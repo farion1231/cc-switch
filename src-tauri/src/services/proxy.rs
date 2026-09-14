@@ -716,6 +716,50 @@ impl ProxyService {
             .await
     }
 
+    /// Reproject an official takeover after a history-setting change under the
+    /// same lock as provider switches. Restore both live and backup on failure.
+    pub async fn reapply_codex_official_takeover(&self) -> Result<bool, String> {
+        let _guard = self.lock_switch_for_app("codex").await;
+        if !self.is_running().await {
+            return Ok(false);
+        }
+        let Some(provider) = self.get_current_provider_for_app(&AppType::Codex)? else {
+            return Ok(false);
+        };
+        if !crate::proxy::providers::is_codex_official_provider(&provider)
+            || !Self::is_codex_live_taken_over(&self.read_codex_live()?)
+        {
+            return Ok(false);
+        }
+        let previous_backup = self
+            .db
+            .get_live_backup("codex")
+            .await
+            .map_err(|e| e.to_string())?;
+        let snapshot =
+            crate::codex_config::CodexLiveStateSnapshot::capture().map_err(|e| e.to_string())?;
+        let result = async {
+            self.update_live_backup_from_provider_inner("codex", &provider, None)
+                .await?;
+            self.sync_codex_live_from_provider_while_proxy_active(&provider)
+                .await
+        }
+        .await;
+        if let Err(error) = result {
+            self.rollback_hot_switch_preparation(
+                &AppType::Codex,
+                previous_backup.as_ref(),
+                Some(&provider.id),
+                true,
+                true,
+                Some(&snapshot),
+            )
+            .await;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
     pub(crate) async fn sync_codex_live_from_provider_while_proxy_active_guarded(
         &self,
         provider: &Provider,
@@ -2516,7 +2560,27 @@ impl ProxyService {
                             Self::proxy_urls_match(url, &proxy_codex_base_url)
                         })
                     });
-                Ok(Self::is_codex_live_taken_over(&config) && base_url_matches)
+                let official_bucket_matches = config
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(|text| {
+                        if !crate::codex_config::codex_config_has_official_proxy_route(text) {
+                            return true;
+                        }
+                        let expected = if crate::settings::unify_codex_session_history() {
+                            crate::codex_config::CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+                        } else {
+                            crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID
+                        };
+                        text.parse::<toml_edit::DocumentMut>()
+                            .ok()
+                            .is_some_and(|doc| {
+                                doc.get("model_provider").and_then(|v| v.as_str()) == Some(expected)
+                            })
+                    });
+                Ok(Self::is_codex_live_taken_over(&config)
+                    && base_url_matches
+                    && official_bucket_matches)
             }
             AppType::Gemini => {
                 let config = self.read_gemini_live()?;
@@ -2586,14 +2650,15 @@ impl ProxyService {
         }
 
         if let Some(cfg_str) = config.get("config").and_then(|v| v.as_str()) {
-            let updated = Self::remove_local_toml_base_url(cfg_str);
+            // Check ownership before removing URL fields used by the marker.
+            let updated = crate::codex_config::remove_codex_official_proxy_route(cfg_str)
+                .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
+            let updated = Self::remove_local_toml_base_url(&updated);
             let updated =
                 crate::codex_config::remove_codex_experimental_bearer_token_if(&updated, |token| {
                     token == PROXY_TOKEN_PLACEHOLDER
                 })
                 .map_err(|e| format!("清理 Codex 接管占位符失败: {e}"))?;
-            let updated = crate::codex_config::remove_codex_official_proxy_route(&updated)
-                .map_err(|e| format!("清理 Codex 官方接管路由失败: {e}"))?;
             config["config"] = json!(updated);
         }
 
@@ -5214,12 +5279,25 @@ wire_api = "responses"
     #[tokio::test]
     #[serial]
     async fn codex_takeover_hot_switches_between_builtin_official_and_third_party() {
+        exercise_official_takeover_history(false).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn unified_official_takeover_survives_hot_switch_toggle_and_restore() {
+        exercise_official_takeover_history(true).await;
+    }
+
+    async fn exercise_official_takeover_history(unified: bool) {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
         // Exercise the default setting: takeover itself must now preserve native
         // auth regardless of the legacy compatibility toggle.
-        crate::settings::update_settings(crate::settings::AppSettings::default())
-            .expect("reset settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            unify_codex_session_history: unified,
+            ..Default::default()
+        })
+        .expect("reset settings");
 
         let db = Arc::new(Database::memory().expect("init db"));
         use_ephemeral_proxy_port(&db).await;
@@ -5260,6 +5338,13 @@ wire_api = "responses"
             None,
         );
         third_party.category = Some("custom".to_string());
+        if unified {
+            let text = third_party.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .replace("rightcode", "custom");
+            third_party.settings_config["config"] = json!(text);
+        }
         db.save_provider("codex", &third_party)
             .expect("save third-party provider");
         db.set_current_provider("codex", "codex-official")
@@ -5285,6 +5370,39 @@ wire_api = "responses"
         assert!(official_live.contains("requires_openai_auth = true"));
         assert!(!official_live.contains(PROXY_TOKEN_PLACEHOLDER));
 
+        let read_bucket = || {
+            let text =
+                std::fs::read_to_string(crate::codex_config::get_codex_config_path()).unwrap();
+            let doc: toml::Value = toml::from_str(&text).unwrap();
+            doc.get("model_provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("openai")
+                .to_string()
+        };
+        assert_eq!(
+            read_bucket(),
+            if unified {
+                "custom"
+            } else {
+                "cc-switch-official"
+            }
+        );
+
+        if unified {
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = false;
+            crate::settings::update_settings(settings.clone()).unwrap();
+            assert!(service.reapply_codex_official_takeover().await.unwrap());
+            assert_eq!(read_bucket(), "cc-switch-official");
+            settings.unify_codex_session_history = true;
+            crate::settings::update_settings(settings).unwrap();
+            // Upgrade/re-enable must not incorrectly reuse a legacy route.
+            service.set_takeover_for_app("codex", true).await.unwrap();
+            assert_eq!(read_bucket(), "custom");
+            assert!(service.reapply_codex_official_takeover().await.unwrap());
+            assert_eq!(read_auth(), oauth_auth);
+        }
+
         service
             .hot_switch_provider("codex", "rightcode")
             .await
@@ -5301,6 +5419,9 @@ wire_api = "responses"
         assert!(!crate::codex_config::codex_config_has_official_proxy_route(
             &third_party_live
         ));
+        if unified {
+            assert_eq!(read_bucket(), "custom");
+        }
 
         service
             .hot_switch_provider("codex", "codex-official")
@@ -5323,6 +5444,7 @@ wire_api = "responses"
             .await
             .expect("disable takeover");
         assert_eq!(read_auth(), oauth_auth);
+        assert_eq!(read_bucket(), if unified { "custom" } else { "openai" });
     }
 
     #[tokio::test]

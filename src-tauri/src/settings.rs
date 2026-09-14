@@ -326,6 +326,9 @@ pub struct CodexProviderTemplateMigration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexOfficialHistoryUnifyMigration {
+    /// V2 also covers official takeover IDs and persisted runtime settings.
+    #[serde(default)]
+    pub version: u32,
     pub completed_at: String,
     pub target_provider_id: String,
     #[serde(default)]
@@ -336,6 +339,12 @@ pub struct CodexOfficialHistoryUnifyMigration {
     /// 切换 codex_config_dir 后旧标记不会挡住新目录的迁移。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
+}
+
+impl CodexOfficialHistoryUnifyMigration {
+    fn covers_directory(&self, codex_dir: &str) -> bool {
+        self.version >= 2 && self.codex_config_dir.as_deref() == Some(codex_dir)
+    }
 }
 
 /// 应用设置结构
@@ -853,7 +862,7 @@ pub fn is_codex_official_history_unify_migrated_for_dir(codex_dir: &str) -> bool
         .local_migrations
         .as_ref()
         .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+        .is_some_and(|migration| migration.covers_directory(codex_dir))
 }
 
 /// 条件写入迁移完成标记：仅当此刻开关仍开启且迁移意愿仍在时才写。
@@ -1188,6 +1197,20 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn legacy_history_marker_does_not_skip_runtime_and_takeover_upgrade() {
+        let mut marker: CodexOfficialHistoryUnifyMigration =
+            serde_json::from_value(serde_json::json!({
+                "completedAt": "2026-01-01T00:00:00Z", "targetProviderId": "custom",
+                "codexConfigDir": "/fixture/codex", "migratedJsonlFiles": 2,
+            }))
+            .unwrap();
+        assert!(!marker.covers_directory("/fixture/codex"));
+        marker.version = 2;
+        assert!(marker.covers_directory("/fixture/codex"));
+        assert!(!marker.covers_directory("/another/codex"));
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
