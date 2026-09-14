@@ -647,7 +647,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // 命令退出码为 0、但刷新后仍探不到版本：多半是"装上了却跑不起来"
             // （如 openclaw 要求更高的 Node 版本）。refreshToolVersions 的 merge 已把
             // version 置空并写入后端 error，这里只需归类为软失败并展示原因。
-            const detail = tool?.error?.trim() || t("settings.toolNotRunnable");
+            const detail = tool?.installed_but_broken
+              ? tool?.error?.trim() || t("settings.toolNotRunnable")
+              : t("common.notInstalled");
             failures.push({
               toolName,
               detail,
@@ -1078,7 +1080,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     ? "update"
                     : null;
             const runningAction = toolActions[toolName];
-            const title = tool?.version || tool?.error || t("common.unknown");
+            const title =
+              tool?.version ||
+              (installedButBroken
+                ? tool?.error || t("settings.installedNotRunnable")
+                : t("common.notInstalled"));
             const conflicts = toolDiagnostics[toolName];
 
             return (
@@ -1151,11 +1157,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                         : tool?.latest_version || t("common.unknown")}
                     </span>
                   </div>
-                  {!isToolVersionLoading && !tool?.version && tool?.error && (
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {tool.error}
-                    </div>
-                  )}
+                  {!isToolVersionLoading &&
+                    installedButBroken &&
+                    tool?.error && (
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {tool.error}
+                      </div>
+                    )}
                 </div>
 
                 {tool?.env_type === "wsl" && (
