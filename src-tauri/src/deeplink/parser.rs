@@ -143,6 +143,7 @@ fn parse_provider_deeplink(
         .and_then(|v| v.parse::<u64>().ok());
 
     Ok(DeepLinkImportRequest {
+        grokbuild_models: None,
         version,
         resource,
         app: Some(app),
@@ -213,6 +214,7 @@ fn parse_prompt_deeplink(
     let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
 
     Ok(DeepLinkImportRequest {
+        grokbuild_models: None,
         version,
         resource,
         app: Some(app),
@@ -285,6 +287,7 @@ fn parse_mcp_deeplink(
     let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
 
     Ok(DeepLinkImportRequest {
+        grokbuild_models: None,
         version,
         resource,
         apps: Some(apps),
@@ -340,6 +343,7 @@ fn parse_skill_deeplink(
     let branch = params.get("branch").cloned();
 
     Ok(DeepLinkImportRequest {
+        grokbuild_models: None,
         version,
         resource,
         repo: Some(repo),
