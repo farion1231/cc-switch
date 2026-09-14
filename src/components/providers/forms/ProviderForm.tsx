@@ -126,6 +126,7 @@ import {
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { parseWindowToken } from "./hooks/useModelState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -165,13 +166,14 @@ export const normalizeCodexCatalogModelsForSave = (
     seen.add(model);
 
     const displayName = item.displayName?.trim();
-    const rawContextWindow = String(item.contextWindow ?? "").replace(
-      /[^\d]/g,
-      "",
-    );
-    const contextWindow = rawContextWindow
-      ? Number.parseInt(rawContextWindow, 10)
-      : undefined;
+    const rawContextWindow = String(item.contextWindow ?? "").trim();
+    // 契约单点：合法窗口 token（纯数字 / K/k/M/m 后缀，含空串拒绝）以
+    // parseWindowToken 全串校验为准，通过则保留用户原样串，数值归一化由
+    // 后端 parse_codex_positive_u64 统一负责；解析失败整字段丢弃，宁缺毋假。
+    const contextWindow =
+      parseWindowToken(rawContextWindow) !== undefined
+        ? rawContextWindow
+        : undefined;
 
     const inputModalities = item.inputModalities?.filter(
       (m) => typeof m === "string" && m.trim(),
@@ -186,7 +188,7 @@ export const normalizeCodexCatalogModelsForSave = (
     normalized.push({
       model,
       ...(displayName ? { displayName } : {}),
-      ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
       // Native Responses profile overrides (ignored by the chat/proxy profile).
       ...(typeof item.supportsParallelToolCalls === "boolean"
         ? { supportsParallelToolCalls: item.supportsParallelToolCalls }

@@ -32,6 +32,29 @@ pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
 /// Claude Desktop schema 不接受此后缀，import 边界翻译为 `supports1m` 字段。
 pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
+/// Parse window token like "1M" / "200K" / "1000000". Returns None for invalid or zero.
+pub fn parse_window_token(token: &str) -> Option<u64> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let (num_part, multiplier) = match token.chars().last() {
+        Some('K' | 'k') => (&token[..token.len() - 1], 1_000u64),
+        Some('M' | 'm') => (&token[..token.len() - 1], 1_000_000u64),
+        Some(_) => (token, 1u64),
+        None => return None,
+    };
+    let value = num_part
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .and_then(|value| value.checked_mul(multiplier))?;
+    if value == 0 || value > i64::MAX as u64 {
+        return None;
+    }
+    Some(value)
+}
+
 const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-5";
 const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
 
@@ -1322,6 +1345,25 @@ fn unsupported_platform_error() -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_window_token_handles_empty_and_zero() {
+        assert_eq!(parse_window_token(""), None);
+        assert_eq!(parse_window_token("0"), None);
+        assert_eq!(parse_window_token("0K"), None);
+    }
+
+    #[test]
+    fn parse_window_token_rejects_overflow_beyond_i64() {
+        // u64 可解析但超过 TOML i64 上限
+        assert_eq!(parse_window_token("9223372036854775808"), None);
+        // checked_mul 溢出
+        assert_eq!(parse_window_token("18446744073709551615K"), None);
+        assert_eq!(
+            parse_window_token("9223372036854775807"),
+            Some(9_223_372_036_854_775_807)
+        );
+    }
+
     use super::*;
     use crate::database::Database;
     use crate::provider::{ClaudeDesktopModelRoute, ProviderMeta};

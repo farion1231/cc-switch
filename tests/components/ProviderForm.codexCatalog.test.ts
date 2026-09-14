@@ -13,7 +13,53 @@ describe("ProviderForm Codex catalog helpers", () => {
       ]),
     ).toEqual([
       { model: "deepseek-v4-flash", displayName: "DeepSeek" },
-      { model: "kimi-k2", contextWindow: 128000 },
+      // 行为变更：parseWindowToken 全串校验失败 → 丢字段（旧约定是剥出 128000）
+      { model: "kimi-k2" },
+    ]);
+  });
+
+  it("keeps parseable K/M context windows verbatim and drops unparseable ones", () => {
+    expect(
+      normalizeCodexCatalogModelsForSave([
+        { model: "deepseek-v4-flash", contextWindow: "1M" },
+        { model: "kimi-k2", contextWindow: "200k" },
+        { model: "glm-5.2", contextWindow: "500000" },
+        { model: "mimo-v2.5-pro", contextWindow: 1_000_000 },
+        { model: "mini-max", contextWindow: "  128000  " },
+        { model: "bad-decimal", contextWindow: "0.5M" },
+        { model: "bad-text", contextWindow: "abc" },
+        { model: "bad-zero", contextWindow: "0" },
+      ]),
+    ).toEqual([
+      { model: "deepseek-v4-flash", contextWindow: "1M" },
+      { model: "kimi-k2", contextWindow: "200k" },
+      { model: "glm-5.2", contextWindow: "500000" },
+      { model: "mimo-v2.5-pro", contextWindow: "1000000" },
+      { model: "mini-max", contextWindow: "128000" },
+      { model: "bad-decimal" },
+      { model: "bad-text" },
+      { model: "bad-zero" },
+    ]);
+  });
+
+  it("round-trips K/M context window tokens through load and save without loss", () => {
+    // load→save 回环：K/M 原样串两侧（mapCodexCatalogModelForForm /
+    // normalizeCodexCatalogModelsForSave）任何一侧漂移都会静默改写用户输入。
+    const stored = [
+      { model: "deepseek-v4-flash", contextWindow: "1M" },
+      { model: "kimi-k2", contextWindow: "200k" },
+      { model: "glm-5.2", contextWindow: 500000 },
+    ];
+
+    const roundTripped = normalizeCodexCatalogModelsForSave(
+      stored.map(mapCodexCatalogModelForForm),
+    );
+
+    expect(roundTripped).toEqual([
+      { model: "deepseek-v4-flash", contextWindow: "1M" },
+      { model: "kimi-k2", contextWindow: "200k" },
+      // 旧数值数据经一次编辑保存统一为串形态（读侧双形态兼容）
+      { model: "glm-5.2", contextWindow: "500000" },
     ]);
   });
 
@@ -42,7 +88,8 @@ describe("ProviderForm Codex catalog helpers", () => {
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
-        contextWindow: 1000000,
+        // 数值旧数据经一次编辑保存统一为串形态（新契约：原样串为存储形态）
+        contextWindow: "1000000",
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions: "You are Codex, a coding agent based on MiniMax-M3.",

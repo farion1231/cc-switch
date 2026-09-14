@@ -35,6 +35,27 @@ export function setClaudeOneMMarker(model: string, enabled: boolean): string {
   return enabled ? `${base}${CLAUDE_ONE_M_MARKER}` : base;
 }
 
+// 与 Rust 端 parse_window_token 对齐（见 src-tauri/src/claude_desktop_config.rs）。
+export function parseWindowToken(token: string): number | undefined {
+  const trimmed = token.trim();
+  if (!trimmed) return undefined;
+  // 与 Rust 端一致：全串校验，不接受小数、分隔符或未知单位
+  const match = /^(\d+)([KkMm])?$/.exec(trimmed);
+  if (!match) return undefined;
+  const num = Number(match[1]);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  const multiplier = match[2]
+    ? match[2].toLowerCase() === "k"
+      ? 1000
+      : 1000000
+    : 1;
+  const value = num * multiplier;
+  // 与 TOML i64 对齐：拒绝超出安全整数范围的值，避免写入 config.toml 后
+  // 整文件解析失败（Rust 端 parse_window_token 同步该上限）。
+  if (!Number.isSafeInteger(value)) return undefined;
+  return value;
+}
+
 /**
  * Parse model values from settings config JSON
  */
