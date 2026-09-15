@@ -628,7 +628,9 @@ mod tests {
         // 全局关闭：管线为空，list 条目展示为禁用，overrides 不受影响
         registry.set_global_enabled(false);
         assert!(!registry.global_enabled());
-        assert!(registry.plugins_for_stage(PluginStage::PreRequest).is_empty());
+        assert!(registry
+            .plugins_for_stage(PluginStage::PreRequest)
+            .is_empty());
         let infos = registry.list();
         assert_eq!(infos.len(), 1);
         assert!(!infos[0].enabled);
@@ -832,7 +834,9 @@ mod tests {
             SseMockPlugin::stateful("bad", 100).with_fail().with_panic(),
         ));
         // fail 在 panic 之前返回，这里拆成两个插件分别覆盖两条 fail-open 路径
-        registry.register(Arc::new(SseMockPlugin::stateful("panicky", 110).with_panic()));
+        registry.register(Arc::new(
+            SseMockPlugin::stateful("panicky", 110).with_panic(),
+        ));
         let ok = Arc::new(SseMockPlugin::stateful("ok", 120));
         registry.register(ok.clone());
 

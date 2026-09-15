@@ -3881,7 +3881,10 @@ mod transform_hook_e2e_tests {
         let text = response.text().await.expect("read anthropic sse body");
 
         // anthropic 形状的最终输出：input_json_delta.partial_json 携带 tool 参数
-        assert!(text.contains("input_json_delta"), "应含工具参数 delta: {text}");
+        assert!(
+            text.contains("input_json_delta"),
+            "应含工具参数 delta: {text}"
+        );
         // 哨兵已在 SseChunk 挂点上替换
         assert!(!text.contains(PROBE_SENTINEL), "流中不得残留哨兵: {text}");
         assert!(text.contains(PROBE_REPLACEMENT), "应含替换结果: {text}");
@@ -3928,7 +3931,10 @@ mod transform_hook_e2e_tests {
             format!("saved to {PROBE_REPLACEMENT}"),
             "哨兵应被替换: {body}"
         );
-        assert!(!body.to_string().contains(PROBE_SENTINEL), "不得残留哨兵: {body}");
+        assert!(
+            !body.to_string().contains(PROBE_SENTINEL),
+            "不得残留哨兵: {body}"
+        );
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();
@@ -3967,7 +3973,10 @@ mod transform_hook_e2e_tests {
         let text = response.text().await.expect("read anthropic sse body");
 
         // 无插件：哨兵字节级原样透传
-        assert!(text.contains(PROBE_SENTINEL), "无插件时哨兵应原样透传: {text}");
+        assert!(
+            text.contains(PROBE_SENTINEL),
+            "无插件时哨兵应原样透传: {text}"
+        );
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();

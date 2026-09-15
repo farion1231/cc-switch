@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { AlertTriangle, FolderInput, FolderOpen, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  FolderInput,
+  FolderOpen,
+  RefreshCw,
+} from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Switch } from "@/components/ui/switch";
@@ -29,7 +34,9 @@ export function PluginSettingsPanel() {
   // 全局总开关本地态：以"是否全部启用"初始化（后端 plugin_list 不单独返回总开关）
   const [globalEnabled, setGlobalEnabled] = useState(true);
   // 优先级输入草稿：失焦/回车时才提交，避免每敲一个字符调一次后端
-  const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({});
+  const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>(
+    {},
+  );
 
   const loadPlugins = useCallback(async () => {
     try {
@@ -86,9 +93,7 @@ export function PluginSettingsPanel() {
       console.error("Failed to set plugin enabled:", e);
       toast.error(String(e));
       setPlugins((prev) =>
-        prev.map((p) =>
-          p.id === plugin.id ? { ...p, enabled: previous } : p,
-        ),
+        prev.map((p) => (p.id === plugin.id ? { ...p, enabled: previous } : p)),
       );
     }
   };
@@ -131,7 +136,9 @@ export function PluginSettingsPanel() {
     try {
       const result = await invoke<PluginReloadResult>("plugin_reload");
       setReloadErrors(result.errors ?? []);
-      toast.success(t(`${I18N_PREFIX}.reloadSuccess`, { loaded: result.loaded }));
+      toast.success(
+        t(`${I18N_PREFIX}.reloadSuccess`, { loaded: result.loaded }),
+      );
       await loadPlugins();
     } catch (e) {
       console.error("Failed to reload plugins:", e);
@@ -204,7 +211,9 @@ export function PluginSettingsPanel() {
           onClick={() => void handleReload()}
           disabled={isReloading}
         >
-          <RefreshCw className={`mr-2 h-4 w-4 ${isReloading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`mr-2 h-4 w-4 ${isReloading ? "animate-spin" : ""}`}
+          />
           {t(`${I18N_PREFIX}.reload`)}
         </Button>
         <Button
@@ -216,7 +225,11 @@ export function PluginSettingsPanel() {
           <FolderInput className="mr-2 h-4 w-4" />
           {t(`${I18N_PREFIX}.import`)}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => void handleOpenDir()}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleOpenDir()}
+        >
           <FolderOpen className="mr-2 h-4 w-4" />
           {t(`${I18N_PREFIX}.openDir`)}
         </Button>
@@ -261,7 +274,13 @@ export function PluginSettingsPanel() {
                       {plugin.displayName}
                     </span>
                     <Badge
-                      variant={failed ? "destructive" : plugin.isBuiltin ? "secondary" : "default"}
+                      variant={
+                        failed
+                          ? "destructive"
+                          : plugin.isBuiltin
+                            ? "secondary"
+                            : "default"
+                      }
                       className="px-1.5 py-0 text-[10px]"
                     >
                       {failed
@@ -305,7 +324,9 @@ export function PluginSettingsPanel() {
                       aria-label={`${t(`${I18N_PREFIX}.priority`)}: ${plugin.displayName}`}
                       title={t(`${I18N_PREFIX}.priorityHint`)}
                       className="h-8 w-20"
-                      value={priorityDrafts[plugin.id] ?? String(plugin.priority)}
+                      value={
+                        priorityDrafts[plugin.id] ?? String(plugin.priority)
+                      }
                       disabled={failed || !globalEnabled}
                       onChange={(e) =>
                         setPriorityDrafts((prev) => ({

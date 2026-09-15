@@ -29,10 +29,7 @@ fn load_config(db: &Database) -> Option<OptimizerConfig> {
 
 /// Bedrock 门：provider 缺失或非 Bedrock 时不执行（provider 为 None 视为非 Bedrock）
 fn bedrock_gate(ctx: &PluginRequestContext) -> bool {
-    ctx.provider
-        .as_ref()
-        .map(|p| p.is_bedrock)
-        .unwrap_or(false)
+    ctx.provider.as_ref().map(|p| p.is_bedrock).unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +181,8 @@ mod tests {
 
     fn db_with_config(config: &OptimizerConfig) -> Arc<Database> {
         let db = Arc::new(Database::memory().expect("memory db"));
-        db.set_optimizer_config(config).expect("set optimizer config");
+        db.set_optimizer_config(config)
+            .expect("set optimizer config");
         db
     }
 

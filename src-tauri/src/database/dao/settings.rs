@@ -331,9 +331,7 @@ impl Database {
     ///
     /// key 缺失或 JSON 解析失败时回退默认值（全局开启、无覆盖），
     /// 与 `proxy::plugins::init` 的加载语义保持一致。
-    pub fn get_plugins_config(
-        &self,
-    ) -> Result<crate::proxy::plugins::PluginsConfig, AppError> {
+    pub fn get_plugins_config(&self) -> Result<crate::proxy::plugins::PluginsConfig, AppError> {
         match self.get_setting("plugins_config")? {
             Some(json) => Ok(serde_json::from_str(&json).unwrap_or_else(|e| {
                 log::warn!("[PLUGIN] 解析 plugins_config 失败，使用默认配置: {e}");

@@ -10,7 +10,9 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
-    plugins::{run_request_pipeline, PluginProviderInfo, PluginRegistry, PluginRequestContext, PluginStage},
+    plugins::{
+        run_request_pipeline, PluginProviderInfo, PluginRegistry, PluginRequestContext, PluginStage,
+    },
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -3973,10 +3975,11 @@ mod tests {
                 body: &mut Value,
             ) -> Result<bool, PluginError> {
                 let provider = ctx.provider.as_ref().expect("PreSend 应携带 provider 信息");
-                self.seen
-                    .lock()
-                    .unwrap()
-                    .push((provider.id.clone(), provider.is_bedrock, ctx.session_id.clone()));
+                self.seen.lock().unwrap().push((
+                    provider.id.clone(),
+                    provider.is_bedrock,
+                    ctx.session_id.clone(),
+                ));
                 body["plugin_touched"] = json!(true);
                 Ok(true)
             }
@@ -3987,11 +3990,8 @@ mod tests {
         });
         let registry = PluginRegistry::new();
         registry.register(plugin.clone() as Arc<dyn ProxyPlugin>);
-        let forwarder = test_forwarder_with_plugins(
-            Duration::ZERO,
-            Duration::ZERO,
-            Arc::new(registry),
-        );
+        let forwarder =
+            test_forwarder_with_plugins(Duration::ZERO, Duration::ZERO, Arc::new(registry));
 
         let mut bedrock_provider = test_provider_with_type(Some("claude"));
         bedrock_provider.id = "bedrock-1".to_string();
@@ -4008,7 +4008,10 @@ mod tests {
         let seen = plugin.seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].0, "bedrock-1");
-        assert!(seen[0].1, "Bedrock provider 应在 ctx 中标记 is_bedrock=true");
+        assert!(
+            seen[0].1,
+            "Bedrock provider 应在 ctx 中标记 is_bedrock=true"
+        );
         assert_eq!(seen[0].2, "", "session_id 来自 forwarder");
     }
 

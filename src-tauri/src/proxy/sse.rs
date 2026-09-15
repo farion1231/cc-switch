@@ -11,9 +11,7 @@ pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
 
 /// 与 [`take_sse_block`] 相同的切块逻辑，但额外返回该块使用的分隔符
 /// （`"\r\n\r\n"` 或 `"\n\n"`），供重 emitted 块沿用原样式。
-pub(crate) fn take_sse_block_with_delimiter(
-    buffer: &mut String,
-) -> Option<(String, &'static str)> {
+pub(crate) fn take_sse_block_with_delimiter(buffer: &mut String) -> Option<(String, &'static str)> {
     let mut best: Option<(usize, usize, &'static str)> = None;
 
     for (delimiter, len) in [("\r\n\r\n", 4usize), ("\n\n", 2usize)] {

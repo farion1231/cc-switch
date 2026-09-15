@@ -30,20 +30,16 @@ fn main() {
             }
             Ok("gnu") => {
                 let windres = "windres";
-                let out_dir = std::path::PathBuf::from(
-                    std::env::var("OUT_DIR").expect("missing OUT_DIR"),
-                );
+                let out_dir =
+                    std::path::PathBuf::from(std::env::var("OUT_DIR").expect("missing OUT_DIR"));
                 // RC 资源：type 24 = RT_MANIFEST，id 1 = 应用程序清单
                 let rc_path = out_dir.join("common_controls.rc");
                 let manifest_fwd = manifest_path
                     .display()
                     .to_string()
                     .replace(std::path::MAIN_SEPARATOR, "/");
-                std::fs::write(
-                    &rc_path,
-                    format!("1 24 \"{}\"\n", manifest_fwd),
-                )
-                .expect("write common_controls.rc");
+                std::fs::write(&rc_path, format!("1 24 \"{}\"\n", manifest_fwd))
+                    .expect("write common_controls.rc");
                 let obj_path = out_dir.join("common_controls.manifest.o");
                 let status = std::process::Command::new(windres)
                     .args([
