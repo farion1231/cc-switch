@@ -4,12 +4,16 @@
 
 use super::{
     content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
-    forwarder::ActiveConnectionGuard,
+    forwarder::{is_bedrock_provider, ActiveConnectionGuard},
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
+    plugins::{
+        run_request_pipeline, run_sse_pipeline, PluginProviderInfo, PluginRegistry,
+        PluginRequestContext, PluginStage,
+    },
     server::ProxyState,
-    sse::{strip_sse_field, take_sse_block},
+    sse::{append_utf8_safe, strip_sse_field, take_sse_block, take_sse_block_with_delimiter},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -20,6 +24,8 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
+    any::Any,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -188,14 +194,17 @@ pub async fn handle_streaming(
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
 
     // 获取流式超时配置
-    let timeout_config = ctx.streaming_timeout_config();
+    // （已下沉到 apply_plugin_sse_transform_if_needed：挂点与 logged passthrough 在一处组装）
 
-    // 创建带日志和超时的透传流
-    let logged_stream = create_logged_passthrough_stream(
+    // SseChunk 插件挂点 + logged passthrough 统一由公共助手组装：
+    // 无启用的 SseChunk 插件时原样包装（零开销），有则先接插件流再接 logged
+    // passthrough，用量统计基于包装后的最终输出流（与客户端实际收到的一致）。
+    let logged_stream = apply_plugin_sse_transform_if_needed(
         stream,
-        ctx.tag,
+        ctx,
+        state,
         usage_collector,
-        timeout_config,
+        ctx.tag,
         connection_guard,
     );
 
@@ -207,6 +216,249 @@ pub async fn handle_streaming(
             ProxyError::Internal(format!("Failed to build streaming response: {e}")).into_response()
         }
     }
+}
+
+// ============================================================================
+// 转换路径共用的插件挂点
+// ============================================================================
+
+/// 转换路径（handle_claude_transform / codex 转换链路）共用的 SseChunk 插件挂点。
+///
+/// 这些路径自行构建响应流（anthropic / responses 形状的 SSE），不经过
+/// [`handle_streaming`]，插件挂点必须单独接入。本助手把"挂点 + logged
+/// passthrough"组装为一段最终输出流：
+/// - 无启用的 SseChunk 插件：原样包装 logged passthrough（零开销，与主线一致）
+/// - 有：先接 SSE 插件变换流，再接 logged passthrough；用量统计基于最终输出，
+///   与客户端实际收到的一致
+///
+/// 关键点：插件流必须在**转换完成后的最终输出**上执行——此时流已是客户端可见
+/// 形状（anthropic / responses），text / partial_json 还原白名单才能命中。
+pub(crate) fn apply_plugin_sse_transform_if_needed(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    usage_collector: Option<SseUsageCollector>,
+    tag: &'static str,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
+    let timeout_config = ctx.streaming_timeout_config();
+    if state
+        .plugins
+        .plugins_for_stage(PluginStage::SseChunk)
+        .is_empty()
+    {
+        Box::pin(create_logged_passthrough_stream(
+            stream,
+            tag,
+            usage_collector,
+            timeout_config,
+            connection_guard,
+        ))
+    } else {
+        let plugin_ctx = PluginRequestContext {
+            app_type: ctx.app_type_str.to_string(),
+            session_id: ctx.session_id.clone(),
+            request_model: ctx.request_model.clone(),
+            stage: PluginStage::SseChunk,
+            provider: Some(PluginProviderInfo {
+                id: ctx.provider.id.clone(),
+                name: ctx.provider.name.clone(),
+                is_bedrock: is_bedrock_provider(&ctx.provider),
+            }),
+        };
+        let transformed =
+            create_sse_plugin_transform_stream(stream, state.plugins.clone(), plugin_ctx, ctx.tag);
+        Box::pin(create_logged_passthrough_stream(
+            transformed,
+            tag,
+            usage_collector,
+            timeout_config,
+            connection_guard,
+        ))
+    }
+}
+
+/// 非流式转换路径共用的 PostResponse 插件挂点（fail-open 由管线保证）。
+///
+/// handle_claude_transform / codex 转换链路的聚合分支自行构建最终 JSON，
+/// 不经过 [`handle_non_streaming`]；在序列化返回前执行 PostResponse 管线。
+/// 仅成功响应接入，错误体语义与主线（handle_non_streaming 只挂成功响应）一致。
+/// 调用方需保证 usage 日志先于本函数基于改写前的值统计（与主线一致）。
+pub(crate) fn apply_post_response_plugin_transform_if_needed(
+    ctx: &RequestContext,
+    state: &ProxyState,
+    status: http::StatusCode,
+    value: &mut Value,
+) {
+    if !status.is_success()
+        || state
+            .plugins
+            .plugins_for_stage(PluginStage::PostResponse)
+            .is_empty()
+    {
+        return;
+    }
+    let plugin_ctx = PluginRequestContext {
+        app_type: ctx.app_type_str.to_string(),
+        session_id: ctx.session_id.clone(),
+        request_model: ctx.request_model.clone(),
+        stage: PluginStage::PostResponse,
+        provider: Some(PluginProviderInfo {
+            id: ctx.provider.id.clone(),
+            name: ctx.provider.name.clone(),
+            is_bedrock: is_bedrock_provider(&ctx.provider),
+        }),
+    };
+    let _changed = run_request_pipeline(
+        &state.plugins,
+        PluginStage::PostResponse,
+        &plugin_ctx,
+        value,
+        |p, c, b| p.transform_response(c, b),
+    );
+}
+
+// ============================================================================
+// SseChunk 插件流包装器
+// ============================================================================
+
+/// SSE 插件流包装器：逐事件块执行 SseChunk 插件管线（契约第 5 节）。
+///
+/// - 字节 → UTF-8 安全缓冲（[`append_utf8_safe`]）→ 事件块切分（`take_sse_block_with_delimiter`）
+/// - 块内解析出 event 名与 data 行（多行 data 按 SSE 规范以 `\n` 拼接），交给
+///   [`run_sse_pipeline`]；被修改的块重 emitted：非 data 行（event/id/retry/注释）按
+///   原样保序保留，data 行合并为单行 `data: <new>`，块分隔符沿用原样式
+/// - 未被修改的块按原始字节原样透传（零改动保证）
+/// - 流结束把缓冲里残余的不完整块原样冲出（不参与管线）
+/// - 解析/管线出任何错误：fail-open——该块原样透传并 `log::warn`
+pub fn create_sse_plugin_transform_stream(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    registry: Arc<PluginRegistry>,
+    plugin_ctx: PluginRequestContext,
+    tag: &'static str,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    async_stream::stream! {
+        // 私有状态槽位与插件列表按下标对齐（run_sse_pipeline 每次调用内部取同一份列表）
+        let mut states: Vec<Option<Box<dyn Any + Send>>> = Vec::new();
+        let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
+
+        tokio::pin!(stream);
+        loop {
+            let mut stream_ended = false;
+            match stream.next().await {
+                Some(Ok(bytes)) => {
+                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                }
+                Some(Err(e)) => {
+                    log::error!("[{tag}] 流错误: {e}");
+                    yield Err(std::io::Error::other(e.to_string()));
+                    break;
+                }
+                None => {
+                    // 流结束：把跨 chunk 的 UTF-8 remainder 冲回缓冲后一并原样输出
+                    if !utf8_remainder.is_empty() {
+                        buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+                        utf8_remainder.clear();
+                    }
+                    stream_ended = true;
+                }
+            }
+
+            // 处理所有完整事件块
+            while let Some((block, delimiter)) = take_sse_block_with_delimiter(&mut buffer) {
+                let original = format!("{block}{delimiter}");
+                let transformed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    transform_sse_block(&block, delimiter, &registry, &plugin_ctx, &mut states)
+                }));
+                match transformed {
+                    Ok(Some(new_block)) => {
+                        yield Ok(Bytes::from(format!("{new_block}{delimiter}")));
+                    }
+                    Ok(None) => yield Ok(Bytes::from(original)),
+                    Err(payload) => {
+                        log::warn!(
+                            "[{tag}] SseChunk 块处理 panic，原样透传(fail-open): {}",
+                            super::plugins::registry::panic_message(&payload)
+                        );
+                        yield Ok(Bytes::from(original));
+                    }
+                }
+            }
+
+            if stream_ended {
+                // 残余不完整块（无结尾分隔符）：原样冲出
+                if !buffer.is_empty() {
+                    yield Ok(Bytes::from(std::mem::take(&mut buffer)));
+                }
+                break;
+            }
+        }
+    }
+}
+
+/// 对单个 SSE 事件块执行 SseChunk 插件管线。
+///
+/// 返回 `Some(重 emitted 块文本)` 表示 data 被插件修改；`None` 表示原样透传。
+/// `delimiter` 决定重 emitted 块内的行尾风格（与块分隔符保持同一 CR/LF 样式）。
+fn transform_sse_block(
+    block: &str,
+    delimiter: &str,
+    registry: &PluginRegistry,
+    ctx: &PluginRequestContext,
+    states: &mut Vec<Option<Box<dyn Any + Send>>>,
+) -> Option<String> {
+    if block.trim().is_empty() {
+        return None;
+    }
+
+    // 解析 event 名与 data 行（多行 data 按 SSE 规范以 \n 拼接）
+    let mut event_name: Option<String> = None;
+    let mut data_parts: Vec<&str> = Vec::new();
+    for line in block.lines() {
+        if line == "data" {
+            // SSE 允许无冒号的裸字段名行，等价于空 data
+            data_parts.push("");
+        } else if let Some(data) = strip_sse_field(line, "data") {
+            data_parts.push(data);
+        } else if event_name.is_none() {
+            if let Some(event) = strip_sse_field(line, "event") {
+                event_name = Some(event.to_string());
+            }
+        }
+    }
+    if data_parts.is_empty() {
+        // 纯注释 / id / retry 块：无 data 可变换
+        return None;
+    }
+
+    let mut data = data_parts.join("\n");
+    let changed = run_sse_pipeline(registry, ctx, event_name.as_deref(), &mut data, states);
+    if !changed {
+        return None;
+    }
+
+    // 重 emitted：非 data 行按原样保序保留，data 行合并为单行 `data: <new>`
+    let line_ending: &str = if delimiter == "\r\n\r\n" {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut data_emitted = false;
+    for line in block.lines() {
+        let is_data_line = line == "data" || strip_sse_field(line, "data").is_some();
+        if is_data_line {
+            if !data_emitted {
+                out_lines.push(format!("data: {data}"));
+                data_emitted = true;
+            }
+            // 其余 data 行已合并进单行，丢弃
+        } else {
+            out_lines.push(line.to_string());
+        }
+    }
+    Some(out_lines.join(line_ending))
 }
 
 /// 处理非流式响应
@@ -225,7 +477,7 @@ pub async fn handle_non_streaming(
         } else {
             Duration::ZERO
         };
-    let (mut response_headers, status, body_bytes) =
+    let (mut response_headers, status, mut body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     strip_hop_by_hop_response_headers(&mut response_headers);
 
@@ -305,6 +557,56 @@ pub async fn handle_non_streaming(
         }
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
+    }
+
+    // PostResponse 插件管线（仅非流式主路径、上游成功响应，fail-open）。
+    // 上方 usage 日志统计基于插件改写前的 body，保证计费统计与上游一致。
+    // 格式转换路径（handle_claude_transform 等）在各自聚合分支通过
+    // apply_post_response_plugin_transform_if_needed 接入同一挂点；
+    // 流式路径由 SseChunk 挂点处理（见 apply_plugin_sse_transform_if_needed）。
+    if status.is_success()
+        && !state
+            .plugins
+            .plugins_for_stage(PluginStage::PostResponse)
+            .is_empty()
+    {
+        if let Ok(mut body_value) = serde_json::from_slice::<Value>(&body_bytes) {
+            let plugin_ctx = PluginRequestContext {
+                app_type: parser_config.app_type_str.to_string(),
+                session_id: ctx.session_id.clone(),
+                request_model: ctx.request_model.clone(),
+                stage: PluginStage::PostResponse,
+                provider: Some(PluginProviderInfo {
+                    id: ctx.provider.id.clone(),
+                    name: ctx.provider.name.clone(),
+                    is_bedrock: is_bedrock_provider(&ctx.provider),
+                }),
+            };
+            let changed = run_request_pipeline(
+                &state.plugins,
+                PluginStage::PostResponse,
+                &plugin_ctx,
+                &mut body_value,
+                |p, c, b| p.transform_response(c, b),
+            );
+            if changed {
+                match serde_json::to_vec(&body_value) {
+                    Ok(serialized) => {
+                        // body 被改写：长度可能变化，剥掉会失真的实体头
+                        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                        body_bytes = Bytes::from(serialized);
+                    }
+                    Err(e) => {
+                        // 序列化失败保持原样返回（fail-open）
+                        log::warn!(
+                            "[{}] PostResponse 插件改写后的响应体序列化失败，使用原始响应: {e}",
+                            ctx.tag
+                        );
+                    }
+                }
+            }
+        }
+        // body 非 JSON：静默跳过，保持原样返回
     }
 
     // 构建响应
@@ -1019,6 +1321,7 @@ mod tests {
     }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
+        use crate::proxy::plugins::PluginRegistry;
         ProxyState {
             db: db.clone(),
             config: Arc::new(RwLock::new(ProxyConfig::default())),
@@ -1030,6 +1333,7 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            plugins: Arc::new(PluginRegistry::new()),
         }
     }
 
@@ -1279,5 +1583,203 @@ mod tests {
             Decimal::from_str("1.5").unwrap()
         );
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // create_sse_plugin_transform_stream tests
+    // ------------------------------------------------------------------
+
+    /// 测试用 SseChunk 插件：把 data 中出现的 needle 替换为 replacement
+    struct SseReplacePlugin {
+        needle: &'static str,
+        replacement: &'static str,
+    }
+
+    impl crate::proxy::plugins::ProxyPlugin for SseReplacePlugin {
+        fn id(&self) -> &str {
+            "test:sse-replace"
+        }
+        fn display_name(&self) -> &str {
+            "SSE Replace"
+        }
+        fn description(&self) -> &str {
+            "测试用：data 子串替换"
+        }
+        fn is_builtin(&self) -> bool {
+            false
+        }
+        fn stages(&self) -> &'static [PluginStage] {
+            &[PluginStage::SseChunk]
+        }
+        fn default_priority(&self) -> i32 {
+            100
+        }
+        fn transform_sse_event(
+            &self,
+            _ctx: &PluginRequestContext,
+            _event_name: Option<&str>,
+            data: &mut String,
+            _state: &mut dyn Any,
+        ) -> Result<bool, crate::proxy::plugins::PluginError> {
+            if data.contains(self.needle) {
+                *data = data.replace(self.needle, self.replacement);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    fn sse_test_ctx() -> PluginRequestContext {
+        PluginRequestContext {
+            app_type: "codex".to_string(),
+            session_id: "sess-sse-test".to_string(),
+            request_model: "gpt-test".to_string(),
+            stage: PluginStage::SseChunk,
+            provider: None,
+        }
+    }
+
+    fn replace_registry(needle: &'static str, replacement: &'static str) -> Arc<PluginRegistry> {
+        let registry = PluginRegistry::new();
+        registry.register(Arc::new(SseReplacePlugin {
+            needle,
+            replacement,
+        }));
+        Arc::new(registry)
+    }
+
+    /// 把字节块序列喂进包装器，收集客户端侧输出字节
+    async fn collect_transformed(
+        chunks: Vec<Result<Bytes, std::io::Error>>,
+        registry: Arc<PluginRegistry>,
+    ) -> Vec<u8> {
+        let stream = futures::stream::iter(chunks);
+        let wrapped = create_sse_plugin_transform_stream(stream, registry, sse_test_ctx(), "Test");
+        let mut out = Vec::new();
+        tokio::pin!(wrapped);
+        while let Some(item) = wrapped.next().await {
+            match item {
+                Ok(bytes) => out.extend_from_slice(&bytes),
+                Err(e) => panic!("包装器不应产生错误: {e}"),
+            }
+        }
+        out
+    }
+
+    fn to_chunks(parts: Vec<&[u8]>) -> Vec<Result<Bytes, std::io::Error>> {
+        parts
+            .into_iter()
+            .map(|p| Ok(Bytes::copy_from_slice(p)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_unmodified_blocks_are_byte_identical() {
+        // 无匹配（插件返回 Ok(false)）时所有块必须与原始字节逐字节一致
+        let original = "event: ping\r\ndata: {\"n\":1}\r\n\r\n: comment only\n\ndata: [DONE]\n\n";
+        let out = collect_transformed(
+            to_chunks(vec![original.as_bytes()]),
+            replace_registry("ABSENT", "x"),
+        )
+        .await;
+        assert_eq!(out, original.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_modified_block_reemitted_with_original_style() {
+        // LF 块被修改：event 行保留 + 单行 data，分隔符仍为 \n\n
+        let out = collect_transformed(
+            to_chunks(vec![b"event: message\ndata: {\"t\":\"AAA\"}\n\n"]),
+            replace_registry("AAA", "BBB"),
+        )
+        .await;
+        assert_eq!(out, b"event: message\ndata: {\"t\":\"BBB\"}\n\n");
+
+        // CRLF 块被修改：行尾与分隔符沿用 \r\n 样式
+        let out = collect_transformed(
+            to_chunks(vec![
+                b"id: 7\r\n: keep\r\nevent: m\r\ndata: \"AAA\"\r\n\r\n",
+            ]),
+            replace_registry("AAA", "BBB"),
+        )
+        .await;
+        assert_eq!(out, b"id: 7\r\n: keep\r\nevent: m\r\ndata: \"BBB\"\r\n\r\n");
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_event_split_across_chunks() {
+        // 单个事件的 data 被切成多个 chunk，且命中子串跨 chunk 边界
+        let out = collect_transformed(
+            to_chunks(vec![
+                b"event: delta\ndata: {\"text\":\"hello SE",
+                b"CRET tail\"}\n\nevent: done\ndata: [DO",
+                b"NE]\n\n",
+            ]),
+            replace_registry("SECRET", "REPLACED"),
+        )
+        .await;
+        assert_eq!(
+            out,
+            b"event: delta\ndata: {\"text\":\"hello REPLACED tail\"}\n\n\
+              event: done\ndata: [DONE]\n\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_multiple_data_lines_joined() {
+        // 多行 data 按 SSE 规范以 \n 拼接后进管线；修改后合并为单行 data
+        let out = collect_transformed(
+            to_chunks(vec![b"event: m\ndata: part-one-\ndata: AA\n\n"]),
+            replace_registry("AA", "XX"),
+        )
+        .await;
+        assert_eq!(out, b"event: m\ndata: part-one-\nXX\n\n");
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_multibyte_utf8_split_across_chunks() {
+        // 多字节字符跨 chunk 切开：未修改块字节级一致
+        let block = "event: m\ndata: {\"t\":\"你好\"}\n\n".to_string();
+        let bytes = block.as_bytes();
+        // 在 "你" 的第 2 个字节处切开
+        let split = bytes.windows(3).position(|w| w == "你".as_bytes()).unwrap() + 2;
+        let out = collect_transformed(
+            vec![
+                Ok(Bytes::copy_from_slice(&bytes[..split])),
+                Ok(Bytes::copy_from_slice(&bytes[split..])),
+            ],
+            replace_registry("ABSENT", "x"),
+        )
+        .await;
+        assert_eq!(out, bytes);
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_flushes_incomplete_tail_block() {
+        // 流结束时缓冲里残余的不完整块原样冲出（不参与管线）
+        let out = collect_transformed(
+            to_chunks(vec![
+                b"data: {\"t\":\"AA\"}\n\ndata: tail-without-delimiter",
+            ]),
+            replace_registry("AA", "XX"),
+        )
+        .await;
+        assert_eq!(
+            out,
+            b"data: {\"t\":\"XX\"}\n\ndata: tail-without-delimiter".to_vec()
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_wrapper_empty_registry_passthrough_identical() {
+        // 无插件注册时（handle_streaming 不会走此路径，防御性透传）字节级一致
+        let original = "event: a\ndata: {\"x\":1}\n\nevent: b\r\ndata: {\"y\":2}\r\n\r\n";
+        let out = collect_transformed(
+            to_chunks(vec![original.as_bytes()]),
+            Arc::new(PluginRegistry::new()),
+        )
+        .await;
+        assert_eq!(out, original.as_bytes());
     }
 }

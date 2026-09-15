@@ -12,6 +12,7 @@ use super::{
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
+    plugins::PluginRegistry,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
     types::*,
@@ -48,6 +49,8 @@ pub struct ProxyState {
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+    /// 插件注册表（由服务层构造并共享，热重载/重启代理时复用同一实例）
+    pub plugins: Arc<PluginRegistry>,
 }
 
 /// 代理HTTP服务器
@@ -64,6 +67,7 @@ impl ProxyServer {
         config: ProxyConfig,
         db: Arc<Database>,
         app_handle: Option<tauri::AppHandle>,
+        plugins: Arc<PluginRegistry>,
     ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
@@ -81,6 +85,7 @@ impl ProxyServer {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
+            plugins,
         };
 
         Self {
@@ -512,6 +517,8 @@ mod tests {
             },
             db.clone(),
             None,
+            // 测试用空注册表：不加载真实插件目录，保证回归行为与主线一致
+            Arc::new(PluginRegistry::new()),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -688,6 +695,8 @@ mod tests {
             },
             db.clone(),
             None,
+            // 测试用空注册表：不加载真实插件目录，保证回归行为与主线一致
+            Arc::new(PluginRegistry::new()),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -898,6 +907,8 @@ mod tests {
             },
             db.clone(),
             None,
+            // 测试用空注册表：不加载真实插件目录，保证回归行为与主线一致
+            Arc::new(PluginRegistry::new()),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -1123,6 +1134,8 @@ mod tests {
             },
             db.clone(),
             None,
+            // 测试用空注册表：不加载真实插件目录，保证回归行为与主线一致
+            Arc::new(PluginRegistry::new()),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -1239,5 +1252,319 @@ mod tests {
             full_url_request.body["commands"]["search_query"][0]["q"],
             "full URL"
         );
+    }
+
+    /// 端到端冒烟（#[ignore]，需 node 在 PATH，手动运行：
+    /// `cargo test --lib -- --ignored user_plugin_pre_request`）
+    ///
+    /// 验证完整链路：临时插件目录里的真实 Node 脚本插件（stdin/stdout 协议）
+    /// 经 load_user_plugins 加载 → 真实 ProxyServer 转发 → PreRequest 挂点改写
+    /// 请求体 → 上游收到的 body 带有插件标记。
+    #[tokio::test]
+    #[ignore = "spawn 真实 Node 进程，需 node 在 PATH；仅作手动冒烟"]
+    async fn user_plugin_pre_request_rewrites_body_end_to_end() {
+        use std::fs;
+
+        // 1. 临时插件目录：Node 脚本读 stdin JSON，在 body 顶层打 plugin_touched 标记
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plugin_dir = tmp.path().join("e2e-marker");
+        fs::create_dir_all(&plugin_dir).expect("create plugin dir");
+        fs::write(
+            plugin_dir.join("plugin.json"),
+            r#"{
+                "id": "e2e-marker",
+                "name": "E2E Marker",
+                "stages": ["pre_request"],
+                "command": ["node", "rewrite.js"],
+                "timeout_ms": 10000
+            }"#,
+        )
+        .expect("write plugin.json");
+        fs::write(
+            plugin_dir.join("rewrite.js"),
+            r#"
+                let raw = "";
+                process.stdin.on("data", (chunk) => { raw += chunk; });
+                process.stdin.on("end", () => {
+                  const input = JSON.parse(raw);
+                  input.body.metadata = { plugin_touched: "user:e2e-marker" };
+                  process.stdout.write(JSON.stringify({ body: input.body }));
+                });
+            "#,
+        )
+        .expect("write rewrite.js");
+
+        // 2. mock 上游：捕获 /chat/completions 请求体
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let capture_handler = {
+            let captured = captured.clone();
+            move |request: axum::extract::Request| {
+                let captured = captured.clone();
+                async move {
+                    let (parts, body) = request.into_parts();
+                    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+                        .await
+                        .expect("read upstream body");
+                    captured.lock().await.push(CapturedRequest {
+                        path_and_query: parts
+                            .uri
+                            .path_and_query()
+                            .map(|value| value.as_str().to_string())
+                            .unwrap_or_else(|| parts.uri.path().to_string()),
+                        authorization: None,
+                        body: serde_json::from_slice(&body_bytes).unwrap_or(Value::Null),
+                    });
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "application/json")],
+                        r#"{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#,
+                    )
+                }
+            }
+        };
+        // base_url 已含 /v1，转发最终路径为 /v1/chat/completions
+        let mock_app = Router::new().route("/v1/chat/completions", post(capture_handler));
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        // 3. codex 供应商指向 mock 上游
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "e2e-upstream".to_string(),
+            "E2E Upstream".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save test provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("select test provider");
+
+        // 4. 注册表加载真实的外部插件
+        let registry = Arc::new(PluginRegistry::new());
+        let (plugins, errors) = crate::proxy::plugins::external::load_user_plugins(tmp.path());
+        assert!(errors.is_empty(), "load errors: {errors:?}");
+        assert_eq!(plugins.len(), 1, "one user plugin loaded");
+        for plugin in plugins {
+            registry.register(plugin);
+        }
+
+        // 5. 起真实代理并发请求
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+            registry,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!(
+                "http://127.0.0.1:{}/chat/completions",
+                proxy_info.port
+            ))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&json!({
+                "model": "gpt-4o",
+                "stream": false,
+                "messages": [{"role": "user", "content": "hello"}]
+            }))
+            .send()
+            .await
+            .expect("send chat request");
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = response.text().await;
+
+        let requests = captured.lock().await;
+        assert_eq!(requests.len(), 1, "exactly one upstream request");
+        assert_eq!(
+            requests[0].body["metadata"]["plugin_touched"],
+            json!("user:e2e-marker"),
+            "PreRequest 插件应已改写到达上游的请求体"
+        );
+
+        mock_handle.abort();
+    }
+
+    // ------------------------------------------------------------------
+    // SseChunk 插件挂点集成测试
+    // ------------------------------------------------------------------
+
+    /// 测试用 SseChunk 插件：把 data 中出现的 needle 替换为 replacement
+    struct SseStubPlugin {
+        needle: &'static str,
+        replacement: &'static str,
+    }
+
+    impl crate::proxy::plugins::ProxyPlugin for SseStubPlugin {
+        fn id(&self) -> &str {
+            "test:sse-stub"
+        }
+        fn display_name(&self) -> &str {
+            "SSE Stub"
+        }
+        fn description(&self) -> &str {
+            "测试用：SSE data 子串替换"
+        }
+        fn is_builtin(&self) -> bool {
+            false
+        }
+        fn stages(&self) -> &'static [crate::proxy::plugins::PluginStage] {
+            &[crate::proxy::plugins::PluginStage::SseChunk]
+        }
+        fn default_priority(&self) -> i32 {
+            100
+        }
+        fn transform_sse_event(
+            &self,
+            _ctx: &crate::proxy::plugins::PluginRequestContext,
+            _event_name: Option<&str>,
+            data: &mut String,
+            _state: &mut dyn std::any::Any,
+        ) -> Result<bool, crate::proxy::plugins::PluginError> {
+            if data.contains(self.needle) {
+                *data = data.replace(self.needle, self.replacement);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    /// mock 上游返回的 SSE 流：混合 LF/CRLF 分隔符、注释与 id 行，
+    /// 且第一个事件的 data 在 chunk 边界处被切开
+    fn sse_upstream_response() -> axum::response::Response {
+        let chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = vec![
+            Ok(axum::body::Bytes::from_static(
+                b"event: delta\ndata: {\"text\":\"hello SE",
+            )),
+            Ok(axum::body::Bytes::from_static(
+                b"CRET tail\"}\n\nevent: ping\ndata: {\"n\":1}\n\n",
+            )),
+            Ok(axum::body::Bytes::from_static(
+                b"id: 9\r\n: note\r\nevent: done\r\ndata: [DONE]\r\n\r\n",
+            )),
+        ];
+        let body = axum::body::Body::from_stream(futures::stream::iter(chunks));
+        axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(body)
+            .expect("build mock SSE response")
+    }
+
+    /// 搭建「mock 上游 + codex 供应商 + 指定插件注册表」的完整代理环境
+    async fn start_sse_proxy(
+        registry: Arc<PluginRegistry>,
+    ) -> (ProxyServer, u16, tokio::task::JoinHandle<()>) {
+        let mock_app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async { sse_upstream_response() }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "sse-upstream".to_string(),
+            "SSE Upstream".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("select provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+            registry,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        (proxy, proxy_info.port, mock_handle)
+    }
+
+    async fn send_sse_request(port: u16) -> String {
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&json!({
+                "model": "gpt-4o",
+                "stream": true,
+                "messages": [{"role": "user", "content": "hello"}]
+            }))
+            .send()
+            .await
+            .expect("send streaming chat request");
+        assert_eq!(response.status(), StatusCode::OK);
+        response.text().await.expect("read streaming body")
+    }
+
+    #[tokio::test]
+    async fn sse_chunk_plugin_transforms_streaming_response() {
+        let registry = Arc::new(PluginRegistry::new());
+        registry.register(Arc::new(SseStubPlugin {
+            needle: "SECRET",
+            replacement: "REPLACED",
+        }));
+        let (proxy, port, mock_handle) = start_sse_proxy(registry).await;
+
+        let text = send_sse_request(port).await;
+
+        // 被修改的块重 emitted（event 行保留、单行 data、沿用 \n\n 分隔符）；
+        // 未修改的块（含 CRLF 块的 id/注释行）字节级原样透传
+        let expected = "event: delta\ndata: {\"text\":\"hello REPLACED tail\"}\n\n\
+                        event: ping\ndata: {\"n\":1}\n\n\
+                        id: 9\r\n: note\r\nevent: done\r\ndata: [DONE]\r\n\r\n";
+        assert_eq!(text, expected);
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn sse_streaming_passthrough_without_sse_chunk_plugin_is_byte_identical() {
+        // 回归红线：无 SseChunk 插件时代理行为与主线完全一致（字节级透传）
+        let (proxy, port, mock_handle) = start_sse_proxy(Arc::new(PluginRegistry::new())).await;
+
+        let text = send_sse_request(port).await;
+
+        let expected = "event: delta\ndata: {\"text\":\"hello SECRET tail\"}\n\n\
+                        event: ping\ndata: {\"n\":1}\n\n\
+                        id: 9\r\n: note\r\nevent: done\r\ndata: [DONE]\r\n\r\n";
+        assert_eq!(text, expected);
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
     }
 }
