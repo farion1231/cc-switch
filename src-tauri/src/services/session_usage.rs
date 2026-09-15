@@ -174,8 +174,157 @@ struct ParsedAssistantUsage {
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
     stop_reason: Option<String>,
+    api_error_status: Option<u16>,
+    error_message: Option<String>,
     timestamp: Option<String>,
     session_id: Option<String>,
+}
+
+const CLAUDE_API_ERROR_BACKFILL_SUFFIX: &str = "#api-errors-v1";
+
+fn claude_api_error_backfill_key(file_path: &Path) -> String {
+    format!(
+        "{}{}",
+        file_path.to_string_lossy(),
+        CLAUDE_API_ERROR_BACKFILL_SUFFIX
+    )
+}
+
+fn parse_api_error_fields(value: &serde_json::Value) -> (Option<u16>, Option<String>) {
+    let status = value
+        .get("isApiErrorMessage")
+        .and_then(|v| v.as_bool())
+        .filter(|is_error| *is_error)
+        .and_then(|_| value.get("apiErrorStatus"))
+        .and_then(|v| v.as_u64())
+        .filter(|status| (400..=599).contains(status))
+        .map(|status| status as u16);
+    let error_message = status.and_then(|_| {
+        value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    });
+    (status, error_message)
+}
+
+/// One-time error-only rescan for existing installs whose normal Claude
+/// cursor has already advanced past zero-token API failures. Successful
+/// usage rows are never replayed, avoiding double-counting pruned rollups.
+fn backfill_api_errors_once(
+    db: &Database,
+    file_path: &Path,
+    already_done: bool,
+) -> Result<u32, AppError> {
+    if already_done {
+        return Ok(0);
+    }
+
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
+    let file_modified = metadata_modified_nanos(&metadata);
+    let file =
+        fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
+    let mut reader = BufReader::new(file);
+    let mut buf = Vec::new();
+    let mut current_session_id: Option<String> = None;
+    let mut errors = Vec::new();
+
+    loop {
+        buf.clear();
+        let read = reader
+            .read_until(b'\n', &mut buf)
+            .map_err(|e| AppError::Config(format!("API 错误历史回填读取失败: {e}")))?;
+        if read == 0 {
+            break;
+        }
+        if !buf.ends_with(
+            b"
+",
+        ) {
+            return Err(AppError::Config(
+                "API 错误历史回填遇到未完成尾行，将在后续同步重试".to_string(),
+            ));
+        }
+        if buf.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let value: serde_json::Value = match serde_json::from_slice(&buf) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if current_session_id.is_none() {
+            if let Some(sid) = value.get("sessionId").and_then(|v| v.as_str()) {
+                current_session_id = Some(sid.to_string());
+            }
+        }
+        if value.get("type").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let (api_error_status, error_message) = parse_api_error_fields(&value);
+        if api_error_status.is_none() {
+            continue;
+        }
+        let message = match value.get("message") {
+            Some(message) => message,
+            None => continue,
+        };
+        let message_id = match message.get("id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+        let usage = message.get("usage");
+        let token = |name: &str| {
+            usage
+                .and_then(|u| u.get(name))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32
+        };
+        errors.push(ParsedAssistantUsage {
+            message_id,
+            model: message
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            input_tokens: token("input_tokens"),
+            output_tokens: token("output_tokens"),
+            cache_read_tokens: token("cache_read_input_tokens"),
+            cache_creation_tokens: token("cache_creation_input_tokens"),
+            stop_reason: message
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            api_error_status,
+            error_message,
+            timestamp: value
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            session_id: current_session_id.clone(),
+        });
+    }
+
+    let conn = lock_conn!(db.conn);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(format!("启动 API 错误历史回填事务失败: {e}")))?;
+    let mut imported = 0;
+    for msg in &errors {
+        let request_id = format!(
+            "{}{}",
+            crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
+            msg.message_id
+        );
+        if insert_session_log_entry_on_conn(&tx, &request_id, msg)? {
+            imported += 1;
+        }
+    }
+    let marker_key = claude_api_error_backfill_key(file_path);
+    update_sync_state_on_conn(&tx, &marker_key, file_modified, 0)?;
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 API 错误历史回填事务失败: {e}")))?;
+    Ok(imported)
 }
 
 /// 同步 Claude Code 会话日志到使用统计数据库
@@ -207,6 +356,17 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 
     for file_path in &jsonl_files {
         result.files_scanned += 1;
+
+        let backfill_key = claude_api_error_backfill_key(file_path);
+        let backfill_done = cursors.contains_key(&backfill_key);
+        match backfill_api_errors_once(db, file_path, backfill_done) {
+            Ok(imported) => result.imported += imported,
+            Err(e) => {
+                let msg = format!("{}: API 错误历史回填失败: {e}", file_path.display());
+                log::warn!("[SESSION-SYNC] {msg}");
+                result.errors.push(msg);
+            }
+        }
 
         let cursor = cursors.get(file_path.to_string_lossy().as_ref());
         match sync_single_file(db, file_path, cursor) {
@@ -558,6 +718,7 @@ fn sync_single_file(
             Some(u) => u,
             None => continue,
         };
+        let (api_error_status, error_message) = parse_api_error_fields(&value);
 
         let parsed = ParsedAssistantUsage {
             message_id: msg_id.clone(),
@@ -586,6 +747,8 @@ fn sync_single_file(
                 .get("stop_reason")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            api_error_status,
+            error_message,
             timestamp: value
                 .get("timestamp")
                 .and_then(|v| v.as_str())
@@ -642,7 +805,7 @@ fn sync_single_file(
             || msg.output_tokens > 0
             || msg.cache_read_tokens > 0
             || msg.cache_creation_tokens > 0;
-        if !has_billable_tokens {
+        if !has_billable_tokens && msg.api_error_status.is_none() {
             continue;
         }
 
@@ -656,6 +819,9 @@ fn sync_single_file(
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
+                if msg.api_error_status.is_some() {
+                    return Err(e);
+                }
                 log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
                 skipped += 1;
             }
@@ -820,7 +986,7 @@ fn insert_session_log_entry_on_conn(
         cache_creation_tokens: msg.cache_creation_tokens,
         created_at,
     };
-    if should_skip_session_insert(conn, request_id, &dedup_key)? {
+    if msg.api_error_status.is_none() && should_skip_session_insert(conn, request_id, &dedup_key)? {
         return Ok(false);
     }
 
@@ -883,8 +1049,8 @@ fn insert_session_log_entry_on_conn(
                 total_cost,
                 0i64,               // latency_ms: 会话日志无此数据
                 Option::<i64>::None, // first_token_ms
-                200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
-                Option::<String>::None, // error_message
+                msg.api_error_status.unwrap_or(200) as i64,
+                msg.error_message.as_deref(),
                 msg.session_id,
                 Some("session_log"), // provider_type
                 1i64,               // is_streaming: Claude Code 通常使用流式
@@ -1013,6 +1179,8 @@ mod tests {
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
             stop_reason: None,
+            api_error_status: None,
+            error_message: None,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
         };
@@ -1027,6 +1195,8 @@ mod tests {
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
             stop_reason: Some("end_turn".to_string()),
+            api_error_status: None,
+            error_message: None,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
         };
@@ -1038,6 +1208,45 @@ mod tests {
 
         messages.insert("msg_1".to_string(), final_entry);
         assert_eq!(messages.get("msg_1").unwrap().output_tokens, 1349);
+    }
+
+    #[test]
+    fn test_api_error_backfill_imports_zero_token_error_once() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(
+            &file,
+            format!(
+                "{api_error}
+"
+            ),
+        )
+        .unwrap();
+
+        let modified = metadata_modified_nanos(&fs::metadata(&file).unwrap());
+        update_sync_state(&db, file.to_string_lossy().as_ref(), modified, 1)?;
+
+        assert_eq!(backfill_api_errors_once(&db, &file, false)?, 1);
+        let marker = claude_api_error_backfill_key(&file);
+        assert!(load_sync_cursors(&db)?.contains_key(&marker));
+        assert_eq!(backfill_api_errors_once(&db, &file, true)?, 0);
+
+        let conn = lock_conn!(db.conn);
+        let (count, status, error): (i64, i64, Option<String>) = conn.query_row(
+            "SELECT COUNT(*), MAX(status_code), MAX(error_message) FROM proxy_request_logs WHERE request_id = 'session:msg_api_error'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(count, 1);
+        assert_eq!(status, 403);
+        assert_eq!(error.as_deref(), Some("authentication_failed"));
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
     }
 
     #[test]
@@ -1078,6 +1287,8 @@ mod tests {
             cache_read_tokens: 10,
             cache_creation_tokens: 5,
             stop_reason: Some("end_turn".to_string()),
+            api_error_status: None,
+            error_message: None,
             timestamp: Some("1970-01-01T00:16:45Z".to_string()),
             session_id: Some("session-1".to_string()),
         };

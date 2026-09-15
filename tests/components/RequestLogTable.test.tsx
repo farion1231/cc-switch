@@ -42,8 +42,8 @@ vi.mock("@/components/ui/select", () => ({
     </button>
   ),
   SelectValue: ({ placeholder }: any) => <span>{placeholder ?? null}</span>,
-  SelectContent: () => null,
-  SelectItem: () => null,
+  SelectContent: ({ children }: any) => <div>{children}</div>,
+  SelectItem: ({ children }: any) => <div>{children}</div>,
 }));
 
 vi.mock("@/components/ui/table", () => ({
@@ -157,5 +157,18 @@ describe("RequestLogTable", () => {
         }),
       );
     });
+  });
+
+  it("offers 403 as a status-code filter", () => {
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="claude"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    expect(screen.getByText("403")).toBeInTheDocument();
   });
 });
