@@ -38,6 +38,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   "deepseek-harness": "deepseek",
+  mcode: "minimax",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -51,6 +52,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   "deepseek-harness": "DeepSeek Harness",
+  mcode: "MiniMax Code",
 };
 
 /** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */

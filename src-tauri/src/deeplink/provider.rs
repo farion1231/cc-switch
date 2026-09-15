@@ -152,6 +152,11 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Mcode => {
+            return Err(AppError::InvalidInput(
+                "Add MCode providers from the MCode page".into(),
+            ))
+        }
         AppType::Pi | AppType::DeepSeekHarness => {
             return Err(AppError::InvalidInput(
                 "These providers must be added from their provider page".to_string(),

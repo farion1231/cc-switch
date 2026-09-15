@@ -53,6 +53,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
+    appId !== "mcode" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
@@ -198,7 +199,7 @@ export function AddProviderDialog({
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "pi" ||
-          appId === "deepseek-harness") &&
+          appId === "deepseek-harness" || appId === "mcode") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

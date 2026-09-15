@@ -37,6 +37,7 @@ const APP_CONFIG: Array<{
     icon: "deepseek",
     nameKey: "apps.deepseek-harness",
   },
+  { id: "mcode", icon: "minimax", nameKey: "apps.mcode" },
 ];
 
 export function AppVisibilitySettings({

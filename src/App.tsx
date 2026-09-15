@@ -253,7 +253,8 @@ function App() {
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
       sharedFeatureApp !== "pi" &&
-      sharedFeatureApp !== "deepseek-harness"
+      sharedFeatureApp !== "deepseek-harness" &&
+      sharedFeatureApp !== "mcode"
     ) {
       setCurrentView("providers");
     }
@@ -332,7 +333,7 @@ function App() {
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi" ||
-    sharedFeatureApp === "deepseek-harness";
+    sharedFeatureApp === "deepseek-harness" || sharedFeatureApp === "mcode";
   const hasMcpSupport =
     sharedFeatureApp !== "pi" && sharedFeatureApp !== "deepseek-harness";
 
@@ -671,6 +672,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
+        if (activeApp === "mcode") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -1222,7 +1224,8 @@ function App() {
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
                         activeApp === "pi" ||
-                        activeApp === "deepseek-harness"
+                        activeApp === "deepseek-harness" ||
+                        activeApp === "mcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1489,6 +1492,7 @@ function App() {
                 </div>
               )}
             {currentView === "providers" &&
+              activeApp !== "mcode" &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"
