@@ -132,7 +132,9 @@ impl TokenUsage {
         let mut usage = Self::default();
         let mut model: Option<String> = None;
         let mut message_id: Option<String> = None;
+        let mut start_input_tokens = 0u32;
         let mut input_from_delta = false;
+        let mut corrected_usage_accepted = false;
 
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
@@ -156,6 +158,7 @@ impl TokenUsage {
                                 msg_usage.get("input_tokens").and_then(|v| v.as_u64())
                             {
                                 usage.input_tokens = input as u32;
+                                start_input_tokens = input as u32;
                             }
                             usage.cache_read_tokens = msg_usage
                                 .get("cache_read_input_tokens")
@@ -191,36 +194,69 @@ impl TokenUsage {
                                 .and_then(|v| v.as_u64())
                                 .map(|v| v as u32);
 
-                            // 部分 Anthropic-compatible SSE provider 会在 message_start 上报完整上下文，
-                            // 但在 message_delta 上报修正后的 fresh input。遇到更小的正数 delta input
-                            // 时采用 delta；若同一 usage 块带有缓存计数，也同步采用以避免重复计数。
-                            // 若 delta 缺少缓存字段，则保留 start 中已有的缓存值作为 best-effort fallback。
+                            // 原生 Anthropic 语义下，非零 message_start input_tokens 通常是
+                            // 权威输入计数；但部分兼容 provider 会先在 start 上报总输入，
+                            // 再在 delta 上报 fresh input + cache 的修正 tuple。仅当 delta 的
+                            // cache tuple 能与 start 总输入自洽时才接受这种修正，避免把任意
+                            // 较小 delta（例如网关的不同统计口径）误当成 fresh input。
                             if let Some(input) = delta_input {
-                                let should_use_delta_input = input > 0
-                                    && (usage.input_tokens == 0
-                                        || input < usage.input_tokens
-                                        || (input_from_delta && input <= usage.input_tokens));
+                                let has_delta_cache =
+                                    delta_cache_read.is_some() || delta_cache_creation.is_some();
+                                let fresh_plus_cache_read =
+                                    input.checked_add(delta_cache_read.unwrap_or(0));
+                                let fresh_plus_all_cache =
+                                    fresh_plus_cache_read.and_then(|total| {
+                                        total.checked_add(delta_cache_creation.unwrap_or(0))
+                                    });
+                                let corrected_cache_tuple = has_delta_cache
+                                    && start_input_tokens > 0
+                                    && input < start_input_tokens
+                                    && match delta_cache_creation {
+                                        Some(cache_creation) if cache_creation > 0 => {
+                                            fresh_plus_all_cache == Some(start_input_tokens)
+                                        }
+                                        _ => fresh_plus_cache_read == Some(start_input_tokens),
+                                    };
+
+                                let delta_only_has_cache = delta_cache_read.unwrap_or(0) > 0
+                                    || delta_cache_creation.unwrap_or(0) > 0;
+                                let delta_only_input = start_input_tokens == 0
+                                    && ((input > 0
+                                        && (!input_from_delta || input <= usage.input_tokens))
+                                        || (input == 0 && delta_only_has_cache));
+                                let should_use_delta_input =
+                                    delta_only_input || corrected_cache_tuple;
 
                                 if should_use_delta_input {
                                     usage.input_tokens = input;
-                                    input_from_delta = true;
-                                    if let Some(cache_read) = delta_cache_read {
-                                        usage.cache_read_tokens = cache_read;
-                                    }
-                                    if let Some(cache_creation) = delta_cache_creation {
-                                        usage.cache_creation_tokens = cache_creation;
+                                    if start_input_tokens == 0 {
+                                        input_from_delta = true;
+                                        if let Some(cache_read) = delta_cache_read {
+                                            usage.cache_read_tokens = cache_read;
+                                        }
+                                        if let Some(cache_creation) = delta_cache_creation {
+                                            usage.cache_creation_tokens = cache_creation;
+                                        }
+                                    } else {
+                                        corrected_usage_accepted = true;
+                                        usage.cache_read_tokens = delta_cache_read.unwrap_or(0);
+                                        usage.cache_creation_tokens =
+                                            delta_cache_creation.unwrap_or(0);
                                     }
                                 }
                             }
+                            let allow_cache_fallback = !corrected_usage_accepted
+                                && (delta_input.is_none()
+                                    || (start_input_tokens == 0 && delta_input == Some(0)));
                             // 从 message_delta 中处理缓存命中(cache_read_input_tokens)
-                            if usage.cache_read_tokens == 0 {
+                            if allow_cache_fallback && usage.cache_read_tokens == 0 {
                                 if let Some(cache_read) = delta_cache_read {
                                     usage.cache_read_tokens = cache_read;
                                 }
                             }
                             // 从 message_delta 中处理缓存创建(cache_creation_input_tokens)
                             // 注: 现在 zhipu 没有返回 cache_creation_input_tokens 字段
-                            if usage.cache_creation_tokens == 0 {
+                            if allow_cache_fallback && usage.cache_creation_tokens == 0 {
                                 if let Some(cache_creation) = delta_cache_creation {
                                     usage.cache_creation_tokens = cache_creation;
                                 }
@@ -875,16 +911,16 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_stream_prefers_smaller_delta_input_and_cache_pair() {
-        // 部分 Anthropic-compatible provider 会在 message_start 给出包含缓存的总上下文，
-        // 再在 message_delta 给出修正后的 fresh input，需要以 delta usage 为准。
+    fn test_claude_stream_prefers_coherent_corrected_delta_usage() {
+        // 部分兼容 provider 会在 start 上报总输入，再在 delta 上报 fresh input + cache。
+        // 80_000 + 120_000 + 500 恰好还原 start 的 200_500，因此接受 delta 的修正 tuple。
         let events = vec![
             json!({
                 "type": "message_start",
                 "message": {
                     "model": "qwen-max",
                     "usage": {
-                        "input_tokens": 200_000,
+                        "input_tokens": 200_500,
                         "cache_read_input_tokens": 180_000,
                         "cache_creation_input_tokens": 2_000
                     }
@@ -910,9 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_stream_updates_cache_pair_from_later_delta_input() {
-        // 有些 provider 会多次发送带 input 的 message_delta；一旦采用过 delta input，
-        // 后续相同/更小 input 的 delta 应继续更新同一块里的缓存计数。
+    fn test_claude_stream_rejects_overfull_tuple_with_cache_creation() {
         let events = vec![
             json!({
                 "type": "message_start",
@@ -929,6 +963,428 @@ mod tests {
                 "type": "message_delta",
                 "usage": {
                     "input_tokens": 80_000,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 10_000
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 200_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 180_000);
+        assert_eq!(usage.cache_creation_tokens, 2_000);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_rejects_incoherent_later_delta_after_correction() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200_500,
+                        "cache_read_input_tokens": 180_000,
+                        "cache_creation_input_tokens": 2_000
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80_000,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 500
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 200_000,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 500
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 80_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 120_000);
+        assert_eq!(usage.cache_creation_tokens, 500);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_accepts_cache_only_delta_with_nonzero_start_input() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200_000,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 500
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 200_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 120_000);
+        assert_eq!(usage.cache_creation_tokens, 500);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_rejects_incoherent_zero_input_cache_tuple() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "claude-sonnet-4-20250514",
+                    "usage": {
+                        "input_tokens": 200_000,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_input_tokens": 100_000
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 200_000);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_accepts_coherent_zero_input_correction() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200_000,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_input_tokens": 200_000
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 200_000);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_accepts_zero_input_cache_only_delta() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 500
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 120_000);
+        assert_eq!(usage.cache_creation_tokens, 500);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_rejected_delta_does_not_fill_start_cache() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "claude-sonnet-4-20250514",
+                    "usage": {
+                        "input_tokens": 200_000,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80_000,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 10_000
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 200_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_clears_omitted_cache_bucket_on_later_correction() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200,
+                        "cache_read_input_tokens": 150,
+                        "cache_creation_input_tokens": 10
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 119,
+                    "cache_creation_input_tokens": 1
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 100
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 100);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_delta_only_accepts_final_zero_input_cache_correction() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {"input_tokens": 0}
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 120
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 200
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.cache_creation_tokens, 0);
+    }
+
+    #[test]
+    fn test_claude_stream_delta_only_rejects_larger_later_input() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {"input_tokens": 0}
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 120
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 200,
+                    "output_tokens": 1_000
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 80);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 120);
+    }
+
+    #[test]
+    fn test_claude_stream_rejects_cache_only_delta_after_correction() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 120
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "output_tokens": 1_000,
+                    "cache_creation_input_tokens": 10
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 80);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 120);
+        assert_eq!(usage.cache_creation_tokens, 0);
+    }
+
+    #[test]
+    fn test_claude_stream_delta_only_preserves_omitted_cache_bucket() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 90_000,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 110_000
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80_000,
+                    "output_tokens": 1_000
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 80_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 110_000);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_updates_delta_only_usage_from_later_delta() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 90_000,
                     "output_tokens": 100,
                     "cache_read_input_tokens": 110_000,
                     "cache_creation_input_tokens": 300
@@ -951,6 +1407,34 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 120_000);
         assert_eq!(usage.cache_creation_tokens, 500);
         assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_preserves_start_usage_for_reported_regression() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "usage": {
+                        "input_tokens": 233_535,
+                        "cache_read_input_tokens": 10_240
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 89_828,
+                    "output_tokens": 176,
+                    "cache_read_input_tokens": 10_240
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 233_535);
+        assert_eq!(usage.output_tokens, 176);
+        assert_eq!(usage.cache_read_tokens, 10_240);
     }
 
     #[test]
