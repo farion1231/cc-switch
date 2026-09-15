@@ -67,8 +67,24 @@ pub async fn update_provider(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
-            .map_err(|e| e.to_string())
+        let provider_id = provider.id.clone();
+        let original_provider_id = originalId.clone().unwrap_or_else(|| provider_id.clone());
+        let updated = ProviderService::update(
+            state.inner(),
+            app_type.clone(),
+            originalId.as_deref(),
+            provider,
+        )
+        .map_err(|e| e.to_string())?;
+        if updated && app_type == AppType::Claude {
+            if original_provider_id != provider_id {
+                crate::claude_launcher_profile::retire_profile(&original_provider_id)
+                    .map_err(|e| e.to_string())?;
+            }
+            crate::claude_launcher_profile::refresh_profile_if_present(state.inner(), &provider_id)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(updated)
     })
     .await
     .map_err(|e| format!("供应商更新任务执行失败: {e}"))?
@@ -81,9 +97,11 @@ pub fn delete_provider(
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::delete(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    ProviderService::delete(state.inner(), app_type.clone(), &id).map_err(|e| e.to_string())?;
+    if app_type == AppType::Claude {
+        crate::claude_launcher_profile::retire_profile(&id).map_err(|e| e.to_string())?;
+    }
+    Ok(true)
 }
 
 #[tauri::command]

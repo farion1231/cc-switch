@@ -1,6 +1,7 @@
 import { ChevronRight, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -103,6 +104,15 @@ export function SessionItem({
               ? formatRelativeTime(lastActive, t)
               : t("common.unknown")}
           </span>
+          {session.profileName && (
+            <Badge
+              variant="outline"
+              className="ml-1 max-w-[140px] truncate px-1.5 py-0 text-[10px] font-normal"
+              title={session.profileConfigDir}
+            >
+              {session.profileName}
+            </Badge>
+          )}
         </div>
       </button>
     </div>
