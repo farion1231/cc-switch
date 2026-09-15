@@ -1850,29 +1850,32 @@ pub fn anthropic_to_responses(
 
     // 转换 tools (过滤 BatchTool)
     //
-    // The Codex OAuth request contract accepts only a string `tool_choice`.
     // When Anthropic forces one hosted WebSearch tool, `"required"` is exact
     // only if no unrelated tools remain in the outbound list. Resolve the
     // selected tool by its declared name so future versioned names keep working.
-    let forced_hosted_web_search_name = if is_codex_oauth {
-        body.get("tool_choice")
-            .and_then(Value::as_object)
-            .filter(|choice| choice.get("type").and_then(Value::as_str) == Some("tool"))
-            .and_then(|choice| choice.get("name"))
-            .and_then(Value::as_str)
-            .filter(|selected_name| {
-                body.get("tools")
-                    .and_then(Value::as_array)
-                    .is_some_and(|tools| {
-                        tools.iter().any(|tool| {
-                            is_anthropic_web_search_tool(tool)
-                                && tool.get("name").and_then(Value::as_str) == Some(*selected_name)
-                        })
+    //
+    // Always isolate here — not just for Codex OAuth. OpenAI accepts the
+    // hosted selector `{"type":"web_search"}`, but Grok/xAI and other New-API
+    // gateways deserialize `tool_choice` as an untagged `ModelToolChoice` of
+    // `"auto"|"none"|"required"|{"type":"function","name"}` and 422 on the
+    // hosted form. Isolating the tool lets `"required"` preserve forced-search
+    // behavior on every Responses backend.
+    let forced_hosted_web_search_name = body
+        .get("tool_choice")
+        .and_then(Value::as_object)
+        .filter(|choice| choice.get("type").and_then(Value::as_str) == Some("tool"))
+        .and_then(|choice| choice.get("name"))
+        .and_then(Value::as_str)
+        .filter(|selected_name| {
+            body.get("tools")
+                .and_then(Value::as_array)
+                .is_some_and(|tools| {
+                    tools.iter().any(|tool| {
+                        is_anthropic_web_search_tool(tool)
+                            && tool.get("name").and_then(Value::as_str) == Some(*selected_name)
                     })
-            })
-    } else {
-        None
-    };
+                })
+        });
     let mut hosted_web_search_names = HashSet::new();
     let mut hosted_web_search_max_uses: Option<u64> = None;
     if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
@@ -1957,7 +1960,7 @@ pub fn anthropic_to_responses(
 
     if let Some(v) = body.get("tool_choice") {
         result["tool_choice"] =
-            map_tool_choice_to_responses(v, &hosted_web_search_names, is_codex_oauth);
+            map_tool_choice_to_responses(v, &hosted_web_search_names);
         if is_codex_oauth {
             if let Some(disable_parallel) =
                 v.get("disable_parallel_tool_use").and_then(Value::as_bool)
@@ -2053,7 +2056,6 @@ pub fn anthropic_to_responses(
 fn map_tool_choice_to_responses(
     tool_choice: &Value,
     hosted_web_search_names: &HashSet<String>,
-    is_codex_oauth: bool,
 ) -> Value {
     match tool_choice {
         Value::String(_) => tool_choice.clone(),
@@ -2066,15 +2068,11 @@ fn map_tool_choice_to_responses(
             Some("tool") => {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 if hosted_web_search_names.contains(name) {
-                    // The ChatGPT Codex backend's canonical request schema accepts a
-                    // string tool_choice. The request transform filters the outbound
-                    // list to this dynamically named hosted tool, so `required`
-                    // preserves the forced-tool behavior.
-                    if is_codex_oauth {
-                        json!("required")
-                    } else {
-                        json!({"type": "web_search"})
-                    }
+                    // OpenAI accepts `{"type":"web_search"}`, but Grok/xAI and
+                    // other New-API gateways reject it (`ModelToolChoice` 422).
+                    // The request transform has already filtered the outbound
+                    // list to this hosted tool, so `required` is exact everywhere.
+                    json!("required")
                 } else {
                     json!({
                         "type": "function",
@@ -3418,7 +3416,9 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_hosted_web_search_uses_responses_selector_for_api_key_backend() {
+    fn test_anthropic_hosted_web_search_uses_required_for_api_key_backend() {
+        // Forced hosted WebSearch must not emit `{"type":"web_search"}` —
+        // Grok/xAI New-API gateways 422 that selector as ModelToolChoice.
         let input = json!({
             "model": "gpt-5",
             "messages": [{"role": "user", "content": "Search"}],
@@ -3427,9 +3427,33 @@ mod tests {
         });
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
-        assert_eq!(result["tool_choice"], json!({"type": "web_search"}));
+        assert_eq!(result["tool_choice"], "required");
         assert_eq!(result["include"], json!(["web_search_call.action.sources"]));
         assert!(result["tools"][0].get("external_web_access").is_none());
+    }
+
+    #[test]
+    fn test_forced_hosted_web_search_isolates_unrelated_tools_on_api_key_backend() {
+        let input = json!({
+            "model": "grok-4.6",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [
+                {"type": "web_search_20250305", "name": "web_search"},
+                {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}}
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tool_choice"], "required");
+        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(result["tools"][0]["type"], "web_search");
+        assert!(result["tools"][0].get("external_web_access").is_none());
+        assert_eq!(result["include"], json!(["web_search_call.action.sources"]));
     }
 
     #[test]
