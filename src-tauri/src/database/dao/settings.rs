@@ -324,4 +324,106 @@ impl Database {
             .map_err(|e| AppError::Database(format!("序列化日志配置失败: {e}")))?;
         self.set_setting("log_config", &json)
     }
+
+    // --- 插件系统配置 ---
+
+    /// 获取插件系统配置（key = "plugins_config"）
+    ///
+    /// key 缺失或 JSON 解析失败时回退默认值（全局开启、无覆盖），
+    /// 与 `proxy::plugins::init` 的加载语义保持一致。
+    pub fn get_plugins_config(
+        &self,
+    ) -> Result<crate::proxy::plugins::PluginsConfig, AppError> {
+        match self.get_setting("plugins_config")? {
+            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_else(|e| {
+                log::warn!("[PLUGIN] 解析 plugins_config 失败，使用默认配置: {e}");
+                crate::proxy::plugins::PluginsConfig::default()
+            })),
+            None => Ok(crate::proxy::plugins::PluginsConfig::default()),
+        }
+    }
+
+    /// 更新插件系统配置
+    pub fn set_plugins_config(
+        &self,
+        config: &crate::proxy::plugins::PluginsConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化插件配置失败: {e}")))?;
+        self.set_setting("plugins_config", &json)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::plugins::{PluginOverride, PluginsConfig};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_plugins_config_roundtrip() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        // key 缺失 → 默认值（全局开启、无覆盖）
+        let config = db.get_plugins_config()?;
+        assert!(config.enabled);
+        assert!(config.overrides.is_empty());
+
+        // 写入后往返
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "user:my-plugin".to_string(),
+            PluginOverride {
+                enabled: Some(false),
+                priority: Some(300),
+            },
+        );
+        overrides.insert(
+            "builtin:cache-injector".to_string(),
+            PluginOverride {
+                enabled: Some(true),
+                priority: None,
+            },
+        );
+        let config = PluginsConfig {
+            enabled: false,
+            overrides,
+        };
+        db.set_plugins_config(&config)?;
+
+        let got = db.get_plugins_config()?;
+        assert!(!got.enabled);
+        assert_eq!(
+            got.overrides.get("user:my-plugin").cloned(),
+            Some(PluginOverride {
+                enabled: Some(false),
+                priority: Some(300)
+            })
+        );
+        assert_eq!(
+            got.overrides.get("builtin:cache-injector").cloned(),
+            Some(PluginOverride {
+                enabled: Some(true),
+                priority: None
+            })
+        );
+
+        // 覆盖更新
+        let updated = PluginsConfig::default();
+        db.set_plugins_config(&updated)?;
+        let got = db.get_plugins_config()?;
+        assert!(got.enabled);
+        assert!(got.overrides.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_plugins_config_bad_json_falls_back_to_default() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.set_setting("plugins_config", "not valid json")?;
+        let config = db.get_plugins_config()?;
+        assert!(config.enabled);
+        assert!(config.overrides.is_empty());
+        Ok(())
+    }
 }

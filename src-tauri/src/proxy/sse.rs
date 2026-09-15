@@ -6,20 +6,28 @@ pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str>
 
 #[inline]
 pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let mut best: Option<(usize, usize)> = None;
+    take_sse_block_with_delimiter(buffer).map(|(block, _)| block)
+}
+
+/// 与 [`take_sse_block`] 相同的切块逻辑，但额外返回该块使用的分隔符
+/// （`"\r\n\r\n"` 或 `"\n\n"`），供重 emitted 块沿用原样式。
+pub(crate) fn take_sse_block_with_delimiter(
+    buffer: &mut String,
+) -> Option<(String, &'static str)> {
+    let mut best: Option<(usize, usize, &'static str)> = None;
 
     for (delimiter, len) in [("\r\n\r\n", 4usize), ("\n\n", 2usize)] {
         if let Some(pos) = buffer.find(delimiter) {
-            if best.is_none_or(|(best_pos, _)| pos < best_pos) {
-                best = Some((pos, len));
+            if best.is_none_or(|(best_pos, _, _)| pos < best_pos) {
+                best = Some((pos, len, delimiter));
             }
         }
     }
 
-    let (pos, len) = best?;
+    let (pos, len, delimiter) = best?;
     let block = buffer[..pos].to_string();
     buffer.drain(..pos + len);
-    Some(block)
+    Some((block, delimiter))
 }
 
 /// Append raw bytes to a UTF-8 `String` buffer, correctly handling multi-byte
@@ -87,7 +95,7 @@ pub(crate) fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, new
 
 #[cfg(test)]
 mod tests {
-    use super::{append_utf8_safe, strip_sse_field, take_sse_block};
+    use super::{append_utf8_safe, strip_sse_field, take_sse_block, take_sse_block_with_delimiter};
 
     #[test]
     fn strip_sse_field_accepts_optional_space() {
@@ -119,6 +127,22 @@ mod tests {
             Some("data: {\"ok\":true}".to_string())
         );
         assert_eq!(buffer, "rest");
+    }
+
+    #[test]
+    fn take_sse_block_with_delimiter_records_delimiter_style() {
+        let mut buffer = "data: a\r\n\r\ndata: b\n\nrest".to_string();
+
+        let (block, delimiter) = take_sse_block_with_delimiter(&mut buffer).unwrap();
+        assert_eq!(block, "data: a");
+        assert_eq!(delimiter, "\r\n\r\n");
+
+        let (block, delimiter) = take_sse_block_with_delimiter(&mut buffer).unwrap();
+        assert_eq!(block, "data: b");
+        assert_eq!(delimiter, "\n\n");
+
+        assert_eq!(buffer, "rest");
+        assert!(take_sse_block_with_delimiter(&mut buffer).is_none());
     }
 
     #[test]

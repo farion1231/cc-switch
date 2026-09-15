@@ -239,6 +239,7 @@ impl RequestContext {
             idle_timeout,
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
+            state.plugins.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
@@ -278,6 +279,49 @@ impl RequestContext {
             }
         }
     }
+}
+
+/// 在 body 解析成功后、`RequestContext::new` 之前执行 PreRequest 插件管线。
+///
+/// - fail-open：管线内部已保证插件错误/panic 只 log::warn 并跳过，不影响原流程；
+/// - 无启用的 PreRequest 插件时直接返回，避免为每个请求引入额外的
+///   session/model 提取开销；
+/// - `body` 需为 `mut`：插件改写会直接作用于调用方的请求体。
+pub(crate) fn run_pre_request_plugins(
+    state: &ProxyState,
+    headers: &HeaderMap,
+    body: &mut serde_json::Value,
+    app_type_str: &str,
+) {
+    use crate::proxy::plugins::{run_request_pipeline, PluginRequestContext, PluginStage};
+    if state
+        .plugins
+        .plugins_for_stage(PluginStage::PreRequest)
+        .is_empty()
+    {
+        return;
+    }
+    let session_id = extract_session_id(headers, body, app_type_str).session_id;
+    let request_model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let plugin_ctx = PluginRequestContext {
+        app_type: app_type_str.to_string(),
+        session_id,
+        request_model,
+        stage: PluginStage::PreRequest,
+        // PreRequest 阶段尚未选定 provider
+        provider: None,
+    };
+    let _changed = run_request_pipeline(
+        &state.plugins,
+        PluginStage::PreRequest,
+        &plugin_ctx,
+        body,
+        |p, c, b| p.transform_request(c, b),
+    );
 }
 
 /// Pull the Gemini model name out of an API path.
