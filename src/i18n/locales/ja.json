@@ -445,6 +445,27 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      },
+      "plugins": {
+        "title": "プラグインシステム",
+        "description": "プロキシプラグインの管理：有効/無効の切り替え、実行順序の変更、ユーザープラグインの再読み込み",
+        "globalEnabled": "プラグインを有効化",
+        "globalEnabledDescription": "マスタースイッチ。オフにするとすべてのプラグインが無効になり、プロキシは標準の動作に戻ります",
+        "reload": "再読み込み",
+        "openDir": "プラグインディレクトリを開く",
+        "import": "プラグインをインポート",
+        "importDialogTitle": "プラグインのディレクトリを選択",
+        "importSuccess": "プラグイン {{name}}（{{id}}）をインポートしました。表示されない場合は再読み込みしてください",
+        "reloadSuccess": "再読み込み完了：{{loaded}} 個のプラグインを読み込みました",
+        "reloadErrorsTitle": "次のプラグインの読み込みに失敗しました：",
+        "badgeBuiltin": "組み込み",
+        "badgeUser": "ユーザー",
+        "loadFailed": "読み込み失敗",
+        "priority": "優先度",
+        "priorityHint": "小さいほど先に実行（負数可）",
+        "enabledLabel": "有効",
+        "stageHint": "プラグインが参加する実行タイミング",
+        "empty": "プラグインはありません"
       }
     },
     "language": "言語",
