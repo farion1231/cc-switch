@@ -25,11 +25,16 @@ describe("third-party Token Plan DeepSeek V4 rows stay text-only", () => {
     }
   });
 
-  it("the official DeepSeek preset keeps fail-open (no modality override)", () => {
+  it("distinguishes official V4.1 Flash vision from text-only V4 Pro", () => {
     const preset = codexProviderPresets.find((p) => p.name === "DeepSeek");
     expect(preset).toBeDefined();
-    for (const row of preset!.modelCatalog ?? []) {
-      expect(row.inputModalities, row.model).toBeUndefined();
-    }
+    expect(
+      preset!.modelCatalog?.find((row) => row.model === "deepseek-flash")
+        ?.inputModalities,
+    ).toEqual(["text", "image"]);
+    expect(
+      preset!.modelCatalog?.find((row) => row.model === "deepseek-v4-pro")
+        ?.inputModalities,
+    ).toEqual(["text"]);
   });
 });

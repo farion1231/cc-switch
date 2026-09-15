@@ -50,6 +50,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 混元官方枚举 low/high；hy3 开源 chat template 对其他值直接 raise
     ["Tencent Hunyuan", "hy3", ["low", "high"]],
     ["Tencent Hunyuan", "hy3-preview", ["low", "high"]],
+    ["Tencent Hunyuan", "hy4-preview", ["none", "high"], "high"],
     // 腾讯 Token Plan（订阅线 /plan 端点）档位全部真 Key 实测（2026-08-31）：
     // glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 直接 400，
     // 错误信息即枚举来源）；kimi-k2.7-code(-highspeed) 仅接受
@@ -85,7 +86,7 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high", "xhigh"]],
     // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
     // 优先，接受快照过时风险——官方目录变更时须同步）
-    ["DeepSeek", "deepseek-v4-flash", ["low", "high", "max"]],
+    ["DeepSeek", "deepseek-flash", ["low", "high", "max"]],
     ["DeepSeek", "deepseek-v4-pro", ["low", "high", "max"]],
     // MiniMax/MiMo 官方 catalog=none/high（与模板默认一致，声明只为表单可见）
     ["MiniMax", "MiniMax-M3", ["none", "high"]],
@@ -142,8 +143,8 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // Kimi Code 端点（原生 Responses 直连）：k3/k3-256k 官方 models.json 明写
     // default_reasoning_level "high"，与 native 模板回落值相同——照抄官方目录
     // 的显式声明（表单可见性优先，MiniMax/MiMo 先例）故仍有第四位期望；
-    // kimi-for-coding(-highspeed) Thinking 恒 ON 单档
-    ["Kimi For Coding", "kimi-for-coding", ["high"]],
+    // 标准 kimi-for-coding 已升级到 K2.8 Preview；highspeed 保留原来的单档目录。
+    ["Kimi For Coding", "kimi-for-coding", ["low", "high", "max"], "high"],
     ["Kimi For Coding", "kimi-for-coding-highspeed", ["high"]],
     ["Kimi For Coding", "k3", ["low", "high", "max"], "high"],
     ["Kimi For Coding", "k3-256k", ["low", "high", "max"], "high"],
@@ -161,6 +162,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 核对）：qwen3.8-max 档位 low/medium/xhigh、默认 xhigh（≠ 模板回落的
     // none/high，故显式声明）；按量付费与 Token Plan 同源同一份
     ["千问AI平台", "qwen3.8-max", ["low", "medium", "xhigh"], "xhigh"],
+    ["千问AI平台", "qwen3.8-2.4t-a95b", ["low", "medium", "xhigh"], "xhigh"],
+    ["千问AI平台", "qwen3.8-27b", ["low", "medium", "xhigh"], "xhigh"],
+    ["QwenCloud", "qwen3.8-2.4t-a95b", ["low", "medium", "xhigh"], "xhigh"],
+    ["QwenCloud", "qwen3.8-27b", ["low", "medium", "xhigh"], "xhigh"],
   ];
 
   it.each(EXPECTED)(
