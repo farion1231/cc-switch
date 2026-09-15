@@ -1470,11 +1470,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.minimaxi.com/anthropic",
+        ANTHROPIC_BASE_URL: "https://api.minimax.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
@@ -1520,15 +1520,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.tbox.cn/api/anthropic",
+        ANTHROPIC_BASE_URL: "https://api.ant-ling.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "Ling-2.5-1T",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Ling-2.5-1T",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "Ling-2.5-1T",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "Ling-2.5-1T",
+        ANTHROPIC_MODEL: "Ling-2.6-1T",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Ling-2.6-1T",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Ling-2.6-1T",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Ling-2.6-1T",
       },
     },
     category: "cn_official",

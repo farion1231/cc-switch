@@ -1342,11 +1342,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "MiniMax",
     providerKey: "cc-switch-mini-max",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       name: "MiniMax",
-      baseUrl: "https://api.minimaxi.com/v1",
+      baseUrl: "https://api.minimax.cn/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1392,15 +1392,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "BaiLing",
     providerKey: "cc-switch-bai-ling",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       name: "BaiLing",
-      baseUrl: "https://api.tbox.cn/v1",
+      baseUrl: "https://api.ant-ling.com/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("inclusionai/ling-2.5-1t", {
-          id: "Ling-2.5-1T",
+        piModel("inclusionai/ling-2.6-1t", {
+          id: "Ling-2.6-1T",
         }),
       ],
     },
