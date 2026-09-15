@@ -33,7 +33,7 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
         PromptService::upsert_prompt(&state, app.clone(), &active.id, active.clone()).unwrap();
         let path = home.join(relative_path);
 
-        for content in ["externally edited\n", ""] {
+        for content in ["externally edited\n", "another edit\n"] {
             fs::write(&path, content).unwrap();
             let prompts = PromptService::get_prompts(&state, app.clone()).unwrap();
             assert_eq!(prompts["active"].content, content);
@@ -58,6 +58,19 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
             PromptService::get_prompts(&state, app.clone()).unwrap()["active"].updated_at,
             Some(42)
         );
+
+        for content in ["", " \t\r\n"] {
+            fs::write(&path, content).unwrap();
+            let prompts = PromptService::get_prompts(&state, app.clone()).unwrap();
+            assert_eq!(prompts["active"].content, saved.content);
+            assert_eq!(prompts["active"].updated_at, Some(42));
+            assert_eq!(prompts["inactive"].content, "original");
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+            assert_eq!(
+                state.db.get_prompts(app.as_str()).unwrap()["active"].content,
+                saved.content
+            );
+        }
 
         // An editor may save UTF-16: the live read fails, but saved templates
         // must remain available so the user can repair the file from the UI.
