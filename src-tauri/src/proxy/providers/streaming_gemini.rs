@@ -3,7 +3,7 @@
 //! Converts Gemini `streamGenerateContent?alt=sse` chunks into Anthropic-style
 //! SSE events for Claude-compatible clients.
 
-use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
+use super::gemini_shadow::{propagate_parallel_thought_signatures, GeminiShadowStore, GeminiToolCallMeta};
 use super::transform_gemini::{
     build_anthropic_usage, is_synthesized_tool_call_id, rectify_tool_call_parts,
     synthesize_tool_call_id, AnthropicToolSchemaHints,
@@ -47,7 +47,7 @@ fn extract_tool_calls(
     let mut rectified_parts = parts.to_vec();
     rectify_tool_call_parts(&mut rectified_parts, tool_schema_hints);
 
-    rectified_parts
+    let mut calls: Vec<GeminiToolCallMeta> = rectified_parts
         .iter()
         .filter_map(|part| {
             let function_call = part.get("functionCall")?;
@@ -77,7 +77,9 @@ fn extract_tool_calls(
                     .and_then(|value| value.as_str()),
             ))
         })
-        .collect()
+        .collect();
+    propagate_parallel_thought_signatures(&mut calls);
+    calls
 }
 
 fn extract_text_thought_signature(parts: &[Value]) -> Option<String> {
@@ -204,6 +206,7 @@ fn build_shadow_assistant_parts(
         });
         if let Some(signature) = text_thought_signature {
             part["thoughtSignature"] = json!(signature);
+            part["thought_signature"] = json!(signature);
         }
         parts.push(part);
     }
@@ -219,6 +222,7 @@ fn build_shadow_assistant_parts(
 
         if let Some(signature) = &tool_call.thought_signature {
             part["thoughtSignature"] = json!(signature);
+            part["thought_signature"] = json!(signature);
         }
 
         parts.push(part);
