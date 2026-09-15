@@ -1335,6 +1335,8 @@
     "quickSetModels": "一键设置",
     "quickSetSuccess": "已将模型名称应用到所有角色",
     "advancedOptionsToggle": "高级选项",
+    "outboundProxyUrl": "外部 API 代理",
+    "outboundProxyUrlHint": "该供应商的余额查询与 API 调用将走此代理，覆盖全局外部代理。留空则使用全局代理。",
     "advancedOptionsHint": "包含 API 格式、认证字段、模型映射等配置。大多数场景下保持默认即可。",
     "categoryOfficial": "官方",
     "categoryCnOfficial": "开源官方",
