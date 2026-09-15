@@ -354,6 +354,18 @@ export interface RemoteSnapshotInfo {
 
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
+export interface SharedMemorySettings {
+  /** 是否启用共享记忆 */
+  enabled?: boolean;
+  /** 云端地址（默认 Cloudflare Worker） */
+  url?: string;
+  /** 访问令牌（写入时需要） */
+  token?: string;
+  /** 最近一次同步时间（ISO 8601） */
+  lastSyncAt?: string;
+  /** 最近一次同步字节数 */
+  lastSyncBytes?: number;
+}
 export interface Settings {
   // ===== 设备级 UI 设置 =====
   // 是否在系统托盘（macOS 菜单栏）显示图标
@@ -443,6 +455,9 @@ export interface Settings {
 
   // ===== S3 同步设置 =====
   s3Sync?: S3SyncSettings;
+
+  // ===== 共享记忆设置 =====
+  sharedMemory?: SharedMemorySettings;
 
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)
