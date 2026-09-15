@@ -38,6 +38,10 @@ describe("ProviderCard layout", () => {
     expect(source).not.toContain("extractPiModelSummaryItems");
   });
 
+  it("reads the official DSH baseURL field for card display", () => {
+    expect(source).toContain("object.baseURL");
+  });
+
   it("keeps Pi provider cards independent from routing capability state", () => {
     const listSource = fs.readFileSync(PROVIDER_LIST_TSX, "utf8");
 

@@ -15,6 +15,7 @@ import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { invalidateDshProviderCaches } from "@/lib/query/dsh";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
@@ -64,7 +65,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "opencode" ||
         appId === "openclaw" ||
         appId === "hermes" ||
-        appId === "pi"
+        appId === "pi" ||
+        appId === "deepseek-harness"
       ) {
         if (
           providerInput.category === "omo" ||
@@ -156,6 +158,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
       }
+      if (appId === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -220,6 +225,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (appId === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
       }
     },
   });
@@ -296,6 +304,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (appId === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
       }
     },
   });
@@ -379,6 +390,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (appId === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
       }
     },
   });

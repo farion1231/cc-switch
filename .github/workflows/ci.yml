@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -18,8 +19,9 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      frontend: ${{ steps.filter.outputs.frontend }}
-      backend: ${{ steps.filter.outputs.backend }}
+      # Manual dispatches run every check (there is no base ref to diff against).
+      frontend: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.frontend }}
+      backend: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.backend }}
     steps:
       # On pull_request the filter reads changed files via the API (no checkout);
       # on push it needs a local git history to diff against.
@@ -28,6 +30,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Detect changed paths
+        if: github.event_name != 'workflow_dispatch'
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:

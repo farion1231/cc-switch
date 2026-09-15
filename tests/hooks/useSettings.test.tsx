@@ -461,6 +461,7 @@ describe("useSettings hook", () => {
       ...serverSettings,
       claudeConfigDir: "  /server/claude  ",
       codexConfigDir: "   ",
+      dshConfigDir: "/server/dsh",
       language: "zh",
     };
     useSettingsQueryMock.mockReturnValue({
@@ -496,6 +497,7 @@ describe("useSettings hook", () => {
       openclaw: "/server/openclaw",
       hermes: "/server/hermes",
       pi: "/server/pi",
+      dsh: "/server/dsh",
     });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

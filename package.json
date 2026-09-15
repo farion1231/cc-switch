@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "3.20.3",
+  "version": "3.20.3-dsh.1",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {
@@ -13,7 +13,9 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "test:dsh": "bash scripts/test-dsh.sh",
+    "build:dsh:macos": "bash scripts/build-dsh-macos.sh"
   },
   "keywords": [],
   "author": "Jason Young",

@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+/work/
+/backups/
 .DS_Store
 *.log
 .env
@@ -29,3 +31,9 @@ copilot-api
 .history
 CODEBUDDY.md
 mainWindow.js
+
+# Local agent memory and workflow artifacts (never push machine-local records)
+docs/agent-memory/
+docs/superpowers/
+AGENTS.md
+.workbuddy/
