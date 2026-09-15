@@ -423,13 +423,12 @@ export function ProviderCard({
           </div>
 
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2 min-h-7">
+            <div className="flex flex-nowrap items-center gap-2 min-h-7 min-w-0">
               <h3
                 className={cn(
-                  "text-base font-semibold leading-none",
-                  codexOfficialIdentity && "min-w-0 flex-1 truncate",
+                  "min-w-0 flex-1 truncate text-base font-semibold leading-none",
                 )}
-                title={codexOfficialIdentity ? provider.name : undefined}
+                title={provider.name}
               >
                 {provider.name}
               </h3>
@@ -598,9 +597,9 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="flex items-center ml-auto min-w-0 gap-3">
-          <div className="ml-auto">
-            <div className="flex items-center gap-1">
+        <div className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-3 sm:flex-initial">
+          <div className="ml-auto min-w-0 max-w-full overflow-hidden">
+            <div className="flex min-w-0 max-w-full items-center gap-1">
               {isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}

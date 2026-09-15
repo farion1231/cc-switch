@@ -194,10 +194,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     const isExpired = firstUsage.isValid === false;
 
     return (
-      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
+      <div className="flex min-w-0 max-w-full flex-col items-end gap-1 overflow-hidden text-xs whitespace-nowrap sm:max-w-[min(55vw,520px)]">
         {/* 第一行：更新时间和刷新按钮 */}
-        <div className="flex items-center gap-2 justify-end">
-          {/* 上次查询时间 */}
+        <div className="flex min-w-0 max-w-full items-center gap-2 justify-end overflow-hidden">
           <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
             <Clock size={10} />
             {lastQueriedAt
