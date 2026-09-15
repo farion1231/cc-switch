@@ -544,6 +544,14 @@ pub struct ProviderMeta {
     /// Custom User-Agent for local proxy routing.
     #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
     pub custom_user_agent: Option<String>,
+    /// Claude→非 Anthropic 转换路径是否剥离 Claude Code 客户端指纹头
+    /// （x-app / x-stainless-* / x-claude-code-*）。缺省（None）不剥离；
+    /// 显式 true 开启——用于向指纹敏感的网关隐藏 Claude Code 客户端特征。
+    #[serde(
+        rename = "stripClaudeCodeFingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub strip_claude_code_fingerprint: Option<bool>,
     /// Local proxy request overrides applied to the transformed upstream request.
     #[serde(
         rename = "localProxyRequestOverrides",
@@ -598,6 +606,11 @@ impl ProviderMeta {
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。
     pub fn custom_user_agent_header(&self) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
         parse_custom_user_agent(self.custom_user_agent.as_deref())
+    }
+
+    /// 转换路径是否剥离 Claude Code 指纹头。缺省关闭；显式 true 开启。
+    pub fn strip_claude_code_fingerprint_enabled(&self) -> bool {
+        self.strip_claude_code_fingerprint == Some(true)
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。
@@ -1121,6 +1134,23 @@ mod tests {
         let overrides = decoded.local_proxy_request_overrides.unwrap();
         assert_eq!(overrides.headers.get("X-Test"), Some(&"yes".to_string()));
         assert_eq!(overrides.body.unwrap()["temperature"], 0.2);
+    }
+
+    #[test]
+    fn strip_claude_code_fingerprint_defaults_to_disabled() {
+        let meta: ProviderMeta = serde_json::from_str("{}").unwrap();
+        assert!(!meta.strip_claude_code_fingerprint_enabled());
+
+        let meta: ProviderMeta =
+            serde_json::from_str(r#"{"stripClaudeCodeFingerprint": true}"#).unwrap();
+        assert!(meta.strip_claude_code_fingerprint_enabled());
+
+        let meta = ProviderMeta {
+            strip_claude_code_fingerprint: Some(true),
+            ..ProviderMeta::default()
+        };
+        let value = serde_json::to_value(&meta).unwrap();
+        assert_eq!(value["stripClaudeCodeFingerprint"], true);
     }
 
     #[test]
