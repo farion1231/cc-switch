@@ -257,6 +257,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     "type": "message",
                                                     "role": "assistant",
                                                     "model": current_model.clone().unwrap_or_default(),
+                                                    "content": [],
                                                     "usage": start_usage
                                                 }
                                             });
@@ -819,6 +820,16 @@ mod tests {
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect();
+
+        let message_start = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_start"))
+            .expect("message_start event");
+        let content = message_start
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .expect("message_start content");
+        assert!(content.is_empty());
 
         let mut tool_index_by_call: HashMap<String, u64> = HashMap::new();
         for event in &events {
