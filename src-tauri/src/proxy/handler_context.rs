@@ -7,11 +7,16 @@ use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
+    outbound_mask::MaskSession,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{
+        AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, OutboundMaskConfig,
+        RectifierConfig,
+    },
     ProxyError,
 };
 use axum::http::HeaderMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -70,6 +75,12 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 出站可逆脱敏配置
+    pub outbound_mask_config: OutboundMaskConfig,
+    /// 本次请求的占位符映射表
+    ///
+    /// 请求侧（forwarder）写入、响应侧（response_processor）读取，两端共享同一实例。
+    pub mask_session: Arc<MaskSession>,
 }
 
 impl RequestContext {
@@ -106,6 +117,7 @@ impl RequestContext {
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let outbound_mask_config = state.db.get_outbound_mask_config().unwrap_or_default();
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -120,6 +132,8 @@ impl RequestContext {
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
+        // 占位符盐由 session id 派生，需在 session_id 被移入结构体前取一份。
+        let session_id_for_mask = session_id.clone();
 
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
@@ -173,6 +187,8 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            outbound_mask_config,
+            mask_session: Arc::new(MaskSession::new(&session_id_for_mask)),
         })
     }
 
@@ -241,7 +257,21 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            self.outbound_mask_config.clone(),
+            self.mask_session.clone(),
         )
+    }
+
+    /// 响应侧还原需要的映射表。
+    ///
+    /// 只有「开关打开 **且** 本次请求确实打过码」才返回 `Some`——没打过码的请求
+    /// 不该为还原付出任何代价，流式热路径必须保持零开销透传。
+    pub fn mask_restorer(&self) -> Option<Arc<MaskSession>> {
+        if self.outbound_mask_config.enabled && !self.mask_session.is_empty() {
+            Some(self.mask_session.clone())
+        } else {
+            None
+        }
     }
 
     /// 获取 Provider 列表（用于故障转移）

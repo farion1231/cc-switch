@@ -368,6 +368,70 @@ impl LogConfig {
     }
 }
 
+/// 自定义脱敏规则的匹配方式
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MaskRuleKind {
+    /// 按正则匹配
+    #[default]
+    Regex,
+    /// 按字面量匹配（内部会 escape，`.` 不当通配符）
+    Literal,
+}
+
+/// 用户自定义脱敏规则
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MaskCustomRule {
+    /// 是否启用
+    #[serde(default)]
+    pub enabled: bool,
+    /// 匹配方式
+    #[serde(default)]
+    pub kind: MaskRuleKind,
+    /// 占位符类型名，如 `TERM`；非法字符会被规整，空值回退为 `CUSTOM{n}`
+    #[serde(default)]
+    pub label: String,
+    /// 匹配内容（正则或字面量）
+    #[serde(default)]
+    pub pattern: String,
+}
+
+/// 自定义规则非法时的处理策略
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MaskOnError {
+    /// 记一条 warn 后按原文放行（默认）
+    #[default]
+    WarnAndBypass,
+    /// 直接拒绝请求，绝不让原文出网
+    BlockRequest,
+}
+
+/// 出站可逆脱敏配置
+///
+/// 存储在 settings 表的 outbound_mask_config 字段中（JSON 格式）。
+///
+/// 与遮盖式脱敏不同，本功能把敏感值换成带类型的占位符并在响应侧还原，
+/// 详见 [`crate::proxy::outbound_mask`]。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboundMaskConfig {
+    /// 总开关。**默认关闭**——这个功能会改写用户请求体，不能在用户不知情时生效。
+    #[serde(default)]
+    pub enabled: bool,
+    /// 自定义规则非法时的处理策略
+    #[serde(default)]
+    pub on_error: MaskOnError,
+    /// 内置规则开关，键为规则 id（见 `outbound_mask::BUILTIN_RULES`）。
+    /// 缺省的键使用规则自带的默认值，因此新增内置规则不会破坏老配置。
+    #[serde(default)]
+    pub builtin: std::collections::HashMap<String, bool>,
+    /// 用户自定义规则，按填写顺序追加在内置规则之后
+    #[serde(default)]
+    pub custom_rules: Vec<MaskCustomRule>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
