@@ -9,6 +9,7 @@ import UnifiedSkillsPanel, {
 import type {
   InstalledSkill,
   SkillBackupEntry,
+  SkillGroup,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
 
@@ -22,6 +23,11 @@ const restoreSkillBackupMock = vi.fn();
 const bulkToggleSkillAppMock = vi.fn();
 const checkUpdatesMock = vi.fn();
 const updateSkillMock = vi.fn();
+const createSkillGroupMock = vi.fn();
+const updateSkillGroupMock = vi.fn();
+const deleteSkillGroupMock = vi.fn();
+const replaceSkillGroupMembersMock = vi.fn();
+const moveSkillsToGroupMock = vi.fn();
 const refetchSkillBackupsMock = vi.fn();
 const { toastErrorMock, toastSuccessMock, toastWarningMock } = vi.hoisted(
   () => ({
@@ -31,6 +37,7 @@ const { toastErrorMock, toastSuccessMock, toastWarningMock } = vi.hoisted(
   }),
 );
 let installedSkillsMock: InstalledSkill[] = [];
+let skillGroupsMock: SkillGroup[] = [];
 let skillBackupsMock: SkillBackupEntry[] = [];
 let skillUpdatesMock: SkillUpdateInfo[] = [];
 let checkUpdatesFetching = false;
@@ -56,6 +63,30 @@ vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
     data: installedSkillsMock,
     isLoading: false,
+  }),
+  useSkillGroups: () => ({
+    data: skillGroupsMock,
+    isLoading: false,
+  }),
+  useCreateSkillGroup: () => ({
+    mutateAsync: createSkillGroupMock,
+    isPending: false,
+  }),
+  useUpdateSkillGroup: () => ({
+    mutateAsync: updateSkillGroupMock,
+    isPending: false,
+  }),
+  useDeleteSkillGroup: () => ({
+    mutateAsync: deleteSkillGroupMock,
+    isPending: false,
+  }),
+  useReplaceSkillGroupMembers: () => ({
+    mutateAsync: replaceSkillGroupMembersMock,
+    isPending: false,
+  }),
+  useMoveSkillsToGroup: () => ({
+    mutateAsync: moveSkillsToGroupMock,
+    isPending: false,
   }),
   useSkillBackups: () => ({
     data: skillBackupsMock,
@@ -149,9 +180,18 @@ const makeInstalledSkill = (
 const renderPanel = () =>
   render(<UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />);
 
+const makeSkillGroup = (overrides: Partial<SkillGroup> = {}): SkillGroup => ({
+  id: "group-work",
+  name: "Work",
+  color: "blue",
+  createdAt: 1,
+  ...overrides,
+});
+
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
     installedSkillsMock = [];
+    skillGroupsMock = [];
     skillBackupsMock = [];
     skillUpdatesMock = [];
     checkUpdatesFetching = false;
@@ -191,6 +231,27 @@ describe("UnifiedSkillsPanel", () => {
     updateSkillMock.mockImplementation(async (id: string) =>
       makeInstalledSkill({ id }),
     );
+    createSkillGroupMock.mockReset();
+    createSkillGroupMock.mockResolvedValue({
+      id: "group-created",
+      name: "Created",
+      color: "blue",
+      createdAt: 1,
+    });
+    updateSkillGroupMock.mockReset();
+    updateSkillGroupMock.mockImplementation(async (input) => ({
+      id: input.id,
+      name: input.name,
+      color: input.color,
+      createdAt: 1,
+    }));
+    deleteSkillGroupMock.mockReset();
+    deleteSkillGroupMock.mockResolvedValue(true);
+    replaceSkillGroupMembersMock.mockReset();
+    replaceSkillGroupMembersMock.mockResolvedValue(true);
+    moveSkillsToGroupMock.mockReset();
+    moveSkillsToGroupMock.mockResolvedValue(true);
+    localStorage.clear();
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
@@ -226,6 +287,182 @@ describe("UnifiedSkillsPanel", () => {
         },
       ]);
     });
+  });
+
+  it("renders user groups before the ungrouped section", () => {
+    skillGroupsMock = [makeSkillGroup()];
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "grouped",
+        name: "Grouped Skill",
+        groupId: "group-work",
+      }),
+      makeInstalledSkill({ id: "loose", name: "Loose Skill" }),
+    ];
+
+    renderPanel();
+
+    const work = screen.getByText("Work");
+    const ungrouped = screen.getByText("skills.groups.ungrouped");
+    expect(
+      work.compareDocumentPosition(ungrouped) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText("Grouped Skill")).toBeInTheDocument();
+    expect(screen.getByText("Loose Skill")).toBeInTheDocument();
+  });
+
+  it("keeps empty user groups visible when no Skills are installed", () => {
+    skillGroupsMock = [makeSkillGroup()];
+
+    renderPanel();
+
+    expect(screen.getByText("Work")).toBeInTheDocument();
+    expect(
+      screen.queryByText("skills.groups.ungrouped"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("skills.noInstalled")).not.toBeInTheDocument();
+  });
+
+  it("applies a group bulk toggle to the complete group while searching", async () => {
+    skillGroupsMock = [makeSkillGroup()];
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "match",
+        name: "Matching Skill",
+        groupId: "group-work",
+      }),
+      makeInstalledSkill({
+        id: "hidden",
+        name: "Hidden Skill",
+        groupId: "group-work",
+      }),
+      makeInstalledSkill({ id: "outside", name: "Outside Skill" }),
+    ];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["match", "hidden"],
+      failed: [],
+    });
+    renderPanel();
+
+    await userEvent.setup().type(
+      screen.getByRole("textbox", {
+        name: "skills.installedSearchAriaLabel",
+      }),
+      "Matching",
+    );
+    const groupToggles = screen.getAllByRole("checkbox", {
+      name: "skills.groups.enableForGroup",
+    });
+    await userEvent.setup().click(groupToggles[0]);
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["match", "hidden"],
+        app: "claude",
+        enabled: true,
+      });
+    });
+  });
+
+  it("creates a group with selected initial members", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "skill-one", name: "Skill One" }),
+    ];
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "skills.groups.newGroup" }),
+    );
+    await user.type(screen.getByLabelText("skills.groups.name"), "Daily");
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(
+      screen.getByRole("button", { name: "skills.groups.create" }),
+    );
+
+    await waitFor(() => {
+      expect(createSkillGroupMock).toHaveBeenCalledWith({
+        name: "Daily",
+        color: "blue",
+        skillIds: ["skill-one"],
+      });
+    });
+  });
+
+  it("moves one Skill from its row menu", async () => {
+    skillGroupsMock = [makeSkillGroup()];
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "skill-one", name: "Skill One" }),
+    ];
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "skills.groups.moveSkill" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Work" }));
+
+    await waitFor(() => {
+      expect(moveSkillsToGroupMock).toHaveBeenCalledWith({
+        skillIds: ["skill-one"],
+        groupId: "group-work",
+      });
+    });
+  });
+
+  it("temporarily expands a collapsed group for search matches", async () => {
+    localStorage.setItem(
+      "cc-switch:skills:collapsed-groups",
+      JSON.stringify(["group-work"]),
+    );
+    skillGroupsMock = [makeSkillGroup()];
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "grouped",
+        name: "Needle Skill",
+        groupId: "group-work",
+      }),
+    ];
+    renderPanel();
+
+    expect(screen.queryByText("Needle Skill")).not.toBeInTheDocument();
+    await userEvent.setup().type(
+      screen.getByRole("textbox", {
+        name: "skills.installedSearchAriaLabel",
+      }),
+      "Needle",
+    );
+    expect(screen.getByText("Needle Skill")).toBeInTheDocument();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "common.clear" }));
+    expect(screen.queryByText("Needle Skill")).not.toBeInTheDocument();
+  });
+
+  it("deletes a group without uninstalling its members", async () => {
+    skillGroupsMock = [makeSkillGroup()];
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "grouped", groupId: "group-work" }),
+    ];
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "skills.groups.actions" }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "skills.groups.delete" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "skills.groups.delete" }),
+    );
+
+    await waitFor(() => {
+      expect(deleteSkillGroupMock).toHaveBeenCalledWith("group-work");
+    });
+    expect(uninstallSkillMock).not.toHaveBeenCalled();
   });
 
   it("passes only the installed Skill ID to uninstall", async () => {

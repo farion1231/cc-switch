@@ -6,12 +6,46 @@
 //! - Skills 使用统一的 id 主键，支持四应用启用标志
 //! - 实际文件存储在 ~/.cc-switch/skills/，同步到各应用目录
 
-use crate::app_config::{InstalledSkill, SkillApps};
+use crate::app_config::{InstalledSkill, SkillApps, SkillGroup};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::services::skill::SkillRepo;
 use indexmap::IndexMap;
 use rusqlite::params;
+use std::collections::BTreeSet;
+
+pub const SKILL_GROUP_COLORS: &[&str] = &[
+    "blue", "violet", "emerald", "amber", "rose", "cyan", "slate",
+];
+
+fn normalize_skill_group_name(name: &str) -> Result<String, AppError> {
+    let normalized = name.trim();
+    let length = normalized.chars().count();
+    if !(1..=50).contains(&length) {
+        return Err(AppError::InvalidInput(
+            "Skill group name must contain 1 to 50 characters".to_string(),
+        ));
+    }
+    if ["ungrouped", "未分组", "未分組", "グループなし"]
+        .iter()
+        .any(|reserved| normalized.eq_ignore_ascii_case(reserved))
+    {
+        return Err(AppError::InvalidInput(
+            "This Skill group name is reserved".to_string(),
+        ));
+    }
+    Ok(normalized.to_string())
+}
+
+fn validate_skill_group_color(color: &str) -> Result<(), AppError> {
+    if SKILL_GROUP_COLORS.contains(&color) {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "Unsupported Skill group color: {color}"
+        )))
+    }
+}
 
 impl Database {
     // ========== InstalledSkill CRUD ==========
@@ -22,7 +56,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+                        readme_url, group_id, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
                         enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills ORDER BY name ASC",
             )
@@ -39,18 +73,19 @@ impl Database {
                     repo_name: row.get(5)?,
                     repo_branch: row.get(6)?,
                     readme_url: row.get(7)?,
+                    group_id: row.get(8)?,
                     apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        grokbuild: row.get(11)?,
-                        opencode: row.get(12)?,
-                        hermes: row.get(13)?,
+                        claude: row.get(9)?,
+                        codex: row.get(10)?,
+                        gemini: row.get(11)?,
+                        grokbuild: row.get(12)?,
+                        opencode: row.get(13)?,
+                        hermes: row.get(14)?,
                         pi: false,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    installed_at: row.get(15)?,
+                    content_hash: row.get(16)?,
+                    updated_at: row.get::<_, i64>(17).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -69,7 +104,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+                        readme_url, group_id, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
                         enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills WHERE id = ?1",
             )
@@ -85,18 +120,19 @@ impl Database {
                 repo_name: row.get(5)?,
                 repo_branch: row.get(6)?,
                 readme_url: row.get(7)?,
+                group_id: row.get(8)?,
                 apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    grokbuild: row.get(11)?,
-                    opencode: row.get(12)?,
-                    hermes: row.get(13)?,
+                    claude: row.get(9)?,
+                    codex: row.get(10)?,
+                    gemini: row.get(11)?,
+                    grokbuild: row.get(12)?,
+                    opencode: row.get(13)?,
+                    hermes: row.get(14)?,
                     pi: false,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                installed_at: row.get(15)?,
+                content_hash: row.get(16)?,
+                updated_at: row.get::<_, i64>(17).unwrap_or(0),
             })
         });
 
@@ -113,9 +149,9 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
+              readme_url, group_id, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 skill.id,
                 skill.name,
@@ -125,6 +161,7 @@ impl Database {
                 skill.repo_name,
                 skill.repo_branch,
                 skill.readme_url,
+                skill.group_id,
                 skill.apps.claude,
                 skill.apps.codex,
                 skill.apps.gemini,
@@ -226,6 +263,229 @@ impl Database {
         Ok(affected > 0)
     }
 
+    // ========== SkillGroup CRUD ==========
+
+    pub fn get_skill_groups(&self) -> Result<Vec<SkillGroup>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, color, created_at
+                 FROM skill_groups ORDER BY created_at ASC, id ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(SkillGroup {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    color: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub fn create_skill_group(
+        &self,
+        name: &str,
+        color: &str,
+        skill_ids: &[String],
+    ) -> Result<SkillGroup, AppError> {
+        let name = normalize_skill_group_name(name)?;
+        validate_skill_group_color(color)?;
+        let skill_ids = skill_ids.iter().collect::<BTreeSet<_>>();
+        let mut group = SkillGroup {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            color: color.to_string(),
+            created_at: 0,
+        };
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction().map_err(AppError::from)?;
+        let last_created_at: Option<i64> = tx
+            .query_row("SELECT MAX(created_at) FROM skill_groups", [], |row| {
+                row.get(0)
+            })
+            .map_err(AppError::from)?;
+        group.created_at = chrono::Utc::now()
+            .timestamp_millis()
+            .max(last_created_at.unwrap_or(0).saturating_add(1));
+        let duplicate: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM skill_groups WHERE name = ?1 COLLATE NOCASE)",
+                [&group.name],
+                |row| row.get(0),
+            )
+            .map_err(AppError::from)?;
+        if duplicate {
+            return Err(AppError::InvalidInput(
+                "A Skill group with this name already exists".to_string(),
+            ));
+        }
+        tx.execute(
+            "INSERT INTO skill_groups (id, name, color, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![group.id, group.name, group.color, group.created_at],
+        )
+        .map_err(AppError::from)?;
+        for skill_id in skill_ids {
+            let affected = tx
+                .execute(
+                    "UPDATE skills SET group_id = ?1 WHERE id = ?2",
+                    params![group.id, skill_id],
+                )
+                .map_err(AppError::from)?;
+            if affected == 0 {
+                return Err(AppError::InvalidInput(format!(
+                    "Skill not found: {skill_id}"
+                )));
+            }
+        }
+        tx.commit().map_err(AppError::from)?;
+        Ok(group)
+    }
+
+    pub fn update_skill_group(
+        &self,
+        id: &str,
+        name: &str,
+        color: &str,
+    ) -> Result<SkillGroup, AppError> {
+        let name = normalize_skill_group_name(name)?;
+        validate_skill_group_color(color)?;
+        let conn = lock_conn!(self.conn);
+        let duplicate: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM skill_groups
+                    WHERE name = ?1 COLLATE NOCASE AND id <> ?2
+                 )",
+                params![name, id],
+                |row| row.get(0),
+            )
+            .map_err(AppError::from)?;
+        if duplicate {
+            return Err(AppError::InvalidInput(
+                "A Skill group with this name already exists".to_string(),
+            ));
+        }
+        let affected = conn
+            .execute(
+                "UPDATE skill_groups SET name = ?1, color = ?2 WHERE id = ?3",
+                params![name, color, id],
+            )
+            .map_err(AppError::from)?;
+        if affected == 0 {
+            return Err(AppError::InvalidInput(format!(
+                "Skill group not found: {id}"
+            )));
+        }
+        Ok(SkillGroup {
+            id: id.to_string(),
+            name,
+            color: color.to_string(),
+            created_at: conn
+                .query_row(
+                    "SELECT created_at FROM skill_groups WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .map_err(AppError::from)?,
+        })
+    }
+
+    pub fn delete_skill_group(&self, id: &str) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute("DELETE FROM skill_groups WHERE id = ?1", [id])
+            .map_err(AppError::from)?;
+        Ok(affected > 0)
+    }
+
+    /// Replace one group's complete member set. Skills selected from another
+    /// group are moved atomically; removed members become ungrouped.
+    pub fn replace_skill_group_members(
+        &self,
+        group_id: &str,
+        skill_ids: &[String],
+    ) -> Result<(), AppError> {
+        let skill_ids = skill_ids.iter().collect::<BTreeSet<_>>();
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction().map_err(AppError::from)?;
+        let group_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM skill_groups WHERE id = ?1)",
+                [group_id],
+                |row| row.get(0),
+            )
+            .map_err(AppError::from)?;
+        if !group_exists {
+            return Err(AppError::InvalidInput(format!(
+                "Skill group not found: {group_id}"
+            )));
+        }
+        tx.execute(
+            "UPDATE skills SET group_id = NULL WHERE group_id = ?1",
+            [group_id],
+        )
+        .map_err(AppError::from)?;
+        for skill_id in skill_ids {
+            let affected = tx
+                .execute(
+                    "UPDATE skills SET group_id = ?1 WHERE id = ?2",
+                    params![group_id, skill_id],
+                )
+                .map_err(AppError::from)?;
+            if affected == 0 {
+                return Err(AppError::InvalidInput(format!(
+                    "Skill not found: {skill_id}"
+                )));
+            }
+        }
+        tx.commit().map_err(AppError::from)
+    }
+
+    /// Move an arbitrary selection to a group, or pass `None` to ungroup it.
+    pub fn move_skills_to_group(
+        &self,
+        skill_ids: &[String],
+        group_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let skill_ids = skill_ids.iter().collect::<BTreeSet<_>>();
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction().map_err(AppError::from)?;
+        if let Some(group_id) = group_id {
+            let group_exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM skill_groups WHERE id = ?1)",
+                    [group_id],
+                    |row| row.get(0),
+                )
+                .map_err(AppError::from)?;
+            if !group_exists {
+                return Err(AppError::InvalidInput(format!(
+                    "Skill group not found: {group_id}"
+                )));
+            }
+        }
+        for skill_id in skill_ids {
+            let affected = tx
+                .execute(
+                    "UPDATE skills SET group_id = ?1 WHERE id = ?2",
+                    params![group_id, skill_id],
+                )
+                .map_err(AppError::from)?;
+            if affected == 0 {
+                return Err(AppError::InvalidInput(format!(
+                    "Skill not found: {skill_id}"
+                )));
+            }
+        }
+        tx.commit().map_err(AppError::from)
+    }
+
     // ========== SkillRepo CRUD（保持原有） ==========
 
     /// 获取所有 Skill 仓库
@@ -320,6 +580,7 @@ mod tests {
             repo_name: Some("repo".to_string()),
             repo_branch: Some("main".to_string()),
             readme_url: Some(format!("https://example.com/{name}")),
+            group_id: None,
             apps,
             installed_at: 1,
             content_hash: Some(format!("{name}-hash")),
@@ -402,5 +663,70 @@ mod tests {
         assert_eq!(stored.name, reinstalled.name);
         assert_eq!(stored.installed_at, reinstalled.installed_at);
         assert_eq!(stored.apps, reinstalled.apps);
+    }
+
+    #[test]
+    fn skill_groups_move_members_atomically_and_delete_to_ungrouped() {
+        let db = Database::memory().expect("memory db");
+        let first = skill("owner/repo:first", "first", SkillApps::default());
+        let second = skill("owner/repo:second", "second", SkillApps::default());
+        db.save_skill(&first).expect("seed first");
+        db.save_skill(&second).expect("seed second");
+
+        let work = db
+            .create_skill_group(" Work ", "blue", std::slice::from_ref(&first.id))
+            .expect("create work group");
+        let personal = db
+            .create_skill_group("Personal", "violet", &[])
+            .expect("create personal group");
+        assert_eq!(work.name, "Work");
+        assert_eq!(
+            db.get_skill_groups().expect("groups"),
+            vec![work.clone(), personal.clone()]
+        );
+
+        db.replace_skill_group_members(&personal.id, &[first.id.clone(), second.id.clone()])
+            .expect("move both to personal");
+        assert_eq!(
+            db.get_installed_skill(&first.id)
+                .expect("query first")
+                .expect("first")
+                .group_id
+                .as_deref(),
+            Some(personal.id.as_str())
+        );
+        assert_eq!(
+            db.get_installed_skill(&second.id)
+                .expect("query second")
+                .expect("second")
+                .group_id
+                .as_deref(),
+            Some(personal.id.as_str())
+        );
+
+        assert!(db.delete_skill_group(&personal.id).expect("delete group"));
+        assert!(db
+            .get_installed_skill(&first.id)
+            .expect("query first")
+            .expect("first")
+            .group_id
+            .is_none());
+        assert!(db
+            .get_installed_skill(&second.id)
+            .expect("query second")
+            .expect("second")
+            .group_id
+            .is_none());
+    }
+
+    #[test]
+    fn skill_group_validation_rejects_reserved_duplicate_and_unknown_color() {
+        let db = Database::memory().expect("memory db");
+        db.create_skill_group("Work", "emerald", &[])
+            .expect("create group");
+
+        assert!(db.create_skill_group("work", "blue", &[]).is_err());
+        assert!(db.create_skill_group("未分组", "blue", &[]).is_err());
+        assert!(db.create_skill_group("Valid", "magenta", &[]).is_err());
     }
 }

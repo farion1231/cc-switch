@@ -930,6 +930,7 @@ impl SkillService {
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
             readme_url,
+            group_id: None,
             apps: SkillApps::only(current_app),
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
@@ -1497,6 +1498,7 @@ impl SkillService {
             repo_name: skill.repo_name.clone(),
             repo_branch: Some(used_branch),
             readme_url,
+            group_id: skill.group_id.clone(),
             apps: skill.apps.clone(),
             installed_at: skill.installed_at,
             content_hash: new_hash,
@@ -1803,6 +1805,15 @@ impl SkillService {
         restored_skill.installed_at = Utc::now().timestamp();
         restored_skill.apps = SkillApps::only(current_app);
         restored_skill.updated_at = 0;
+        if let Some(group_id) = restored_skill.group_id.as_deref() {
+            let group_still_exists = db
+                .get_skill_groups()?
+                .iter()
+                .any(|group| group.id == group_id);
+            if !group_still_exists {
+                restored_skill.group_id = None;
+            }
+        }
 
         Self::copy_dir_recursive(&backup_skill_dir, &restore_path)?;
 
@@ -2027,6 +2038,7 @@ impl SkillService {
                 repo_name,
                 repo_branch,
                 readme_url,
+                group_id: None,
                 apps,
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
@@ -3758,6 +3770,7 @@ impl SkillService {
                 repo_name: None,
                 repo_branch: None,
                 readme_url: None,
+                group_id: None,
                 apps: SkillApps::only(current_app),
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
@@ -4205,6 +4218,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             repo_name,
             repo_branch,
             readme_url,
+            group_id: None,
             apps,
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
@@ -5266,6 +5280,7 @@ mod tests {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            group_id: None,
             apps: SkillApps::default(),
             installed_at: 0,
             content_hash: None,

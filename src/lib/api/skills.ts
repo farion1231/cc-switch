@@ -36,10 +36,30 @@ export interface InstalledSkill {
   repoName?: string;
   repoBranch?: string;
   readmeUrl?: string;
+  groupId?: string;
   apps: SkillApps;
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+}
+
+export const SKILL_GROUP_COLORS = [
+  "blue",
+  "violet",
+  "emerald",
+  "amber",
+  "rose",
+  "cyan",
+  "slate",
+] as const;
+
+export type SkillGroupColor = (typeof SKILL_GROUP_COLORS)[number];
+
+export interface SkillGroup {
+  id: string;
+  name: string;
+  color: SkillGroupColor;
+  createdAt: number;
 }
 
 export interface SkillUninstallResult {
@@ -145,6 +165,47 @@ export const skillsApi = {
   /** 获取所有已安装的 Skills */
   async getInstalled(): Promise<InstalledSkill[]> {
     return await invoke("get_installed_skills");
+  },
+
+  /** 获取用户定义的 Skill 分组 */
+  async getGroups(): Promise<SkillGroup[]> {
+    return await invoke("get_skill_groups");
+  },
+
+  /** 创建分组，并可同时移动初始成员 */
+  async createGroup(
+    name: string,
+    color: SkillGroupColor,
+    skillIds: string[],
+  ): Promise<SkillGroup> {
+    return await invoke("create_skill_group", { name, color, skillIds });
+  },
+
+  /** 更新分组名称与颜色 */
+  async updateGroup(
+    id: string,
+    name: string,
+    color: SkillGroupColor,
+  ): Promise<SkillGroup> {
+    return await invoke("update_skill_group", { id, name, color });
+  },
+
+  /** 删除分组，成员自动回到未分组 */
+  async deleteGroup(id: string): Promise<boolean> {
+    return await invoke("delete_skill_group", { id });
+  },
+
+  /** 替换一个分组的完整成员集合 */
+  async replaceGroupMembers(
+    groupId: string,
+    skillIds: string[],
+  ): Promise<boolean> {
+    return await invoke("replace_skill_group_members", { groupId, skillIds });
+  },
+
+  /** 批量移动到分组；groupId 为空表示移回未分组 */
+  async moveToGroup(skillIds: string[], groupId?: string): Promise<boolean> {
+    return await invoke("move_skills_to_group", { skillIds, groupId });
   },
 
   /** 获取可恢复的 Skill 备份列表 */
