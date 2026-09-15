@@ -5,15 +5,17 @@
 //!
 //! ## 数据流
 //! ```text
-//! ~/.gemini/tmp/*/chats/session-*.{json,jsonl} → 回放 → 全量解析 → 费用计算 → proxy_request_logs 表
+//! ~/.gemini/tmp/*/chats/session-*.{json,jsonl} → 回放 → 计费事件 → 费用计算 → proxy_request_logs 表
 //! ```
 //!
 //! ## 与 Claude/Codex 解析器的差异
 //! - 两种落盘格式：旧版单个 JSON 对象，新版追加式 JSONL，统一由
-//!   [`crate::gemini_session`] 回放成最终消息列表
+//!   [`crate::gemini_session`] 回放
+//! - 计费用回放出的**全部** token 事件而非最终消息列表：Gemini CLI 上下文超限时
+//!   会把最旧的一半裁掉，被裁掉的请求不再出现在会话里，但确实消耗过 token
 //! - 无需 delta 计算：tokens 字段是 per-message 独立值
 //! - 无需状态恢复：不依赖前一条消息的累计值
-//! - 天然去重：每条消息有唯一 id 字段
+//! - 天然去重：每条消息有唯一 id 字段，快照重叠部分由 id 与 request_id 双重去重
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -154,17 +156,33 @@ fn sync_single_gemini_file(
     // 回放会话文件（旧版单对象 JSON / 新版增量 JSONL 都由回放器统一处理）
     let session = gemini_session::load(file_path).map_err(AppError::Config)?;
 
-    let messages = &session.messages;
-    if messages.is_empty() {
-        return Ok((0, 0));
+    // 中间坏行会让其后的行回放到错误状态上，这一次的 token 统计不可信：直接让
+    // 该文件本次同步失败，游标不推进，下次同步重试。
+    if session.malformed_interior_lines > 0 {
+        return Err(AppError::Config(format!(
+            "回放时跳过 {} 行无法解析的内容（位于文件中间），不推进同步游标以便重试",
+            session.malformed_interior_lines
+        )));
     }
+    if session.malformed_lines > 0 {
+        // 末行损坏通常是写入被中断，下次追加会补全，代价只是这一次少一条记录
+        log::warn!(
+            "[GEMINI-SYNC] {} 跳过 {} 行无法解析的内容（均在文件末尾）",
+            file_path.display(),
+            session.malformed_lines
+        );
+    }
+
+    // 计费用全部 token 事件，而不是最终消息列表：被快照截断掉的历史消息不再
+    // 属于当前会话，但它们对应的请求确实花过 token。
+    let usage_events = &session.usage_events;
     let session_id = session.session_id.as_deref();
 
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
     let mut gemini_msg_count: i64 = 0;
 
-    for msg in messages {
+    for msg in usage_events {
         // 只处理 type == "gemini" 的消息
         if msg.get("type").and_then(|t| t.as_str()) != Some("gemini") {
             continue;
@@ -424,6 +442,114 @@ mod tests {
         assert_eq!(input, 300);
         assert_eq!(output, 30);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_keeps_tokens_truncated_by_later_snapshot() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-truncated.jsonl");
+
+        // m2 只存在于第一份快照里，随后的快照把它截断掉了
+        fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-2","startTime":"2026-09-14T03:16:00.000Z","kind":"main"}"#,
+                "\n",
+                r#"{"$set":{"messages":[{"id":"m1","type":"user","content":"hi"},{"id":"m2","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-09-14T03:16:10.000Z","tokens":{"input":100,"output":10,"cached":0,"thoughts":0}}]}}"#,
+                "\n",
+                r#"{"id":"m3","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-09-14T03:16:20.000Z","tokens":{"input":200,"output":20,"cached":0,"thoughts":0}}"#,
+                "\n",
+                r#"{"$set":{"messages":[{"id":"m3","type":"gemini","model":"gemini-2.5-pro","timestamp":"2026-09-14T03:16:20.000Z","tokens":{"input":200,"output":20,"cached":0,"thoughts":0}}]}}"#,
+                "\n",
+            ),
+        )
+        .expect("write session");
+
+        let (imported, _skipped) = sync_single_gemini_file(&db, &path, 0)?;
+        assert_eq!(imported, 2, "被截断的 m2 也必须计入");
+
+        // 同一个文件重扫一次（游标仍是 0）不应重复计入
+        let (imported_again, skipped_again) = sync_single_gemini_file(&db, &path, 0)?;
+        assert_eq!(imported_again, 0, "重扫应全部命中 request_id 去重");
+        assert_eq!(skipped_again, 2);
+
+        let conn = lock_conn!(db.conn);
+        let (rows, input): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), SUM(input_tokens) FROM proxy_request_logs
+             WHERE data_source = 'gemini_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(rows, 2);
+        assert_eq!(input, 300);
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_refuses_to_advance_cursor_on_interior_malformed_line() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-broken.jsonl");
+
+        // 坏行后面还有内容：不是写入中断留下的半行，回放状态已不可信
+        fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-3","kind":"main"}"#,
+                "\n",
+                r#"{"id":"m1","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":10,"output":1}}"#,
+                "\n",
+                "{ this line is truncated\n",
+                r#"{"id":"m2","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":20,"output":2}}"#,
+                "\n",
+            ),
+        )
+        .expect("write session");
+
+        assert!(sync_single_gemini_file(&db, &path, 0).is_err());
+
+        let path_str = path.to_string_lossy().to_string();
+        let conn = lock_conn!(db.conn);
+        let synced: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_log_sync WHERE file_path = ?1",
+            rusqlite::params![path_str],
+            |row| row.get(0),
+        )?;
+        assert_eq!(synced, 0, "游标不应推进，下次同步仍会重试该文件");
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_tolerates_incomplete_final_line() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session-2026-09-14T03-16-partial.jsonl");
+
+        fs::write(
+            &path,
+            concat!(
+                r#"{"sessionId":"s-4","kind":"main"}"#,
+                "\n",
+                r#"{"id":"m1","type":"gemini","model":"gemini-2.5-pro","tokens":{"input":10,"output":1}}"#,
+                "\n",
+                r#"{"id":"m2","type":"gem"#,
+            ),
+        )
+        .expect("write session");
+
+        let (imported, _skipped) = sync_single_gemini_file(&db, &path, 0)?;
+        assert_eq!(imported, 1, "末行不完整不应阻塞前面已完整的记录");
+
+        let path_str = path.to_string_lossy().to_string();
+        let conn = lock_conn!(db.conn);
+        let synced: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_log_sync WHERE file_path = ?1",
+            rusqlite::params![path_str],
+            |row| row.get(0),
+        )?;
+        assert_eq!(synced, 1, "末行不完整可以推进游标，等下次追加补全");
         Ok(())
     }
 
