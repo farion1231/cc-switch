@@ -237,16 +237,23 @@ jobs:
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
+          $testNames = @(
+            "config::tests::atomic_write_replaces_existing_wsl_unc_file",
+            "services::proxy::tests::codex_auth_transaction_runs_on_wsl_unc_home"
+          )
           $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
-          $expected = "${testName}: test"
-          if ($testList -notcontains $expected) {
-            throw "Expected ignored test was not discovered: $testName"
+          foreach ($testName in $testNames) {
+            $expected = "${testName}: test"
+            if ($testList -notcontains $expected) {
+              throw "Expected ignored test was not discovered: $testName"
+            }
           }
-          & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          foreach ($testName in $testNames) {
+            & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
           }
