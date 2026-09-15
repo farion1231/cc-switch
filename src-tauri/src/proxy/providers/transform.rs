@@ -53,6 +53,45 @@ pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
     }
 }
 
+const CLAUDE_CODE_TOKEN_MARKER_PREFIX: &str = "<total_tokens>";
+const CLAUDE_CODE_TOKEN_MARKER_SUFFIX: &str = "</total_tokens>";
+
+/// Whether a message is a Claude Code token-usage bookkeeping marker.
+///
+/// Claude Code injects `<total_tokens>N tokens left</total_tokens>` as a
+/// mid-conversation system message. It is client-side bookkeeping that no
+/// upstream consumes, and the count changes on every turn, so forwarding it
+/// breaks the prompt prefix cache from the first marker onwards (#7417).
+/// Only a system message whose entire content is the marker envelope matches;
+/// user-authored text containing the same tag is never touched.
+fn is_claude_code_token_marker(message: &Value) -> bool {
+    if message.get("role").and_then(Value::as_str) != Some("system") {
+        return false;
+    }
+    message
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(is_claude_code_token_marker_text)
+}
+
+fn is_claude_code_token_marker_text(text: &str) -> bool {
+    let text = text.trim();
+    text.strip_prefix(CLAUDE_CODE_TOKEN_MARKER_PREFIX)
+        .is_some_and(|inner| inner.ends_with(CLAUDE_CODE_TOKEN_MARKER_SUFFIX))
+}
+
+/// Strip Claude Code token-usage marker messages in place.
+///
+/// Called once at the Claude egress dispatch so every converted target
+/// (openai_chat / openai_responses / gemini_native) emits a byte-stable
+/// prefix; the Anthropic passthrough stays byte-faithful and is not affected.
+pub(crate) fn strip_claude_code_token_markers(body: &mut Value) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    messages.retain(|message| !is_claude_code_token_marker(message));
+}
+
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
 /// These models require `max_completion_tokens` instead of `max_tokens`.
 pub fn is_openai_o_series(model: &str) -> bool {
@@ -981,6 +1020,72 @@ mod tests {
 
         // 总共 5 条消息，没有合并
         assert_eq!(messages.len(), 5);
+    }
+
+    #[test]
+    fn test_strip_claude_code_token_markers_removes_marker_system_messages() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {"role": "system", "content": "<total_tokens>14963538 tokens left</total_tokens>"},
+                {"role": "system", "content": "  <total_tokens>14963211 tokens left</total_tokens>  "},
+                {"role": "user", "content": "Continue"}
+            ]
+        });
+
+        strip_claude_code_token_markers(&mut body);
+
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["content"], "Hello");
+        assert_eq!(messages[1]["content"], "Hi there!");
+        assert_eq!(messages[2]["content"], "Continue");
+    }
+
+    #[test]
+    fn test_strip_claude_code_token_markers_keeps_non_marker_content() {
+        // 非标记的 system 消息原样保留（#6941 的原位保持语义不受影响）；
+        // 用户消息里出现同形文本、以及数组形状的 content 都不剥离。
+        let mut body = json!({
+            "messages": [
+                {"role": "system", "content": "<total_tokens>999 tokens left</total_tokens>"},
+                {"role": "user", "content": "<total_tokens>15000000 tokens left</total_tokens>"},
+                {"role": "system", "content": "periodic context hint"},
+                {"role": "system", "content": ["<total_tokens>1</total_tokens>"]},
+                {"role": "assistant", "content": "ok"},
+                {"role": "system", "content": "text mentioning <total_tokens> inline"}
+            ]
+        });
+
+        strip_claude_code_token_markers(&mut body);
+
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(
+            messages[0]["content"],
+            "<total_tokens>15000000 tokens left</total_tokens>"
+        );
+        assert_eq!(messages[1]["content"], "periodic context hint");
+        assert_eq!(
+            messages[2]["content"],
+            json!(["<total_tokens>1</total_tokens>"])
+        );
+        assert_eq!(messages[3]["content"], "ok");
+        assert_eq!(
+            messages[4]["content"],
+            "text mentioning <total_tokens> inline"
+        );
+    }
+
+    #[test]
+    fn test_strip_claude_code_token_markers_noop_without_messages() {
+        let mut body = json!({"system": "You are Claude Code.", "model": "x"});
+        strip_claude_code_token_markers(&mut body);
+        assert_eq!(body["system"], "You are Claude Code.");
+        assert_eq!(body["model"], "x");
     }
 
     #[test]
