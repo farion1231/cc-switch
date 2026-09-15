@@ -4,7 +4,10 @@ import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
-import { TierBadge } from "@/components/SubscriptionQuotaFooter";
+import {
+  TierBadge,
+  formatExtraText,
+} from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
 import { isAdditiveAppId } from "@/config/appConfig";
 
@@ -192,6 +195,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   if (inline) {
     const firstUsage = usageDataList[0];
     const isExpired = firstUsage.isValid === false;
+    const extraText = formatExtraText(firstUsage.extra, t);
 
     return (
       <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
@@ -262,12 +266,12 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           )}
 
           {/* 扩展字段 extra */}
-          {firstUsage.extra && (
+          {extraText && (
             <span
-              className="text-gray-500 dark:text-gray-400 truncate max-w-[150px]"
-              title={firstUsage.extra}
+              className="text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
+              title={extraText}
             >
-              {firstUsage.extra}
+              {extraText}
             </span>
           )}
         </div>
@@ -329,6 +333,9 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
 
   // 判断套餐是否失效（isValid 为 false 或未定义时视为有效）
   const isExpired = isValid === false;
+  // `extra` may carry a bare `resets_at` ISO string — render it on the local
+  // clock rather than printing the raw UTC value.
+  const extraText = formatExtraText(extra, t);
 
   return (
     <div className="flex items-center gap-3">
@@ -354,12 +361,12 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
         className="text-xs text-gray-500 dark:text-gray-400 min-w-0 flex items-center gap-2"
         style={{ width: "30%" }}
       >
-        {extra && (
+        {extraText && (
           <span
             className={`truncate ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
-            title={extra}
+            title={extraText}
           >
-            {extra}
+            {extraText}
           </span>
         )}
         {isExpired && (

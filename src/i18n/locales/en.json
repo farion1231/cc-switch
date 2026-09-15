@@ -3259,6 +3259,8 @@
     "copilotPremium": "Premium",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
+    "resetsInAt": "Resets in {{time}} ({{at}})",
+    "resetsAt": "Resets at {{at}}",
     "extraUsage": "Extra Usage",
     "expired": "Session expired",
     "expiredHint": "Run the {{tool}} command to refresh your login",
