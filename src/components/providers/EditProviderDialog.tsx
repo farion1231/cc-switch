@@ -113,12 +113,12 @@ export function EditProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: appId !== "pi",
+    ready: appId !== "pi" && appId !== "ohmypi",
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : appId !== "pi";
+      : appId !== "pi" && appId !== "ohmypi";
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -174,10 +174,10 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode, while Pi's shared models.json is owned by
-      // the catalog coordinator. Neither has a per-provider generic live
-      // snapshot that may replace the DB aggregate in this form.
-      if (appId === "opencode" || appId === "pi") {
+      // OpenCode uses additive mode, while Pi/Oh My Pi's shared models.yml is
+      // owned by the catalog coordinator. Neither has a per-provider generic
+      // live snapshot that may replace the DB aggregate in this form.
+      if (appId === "opencode" || appId === "pi" || appId === "ohmypi") {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
@@ -302,7 +302,10 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "pi" ||
+          appId === "ohmypi") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;
@@ -339,7 +342,9 @@ export function EditProviderDialog({
       isOpen={open}
       title={t("provider.editProvider")}
       onClose={handlePanelClose}
-      contentClassName={appId === "pi" ? "pb-0" : undefined}
+      contentClassName={
+        appId === "pi" || appId === "ohmypi" ? "pb-0" : undefined
+      }
       footer={
         <Button
           type="submit"

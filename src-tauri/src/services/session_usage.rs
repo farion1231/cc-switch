@@ -145,6 +145,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Pi",
         crate::services::session_usage_pi::sync_pi_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "Oh My Pi",
+        crate::services::session_usage_ohmypi::sync_ohmypi_usage(db),
+    );
     notify_sync_result(&result);
     result
 }

@@ -25,6 +25,23 @@ export interface PiPromptTemplate {
   revision: string;
 }
 
+export type OhMyPiPromptFileKind =
+  | "agents"
+  | "system_override"
+  | "system_append";
+
+export interface OhMyPiPromptFileSnapshot {
+  exists: boolean;
+  revision: string;
+  content: string;
+}
+
+export interface OhMyPiPromptTemplate {
+  slug: string;
+  content: string;
+  revision: string;
+}
+
 export const promptsApi = {
   async getPrompts(app: AppId): Promise<Record<string, Prompt>> {
     return await invoke("get_prompts", { app });
@@ -90,12 +107,67 @@ export const promptsApi = {
       content,
     });
   },
-
   async deletePiPromptTemplate(
     slug: string,
     expectedRevision: string,
   ): Promise<boolean> {
     return await invoke("delete_pi_prompt_template", {
+      slug,
+      expectedRevision,
+    });
+  },
+
+  async getOhMyPiPromptFile(
+    kind: OhMyPiPromptFileKind,
+  ): Promise<OhMyPiPromptFileSnapshot> {
+    return await invoke("get_ohmypi_prompt_file", { kind });
+  },
+
+  async replaceOhMyPiPromptFile(
+    kind: OhMyPiPromptFileKind,
+    expectedRevision: string,
+    content: string,
+  ): Promise<OhMyPiPromptFileSnapshot> {
+    return await invoke("replace_ohmypi_prompt_file", {
+      kind,
+      expectedRevision,
+      content,
+    });
+  },
+
+  async deleteOhMyPiPromptFile(
+    kind: OhMyPiPromptFileKind,
+    expectedRevision: string,
+  ): Promise<boolean> {
+    return await invoke("delete_ohmypi_prompt_file", {
+      kind,
+      expectedRevision,
+    });
+  },
+
+  async listOhMyPiPromptTemplates(): Promise<OhMyPiPromptTemplate[]> {
+    return await invoke("list_ohmypi_prompt_templates");
+  },
+
+  async upsertOhMyPiPromptTemplate(
+    slug: string,
+    expectedRevision: string,
+    content: string,
+    originalSlug?: string,
+  ): Promise<OhMyPiPromptTemplate> {
+    return await invoke("upsert_ohmypi_prompt_template", {
+      slug,
+      originalSlug: originalSlug ?? null,
+      expectedRevision,
+      content,
+    });
+  },
+
+  async deleteOhMyPiPromptTemplate(
+    slug: string,
+    expectedRevision: string,
+  ): Promise<boolean> {
+    return await invoke("delete_ohmypi_prompt_template", {
       slug,
       expectedRevision,
     });

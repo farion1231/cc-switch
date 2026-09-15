@@ -378,6 +378,7 @@ command = "say"
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                ohmypi: false,
             },
             description: None,
             homepage: None,

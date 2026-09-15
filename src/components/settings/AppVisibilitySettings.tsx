@@ -1,5 +1,7 @@
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderOpen } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { cn } from "@/lib/utils";
@@ -8,6 +10,12 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import type { VisibleApps } from "@/types";
 import type { AppId } from "@/lib/api";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import {
+  useOhMyPiAgentDiscoveryState,
+  useDisableOhMyPiAgentAutoDiscovery,
+} from "@/lib/query/ohmypi";
+import { ohmypiApi, type OhMyPiAgentDiscoveryProvider } from "@/lib/api/ohmypi";
+import { OhMyPiAutoDiscoveryConfirmDialog } from "./OhMyPiAutoDiscoveryConfirmDialog";
 
 interface AppVisibilitySettingsProps {
   settings: SettingsFormState;
@@ -20,11 +28,7 @@ const APP_CONFIG: Array<{
   nameKey: string;
 }> = [
   { id: "claude", icon: "claude", nameKey: "apps.claudeCode" },
-  {
-    id: "claude-desktop",
-    icon: "claude",
-    nameKey: "apps.claudeDesktop",
-  },
+  { id: "claude-desktop", icon: "claude", nameKey: "apps.claudeDesktop" },
   { id: "codex", icon: "openai", nameKey: "apps.codex" },
   { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
   { id: "grokbuild", icon: "grok", nameKey: "apps.grokbuild" },
@@ -32,6 +36,7 @@ const APP_CONFIG: Array<{
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
   { id: "pi", icon: "pi", nameKey: "apps.pi" },
+  { id: "ohmypi", icon: "ohmypi", nameKey: "apps.ohmypi" },
 ];
 
 export function AppVisibilitySettings({
@@ -39,16 +44,92 @@ export function AppVisibilitySettings({
   onChange,
 }: AppVisibilitySettingsProps) {
   const { t } = useTranslation();
-
   const visibleApps: VisibleApps = settings.visibleApps ?? DEFAULT_VISIBLE_APPS;
+
+  // ── Oh My Pi auto-discovery guard state ────────────────────────
+  const discoveryState = useOhMyPiAgentDiscoveryState();
+  const disableDiscovery = useDisableOhMyPiAgentAutoDiscovery();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogPending, setDialogPending] = useState(false);
+  const [providers, setProviders] = useState<OhMyPiAgentDiscoveryProvider[]>(
+    [],
+  );
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Lazy-load the 12-provider display list only when the dialog opens.
+  useEffect(() => {
+    if (!dialogOpen) return;
+    let cancelled = false;
+    ohmypiApi
+      .getAgentDiscoveryProviders()
+      .then((list) => {
+        if (!cancelled && mountedRef.current) setProviders(list);
+      })
+      .catch(() => {
+        // MSW / test or offline: leave the list empty; the dialog still
+        // shows the reason and scope text.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen]);
 
   // Count how many apps are currently visible
   const visibleCount = Object.values(visibleApps).filter(Boolean).length;
+
+  const enableOhMyPi = () => {
+    onChange({
+      visibleApps: {
+        ...visibleApps,
+        ohmypi: true,
+      },
+    });
+  };
+
+  const handleOhMyPiToggleOn = async () => {
+    // Refetch discovery state if stale, so we don't show a stale dialog.
+    const state = await discoveryState.refetch();
+    const data = state.data;
+    if (!data || !data.needsConfirmation) {
+      enableOhMyPi();
+      return;
+    }
+    setDialogOpen(true);
+  };
+
+  const handleConfirmDisable = async () => {
+    setDialogPending(true);
+    try {
+      await disableDiscovery.mutateAsync();
+      if (!mountedRef.current) return;
+      setDialogOpen(false);
+      enableOhMyPi();
+    } catch {
+      if (!mountedRef.current) return;
+      toast.error(t("ohmypi.autoDiscovery.disableFailed.toast"));
+      setDialogOpen(false);
+    } finally {
+      if (mountedRef.current) setDialogPending(false);
+    }
+  };
 
   const handleToggle = (appId: AppId) => {
     const isCurrentlyVisible = visibleApps[appId];
     // Prevent disabling the last visible app
     if (isCurrentlyVisible && visibleCount <= 1) return;
+
+    // Oh My Pi off→on: guard with auto-discovery confirmation
+    if (!isCurrentlyVisible && appId === "ohmypi") {
+      void handleOhMyPiToggleOn();
+      return;
+    }
 
     onChange({
       visibleApps: {
@@ -94,6 +175,13 @@ export function AppVisibilitySettings({
         description={t("settings.appVisibility.showProfileSwitcherDescription")}
         checked={settings.showProfileSwitcher ?? true}
         onCheckedChange={(value) => onChange({ showProfileSwitcher: value })}
+      />
+      <OhMyPiAutoDiscoveryConfirmDialog
+        isOpen={dialogOpen}
+        providers={providers}
+        pending={dialogPending}
+        onConfirm={() => void handleConfirmDisable()}
+        onCancel={() => setDialogOpen(false)}
       />
     </section>
   );

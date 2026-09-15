@@ -6,6 +6,7 @@ use crate::config::write_text_file;
 use crate::error::AppError;
 use crate::prompt::Prompt;
 use crate::prompt_files::prompt_file_path;
+use crate::services::ohmypi_prompt_files::OhMyPiAgentsFileGuard;
 use crate::services::pi_prompt_files::PiAgentsFileGuard;
 use crate::store::AppState;
 
@@ -59,6 +60,9 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return get_pi_prompts(state);
         }
+        if matches!(app, AppType::OhMyPi) {
+            return get_ohmypi_prompts(state);
+        }
         state.db.get_prompts(app.as_str())
     }
 
@@ -70,6 +74,9 @@ impl PromptService {
     ) -> Result<(), AppError> {
         if matches!(app, AppType::Pi) {
             return upsert_pi_prompt(state, id, prompt);
+        }
+        if matches!(app, AppType::OhMyPi) {
+            return upsert_ohmypi_prompt(state, id, prompt);
         }
 
         // 检查是否为已启用的提示词
@@ -102,6 +109,9 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return delete_pi_prompt(state, id);
         }
+        if matches!(app, AppType::OhMyPi) {
+            return delete_ohmypi_prompt(state, id);
+        }
         let prompts = Self::get_prompts(state, app.clone())?;
 
         if let Some(prompt) = prompts.get(id) {
@@ -117,6 +127,9 @@ impl PromptService {
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
         if matches!(app, AppType::Pi) {
             return enable_pi_prompt(state, id);
+        }
+        if matches!(app, AppType::OhMyPi) {
+            return enable_ohmypi_prompt(state, id);
         }
 
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
@@ -197,6 +210,11 @@ impl PromptService {
                 .read()?
                 .content
                 .ok_or_else(|| AppError::Message("提示词文件不存在".to_string()))?
+        } else if matches!(app, AppType::OhMyPi) {
+            OhMyPiAgentsFileGuard::acquire()?
+                .read()?
+                .content
+                .ok_or_else(|| AppError::Message("提示词文件不存在".to_string()))?
         } else {
             let file_path = prompt_file_path(&app)?;
             if !file_path.exists() {
@@ -228,6 +246,9 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return Ok(PiAgentsFileGuard::acquire()?.read()?.content);
         }
+        if matches!(app, AppType::OhMyPi) {
+            return Ok(OhMyPiAgentsFileGuard::acquire()?.read()?.content);
+        }
         let file_path = prompt_file_path(&app)?;
         if !file_path.exists() {
             return Ok(None);
@@ -244,7 +265,7 @@ impl PromptService {
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi | AppType::OhMyPi) {
             return Ok(());
         }
 
@@ -305,6 +326,17 @@ impl PromptService {
                     return Ok(0);
                 }
             }
+        } else if matches!(app, AppType::OhMyPi) {
+            match OhMyPiAgentsFileGuard::acquire().and_then(|guard| guard.read()) {
+                Ok(snapshot) => match snapshot.content {
+                    Some(content) => content,
+                    None => return Ok(0),
+                },
+                Err(error) => {
+                    log::warn!("读取提示词文件失败: {file_path:?}, 错误: {error}");
+                    return Ok(0);
+                }
+            }
         } else {
             if !file_path.exists() {
                 return Ok(0);
@@ -338,7 +370,7 @@ impl PromptService {
             description: Some("Automatically imported on first launch".to_string()),
             // Pi derives active state from AGENTS.md. Other apps retain their
             // established persisted prompt selection.
-            enabled: !matches!(app, AppType::Pi),
+            enabled: !matches!(app, AppType::Pi | AppType::OhMyPi),
             created_at: Some(timestamp),
             updated_at: Some(timestamp),
         };
@@ -485,6 +517,143 @@ fn delete_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput("无法删除已启用的提示词".to_string()));
     }
     state.db.delete_prompt(AppType::Pi.as_str(), id)?;
+    Ok(())
+}
+
+fn ohmypi_active_prompt_id(
+    prompts: &IndexMap<String, Prompt>,
+    live_content: Option<&str>,
+) -> Option<String> {
+    let live_content = live_content?;
+    prompts
+        .iter()
+        .find(|(_, prompt)| prompt.content == live_content)
+        .map(|(id, _)| id.clone())
+}
+
+fn unique_ohmypi_backup_id(prompts: &IndexMap<String, Prompt>, timestamp: i64) -> String {
+    let base = format!("backup-{timestamp}");
+    if !prompts.contains_key(&base) {
+        return base;
+    }
+    for suffix in 2_u64.. {
+        let candidate = format!("{base}-{suffix}");
+        if !prompts.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("the backup suffix space is finite only after u64 exhaustion")
+}
+
+fn get_ohmypi_prompts(state: &AppState) -> Result<IndexMap<String, Prompt>, AppError> {
+    let guard = OhMyPiAgentsFileGuard::acquire()?;
+    let mut prompts = state.db.get_prompts(AppType::OhMyPi.as_str())?;
+    let snapshot = guard.read()?;
+    let active_id = ohmypi_active_prompt_id(&prompts, snapshot.content.as_deref());
+
+    for (id, prompt) in &mut prompts {
+        prompt.enabled = active_id.as_ref() == Some(id);
+    }
+    Ok(prompts)
+}
+
+fn upsert_ohmypi_prompt(state: &AppState, id: &str, prompt: Prompt) -> Result<(), AppError> {
+    if prompt.id != id {
+        return Err(AppError::InvalidInput(
+            "Oh My Pi prompt id does not match the requested id".to_string(),
+        ));
+    }
+
+    let guard = OhMyPiAgentsFileGuard::acquire()?;
+    let prompts = state.db.get_prompts(AppType::OhMyPi.as_str())?;
+    let snapshot = guard.read()?;
+    let was_active =
+        ohmypi_active_prompt_id(&prompts, snapshot.content.as_deref()).as_deref() == Some(id);
+    let previous = prompts.get(id).cloned();
+    let requested_active = prompt.enabled;
+    let mut stored = prompt;
+    stored.enabled = false;
+
+    if requested_active && !was_active {
+        return Err(AppError::Conflict(
+            "Oh My Pi AGENTS.md changed outside CC Switch; reload before editing it".to_string(),
+        ));
+    }
+
+    persist_ohmypi_prompt_with_native_update(state, id, &stored, previous.as_ref(), || {
+        if requested_active {
+            guard.replace(&snapshot.revision, &stored.content)
+        } else if was_active {
+            guard.delete(&snapshot.revision)
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn persist_ohmypi_prompt_with_native_update(
+    state: &AppState,
+    id: &str,
+    stored: &Prompt,
+    previous: Option<&Prompt>,
+    update_native: impl FnOnce() -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    state.db.save_prompt(AppType::OhMyPi.as_str(), stored)?;
+    if let Err(native_error) = update_native() {
+        let rollback = match previous {
+            Some(previous) => state.db.save_prompt(AppType::OhMyPi.as_str(), previous),
+            None => state.db.delete_prompt(AppType::OhMyPi.as_str(), id),
+        };
+        if let Err(rollback_error) = rollback {
+            return Err(AppError::Message(format!(
+                "Oh My Pi prompt update failed ({native_error}); database rollback also failed: {rollback_error}"
+            )));
+        }
+        return Err(native_error);
+    }
+    Ok(())
+}
+
+fn enable_ohmypi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
+    let guard = OhMyPiAgentsFileGuard::acquire()?;
+    let prompts = state.db.get_prompts(AppType::OhMyPi.as_str())?;
+    let target = prompts
+        .get(id)
+        .cloned()
+        .ok_or_else(|| AppError::InvalidInput(format!("提示词 {id} 不存在")))?;
+    let snapshot = guard.read()?;
+
+    if let Some(content) = snapshot.content.as_ref() {
+        let already_saved = prompts.values().any(|prompt| prompt.content == *content);
+        if !content.trim().is_empty() && !already_saved {
+            let timestamp = get_unix_timestamp()?;
+            let backup = Prompt {
+                id: unique_ohmypi_backup_id(&prompts, timestamp),
+                name: format!(
+                    "原始提示词 {}",
+                    chrono::Local::now().format("%Y-%m-%d %H:%M")
+                ),
+                content: content.clone(),
+                description: Some("自动备份的原始提示词".to_string()),
+                enabled: false,
+                created_at: Some(timestamp),
+                updated_at: Some(timestamp),
+            };
+            state.db.save_prompt(AppType::OhMyPi.as_str(), &backup)?;
+        }
+    }
+
+    guard.replace(&snapshot.revision, &target.content)
+}
+
+fn delete_ohmypi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
+    let guard = OhMyPiAgentsFileGuard::acquire()?;
+    let prompts = state.db.get_prompts(AppType::OhMyPi.as_str())?;
+    let snapshot = guard.read()?;
+    if ohmypi_active_prompt_id(&prompts, snapshot.content.as_deref()).as_deref() == Some(id) {
+        return Err(AppError::InvalidInput("无法删除已启用的提示词".to_string()));
+    }
+    state.db.delete_prompt(AppType::OhMyPi.as_str(), id)?;
     Ok(())
 }
 
@@ -723,5 +892,231 @@ mod pi_prompt_tests {
         prompts.insert(second.id.clone(), second);
 
         assert_eq!(unique_pi_backup_id(&prompts, 42), "backup-42-3");
+    }
+}
+
+#[cfg(test)]
+mod ohmypi_prompt_tests {
+    use super::*;
+    use crate::database::Database;
+    use crate::ohmypi_config::test_support::TestAgentDir;
+    use serial_test::serial;
+    use std::sync::Arc;
+
+    fn prompt(enabled: bool) -> Prompt {
+        Prompt {
+            id: "test-prompt".to_string(),
+            name: "Test prompt".to_string(),
+            content: "managed content".to_string(),
+            description: None,
+            enabled,
+            created_at: Some(1),
+            updated_at: Some(1),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn ohmypi_active_prompt_is_derived_from_agents_file() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &prompt(true))
+            .expect("save prompt");
+
+        let saved = PromptService::get_prompts(&state, AppType::OhMyPi).expect("load prompts");
+        assert!(!saved["test-prompt"].enabled);
+
+        let path = prompt_file_path(&AppType::OhMyPi).expect("prompt path");
+        write_text_file(&path, "managed content").expect("write AGENTS.md");
+        let active = PromptService::get_prompts(&state, AppType::OhMyPi).expect("load prompts");
+        assert!(active["test-prompt"].enabled);
+
+        write_text_file(&path, "external edit").expect("edit AGENTS.md externally");
+        let drifted = PromptService::get_prompts(&state, AppType::OhMyPi).expect("load prompts");
+        assert!(!drifted["test-prompt"].enabled);
+        assert!(
+            PromptService::upsert_prompt(&state, AppType::OhMyPi, "test-prompt", prompt(true),)
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read AGENTS.md"),
+            "external edit"
+        );
+
+        write_text_file(&path, "managed content").expect("restore AGENTS.md");
+        PromptService::upsert_prompt(&state, AppType::OhMyPi, "test-prompt", prompt(false))
+            .expect("disable prompt");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn generic_prompt_projection_does_not_rewrite_ohmypi_agents_file() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &prompt(false))
+            .expect("save Oh My Pi prompt");
+
+        let path = prompt_file_path(&AppType::OhMyPi).expect("prompt path");
+        write_text_file(&path, "native instructions").expect("write AGENTS.md");
+
+        PromptService::sync_to_live(&state, AppType::OhMyPi).expect("sync prompts");
+
+        assert_eq!(
+            std::fs::read_to_string(path).expect("read AGENTS.md"),
+            "native instructions"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn editing_an_inactive_duplicate_ohmypi_prompt_preserves_agents_file() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let first = prompt(false);
+        let mut duplicate = first.clone();
+        duplicate.id = "duplicate-prompt".to_string();
+        duplicate.name = "Duplicate prompt".to_string();
+        duplicate.created_at = Some(2);
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &first)
+            .expect("save first prompt");
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &duplicate)
+            .expect("save duplicate prompt");
+        let path = prompt_file_path(&AppType::OhMyPi).expect("prompt path");
+        write_text_file(&path, "managed content").expect("write AGENTS.md");
+
+        let hydrated = PromptService::get_prompts(&state, AppType::OhMyPi).expect("load prompts");
+        assert!(hydrated["test-prompt"].enabled);
+        assert!(!hydrated["duplicate-prompt"].enabled);
+
+        duplicate.content = "edited duplicate".to_string();
+        PromptService::upsert_prompt(&state, AppType::OhMyPi, "duplicate-prompt", duplicate)
+            .expect("edit inactive duplicate");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read AGENTS.md"),
+            "managed content"
+        );
+        let refreshed =
+            PromptService::get_prompts(&state, AppType::OhMyPi).expect("reload prompts");
+        assert!(refreshed["test-prompt"].enabled);
+        assert!(!refreshed["duplicate-prompt"].enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn failed_ohmypi_native_update_restores_the_previous_database_prompt() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let previous = prompt(false);
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &previous)
+            .expect("save previous prompt");
+        let mut edited = previous.clone();
+        edited.content = "edited content".to_string();
+
+        let result = persist_ohmypi_prompt_with_native_update(
+            &state,
+            &edited.id,
+            &edited,
+            Some(&previous),
+            || Err(AppError::Message("native write failed".to_string())),
+        );
+
+        assert!(result.is_err());
+        let saved = state
+            .db
+            .get_prompts(AppType::OhMyPi.as_str())
+            .expect("reload prompts");
+        assert_eq!(saved["test-prompt"].content, "managed content");
+    }
+
+    #[test]
+    fn ohmypi_backup_ids_do_not_replace_an_existing_same_second_backup() {
+        let mut prompts = IndexMap::new();
+        let mut first = prompt(false);
+        first.id = "backup-42".to_string();
+        prompts.insert(first.id.clone(), first);
+        let mut second = prompt(false);
+        second.id = "backup-42-2".to_string();
+        prompts.insert(second.id.clone(), second);
+
+        assert_eq!(unique_ohmypi_backup_id(&prompts, 42), "backup-42-3");
+    }
+
+    #[test]
+    #[serial]
+    fn enabling_ohmypi_prompt_backs_up_prior_live_content() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let target = prompt(false);
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &target)
+            .expect("save target prompt");
+
+        let path = prompt_file_path(&AppType::OhMyPi).expect("prompt path");
+        write_text_file(&path, "prior live content").expect("write prior AGENTS.md");
+
+        PromptService::enable_prompt(&state, AppType::OhMyPi, "test-prompt")
+            .expect("enable prompt");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read AGENTS.md"),
+            "managed content"
+        );
+
+        let prompts = state
+            .db
+            .get_prompts(AppType::OhMyPi.as_str())
+            .expect("reload prompts");
+        let backup = prompts
+            .values()
+            .find(|p| p.content == "prior live content")
+            .expect("backup row exists with prior live content");
+        assert!(!backup.enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn deleting_active_ohmypi_prompt_is_rejected() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        state
+            .db
+            .save_prompt(AppType::OhMyPi.as_str(), &prompt(false))
+            .expect("save prompt");
+
+        let path = prompt_file_path(&AppType::OhMyPi).expect("prompt path");
+        write_text_file(&path, "managed content").expect("write AGENTS.md");
+
+        let result = PromptService::delete_prompt(&state, AppType::OhMyPi, "test-prompt");
+        assert!(result.is_err());
+        assert!(state
+            .db
+            .get_prompts(AppType::OhMyPi.as_str())
+            .expect("reload prompts")
+            .contains_key("test-prompt"));
     }
 }

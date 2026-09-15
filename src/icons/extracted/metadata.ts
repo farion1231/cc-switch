@@ -494,6 +494,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  ohmypi: {
+    name: "ohmypi",
+    displayName: "Oh My Pi",
+    category: "ai-provider",
+    keywords: ["ohmypi", "oh my pi", "omp", "pi"],
+    defaultColor: "#9b4dff",
+  },
   ollama: {
     name: "ollama",
     displayName: "ollama",

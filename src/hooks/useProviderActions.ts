@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import {
   piApi,
+  ohmypiApi,
   providersApi,
   settingsApi,
   openclawApi,
@@ -388,9 +389,10 @@ export function useProviderActions(
             usage_script: script,
           },
         };
-
         if (activeApp === "pi") {
           await piApi.updateProviderUsageScript(provider.id, script);
+        } else if (activeApp === "ohmypi") {
+          await ohmypiApi.updateProviderUsageScript(provider.id, script);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }

@@ -10,12 +10,14 @@
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
+//! - `ohmypi` - OhMyPi MCP 同步和导入
 
 mod claude;
 mod codex;
 mod gemini;
 mod grokbuild;
 mod hermes;
+mod ohmypi;
 mod opencode;
 mod validation;
 
@@ -35,6 +37,7 @@ pub use grokbuild::{
     import_from_grokbuild, remove_server_from_grokbuild, sync_single_server_to_grokbuild,
 };
 pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
+pub use ohmypi::{import_from_ohmypi, remove_server_from_ohmypi, sync_single_server_to_ohmypi};
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };

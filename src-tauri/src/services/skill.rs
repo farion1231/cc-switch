@@ -608,6 +608,9 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::OhMyPi => {
+                return Ok(crate::ohmypi_config::get_ohmypi_agent_dir()?.join("skills"));
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -625,6 +628,7 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::OhMyPi => crate::ohmypi_config::get_ohmypi_agent_dir()?.join("skills"),
         })
     }
 
@@ -698,6 +702,8 @@ impl SkillService {
         let mut skills = db.get_all_installed_skills()?;
         for skill in skills.values_mut() {
             skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
+            skill.apps.ohmypi =
+                Self::skill_exists_in_app(&skill.directory, &AppType::OhMyPi) || skill.apps.ohmypi;
         }
         Ok(skills.into_values().collect())
     }
@@ -2005,9 +2011,10 @@ impl SkillService {
             let skill_md = dest.join("SKILL.md");
             let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
 
-            // 其他应用保存用户选择；Pi 的 exists=active 必须直接来自原生目录。
+            // 其他应用保存用户选择；Pi/OhMyPi 的 exists=active 必须直接来自原生目录。
             let mut apps = selection.apps;
             apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
+            apps.ohmypi = Self::skill_exists_in_app(&dir_name, &AppType::OhMyPi) || apps.ohmypi;
 
             // 从 lock 文件提取仓库信息
             let (id, repo_owner, repo_name, repo_branch, readme_url) =
@@ -4829,6 +4836,51 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn ohmypi_skill_state_is_derived_from_native_directory_presence() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _omp_dir = crate::ohmypi_config::test_support::TestAgentDir::new();
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+        // DB 标志保持权威：enabled_ohmypi=true 且无原生目录时仍应视为启用
+        let mut managed = poisoned_skill("owner/repo:skill", "managed-skill");
+        managed.apps.ohmypi = true;
+        db.save_skill(&managed).expect("save skill");
+
+        // omp 自身安装的技能没有 DB 记录（enabled_ohmypi=false），目录存在即启用
+        let native = poisoned_skill("owner/repo:native", "native-skill");
+        db.save_skill(&native).expect("save skill");
+        write_skill(
+            &SkillService::get_app_skills_dir(&AppType::OhMyPi)
+                .unwrap()
+                .join("native-skill"),
+            "native",
+        );
+
+        // 无 DB 记录也无原生目录的技能不得被误启用
+        let absent = poisoned_skill("owner/repo:absent", "absent-skill");
+        db.save_skill(&absent).expect("save skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("read skills");
+        let state = |directory: &str| {
+            installed
+                .iter()
+                .find(|s| s.directory == directory)
+                .expect("skill present")
+                .apps
+                .ohmypi
+        };
+        assert!(state("managed-skill"), "a DB flag must stay authoritative");
+        assert!(state("native-skill"), "disk presence must activate OhMyPi");
+        assert!(
+            !state("absent-skill"),
+            "no DB flag and no native presence must stay disabled"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn pi_skill_toggle_preserves_a_same_name_external_directory() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
@@ -4974,6 +5026,32 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert!(imported[0].apps.pi);
         assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.pi);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn importing_a_native_omp_skill_returns_its_derived_active_state() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _omp_dir = crate::ohmypi_config::test_support::TestAgentDir::new();
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let omp_skill = SkillService::get_app_skills_dir(&AppType::OhMyPi)
+            .unwrap()
+            .join("native-skill");
+        write_skill(&omp_skill, "native");
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "native-skill".to_string(),
+                apps: SkillApps::default(),
+            }],
+        )
+        .expect("import native OhMyPi skill");
+
+        assert_eq!(imported.len(), 1);
+        assert!(imported[0].apps.ohmypi);
+        assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.ohmypi);
     }
 
     #[test]

@@ -4,6 +4,7 @@ import { type AppId } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import PiPromptPanel, { type PromptPrimaryAction } from "./PiPromptPanel";
+import OhMyPiPromptPanel from "./OhMyPiPromptPanel";
 import PromptFormPanel from "./PromptFormPanel";
 import { PromptLibrary } from "./PromptLibrary";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -314,6 +315,18 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     if (props.appId === "pi") {
       return (
         <PiPromptPanel
+          ref={ref}
+          open={props.open}
+          onInteractionBlockedChange={props.onInteractionBlockedChange}
+          onNavigationBlockedChange={props.onNavigationBlockedChange}
+          onPrimaryActionChange={props.onPrimaryActionChange}
+        />
+      );
+    }
+
+    if (props.appId === "ohmypi") {
+      return (
+        <OhMyPiPromptPanel
           ref={ref}
           open={props.open}
           onInteractionBlockedChange={props.onInteractionBlockedChange}

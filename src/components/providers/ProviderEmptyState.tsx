@@ -15,7 +15,7 @@ export function ProviderEmptyState({
   onImport,
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
-  const isPi = appId === "pi";
+  const isPi = appId === "pi" || appId === "ohmypi";
   const showSnippetHint =
     appId === "claude" || appId === "codex" || appId === "gemini";
 
