@@ -1,5 +1,6 @@
 //! OpenAI Chat Completions SSE → OpenAI Responses SSE conversion.
 
+use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
         extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
@@ -74,10 +75,13 @@ struct ChatToResponsesState {
     reasoning: ReasoningItemState,
     inline_think: InlineThinkState,
     tools: BTreeMap<usize, ToolCallState>,
+    next_tool_index_to_add: usize,
     output_items: Vec<(u32, Value)>,
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
     tool_context: CodexToolContext,
+    /// 本回合因缺少合法函数名而被丢弃的工具调用数（见 `finalize_tools`）。
+    dropped_tool_calls: usize,
 }
 
 impl Default for ChatToResponsesState {
@@ -93,10 +97,12 @@ impl Default for ChatToResponsesState {
             reasoning: ReasoningItemState::default(),
             inline_think: InlineThinkState::default(),
             tools: BTreeMap::new(),
+            next_tool_index_to_add: 0,
             output_items: Vec::new(),
             latest_usage: None,
             finish_reason: None,
             tool_context: CodexToolContext::default(),
+            dropped_tool_calls: 0,
         }
     }
 }
@@ -141,6 +147,7 @@ impl ChatToResponsesState {
         if let Some(delta) = choice.get("delta") {
             if let Some(reasoning) = chat_delta_reasoning_text(delta) {
                 events.extend(self.push_reasoning_delta(&reasoning));
+                self.append_reasoning_to_active_tools(&reasoning);
             }
 
             if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
@@ -269,20 +276,8 @@ impl ChatToResponsesState {
         let response = self.base_response("in_progress", Vec::new());
 
         vec![
-            sse_event(
-                "response.created",
-                json!({
-                    "type": "response.created",
-                    "response": response
-                }),
-            ),
-            sse_event(
-                "response.in_progress",
-                json!({
-                    "type": "response.in_progress",
-                    "response": self.base_response("in_progress", Vec::new())
-                }),
-            ),
+            sse::response_created(&response),
+            sse::response_in_progress(&response),
         ]
     }
 
@@ -296,45 +291,16 @@ impl ChatToResponsesState {
             self.reasoning.item_id = item_id.clone();
             self.reasoning.added = true;
 
-            events.push(sse_event(
-                "response.output_item.added",
-                json!({
-                    "type": "response.output_item.added",
-                    "output_index": output_index,
-                    "item": {
-                        "id": item_id,
-                        "type": "reasoning",
-                        "status": "in_progress",
-                        "summary": []
-                    }
-                }),
-            ));
-            events.push(sse_event(
-                "response.reasoning_summary_part.added",
-                json!({
-                    "type": "response.reasoning_summary_part.added",
-                    "item_id": self.reasoning.item_id,
-                    "output_index": output_index,
-                    "summary_index": 0,
-                    "part": {
-                        "type": "summary_text",
-                        "text": ""
-                    }
-                }),
-            ));
+            events.push(sse::reasoning_item_added(output_index, &item_id));
+            events.push(sse::reasoning_summary_part_added(output_index, &item_id));
         }
 
         self.reasoning.text.push_str(delta);
         let output_index = self.reasoning.output_index.unwrap_or(0);
-        events.push(sse_event(
-            "response.reasoning_summary_text.delta",
-            json!({
-                "type": "response.reasoning_summary_text.delta",
-                "item_id": self.reasoning.item_id,
-                "output_index": output_index,
-                "summary_index": 0,
-                "delta": delta
-            }),
+        events.push(sse::reasoning_summary_text_delta(
+            output_index,
+            &self.reasoning.item_id,
+            delta,
         ));
 
         events
@@ -350,47 +316,16 @@ impl ChatToResponsesState {
             self.text.item_id = item_id.clone();
             self.text.added = true;
 
-            events.push(sse_event(
-                "response.output_item.added",
-                json!({
-                    "type": "response.output_item.added",
-                    "output_index": output_index,
-                    "item": {
-                        "id": item_id,
-                        "type": "message",
-                        "status": "in_progress",
-                        "role": "assistant",
-                        "content": []
-                    }
-                }),
-            ));
-            events.push(sse_event(
-                "response.content_part.added",
-                json!({
-                    "type": "response.content_part.added",
-                    "item_id": self.text.item_id,
-                    "output_index": output_index,
-                    "content_index": 0,
-                    "part": {
-                        "type": "output_text",
-                        "text": "",
-                        "annotations": []
-                    }
-                }),
-            ));
+            events.push(sse::message_item_added(output_index, &item_id));
+            events.push(sse::message_content_part_added(output_index, &item_id));
         }
 
         self.text.text.push_str(delta);
         let output_index = self.text.output_index.unwrap_or(0);
-        events.push(sse_event(
-            "response.output_text.delta",
-            json!({
-                "type": "response.output_text.delta",
-                "item_id": self.text.item_id,
-                "output_index": output_index,
-                "content_index": 0,
-                "delta": delta
-            }),
+        events.push(sse::output_text_delta(
+            output_index,
+            &self.text.item_id,
+            delta,
         ));
 
         events
@@ -400,8 +335,43 @@ impl ChatToResponsesState {
         (!self.reasoning.text.trim().is_empty()).then(|| self.reasoning.text.trim().to_string())
     }
 
+    /// 上游未下发 `index` 时的 key 解析。
+    ///
+    /// `index` 在 OpenAI Chat Completions 协议里是必填字段，但部分第三方网关会省略。
+    /// 缺了它就无法从帧结构上区分「同一调用的 arguments 续帧」和「一个新调用」，
+    /// 所以这里只在**能确证是新调用**时才分配新 key：delta 带非空 `id`，且该 id 与
+    /// 所有已知调用都不同。其余情况一律归入最后一个已知 key（空 map 时为 0），保持
+    /// 既有行为——宁可两个并行调用坍缩成一个，也不能把一个调用的续帧炸成多个 item。
+    fn resolve_tool_key_without_index(&self, tool_call: &Value) -> usize {
+        let last_key = self.tools.keys().next_back().copied();
+
+        let Some(id) = tool_call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty())
+        else {
+            return last_key.unwrap_or(0);
+        };
+
+        if let Some((key, _)) = self.tools.iter().find(|(_, state)| state.call_id == id) {
+            return *key;
+        }
+
+        // 上游可以先发一个显式 `index: usize::MAX` 再发无 index 的新 id。这段代码
+        // 存在的理由就是应付畸形上游，所以不能用裸 `+1`（debug 下 panic、release 下
+        // 回绕到 0 覆盖已有调用）。溢出时退回并入最后一个已知调用，与本函数
+        // "宁可坍缩也不炸开" 的取向一致。
+        match last_key {
+            Some(key) => key.checked_add(1).unwrap_or(key),
+            None => 0,
+        }
+    }
+
     fn push_tool_call_delta(&mut self, tool_call: &Value, reasoning: Option<&str>) -> Vec<Bytes> {
-        let chat_index = tool_call.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let chat_index = match tool_call.get("index").and_then(|v| v.as_u64()) {
+            Some(index) => index as usize,
+            None => self.resolve_tool_key_without_index(tool_call),
+        };
         let id_delta = tool_call
             .get("id")
             .and_then(|v| v.as_str())
@@ -417,19 +387,21 @@ impl ChatToResponsesState {
             .unwrap_or("")
             .to_string();
 
-        let mut should_add = false;
         let mut output_index = None;
         let mut item_id = String::new();
-        let mut pending_arguments = String::new();
         let current_name: String;
 
         {
             let state = self.tools.entry(chat_index).or_default();
-            if let Some(id) = id_delta {
-                state.call_id = id;
+            if let Some(ref id) = id_delta {
+                if !id.is_empty() {
+                    state.call_id.clone_from(id);
+                }
             }
-            if let Some(name) = name_delta {
-                state.name = name;
+            if let Some(ref name) = name_delta {
+                if !name.is_empty() {
+                    state.name.clone_from(name);
+                }
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
@@ -441,10 +413,7 @@ impl ChatToResponsesState {
                 }
             }
 
-            if !state.added && (!state.call_id.is_empty() || !state.name.is_empty()) {
-                should_add = true;
-                pending_arguments = state.arguments.clone();
-            } else if state.added {
+            if state.added {
                 output_index = state.output_index;
                 item_id = state.item_id.clone();
             }
@@ -454,29 +423,51 @@ impl ChatToResponsesState {
         let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&current_name);
         let mut events = Vec::new();
 
-        if should_add {
+        if !args_delta.is_empty() && !is_custom_tool {
+            if let Some(output_index) = output_index {
+                events.push(sse::function_call_arguments_delta(
+                    output_index,
+                    &item_id,
+                    &args_delta,
+                ));
+            }
+        }
+
+        events.extend(self.flush_ready_tool_calls());
+
+        events
+    }
+
+    fn flush_ready_tool_calls(&mut self) -> Vec<Bytes> {
+        // Release consecutive Chat indexes so late identity fragments cannot reorder calls.
+        let mut events = Vec::new();
+        loop {
+            let key = self.next_tool_index_to_add;
+            let Some(state) = self.tools.get(&key) else {
+                break;
+            };
+            if state.added || state.done {
+                self.next_tool_index_to_add += 1;
+                continue;
+            }
+            if state.call_id.is_empty() || state.name.is_empty() {
+                break;
+            }
+
             let assigned = self.next_output_index();
-            let Some(state) = self.tools.get_mut(&chat_index) else {
-                return events;
+            let Some(state) = self.tools.get_mut(&key) else {
+                continue;
             };
             state.added = true;
-            if state.call_id.is_empty() {
-                state.call_id = format!("call_{chat_index}");
-            }
-            if state.name.is_empty() {
-                state.name = "unknown_tool".to_string();
-            }
             state.output_index = Some(assigned);
-            let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
             state.item_id = response_tool_call_item_id_from_chat_name(
                 &state.call_id,
                 &state.name,
                 &self.tool_context,
             );
-            item_id = state.item_id.clone();
 
             let item = response_tool_call_item_from_chat_name(
-                &item_id,
+                &state.item_id,
                 "in_progress",
                 &state.call_id,
                 &state.name,
@@ -485,41 +476,59 @@ impl ChatToResponsesState {
                 &self.tool_context,
             );
 
-            events.push(sse_event(
-                "response.output_item.added",
-                json!({
-                    "type": "response.output_item.added",
-                    "output_index": assigned,
-                    "item": item
-                }),
-            ));
+            events.push(sse::output_item_added(assigned, &item));
 
-            if !pending_arguments.is_empty() && !is_custom_tool {
-                events.push(sse_event(
-                    "response.function_call_arguments.delta",
-                    json!({
-                        "type": "response.function_call_arguments.delta",
-                        "item_id": state.item_id,
-                        "output_index": assigned,
-                        "delta": pending_arguments
-                    }),
+            if !state.arguments.is_empty()
+                && !self.tool_context.is_custom_tool_chat_name(&state.name)
+            {
+                events.push(sse::function_call_arguments_delta(
+                    assigned,
+                    &state.item_id,
+                    &state.arguments,
                 ));
             }
-        } else if !args_delta.is_empty() && !is_custom_tool {
-            if let Some(output_index) = output_index {
-                events.push(sse_event(
-                    "response.function_call_arguments.delta",
-                    json!({
-                        "type": "response.function_call_arguments.delta",
-                        "item_id": item_id,
-                        "output_index": output_index,
-                        "delta": args_delta
-                    }),
-                ));
-            }
+            self.next_tool_index_to_add += 1;
         }
 
         events
+    }
+
+    fn append_reasoning_to_active_tools(&mut self, delta: &str) {
+        if delta.trim().is_empty() {
+            return;
+        }
+
+        for state in self.tools.values_mut().filter(|state| !state.done) {
+            if state.reasoning_content.is_empty() {
+                state.reasoning_content = delta.trim_start().to_string();
+            } else {
+                state.reasoning_content.push_str(delta);
+            }
+        }
+    }
+
+    fn has_substantive_output(&self) -> bool {
+        !self.text.text.trim().is_empty()
+            || !self.reasoning.text.trim().is_empty()
+            || !self.inline_think.buffer.trim().is_empty()
+            || !self.output_items.is_empty()
+            || self.tools.values().any(|state| {
+                state.added
+                    || !state.call_id.trim().is_empty()
+                    || !state.name.trim().is_empty()
+                    || !state.arguments.trim().is_empty()
+                    || !state.reasoning_content.trim().is_empty()
+            })
+    }
+
+    /// 本回合最终产出里是否至少有一个可被 Codex 识别的工具调用 item。
+    fn has_emitted_tool_call(&self) -> bool {
+        self.output_items.iter().any(|(_, item)| {
+            matches!(
+                item.get("type").and_then(|v| v.as_str()),
+                Some("function_call" | "custom_tool_call" | "tool_search_call")
+            )
+        })
     }
 
     fn finalize(&mut self) -> Vec<Bytes> {
@@ -534,18 +543,33 @@ impl ChatToResponsesState {
         events.extend(self.finalize_tools());
 
         let status = response_status_from_finish_reason(self.finish_reason.as_deref());
+
+        // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
+        // "status=completed 但 output 里没有任何工具调用" 的回合，agent loop 必然
+        // 静默收尾——这正是 #4341「答一句就停、零报错」的形态。此时如实报错，
+        // 而不是谎报成功。只要还剩下任何一个合法工具调用，Codex 本来就会继续，
+        // 判据不成立，行为保持不变。
+        //
+        // 🔴 只对本应 `completed` 的回合生效：`finish_reason=length`（含流提前断开后
+        // 合成的 length）有自己正当的终止解释，工具调用没拿到 name 是截断的后果而非
+        // 上游发了畸形数据——报成 tool_call_dropped 会给出错误的归因，而本修复的全部
+        // 意义就在于诊断信息的准确性。
+        if status == "completed" && self.dropped_tool_calls > 0 && !self.has_emitted_tool_call() {
+            let dropped = self.dropped_tool_calls;
+            let message = format!(
+                "Upstream returned {dropped} tool call(s) without a function name, \
+                 leaving no usable tool call in this turn"
+            );
+            events.push(self.failed_event(message, Some("upstream_tool_call_dropped".to_string())));
+            return events;
+        }
+
         let mut response = self.base_response(status, self.completed_output_items());
         if status == "incomplete" {
             response["incomplete_details"] = json!({ "reason": "max_output_tokens" });
         }
 
-        events.push(sse_event(
-            "response.completed",
-            json!({
-                "type": "response.completed",
-                "response": response
-            }),
-        ));
+        events.push(sse::response_completed(&response));
         self.completed = true;
         events
     }
@@ -558,50 +582,10 @@ impl ChatToResponsesState {
         let output_index = self.reasoning.output_index.unwrap_or(0);
         let item_id = self.reasoning.item_id.clone();
         let text = self.reasoning.text.clone();
-        let item = json!({
-            "id": item_id,
-            "type": "reasoning",
-            "summary": [{
-                "type": "summary_text",
-                "text": text
-            }]
-        });
-        self.output_items.push((output_index, item.clone()));
+        let (events, item) = sse::reasoning_close(output_index, &item_id, &text);
+        self.output_items.push((output_index, item));
         self.reasoning.done = true;
-
-        vec![
-            sse_event(
-                "response.reasoning_summary_text.done",
-                json!({
-                    "type": "response.reasoning_summary_text.done",
-                    "item_id": self.reasoning.item_id,
-                    "output_index": output_index,
-                    "summary_index": 0,
-                    "text": self.reasoning.text
-                }),
-            ),
-            sse_event(
-                "response.reasoning_summary_part.done",
-                json!({
-                    "type": "response.reasoning_summary_part.done",
-                    "item_id": self.reasoning.item_id,
-                    "output_index": output_index,
-                    "summary_index": 0,
-                    "part": {
-                        "type": "summary_text",
-                        "text": self.reasoning.text
-                    }
-                }),
-            ),
-            sse_event(
-                "response.output_item.done",
-                json!({
-                    "type": "response.output_item.done",
-                    "output_index": output_index,
-                    "item": item
-                }),
-            ),
-        ]
+        events
     }
 
     fn finalize_text(&mut self) -> Vec<Bytes> {
@@ -610,54 +594,12 @@ impl ChatToResponsesState {
         }
 
         let output_index = self.text.output_index.unwrap_or(0);
-        let item = json!({
-            "id": self.text.item_id,
-            "type": "message",
-            "status": "completed",
-            "role": "assistant",
-            "content": [{
-                "type": "output_text",
-                "text": self.text.text,
-                "annotations": []
-            }]
-        });
-        self.output_items.push((output_index, item.clone()));
+        let item_id = self.text.item_id.clone();
+        let text = self.text.text.clone();
+        let (events, item) = sse::message_close(output_index, &item_id, &text);
+        self.output_items.push((output_index, item));
         self.text.done = true;
-
-        vec![
-            sse_event(
-                "response.output_text.done",
-                json!({
-                    "type": "response.output_text.done",
-                    "item_id": self.text.item_id,
-                    "output_index": output_index,
-                    "content_index": 0,
-                    "text": self.text.text
-                }),
-            ),
-            sse_event(
-                "response.content_part.done",
-                json!({
-                    "type": "response.content_part.done",
-                    "item_id": self.text.item_id,
-                    "output_index": output_index,
-                    "content_index": 0,
-                    "part": {
-                        "type": "output_text",
-                        "text": self.text.text,
-                        "annotations": []
-                    }
-                }),
-            ),
-            sse_event(
-                "response.output_item.done",
-                json!({
-                    "type": "response.output_item.done",
-                    "output_index": output_index,
-                    "item": item
-                }),
-            ),
-        ]
+        events
     }
 
     fn finalize_tools(&mut self) -> Vec<Bytes> {
@@ -667,6 +609,40 @@ impl ChatToResponsesState {
         for key in keys {
             let mut add_event: Option<Bytes> = None;
             if self.tools.get(&key).map(|state| state.done).unwrap_or(true) {
+                continue;
+            }
+
+            // Skip tool calls with missing names (defensive: some models generate
+            // tool call deltas without providing a valid function name)
+            // 纯空白名同样对应不到任何已发布工具，必须与空名同等对待——否则它会
+            // 伪装成"本回合还有工具调用"，绕过下面 finalize 里的失败判据。
+            let has_bad_name = self
+                .tools
+                .get(&key)
+                .map(|state| state.name.trim().is_empty())
+                .unwrap_or(true);
+            if has_bad_name {
+                let (call_id_empty, args_bytes) = self
+                    .tools
+                    .get(&key)
+                    .map(|state| (state.call_id.is_empty(), state.arguments.len()))
+                    .unwrap_or((true, 0));
+                if let Some(state) = self.tools.get_mut(&key) {
+                    state.done = true;
+                }
+                self.dropped_tool_calls += 1;
+                // 只记结构信息：arguments 内容可能包含用户代码，且前端日志出口是
+                // allowlist 脱敏，新字段不进白名单就不会被处理，因此只输出字节数。
+                log::warn!(
+                    "[Codex] dropped streaming tool call: model={} chat_index={} \
+                     call_id_empty={} args_bytes={} finish_reason={} tools_total={}",
+                    self.model,
+                    key,
+                    call_id_empty,
+                    args_bytes,
+                    self.finish_reason.as_deref().unwrap_or("<none>"),
+                    self.tools.len()
+                );
                 continue;
             }
 
@@ -684,9 +660,6 @@ impl ChatToResponsesState {
                 if state.call_id.is_empty() {
                     state.call_id = format!("call_{key}");
                 }
-                if state.name.is_empty() {
-                    state.name = "unknown_tool".to_string();
-                }
                 state.output_index = Some(assigned);
                 state.item_id = response_tool_call_item_id_from_chat_name(
                     &state.call_id,
@@ -702,14 +675,7 @@ impl ChatToResponsesState {
                     Some(&state.reasoning_content),
                     &self.tool_context,
                 );
-                add_event = Some(sse_event(
-                    "response.output_item.added",
-                    json!({
-                        "type": "response.output_item.added",
-                        "output_index": assigned,
-                        "item": item
-                    }),
-                ));
+                add_event = Some(sse::output_item_added(assigned, &item));
             }
 
             if let Some(event) = add_event {
@@ -737,44 +703,25 @@ impl ChatToResponsesState {
             if is_custom_tool {
                 let input = custom_tool_input_from_chat_arguments(&arguments);
                 if !input.is_empty() {
-                    events.push(sse_event(
-                        "response.custom_tool_call_input.delta",
-                        json!({
-                            "type": "response.custom_tool_call_input.delta",
-                            "item_id": state.item_id,
-                            "output_index": output_index,
-                            "delta": input.clone()
-                        }),
+                    events.push(sse::custom_tool_call_input_delta(
+                        output_index,
+                        &state.item_id,
+                        &input,
                     ));
                 }
-                events.push(sse_event(
-                    "response.custom_tool_call_input.done",
-                    json!({
-                        "type": "response.custom_tool_call_input.done",
-                        "item_id": state.item_id,
-                        "output_index": output_index,
-                        "input": input
-                    }),
+                events.push(sse::custom_tool_call_input_done(
+                    output_index,
+                    &state.item_id,
+                    &input,
                 ));
             } else {
-                events.push(sse_event(
-                    "response.function_call_arguments.done",
-                    json!({
-                        "type": "response.function_call_arguments.done",
-                        "item_id": state.item_id,
-                        "output_index": output_index,
-                        "arguments": arguments
-                    }),
+                events.push(sse::function_call_arguments_done(
+                    output_index,
+                    &state.item_id,
+                    &arguments,
                 ));
             }
-            events.push(sse_event(
-                "response.output_item.done",
-                json!({
-                    "type": "response.output_item.done",
-                    "output_index": output_index,
-                    "item": item
-                }),
-            ));
+            events.push(sse::output_item_done(output_index, &item));
         }
 
         events
@@ -797,13 +744,10 @@ impl ChatToResponsesState {
             "status": status,
             "model": self.model,
             "output": output,
-            "usage": self.latest_usage.clone().unwrap_or_else(|| {
-                json!({
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0
-                })
-            })
+            "usage": self
+                .latest_usage
+                .clone()
+                .unwrap_or_else(|| chat_usage_to_responses_usage(None))
         })
     }
 
@@ -823,13 +767,7 @@ impl ChatToResponsesState {
         let mut response = self.base_response("failed", self.completed_output_items());
         response["error"] = error;
 
-        sse_event(
-            "response.failed",
-            json!({
-                "type": "response.failed",
-                "response": response
-            }),
-        )
+        sse::response_failed(&response)
     }
 }
 
@@ -948,8 +886,20 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         }
 
         if !stream_failed {
-            for event in state.finalize() {
-                yield Ok(event);
+            if state.completed || state.finish_reason.is_some() {
+                for event in state.finalize() {
+                    yield Ok(event);
+                }
+            } else if state.has_substantive_output() {
+                state.finish_reason = Some("length".to_string());
+                for event in state.finalize() {
+                    yield Ok(event);
+                }
+            } else {
+                yield Ok(state.failed_event(
+                    "Upstream Chat Completions stream ended before sending finish_reason".to_string(),
+                    Some("stream_truncated".to_string()),
+                ));
             }
         }
     }
@@ -977,13 +927,6 @@ fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
     (message, error_type)
 }
 
-fn sse_event(event: &str, data: Value) -> Bytes {
-    Bytes::from(format!(
-        "event: {event}\ndata: {}\n\n",
-        serde_json::to_string(&data).unwrap_or_default()
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,20 +947,40 @@ mod tests {
         String::from_utf8(bytes.concat()).unwrap()
     }
 
+    fn parse_sse_events(output: &str) -> Vec<Value> {
+        output
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                serde_json::from_str(data).ok()
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn converts_text_chat_sse_to_responses_sse() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6,\"prompt_tokens_details\":{\"cached_tokens\":0},\"cache_read_input_tokens\":2}}\n\n",
             "data: [DONE]\n\n",
         ])
         .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
 
         assert!(output.contains("event: response.created"));
         assert!(output.contains("event: response.output_text.delta"));
         assert!(output.contains("\"text\":\"Hello\""));
         assert!(output.contains("event: response.completed"));
         assert!(output.contains("\"input_tokens\":4"));
+        assert_eq!(
+            completed["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            2
+        );
+        assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
     }
 
     #[tokio::test]
@@ -1077,6 +1040,257 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preserves_tool_identity_across_empty_continuation_deltas() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_dashscope\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_dashscope\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_dashscope\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"\\\"cmd\\\":\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.done")
+            .unwrap();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        assert_eq!(added.len(), 1);
+        for item in [&done["item"], &completed["response"]["output"][0]] {
+            assert_eq!(item["type"], "function_call");
+            assert_eq!(item["name"], "exec_command");
+            assert_eq!(item["call_id"], "call_dashscope");
+            assert_eq!(item["arguments"], r#"{"cmd":"date"}"#);
+        }
+        assert!(!output.contains(r#""name":"""#));
+        assert!(!output.contains(r#""call_id":"""#));
+    }
+
+    #[tokio::test]
+    async fn preserves_parallel_tool_order_when_earlier_name_arrives_late() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parallel\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_first\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"{\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parallel\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_second\",\"type\":\"function\",\"function\":{\"name\":\"second_tool\",\"arguments\":\"{\\\"value\\\":2}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parallel\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"first_tool\",\"arguments\":\"\\\"value\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(added.len(), 2);
+        assert_eq!(added[0]["output_index"], 0);
+        assert_eq!(added[0]["item"]["name"], "first_tool");
+        assert_eq!(added[1]["output_index"], 1);
+        assert_eq!(added[1]["item"]["name"], "second_tool");
+        assert_eq!(items[0]["name"], "first_tool");
+        assert_eq!(items[0]["call_id"], "call_first");
+        assert_eq!(items[0]["arguments"], r#"{"value":1}"#);
+        assert_eq!(items[1]["name"], "second_tool");
+        assert_eq!(items[1]["call_id"], "call_second");
+        assert_eq!(items[1]["arguments"], r#"{"value":2}"#);
+    }
+
+    #[tokio::test]
+    async fn finalization_keeps_valid_call_after_unnamed_earlier_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_missing\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_valid\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "exec_command");
+        assert_eq!(items[0]["call_id"], "call_valid");
+        assert_eq!(items[0]["arguments"], r#"{"cmd":"date"}"#);
+        assert!(!output.contains("call_missing"));
+    }
+
+    /// #4341：上游只给出畸形工具调用时，丢弃后本回合一个工具调用都不剩，
+    /// Codex 会把它当成正常完成而静默收尾。此时必须如实报错。
+    #[tokio::test]
+    async fn dropped_only_tool_call_emits_failed_without_completed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"让我继续处理这个文件\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_bad\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("upstream_tool_call_dropped"));
+        assert!(!output.contains("event: response.completed"));
+        // 已经推给客户端的文本增量不受影响，用户仍能看到模型说了什么。
+        assert!(output.contains("让我继续处理这个文件"));
+    }
+
+    /// `finish_reason=length`（token 截断）时工具调用往往只到一半就没了 name。
+    /// 这不是"上游发了畸形数据"，而是截断——归因必须是 incomplete，不能报成
+    /// tool_call_dropped，否则诊断信息本身就是错的。
+    #[tokio::test]
+    async fn truncated_turn_stays_incomplete_instead_of_failed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"我来看看\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_cut\",\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"pa\"}}]},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(!output.contains("event: response.failed"));
+    }
+
+    /// 纯空白函数名对应不到任何已发布工具，必须与空名同等对待，
+    /// 否则它会伪装成"本回合还有工具调用"而绕过判据。
+    #[tokio::test]
+    async fn whitespace_only_tool_name_is_dropped() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_ws\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ws\",\"type\":\"function\",\"function\":{\"name\":\"   \",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("upstream_tool_call_dropped"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    /// 纯文本回合（从未出现过工具调用增量）不受判据影响。
+    #[tokio::test]
+    async fn text_only_turn_still_completes() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_text\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"完成了\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+
+        assert!(output.contains("event: response.completed"));
+        assert!(!output.contains("event: response.failed"));
+        for event_type in ["response.created", "response.completed"] {
+            let event = events
+                .iter()
+                .find(|event| event["type"] == event_type)
+                .unwrap();
+            assert_eq!(
+                event["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+                0
+            );
+        }
+    }
+
+    /// 上游省略 `index` 时，两个 id 不同的调用不得坍缩成一个。
+    #[tokio::test]
+    async fn missing_index_with_distinct_ids_keeps_calls_separate() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_noidx\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_noidx\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["call_id"], "call_a");
+        assert_eq!(items[0]["name"], "read_file");
+        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
+        assert_eq!(items[1]["call_id"], "call_b");
+        assert_eq!(items[1]["name"], "exec_command");
+        assert_eq!(items[1]["arguments"], r#"{"cmd":"ls"}"#);
+    }
+
+    /// 上游省略 `index` 时，不带 id 的 arguments 续帧必须归入同一个调用，
+    /// 不能被当成新调用炸成多个 item。
+    #[tokio::test]
+    async fn missing_index_argument_fragments_stay_in_one_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["call_id"], "call_a");
+        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
+    }
+
+    /// 上游省略 `index` 且重复下发同一个 id（部分网关每帧重复整个头部）时，
+    /// 不得被判成新调用。
+    #[tokio::test]
+    async fn missing_index_repeated_same_id_stays_in_one_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["call_id"], "call_a");
+        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
+    }
+
+    #[tokio::test]
+    async fn finalization_keeps_non_contiguous_tool_index() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_sparse\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"call_sparse\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "read_file");
+        assert_eq!(items[0]["call_id"], "call_sparse");
+        assert_eq!(items[0]["arguments"], r#"{"path":"README.md"}"#);
+    }
+
+    #[tokio::test]
     async fn restores_custom_tool_input_stream_events() {
         let request = json!({
             "model": "gpt-5.4",
@@ -1124,6 +1338,22 @@ mod tests {
             "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
             "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
             "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.output_item.done"));
+        assert!(output.contains("\"type\":\"function_call\""));
+        assert!(output.contains("\"reasoning_content\":\"Need file.\""));
+    }
+
+    #[tokio::test]
+    async fn preserves_late_reasoning_content_on_streamed_tool_call_items() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
             "data: [DONE]\n\n",
         ])
         .await;
@@ -1205,6 +1435,31 @@ mod tests {
         let output = String::from_utf8(bytes.concat()).unwrap();
 
         assert!(output.contains("event: response.failed"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn stream_end_with_output_without_finish_reason_emits_incomplete_without_failed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
+        assert!(!output.contains("event: response.failed"));
+    }
+
+    #[tokio::test]
+    async fn stream_end_without_output_or_finish_reason_emits_failed_without_completed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{}}]}\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("stream_truncated"));
         assert!(!output.contains("event: response.completed"));
     }
 

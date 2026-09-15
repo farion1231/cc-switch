@@ -6,14 +6,14 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import type { UpdateInfo, UpdateHandle } from "../lib/updater";
+import type { UpdateInfo } from "../lib/updater";
 import { checkForUpdate } from "../lib/updater";
+import { extractErrorMessage } from "../utils/errorUtils";
 
 interface UpdateContextValue {
   // 更新状态
   hasUpdate: boolean;
   updateInfo: UpdateInfo | null;
-  updateHandle: UpdateHandle | null;
   isChecking: boolean;
   error: string | null;
 
@@ -34,7 +34,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
 
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [updateHandle, setUpdateHandle] = useState<UpdateHandle | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
@@ -72,7 +71,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       if (result.status === "available") {
         setHasUpdate(true);
         setUpdateInfo(result.info);
-        setUpdateHandle(result.update);
 
         // 检查是否已经关闭过这个版本的提醒
         let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
@@ -89,13 +87,12 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       } else {
         setHasUpdate(false);
         setUpdateInfo(null);
-        setUpdateHandle(null);
         setIsDismissed(false);
         return false; // 已是最新
       }
     } catch (err) {
       console.error("检查更新失败:", err);
-      setError(err instanceof Error ? err.message : "检查更新失败");
+      setError(extractErrorMessage(err) || "检查更新失败");
       setHasUpdate(false);
       throw err; // 抛出错误让调用方处理
     } finally {
@@ -132,7 +129,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const value: UpdateContextValue = {
     hasUpdate,
     updateInfo,
-    updateHandle,
     isChecking,
     error,
     isDismissed,

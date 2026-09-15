@@ -14,6 +14,8 @@ export interface RequestLog {
   appType: string;
   model: string;
   requestModel?: string;
+  /** 写入时实际用于计价的模型名；路由接管 + request 计价模式下可能与 model 不同 */
+  pricingModel?: string;
   costMultiplier: string;
   inputTokens: number;
   outputTokens: number;
@@ -38,6 +40,8 @@ export interface SessionSyncResult {
   imported: number;
   skipped: number;
   filesScanned: number;
+  suspectedDuplicates: number;
+  deferredFiles: number;
   errors: string[];
 }
 
@@ -61,6 +65,20 @@ export interface ModelPricing {
   outputCostPerMillion: string;
   cacheReadCostPerMillion: string;
   cacheCreationCostPerMillion: string;
+}
+
+export interface ModelsDevSyncConfig {
+  autoSyncEnabled: boolean;
+  includeCommonModels: boolean;
+  selectedModelKeys: string[];
+  excludedCommonModelKeys: string[];
+  lastSyncAt: number | null;
+  lastSyncError: string | null;
+}
+
+export interface ModelsDevSyncState {
+  config: ModelsDevSyncConfig;
+  configPath: string;
 }
 
 export interface UsageSummary {
@@ -120,6 +138,20 @@ export interface LogFilters {
   endDate?: number;
 }
 
+/**
+ * Dashboard 顶栏的全局筛选维度，作用于 Hero / 趋势图 / 三个统计 Tab。
+ *
+ * - `providerName` 按展示名精确匹配（与 Provider 统计列表同口径，含
+ *   "Claude (Session)" 等会话占位名）；
+ * - `model` 按「有效计价模型」匹配（pricing_model 优先、回落 model，
+ *   与模型统计的分组口径一致）。
+ */
+export interface UsageScopeFilters {
+  appType?: string;
+  providerName?: string;
+  model?: string;
+}
+
 export interface ProviderLimitStatus {
   providerId: string;
   dailyUsage: string;
@@ -136,17 +168,34 @@ export interface UsageRangeSelection {
   preset: UsageRangePreset;
   customStartDate?: number;
   customEndDate?: number;
+  /** When true (custom mode only), endDate resolves to "now" instead of the
+   *  fixed customEndDate snapshot, and the end-time field becomes read-only. */
+  liveEndTime?: boolean;
 }
 
 /**
- * App types whose token usage is reliably collected by the proxy.
+ * App types surfaced as dashboard filter buttons.
  *
- * The proxy has handlers for `claude-desktop` too, but in practice those
- * requests overwhelmingly fail (500/503) and contribute near-zero tokens, so
- * it is hidden from the Dashboard. `opencode` / `openclaw` / `hermes` have
- * no proxy handler at all — they appear only as managed apps elsewhere.
+ * `claude-desktop` is intentionally NOT listed: the Desktop gateway's proxy
+ * traffic is still recorded under its own `app_type` (preserving route-takeover
+ * billing audit — the request detail panel shows the real value), but the
+ * dashboard folds it into `claude` for display. It is the embedded Claude Code
+ * runtime running inside the Desktop shell, and Desktop *chat* usage never
+ * passes through this app at all, so a separate "Claude Desktop" bucket would
+ * only ever show a partial number and mislead users into reading it as the
+ * Desktop's full usage. The backend collapses `claude-desktop → claude` in
+ * every dashboard query (see `folded_app_type_sql`).
+ * `opencode` and `pi` have no proxy handler; their usage reaches this
+ * dashboard through session importers. `openclaw` / `hermes` appear only as
+ * managed apps elsewhere.
  */
-export type AppType = "claude" | "codex" | "gemini";
+export type AppType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "grokbuild"
+  | "opencode"
+  | "pi";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -154,6 +203,9 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
   "codex",
   "gemini",
+  "grokbuild",
+  "opencode",
+  "pi",
 ];
 
 /**
@@ -171,7 +223,29 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
 export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
+  "grokbuild",
 ]);
+
+// Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
+// only by app type. Treat cache-write coverage as partial without changing
+// Pi's fresh-input token semantics.
+const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set(["pi"]);
+
+export type CacheWriteAvailability = "ok" | "partial" | "na";
+
+export function getCacheWriteAvailability(
+  appTypes: readonly string[],
+): CacheWriteAvailability {
+  if (appTypes.length === 0) return "ok";
+  const unavailable = appTypes.filter((appType) =>
+    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+  ).length;
+  if (unavailable === appTypes.length) return "na";
+  const partial = appTypes.some((appType) =>
+    PARTIAL_CACHE_WRITE_APP_TYPES.has(appType),
+  );
+  return unavailable === 0 && !partial ? "ok" : "partial";
+}
 
 /** Subset of request-log fields needed to derive cache-normalized input. */
 export interface CacheNormalizableLog {

@@ -4,8 +4,10 @@
 //! 主要面向第三方聚合站（硅基流动、OpenRouter 等），以及把 Anthropic
 //! 协议挂在兼容子路径上的官方供应商（DeepSeek、Kimi、智谱 GLM 等）。
 
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// 获取到的模型信息
@@ -16,10 +18,14 @@ pub struct FetchedModel {
     pub owned_by: Option<String>,
 }
 
-/// OpenAI 兼容的 /v1/models 响应格式
+/// 模型列表响应的兼容格式。
+///
+/// OpenAI 兼容接口和 Anthropic 接口使用 `data` 字段，智谱 OpenAI Responses
+/// 接口使用 `models` 字段，此结构同时兼容这两种格式。
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
+    models: Option<Vec<ZhipuModelEntry>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,7 +34,15 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ZhipuModelEntry {
+    slug: String,
+}
+
 const FETCH_TIMEOUT_SECS: u64 = 15;
+const MAX_REQUEST_HEADERS: usize = 64;
+const MAX_HEADER_NAME_BYTES: usize = 256;
+const MAX_HEADER_VALUE_BYTES: usize = 16 * 1024;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
 const ERROR_BODY_MAX_CHARS: usize = 512;
@@ -55,24 +69,30 @@ pub async fn fetch_models(
     api_key: &str,
     is_full_url: bool,
     models_url_override: Option<&str>,
+    user_agent: Option<HeaderValue>,
+    api_format: Option<&str>,
+    request_headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<FetchedModel>, String> {
-    if api_key.is_empty() {
-        return Err("API Key is required to fetch models".to_string());
-    }
-
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
+    let headers =
+        build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
     let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
+    let mut known_secrets = vec![api_key.to_string()];
+    if let Some(request_headers) = request_headers {
+        known_secrets.extend(request_headers.values().cloned());
+    }
 
     for url in &candidates {
-        log::debug!("[ModelFetch] Trying endpoint: {url}");
-        let response = match client
+        log::debug!(
+            "[ModelFetch] Trying endpoint: {}",
+            crate::url_for_log_with_secrets(url, &known_secrets)
+        );
+        let request = client
             .get(url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-            .send()
-            .await
-        {
+            .headers(headers.clone())
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
                 return Err(format!("Request failed: {e}"));
@@ -87,27 +107,41 @@ pub async fn fetch_models(
                 .await
                 .map_err(|e| format!("Failed to parse response: {e}"))?;
 
-            let mut models: Vec<FetchedModel> = resp
-                .data
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id,
-                    owned_by: m.owned_by,
-                })
-                .collect();
+            let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
+                data.into_iter()
+                    .map(|m| FetchedModel {
+                        id: m.id,
+                        owned_by: m.owned_by,
+                    })
+                    .collect()
+            } else {
+                resp.models
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| FetchedModel {
+                        id: m.slug,
+                        owned_by: None,
+                    })
+                    .collect()
+            };
 
             models.sort_by(|a, b| a.id.cmp(&b.id));
             return Ok(models);
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
-            let body = truncate_body(response.text().await.unwrap_or_default());
+            let body = redact_model_fetch_error_body(
+                response.text().await.unwrap_or_default(),
+                &known_secrets,
+            );
             last_err = Some(format!("HTTP {status}: {body}"));
             continue;
         }
 
-        let body = truncate_body(response.text().await.unwrap_or_default());
+        let body = redact_model_fetch_error_body(
+            response.text().await.unwrap_or_default(),
+            &known_secrets,
+        );
         return Err(format!("HTTP {status}: {body}"));
     }
 
@@ -117,13 +151,80 @@ pub async fn fetch_models(
     ))
 }
 
+fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
+    truncate_body(crate::redact_known_secrets_strict(&body, known_secrets))
+}
+
+fn build_model_fetch_headers(
+    api_key: &str,
+    api_format: Option<&str>,
+    user_agent: Option<&HeaderValue>,
+    request_headers: Option<&BTreeMap<String, String>>,
+) -> Result<HeaderMap, String> {
+    let custom_count = request_headers.map_or(0, BTreeMap::len);
+    if api_key.is_empty() && custom_count == 0 {
+        return Err("API Key or request headers are required to fetch models".to_string());
+    }
+    if custom_count > MAX_REQUEST_HEADERS {
+        return Err(format!(
+            "Too many model-fetch request headers (maximum {MAX_REQUEST_HEADERS})"
+        ));
+    }
+
+    let mut headers = HeaderMap::new();
+    if !api_key.is_empty() {
+        let (name, value) = match api_format {
+            Some("anthropic-messages") => (
+                HeaderName::from_static("x-api-key"),
+                HeaderValue::from_str(api_key)
+                    .map_err(|error| format!("Invalid API Key header value: {error}"))?,
+            ),
+            Some("google-generative-ai") => (
+                HeaderName::from_static("x-goog-api-key"),
+                HeaderValue::from_str(api_key)
+                    .map_err(|error| format!("Invalid API Key header value: {error}"))?,
+            ),
+            _ => (
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {api_key}"))
+                    .map_err(|error| format!("Invalid API Key header value: {error}"))?,
+            ),
+        };
+        headers.insert(name, value);
+    }
+
+    if let Some(user_agent) = user_agent {
+        headers.insert(USER_AGENT, user_agent.clone());
+    }
+
+    if let Some(request_headers) = request_headers {
+        for (raw_name, raw_value) in request_headers {
+            let name = raw_name.trim();
+            if name.is_empty() || name.len() > MAX_HEADER_NAME_BYTES {
+                return Err(format!("Invalid model-fetch header name: {raw_name}"));
+            }
+            if raw_value.len() > MAX_HEADER_VALUE_BYTES {
+                return Err(format!("Model-fetch header value is too large: {name}"));
+            }
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|error| format!("Invalid model-fetch header name {name}: {error}"))?;
+            let value = HeaderValue::from_str(raw_value)
+                .map_err(|error| format!("Invalid model-fetch header value for {name}: {error}"))?;
+            headers.insert(name, value);
+        }
+    }
+
+    Ok(headers)
+}
+
 /// 构造「模型列表端点」的候选 URL 列表
 ///
 /// 候选顺序：
 /// 1. `models_url_override` 非空 → 只返回它
-/// 2. baseURL 直接拼 `/v1/models`（若已有 `/v1` 结尾则拼 `/models`）
-/// 3. 若 baseURL 命中 [`KNOWN_COMPAT_SUFFIXES`]，剥离后缀再拼 `/v1/models`
-/// 4. 同上，但拼 `/models`（部分站点如 DeepSeek 官方只暴露 `/models`）
+/// 2. baseURL 拼 `/v1/models`；若已以版本段 `/v{N}` 结尾（`/v1`、智谱
+///    `/api/coding/paas/v4` 等），版本号已在路径里，改拼 `/models`
+/// 3. 版本段非 `/v1`（如 `/v4`）时再追加 `/v1/models` 作为兜底次候选
+/// 4. 若 baseURL 命中 [`KNOWN_COMPAT_SUFFIXES`]，剥离后缀再拼 `/v1/models`、`/models`
 ///
 /// 结果已去重且保持首次出现顺序。
 pub fn build_models_url_candidates(
@@ -160,12 +261,18 @@ pub fn build_models_url_candidates(
         return Ok(candidates);
     }
 
-    let primary = if trimmed.ends_with("/v1") {
-        format!("{trimmed}/models")
+    // baseURL 已以版本段 /v{N} 结尾时（如 `/v1`、智谱 `/api/coding/paas/v4`），
+    // OpenAI 惯例的模型端点是 `{base}/models`，不能再补 `/v1`
+    // （否则 .../coding/paas/v4/v1/models → 404）。
+    if ends_with_version_segment(trimmed) {
+        candidates.push(format!("{trimmed}/models"));
+        // 版本段非 /v1 时，保留旧的 /v1/models 作为兜底次候选（正确路径已在前）。
+        if !trimmed.ends_with("/v1") {
+            candidates.push(format!("{trimmed}/v1/models"));
+        }
     } else {
-        format!("{trimmed}/v1/models")
-    };
-    candidates.push(primary);
+        candidates.push(format!("{trimmed}/v1/models"));
+    }
 
     if let Some(stripped) = strip_compat_suffix(trimmed) {
         let root = stripped.trim_end_matches('/');
@@ -210,9 +317,80 @@ fn strip_compat_suffix(base_url: &str) -> Option<&str> {
     None
 }
 
+/// 判断 baseURL 是否以 OpenAI 风格的版本段 `/v{N}` 结尾（`N` 为一个或多个数字），
+/// 例如 `/v1`、`.../paas/v4`。这类 URL 版本号已在路径中，模型端点应为
+/// `{base}/models`，不能再补 `/v1`（智谱 Coding Plan 即 `.../coding/paas/v4`）。
+fn ends_with_version_segment(url: &str) -> bool {
+    let last = url.rsplit('/').next().unwrap_or("");
+    last.strip_prefix('v')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_fetch_headers_follow_pi_api_format() {
+        let anthropic =
+            build_model_fetch_headers("anthropic-key", Some("anthropic-messages"), None, None)
+                .unwrap();
+        assert_eq!(anthropic["x-api-key"], "anthropic-key");
+        assert!(!anthropic.contains_key(AUTHORIZATION));
+
+        let google =
+            build_model_fetch_headers("google-key", Some("google-generative-ai"), None, None)
+                .unwrap();
+        assert_eq!(google["x-goog-api-key"], "google-key");
+        assert!(!google.contains_key(AUTHORIZATION));
+
+        let openai =
+            build_model_fetch_headers("openai-key", Some("openai-responses"), None, None).unwrap();
+        assert_eq!(openai[AUTHORIZATION], "Bearer openai-key");
+    }
+
+    #[test]
+    fn model_fetch_headers_allow_validated_header_only_auth_and_overrides() {
+        let custom = BTreeMap::from([
+            ("Authorization".to_string(), "Token literal".to_string()),
+            ("X-Tenant".to_string(), "tenant-a".to_string()),
+        ]);
+        let headers =
+            build_model_fetch_headers("", Some("openai-completions"), None, Some(&custom)).unwrap();
+        assert_eq!(headers[AUTHORIZATION], "Token literal");
+        assert_eq!(headers["x-tenant"], "tenant-a");
+
+        let override_default =
+            BTreeMap::from([("x-api-key".to_string(), "header-managed-key".to_string())]);
+        let headers = build_model_fetch_headers(
+            "provider-key",
+            Some("anthropic-messages"),
+            None,
+            Some(&override_default),
+        )
+        .unwrap();
+        assert_eq!(headers["x-api-key"], "header-managed-key");
+    }
+
+    #[test]
+    fn model_fetch_headers_reject_invalid_or_missing_credentials() {
+        assert!(build_model_fetch_headers("", None, None, None).is_err());
+        let invalid = BTreeMap::from([("bad header".to_string(), "literal-value".to_string())]);
+        assert!(build_model_fetch_headers("", None, None, Some(&invalid)).is_err());
+    }
+
+    #[test]
+    fn model_fetch_error_body_redacts_known_header_credentials() {
+        let secrets = vec![
+            "short".to_string(),
+            "Bearer literal-header-secret".to_string(),
+        ];
+        let body = redact_model_fetch_error_body(
+            "invalid short / Bearer literal-header-secret".to_string(),
+            &secrets,
+        );
+        assert_eq!(body, "invalid [REDACTED] / [REDACTED]");
+    }
 
     #[test]
     fn test_candidates_plain_root() {
@@ -230,6 +408,48 @@ mod tests {
     fn test_candidates_with_v1() {
         let c = build_models_url_candidates("https://api.example.com/v1", false, None).unwrap();
         assert_eq!(c, vec!["https://api.example.com/v1/models"]);
+    }
+
+    #[test]
+    fn test_candidates_zhipu_coding_paas_v4() {
+        // 智谱 Coding Plan 端点以 /v4 版本段结尾：模型端点是 {base}/models，
+        // 正确路径必须排在 .../v4/v1/models（404）之前。
+        let c =
+            build_models_url_candidates("https://open.bigmodel.cn/api/coding/paas/v4", false, None)
+                .unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://open.bigmodel.cn/api/coding/paas/v4/models",
+                "https://open.bigmodel.cn/api/coding/paas/v4/v1/models",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_candidates_zai_coding_paas_v4() {
+        let c = build_models_url_candidates("https://api.z.ai/api/coding/paas/v4", false, None)
+            .unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://api.z.ai/api/coding/paas/v4/models",
+                "https://api.z.ai/api/coding/paas/v4/v1/models",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_ends_with_version_segment() {
+        assert!(ends_with_version_segment("https://x.com/v1"));
+        assert!(ends_with_version_segment(
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        ));
+        assert!(ends_with_version_segment("https://x.com/v10"));
+        assert!(!ends_with_version_segment("https://x.com/api"));
+        assert!(!ends_with_version_segment("https://x.com/vX"));
+        assert!(!ends_with_version_segment("https://x.com/models"));
+        assert!(!ends_with_version_segment("https://api.siliconflow.cn"));
     }
 
     #[test]

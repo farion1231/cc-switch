@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
 import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
+import { formatOutputTokensPerSecond } from "./format";
 
 interface RequestDetailPanelProps {
   requestId: string;
@@ -56,6 +57,7 @@ export function RequestDetailPanel({
   const freshInput = getFreshInputTokens(request);
   const isCacheInclusive = request.inputTokens !== freshInput;
   const unpriced = isUnpricedUsage(request);
+  const outputTps = formatOutputTokensPerSecond(request);
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -111,6 +113,28 @@ export function RequestDetailPanel({
                   {t("usage.model", "模型")}
                 </dt>
                 <dd className="font-mono">{request.model}</dd>
+                {request.requestModel &&
+                  request.requestModel !== request.model && (
+                    <>
+                      <dt className="mt-1 text-muted-foreground">
+                        {t("usage.requestModel", "请求模型")}
+                      </dt>
+                      <dd className="font-mono text-xs">
+                        {request.requestModel}
+                      </dd>
+                    </>
+                  )}
+                {request.pricingModel &&
+                  request.pricingModel !== request.model && (
+                    <>
+                      <dt className="mt-1 text-muted-foreground">
+                        {t("usage.pricingModel", "计价模型")}
+                      </dt>
+                      <dd className="font-mono text-xs">
+                        {request.pricingModel}
+                      </dd>
+                    </>
+                  )}
               </div>
               <div>
                 <dt className="text-muted-foreground">
@@ -157,6 +181,11 @@ export function RequestDetailPanel({
                 </dt>
                 <dd className="font-mono">
                   {request.outputTokens.toLocaleString()}
+                  {outputTps != null && (
+                    <span className="ml-2 text-xs text-muted-foreground font-normal">
+                      ({outputTps} tps)
+                    </span>
+                  )}
                 </dd>
               </div>
               <div>

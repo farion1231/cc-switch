@@ -8,6 +8,8 @@ import type {
   RequestLog,
   LogFilters,
   ModelPricing,
+  ModelsDevSyncConfig,
+  ModelsDevSyncState,
   ProviderLimitStatus,
   PaginatedLogs,
   SessionSyncResult,
@@ -52,39 +54,78 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<UsageSummary> => {
-    return invoke("get_usage_summary", { startDate, endDate, appType });
+    return invoke("get_usage_summary", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getUsageSummaryByApp: async (
     startDate?: number,
     endDate?: number,
+    providerName?: string,
+    model?: string,
   ): Promise<UsageSummaryByApp[]> => {
-    return invoke("get_usage_summary_by_app", { startDate, endDate });
+    return invoke("get_usage_summary_by_app", {
+      startDate,
+      endDate,
+      providerName,
+      model,
+    });
   },
 
   getUsageTrends: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<DailyStats[]> => {
-    return invoke("get_usage_trends", { startDate, endDate, appType });
+    return invoke("get_usage_trends", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getProviderStats: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<ProviderStats[]> => {
-    return invoke("get_provider_stats", { startDate, endDate, appType });
+    return invoke("get_provider_stats", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getModelStats: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<ModelStats[]> => {
-    return invoke("get_model_stats", { startDate, endDate, appType });
+    return invoke("get_model_stats", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getRequestLogs: async (
@@ -125,6 +166,27 @@ export const usageApi = {
     });
   },
 
+  updateModelPricingBatch: async (entries: ModelPricing[]): Promise<number> => {
+    return invoke("update_model_pricing_batch", { entries });
+  },
+
+  getModelsDevSyncConfig: async (): Promise<ModelsDevSyncState> => {
+    return invoke("get_models_dev_sync_config");
+  },
+
+  saveModelsDevSyncConfig: async (
+    config: ModelsDevSyncConfig,
+  ): Promise<void> => {
+    return invoke("save_models_dev_sync_config", { config });
+  },
+
+  recordModelsDevSyncResult: async (
+    syncedAt: number | null,
+    error: string | null,
+  ): Promise<void> => {
+    return invoke("record_models_dev_sync_result", { syncedAt, error });
+  },
+
   deleteModelPricing: async (modelId: string): Promise<void> => {
     return invoke("delete_model_pricing", { modelId });
   },
@@ -139,6 +201,10 @@ export const usageApi = {
   // Session usage sync
   syncSessionUsage: async (): Promise<SessionSyncResult> => {
     return invoke("sync_session_usage");
+  },
+
+  rebuildCodexUsage: async (): Promise<SessionSyncResult> => {
+    return invoke("rebuild_codex_usage");
   },
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {

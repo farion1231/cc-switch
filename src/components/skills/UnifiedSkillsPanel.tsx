@@ -6,6 +6,7 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import {
   useInstalledSkills,
   useSkillBackups,
   useRestoreSkillBackup,
+  useBulkToggleSkillApp,
   useToggleSkillApp,
   useUninstallSkill,
   useScanUnmanagedSkills,
@@ -28,6 +30,7 @@ import {
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -35,6 +38,8 @@ import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import { ManagementListSearch } from "@/components/common/ManagementListSearch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -44,9 +49,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
+
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
+  onInteractionBlockedChange?: (blocked: boolean) => void;
+  onNavigationBlockedChange?: (blocked: boolean) => void;
+  onCheckUpdatesStateChange?: (state: SkillsCheckUpdatesState) => void;
+}
+
+export interface SkillsCheckUpdatesState {
+  isChecking: boolean;
+  hasSkills: boolean;
 }
 
 export interface UnifiedSkillsPanelHandle {
@@ -67,7 +82,14 @@ function formatSkillBackupDate(unixSeconds: number): string {
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
   UnifiedSkillsPanelProps
->(({ onOpenDiscovery, currentApp }, ref) => {
+>((props, ref) => {
+  const {
+    onOpenDiscovery,
+    currentApp,
+    onInteractionBlockedChange,
+    onNavigationBlockedChange,
+    onCheckUpdatesStateChange,
+  } = props;
   const { t } = useTranslation();
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -79,6 +101,10 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [writePending, setWritePending] = useState(false);
+  const writeLockRef = React.useRef(false);
+  const checkUpdatesLockRef = React.useRef(false);
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -88,10 +114,12 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useSkillBackups();
   const deleteBackupMutation = useDeleteSkillBackup();
   const toggleAppMutation = useToggleSkillApp();
+  const bulkToggleAppMutation = useBulkToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
+  // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
-    useScanUnmanagedSkills();
+    useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
@@ -101,16 +129,87 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const visibleSkillAppIds =
+    currentApp === "pi" ? SKILLS_APP_IDS : IMPORT_SKILLS_APP_IDS;
+
+  const mutationPending =
+    deleteBackupMutation.isPending ||
+    toggleAppMutation.isPending ||
+    bulkToggleAppMutation.isPending ||
+    uninstallMutation.isPending ||
+    restoreBackupMutation.isPending ||
+    importMutation.isPending ||
+    installFromZipMutation.isPending ||
+    updateSkillMutation.isPending ||
+    isUpdatingAll;
+  const dialogOpen =
+    importDialogOpen || restoreDialogOpen || confirmDialog !== null;
+  const navigationBlocked = writePending || mutationPending || dialogOpen;
+  const interactionBlocked = navigationBlocked || isCheckingUpdates;
+
+  React.useEffect(() => {
+    onInteractionBlockedChange?.(interactionBlocked);
+  }, [interactionBlocked, onInteractionBlockedChange]);
+
+  React.useEffect(() => {
+    onNavigationBlockedChange?.(navigationBlocked);
+  }, [navigationBlocked, onNavigationBlockedChange]);
+
+  React.useEffect(
+    () => () => {
+      onInteractionBlockedChange?.(false);
+      onNavigationBlockedChange?.(false);
+    },
+    [onInteractionBlockedChange, onNavigationBlockedChange],
+  );
+
+  const hasSkills = (skills?.length ?? 0) > 0;
+
+  React.useEffect(() => {
+    onCheckUpdatesStateChange?.({
+      isChecking: isCheckingUpdates,
+      hasSkills,
+    });
+  }, [hasSkills, isCheckingUpdates, onCheckUpdatesStateChange]);
+
+  React.useEffect(
+    () => () =>
+      onCheckUpdatesStateChange?.({ isChecking: false, hasSkills: false }),
+    [onCheckUpdatesStateChange],
+  );
+
+  const beginWrite = (allowOpenDialog = false) => {
+    if (
+      checkUpdatesLockRef.current ||
+      isCheckingUpdates ||
+      writeLockRef.current ||
+      mutationPending ||
+      (!allowOpenDialog && dialogOpen)
+    ) {
+      return false;
+    }
+    writeLockRef.current = true;
+    setWritePending(true);
+    return true;
+  };
+
+  const endWrite = () => {
+    writeLockRef.current = false;
+    setWritePending(false);
+  };
+
+  const applicableSkillUpdates = useMemo(() => {
+    const installedIds = new Set((skills ?? []).map((skill) => skill.id));
+    return (skillUpdates ?? []).filter((update) => installedIds.has(update.id));
+  }, [skillUpdates, skills]);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
-    if (skillUpdates) {
-      for (const u of skillUpdates) {
-        map[u.id] = u;
-      }
+    for (const update of applicableSkillUpdates) {
+      map[update.id] = update;
     }
     return map;
-  }, [skillUpdates]);
+  }, [applicableSkillUpdates]);
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -118,59 +217,151 @@ const UnifiedSkillsPanel = React.forwardRef<
       "claude-desktop": 0,
       codex: 0,
       gemini: 0,
+      grokbuild: 0,
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      pi: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of SKILLS_APP_IDS) {
-        if (skill.apps[app]) counts[app]++;
+        if (skill.apps[app]) {
+          counts[app]++;
+        }
       }
     });
     return counts;
   }, [skills]);
 
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (!query) return skills;
+
+    return skills.filter((skill) => {
+      const searchableValues = [
+        skill.name,
+        skill.id,
+        skill.description,
+        skill.directory,
+        skill.repoOwner,
+        skill.repoName,
+        skill.repoOwner && skill.repoName
+          ? `${skill.repoOwner}/${skill.repoName}`
+          : undefined,
+      ];
+
+      return searchableValues.some((value) =>
+        value?.toLocaleLowerCase().includes(query),
+      );
+    });
+  }, [searchQuery, skills]);
+
+  const pendingApp = bulkToggleAppMutation.isPending
+    ? bulkToggleAppMutation.variables?.app
+    : toggleAppMutation.isPending
+      ? toggleAppMutation.variables?.app
+      : null;
+
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
+    if (!beginWrite()) return;
+
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
+    }
+  };
+
+  const handleToggleAll = async (app: AppId, enabled: boolean) => {
+    if (!skills || !beginWrite()) return;
+
+    const ids = skills
+      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .map((skill) => skill.id);
+    if (ids.length === 0) {
+      endWrite();
+      return;
+    }
+
+    try {
+      const result = await bulkToggleAppMutation.mutateAsync({
+        ids,
+        app,
+        enabled,
+      });
+      if (result.failed.length > 0) {
+        toast.error(
+          t("common.bulkToggleFailed", { count: result.failed.length }),
+          { description: String(result.failed[0].error) },
+        );
+      }
+    } catch (error) {
+      toast.error(t("common.bulkToggleFailed", { count: ids.length }), {
+        description: String(error),
+      });
+    } finally {
+      endWrite();
     }
   };
 
   const handleUninstall = (skill: InstalledSkill) => {
+    if (
+      checkUpdatesLockRef.current ||
+      writeLockRef.current ||
+      interactionBlocked
+    ) {
+      return;
+    }
     setConfirmDialog({
       isOpen: true,
       title: t("skills.uninstall"),
       message: t("skills.uninstallConfirm", { name: skill.name }),
       onConfirm: async () => {
+        if (!beginWrite(true)) return;
         try {
-          // 构建 skillKey 用于更新 discoverable 缓存
-          const installName =
-            skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
-            skill.directory.toLowerCase();
-          const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
-
-          const result = await uninstallMutation.mutateAsync({
-            id: skill.id,
-            skillKey,
-          });
+          const result = await uninstallMutation.mutateAsync(skill.id);
           setConfirmDialog(null);
-          toast.success(t("skills.uninstallSuccess", { name: skill.name }), {
-            description: result.backupPath
-              ? t("skills.backup.location", { path: result.backupPath })
-              : undefined,
+          const piCleanupIncomplete =
+            result.piCleanupIncomplete || Boolean(result.preservedPiPath);
+          const toastOptions = {
+            description: result.preservedPiPath
+              ? t("skills.uninstallPiPreserved", {
+                  path: result.preservedPiPath,
+                })
+              : result.piCleanupIncomplete
+                ? t("skills.uninstallPiCleanupIncomplete")
+                : result.backupPath
+                  ? t("skills.backup.location", { path: result.backupPath })
+                  : undefined,
             closeButton: true,
-          });
+          };
+          if (piCleanupIncomplete) {
+            toast.warning(
+              t("skills.uninstallSuccess", { name: skill.name }),
+              toastOptions,
+            );
+          } else {
+            toast.success(
+              t("skills.uninstallSuccess", { name: skill.name }),
+              toastOptions,
+            );
+          }
         } catch (error) {
           toast.error(t("common.error"), { description: String(error) });
+        } finally {
+          endWrite();
         }
       },
     });
   };
 
   const handleOpenImport = async () => {
+    if (!beginWrite()) return;
     try {
       const result = await scanUnmanaged();
       if (!result.data || result.data.length === 0) {
@@ -180,10 +371,13 @@ const UnifiedSkillsPanel = React.forwardRef<
       setImportDialogOpen(true);
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
     }
   };
 
   const handleImport = async (imports: ImportSkillSelection[]) => {
+    if (!beginWrite(true)) return;
     try {
       const imported = await importMutation.mutateAsync(imports);
       setImportDialogOpen(false);
@@ -192,10 +386,13 @@ const UnifiedSkillsPanel = React.forwardRef<
       });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
     }
   };
 
   const handleInstallFromZip = async () => {
+    if (!beginWrite()) return;
     try {
       const filePath = await skillsApi.openZipFileDialog();
       if (!filePath) return;
@@ -211,7 +408,9 @@ const UnifiedSkillsPanel = React.forwardRef<
         });
       } else if (installed.length === 1) {
         toast.success(
-          t("skills.installFromZip.successSingle", { name: installed[0].name }),
+          t("skills.installFromZip.successSingle", {
+            name: installed[0].name,
+          }),
           { closeButton: true },
         );
       } else {
@@ -224,10 +423,20 @@ const UnifiedSkillsPanel = React.forwardRef<
       }
     } catch (error) {
       toast.error(t("skills.installFailed"), { description: String(error) });
+    } finally {
+      endWrite();
     }
   };
 
   const handleCheckUpdates = async () => {
+    if (
+      checkUpdatesLockRef.current ||
+      writeLockRef.current ||
+      interactionBlocked
+    ) {
+      return;
+    }
+    checkUpdatesLockRef.current = true;
     try {
       const result = await checkUpdates();
       const updates = result.data || [];
@@ -240,10 +449,13 @@ const UnifiedSkillsPanel = React.forwardRef<
       }
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      checkUpdatesLockRef.current = false;
     }
   };
 
   const handleUpdateSkill = async (skill: InstalledSkill) => {
+    if (!beginWrite()) return;
     try {
       const updated = await updateSkillMutation.mutateAsync(skill.id);
       toast.success(t("skills.updateSuccess", { name: updated.name }), {
@@ -251,24 +463,32 @@ const UnifiedSkillsPanel = React.forwardRef<
       });
     } catch (error) {
       toast.error(t("skills.updateFailed"), { description: String(error) });
+    } finally {
+      endWrite();
     }
   };
 
   const handleUpdateAll = async () => {
-    if (!skillUpdates || skillUpdates.length === 0) return;
+    if (applicableSkillUpdates.length === 0 || !beginWrite()) {
+      return;
+    }
     setIsUpdatingAll(true);
     let successCount = 0;
-    for (const update of skillUpdates) {
-      try {
-        await updateSkillMutation.mutateAsync(update.id);
-        successCount++;
-      } catch (error) {
-        toast.error(t("skills.updateFailed"), {
-          description: `${update.name}: ${String(error)}`,
-        });
+    try {
+      for (const update of applicableSkillUpdates) {
+        try {
+          await updateSkillMutation.mutateAsync(update.id);
+          successCount++;
+        } catch (error) {
+          toast.error(t("skills.updateFailed"), {
+            description: `${update.name}: ${String(error)}`,
+          });
+        }
       }
+    } finally {
+      setIsUpdatingAll(false);
+      endWrite();
     }
-    setIsUpdatingAll(false);
     if (successCount > 0) {
       toast.success(t("skills.updateAllSuccess", { count: successCount }), {
         closeButton: true,
@@ -277,15 +497,20 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleOpenRestoreFromBackup = async () => {
+    if (!beginWrite()) return;
     setRestoreDialogOpen(true);
     try {
-      await refetchSkillBackups();
+      await refetchSkillBackups({ throwOnError: true });
     } catch (error) {
+      setRestoreDialogOpen(false);
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
     }
   };
 
   const handleRestoreFromBackup = async (backupId: string) => {
+    if (!beginWrite(true)) return;
     try {
       const restored = await restoreBackupMutation.mutateAsync({
         backupId,
@@ -302,10 +527,13 @@ const UnifiedSkillsPanel = React.forwardRef<
       toast.error(t("skills.restoreFromBackup.failed"), {
         description: String(error),
       });
+    } finally {
+      endWrite();
     }
   };
 
   const handleDeleteBackup = (backup: SkillBackupEntry) => {
+    if (checkUpdatesLockRef.current || writeLockRef.current) return;
     setConfirmDialog({
       isOpen: true,
       title: t("skills.restoreFromBackup.deleteConfirmTitle"),
@@ -315,29 +543,76 @@ const UnifiedSkillsPanel = React.forwardRef<
       confirmText: t("skills.restoreFromBackup.delete"),
       variant: "destructive",
       onConfirm: async () => {
+        if (!beginWrite(true)) return;
         try {
-          await deleteBackupMutation.mutateAsync(backup.backupId);
-          await refetchSkillBackups();
-          setConfirmDialog(null);
-          toast.success(
-            t("skills.restoreFromBackup.deleteSuccess", {
-              name: backup.skill.name,
-            }),
-            {
-              closeButton: true,
-            },
-          );
-        } catch (error) {
-          toast.error(t("skills.restoreFromBackup.deleteFailed"), {
-            description: String(error),
-          });
+          let deleteSucceeded = false;
+          let deleteError: unknown;
+          try {
+            await deleteBackupMutation.mutateAsync(backup.backupId);
+            deleteSucceeded = true;
+          } catch (error) {
+            deleteError = error;
+          }
+
+          // The backups query is disabled by default, so invalidation alone
+          // does not fetch authoritative data. Explicitly refresh after both
+          // success and failure (remove_dir_all may have made partial progress).
+          let refreshedBackups: SkillBackupEntry[] | undefined;
+          try {
+            const result = await refetchSkillBackups({ throwOnError: true });
+            refreshedBackups = result.data;
+          } catch (error) {
+            // A refresh failure must not turn a completed deletion into a false
+            // "delete failed" report, or replace the original deletion error.
+            console.error(
+              "Failed to refresh Skill backups after deletion:",
+              error,
+            );
+          }
+
+          if (!deleteSucceeded) {
+            // remove_dir_all may finish removing the directory but still
+            // report an error. If the authoritative refresh confirms that the
+            // item is gone, close the now-stale confirmation dialog.
+            if (
+              refreshedBackups &&
+              !refreshedBackups.some(
+                (entry) => entry.backupId === backup.backupId,
+              )
+            ) {
+              setConfirmDialog(null);
+            }
+            toast.error(t("skills.restoreFromBackup.deleteFailed"), {
+              description: String(deleteError),
+            });
+          } else {
+            setConfirmDialog(null);
+            toast.success(
+              t("skills.restoreFromBackup.deleteSuccess", {
+                name: backup.skill.name,
+              }),
+              {
+                closeButton: true,
+              },
+            );
+          }
+        } finally {
+          endWrite();
         }
       },
     });
   };
 
   React.useImperativeHandle(ref, () => ({
-    openDiscovery: onOpenDiscovery,
+    openDiscovery: () => {
+      if (
+        !checkUpdatesLockRef.current &&
+        !writeLockRef.current &&
+        !interactionBlocked
+      ) {
+        onOpenDiscovery();
+      }
+    },
     openImport: handleOpenImport,
     openInstallFromZip: handleInstallFromZip,
     openRestoreFromBackup: handleOpenRestoreFromBackup,
@@ -346,98 +621,103 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   return (
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-      <div className="flex items-center justify-between">
-        <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
-          counts={enabledCounts}
-          appIds={SKILLS_APP_IDS}
-        />
-        <div className="flex items-center gap-1.5">
-          <div
-            className="transition-all duration-300 ease-out overflow-hidden"
-            style={{
-              maxWidth:
-                skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
-              opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
-            }}
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs gap-1 whitespace-nowrap"
-              onClick={handleUpdateAll}
-              disabled={isUpdatingAll || updateSkillMutation.isPending}
-            >
-              {isUpdatingAll ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <RefreshCw size={12} />
-              )}
-              {isUpdatingAll
-                ? t("skills.updatingAll")
-                : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
-            </Button>
-          </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <AppCountBar
+            totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+            counts={enabledCounts}
+            appIds={visibleSkillAppIds}
+            totalCount={skills?.length ?? 0}
+            onToggleAll={handleToggleAll}
+            pendingApp={pendingApp}
+            disabled={interactionBlocked}
+          />
+        </div>
+        <div
+          className="mb-4 overflow-hidden transition-all duration-300 ease-out"
+          style={{
+            maxWidth: applicableSkillUpdates.length > 0 ? "200px" : "0px",
+            opacity: applicableSkillUpdates.length > 0 ? 1 : 0,
+          }}
+        >
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={handleCheckUpdates}
-            disabled={isCheckingUpdates || !skills || skills.length === 0}
+            className="h-7 text-xs gap-1 whitespace-nowrap disabled:opacity-100"
+            onClick={handleUpdateAll}
+            disabled={interactionBlocked}
           >
-            {isCheckingUpdates ? (
+            {isUpdatingAll ? (
               <Loader2 size={12} className="animate-spin" />
             ) : (
               <RefreshCw size={12} />
             )}
-            {isCheckingUpdates
-              ? t("skills.checkingUpdates")
-              : t("skills.checkUpdates")}
+            {isUpdatingAll
+              ? t("skills.updatingAll")
+              : t("skills.updateAll", {
+                  count: applicableSkillUpdates.length,
+                })}
           </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
-        {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">
-            {t("skills.loading")}
-          </div>
-        ) : !skills || skills.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
-              <Sparkles size={24} className="text-muted-foreground" />
+      <ManagementListSearch
+        value={searchQuery}
+        onValueChange={setSearchQuery}
+        placeholder={t("skills.installedSearchPlaceholder")}
+        ariaLabel={t("skills.installedSearchAriaLabel")}
+        clearLabel={t("common.clear")}
+      />
+
+      <ScrollArea className="-mr-3 flex-1 min-h-0" type="auto">
+        <div className="pb-24 pr-3">
+          {isLoading ? (
+            <div className="text-center py-12 text-muted-foreground">
+              {t("skills.loading")}
             </div>
-            <h3 className="text-lg font-medium text-foreground mb-2">
-              {t("skills.noInstalled")}
-            </h3>
-            <p className="text-muted-foreground text-sm">
-              {t("skills.noInstalledDescription")}
-            </p>
-          </div>
-        ) : (
-          <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
-                <InstalledSkillListItem
-                  key={skill.id}
-                  skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
-                  isUpdating={
-                    updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
-                  }
-                  onToggleApp={handleToggleApp}
-                  onUninstall={() => handleUninstall(skill)}
-                  onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
-                />
-              ))}
+          ) : !skills || skills.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+                <Sparkles size={24} className="text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-medium text-foreground mb-2">
+                {t("skills.noInstalled")}
+              </h3>
+              <p className="text-muted-foreground text-sm">
+                {t("skills.noInstalledDescription")}
+              </p>
             </div>
-          </TooltipProvider>
-        )}
-      </div>
+          ) : filteredSkills.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+              <Search className="mb-4 h-10 w-10 opacity-40" />
+              <p className="text-sm">{t("skills.noInstalledSearchResults")}</p>
+            </div>
+          ) : (
+            <TooltipProvider delayDuration={300}>
+              <div className="rounded-xl border border-border-default overflow-hidden">
+                {filteredSkills.map((skill, index) => (
+                  <InstalledSkillListItem
+                    key={skill.id}
+                    skill={skill}
+                    hasUpdate={!!updatesMap[skill.id]}
+                    isUpdating={
+                      updateSkillMutation.isPending &&
+                      updateSkillMutation.variables === skill.id
+                    }
+                    actionsDisabled={interactionBlocked}
+                    appIds={visibleSkillAppIds}
+                    onToggleApp={handleToggleApp}
+                    onUninstall={() => handleUninstall(skill)}
+                    onUpdate={() => handleUpdateSkill(skill)}
+                    isLast={index === filteredSkills.length - 1}
+                  />
+                ))}
+              </div>
+            </TooltipProvider>
+          )}
+        </div>
+      </ScrollArea>
 
       {confirmDialog && (
         <ConfirmDialog
@@ -447,6 +727,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           confirmText={confirmDialog.confirmText}
           variant={confirmDialog.variant}
           zIndex="top"
+          pending={writePending}
           onConfirm={confirmDialog.onConfirm}
           onCancel={() => setConfirmDialog(null)}
         />
@@ -479,8 +760,10 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
+  appIds: AppId[];
   hasUpdate?: boolean;
   isUpdating?: boolean;
+  actionsDisabled?: boolean;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
@@ -489,8 +772,10 @@ interface InstalledSkillListItemProps {
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
+  appIds,
   hasUpdate,
   isUpdating,
+  actionsDisabled,
   onToggleApp,
   onUninstall,
   onUpdate,
@@ -555,7 +840,8 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       <AppToggleGroup
         apps={skill.apps}
         onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
+        appIds={appIds}
+        disabled={actionsDisabled}
       />
 
       <div
@@ -567,9 +853,12 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             type="button"
             variant="ghost"
             size="icon"
-            className="h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10"
+            className={cn(
+              "h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10",
+              actionsDisabled && !isUpdating && "disabled:opacity-100",
+            )}
             onClick={onUpdate}
-            disabled={isUpdating}
+            disabled={actionsDisabled || isUpdating}
             title={t("skills.update")}
           >
             {isUpdating ? (
@@ -583,8 +872,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={onUninstall}
+          disabled={actionsDisabled}
           title={t("skills.uninstall")}
         >
           <Trash2 size={14} />
@@ -629,9 +919,13 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
   open,
 }) => {
   const { t } = useTranslation();
+  const actionPending = isRestoring || isDeleting;
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => !nextOpen && !actionPending && onClose()}
+    >
       <DialogContent
         className="max-w-2xl max-h-[85vh] flex flex-col"
         zIndex="alert"
@@ -716,7 +1010,12 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={actionPending}
+          >
             {t("common.close")}
           </Button>
         </DialogFooter>
@@ -745,9 +1044,11 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           claude: skill.foundIn.includes("claude"),
           codex: skill.foundIn.includes("codex"),
           gemini: skill.foundIn.includes("gemini"),
+          grokbuild: skill.foundIn.includes("grokbuild"),
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
+          pi: false,
         },
       ]),
     ),
@@ -771,9 +1072,11 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           claude: false,
           codex: false,
           gemini: false,
+          grokbuild: false,
           opencode: false,
           openclaw: false,
           hermes: false,
+          pi: false,
         },
       })),
     );
@@ -798,6 +1101,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                   type="checkbox"
                   checked={selected.has(skill.directory)}
                   onChange={() => toggleSelect(skill.directory)}
+                  aria-label={skill.name}
                   className="mt-1"
                 />
                 <div className="flex-1 min-w-0">
@@ -814,6 +1118,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           claude: false,
                           codex: false,
                           gemini: false,
+                          grokbuild: false,
                           opencode: false,
                           openclaw: false,
                           hermes: false,
@@ -827,6 +1132,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               claude: false,
                               codex: false,
                               gemini: false,
+                              grokbuild: false,
                               opencode: false,
                               openclaw: false,
                               hermes: false,
@@ -835,7 +1141,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           },
                         }));
                       }}
-                      appIds={SKILLS_APP_IDS}
+                      appIds={IMPORT_SKILLS_APP_IDS}
                     />
                   </div>
                   <div

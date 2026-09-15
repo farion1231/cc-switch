@@ -1,14 +1,9 @@
 import { useTranslation } from "react-i18next";
-import {
-  useState,
-  useRef,
-  useCallback,
-  useMemo,
-  useEffect,
-  type ReactNode,
-} from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { FormLabel } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -17,29 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import {
-  Download,
-  Plus,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-} from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ApiKeySection } from "./shared";
+import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
+import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -101,44 +76,6 @@ function validateBaseUrl(raw: string): BaseUrlErrorCode | null {
   return null;
 }
 
-interface AdvancedSectionProps {
-  open: boolean;
-  onOpenChange: (next: boolean) => void;
-  labelKey: string;
-  children: ReactNode;
-}
-
-function AdvancedSection({
-  open,
-  onOpenChange,
-  labelKey,
-  children,
-}: AdvancedSectionProps) {
-  const { t } = useTranslation();
-  return (
-    <Collapsible open={open} onOpenChange={onOpenChange}>
-      <CollapsibleTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          {open ? (
-            <ChevronDown className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5" />
-          )}
-          {t(labelKey)}
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-3 pt-2">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
 export function HermesFormFields({
   baseUrl,
   onBaseUrlChange,
@@ -157,23 +94,12 @@ export function HermesFormFields({
   onRateLimitDelayChange,
 }: HermesFormFieldsProps) {
   const { t } = useTranslation();
-  const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
-    {},
+  const [expandedModelKeys, setExpandedModelKeys] = useState<Set<string>>(
+    new Set(),
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [baseUrlTouched, setBaseUrlTouched] = useState(false);
-  const [providerAdvancedOpen, setProviderAdvancedOpen] = useState(
-    rateLimitDelay !== undefined,
-  );
-
-  // Auto-expand when a preset switch brings in a value so the user sees it;
-  // don't force-collapse on clear, to avoid yanking the panel shut mid-edit.
-  useEffect(() => {
-    if (rateLimitDelay !== undefined) {
-      setProviderAdvancedOpen(true);
-    }
-  }, [rateLimitDelay]);
 
   const baseUrlErrorCode = useMemo(() => validateBaseUrl(baseUrl), [baseUrl]);
   const showBaseUrlError = baseUrlTouched && baseUrlErrorCode !== null;
@@ -192,26 +118,13 @@ export function HermesFormFields({
   }
   const modelKeys = modelKeysRef.current;
 
-  // Group fetched models by vendor once — Radix DropdownMenuContent doesn't
-  // lazy-mount, so computing this in JSX would re-run per model row per render.
-  const groupedFetchedModels = useMemo(
-    () =>
-      Object.entries(
-        fetchedModels.reduce(
-          (acc, m) => {
-            const v = m.ownedBy || "Other";
-            if (!acc[v]) acc[v] = [];
-            acc[v].push(m);
-            return acc;
-          },
-          {} as Record<string, FetchedModel[]>,
-        ),
-      ).sort(([a], [b]) => a.localeCompare(b)),
-    [fetchedModels],
-  );
-
-  const toggleModelAdvanced = (index: number) => {
-    setExpandedModels((prev) => ({ ...prev, [index]: !prev[index] }));
+  const toggleModelDetails = (modelKey: string) => {
+    setExpandedModelKeys((current) => {
+      const next = new Set(current);
+      if (next.has(modelKey)) next.delete(modelKey);
+      else next.add(modelKey);
+      return next;
+    });
   };
 
   const handleAddModel = () => {
@@ -250,13 +163,14 @@ export function HermesFormFields({
   }, [baseUrl, apiKey, t]);
 
   const handleRemoveModel = (index: number) => {
+    const removedKey = modelKeysRef.current[index];
     modelKeysRef.current.splice(index, 1);
     const next = [...models];
     next.splice(index, 1);
     onModelsChange(next);
-    setExpandedModels((prev) => {
-      const updated = { ...prev };
-      delete updated[index];
+    setExpandedModelKeys((current) => {
+      const updated = new Set(current);
+      updated.delete(removedKey);
       return updated;
     });
   };
@@ -303,10 +217,10 @@ export function HermesFormFields({
         <FormLabel htmlFor="hermes-baseurl">
           {t("hermes.form.baseUrl", { defaultValue: "API 端点" })}
         </FormLabel>
-        <Input
+        <ImeSafeInput
           id="hermes-baseurl"
           value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
+          onValueChange={onBaseUrlChange}
           onBlur={() => setBaseUrlTouched(true)}
           placeholder="https://api.example.com/v1"
           aria-invalid={showBaseUrlError}
@@ -330,18 +244,20 @@ export function HermesFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
-        category={category}
+        // Hermes 没有 OAuth-only 的免 key 官方供应商：即便是 official 预设
+        // （如 Nous Research）也需用户自填 key，故不让 official 禁用输入框。
+        category={category === "official" ? undefined : category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
       />
 
-      <div className="space-y-3">
+      <div className="space-y-3 border-l border-border-default pl-3">
         <div className="flex items-center justify-between">
-          <FormLabel>
+          <h3 className="text-sm font-normal leading-5">
             {t("hermes.form.models", { defaultValue: "模型列表" })}
-          </FormLabel>
+          </h3>
           <div className="flex gap-1">
             <Button
               type="button"
@@ -378,189 +294,170 @@ export function HermesFormFields({
             })}
           </p>
         ) : (
-          <div className="space-y-4">
-            {models.map((model, index) => (
-              <div
-                key={modelKeys[index]}
-                className="p-3 border border-border/50 rounded-lg space-y-3"
-              >
-                {/* Role badge — first entry is the default written to model.default on switch */}
-                <div className="flex items-center">
-                  <span
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                      index === 0
-                        ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {index === 0
-                      ? t("hermes.form.primaryModel", {
-                          defaultValue: "默认模型",
-                        })
-                      : t("hermes.form.fallbackModel", {
-                          defaultValue: "备选模型",
-                        })}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {t("hermes.form.modelId", { defaultValue: "模型 ID" })}
-                    </label>
-                    <div className="flex gap-1">
-                      <Input
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+              <span className="w-9" />
+              <span className="flex-1">
+                {t("hermes.form.modelId", { defaultValue: "模型 ID" })}
+              </span>
+              <span className="flex-1">
+                {t("hermes.form.modelName", { defaultValue: "显示名称" })}
+              </span>
+              <span className="w-9" />
+            </div>
+            {models.map((model, index) => {
+              const modelKey = modelKeys[index];
+              const isExpanded = expandedModelKeys.has(modelKey);
+              const detailsId = `hermes-model-details-${modelKey}`;
+              return (
+                <div key={modelKey} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => toggleModelDetails(modelKey)}
+                      aria-label={t("hermes.form.toggleModelDetails", {
+                        defaultValue: "展开或收起模型详情",
+                      })}
+                      aria-expanded={isExpanded}
+                      aria-controls={detailsId}
+                      className="h-9 w-9 shrink-0"
+                    >
+                      <ChevronRight
+                        className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
+                          isExpanded ? "rotate-90" : ""
+                        }`}
+                      />
+                    </Button>
+                    <div className="flex min-w-0 flex-1 items-center gap-1">
+                      <ImeSafeInput
+                        id={`hermes-model-id-${modelKey}`}
                         value={model.id}
-                        onChange={(e) =>
-                          handleModelChange(index, "id", e.target.value)
+                        onValueChange={(value) =>
+                          handleModelChange(index, "id", value)
                         }
                         placeholder={t("hermes.form.modelIdPlaceholder", {
-                          defaultValue: "anthropic/claude-opus-4-8",
+                          defaultValue: "anthropic/claude-opus-5",
                         })}
-                        className="flex-1"
+                        aria-label={t("hermes.form.modelId", {
+                          defaultValue: "模型 ID",
+                        })}
+                        className="min-w-0 flex-1"
                       />
                       {fetchedModels.length > 0 && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="shrink-0"
-                            >
-                              <ChevronDown className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="max-h-64 overflow-y-auto z-[200]"
-                          >
-                            {groupedFetchedModels.map(
-                              ([vendor, vModels], vi) => (
-                                <div key={vendor}>
-                                  {vi > 0 && <DropdownMenuSeparator />}
-                                  <DropdownMenuLabel>
-                                    {vendor}
-                                  </DropdownMenuLabel>
-                                  {vModels.map((m) => (
-                                    <DropdownMenuItem
-                                      key={m.id}
-                                      onSelect={() =>
-                                        handleModelChange(index, "id", m.id)
-                                      }
-                                    >
-                                      {m.id}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </div>
-                              ),
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <ModelDropdown
+                          models={fetchedModels}
+                          onSelect={(id) => handleModelChange(index, "id", id)}
+                        />
                       )}
                     </div>
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {t("hermes.form.modelName", {
-                        defaultValue: "显示名称",
-                      })}
-                    </label>
-                    <Input
+                    <ImeSafeInput
+                      id={`hermes-model-name-${modelKey}`}
                       value={model.name ?? ""}
-                      onChange={(e) =>
-                        handleModelChange(index, "name", e.target.value)
+                      onValueChange={(value) =>
+                        handleModelChange(index, "name", value)
                       }
                       placeholder={t("hermes.form.modelNamePlaceholder", {
-                        defaultValue: "Claude Opus 4.8",
+                        defaultValue: "Claude Opus 5",
                       })}
+                      aria-label={t("hermes.form.modelName", {
+                        defaultValue: "显示名称",
+                      })}
+                      className="min-w-0 flex-1"
                     />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveModel(index)}
+                      aria-label={t("hermes.form.removeModel", {
+                        defaultValue: "移除模型",
+                      })}
+                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveModel(index)}
-                    className="h-9 w-9 mt-5 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
 
-                <AdvancedSection
-                  open={expandedModels[index] ?? false}
-                  onOpenChange={() => toggleModelAdvanced(index)}
-                  labelKey="hermes.form.advancedOptions"
-                >
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {t("hermes.form.contextLength", {
-                        defaultValue: "上下文长度",
-                      })}
-                    </label>
-                    <Input
-                      type="number"
-                      value={model.context_length ?? ""}
-                      onChange={(e) =>
-                        handleModelChange(
-                          index,
-                          "context_length",
-                          e.target.value ? parseInt(e.target.value) : undefined,
-                        )
-                      }
-                      placeholder="200000"
-                    />
-                  </div>
-                </AdvancedSection>
-              </div>
-            ))}
+                  {isExpanded && (
+                    <div
+                      id={detailsId}
+                      className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]"
+                    >
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor={`hermes-model-context-${modelKey}`}
+                          className="text-xs font-normal text-muted-foreground"
+                        >
+                          {t("hermes.form.contextLength", {
+                            defaultValue: "上下文长度",
+                          })}
+                        </Label>
+                        <Input
+                          id={`hermes-model-context-${modelKey}`}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={model.context_length ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value.replace(/[^\d]/g, "");
+                            handleModelChange(
+                              index,
+                              "context_length",
+                              value ? parseInt(value, 10) : undefined,
+                            );
+                          }}
+                          placeholder="200000"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
         <p className="text-xs text-muted-foreground">
           {t("hermes.form.modelsHint", {
             defaultValue:
-              "切换到此供应商时，第一个模型会写入顶层 model.default。",
+              "启用为当前供应商时，第一个模型会设为 Hermes 默认模型。",
           })}
         </p>
       </div>
 
-      <AdvancedSection
-        open={providerAdvancedOpen}
-        onOpenChange={setProviderAdvancedOpen}
-        labelKey="hermes.form.providerAdvanced"
-      >
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">
-            {t("hermes.form.rateLimitDelay", {
-              defaultValue: "请求间隔（秒）",
-            })}
-          </label>
-          <Input
-            type="number"
-            step="0.1"
-            min="0"
-            value={rateLimitDelay ?? ""}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === "") {
-                onRateLimitDelayChange(undefined);
-                return;
-              }
-              const n = parseFloat(v);
-              onRateLimitDelayChange(
-                Number.isFinite(n) && n >= 0 ? n : undefined,
-              );
-            }}
-            placeholder="0.5"
-          />
-          <p className="text-xs text-muted-foreground">
-            {t("hermes.form.rateLimitDelayHint", {
-              defaultValue:
-                "连续请求间的最小间隔秒数（可选）。留空表示无限制。",
-            })}
-          </p>
-        </div>
-      </AdvancedSection>
+      <div className="space-y-2 border-l border-border-default pl-3">
+        <Label htmlFor="hermes-rate-limit-delay">
+          {t("hermes.form.rateLimitDelay", {
+            defaultValue: "请求间隔（秒）",
+          })}
+        </Label>
+        <Input
+          id="hermes-rate-limit-delay"
+          type="number"
+          step="0.1"
+          min="0"
+          value={rateLimitDelay ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "") {
+              onRateLimitDelayChange(undefined);
+              return;
+            }
+            const n = parseFloat(v);
+            onRateLimitDelayChange(
+              Number.isFinite(n) && n >= 0 ? n : undefined,
+            );
+          }}
+          placeholder="0.5"
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("hermes.form.rateLimitDelayHint", {
+            defaultValue: "连续请求间的最小间隔秒数（可选）。留空表示无限制。",
+          })}
+        </p>
+      </div>
     </>
   );
 }

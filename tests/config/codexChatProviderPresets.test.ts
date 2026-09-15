@@ -10,51 +10,8 @@ const expectedChatPresets = new Map<
   string,
   { baseUrl: string; contextWindows: Record<string, number> }
 >([
-  [
-    "火山Agentplan",
-    {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
-      contextWindows: { "ark-code-latest": 256000 },
-    },
-  ],
-  [
-    "BytePlus",
-    {
-      baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
-      contextWindows: { "ark-code-latest": 256000 },
-    },
-  ],
-  [
-    "DouBaoSeed",
-    {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      contextWindows: { "doubao-seed-2-0-code-preview-latest": 256000 },
-    },
-  ],
-  [
-    "DeepSeek",
-    {
-      baseUrl: "https://api.deepseek.com",
-      contextWindows: {
-        "deepseek-v4-flash": 1000000,
-        "deepseek-v4-pro": 1000000,
-      },
-    },
-  ],
-  [
-    "Zhipu GLM",
-    {
-      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-      contextWindows: { "glm-5.1": 200000 },
-    },
-  ],
-  [
-    "Zhipu GLM en",
-    {
-      baseUrl: "https://api.z.ai/api/paas/v4",
-      contextWindows: { "glm-5.1": 200000 },
-    },
-  ],
+  // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）、智谱 GLM、
+  // Kimi 两条（开放平台 + Kimi Code）均已切原生 Responses，见下方 native 清单
   [
     "Baidu Qianfan Coding Plan",
     {
@@ -63,20 +20,17 @@ const expectedChatPresets = new Map<
     },
   ],
   [
-    "Bailian",
+    "Baidu Qianfan Token Plan",
     {
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://qianfan.baidubce.com/v2/tokenplan/personal",
       contextWindows: {
-        "qwen3-coder-plus": 1000000,
-        "qwen3-max": 262144,
+        "deepseek-v4-pro": 1048576,
+        "deepseek-v4-flash": 1048576,
+        "deepseek-v4-flash-0731": 1048576,
+        "glm-5.2": 1048576,
+        "glm-5.1": 198000,
+        "kimi-k2.6": 262144,
       },
-    },
-  ],
-  [
-    "Kimi",
-    {
-      baseUrl: "https://api.moonshot.cn/v1",
-      contextWindows: { "kimi-k2.6": 262144 },
     },
   ],
   [
@@ -84,6 +38,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.stepfun.com/step_plan/v1",
       contextWindows: {
+        "step-3.7-flash": 262144,
         "step-3.5-flash-2603": 262144,
         "step-3.5-flash": 262144,
       },
@@ -94,6 +49,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.stepfun.ai/step_plan/v1",
       contextWindows: {
+        "step-3.7-flash": 262144,
         "step-3.5-flash-2603": 262144,
         "step-3.5-flash": 262144,
       },
@@ -103,82 +59,80 @@ const expectedChatPresets = new Map<
     "ModelScope",
     {
       baseUrl: "https://api-inference.modelscope.cn/v1",
-      contextWindows: { "ZhipuAI/GLM-5.1": 200000 },
-    },
-  ],
-  [
-    "Longcat",
-    {
-      baseUrl: "https://api.longcat.chat/openai/v1",
-      contextWindows: { "LongCat-Flash-Chat": 262144 },
-    },
-  ],
-  [
-    "MiniMax",
-    {
-      baseUrl: "https://api.minimaxi.com/v1",
-      contextWindows: { "MiniMax-M2.7": 200000 },
-    },
-  ],
-  [
-    "MiniMax en",
-    {
-      baseUrl: "https://api.minimax.io/v1",
-      contextWindows: { "MiniMax-M2.7": 200000 },
+      contextWindows: { "ZhipuAI/GLM-5.2": 200000 },
     },
   ],
   [
     "BaiLing",
     {
       baseUrl: "https://api.tbox.cn/api/llm/v1",
-      contextWindows: { "Ling-2.5-1T": 131072 },
-    },
-  ],
-  [
-    "Xiaomi MiMo",
-    {
-      baseUrl: "https://api.xiaomimimo.com/v1",
-      contextWindows: { "mimo-v2.5-pro": 1048576 },
-    },
-  ],
-  [
-    "Xiaomi MiMo Token Plan (China)",
-    {
-      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-      contextWindows: { "mimo-v2.5-pro": 1048576 },
+      contextWindows: { "Ling-2.6-1T": 262144 },
     },
   ],
   [
     "SiliconFlow",
     {
       baseUrl: "https://api.siliconflow.cn/v1",
-      contextWindows: { "Pro/MiniMaxAI/MiniMax-M2.7": 200000 },
+      contextWindows: { "deepseek-ai/DeepSeek-V4-Flash": 1048576 },
     },
   ],
   [
     "SiliconFlow en",
     {
       baseUrl: "https://api.siliconflow.com/v1",
-      contextWindows: { "MiniMaxAI/MiniMax-M2.7": 200000 },
+      contextWindows: { "MiniMaxAI/MiniMax-M3": 1048576 },
+    },
+  ],
+  [
+    "AtlasCloud",
+    {
+      baseUrl: "https://api.atlascloud.ai/v1",
+      contextWindows: { "zai-org/glm-5.2": 1048576 },
     },
   ],
   [
     "Novita AI",
     {
       baseUrl: "https://api.novita.ai/openai/v1",
-      contextWindows: { "zai-org/glm-5.1": 202800 },
+      contextWindows: { "zai-org/glm-5.3": 1048576 },
     },
   ],
   [
     "Nvidia",
     {
       baseUrl: "https://integrate.api.nvidia.com/v1",
-      contextWindows: { "moonshotai/kimi-k2.5": 262144 },
+      contextWindows: { "moonshotai/kimi-k3": 1048576 },
+    },
+  ],
+  [
+    "OpenCode Go",
+    {
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      contextWindows: {
+        "glm-5.3": 1000000,
+        "glm-5.3-flash": 1000000,
+        "kimi-k3": 1048576,
+        "deepseek-v4-pro": 1048576,
+        "deepseek-v4-flash": 1048576,
+        "mimo-v2.5-pro": 1048576,
+      },
     },
   ],
 ]);
 
 describe("Codex Chat provider presets", () => {
+  it("drops prompt cache routing once Kimi Coding is direct-connect", () => {
+    // promptCacheRouting 只被 Responses→Chat 转换层消费（forwarder 在转换后
+    // 重注入 prompt_cache_key）。原生直连由 Codex 自己发 prompt_cache_key，
+    // 留着这面旗只会让人误以为该卡仍需路由接管。
+    const preset = codexProviderPresets.find(
+      (item) => item.name === "Kimi For Coding",
+    );
+
+    expect(preset?.apiFormat).toBe("openai_responses");
+    expect(preset?.promptCacheRouting).toBeUndefined();
+  });
+
   it("marks migrated Chat Completions presets for local routing", () => {
     for (const [name, expected] of expectedChatPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);
@@ -201,5 +155,161 @@ describe("Codex Chat provider presets", () => {
         ),
       ).toEqual(expected.contextWindows);
     }
+  });
+
+  it("uses native Responses API for migrated CN providers without local route mapping", () => {
+    const nativeResponsesPresets = new Map<
+      string,
+      { baseUrl?: string; contextWindows: Record<string, number> }
+    >([
+      // 官方 Codex 文档确认 Agent Plan /api/plan/v3 与 Coding Plan
+      // /api/coding/v3 均支持 Responses API；BytePlus 国际站 coding/v3
+      // 同（docs.byteplus.com/en/docs/ModelArk/2556056，2026-08-15 核实）
+      ["火山 Agent Plan", { contextWindows: { "ark-code-latest": 256000 } }],
+      ["火山 Coding Plan", { contextWindows: { "ark-code-latest": 256000 } }],
+      ["BytePlus", { contextWindows: { "ark-code-latest": 256000 } }],
+      [
+        "Volcengine Doubao",
+        { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
+      ],
+      ["千问AI平台", { contextWindows: { "qwen3.8-max": 983616 } }],
+      // 腾讯 TokenHub 官方 Codex 文档确认 hy3 原生 Responses（2026-07-14）
+      [
+        "Tencent Hunyuan",
+        { contextWindows: { hy3: 256000, "hy3-preview": 256000 } },
+      ],
+      // DeepSeek 官方 Codex 文档确认 deepseek-v4-flash 原生 Responses；
+      // catalog 由后端按 deepseek.com host 镜像官方 models.json 生成
+      [
+        "DeepSeek",
+        {
+          contextWindows: {
+            "deepseek-v4-flash": 1048576,
+            "deepseek-v4-pro": 1048576,
+          },
+        },
+      ],
+      ["Longcat", { contextWindows: { "LongCat-2.0": 1048576 } }],
+      ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "Xiaomi MiMo",
+        {
+          contextWindows: {
+            "mimo-v2.5-pro": 1048576,
+            "mimo-v2.5": 1048576,
+          },
+        },
+      ],
+      [
+        "Xiaomi MiMo Token Plan (China)",
+        {
+          contextWindows: {
+            "mimo-v2.5-pro": 1048576,
+            "mimo-v2.5": 1048576,
+          },
+        },
+      ],
+      // 智谱三端点分立（Anthropic /api/anthropic、Chat /api/coding/paas/v4、
+      // Responses /api/v1），官方明示错误端点无法使用 Coding Plan 套餐额度——
+      // 原生 Responses 预设必须锁在 /api/v1（#6944；docs.bigmodel.cn/cn/coding-plan/
+      // tool/codex 与 docs.z.ai/devpack/tool/codex 自带 models.json，2026-09-04 核对：
+      // 国内站 glm-5.3 + glm-5-turbo，国际站仅 glm-5.3）
+      [
+        "Zhipu GLM",
+        {
+          baseUrl: "https://open.bigmodel.cn/api/v1",
+          contextWindows: { "glm-5.3": 1048576, "glm-5-turbo": 204800 },
+        },
+      ],
+      [
+        "Zhipu GLM en",
+        {
+          baseUrl: "https://api.z.ai/api/v1",
+          contextWindows: { "glm-5.3": 1048576 },
+        },
+      ],
+      // Kimi 两份官方 Codex 接入文档均要求 wire_api = "responses"，并明写服务
+      // 端原生实现 Responses API、无需本地路由或协议转换（platform.kimi.com/
+      // docs/guide/codex-kimi.md 与 kimi.com/code/docs/third-party-tools/
+      // codex.html，2026-09-09 真 Key 探针复核）
+      [
+        "Kimi",
+        {
+          baseUrl: "https://api.moonshot.cn/v1",
+          contextWindows: { "kimi-k3": 1048576, "kimi-k2.7-code": 262144 },
+        },
+      ],
+      [
+        "Kimi For Coding",
+        {
+          baseUrl: "https://api.kimi.com/coding/v1",
+          contextWindows: {
+            "kimi-for-coding": 262144,
+            "kimi-for-coding-highspeed": 262144,
+            k3: 1048576,
+            "k3-256k": 262144,
+          },
+        },
+      ],
+    ]);
+
+    for (const [name, expected] of nativeResponsesPresets) {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+
+      expect(preset, `${name} preset`).toBeDefined();
+      expect(preset?.apiFormat).toBe("openai_responses");
+      if (expected.baseUrl) {
+        // 直连预设的 base_url 必须是厂商的 Responses 端点本身（不是同站的
+        // Chat 端点）；endpointCandidates 与主地址同路径档
+        expect(extractCodexBaseUrl(preset?.config)).toBe(expected.baseUrl);
+        expect(preset?.endpointCandidates).toContain(expected.baseUrl);
+        expect(extractCodexModelName(preset?.config)).toBe(
+          preset?.modelCatalog?.[0]?.model,
+        );
+      }
+      // 原生 Responses 预设现在带 modelCatalog：cc-switch 直连时据此生成
+      // ~/.codex 的 model-catalogs.json（shell_command 编辑、不发 freeform
+      // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
+      // apiFormat 解耦（openai_responses 默认不开接管）。
+      expect((preset?.modelCatalog ?? []).length).toBeGreaterThan(0);
+      expect(
+        Object.fromEntries(
+          (preset?.modelCatalog ?? []).map((model) => [
+            model.model,
+            model.contextWindow,
+          ]),
+        ),
+      ).toEqual(expected.contextWindows);
+      // 原生（直连）不走 Chat 转换，因此不需要 codexChatReasoning。
+      expect(preset?.codexChatReasoning).toBeUndefined();
+    }
+  });
+
+  it("ships per-model reasoningLevels for OpenCode Go mirroring models.dev", () => {
+    // Zen 网关的合法 effort 档位是逐模型的（models.dev reasoning_options，
+    // 2026-09-10）：统一并集映射会把 high 发给仅声明 max 的 kimi-k3，
+    // 此测试锁住逐模型表，防回退。
+    const preset = codexProviderPresets.find(
+      (item) => item.name === "OpenCode Go",
+    );
+
+    expect(preset, "OpenCode Go preset").toBeDefined();
+    expect(preset?.codexChatReasoning?.effortValueMode).toBe("zen");
+    expect(
+      Object.fromEntries(
+        (preset?.modelCatalog ?? []).map((model) => [
+          model.model,
+          model.reasoningLevels ?? null,
+        ]),
+      ),
+    ).toEqual({
+      "glm-5.3": ["low", "high", "max"],
+      "glm-5.3-flash": ["low", "high", "max"],
+      "kimi-k3": ["max"],
+      "deepseek-v4-pro": ["high", "max"],
+      "deepseek-v4-flash": ["low", "high", "max"],
+      "mimo-v2.5-pro": null,
+    });
   });
 });

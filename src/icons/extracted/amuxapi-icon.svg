@@ -1,0 +1,13 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path
+    d="M4 96
+       C4 96, 24 12, 64 12
+       C104 12, 124 96, 124 96
+       Q124 102, 118 102
+       C94 102, 92 64, 64 64
+       C36 64, 34 102, 10 102
+       Q4 102, 4 96
+       Z"
+    fill="currentColor"
+  />
+</svg>

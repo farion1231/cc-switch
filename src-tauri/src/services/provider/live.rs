@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -13,6 +14,7 @@ use crate::config::{delete_file, get_claude_settings_path, read_json_file, write
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -20,6 +22,148 @@ use super::gemini_auth::{
     detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
 };
 use super::normalize_claude_models_in_value;
+
+/// ChatGPT Codex catalogs gpt-5.6 at a 372K context window with a ~353K
+/// effective budget (openai/codex#31860), far below the 1.05M API spec.
+/// Declare the catalog window for both knobs: Claude Code's built-in output
+/// reserve and compact buffer already keep the actual compact trigger
+/// (~278K-339K) below the effective budget, so anything lower only wastes
+/// usable context.
+const CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS: &str = "372000";
+const CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW: &str = "372000";
+const KIMI_FOR_CODING_CONTEXT_TOKENS: &str = "262144";
+
+/// Model env keys Claude Code may route requests through. The defaults above
+/// are calibrated against gpt-5.6's Codex catalog, so every configured model
+/// must belong to that family before they are injected — gpt-5.5's upstream
+/// catalog oscillates between 272K and 372K and must not inherit them.
+const CODEX_OAUTH_MODEL_ENV_KEYS: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+];
+
+fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Value>>) -> bool {
+    let Some(env) = provider_env else {
+        return false;
+    };
+    let mut saw_model = false;
+    for key in CODEX_OAUTH_MODEL_ENV_KEYS {
+        let Some(value) = env.get(key) else {
+            continue;
+        };
+        let Some(model) = value.as_str() else {
+            return false;
+        };
+        let model = model.trim();
+        if model.is_empty() {
+            continue;
+        }
+        saw_model = true;
+        if !model.to_ascii_lowercase().starts_with("gpt-5.6") {
+            return false;
+        }
+    }
+    saw_model
+}
+
+fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
+    provider
+        .settings_config
+        .pointer("/env/ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(|url| url.trim_end_matches('/'))
+        == Some("https://api.kimi.com/coding")
+}
+
+/// Claude Code assigns unknown non-Claude model ids a 200K context window.
+/// Codex OAuth deliberately exposes GPT ids through Claude Code, so enrich the
+/// effective live settings for both newly-created and already-saved providers.
+/// Explicit user values always win; the defaults are only injected when every
+/// configured model targets gpt-5.6.
+fn apply_codex_oauth_claude_context_defaults(settings: &mut Value, provider: &Provider) {
+    if !provider.is_codex_oauth() {
+        return;
+    }
+
+    // Read provider-owned values before mutably borrowing the effective
+    // settings. This also deliberately prevents a legacy common-config
+    // snippet from overriding model-specific context limits.
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+    let Some(env) = env.as_object_mut() else {
+        log::warn!(
+            "Cannot apply Codex OAuth Claude context defaults for '{}': env is not an object",
+            provider.id
+        );
+        return;
+    };
+
+    let inject_defaults = provider_env_targets_gpt56(provider_env);
+    for (key, default_value) in [
+        (
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS,
+        ),
+        (
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW,
+        ),
+    ] {
+        match provider_env.and_then(|provider_env| provider_env.get(key)) {
+            Some(value) => {
+                env.insert(key.to_string(), value.clone());
+            }
+            None if inject_defaults => {
+                env.insert(key.to_string(), Value::String(default_value.to_string()));
+            }
+            // 老模型不注入默认值，同时剥掉遗留共享片段可能带进来的值
+            None => {
+                env.remove(key);
+            }
+        }
+    }
+}
+
+/// Kimi For Coding serves a 256K window, but Claude Code caps unknown models at
+/// 200K unless `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is set — and that env is ignored
+/// for `claude-`-prefixed ids, so these defaults only bite when the provider also
+/// routes the endpoint's `kimi-for-coding` alias (the preset does). Keep the
+/// defaults provider-owned so an old shared snippet cannot override them.
+fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
+    if !is_kimi_for_coding_provider(provider) {
+        return;
+    }
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+
+    for key in [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    ] {
+        let value = provider_env
+            .and_then(|provider_env| provider_env.get(key))
+            .cloned()
+            .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
+        env.insert(key.to_string(), value);
+    }
+}
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
@@ -44,6 +188,7 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -306,6 +451,40 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+/// 前端表单勾选/取消"使用通用配置"时，对编辑器里的 config.toml 文本做
+/// 结构化合并/剥离。必须在后端用 toml_edit 做：前端 smol-toml 只能
+/// parse → merge → 整文档重序列化，注释全丢、键序重排，还会生成多余的
+/// 空父表头（如 `[model_providers]`）。
+pub fn update_toml_common_config_snippet(
+    config_toml: &str,
+    snippet_toml: &str,
+    enabled: bool,
+) -> Result<String, AppError> {
+    let trimmed = snippet_toml.trim();
+    if trimmed.is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut target_doc = if config_toml.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        config_toml
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?
+    };
+    let source_doc = trimmed
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+
+    if enabled {
+        merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    } else {
+        remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    }
+
+    Ok(target_doc.to_string())
+}
+
 fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
@@ -347,7 +526,12 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -417,9 +601,12 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -474,9 +661,12 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -503,17 +693,66 @@ pub(crate) fn build_effective_settings_with_common_config(
         }
     }
 
+    if matches!(app_type, AppType::Claude) {
+        apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
+        apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
+    }
+
     Ok(effective_settings)
 }
 
-pub(crate) fn write_live_with_common_config(
-    db: &Database,
+pub(crate) fn write_live_with_common_config_for_state(
+    state: &AppState,
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
-    let mut effective_provider = provider.clone();
-    effective_provider.settings_config =
-        build_effective_settings_with_common_config(db, app_type, provider)?;
+    write_live_with_common_config_for_codex_oauth_manager(
+        state.db.as_ref(),
+        app_type,
+        provider,
+        &state.codex_oauth_manager,
+    )
+}
+
+/// Validate the target provider's Codex live projection without writing:
+/// build the effective settings exactly like the live write would, then run
+/// the write-layer plan (legacy normalization, safety gates, token
+/// injection, TOML parsing). Called before `current` is committed — a
+/// write-layer refusal after `current` moved would let the next switch
+/// backfill the old live config into the new provider's DB row.
+pub(crate) fn preflight_codex_live_write_for_state(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let effective = build_effective_provider_for_live_with_codex_oauth_manager(
+        state.db.as_ref(),
+        &AppType::Codex,
+        provider,
+        &state.codex_oauth_manager,
+    )?;
+    let obj = effective
+        .settings_config
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+    let auth = obj
+        .get("auth")
+        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+    let config_str = obj.get("config").and_then(|v| v.as_str());
+    crate::codex_config::preflight_codex_live_write(effective.category.as_deref(), auth, config_str)
+}
+
+pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    codex_oauth_manager: &Arc<CodexOAuthManager>,
+) -> Result<(), AppError> {
+    let effective_provider = build_effective_provider_for_live_with_codex_oauth_manager(
+        db,
+        app_type,
+        provider,
+        codex_oauth_manager,
+    )?;
 
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
@@ -526,6 +765,179 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+pub(crate) fn build_effective_provider_for_live_with_codex_oauth_manager(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    codex_oauth_manager: &Arc<CodexOAuthManager>,
+) -> Result<Provider, AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, app_type, provider)?;
+    apply_codex_official_auth(app_type, &mut effective_provider, Some(codex_oauth_manager))?;
+    neutralize_codex_proxy_oauth_fallback(app_type, &mut effective_provider);
+    Ok(effective_provider)
+}
+
+/// Proxy-managed OAuth cards (xai_oauth, github_copilot, …) are keyless by
+/// design — the local proxy injects the real token per request — yet their
+/// preset snapshots inherited the legacy `requires_openai_auth = true`,
+/// which the keyless write-layer safety gate rightly refuses. Neutralize
+/// the flag in the effective snapshot instead of exempting the gate: the
+/// written config is then genuinely safe (0.149 treats it as
+/// unauthenticated and never reads auth.json). `codex_oauth` stays out via
+/// the predicate — the official login IS its credential.
+fn neutralize_codex_proxy_oauth_fallback(app_type: &AppType, provider: &mut Provider) {
+    if !matches!(app_type, AppType::Codex) || !provider.uses_proxy_injected_oauth() {
+        return;
+    }
+    let Some(settings) = provider.settings_config.as_object_mut() else {
+        return;
+    };
+    let Some(config_text) = settings.get("config").and_then(Value::as_str) else {
+        return;
+    };
+    if let Some(updated) =
+        crate::codex_config::neutralize_codex_official_auth_fallback_for_proxy_oauth(config_text)
+    {
+        settings.insert("config".to_string(), Value::String(updated));
+    }
+}
+
+fn apply_codex_official_auth(
+    app_type: &AppType,
+    provider: &mut Provider,
+    codex_oauth_manager: Option<&Arc<CodexOAuthManager>>,
+) -> Result<(), AppError> {
+    if !matches!(app_type, AppType::Codex)
+        || !crate::proxy::providers::is_codex_official_provider(provider)
+    {
+        return Ok(());
+    }
+
+    // Early OAuth builds could bind the fixed card before its category was
+    // persisted. Normalize only the in-memory live snapshot; the DB row and ID
+    // remain untouched.
+    provider.category = Some("official".to_string());
+
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+    else {
+        // Preserve the historical unbound Official behavior: an empty stored
+        // auth follows Codex's current login, while a backfilled login snapshot
+        // is restored when switching back to this card.
+        return Ok(());
+    };
+
+    let Some(manager) = codex_oauth_manager else {
+        return Err(AppError::Message(
+            "Codex OAuth 托管账号不可用，请重启应用后重试".to_string(),
+        ));
+    };
+
+    let auth = get_codex_managed_oauth_live_auth_value(manager.clone(), account_id.clone())?;
+
+    let Some(settings_obj) = provider.settings_config.as_object_mut() else {
+        return Err(AppError::Config(
+            "Codex 供应商配置必须是 JSON 对象".to_string(),
+        ));
+    };
+
+    settings_obj.insert("auth".to_string(), auth);
+    Ok(())
+}
+
+/// 构建写入托管 Codex `auth.json` 的完整可刷新 auth（含 refresh_token + last_refresh）。
+///
+/// 步骤：
+/// 1. **读回**：若 Codex CLI 已自行刷新并轮换 refresh_token，先采纳盘上最新值，避免
+///    用陈腐 refresh_token 覆盖 CLI 的有效登录（反复切换场景）。
+/// 2. 取有效 token 束（必要时刷新 access_token）。
+/// 3. 按原生浏览器登录形状生成完整 auth。
+///
+/// 不再持有外层锁：manager 内部按账号加锁刷新，网络阻塞不会波及其他账号操作或
+/// token 读取。
+fn get_codex_managed_oauth_live_auth_value(
+    manager: Arc<CodexOAuthManager>,
+    account_id: String,
+) -> Result<Value, AppError> {
+    std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            let bundle = manager
+                .get_valid_token_bundle_for_account(&account_id)
+                .await
+                .map_err(|err| {
+                    format!(
+                        "Codex OAuth 账号 {account_id} 认证失败，请重新登录 ChatGPT 账号: {err}"
+                    )
+                })?;
+            let id_token = bundle
+                .id_token
+                .as_deref()
+                .filter(|token| !token.trim().is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "Codex OAuth 账号 {account_id} 缺少 id_token，请在认证中心重新登录后再保存"
+                    )
+                })?;
+
+            Ok::<Value, String>(codex_managed_oauth_live_auth(
+                &bundle.chatgpt_account_id,
+                &bundle.access_token,
+                Some(id_token),
+                &bundle.refresh_token,
+                &bundle.last_refresh,
+            ))
+        })
+    })
+    .join()
+    .map_err(|_| AppError::Message("Codex OAuth token 获取线程异常退出".to_string()))?
+    .map_err(AppError::Message)
+}
+
+/// Before replacing an outgoing managed account's live auth, adopt any Codex
+/// CLI-rotated refresh generation and return the exact disk refresh token for
+/// a compare-before-write check.
+pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
+    manager: Arc<CodexOAuthManager>,
+    account_id: String,
+) -> Result<Option<String>, AppError> {
+    std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            manager
+                .prepare_live_auth_for_account_switch_away(&account_id)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+    .join()
+    .map_err(|_| AppError::Message("Codex OAuth live 凭据采纳线程异常退出".to_string()))?
+    .map_err(AppError::Message)
+}
+
+pub(crate) fn codex_managed_oauth_live_auth(
+    chatgpt_account_id: &str,
+    access_token: &str,
+    id_token: Option<&str>,
+    refresh_token: &str,
+    last_refresh: &str,
+) -> Value {
+    // 与原生 Codex 浏览器登录的形状对齐：tokens 字段顺序 id_token、access_token、
+    // refresh_token、account_id，并带顶层 last_refresh。**必须**包含 refresh_token，
+    // 否则 Codex CLI 在 access_token 过期后无法自刷新（“裸跑 codex” 会静默失效）。
+    crate::codex_config::codex_managed_oauth_auth_value(
+        chatgpt_account_id,
+        access_token,
+        id_token,
+        refresh_token,
+        last_refresh,
+    )
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
@@ -570,11 +982,90 @@ pub(crate) fn strip_common_config_from_live_settings(
     restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
 }
 
+/// 与 `apply_codex_oauth_claude_context_defaults` 严格对称：注入产物只活在
+/// live，切走回填时必须剥掉，否则程序默认值会固化成供应商的"用户显式值"，
+/// 之后调整默认值或更换模型时旧值永远压住新默认。仅当"注入会发生且注入的
+/// 就是这个值、且存储配置本来没有显式值"时才剥；用户显式存储的值和手改
+/// live 成其他数字的值都保留。
+fn strip_injected_codex_oauth_context_defaults(settings: &mut Value, provider: &Provider) {
+    if !provider.is_codex_oauth() {
+        return;
+    }
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    if !provider_env_targets_gpt56(provider_env) {
+        return;
+    }
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (key, default_value) in [
+        (
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS,
+        ),
+        (
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW,
+        ),
+    ] {
+        let stored_explicit = provider_env.is_some_and(|e| e.contains_key(key));
+        if stored_explicit {
+            continue;
+        }
+        if env.get(key).and_then(Value::as_str) == Some(default_value) {
+            env.remove(key);
+        }
+    }
+}
+
+fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
+    if !is_kimi_for_coding_provider(provider) {
+        return;
+    }
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    ] {
+        if provider_env.is_some_and(|provider_env| provider_env.contains_key(key)) {
+            continue;
+        }
+        if env.get(key).and_then(Value::as_str) == Some(KIMI_FOR_CODING_CONTEXT_TOKENS) {
+            env.remove(key);
+        }
+    }
+}
+
 fn restore_live_settings_for_provider_backfill(
     app_type: &AppType,
     provider: &Provider,
     live_settings: Value,
 ) -> Value {
+    if matches!(app_type, AppType::Claude) {
+        let mut settings = live_settings;
+        strip_injected_codex_oauth_context_defaults(&mut settings, provider);
+        strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
+        return settings;
+    }
+    if matches!(app_type, AppType::GrokBuild) {
+        let mut settings = live_settings;
+        if let Err(err) = crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings) {
+            log::warn!(
+                "Failed to strip Grok Build mcp_servers while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+        return settings;
+    }
     if !matches!(app_type, AppType::Codex) {
         return live_settings;
     }
@@ -596,6 +1087,32 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    strip_codex_managed_oauth_auth_for_backfill(provider, &mut settings);
+
+    // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
+    // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
+    if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {
+        log::warn!(
+            "Failed to strip mcp_servers while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
+    // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
+    // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
+    if provider.category.as_deref() == Some("official")
+        || crate::proxy::providers::is_codex_official_provider(provider)
+    {
+        if let Err(err) =
+            crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
+        {
+            log::warn!(
+                "Failed to strip unified session bucket while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+    }
+
     // `modelCatalog` is a cc-switch–private field whose SSOT is the DB. Live's
     // `config.toml` only carries a lossy projection (`model_catalog_json` →
     // generated catalog file) that proxy takeover/restore cycles and Codex.app
@@ -610,6 +1127,40 @@ fn restore_live_settings_for_provider_backfill(
     }
 
     settings
+}
+
+/// 回填（backfill）托管 Codex 官方 provider 时，剥离 live 的 `auth`。
+///
+/// 托管 provider 的存储配置**永远不应**持久化真实 OAuth token：token 由
+/// `CodexOAuthManager` 按账号集中保管，provider 配置只保留绑定与占位 auth。
+///
+/// 因此无论 live 里当前是什么（我们写入的托管 auth、被 CLI 轮换过的 token、
+/// 还是用户自己浏览器登录的原生 auth，后者含真实 access/refresh_token），
+/// 都统一替换为 provider 存储的占位 auth，避免把真实凭据回填进 DB 配置。
+fn strip_codex_managed_oauth_auth_for_backfill(provider: &Provider, settings: &mut Value) {
+    let is_managed = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .is_some();
+    if !is_managed {
+        return;
+    }
+
+    // live 里没有 auth 就无需处理。
+    if settings.get("auth").is_none() {
+        return;
+    }
+
+    let stored_auth = provider
+        .settings_config
+        .get("auth")
+        .filter(|auth| auth.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("auth".to_string(), stored_auth);
+    }
 }
 
 pub(crate) fn normalize_provider_common_config_for_storage(
@@ -747,16 +1298,33 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
             let config_str = obj.get("config").and_then(|v| v.as_str());
 
+            // Native (direct) Responses and Anthropic providers must suppress Codex's
+            // freeform apply_patch custom tool via the generated catalog; chat/proxy
+            // providers keep the default tool set. Uses the same Anthropic detection as
+            // the proxy router (apiFormat meta/settings + TOML wire_api).
+            let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &provider.settings_config,
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                profile,
             )?;
+            if let Some(account_id) = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            {
+                crate::codex_config::record_codex_managed_oauth_live_auth(auth, &account_id)?;
+            }
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
+        }
+        AppType::GrokBuild => {
+            crate::grok_config::write_grok_provider_live(provider)?;
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -862,6 +1430,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Pi => {
+            return Err(AppError::InvalidInput(
+                "Pi providers use the Pi provider service".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -884,7 +1457,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
             continue;
         }
 
-        if let Err(e) = write_live_with_common_config(state.db.as_ref(), app_type, provider) {
+        if let Err(e) = write_live_with_common_config_for_state(state, app_type, provider) {
             log::warn!(
                 "Failed to sync {:?} provider '{}' to live: {e}",
                 app_type,
@@ -914,13 +1487,148 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            write_live_with_common_config_for_state(state, app_type, provider)?;
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
+    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
+    // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
+    McpService::sync_enabled_for_app(state, app_type)?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveSyncOutcome {
+    WroteLive,
+    BackupOnly,
+}
+
+/// Return whether proxy takeover currently owns this app's live file.
+///
+/// A backup row by itself is not evidence: stale rows survive crashes and failed
+/// restores. Likewise, an enabled flag left behind by an interrupted teardown
+/// must not suppress a real live write unless there is corroborating evidence.
+fn proxy_owns_live_config(
+    state: &AppState,
+    app_type: &AppType,
+    has_live_backup: bool,
+    live_taken_over: bool,
+) -> bool {
+    if live_taken_over {
+        return true;
+    }
+
+    let takeover_enabled =
+        match futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str())) {
+            Ok(config) => config.enabled,
+            Err(err) => {
+                log::warn!(
+                    "读取 {} 代理接管标志失败，按未接管处理并继续写入 live 配置；\
+                     若该应用此刻确实处于接管状态，本次写入会覆盖接管的 live: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
+
+    // The enabled flag is only trusted when the proxy is actually running and
+    // the app still has a backup. This avoids treating an interrupted teardown
+    // (enabled=true, ordinary live file, no backup) as proxy ownership. The
+    // per-app lock covers the short activation window before the flag/placeholder
+    // is committed and avoids using a global proxy-running bit for another app.
+    if takeover_enabled
+        && has_live_backup
+        && futures::executor::block_on(state.proxy_service.is_running())
+    {
+        return true;
+    }
+
+    has_live_backup
+        && futures::executor::block_on(
+            state
+                .proxy_service
+                .is_switch_in_progress_for_app(app_type.as_str()),
+        )
+}
+
+/// Sync a provider to live while respecting proxy takeover ownership.
+pub(crate) fn sync_live_for_provider_respecting_takeover(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<LiveSyncOutcome, AppError> {
+    let has_live_backup =
+        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
+            Ok(backup) => backup.is_some(),
+            Err(err) => {
+                log::warn!(
+                    "读取 {} Live 备份失败，按无备份处理并继续写入 live 配置: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type);
+
+    if !proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over) {
+        // A stale backup must follow the provider too, otherwise a later restore
+        // can resurrect the old URL and undo the live write we are making now.
+        if has_live_backup {
+            if let Err(err) = futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), provider),
+            ) {
+                log::warn!(
+                    "刷新 {} 残留 Live 备份失败（不影响本次 live 写入）: {err}",
+                    app_type.as_str()
+                );
+            }
+        }
+        write_live_with_common_config_for_state(state, app_type, provider)?;
+        return Ok(LiveSyncOutcome::WroteLive);
+    }
+
+    // Takeover owns live: update the restore source, and refresh proxy-safe
+    // projections while the proxy is running.
+    futures::executor::block_on(
+        state
+            .proxy_service
+            .update_live_backup_from_provider(app_type.as_str(), provider),
+    )
+    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+    if !futures::executor::block_on(state.proxy_service.is_running()) {
+        return Ok(LiveSyncOutcome::BackupOnly);
+    }
+
+    match app_type {
+        AppType::Claude => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_claude_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?,
+        AppType::Codex if live_taken_over => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_codex_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?,
+        AppType::GrokBuild if live_taken_over => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_grok_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Grok Build Live 配置失败: {e}")))?,
+        _ => {}
+    }
+
+    Ok(LiveSyncOutcome::BackupOnly)
 }
 
 fn sync_current_provider_for_app_respecting_takeover(
@@ -937,32 +1645,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     };
 
-    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-        .ok()
-        .flatten()
-        .is_some();
-    let live_taken_over = state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(app_type);
-
-    // `enabled` is set only after takeover writes complete. During that
-    // activation window, backup/live placeholders are the authoritative signal
-    // that normal provider sync must not rewrite the managed live file.
-    if has_live_backup || live_taken_over {
-        if matches!(app_type, AppType::ClaudeDesktop) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
-        } else {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-        }
-        return Ok(());
-    }
-
-    write_live_with_common_config(state.db.as_ref(), app_type, provider)
+    sync_live_for_provider_respecting_takeover(state, app_type, provider).map(|_| ())
 }
 
 /// Sync current provider to live configuration
@@ -973,31 +1656,51 @@ fn sync_current_provider_for_app_respecting_takeover(
 ///
 /// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if app_type.is_additive_mode() {
+        if matches!(app_type, AppType::Pi) {
+            continue;
+        }
+        let result = if app_type.is_additive_mode() {
             // Additive mode: sync ALL providers
-            sync_all_providers_to_live(state, &app_type)?;
+            sync_all_providers_to_live(state, &app_type)
         } else {
             // Switch mode: sync only current provider. During proxy takeover,
             // update the restore backup instead of rewriting the taken-over
             // live file.
-            sync_current_provider_for_app_respecting_takeover(state, &app_type)?;
+            sync_current_provider_for_app_respecting_takeover(state, &app_type)
+        };
+
+        if let Err(error) = result {
+            log::warn!("同步 Provider 到 {app_type:?} 失败: {error}");
+            failures.push(format!("provider/{}: {error}", app_type.as_str()));
         }
     }
 
-    // MCP sync
-    McpService::sync_all_enabled(state)?;
+    // MCP sync is already best-effort per application. Preserve its aggregate
+    // error while continuing with Skills.
+    if let Err(error) = McpService::sync_all_enabled(state) {
+        failures.push(format!("mcp: {error}"));
+    }
 
     // Skill sync
     for app_type in AppType::all() {
         if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
             log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
-            // Continue syncing other apps, don't abort
+            failures.push(format!("skill/{}: {e}", app_type.as_str()));
         }
     }
 
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "部分 live 配置同步失败: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 /// Read current live settings for an app type
@@ -1083,6 +1786,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
 
@@ -1111,6 +1815,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Pi => Err(AppError::InvalidInput(
+            "Pi providers are read from Pi's native models file".to_string(),
+        )),
     }
 }
 
@@ -1133,8 +1840,39 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         return Ok(false);
     }
 
+    // 拒绝把"被代理接管的 Live"导入为供应商：接管期间 Live 里只有
+    // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
+    // 它会成为 current provider（SSOT），后续"无备份恢复"路径会把占位符
+    // 当真实配置写回 Live，永久卡在已失效的本地代理上。
+    // 典型触发场景：代理接管开启时切换 app_config_dir 并重启，新数据库首启导入。
+    if state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&app_type)
+    {
+        return Err(AppError::localized(
+            "provider.import.live_taken_over",
+            "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",
+            "The live config is currently taken over by the proxy (contains placeholders) and cannot be imported as a provider. Disable proxy takeover or restore the live config first.",
+        ));
+    }
+
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
+        AppType::GrokBuild => {
+            let mut settings = crate::grok_config::read_grok_live_settings()?;
+            let config = settings
+                .get("config")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            // 官方登录态（无自定义模型表）在这里必须报错：本函数也被启动
+            // 自动导入调用，而全项目惯例是"启动自动导入只产出 default，
+            // 从不产出官方条目"——否则删掉的官方条目每次重启都会复活。
+            // 官方态的成功导入（补官方条目并激活）只挂在手动导入的命令层
+            // （`import_default_config_internal`）。
+            crate::grok_config::validate_config_toml(config)?;
+            crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings)?;
+            settings
+        }
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
             if !settings_path.exists() {
@@ -1189,7 +1927,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1232,6 +1970,20 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
     crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+
+    // 初次导入已有配置时随手补出官方入口，对齐其它应用"首启动 = 导入 default
+    // + 播种官方条目"的观感。grokbuild 种子晚于 `official_providers_seeded`
+    // flag 引入，存量库的主播种不会再跑，只能挂在导入动作上补。
+    // 只在导入成功时执行；live 完全不可导入（文件缺失/语法错误/残缺配置）
+    // 不会到达这里。失败只 warn。
+    if matches!(app_type, AppType::GrokBuild) {
+        if let Err(e) = state.db.ensure_official_seed_by_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+            AppType::GrokBuild,
+        ) {
+            log::warn!("Failed to ensure grokbuild-official seed after import: {e}");
+        }
+    }
 
     Ok(true) // 真正导入了
 }
@@ -1367,15 +2119,10 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
     for (id, config) in providers {
-        // Skip if already exists in database
-        if existing_ids.contains(&id) {
-            log::debug!("OpenCode provider '{id}' already exists in database, skipping");
-            continue;
-        }
-
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
@@ -1385,13 +2132,36 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             }
         };
 
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "opencode") {
+                Ok(Some(existing)) => {
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
+                    if existing.settings_config != settings_config || existing.name != display_name
+                    {
+                        let mut provider = existing;
+                        provider.name = display_name;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("opencode", &provider) {
+                            log::warn!(
+                                "Failed to update OpenCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated OpenCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("OpenCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up OpenCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
         // Create provider
-        let mut provider = Provider::with_id(
-            id.clone(),
-            config.name.clone().unwrap_or_else(|| id.clone()),
-            settings_config,
-            None,
-        );
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),
             ..Default::default()
@@ -1407,7 +2177,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Imported OpenCode provider '{id}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Import all providers from OpenClaw live config to database
@@ -1424,6 +2194,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("openclaw")?;
 
     for (id, config) in providers {
@@ -1437,12 +2208,6 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
             continue;
         }
 
-        // Skip if already exists in database
-        if existing_ids.contains(&id) {
-            log::debug!("OpenClaw provider '{id}' already exists in database, skipping");
-            continue;
-        }
-
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
@@ -1451,6 +2216,30 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
                 continue;
             }
         };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "openclaw") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != settings_config {
+                        let mut provider = existing;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+                            log::warn!(
+                                "Failed to update OpenClaw provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated OpenClaw provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("OpenClaw provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up OpenClaw provider '{id}': {e}"),
+            }
+            continue;
+        }
 
         // Determine display name: use first model name if available, otherwise use id
         let display_name = config
@@ -1476,7 +2265,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Imported OpenClaw provider '{id}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Import all providers from Hermes live config to database
@@ -1493,6 +2282,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("hermes")?;
 
     for (name, config) in providers {
@@ -1502,9 +2292,27 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
             continue;
         }
 
-        // Skip if already exists in database
         if existing_ids.contains(&name) {
-            log::debug!("Hermes provider '{name}' already exists in database, skipping");
+            match state.db.get_provider_by_id(&name, "hermes") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("hermes", &provider) {
+                            log::warn!(
+                                "Failed to update Hermes provider '{name}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated Hermes provider '{name}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("Hermes provider '{name}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up Hermes provider '{name}': {e}"),
+            }
             continue;
         }
 
@@ -1525,7 +2333,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         log::info!("Imported Hermes provider '{name}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Remove a Hermes provider from live config
@@ -1569,7 +2377,449 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
+
+    #[test]
+    fn proxy_oauth_codex_snapshot_neutralizes_official_auth_fallback() {
+        let poisoned_config = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"xai\"\nbase_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
+        let settings = json!({
+            "auth": { "OPENAI_API_KEY": "" },
+            "config": poisoned_config,
+        });
+
+        // The raw managed-OAuth snapshot is exactly what the keyless safety
+        // gate refuses — the switch regression this neutralization fixes.
+        assert!(crate::codex_config::preflight_codex_live_write(
+            None,
+            &settings["auth"],
+            Some(poisoned_config)
+        )
+        .is_err());
+
+        let mut provider = Provider::with_id(
+            "grok-oauth".to_string(),
+            "xAI (Grok) OAuth".to_string(),
+            settings.clone(),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+        neutralize_codex_proxy_oauth_fallback(&AppType::Codex, &mut provider);
+        let config = provider.settings_config["config"].as_str().expect("config");
+        assert!(config.contains("requires_openai_auth = false"));
+        assert!(crate::codex_config::preflight_codex_live_write(
+            None,
+            &provider.settings_config["auth"],
+            Some(config)
+        )
+        .is_ok());
+
+        // codex_oauth keeps its fallback shape — the official login IS its
+        // credential — and non-Codex app types are untouched entirely.
+        let mut official = Provider::with_id(
+            "chatgpt".to_string(),
+            "ChatGPT".to_string(),
+            settings.clone(),
+            None,
+        );
+        official.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+        neutralize_codex_proxy_oauth_fallback(&AppType::Codex, &mut official);
+        assert!(official.settings_config["config"]
+            .as_str()
+            .expect("config")
+            .contains("requires_openai_auth = true"));
+
+        let mut claude_card = provider.clone();
+        claude_card.settings_config = settings;
+        neutralize_codex_proxy_oauth_fallback(&AppType::Claude, &mut claude_card);
+        assert!(claude_card.settings_config["config"]
+            .as_str()
+            .expect("config")
+            .contains("requires_openai_auth = true"));
+    }
+
+    #[test]
+    fn kimi_for_coding_effective_settings_backfill_256k_context() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-for-coding".to_string(),
+            "Kimi For Coding".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+                    "ANTHROPIC_MODEL": "kimi-for-coding",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("262144")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("262144")
+        );
+    }
+
+    #[test]
+    fn kimi_for_coding_context_defaults_preserve_user_overrides() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-for-coding".to_string(),
+            "Kimi For Coding".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "300000",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "250000"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("300000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("250000")
+        );
+    }
+
+    #[test]
+    fn kimi_for_coding_backfill_strips_only_injected_context_default() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-for-coding".to_string(),
+            "Kimi For Coding".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+                }
+            }),
+            None,
+        );
+
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("262144")
+        );
+    }
+
+    #[test]
+    fn codex_oauth_effective_settings_backfill_gpt_context_defaults() {
+        let db = Database::memory().expect("create memory db");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "gpt-5.6"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("372000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("372000")
+        );
+    }
+
+    #[test]
+    fn codex_oauth_context_defaults_preserve_user_overrides() {
+        let db = Database::memory().expect("create memory db");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "350000"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("500000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("350000")
+        );
+    }
+
+    #[test]
+    fn codex_oauth_context_defaults_ignore_legacy_common_config_values() {
+        let db = Database::memory().expect("create memory db");
+        db.set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                json!({
+                    "env": {
+                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+                        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+                    }
+                })
+                .to_string(),
+            ),
+        )
+        .expect("save legacy common config");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({ "env": { "ANTHROPIC_MODEL": "gpt-5.6" } }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("372000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("372000")
+        );
+    }
+
+    #[test]
+    fn codex_oauth_context_defaults_skip_non_gpt56_models() {
+        let db = Database::memory().expect("create memory db");
+        db.set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                json!({
+                    "env": {
+                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+                        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+                    }
+                })
+                .to_string(),
+            ),
+        )
+        .expect("save legacy common config");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "gpt-5.5",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 旧模型不注入 372K 默认值，遗留共享片段带进来的值也要剥掉
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        // 用户显式写在供应商配置里的值仍然生效
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("300000")
+        );
+    }
+
+    /// 往返不动点：注入产物只活在 live，切走回灌后存储配置必须与注入前一致，
+    /// 否则程序默认值固化成"用户显式值"，之后调默认值永远压不动。
+    #[test]
+    fn codex_oauth_backfill_strips_injected_context_defaults() {
+        let db = Database::memory().expect("create memory db");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({ "env": { "ANTHROPIC_MODEL": "gpt-5.6" } }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        // 模拟写 live：注入了两个上下文默认值
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        assert_eq!(
+            live["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("372000")
+        );
+
+        // 模拟切走回灌：注入产物被剥掉，其余字段原样保留
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+        assert_eq!(backfilled["env"]["ANTHROPIC_MODEL"], json!("gpt-5.6"));
+    }
+
+    #[test]
+    fn codex_oauth_backfill_keeps_user_context_values() {
+        let db = Database::memory().expect("create memory db");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "gpt-5.6",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        // live 里：MAX 是用户显式值；ACW 被用户手改成了非默认数字
+        let live = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "gpt-5.6",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"
+            }
+        });
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("500000")
+        );
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("300000")
+        );
+    }
+
+    /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。
+    /// smol-toml 的 parse→merge→stringify 整文档重序列化会丢注释、
+    /// 按字母序重排键、并为 dotted 表生成多余的空父表头。
+    #[test]
+    fn update_toml_common_config_snippet_preserves_comments_and_key_order() {
+        // 刻意非字母序的键序 + 注释，模拟用户手写格式
+        let config = r#"# my precious comment
+model = "gpt-5.5"
+model_provider = "aprov"
+disable_response_storage = true
+
+[model_providers.aprov]
+# provider comment
+name = "A Prov"
+base_url = "https://a.example/v1"
+"#;
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged = update_toml_common_config_snippet(config, snippet, true).unwrap();
+        assert!(merged.contains("# my precious comment"));
+        assert!(merged.contains("# provider comment"));
+        let model_pos = merged.find("model = ").unwrap();
+        let provider_pos = merged.find("model_provider = ").unwrap();
+        let disable_pos = merged.find("disable_response_storage").unwrap();
+        assert!(
+            model_pos < provider_pos && provider_pos < disable_pos,
+            "merge must not reorder user keys, got: {merged}"
+        );
+        assert!(merged.contains("[tui]"));
+        assert!(merged.contains("notifications = true"));
+        assert!(
+            !merged.contains("[model_providers]\n"),
+            "merge must not synthesize an empty parent table header, got: {merged}"
+        );
+
+        let removed = update_toml_common_config_snippet(&merged, snippet, false).unwrap();
+        assert!(!removed.contains("[tui]"), "snippet keys must be stripped");
+        assert!(removed.contains("# my precious comment"));
+        assert!(removed.contains("disable_response_storage = true"));
+    }
+
+    /// 合并时标量=片段覆盖供应商值（与 Claude 侧 deepMerge 一致）；
+    /// 剥离按值匹配：用户改过的值不删（与 strip 路径的
+    /// toml_value_is_subset 语义一致）。
+    #[test]
+    fn update_toml_common_config_snippet_scalar_override_and_value_matched_removal() {
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, true)
+                .unwrap();
+        assert!(
+            merged.contains("notifications = true"),
+            "snippet scalar should override provider value, got: {merged}"
+        );
+
+        let removed =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, false)
+                .unwrap();
+        assert!(
+            removed.contains("notifications = false"),
+            "user-modified value must survive removal, got: {removed}"
+        );
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -1613,6 +2863,308 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_managed_oauth_live_auth_matches_codex_cli_shape() {
+        assert_eq!(
+            codex_managed_oauth_live_auth(
+                "acct-managed",
+                "access-token",
+                Some("id-token"),
+                "refresh-token",
+                "2026-01-02T03:04:05.000000000Z",
+            ),
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "id-token",
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct-managed"
+                },
+                "last_refresh": "2026-01-02T03:04:05.000000000Z"
+            }),
+            "managed live auth must carry refresh_token + last_refresh so the Codex CLI can self-refresh"
+        );
+    }
+
+    #[test]
+    fn codex_managed_oauth_live_auth_without_id_token_omits_it() {
+        assert_eq!(
+            codex_managed_oauth_live_auth(
+                "acct-managed",
+                "access-token",
+                None,
+                "refresh-token",
+                "2026-01-02T03:04:05.000000000Z",
+            ),
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct-managed"
+                },
+                "last_refresh": "2026-01-02T03:04:05.000000000Z"
+            }),
+            "without a stored id_token the field is omitted rather than written as null"
+        );
+    }
+
+    #[test]
+    fn category_less_managed_codex_binding_with_null_config_uses_selected_account_token() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
+        let id_token = crate::codex_config::test_codex_id_token("managed-user");
+        tauri::async_runtime::block_on(async {
+            manager
+                .add_test_account_with_workspace_and_access_token(
+                    "local-managed",
+                    "workspace-shared",
+                    "managed-token",
+                    Some(&id_token),
+                )
+                .await
+                .expect("seed managed account");
+        });
+
+        let mut provider = Provider::with_id(
+            "managed-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "stale-key"
+                },
+                "config": null
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("local-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        apply_codex_official_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("apply managed OAuth auth");
+
+        assert_eq!(provider.category.as_deref(), Some("official"));
+
+        // last_refresh 是写入时刻的时间戳（非确定），因此逐字段断言而非整体等值。
+        let auth = provider.settings_config.get("auth").expect("auth written");
+        assert_eq!(
+            auth.get("auth_mode").and_then(|v| v.as_str()),
+            Some("chatgpt")
+        );
+        assert!(auth.get("OPENAI_API_KEY").is_some_and(|v| v.is_null()));
+        let tokens = auth
+            .get("tokens")
+            .and_then(|v| v.as_object())
+            .expect("tokens object");
+        assert_eq!(
+            tokens.get("account_id").and_then(|v| v.as_str()),
+            Some("workspace-shared")
+        );
+        assert_eq!(
+            tokens.get("access_token").and_then(|v| v.as_str()),
+            Some("managed-token")
+        );
+        assert_eq!(
+            tokens.get("id_token").and_then(|v| v.as_str()),
+            Some(id_token.as_str())
+        );
+        assert_eq!(
+            tokens.get("refresh_token").and_then(|v| v.as_str()),
+            Some("test-refresh-token"),
+            "managed live auth must carry the account's refresh_token so the Codex CLI can self-refresh"
+        );
+        assert!(
+            auth.get("last_refresh")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.ends_with('Z')),
+            "managed live auth must include an RFC3339 last_refresh timestamp"
+        );
+    }
+
+    #[test]
+    fn codex_follow_login_without_binding_keeps_stored_auth() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
+        tauri::async_runtime::block_on(async {
+            manager
+                .add_test_account_with_access_token("acct-managed", "managed-token", None)
+                .await
+                .expect("seed managed account");
+        });
+
+        let original_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": "native-codex-token",
+                "account_id": "acct-native"
+            }
+        });
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": original_auth.clone(),
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        apply_codex_official_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("apply follow-login auth policy");
+
+        assert_eq!(
+            provider.settings_config.get("auth"),
+            Some(&original_auth),
+            "follow-login providers must preserve their historical auth snapshot instead of using the managed default"
+        );
+    }
+
+    #[test]
+    fn follow_login_backfill_preserves_latest_live_tokens() {
+        let mut provider = Provider::with_id(
+            "follow-login".to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        let mut live_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "live-access-secret",
+                    "refresh_token": "live-refresh-secret"
+                }
+            },
+            "config": ""
+        });
+
+        strip_codex_managed_oauth_auth_for_backfill(&provider, &mut live_settings);
+
+        assert_eq!(
+            live_settings["auth"]["tokens"]["refresh_token"],
+            json!("live-refresh-secret")
+        );
+    }
+
+    #[test]
+    fn category_less_fixed_follow_login_backfill_preserves_auth_and_strips_live_only_config() {
+        let provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        let injected_config = crate::codex_config::inject_codex_unified_session_bucket("")
+            .expect("inject unified session bucket");
+        let live_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": { "refresh_token": "live-refresh-secret" }
+            },
+            "config": injected_config
+        });
+
+        let backfilled =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert_eq!(
+            backfilled["auth"]["tokens"]["refresh_token"],
+            json!("live-refresh-secret")
+        );
+        assert_eq!(backfilled["config"], json!(""));
+    }
+
+    #[test]
+    fn backfill_never_persists_native_tokens_into_managed_provider_config() {
+        // 托管 provider 的存储配置以占位 auth 表示；但 live 里此刻是用户自己
+        // 浏览器登录的原生 auth（含真实 refresh_token）。backfill 必须把 live
+        // auth 换回存储占位，绝不把原生 access/refresh_token 回填进 DB 配置。
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let mut live_settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "native-id",
+                    "access_token": "native-access-secret",
+                    "refresh_token": "native-refresh-secret",
+                    "account_id": "acct-native"
+                },
+                "last_refresh": "2026-01-01T00:00:00Z"
+            },
+            "config": ""
+        });
+
+        strip_codex_managed_oauth_auth_for_backfill(&provider, &mut live_settings);
+
+        assert_eq!(
+            live_settings.get("auth"),
+            Some(&json!({})),
+            "managed provider backfill must reset live auth to the stored placeholder"
+        );
+        let serialized = live_settings.to_string();
+        assert!(
+            !serialized.contains("native-refresh-secret"),
+            "native refresh_token must not leak into a managed provider's backfilled config"
+        );
+        assert!(
+            !serialized.contains("native-access-secret"),
+            "native access_token must not leak into a managed provider's backfilled config"
+        );
+    }
+
+    #[test]
+    fn backfill_leaves_non_managed_provider_auth_untouched() {
+        // 非托管 provider 不受此剥离影响：其 auth 就该原样保留。
+        let mut provider = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({ "auth": { "OPENAI_API_KEY": "user-key" }, "config": "" }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "user-key" },
+            "config": ""
+        });
+        let before = live_settings.clone();
+        strip_codex_managed_oauth_auth_for_backfill(&provider, &mut live_settings);
+        assert_eq!(
+            live_settings, before,
+            "non-managed provider auth must be left untouched by managed-oauth backfill stripping"
+        );
     }
 
     #[test]
@@ -1766,5 +3318,69 @@ mod tests {
             live_settings.get("modelCatalog"),
             "backfill must keep the Live-reconstructed catalog when the DB has none"
         );
+    }
+
+    #[test]
+    fn codex_switch_backfill_strips_synced_mcp_servers() {
+        // Live 里的 [mcp_servers] 是 MCP 同步的投影（SSOT 在 DB 表），
+        // 回填进供应商存储配置会让已删除的服务器随快照复活。
+        let provider = Provider::with_id(
+            "prov".to_string(),
+            "Prov".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model = \"gpt-5.5\"\n"
+            }),
+            None,
+        );
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": "model = \"gpt-5.5\"\n\n[mcp_servers.echo]\ntype = \"stdio\"\ncommand = \"echo\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        let config_text = result
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(
+            !config_text.contains("mcp_servers"),
+            "backfill must strip synced [mcp_servers] from the stored provider config, got: {config_text}"
+        );
+        assert!(
+            config_text.contains("model = \"gpt-5.5\""),
+            "non-MCP content must survive the strip"
+        );
+    }
+
+    #[test]
+    fn grok_switch_backfill_strips_synced_mcp_servers() {
+        let provider = Provider::with_id(
+            "grok".to_string(),
+            "Grok".to_string(),
+            json!({
+                "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n"
+            }),
+            None,
+        );
+        let live_settings = json!({
+            "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n\n[mcp_servers.echo]\ncommand = \"echo\"\n"
+        });
+
+        let result = restore_live_settings_for_provider_backfill(
+            &AppType::GrokBuild,
+            &provider,
+            live_settings,
+        );
+        let config_text = result
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+
+        assert!(!config_text.contains("mcp_servers"));
+        assert!(config_text.contains("model = \"grok-4.5\""));
     }
 }

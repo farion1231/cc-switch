@@ -2,7 +2,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 
 type OmoProviderRow = (
@@ -272,6 +272,105 @@ impl Database {
                 .map_err(|e| AppError::Database(e.to_string()))?;
             }
         }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Replace a provider row under a new ID without exposing an intermediate
+    /// duplicate or missing row. Existing endpoint and health references move
+    /// with the provider, while its current-state bit is preserved.
+    pub fn replace_provider_id(
+        &self,
+        app_type: &str,
+        original_id: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        if original_id == provider.id {
+            return self.save_provider(app_type, provider);
+        }
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let (is_current, in_failover_queue) = tx
+            .query_row(
+                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![original_id, app_type],
+                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .ok_or_else(|| {
+                AppError::Database(format!(
+                    "Provider '{original_id}' does not exist in app '{app_type}'"
+                ))
+            })?;
+
+        let target_exists = tx
+            .query_row(
+                "SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider.id, app_type],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .is_some();
+        if target_exists {
+            return Err(AppError::Database(format!(
+                "Provider '{}' already exists in app '{app_type}'",
+                provider.id
+            )));
+        }
+
+        let mut meta = provider.meta.clone().unwrap_or_default();
+        meta.custom_endpoints.clear();
+        tx.execute(
+            "INSERT INTO providers (
+                id, app_type, name, settings_config, website_url, category,
+                created_at, sort_index, notes, icon, icon_color, meta,
+                is_current, in_failover_queue
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                provider.id,
+                app_type,
+                provider.name,
+                serde_json::to_string(&provider.settings_config).map_err(|e| {
+                    AppError::Database(format!("Failed to serialize settings_config: {e}"))
+                })?,
+                provider.website_url,
+                provider.category,
+                provider.created_at,
+                provider.sort_index,
+                provider.notes,
+                provider.icon,
+                provider.icon_color,
+                serde_json::to_string(&meta).map_err(|e| {
+                    AppError::Database(format!("Failed to serialize meta: {e}"))
+                })?,
+                is_current,
+                in_failover_queue,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "UPDATE provider_endpoints SET provider_id = ?1 WHERE provider_id = ?2 AND app_type = ?3",
+            params![provider.id, original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "UPDATE provider_health SET provider_id = ?1 WHERE provider_id = ?2 AND app_type = ?3",
+            params![provider.id, original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -710,7 +809,10 @@ impl Database {
 #[cfg(test)]
 mod ensure_official_seed_tests {
     use crate::app_config::AppType;
-    use crate::database::{Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID};
+    use crate::database::{
+        Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
+        GROKBUILD_OFFICIAL_PROVIDER_ID,
+    };
 
     #[test]
     fn ensure_inserts_when_missing() {
@@ -767,6 +869,45 @@ mod ensure_official_seed_tests {
             after.name, "My Custom Backup",
             "customization must not be overwritten"
         );
+    }
+
+    #[test]
+    fn ensure_recreates_codex_official_seed_after_deletion() {
+        let db = Database::memory().expect("memory db");
+        db.init_default_official_providers().expect("seed");
+        db.delete_provider(AppType::Codex.as_str(), CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("delete Codex official");
+
+        let inserted = db
+            .ensure_official_seed_by_id(CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
+            .expect("ensure Codex official");
+        assert!(inserted);
+        let provider = db
+            .get_provider_by_id(CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex.as_str())
+            .expect("query")
+            .expect("Codex official restored");
+        assert_eq!(provider.category.as_deref(), Some("official"));
+        assert_eq!(provider.settings_config["auth"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn ensure_recreates_grokbuild_official_seed_after_deletion() {
+        let db = Database::memory().expect("memory db");
+        db.init_default_official_providers().expect("seed");
+        db.delete_provider(AppType::GrokBuild.as_str(), GROKBUILD_OFFICIAL_PROVIDER_ID)
+            .expect("delete Grok Build official");
+
+        let inserted = db
+            .ensure_official_seed_by_id(GROKBUILD_OFFICIAL_PROVIDER_ID, AppType::GrokBuild)
+            .expect("ensure Grok Build official");
+        assert!(inserted);
+        let provider = db
+            .get_provider_by_id(GROKBUILD_OFFICIAL_PROVIDER_ID, AppType::GrokBuild.as_str())
+            .expect("query")
+            .expect("Grok Build official restored");
+        assert_eq!(provider.category.as_deref(), Some("official"));
+        // 空 config：切换时不注入自定义模型表，Grok CLI 回落到自带 OAuth 登录
+        assert_eq!(provider.settings_config["config"], serde_json::json!(""));
     }
 
     #[test]

@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { FailoverQueueItem } from "@/types/proxy";
-import type { AppId } from "@/lib/api";
+import type { ProxyAppId } from "@/config/appConfig";
 import {
   useFailoverQueue,
   useAvailableProvidersForFailover,
@@ -33,7 +33,7 @@ import {
 } from "@/lib/query/failover";
 
 interface FailoverQueueManagerProps {
-  appType: AppId;
+  appType: ProxyAppId;
   disabled?: boolean;
 }
 

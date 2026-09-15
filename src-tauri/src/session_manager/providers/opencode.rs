@@ -149,7 +149,7 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
             created_at: Some(created),
             last_active_at: Some(updated),
             source_path: Some(format!("sqlite:{db_display}:{session_id}")),
-            resume_command: Some(format!("opencode session resume {session_id}")),
+            resume_command: Some(format!("opencode -s {session_id}")),
         });
     }
     sessions
@@ -473,7 +473,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at: updated_at.or(created_at),
         source_path: Some(source_path),
-        resume_command: Some(format!("opencode session resume {session_id}")),
+        resume_command: Some(format!("opencode -s {session_id}")),
     })
 }
 
@@ -824,6 +824,10 @@ mod tests {
         assert_eq!(
             sessions[1].source_path.as_deref(),
             Some(expected_source.as_str())
+        );
+        assert_eq!(
+            sessions[1].resume_command.as_deref(),
+            Some("opencode -s ses_1")
         );
     }
 

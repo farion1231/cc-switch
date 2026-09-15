@@ -12,4 +12,4 @@ pub use calculator::{CostBreakdown, CostCalculator, ModelPricing};
 #[allow(unused_imports)]
 pub use logger::{RequestLog, UsageLogger};
 #[allow(unused_imports)]
-pub use parser::{ApiType, TokenUsage};
+pub use parser::TokenUsage;

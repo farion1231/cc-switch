@@ -2,9 +2,10 @@
 //!
 //! 负责将请求转发到上游Provider，支持故障转移
 
-use super::hyper_client::ProxyResponse;
+use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
     body_filter::filter_private_params_with_whitelist,
+    content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
@@ -21,10 +22,14 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig,SensitiveWordConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState};
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-use crate::{app_config::AppType, provider::Provider};
+use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+use crate::{
+    app_config::AppType,
+    provider::{LocalProxyRequestOverrides, Provider},
+};
+use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
@@ -34,10 +39,74 @@ use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+fn codex_bearer_access_token(headers: &http::HeaderMap) -> Option<&str> {
+    let authorization = headers
+        .get(http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .trim();
+    let mut parts = authorization.split_whitespace();
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+    if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(token)
+}
+
+fn validate_codex_official_authorization(
+    headers: &http::HeaderMap,
+    provider: &Provider,
+    expected_chatgpt_account_id: Option<&str>,
+    managed_session_matches: Option<bool>,
+) -> Result<(), ProxyError> {
+    let authorization = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim);
+    match authorization {
+        None | Some("") => Err(ProxyError::AuthError(
+            "Codex 官方登录不可用，请先在 Codex 中完成 ChatGPT 登录".to_string(),
+        )),
+        Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
+            "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
+        )),
+        Some(_) => {
+            let managed_account_id = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .map(|account_id| account_id.trim().to_string())
+                .filter(|account_id| !account_id.is_empty());
+            if managed_account_id.is_some() {
+                let request_account_id = headers
+                    .get("chatgpt-account-id")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::trim)
+                    .filter(|account_id| !account_id.is_empty());
+                if request_account_id != expected_chatgpt_account_id
+                    || managed_session_matches != Some(true)
+                {
+                    return Err(ProxyError::AuthError(
+                        "当前 Codex 会话未加载所选 ChatGPT 账号，请重启 Codex 或新建会话后重试"
+                            .to_string(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
     pub claude_api_format: Option<String>,
+    /// 实际发往上游的模型名（路由接管/模型映射后的真值）。
+    ///
+    /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
+    /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
+    pub outbound_model: Option<String>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -124,6 +193,51 @@ pub struct RequestForwarder {
 }
 
 impl RequestForwarder {
+    /// 预防式 media 降级：发送前对 text-only 模型把图片块替换为标记。
+    ///
+    /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
+    /// 再受 `request_media_heuristic` 单独管辖（显式声明 text-only 始终生效）。
+    /// 返回被替换的图片块数量（0 = 未触发或开关关闭）。
+    fn apply_media_prevention(&self, body: &mut Value, provider: &Provider) -> usize {
+        if !(self.rectifier_config.enabled && self.rectifier_config.request_media_fallback) {
+            return 0;
+        }
+        let replaced_images = super::media_sanitizer::replace_images_for_text_only_model(
+            body,
+            provider,
+            self.rectifier_config.request_media_heuristic,
+        );
+        if replaced_images > 0 {
+            let model = body.get("model").and_then(Value::as_str).unwrap_or("");
+            log::info!(
+                "[Media] Replaced {replaced_images} image block(s) with {} for text-only provider={}, model={}",
+                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER,
+                provider.id,
+                model
+            );
+        }
+        replaced_images
+    }
+
+    /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
+    ///
+    /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
+    /// 这里是上游"实测"错误后的纯恢复，不是预测，故启发式开关与它无关。
+    fn media_retry_should_trigger(
+        &self,
+        adapter_name: &str,
+        already_retried: bool,
+        provider_body: &Value,
+        error: &ProxyError,
+    ) -> bool {
+        matches!(adapter_name, "Claude" | "Codex")
+            && self.rectifier_config.enabled
+            && self.rectifier_config.request_media_fallback
+            && !already_retried
+            && super::media_sanitizer::contains_image_blocks(provider_body)
+            && super::media_sanitizer::is_unsupported_image_error(error)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -327,7 +441,13 @@ impl RequestForwarder {
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
-        let adapter = get_adapter(app_type);
+        let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
+            error: ProxyError::ConfigError(format!(
+                "{} does not support proxy routing",
+                app_type.as_str()
+            )),
+            provider: None,
+        })?;
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
@@ -360,6 +480,7 @@ impl RequestForwarder {
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
+            let mut media_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -431,7 +552,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format)) => {
+                Ok((response, claude_api_format, outbound_model)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -479,6 +600,7 @@ impl RequestForwarder {
                         response,
                         provider: provider.clone(),
                         claude_api_format,
+                        outbound_model,
                         connection_guard: None,
                     });
                 }
@@ -487,9 +609,127 @@ impl RequestForwarder {
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
                         provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
+                        Some(ProviderType::Claude | ProviderType::ClaudeAuth)
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
+
+                    if self.media_retry_should_trigger(
+                        adapter.name(),
+                        media_rectifier_retried,
+                        &provider_body,
+                        &e,
+                    ) {
+                        let mut media_body = provider_body.clone();
+                        let replaced_images =
+                            super::media_sanitizer::replace_image_blocks_with_marker(
+                                &mut media_body,
+                            );
+
+                        if replaced_images > 0 {
+                            let _ = std::mem::replace(&mut media_rectifier_retried, true);
+                            let model = media_body
+                                .get("model")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            log::info!(
+                                "[{app_type_str}] [Media] Upstream rejected image input; retrying provider={} model={} with {replaced_images} image block(s) replaced by {}",
+                                provider.id,
+                                model,
+                                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+                            );
+
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &media_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format, outbound_model)) => {
+                                    log::info!(
+                                        "[{app_type_str}] [Media] Unsupported-image retry succeeded"
+                                    );
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+
+                                    {
+                                        let mut current_providers =
+                                            self.current_providers.write().await;
+                                        current_providers.insert(
+                                            app_type_str.to_string(),
+                                            (provider.id.clone(), provider.name.clone()),
+                                        );
+                                    }
+
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        let should_switch =
+                                            self.current_provider_id_at_start.as_str()
+                                                != provider.id.as_str();
+                                        if should_switch {
+                                            status.failover_count += 1;
+                                            let fm = self.failover_manager.clone();
+                                            let ah = self.app_handle.clone();
+                                            let pid = provider.id.clone();
+                                            let pname = provider.name.clone();
+                                            let at = app_type_str.to_string();
+
+                                            tokio::spawn(async move {
+                                                let _ = fm
+                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .await;
+                                            });
+                                        }
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(),
+                                        claude_api_format,
+                                        outbound_model,
+                                        connection_guard: None,
+                                    });
+                                }
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [Media] Unsupported-image retry still failed: {retry_err}"
+                                    );
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "media 降级",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(err);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
 
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
@@ -557,7 +797,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format)) => {
+                                    Ok((response, claude_api_format, outbound_model)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -612,6 +852,7 @@ impl RequestForwarder {
                                             response,
                                             provider: provider.clone(),
                                             claude_api_format,
+                                            outbound_model,
                                             connection_guard: None,
                                         });
                                     }
@@ -722,7 +963,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, outbound_model)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -771,6 +1012,7 @@ impl RequestForwarder {
                                         response,
                                         provider: provider.clone(),
                                         claude_api_format,
+                                        outbound_model,
                                         connection_guard: None,
                                     });
                                 }
@@ -823,7 +1065,7 @@ impl RequestForwarder {
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
                     //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
-                    let category = self.categorize_proxy_error(&e);
+                    let category = self.categorize_proxy_error(&e, provider);
 
                     match category {
                         ErrorCategory::Retryable => {
@@ -928,6 +1170,9 @@ impl RequestForwarder {
     }
 
     /// 转发单个请求（使用适配器）
+    ///
+    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
+    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
@@ -939,7 +1184,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -947,7 +1192,9 @@ impl RequestForwarder {
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && !provider.is_codex_oauth()
+            && !provider.is_xai_oauth();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
@@ -956,6 +1203,58 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+
+        // Codex upstream conversion mode — computed early because the [1m]-suffix strip
+        // below must be skipped on the Anthropic path (the marker has to survive to
+        // catalog matching and to the transform's own strip+beta detection).
+        let codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
+            && super::providers::is_codex_official_provider(provider);
+
+        if codex_official_auth_passthrough {
+            let (expected_chatgpt_account_id, managed_session_matches) = match provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            {
+                Some(local_account_id) => {
+                    let app_handle = self.app_handle.as_ref().ok_or_else(|| {
+                        ProxyError::AuthError("Codex OAuth 认证不可用（无 AppHandle）".to_string())
+                    })?;
+                    let codex_state = app_handle.state::<CodexOAuthState>();
+                    let chatgpt_account_id = codex_state
+                        .0
+                        .chatgpt_account_id_for_account(&local_account_id)
+                        .await
+                        .map_err(|error| {
+                            ProxyError::AuthError(format!("Codex OAuth 账号解析失败: {error}"))
+                        })?;
+                    let session_matches = match codex_bearer_access_token(headers) {
+                        Some(access_token) => {
+                            crate::codex_config::codex_live_auth_matches_managed_request(
+                                &local_account_id,
+                                access_token,
+                            )
+                            .map_err(|error| {
+                                ProxyError::AuthError(format!("Codex OAuth 会话校验失败: {error}"))
+                            })?
+                        }
+                        None => false,
+                    };
+                    (Some(chatgpt_account_id), Some(session_matches))
+                }
+                None => (None, None),
+            };
+            validate_codex_official_authorization(
+                headers,
+                provider,
+                expected_chatgpt_account_id.as_deref(),
+                managed_session_matches,
+            )?;
+        }
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
@@ -972,12 +1271,32 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
+        // Grok Build exposes a stable client-side model profile in config.toml.
+        // Route requests to the provider's real upstream model before applying
+        // the optional Responses -> Chat/Anthropic bridge.
+        if matches!(app_type, AppType::GrokBuild) {
+            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+        }
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
                 .await;
-        } else {
+            // Strip the [1M] context marker after Copilot normalization/resolve.
+            // A user's mapped value (e.g. "gpt-5.6-sol[1M]") carries [1M] as a
+            // Claude Code context-capability declaration that upstream APIs reject
+            // as part of the model name. The preceding normalization step already
+            // rewrites claude-xxx[1M] into the "-1m" dash form Copilot accepts, and
+            // the strip helper only touches the "[1m]" bracket form, so "-1m"
+            // variants pass through unchanged.
+            mapped_body =
+                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
+        } else if !codex_responses_to_anthropic {
+            // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
+            // model-catalog match (apply_codex_upstream_model) and the transform's own
+            // strip+`context-1m` beta detection. The marker is stripped later, on the
+            // final anthropic_body.
             mapped_body =
                 super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
         }
@@ -1123,21 +1442,34 @@ impl RequestForwarder {
         };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
-                super::providers::normalize_anthropic_tool_thinking_history_for_provider(
+                super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
                     provider,
                     api_format,
                 );
+                self.apply_media_prevention(&mut mapped_body, provider);
             }
         }
         let needs_transform = match resolved_claude_api_format.as_deref() {
             Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
             None => adapter.needs_transform(provider),
         };
-        let codex_responses_to_chat = matches!(app_type, AppType::Codex)
-            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        // Codex → Anthropic: Claude Code emulation is off by default and only
+        // enabled when the user explicitly turns it on in the UI, so requests can
+        // pass a gateway's "Claude Code only" fingerprint check (User-Agent /
+        // anthropic-beta / x-app / system prompt first line). Defaulting to off
+        // avoids leaking the Claude Code fingerprint and identity prompt to
+        // general-purpose gateways.
+        let codex_impersonate_claude_code = codex_responses_to_anthropic
+            && provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.impersonate_claude_code)
+                == Some(true);
         let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
+        } else if codex_responses_to_anthropic {
+            rewrite_codex_responses_endpoint_to_anthropic(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
             let api_format = resolved_claude_api_format
                 .as_deref()
@@ -1152,11 +1484,20 @@ impl RequestForwarder {
             )
         };
 
-        let codex_chat_base_is_full_endpoint = codex_responses_to_chat
-            && base_url
-                .trim_end_matches('/')
-                .to_ascii_lowercase()
-                .ends_with("/chat/completions");
+        let codex_chat_base_is_full_endpoint =
+            codex_responses_to_chat && base_url_is_full_endpoint(&base_url, "/chat/completions");
+
+        // Defensive fallback mirroring `codex_chat_base_is_full_endpoint`: if a user pastes
+        // a base URL already ending in the Anthropic `/v1/messages` endpoint but leaves the
+        // "full URL" switch off, treat it as a full endpoint so we don't double-append
+        // `/v1/messages` (→ `.../v1/messages/v1/messages`, a non-retryable 400). Matches the
+        // exact endpoint suffix, so prefixed gateways like `.../api/v1/messages` are covered.
+        let codex_anthropic_base_is_full_endpoint =
+            codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
+
+        let codex_standalone_endpoint = matches!(app_type, AppType::Codex)
+            .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
+            .flatten();
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1164,31 +1505,129 @@ impl RequestForwarder {
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url || codex_chat_base_is_full_endpoint {
+        } else if is_full_url {
+            if let Some(endpoint) = codex_standalone_endpoint {
+                rewrite_codex_standalone_full_url(
+                    &base_url,
+                    passthrough_query.as_deref(),
+                    endpoint,
+                )?
+            } else {
+                append_query_to_full_url(&base_url, passthrough_query.as_deref())
+            }
+        } else if let Some(endpoint) = codex_standalone_endpoint
+            .filter(|endpoint| endpoint.base_url_is_source_endpoint(&base_url))
+        {
+            // Same tolerance as `codex_chat_base_is_full_endpoint` below: a base URL
+            // pasted as a complete endpoint with the full-URL switch off would
+            // otherwise become `.../chat/completions/images/generations`.
+            rewrite_codex_standalone_full_url(&base_url, passthrough_query.as_deref(), endpoint)?
+        } else if codex_chat_base_is_full_endpoint || codex_anthropic_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
+        // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
+        // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
+        let mut outbound_model = mapped_body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+            .map(str::to_string);
+
+        // Codex→Anthropic: when the model name carries the [1m] marker, strip the
+        // suffix and add the context-1m beta header.
+        let mut codex_anthropic_one_m = false;
+
         // 转换请求体（如果需要）
-        let request_body = if codex_responses_to_chat {
+        let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
+            let explicit_prompt_cache_key = mapped_body
+                .get("prompt_cache_key")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
                 .enrich_request(&mut mapped_body)
                 .await;
             if restored > 0 {
                 log::debug!(
-                    "[Codex] Restored {restored} cached function call(s) for Chat upstream"
+                    "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
-            )?
+            )?;
+            super::providers::inject_codex_chat_prompt_cache_key(
+                provider,
+                &mut chat_body,
+                explicit_prompt_cache_key.as_deref(),
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+            );
+            chat_body
+        } else if codex_responses_to_anthropic {
+            let mut mapped_body = mapped_body;
+            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            // Per-provider output ceiling override. Codex does not forward its
+            // `model_max_output_tokens` in the request body, so honor the value
+            // configured on the provider here — it takes precedence over any
+            // request-supplied `max_output_tokens` and over the default below.
+            // Injecting it into the body (rather than overriding after transform)
+            // lets the thinking-budget clamp size its headroom against the real
+            // ceiling too. Kept per-provider to avoid a global large default that
+            // would 400 on low-output-ceiling gateways.
+            if let Some(max_out) = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.max_output_tokens)
+                .filter(|v| *v > 0)
+            {
+                mapped_body["max_output_tokens"] = Value::from(max_out);
+            }
+            // Anthropic requires max_tokens; fall back to this default only when the
+            // Codex request omits max_output_tokens (rare — Codex normally sends it).
+            // Kept conservative so a low-output-ceiling model or relay does not hard-400
+            // on the fallback (a too-high default 400s and is non-retryable); 8192 is
+            // accepted by every current Claude model and virtually all gateways. The
+            // transform clamps any thinking budget below this value.
+            const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
+            let mut anthropic_body =
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                    mapped_body,
+                    DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                )?;
+            // Handle the 1M-context marker [1m]: strip the model-name suffix (the
+            // gateway doesn't recognize it) and set the flag so the beta header is
+            // added. apply_codex_upstream_model may have just written back a model
+            // name carrying [1m] from the provider config, so strip it once more on
+            // the final body here.
+            if let Some(model) = anthropic_body.get("model").and_then(|v| v.as_str()) {
+                let stripped = super::model_mapper::strip_one_m_suffix_for_upstream(model);
+                if stripped != model {
+                    codex_anthropic_one_m = true;
+                    anthropic_body["model"] = Value::String(stripped.to_string());
+                }
+            }
+            if codex_impersonate_claude_code {
+                prepend_claude_code_system_prompt(&mut anthropic_body);
+            }
+            // Enable Anthropic prompt caching (no beta header required). Reuse the
+            // configured TTL rather than silently forcing 5m on this conversion path.
+            // otherwise system/tools/history are re-sent at full price every round,
+            // inflating cost and first-token latency. The injector handles the
+            // string→array `system` conversion and the new-breakpoint budget.
+            super::cache_injector::inject(
+                &mut anthropic_body,
+                &codex_anthropic_cache_config(&self.optimizer_config),
+            );
+            anthropic_body
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
@@ -1209,9 +1648,78 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Native Responses passthrough to a strict third-party gateway (xAI).
+        // One gate so rebase conflicts stay here plus the isolate file, not
+        // scattered across sanitizers. Flatten namespaces first; then apply
+        // xAI request rewrites (schema, agent_message, unknown models).
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::provider_needs_responses_namespace_flatten(provider)
+        {
+            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+                &mut request_body,
+            )? {
+                log::debug!(
+                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+                &mut request_body,
+                &provider.id,
+                super::providers::codex_provider_upstream_model(provider).as_deref(),
+                &provider.settings_config,
+            );
+        }
+
+        // Moonshot / Kimi Chat Completions reject `$ref` nodes that carry sibling
+        // keywords, which Codex Desktop's built-in tool schemas do (#6867). Move
+        // each such `$ref` into `allOf` for that upstream only; every other
+        // provider keeps byte-identical tool schemas (prompt-cache prefix intact).
+        if codex_responses_to_chat
+            && super::providers::transform_codex_chat_moonshot_schema::upstream_requires_ref_sibling_all_of(
+                &base_url,
+            )
+        {
+            let rewritten =
+                super::providers::transform_codex_chat_moonshot_schema::wrap_ref_siblings_in_chat_tools(
+                    &mut request_body,
+                );
+            if rewritten > 0 {
+                log::debug!(
+                    "[Codex] Moved `$ref` siblings into allOf for {rewritten} tool schema(s) (Moonshot upstream, provider={})",
+                    provider.id
+                );
+            }
+        }
+
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
+            self.apply_media_prevention(&mut request_body, provider);
+        }
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = prepare_upstream_request_body(request_body);
+        let mut filtered_body = prepare_upstream_request_body(request_body);
+        if !is_copilot {
+            if let Some(overrides) = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
+            {
+                if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
+                    filtered_body = prepare_upstream_request_body(filtered_body);
+                }
+            }
+        }
+        // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
+        if let Some(m) = filtered_body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+        {
+            outbound_model = Some(m.to_string());
+        }
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -1222,14 +1730,18 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
-        let force_identity_encoding =
-            needs_transform || codex_responses_to_chat || request_is_streaming;
+        let force_identity_encoding = needs_transform
+            || codex_responses_to_chat
+            || codex_responses_to_anthropic
+            || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
 
-        // 获取认证头（提前准备，用于内联替换）
+        // 获取认证头（提前准备，用于内联替换），同时保留仅用于日志脱敏的
+        // 精确认证材料。实际日志永远不输出这些值。
+        let mut log_secrets: Vec<String> = Vec::new();
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
@@ -1286,8 +1798,7 @@ impl RequestForwarder {
             if auth.strategy == AuthStrategy::CodexOAuth {
                 if let Some(app_handle) = &self.app_handle {
                     let codex_state = app_handle.state::<CodexOAuthState>();
-                    let codex_auth: tokio::sync::RwLockReadGuard<'_, CodexOAuthManager> =
-                        codex_state.0.read().await;
+                    let codex_auth = &codex_state.0;
 
                     // 从 provider.meta 获取关联的 ChatGPT 账号 ID
                     let account_id = provider
@@ -1295,14 +1806,20 @@ impl RequestForwarder {
                         .as_ref()
                         .and_then(|m| m.managed_account_id_for("codex_oauth"));
 
-                    let token_result = match &account_id {
+                    let resolved_account_id = match account_id {
+                        Some(id) => Some(id),
+                        None => codex_auth.default_account_id().await,
+                    };
+
+                    let token_result = match &resolved_account_id {
                         Some(id) => {
                             log::debug!("[CodexOAuth] 使用指定账号 {id} 获取 token");
                             codex_auth.get_valid_token_for_account(id).await
                         }
                         None => {
-                            log::debug!("[CodexOAuth] 使用默认账号获取 token");
-                            codex_auth.get_valid_token().await
+                            return Err(ProxyError::AuthError(
+                                "Codex OAuth 认证失败: 无可用的 ChatGPT 账号".to_string(),
+                            ));
                         }
                     };
 
@@ -1310,10 +1827,19 @@ impl RequestForwarder {
                         Ok(token) => {
                             auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
                             should_send_codex_oauth_session_headers = true;
-                            // 解析使用的 account_id（用于注入 ChatGPT-Account-Id header）
-                            codex_oauth_account_id = match account_id {
-                                Some(id) => Some(id),
-                                None => codex_auth.default_account_id().await,
+                            // 本地账号 ID 只用于绑定；请求头必须使用上游 workspace ID。
+                            codex_oauth_account_id = match resolved_account_id.as_deref() {
+                                Some(id) => Some(
+                                    codex_auth
+                                        .chatgpt_account_id_for_account(id)
+                                        .await
+                                        .map_err(|e| {
+                                            ProxyError::AuthError(format!(
+                                                "Codex OAuth 账号解析失败: {e}"
+                                            ))
+                                        })?,
+                                ),
+                                None => None,
                             };
                             log::debug!(
                                 "[CodexOAuth] 成功获取 access_token (account={})",
@@ -1335,17 +1861,54 @@ impl RequestForwarder {
                 }
             }
 
+            // xAI OAuth: resolve a managed account token immediately before
+            // sending the request. Invalid refresh credentials are persisted as
+            // requiring re-authentication by the manager.
+            if auth.strategy == AuthStrategy::XaiOAuth {
+                if let Some(app_handle) = &self.app_handle {
+                    let xai_state = app_handle.state::<XaiOAuthState>();
+                    let xai_auth: tokio::sync::RwLockReadGuard<'_, XaiOAuthManager> =
+                        xai_state.0.read().await;
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.managed_account_id_for("xai_oauth"));
+                    let token_result = match &account_id {
+                        Some(id) => xai_auth.get_valid_token_for_account(id).await,
+                        None => xai_auth.get_valid_token().await,
+                    };
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::XaiOAuth);
+                            log::debug!(
+                                "[XaiOAuth] 成功获取 access_token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                        }
+                        Err(error) => {
+                            log::error!("[XaiOAuth] 获取 access_token 失败: {error}");
+                            return Err(ProxyError::AuthError(format!(
+                                "xAI OAuth 认证失败: {error}"
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ProxyError::AuthError(
+                        "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
+            for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
+                if !secret.is_empty() && !log_secrets.contains(secret) {
+                    log_secrets.push(secret.clone());
+                }
+            }
+
             adapter.get_auth_headers(&auth)?
         } else {
             Vec::new()
         };
-
-        // 注入 Codex OAuth 的 ChatGPT-Account-Id header（如果有 account_id）
-        if let Some(ref account_id) = codex_oauth_account_id {
-            if let Ok(hv) = http::HeaderValue::from_str(account_id) {
-                auth_headers.push((http::HeaderName::from_static("chatgpt-account-id"), hv));
-            }
-        }
 
         let codex_oauth_session_headers =
             if should_send_codex_oauth_session_headers && self.session_client_provided {
@@ -1353,6 +1916,25 @@ impl RequestForwarder {
             } else {
                 Vec::new()
             };
+
+        // 自定义 User-Agent：与 stream_check / model_fetch 共用 parse_custom_user_agent，
+        // 运行时静默忽略非法值（前端在输入处给非阻断提示，不在保存时阻断）。
+        // Copilot 指纹 UA 不可覆盖。
+        let custom_user_agent = if is_copilot {
+            None
+        } else {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+        };
+        // Codex→Anthropic emulation: when there is no custom UA, override Codex's
+        // codex_cli_rs UA with the Claude Code UA.
+        let custom_user_agent = if custom_user_agent.is_none() && codex_impersonate_claude_code {
+            Some(http::HeaderValue::from_static(CLAUDE_CODE_USER_AGENT))
+        } else {
+            custom_user_agent
+        };
 
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
@@ -1438,6 +2020,17 @@ impl RequestForwarder {
             } else {
                 CLAUDE_CODE_BETA.to_string()
             })
+        } else if codex_impersonate_claude_code || codex_anthropic_one_m {
+            // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
+            // model injects the context-1m marker.
+            let mut betas: Vec<&str> = Vec::new();
+            if codex_impersonate_claude_code {
+                betas.push("claude-code-20250219");
+            }
+            if codex_anthropic_one_m {
+                betas.push("context-1m-2025-08-07");
+            }
+            Some(betas.join(","))
         } else {
             None
         };
@@ -1448,6 +2041,8 @@ impl RequestForwarder {
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
+        let mut saw_accept = false;
+        let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
 
@@ -1503,11 +2098,53 @@ impl RequestForwarder {
                 || key_str.eq_ignore_ascii_case("x-api-key")
                 || key_str.eq_ignore_ascii_case("x-goog-api-key")
             {
+                // Codex official account cards deliberately keep credentials
+                // out of provider storage. `requires_openai_auth = true` makes
+                // Codex send the active ChatGPT authorization, which must reach
+                // the official upstream unchanged. Other credential headers
+                // are still discarded.
+                if codex_official_auth_passthrough && key_str.eq_ignore_ascii_case("authorization")
+                {
+                    saw_auth = true;
+                    ordered_headers.append(key.clone(), value.clone());
+                    continue;
+                }
                 if !saw_auth {
                     saw_auth = true;
                     for (ah_name, ah_value) in &auth_headers {
                         ordered_headers.append(ah_name.clone(), ah_value.clone());
                     }
+                }
+                continue;
+            }
+
+            // --- x-app — during Codex→Anthropic emulation, `cli` is injected uniformly below ---
+            if codex_impersonate_claude_code && key_str.eq_ignore_ascii_case("x-app") {
+                continue;
+            }
+
+            // --- Codex/OpenAI fingerprint headers — never leak to an Anthropic upstream ---
+            // These are client/session identifiers from the incoming Codex request,
+            // not Anthropic protocol headers. Forwarding them both leaks identity and
+            // can defeat strict gateway fingerprint checks.
+            // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
+            // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
+            if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+                continue;
+            }
+
+            // --- accept — force application/json on the Codex→Anthropic path ---
+            // The Codex CLI sends `Accept: text/event-stream`, whereas a native
+            // Anthropic client sends `application/json` (streaming is driven by
+            // the body's stream:true). Strict Anthropic gateways return 406 Not
+            // Acceptable for an event-stream Accept, so normalize it here.
+            if codex_responses_to_anthropic && key_str.eq_ignore_ascii_case("accept") {
+                if !saw_accept {
+                    saw_accept = true;
+                    ordered_headers.append(
+                        http::header::ACCEPT,
+                        http::HeaderValue::from_static("application/json"),
+                    );
                 }
                 continue;
             }
@@ -1521,6 +2158,19 @@ impl RequestForwarder {
                             http::header::ACCEPT_ENCODING,
                             http::HeaderValue::from_static("identity"),
                         );
+                    } else {
+                        ordered_headers.append(key.clone(), value.clone());
+                    }
+                }
+                continue;
+            }
+
+            // --- user-agent: provider-level override for local proxy routing ---
+            if !is_copilot && key_str.eq_ignore_ascii_case("user-agent") {
+                if !saw_user_agent {
+                    saw_user_agent = true;
+                    if let Some(ref ua) = custom_user_agent {
+                        ordered_headers.append(http::header::USER_AGENT, ua.clone());
                     } else {
                         ordered_headers.append(key.clone(), value.clone());
                     }
@@ -1577,6 +2227,25 @@ impl RequestForwarder {
             );
         }
 
+        // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
+        if codex_responses_to_anthropic && !saw_accept {
+            ordered_headers.append(
+                http::header::ACCEPT,
+                http::HeaderValue::from_static("application/json"),
+            );
+        }
+
+        // Codex→Anthropic emulation: inject Claude Code's x-app: cli
+        if codex_impersonate_claude_code {
+            ordered_headers.append("x-app", http::HeaderValue::from_static("cli"));
+        }
+
+        if !saw_user_agent {
+            if let Some(ref ua) = custom_user_agent {
+                ordered_headers.append(http::header::USER_AGENT, ua.clone());
+            }
+        }
+
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
         if !saw_anthropic_beta {
             if let Some(ref beta_val) = anthropic_beta_value {
@@ -1586,8 +2255,13 @@ impl RequestForwarder {
             }
         }
 
-        // anthropic-version：仅在缺失时补充默认值
-        if should_send_anthropic_headers && !saw_anthropic_version {
+        // anthropic-version: add the default only when it is missing.
+        // The Codex→Anthropic path also needs this header. Note this is independent
+        // of anthropic-beta: the Claude Code-specific beta is only sent when
+        // impersonation is on (handled above); on the plain Codex→Anthropic path
+        // (impersonation off) anthropic-version is still required but no beta is sent.
+        if (should_send_anthropic_headers || codex_responses_to_anthropic) && !saw_anthropic_version
+        {
             ordered_headers.append(
                 "anthropic-version",
                 http::HeaderValue::from_static("2023-06-01"),
@@ -1618,7 +2292,34 @@ impl RequestForwarder {
             );
         }
 
+        apply_local_proxy_header_overrides(
+            &mut ordered_headers,
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.local_proxy_request_overrides.as_ref()),
+            is_copilot,
+        );
+
+        // 托管 OAuth 的 workspace 由账号绑定决定，覆盖客户端或本地代理配置的旧值。
+        if let Some(ref account_id) = codex_oauth_account_id {
+            if let Ok(value) = http::HeaderValue::from_str(account_id) {
+                ordered_headers.insert("chatgpt-account-id", value);
+            }
+        }
+
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
+
+        // 日志目标 URL 的脱敏分两种情形：
+        // - 有已知密钥(log_secrets 非空)：记录脱敏后的完整 URL，剥 userinfo/query
+        //   并抹掉已知密钥值，保留 host+path 便于诊断 base_url 配错路径导致的 404。
+        // - 无已知密钥：凭据可能整个内嵌在 path 里且无从脱敏，只记 origin，
+        //   避免默认 Info 级把形如 https://gw/<KEY>/v1 的 path 完整落盘。
+        let target_for_log = if log_secrets.is_empty() {
+            crate::redact_url_origin_for_log(&url)
+        } else {
+            crate::redact_url_for_log_with_secrets(&url, &log_secrets)
+        };
 
         // 输出请求信息日志
         let tag = adapter.name();
@@ -1626,16 +2327,12 @@ impl RequestForwarder {
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
-        log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if log::log_enabled!(log::Level::Debug) {
-            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-                log::debug!(
-                    "[{tag}] >>> 请求体内容 ({}字节): {}",
-                    body_str.len(),
-                    body_str
-                );
-            }
-        }
+        log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
+        log::debug!(
+            "[{tag}] >>> 请求体已准备: bytes={}, hash={} (content omitted)",
+            body_bytes.len(),
+            short_value_hash(Some(&filtered_body))
+        );
 
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -1702,11 +2399,12 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url
-                .parse()
-                .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+            let uri: http::Uri = url.parse().map_err(|e| {
+                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
+            })?;
             super::hyper_client::send_request(
                 uri,
+                &target_for_log,
                 method.clone(),
                 ordered_headers,
                 extensions.clone(),
@@ -1721,13 +2419,53 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            let response = self
+            let mut response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
-            Ok((response, resolved_claude_api_format))
+            // Streaming requests normally return SSE. If a compatible gateway
+            // explicitly returns JSON instead, buffer and validate it inside the retry
+            // loop as well so a 2xx Anthropic error envelope can still fail over. Do
+            // not buffer unknown content types: some gateways omit the SSE header.
+            if codex_responses_to_anthropic && (!request_is_streaming || response.is_json()) {
+                response = self
+                    .validate_codex_anthropic_success_response(response)
+                    .await?;
+            } else if matches!(
+                resolved_claude_api_format.as_deref(),
+                Some("openai_responses")
+            ) {
+                if !request_is_streaming || response.is_json() {
+                    // Claude→Responses gateways can also return a semantic failure in an
+                    // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
+                    // retry loop so an early failure can still select another provider.
+                    response = self.validate_responses_success_response(response).await?;
+                } else {
+                    // Delay committing the downstream stream until the upstream emits
+                    // either productive output or a valid non-failure terminal event.
+                    // A response.failed/error before output remains failover-safe.
+                    response = self.validate_responses_stream_start(response).await?;
+                }
+            }
+            Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
-            let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
+            // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
+            // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
+            // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
+            let encoding = get_content_encoding(response.headers());
+            let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
+            let decoded = match encoding {
+                Some(encoding) => {
+                    match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                        Ok(Some(decompressed)) => decompressed,
+                        // 不支持的编码 / 解压失败 / 解压后超限：退回（已有上限的）
+                        // 原始字节，尽量保留可读信息
+                        _ => raw.to_vec(),
+                    }
+                }
+                None => raw.to_vec(),
+            };
+            let body_text = String::from_utf8(decoded).ok();
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -1756,16 +2494,158 @@ impl RequestForwarder {
         let status = response.status();
         let headers = response.headers().clone();
         let body_timeout = self.non_streaming_timeout;
-        let body = tokio::time::timeout(body_timeout, response.bytes())
-            .await
-            .map_err(|_| {
-                ProxyError::Timeout(format!(
-                    "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
-                    body_timeout.as_secs()
-                ))
-            })??;
+        let body = tokio::time::timeout(
+            body_timeout,
+            response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES),
+        )
+        .await
+        .map_err(|_| {
+            ProxyError::Timeout(format!(
+                "响应体读取超时: {}s（上游发完响应头后 body 未到达）",
+                body_timeout.as_secs()
+            ))
+        })??;
 
         Ok(ProxyResponse::buffered(status, headers, body))
+    }
+
+    /// Some Anthropic-compatible gateways return an Anthropic error envelope with
+    /// HTTP 2xx. Validate it inside the retry loop so the request can fail over to
+    /// the next provider; the response transformer runs too late for that.
+    async fn validate_codex_anthropic_success_response(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let status = response.status();
+        let headers = response.headers().clone();
+        let encoding = get_content_encoding(&headers);
+        let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
+        let decoded = match encoding {
+            Some(encoding) => {
+                match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                    Ok(Some(decompressed)) => decompressed,
+                    _ => raw.to_vec(),
+                }
+            }
+            None => raw.to_vec(),
+        };
+
+        if let Some(message) = codex_anthropic_error_envelope_message(&decoded) {
+            return Err(ProxyError::TransformError(format!(
+                "Anthropic upstream returned a 2xx error envelope: {message}"
+            )));
+        }
+
+        Ok(ProxyResponse::buffered(status, headers, raw))
+    }
+
+    async fn validate_responses_success_response(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let status = response.status();
+        let headers = response.headers().clone();
+        let encoding = get_content_encoding(&headers);
+        let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
+        let decoded = match encoding {
+            Some(encoding) => {
+                match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                    Ok(Some(decompressed)) => decompressed,
+                    _ => raw.to_vec(),
+                }
+            }
+            None => raw.to_vec(),
+        };
+
+        if let Some(message) = responses_error_envelope_message(&decoded) {
+            return Err(ProxyError::TransformError(format!(
+                "Responses upstream returned a 2xx failure: {message}"
+            )));
+        }
+
+        Ok(ProxyResponse::buffered(status, headers, raw))
+    }
+
+    async fn validate_responses_stream_start(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        const MAX_PRIME_BYTES: usize = 256 * 1024;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut stream = Box::pin(response.bytes_stream());
+        let mut replay_chunks: Vec<Bytes> = Vec::new();
+        let mut parse_buffer = String::new();
+        let mut utf8_remainder = Vec::new();
+
+        loop {
+            let next = if self.streaming_first_byte_timeout.is_zero() {
+                stream.next().await
+            } else {
+                tokio::time::timeout(self.streaming_first_byte_timeout, stream.next())
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout(format!(
+                            "Responses stream produced no semantic output within {}s",
+                            self.streaming_first_byte_timeout.as_secs()
+                        ))
+                    })?
+            };
+
+            let Some(chunk) = next else {
+                if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                    outcome?;
+                    let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
+                    return Ok(ProxyResponse::streamed(status, headers, replay));
+                }
+                if !parse_buffer.trim().is_empty() {
+                    if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
+                        outcome?;
+                        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
+                        return Ok(ProxyResponse::streamed(status, headers, replay));
+                    }
+                }
+                return Err(ProxyError::ForwardFailed(
+                    "Responses stream ended before producing output or a terminal event"
+                        .to_string(),
+                ));
+            };
+            let chunk = chunk.map_err(|error| {
+                ProxyError::ForwardFailed(format!(
+                    "Failed while validating Responses stream start: {error}"
+                ))
+            })?;
+            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            replay_chunks.push(chunk);
+
+            // Some compatible gateways ignore `stream:true` and return a complete
+            // Responses JSON document without a JSON content-type. Recognize that
+            // shape before looking for SSE delimiters; pretty-printed JSON may itself
+            // contain blank lines and must stay intact.
+            if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                outcome?;
+                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+                return Ok(ProxyResponse::streamed(status, headers, replay));
+            }
+
+            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
+                if let Some(outcome) = inspect_responses_start_event(&block) {
+                    outcome?;
+                    let replay =
+                        futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+                    return Ok(ProxyResponse::streamed(status, headers, replay));
+                }
+            }
+
+            if replay_chunks.iter().map(Bytes::len).sum::<usize>() >= MAX_PRIME_BYTES {
+                log::warn!(
+                    "[Claude/Responses] semantic stream priming exceeded {MAX_PRIME_BYTES} bytes; committing buffered stream"
+                );
+                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+                return Ok(ProxyResponse::streamed(status, headers, replay));
+            }
+        }
     }
 
     async fn prime_streaming_response(
@@ -1908,7 +2788,22 @@ impl RequestForwarder {
         }
     }
 
-    fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
+    fn categorize_proxy_error(&self, error: &ProxyError, provider: &Provider) -> ErrorCategory {
+        // Authentication belongs to the Codex client for an official route.
+        // Every retry would reuse the selected account's inbound Authorization
+        // header against another card, so no official-route error may fail over.
+        if super::providers::is_codex_official_provider(provider) {
+            return ErrorCategory::NonRetryable;
+        }
+
+        // xAI OAuth mirrors the same rule for token acquisition: a local
+        // AuthError means the managed account needs re-login. Failing over
+        // would silently move the conversation off the selected Grok account
+        // and poison the provider's health state for an account-level issue.
+        if provider.is_xai_oauth() && matches!(error, ProxyError::AuthError(_)) {
+            return ErrorCategory::NonRetryable;
+        }
+
         match error {
             // 网络和上游错误：都应该尝试下一个供应商
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
@@ -2103,6 +2998,242 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<S
     (rewritten, passthrough_query)
 }
 
+/// Claude Code client fingerprint (used for Codex→Anthropic emulation to pass a
+/// gateway's "Claude Code only" check).
+const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/1.0.119 (external, cli)";
+const CLAUDE_CODE_SYSTEM_IDENTITY: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/// Insert the Claude Code identity as the first line before the `system` field in
+/// the Anthropic request body.
+///
+/// Anthropic subscription/OAuth plans require the first system block to be exactly
+/// this identity line. After conversion `system` is a string (from Codex
+/// instructions); normalize it into an array here: [identity line, original system...].
+fn prepend_claude_code_system_prompt(body: &mut Value) {
+    let identity = serde_json::json!({ "type": "text", "text": CLAUDE_CODE_SYSTEM_IDENTITY });
+    let mut blocks: Vec<Value> = vec![identity];
+    match body.get("system") {
+        Some(Value::String(existing)) if !existing.is_empty() => {
+            blocks.push(serde_json::json!({ "type": "text", "text": existing }));
+        }
+        Some(Value::Array(existing)) => {
+            // Idempotent: skip re-injection if the first block is already the identity line.
+            if existing
+                .first()
+                .and_then(|b| b.get("text"))
+                .and_then(|t| t.as_str())
+                == Some(CLAUDE_CODE_SYSTEM_IDENTITY)
+            {
+                return;
+            }
+            blocks.extend(existing.iter().cloned());
+        }
+        _ => {}
+    }
+    body["system"] = Value::Array(blocks);
+}
+
+/// Headers a native Claude Code client never sends but the Codex/OpenAI CLI (and its
+/// stainless SDK layer) do. Dropped for every Codex→Anthropic request so the upstream sees a
+/// clean Anthropic client fingerprint. Centralized here so the set stays in one place and future
+/// additions can't miss a code path. `key_str` is already lowercased by the http crate.
+/// Whether `base_url` already ends in `endpoint_suffix` (e.g. `/v1/messages` or
+/// `/chat/completions`), ignoring surrounding whitespace, any `?query`/`#fragment`, and a
+/// trailing slash. Used to avoid double-appending the endpoint when a user pastes a full
+/// URL but leaves the "full URL" switch off (`.../v1/messages` → `.../v1/messages/v1/messages`,
+/// a non-retryable 400). `endpoint_suffix` must be lowercase.
+fn base_url_is_full_endpoint(base_url: &str, endpoint_suffix: &str) -> bool {
+    let trimmed = base_url.trim();
+    // Match against the path only: a `?query`/`#fragment` on a full endpoint URL must not
+    // hide the suffix (`.../v1/messages?beta=true` still ends in the endpoint).
+    let path = match trimmed.split_once(['?', '#']) {
+        Some((head, _)) => head,
+        None => trimmed,
+    };
+    path.trim_end_matches('/')
+        .to_ascii_lowercase()
+        .ends_with(endpoint_suffix)
+}
+
+fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
+    matches!(
+        key_str,
+        "originator"
+            | "session_id"
+            | "session-id"
+            | "thread-id"
+            | "conversation_id"
+            | "chatgpt-account-id"
+            | "x-openai-subagent"
+            | "x-client-request-id"
+            | "openai-beta"
+            | "openai-organization"
+            | "openai-project"
+    ) || key_str.starts_with("x-stainless-")
+        || key_str.starts_with("x-codex-")
+}
+
+fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("error") && value.get("error").is_none() {
+        return None;
+    }
+    let error = value.get("error").unwrap_or(&value);
+    let error_type = error.get("type").and_then(Value::as_str).unwrap_or("error");
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| error.to_string());
+    Some(format!("{error_type}: {message}"))
+}
+
+fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let status = value.get("status").and_then(Value::as_str);
+    let has_error = value.get("error").is_some_and(|error| !error.is_null());
+    if !matches!(status, Some("failed" | "cancelled")) && !has_error {
+        return None;
+    }
+
+    let error = value.get("error").unwrap_or(&value);
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| error.get("code").and_then(Value::as_str))
+        .unwrap_or_else(|| status.unwrap_or("error"));
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or(match status {
+            Some("cancelled") => "response generation was cancelled",
+            _ => "response generation failed",
+        });
+    Some(format!("{error_type}: {message}"))
+}
+
+/// Prompt caching is part of the Codex→Anthropic protocol bridge rather than an
+/// optional Bedrock optimizer. Codex requests do not contain Anthropic
+/// `cache_control`, so keep bridge caching on by default while still honoring the
+/// dedicated cache-injection switch. Injected breakpoints always use Anthropic's
+/// standard 5-minute TTL.
+fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
+    OptimizerConfig {
+        enabled: true,
+        thinking_optimizer: false,
+        cache_injection: config.cache_injection,
+    }
+}
+
+/// A streaming request may receive a whole JSON document even when the gateway
+/// omits `application/json`. `None` means either "not JSON" or "not complete yet";
+/// a parsed document is safe to commit unless it is a semantic failure envelope.
+fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError>> {
+    let trimmed = buffer.trim();
+    if !matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
+        return None;
+    }
+    let _: Value = serde_json::from_str(trimmed).ok()?;
+    if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
+        return Some(Err(ProxyError::TransformError(format!(
+            "Responses upstream returned a 2xx failure: {message}"
+        ))));
+    }
+    Some(Ok(()))
+}
+
+/// Inspect one complete Responses SSE block while the response is still inside
+/// the retry loop. `None` means the event is lifecycle-only and priming should
+/// continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
+fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> {
+    let mut named_event = None;
+    let mut data_lines = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
+            named_event = Some(event.trim().to_string());
+        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
+            data_lines.push(data);
+        }
+    }
+    if data_lines.is_empty() {
+        return None;
+    }
+    let value: Value = match serde_json::from_str(&data_lines.join("\n")) {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    let event = named_event
+        .as_deref()
+        .filter(|event| !event.is_empty())
+        .or_else(|| value.get("type").and_then(Value::as_str))
+        .unwrap_or("");
+
+    let response = value.get("response").unwrap_or(&value);
+    if matches!(
+        response.get("status").and_then(Value::as_str),
+        Some("failed" | "cancelled")
+    ) || response.get("error").is_some_and(|error| !error.is_null())
+    {
+        let error = response.get("error").unwrap_or(response);
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| error.as_str())
+            .unwrap_or("Responses upstream failed before output");
+        let error_type = error
+            .get("type")
+            .and_then(Value::as_str)
+            .or_else(|| error.get("code").and_then(Value::as_str))
+            .or_else(|| response.get("status").and_then(Value::as_str))
+            .unwrap_or("upstream_error");
+        return Some(Err(ProxyError::TransformError(format!(
+            "Responses upstream {error_type}: {message}"
+        ))));
+    }
+
+    match event {
+        "response.failed" | "error" => {
+            let error = response.get("error").unwrap_or(response);
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .or_else(|| error.as_str())
+                .unwrap_or("Responses upstream emitted an error before output");
+            let error_type = error
+                .get("type")
+                .and_then(Value::as_str)
+                .or_else(|| error.get("code").and_then(Value::as_str))
+                .unwrap_or("upstream_error");
+            Some(Err(ProxyError::TransformError(format!(
+                "Responses upstream {error_type}: {message}"
+            ))))
+        }
+        "response.created" | "response.in_progress" | "response.queued" => None,
+        "" => None,
+        // Productive output, incomplete, and completed terminals are all safe to
+        // expose. Mid-stream failures after this point are surfaced by the converter
+        // but intentionally do not switch providers.
+        _ => Some(Ok(())),
+    }
+}
+
+/// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
+fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
+    let (_path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let target_path = "/v1/messages";
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
+
 fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
@@ -2201,6 +3332,145 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+#[derive(Clone, Copy)]
+enum CodexStandaloneEndpoint {
+    AlphaSearch,
+    ImagesGenerations,
+    ImagesEdits,
+}
+
+impl CodexStandaloneEndpoint {
+    fn from_effective_endpoint(endpoint: &str) -> Option<Self> {
+        match split_endpoint_and_query(endpoint).0 {
+            "/alpha/search" => Some(Self::AlphaSearch),
+            "/images/generations" => Some(Self::ImagesGenerations),
+            "/images/edits" => Some(Self::ImagesEdits),
+            _ => None,
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "/alpha/search",
+            Self::ImagesGenerations => "/images/generations",
+            Self::ImagesEdits => "/images/edits",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "Codex Alpha Search",
+            Self::ImagesGenerations => "Codex Images generations",
+            Self::ImagesEdits => "Codex Images edits",
+        }
+    }
+
+    fn full_url_hint(self) -> &'static str {
+        match self {
+            Self::AlphaSearch => "/responses",
+            Self::ImagesGenerations | Self::ImagesEdits => {
+                "/responses, /chat/completions, /images/generations, or /images/edits"
+            }
+        }
+    }
+
+    /// Full-URL suffixes that unambiguously locate this endpoint's sibling.
+    ///
+    /// Order matters: a longer suffix must precede any suffix it ends with
+    /// (`/responses/compact` before `/responses`), otherwise the shorter one
+    /// wins and the rewrite keeps a stray `/compact` segment.
+    fn source_suffixes(self) -> &'static [&'static str] {
+        match self {
+            Self::AlphaSearch => &["/responses/compact", "/responses"],
+            // Both Images routes live next to each other, so a full URL pasted
+            // for either one is a valid source for the other.
+            Self::ImagesGenerations | Self::ImagesEdits => &[
+                "/images/generations",
+                "/images/edits",
+                "/chat/completions",
+                "/responses/compact",
+                "/responses",
+            ],
+        }
+    }
+
+    fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
+        // Match the case-insensitive pasted-endpoint check. Only normalize for
+        // matching; the rewrite keeps the original URL prefix and query intact.
+        let parsed_path = parsed_path.to_ascii_lowercase();
+        self.source_suffixes()
+            .iter()
+            .copied()
+            .find(|suffix| parsed_path.ends_with(suffix))
+    }
+
+    /// Whether a base URL (full-URL switch off) already ends in one of this
+    /// endpoint's source suffixes, i.e. was pasted as a complete endpoint URL.
+    fn base_url_is_source_endpoint(self, base_url: &str) -> bool {
+        self.source_suffixes()
+            .iter()
+            .any(|suffix| base_url_is_full_endpoint(base_url, suffix))
+    }
+}
+
+/// Derive Codex standalone sibling endpoints from a provider configured with a
+/// complete Codex-compatible API URL.
+///
+/// Full-URL mode normally means "use this exact URL". That is correct for the
+/// request type it was configured for, but standalone Codex protocols cannot be
+/// posted to chat/responses endpoints. Only rewrite URL shapes whose sibling
+/// endpoint is unambiguous; opaque full URLs fail closed instead of leaking the
+/// payload to an unrelated route.
+fn rewrite_codex_standalone_full_url(
+    base_url: &str,
+    request_query: Option<&str>,
+    endpoint: CodexStandaloneEndpoint,
+) -> Result<String, ProxyError> {
+    let trimmed = base_url.trim();
+    let parsed = url::Url::parse(trimmed).map_err(|_| {
+        ProxyError::ConfigError(format!("{} requires a valid full URL", endpoint.label()))
+    })?;
+
+    // Fragments are never sent in HTTP requests. Drop one before splitting the
+    // query so an accidental fragment cannot move the incoming query behind `#`.
+    let without_fragment = trimmed
+        .split_once('#')
+        .map_or(trimmed, |(head, _fragment)| head);
+    let (url_without_query, base_query) = without_fragment
+        .split_once('?')
+        .map_or((without_fragment, None), |(head, query)| {
+            (head, Some(query))
+        });
+    let url_without_query = url_without_query.trim_end_matches('/');
+
+    let parsed_path = parsed.path().trim_end_matches('/').to_string();
+    let suffix = endpoint.source_suffix(&parsed_path).ok_or_else(|| {
+        ProxyError::ConfigError(format!(
+            "{} cannot derive {} from an opaque full URL; use a base URL or a full URL ending in {}",
+            endpoint.label(),
+            endpoint.path(),
+            endpoint.full_url_hint()
+        ))
+    })?;
+
+    let prefix_len = url_without_query
+        .len()
+        .checked_sub(suffix.len())
+        .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
+    let mut rewritten = format!("{}{}", &url_without_query[..prefix_len], endpoint.path());
+
+    let request_query = request_query.filter(|query| !query.is_empty());
+    let base_query = base_query.filter(|query| !query.is_empty());
+    match (base_query, request_query) {
+        (Some(base), Some(request)) => rewritten.push_str(&format!("?{base}&{request}")),
+        (Some(base), None) => rewritten.push_str(&format!("?{base}")),
+        (None, Some(request)) => rewritten.push_str(&format!("?{request}")),
+        (None, None) => {}
+    }
+
+    Ok(rewritten)
+}
+
 fn build_codex_oauth_session_headers(
     session_id: &str,
 ) -> Vec<(http::HeaderName, http::HeaderValue)> {
@@ -2249,6 +3519,7 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
     host == "githubcopilot.com"
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
+        || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
 }
 
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -2270,7 +3541,7 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() {
+    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
         return false;
     }
 
@@ -2308,11 +3579,11 @@ fn should_force_identity_encoding(
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
     if error.is_timeout() {
-        ProxyError::Timeout(format!("请求超时: {error}"))
+        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
     } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("连接失败: {error}"))
+        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
     } else {
-        ProxyError::ForwardFailed(error.to_string())
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
     }
 }
 
@@ -2327,6 +3598,154 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     let truncated: String = trimmed.chars().take(max_chars).collect();
     let truncated = truncated.trim_end();
     format!("{truncated}...")
+}
+
+fn apply_local_proxy_body_overrides(
+    body: &mut Value,
+    overrides: &LocalProxyRequestOverrides,
+) -> bool {
+    let Some(override_body) = overrides.body.as_ref() else {
+        return false;
+    };
+
+    if !override_body.is_object() {
+        log::warn!("[LocalProxyOverrides] Ignoring body override because it is not an object");
+        return false;
+    }
+
+    merge_json_override(body, override_body)
+}
+
+fn merge_json_override(target: &mut Value, patch: &Value) -> bool {
+    merge_json_override_inner(target, patch, true)
+}
+
+fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bool) -> bool {
+    match (target, patch) {
+        (Value::Object(target_map), Value::Object(patch_map)) => {
+            let mut changed = false;
+            for (key, patch_value) in patch_map {
+                if is_top_level && key == "stream" {
+                    log::warn!(
+                        "[LocalProxyOverrides] Ignoring body override for protected field: stream"
+                    );
+                    continue;
+                }
+                match target_map.get_mut(key) {
+                    Some(target_value) => {
+                        changed |= merge_json_override_inner(target_value, patch_value, false);
+                    }
+                    None => {
+                        target_map.insert(key.clone(), patch_value.clone());
+                        changed = true;
+                    }
+                }
+            }
+            changed
+        }
+        (target_value, patch_value) => {
+            if target_value == patch_value {
+                false
+            } else {
+                *target_value = patch_value.clone();
+                true
+            }
+        }
+    }
+}
+
+fn apply_local_proxy_header_overrides(
+    headers: &mut http::HeaderMap,
+    overrides: Option<&LocalProxyRequestOverrides>,
+    is_copilot: bool,
+) {
+    if is_copilot {
+        return;
+    }
+
+    let Some(header_overrides) = overrides.map(|overrides| &overrides.headers) else {
+        return;
+    };
+
+    for (raw_name, raw_value) in header_overrides {
+        let header_name = raw_name.trim().to_ascii_lowercase();
+        if header_name.is_empty() {
+            log::warn!("[LocalProxyOverrides] Ignoring header override with empty name");
+            continue;
+        }
+
+        let Ok(name) = http::HeaderName::from_bytes(header_name.as_bytes()) else {
+            log::warn!("[LocalProxyOverrides] Ignoring invalid header override name: {raw_name}");
+            continue;
+        };
+
+        if is_protected_local_proxy_override_header(&name) {
+            log::debug!(
+                "[LocalProxyOverrides] Ignoring protected header override: {}",
+                name.as_str()
+            );
+            continue;
+        }
+
+        let Ok(value) = http::HeaderValue::from_str(raw_value) else {
+            log::warn!(
+                "[LocalProxyOverrides] Ignoring invalid header override value for {}",
+                name.as_str()
+            );
+            continue;
+        };
+
+        headers.insert(name, value);
+    }
+}
+
+fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "proxy-authorization"
+            | "proxy-authenticate"
+            | "te"
+            | "trailer"
+            | "upgrade"
+            | "accept-encoding"
+            | "content-type"
+            | "authorization"
+            | "x-api-key"
+            | "x-goog-api-key"
+            | "chatgpt-account-id"
+            | "session_id"
+            | "x-client-request-id"
+            | "x-codex-window-id"
+            | "x-forwarded-host"
+            | "x-forwarded-port"
+            | "x-forwarded-proto"
+            | "forwarded"
+            | "cf-connecting-ip"
+            | "cf-ipcountry"
+            | "cf-ray"
+            | "cf-visitor"
+            | "true-client-ip"
+            | "fastly-client-ip"
+            | "x-azure-clientip"
+            | "x-azure-fdid"
+            | "x-azure-ref"
+            | "akamai-origin-hop"
+            | "x-akamai-config-log-detail"
+            | "x-request-id"
+            | "x-correlation-id"
+            | "x-trace-id"
+            | "x-amzn-trace-id"
+            | "x-b3-traceid"
+            | "x-b3-spanid"
+            | "x-b3-parentspanid"
+            | "x-b3-sampled"
+            | "traceparent"
+            | "tracestate"
+    )
 }
 
 fn prepare_upstream_request_body(request_body: Value) -> Value {
@@ -2358,23 +3777,66 @@ fn log_prompt_cache_trace(
         .get("stream")
         .map(value_for_log)
         .unwrap_or_else(|| "absent".to_string());
+    let cache_controls = cache_control_summary(body);
 
     log::debug!(
-        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, tools_hash={}, input_hash={}, include_hash={}, body_hash={}",
+        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, system_hash={}, tools_hash={}, input_hash={}, messages_hash={}, include_hash={}, cache_controls={}, body_hash={}",
         app_type.as_str(),
         provider.id,
-        endpoint,
+        // Gemini 的 endpoint 带 ?key=<API_KEY>；脱敏剥掉 query 再落盘。
+        crate::redact_url_for_log(endpoint),
         api_format.unwrap_or("native"),
         session_client_provided,
         prompt_cache_key,
         store,
         stream,
         short_value_hash(body.get("instructions")),
+        short_value_hash(body.get("system")),
         short_value_hash(body.get("tools")),
         short_value_hash(body.get("input")),
+        short_value_hash(body.get("messages")),
         short_value_hash(body.get("include")),
+        cache_controls,
         short_value_hash(Some(body)),
     );
+}
+
+fn cache_control_summary(value: &Value) -> String {
+    fn walk(value: &Value, count: &mut usize, ttls: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(cache_control) = object.get("cache_control") {
+                    *count += 1;
+                    let ttl = cache_control
+                        .get("ttl")
+                        .and_then(Value::as_str)
+                        .unwrap_or("default");
+                    ttls.insert(ttl.to_string());
+                }
+                for child in object.values() {
+                    walk(child, count, ttls);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    walk(child, count, ttls);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut count = 0;
+    let mut ttls = std::collections::BTreeSet::new();
+    walk(value, &mut count, &mut ttls);
+    format!(
+        "count={count},ttls={}",
+        if ttls.is_empty() {
+            "none".to_string()
+        } else {
+            ttls.into_iter().collect::<Vec<_>>().join("|")
+        }
+    )
 }
 
 fn value_for_log(value: &Value) -> String {
@@ -2392,6 +3854,7 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::LocalProxyRequestOverrides;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -2459,6 +3922,7 @@ mod tests {
         assert_eq!(code, log_fwd::SINGLE_PROVIDER_FAILED);
         assert!(message.contains("Provider PackyCode-response 请求失败"));
         assert!(message.contains("上游 HTTP 429"));
+        // 上游错误消息保留(截断)，用于诊断失败原因。
         assert!(message.contains("rate limit exceeded"));
         assert!(!message.contains("切换下一个"));
     }
@@ -2489,20 +3953,6 @@ mod tests {
         assert_eq!(code, log_fwd::ALL_PROVIDERS_FAILED);
         assert!(message.contains("已尝试 2/2 个 Provider，均失败"));
         assert!(message.contains("connection reset by peer"));
-    }
-
-    #[test]
-    fn summarize_upstream_body_prefers_json_message() {
-        let body = json!({
-            "error": {
-                "message": "invalid_request_error: unsupported field"
-            },
-            "request_id": "req_123"
-        });
-
-        let summary = summarize_upstream_body(&body.to_string());
-
-        assert_eq!(summary, "invalid_request_error: unsupported field");
     }
 
     #[test]
@@ -2592,6 +4042,116 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_proxy_body_overrides_deep_merge_final_body_without_stream() {
+        let mut body = json!({
+            "model": "before",
+            "stream": false,
+            "metadata": {
+                "keep": true,
+                "temperature": 1
+            },
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::new(),
+            body: Some(json!({
+                "model": "after",
+                "stream": true,
+                "metadata": {
+                    "temperature": 0.2,
+                    "top_p": 0.9
+                },
+                "messages": []
+            })),
+        };
+
+        assert!(apply_local_proxy_body_overrides(&mut body, &overrides));
+
+        assert_eq!(body["model"], "after");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["metadata"]["keep"], true);
+        assert_eq!(body["metadata"]["temperature"], 0.2);
+        assert_eq!(body["metadata"]["top_p"], 0.9);
+        assert_eq!(body["messages"], json!([]));
+    }
+
+    #[test]
+    fn local_proxy_header_overrides_replace_allowed_headers_only() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            http::HeaderValue::from_static("original"),
+        );
+        headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_static("Bearer good"),
+        );
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::from([
+                ("User-Agent".to_string(), "custom".to_string()),
+                ("X-Test".to_string(), "ok".to_string()),
+                ("Authorization".to_string(), "Bearer bad".to_string()),
+                ("Content-Type".to_string(), "text/plain".to_string()),
+                ("X-Bad".to_string(), "bad\nvalue".to_string()),
+            ]),
+            body: None,
+        };
+
+        apply_local_proxy_header_overrides(&mut headers, Some(&overrides), false);
+
+        assert_eq!(
+            headers
+                .get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("custom")
+        );
+        assert_eq!(
+            headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer good")
+        );
+        assert_eq!(
+            headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        assert_eq!(
+            headers.get("x-test").and_then(|value| value.to_str().ok()),
+            Some("ok")
+        );
+        assert!(headers.get("x-bad").is_none());
+    }
+
+    #[test]
+    fn local_proxy_header_overrides_are_skipped_for_copilot() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            http::HeaderValue::from_static("copilot"),
+        );
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::from([("User-Agent".to_string(), "custom".to_string())]),
+            body: None,
+        };
+
+        apply_local_proxy_header_overrides(&mut headers, Some(&overrides), true);
+
+        assert_eq!(
+            headers
+                .get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("copilot")
+        );
+    }
+
     #[tokio::test]
     async fn non_streaming_success_is_buffered_before_marking_provider_successful() {
         let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
@@ -2610,7 +4170,10 @@ mod tests {
             .expect("response should be buffered");
 
         assert_eq!(
-            prepared.bytes().await.unwrap(),
+            prepared
+                .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+                .await
+                .unwrap(),
             Bytes::from_static(b"{\"ok\":true}")
         );
     }
@@ -2655,7 +4218,10 @@ mod tests {
             .expect("stream should be primed");
 
         assert_eq!(
-            prepared.bytes().await.unwrap(),
+            prepared
+                .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+                .await
+                .unwrap(),
             Bytes::from_static(b"firstsecond")
         );
     }
@@ -2720,6 +4286,16 @@ mod tests {
 
         assert!(matches!(
             err,
+            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+        ));
+
+        let xai_err = reject_proxy_placeholder_for_managed_account_upstream(
+            "https://api.x.ai/v1/responses",
+            &headers,
+        )
+        .expect_err("xAI placeholder should be rejected before upstream");
+        assert!(matches!(
+            xai_err,
             ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
         ));
     }
@@ -2838,6 +4414,362 @@ mod tests {
     }
 
     #[test]
+    fn prepend_claude_code_system_prompt_from_string() {
+        let mut body = json!({ "system": "You are a Codex agent." });
+        prepend_claude_code_system_prompt(&mut body);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system[0]["text"], CLAUDE_CODE_SYSTEM_IDENTITY);
+        assert_eq!(system[1]["text"], "You are a Codex agent.");
+    }
+
+    #[test]
+    fn prepend_claude_code_system_prompt_when_absent() {
+        let mut body = json!({});
+        prepend_claude_code_system_prompt(&mut body);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 1);
+        assert_eq!(system[0]["text"], CLAUDE_CODE_SYSTEM_IDENTITY);
+    }
+
+    #[test]
+    fn prepend_claude_code_system_prompt_is_idempotent() {
+        let mut body = json!({ "system": "orig" });
+        prepend_claude_code_system_prompt(&mut body);
+        prepend_claude_code_system_prompt(&mut body);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[0]["text"], CLAUDE_CODE_SYSTEM_IDENTITY);
+        assert_eq!(system[1]["text"], "orig");
+    }
+
+    #[test]
+    fn rewrite_codex_responses_endpoint_to_anthropic_preserves_query() {
+        let (endpoint, passthrough_query) =
+            rewrite_codex_responses_endpoint_to_anthropic("/responses?x=1");
+        assert_eq!(endpoint, "/v1/messages?x=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x=1"));
+
+        let (endpoint, _) = rewrite_codex_responses_endpoint_to_anthropic("/v1/responses");
+        assert_eq!(endpoint, "/v1/messages");
+    }
+
+    #[test]
+    fn codex_anthropic_full_endpoint_guard_avoids_double_messages() {
+        // On the Codex→Anthropic path a base URL already ending in `/v1/messages` (switch
+        // off) must be treated as a full endpoint by the real `base_url_is_full_endpoint`.
+
+        // Without the guard, build_url would concatenate the pasted endpoint with the
+        // rewritten `/v1/messages` target, producing a broken double suffix.
+        use super::super::providers::ProviderAdapter;
+        let doubled = super::super::providers::CodexAdapter::new()
+            .build_url("https://host.example/v1/messages", "/v1/messages");
+        assert_eq!(doubled, "https://host.example/v1/messages/v1/messages");
+
+        // With the guard, the pasted URL is used verbatim (plus preserved query). Includes
+        // query/fragment/whitespace suffixes, which must not hide the endpoint (fix: a base
+        // like `.../v1/messages?beta=true` previously evaded the suffix check).
+        for base in [
+            "https://host.example/v1/messages",
+            "https://host.example/v1/messages/",
+            "https://host.example/api/v1/messages", // prefixed gateway
+            "https://host.example/v1/messages?beta=true",
+            "https://host.example/v1/messages/?beta=true",
+            "https://host.example/v1/messages#frag",
+            "  https://host.example/v1/messages  ",
+        ] {
+            assert!(
+                base_url_is_full_endpoint(base, "/v1/messages"),
+                "expected full-endpoint match: {base:?}"
+            );
+        }
+        assert_eq!(
+            append_query_to_full_url("https://host.example/v1/messages", Some("x=1")),
+            "https://host.example/v1/messages?x=1"
+        );
+        // A base URL that already carries its own query is preserved verbatim (no double
+        // `/v1/messages`, query kept).
+        assert_eq!(
+            append_query_to_full_url("https://host.example/v1/messages?beta=true", None),
+            "https://host.example/v1/messages?beta=true"
+        );
+
+        // A non-endpoint base (origin/prefix) must NOT match, so build_url still appends.
+        assert!(!base_url_is_full_endpoint(
+            "https://host.example",
+            "/v1/messages"
+        ));
+        assert!(!base_url_is_full_endpoint(
+            "https://host.example/v1",
+            "/v1/messages"
+        ));
+        // The shared helper also backs the Chat path's `/chat/completions` guard.
+        assert!(base_url_is_full_endpoint(
+            "https://host.example/v1/chat/completions?api-version=2024",
+            "/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn codex_client_fingerprint_headers_are_dropped_for_anthropic_upstreams() {
+        // Codex/OpenAI fingerprints a native Claude Code client never sends → must drop.
+        for header in [
+            "originator",
+            "session_id",
+            "session-id",
+            "thread-id",
+            "conversation_id",
+            "chatgpt-account-id",
+            "x-openai-subagent",
+            "x-client-request-id",
+            "x-codex-window-id",
+            "openai-beta",
+            "openai-organization",
+            "openai-project",
+            "x-stainless-lang",
+            "x-stainless-runtime",
+            "x-codex-turn-id",
+        ] {
+            assert!(
+                is_codex_client_fingerprint_header(header),
+                "expected {header} to be dropped while impersonating Claude Code"
+            );
+        }
+
+        // Headers a real Claude Code client sends (or that the forwarder rebuilds) must
+        // NOT be caught by the denylist.
+        for header in [
+            "anthropic-version",
+            "anthropic-beta",
+            "user-agent",
+            "accept",
+            "content-type",
+            "x-app",
+        ] {
+            assert!(
+                !is_codex_client_fingerprint_header(header),
+                "{header} must be preserved while impersonating Claude Code"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_anthropic_2xx_error_envelope_is_detected_for_failover() {
+        let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#;
+        assert_eq!(
+            codex_anthropic_error_envelope_message(body).as_deref(),
+            Some("overloaded_error: busy")
+        );
+        assert!(
+            codex_anthropic_error_envelope_message(br#"{"type":"message","content":[]}"#).is_none()
+        );
+    }
+
+    #[test]
+    fn responses_2xx_failure_is_detected_for_failover() {
+        assert_eq!(
+            responses_error_envelope_message(
+                br#"{"status":"failed","error":{"type":"server_error","message":"busy"},"output":[]}"#
+            )
+            .as_deref(),
+            Some("server_error: busy")
+        );
+        assert_eq!(
+            responses_error_envelope_message(br#"{"status":"cancelled","output":[]}"#).as_deref(),
+            Some("cancelled: response generation was cancelled")
+        );
+        assert!(responses_error_envelope_message(
+            br#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#
+        )
+        .is_none());
+        assert!(responses_error_envelope_message(
+            br#"{"status":"completed","error":null,"output":[]}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn responses_stream_start_semantic_failure_is_retryable() {
+        let created = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}"
+        );
+        assert!(inspect_responses_start_event(created).is_none());
+
+        let failed = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"message\":\"boom\"}}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(failed),
+            Some(Err(ProxyError::TransformError(message))) if message.contains("boom")
+        ));
+
+        let delta = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}"
+        );
+        assert!(matches!(inspect_responses_start_event(delta), Some(Ok(()))));
+    }
+
+    #[test]
+    fn responses_stream_start_accepts_unlabelled_whole_json() {
+        assert!(matches!(
+            inspect_responses_json_document(
+                r#"{
+                    "status": "completed",
+
+                    "output": []
+                }"#
+            ),
+            Some(Ok(()))
+        ));
+        assert!(inspect_responses_json_document(r#"{"status":"completed""#).is_none());
+
+        let failed = inspect_responses_json_document(
+            r#"{"status":"failed","error":{"message":"backend unavailable"}}"#,
+        );
+        assert!(
+            matches!(failed, Some(Err(ProxyError::TransformError(message))) if message.contains("backend unavailable"))
+        );
+    }
+
+    #[test]
+    fn codex_anthropic_cache_is_default_on_but_honors_sub_switch() {
+        let default = codex_anthropic_cache_config(&OptimizerConfig::default());
+        assert!(default.enabled);
+        assert!(default.cache_injection);
+
+        let disabled = codex_anthropic_cache_config(&OptimizerConfig {
+            cache_injection: false,
+            ..OptimizerConfig::default()
+        });
+        assert!(disabled.enabled);
+        assert!(!disabled.cache_injection);
+    }
+
+    #[test]
+    fn invalid_client_history_is_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::InvalidRequest("invalid historical tool arguments".to_string()),
+                &provider,
+            ),
+            ErrorCategory::NonRetryable
+        );
+    }
+
+    #[test]
+    fn official_codex_failures_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+
+        for error in [
+            ProxyError::AuthError("restart Codex".to_string()),
+            ProxyError::UpstreamError {
+                status: 401,
+                body: None,
+            },
+            ProxyError::UpstreamError {
+                status: 403,
+                body: None,
+            },
+            ProxyError::UpstreamError {
+                status: 429,
+                body: None,
+            },
+            ProxyError::Timeout("timeout".to_string()),
+        ] {
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider),
+                ErrorCategory::NonRetryable
+            );
+        }
+    }
+
+    #[test]
+    fn xai_oauth_token_auth_failures_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("xai_oauth"));
+
+        // 本地取 token 失败 = 账号级问题（需重新登录），failover 无济于事
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::AuthError("xAI OAuth 认证失败".to_string()),
+                &provider,
+            ),
+            ErrorCategory::NonRetryable
+        );
+        // 上游 401/403 保持 Retryable：换 provider 可能持有可用的 key
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::UpstreamError {
+                    status: 401,
+                    body: None,
+                },
+                &provider,
+            ),
+            ErrorCategory::Retryable
+        );
+    }
+
+    #[test]
+    fn official_codex_rejects_stale_proxy_placeholder_with_restart_hint() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+        );
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+        let error = validate_codex_official_authorization(&headers, &provider, None, None)
+            .expect_err("stale placeholder must be rejected");
+        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
+    }
+
+    #[test]
+    fn managed_codex_official_rejects_a_different_session_account() {
+        let mut provider = test_provider_with_type(Some("codex_oauth"));
+        provider.category = Some("official".to_string());
+        provider.meta.as_mut().expect("provider meta").auth_binding =
+            Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("local-account-b".to_string()),
+            });
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer account-a-token"),
+        );
+        headers.insert(
+            "chatgpt-account-id",
+            HeaderValue::from_static("workspace-shared"),
+        );
+        let error = validate_codex_official_authorization(
+            &headers,
+            &provider,
+            Some("workspace-shared"),
+            Some(false),
+        )
+        .expect_err("another user's bearer in the same workspace must be rejected");
+        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
+
+        validate_codex_official_authorization(
+            &headers,
+            &provider,
+            Some("workspace-shared"),
+            Some(true),
+        )
+        .expect("the selected account may pass through");
+    }
+
+    #[test]
     fn rewrite_codex_responses_compact_endpoint_to_chat_preserves_query() {
         let (endpoint, passthrough_query) =
             rewrite_codex_responses_endpoint_to_chat("/v1/responses/compact?foo=bar");
@@ -2924,6 +4856,210 @@ mod tests {
         let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
 
         assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn alpha_search_rewrites_known_full_responses_urls() {
+        let cases = [
+            (
+                "https://relay.example/Gateway/%2F/v1/Responses/Compact/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/%2F/v1/alpha/search?api-version=CaseValue&client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/alpha/search?client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/alpha/search?client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/custom/%2F/v1/responses?api-version=2026-07",
+                "https://relay.example/custom/%2F/v1/alpha/search?api-version=2026-07&client_version=0.144.6",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.144.6"),
+                    CodexStandaloneEndpoint::AlphaSearch,
+                )
+                .expect("known Responses full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_generations_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/Gateway/v1/Images/Edits/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/generations?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/generations?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/custom/%2F/v1/responses?api-version=2026-07",
+                "https://relay.example/custom/%2F/v1/images/generations?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/edits",
+                "https://relay.example/v1/images/generations?client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesGenerations,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_generations_preserves_existing_full_images_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/generations?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect("full Images URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/generations?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_generations_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesGenerations,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/generations")
+        ));
+    }
+
+    #[test]
+    fn codex_standalone_endpoint_recognizes_images_edits() {
+        assert!(matches!(
+            CodexStandaloneEndpoint::from_effective_endpoint(
+                "/images/edits?client_version=0.145.0"
+            ),
+            Some(CodexStandaloneEndpoint::ImagesEdits)
+        ));
+        // Codex ImageGen never calls the variations route; keep it unrouted.
+        assert!(CodexStandaloneEndpoint::from_effective_endpoint("/images/variations").is_none());
+    }
+
+    #[test]
+    fn images_edits_rewrites_known_full_codex_urls() {
+        let cases = [
+            (
+                "https://relay.example/Gateway/v1/Chat/Completions/?api-version=CaseValue#fragment",
+                "https://relay.example/Gateway/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/images/edits?client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/chat/completions?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+            (
+                "https://relay.example/v1/images/generations?api-version=2026-07",
+                "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_standalone_full_url(
+                    base_url,
+                    Some("client_version=0.145.0"),
+                    CodexStandaloneEndpoint::ImagesEdits,
+                )
+                .expect("known Codex full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn images_edits_preserves_existing_full_edits_url() {
+        let url = rewrite_codex_standalone_full_url(
+            "https://relay.example/v1/images/edits?api-version=2026-07",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect("full Images edits URL should be preserved");
+
+        assert_eq!(
+            url,
+            "https://relay.example/v1/images/edits?api-version=2026-07&client_version=0.145.0"
+        );
+    }
+
+    #[test]
+    fn images_edits_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.145.0"),
+            CodexStandaloneEndpoint::ImagesEdits,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /images/edits")
+        ));
+    }
+
+    #[test]
+    fn alpha_search_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_standalone_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.144.6"),
+            CodexStandaloneEndpoint::AlphaSearch,
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /alpha/search")
+        ));
     }
 
     #[test]
@@ -3120,5 +5256,285 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    // ===== P3: forwarder 层 media 开关回归测试 =====
+    // 验证 gate 在 forwarder 这一层的"接线"，而非 media_sanitizer 纯函数本身。
+
+    fn forwarder_with_rectifier(config: RectifierConfig) -> RequestForwarder {
+        let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        fwd.rectifier_config = config;
+        fwd
+    }
+
+    fn provider_with_settings(settings_config: Value) -> Provider {
+        let mut p = test_provider_with_type(Some("anthropic"));
+        p.settings_config = settings_config;
+        p
+    }
+
+    fn body_with_image(model: &str) -> Value {
+        json!({
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } }
+                ]
+            }]
+        })
+    }
+
+    fn body_with_codex_input_image(model: &str) -> Value {
+        json!({
+            "model": model,
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        })
+    }
+
+    fn body_with_codex_tool_output_image(stringified: bool) -> Value {
+        let output = json!({
+            "content": [{
+                "type": "input_image",
+                "image_url": "data:image/png;base64,TOOL_OUTPUT_SENTINEL"
+            }]
+        });
+        json!({
+            "model": "any-model",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": if stringified {
+                    Value::String(output.to_string())
+                } else {
+                    output
+                }
+            }]
+        })
+    }
+
+    fn body_with_stringified_chat_tool_image() -> Value {
+        let content = json!({
+            "content": [{
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "CHAT_TOOL_SENTINEL"
+            }]
+        })
+        .to_string();
+        json!({
+            "model": "any-model",
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": content
+            }]
+        })
+    }
+
+    fn body_with_gemini_image() -> Value {
+        json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "GEMINI_SENTINEL"
+                    }
+                }]
+            }]
+        })
+    }
+
+    fn image_unsupported_error() -> ProxyError {
+        ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"This model does not support image input"}}"#.to_string(),
+            ),
+        }
+    }
+    #[test]
+    fn prevention_replaces_when_all_switches_on_and_model_in_heuristic_list() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let provider = provider_with_settings(json!({}));
+        let mut body = body_with_image("qwen3-coder-plus");
+
+        let replaced = fwd.apply_media_prevention(&mut body, &provider);
+
+        assert_eq!(replaced, 1, "默认全开 + 名单内模型应预替换");
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn prevention_skipped_when_media_fallback_off() {
+        // 关闭 request_media_fallback：即使名单命中也不预替换。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            request_media_fallback: false,
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({}));
+        let mut body = body_with_image("qwen3-coder-plus");
+
+        let replaced = fwd.apply_media_prevention(&mut body, &provider);
+
+        assert_eq!(replaced, 0);
+        assert_eq!(body["messages"][0]["content"][0]["type"], "image");
+    }
+
+    #[test]
+    fn prevention_skipped_when_master_switch_off() {
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            enabled: false,
+            ..RectifierConfig::default()
+        });
+        let provider = provider_with_settings(json!({}));
+        let mut body = body_with_image("qwen3-coder-plus");
+
+        assert_eq!(fwd.apply_media_prevention(&mut body, &provider), 0);
+        assert_eq!(body["messages"][0]["content"][0]["type"], "image");
+    }
+
+    #[test]
+    fn prevention_heuristic_off_skips_list_but_keeps_explicit_text_only() {
+        // 关闭 request_media_heuristic：名单预测失效，但显式声明 text-only 仍预替换。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            request_media_heuristic: false,
+            ..RectifierConfig::default()
+        });
+
+        // (a) 名单内模型、无显式声明 → 不再预替换
+        let bare_provider = provider_with_settings(json!({}));
+        let mut list_body = body_with_image("qwen3-coder-plus");
+        assert_eq!(
+            fwd.apply_media_prevention(&mut list_body, &bare_provider),
+            0,
+            "heuristic 关闭后名单模型不应被预替换"
+        );
+        assert_eq!(list_body["messages"][0]["content"][0]["type"], "image");
+
+        // (b) 显式声明 text-only → 仍预替换（声明驱动，不受 heuristic 开关影响）
+        let declared_provider = provider_with_settings(json!({
+            "models": [ { "id": "some-text-model", "input": ["text"] } ]
+        }));
+        let mut declared_body = body_with_image("some-text-model");
+        assert_eq!(
+            fwd.apply_media_prevention(&mut declared_body, &declared_provider),
+            1,
+            "显式 text-only 即使关闭 heuristic 也应预替换"
+        );
+        assert_eq!(declared_body["messages"][0]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn reactive_triggers_when_all_switches_on() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_image("any-model");
+        assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn reactive_triggers_for_codex_image_url_deserialize_errors() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_input_image("deepseek-v4-flash");
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[test]
+    fn reactive_triggers_for_structured_and_stringified_codex_tool_images() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+
+        for stringified in [false, true] {
+            let body = body_with_codex_tool_output_image(stringified);
+            assert!(
+                fwd.media_retry_should_trigger("Codex", false, &body, &image_unsupported_error()),
+                "tool-output image should trigger retry (stringified={stringified})"
+            );
+        }
+    }
+
+    #[test]
+    fn reactive_triggers_for_chat_tool_and_gemini_images() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+
+        assert!(fwd.media_retry_should_trigger(
+            "Claude",
+            false,
+            &body_with_stringified_chat_tool_image(),
+            &image_unsupported_error()
+        ));
+        assert!(fwd.media_retry_should_trigger(
+            "Claude",
+            false,
+            &body_with_gemini_image(),
+            &image_unsupported_error()
+        ));
+    }
+
+    #[test]
+    fn reactive_does_not_treat_context_limit_as_image_rejection() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_tool_output_image(false);
+        let context_error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"maximum context length exceeded"}}"#.to_string()),
+        };
+
+        assert!(!fwd.media_retry_should_trigger("Codex", false, &body, &context_error));
+    }
+
+    #[test]
+    fn reactive_skipped_when_media_fallback_off() {
+        // 关闭 request_media_fallback：上游报图片错误也不触发兜底重试。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            request_media_fallback: false,
+            ..RectifierConfig::default()
+        });
+        let body = body_with_image("any-model");
+        assert!(!fwd.media_retry_should_trigger(
+            "Claude",
+            false,
+            &body,
+            &image_unsupported_error()
+        ));
+    }
+
+    #[test]
+    fn reactive_skipped_when_master_switch_off() {
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            enabled: false,
+            ..RectifierConfig::default()
+        });
+        let body = body_with_image("any-model");
+        assert!(!fwd.media_retry_should_trigger(
+            "Claude",
+            false,
+            &body,
+            &image_unsupported_error()
+        ));
+    }
+
+    #[test]
+    fn reactive_unaffected_by_heuristic_switch() {
+        // 关闭 request_media_heuristic 不影响反应式兜底——它是上游实测错误后的恢复，不是预测。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            request_media_heuristic: false,
+            ..RectifierConfig::default()
+        });
+        let body = body_with_image("any-model");
+        assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
     }
 }

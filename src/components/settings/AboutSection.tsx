@@ -32,7 +32,6 @@ import type {
   ToolInstallationReport,
 } from "@/lib/api/settings";
 import { useUpdate } from "@/contexts/UpdateContext";
-import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
@@ -64,9 +63,11 @@ const TOOL_NAMES = [
   "claude",
   "codex",
   "gemini",
+  "grok",
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
@@ -131,12 +132,16 @@ ${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthro
 npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
+# Grok Build
+npm i -g @xai-official/grok@latest
 # OpenCode
 ${posixScriptInstallCommand("https://opencode.ai/install")} || npm i -g opencode-ai@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
-${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}`;
+${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
+# Pi
+npm i -g @earendil-works/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
@@ -144,12 +149,16 @@ npm i -g @anthropic-ai/claude-code@latest
 npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
+# Grok Build
+npm i -g @xai-official/grok@latest
 # OpenCode
 npm i -g opencode-ai@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
-${HERMES_WINDOWS_INSTALL_COMMAND}`;
+${HERMES_WINDOWS_INSTALL_COMMAND}
+# Pi
+npm i -g @earendil-works/pi-coding-agent@latest`;
 
 const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -159,9 +168,11 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
   codex: "Codex",
   gemini: "Gemini CLI",
+  grok: "Grok Build",
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
+  pi: "Pi",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -174,19 +185,58 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   claude: "claude",
   codex: "codex",
   gemini: "gemini",
+  grok: "grokbuild",
   opencode: "opencode",
   openclaw: "openclaw",
   hermes: "hermes",
+  pi: "pi",
 };
+
+// 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
+// 设置页用 Radix Tabs，非激活 Tab 会被卸载——每次切回「关于」都重挂 AboutSection，若都
+// 全量重查纯属浪费。用「模块级」缓存（生命周期 = JS 模块 = 应用会话，不随组件卸载销毁）
+// 跨重挂存活：重挂时若缓存仍新鲜（距上次全量加载 < TTL）直接复用、跳过探测；超期或用户
+// 手动「刷新」才强制重查。at = 最近一次「全量加载」完成时刻；单工具刷新（切 shell / 升级
+// 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
+const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
+let toolVersionsCache: { data: ToolVersion[]; at: number } | null = null;
+// 应用自身版本（getVersion，本地毫秒级、无网络）也缓存一份，纯为重挂时免去 loading 闪烁。
+let appVersionCache: string | null = null;
+
+// 把探测结果按 name 合并进已有列表：替换同名项、追加新项；空列表时直接采用新结果。
+// 组件 state 与模块缓存共用同一套合并语义（单工具与全量探测都经此函数）。
+function mergeToolVersions(
+  prev: ToolVersion[],
+  updated: ToolVersion[],
+): ToolVersion[] {
+  if (prev.length === 0) return updated;
+  const byName = new Map(updated.map((t) => [t.name, t]));
+  const merged = prev.map((t) => byName.get(t.name) ?? t);
+  const existing = new Set(prev.map((t) => t.name));
+  for (const u of updated) {
+    if (!existing.has(u.name)) merged.push(u);
+  }
+  return merged;
+}
 
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
   const { t } = useTranslation();
-  const [version, setVersion] = useState<string | null>(null);
-  const [isLoadingVersion, setIsLoadingVersion] = useState(true);
+  // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
+  // 为空则回退到原始初值（null / loading）。
+  const [version, setVersion] = useState<string | null>(() => appVersionCache);
+  const [isLoadingVersion, setIsLoadingVersion] = useState(
+    () => appVersionCache === null,
+  );
   const [isDownloading, setIsDownloading] = useState(false);
-  const [toolVersions, setToolVersions] = useState<ToolVersion[]>([]);
-  const [isLoadingTools, setIsLoadingTools] = useState(true);
+  const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
+    () => toolVersionsCache?.data ?? [],
+  );
+  // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
+  // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
+  const [isLoadingTools, setIsLoadingTools] = useState(
+    () => toolVersionsCache === null,
+  );
   const [toolActions, setToolActions] = useState<
     Partial<Record<ToolName, ToolLifecycleAction>>
   >({});
@@ -195,14 +245,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [showInstallCommands, setShowInstallCommands] = useState(false);
 
-  const {
-    hasUpdate,
-    updateInfo,
-    updateHandle,
-    checkUpdate,
-    resetDismiss,
-    isChecking,
-  } = useUpdate();
+  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
+    useUpdate();
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
@@ -216,9 +260,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [isDiagnosingAll, setIsDiagnosingAll] = useState(false);
   // 升级前探测到「多处安装需确认」时暂存：toolNames=本次要升级的全部工具，
   // plans=其中需要确认的（≥2 处）那些。用户确认后对 toolNames 整体执行升级。
+  // fromBatchEntry=是否来自「全部升级」入口：确认后执行期需据此补 batchAction
+  // （executeRun 按数量判 isBatch，「全部升级(1)」会漏掉顶部按钮的 spinner）。
   const [pendingUpgrade, setPendingUpgrade] = useState<{
     toolNames: ToolName[];
     plans: ToolInstallationReport[];
+    fromBatchEntry: boolean;
   } | null>(null);
   // 升级 preflight(probe 阶段)的 in-flight 工具集合。
   // probeToolInstallations 是个 1-3 秒级别的跨进程探测(对每个工具跑 --version + canonicalize),
@@ -264,16 +311,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           wslOverrides,
         );
 
-        setToolVersions((prev) => {
-          if (prev.length === 0) return updated;
-          const byName = new Map(updated.map((t) => [t.name, t]));
-          const merged = prev.map((t) => byName.get(t.name) ?? t);
-          const existing = new Set(prev.map((t) => t.name));
-          for (const u of updated) {
-            if (!existing.has(u.name)) merged.push(u);
-          }
-          return merged;
-        });
+        setToolVersions((prev) => mergeToolVersions(prev, updated));
+        // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
+        // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
+        // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
+        // 数据当成完整结果复用。真实时间戳只由 loadAllToolVersions 的 finally 盖上。
+        toolVersionsCache = {
+          data: mergeToolVersions(toolVersionsCache?.data ?? [], updated),
+          at: toolVersionsCache?.at ?? 0,
+        };
 
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
         return updated;
@@ -291,21 +337,42 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     [],
   );
 
-  const loadAllToolVersions = useCallback(async () => {
-    setIsLoadingTools(true);
-    try {
-      // Respect current UI overrides (shell / flag) when doing a full refresh.
-      const versions = await settingsApi.getToolVersions(
-        [...TOOL_NAMES],
-        wslShellByTool,
-      );
-      setToolVersions(versions);
-    } catch (error) {
-      console.error("[AboutSection] Failed to load tool versions", error);
-    } finally {
-      setIsLoadingTools(false);
-    }
-  }, [wslShellByTool]);
+  const loadAllToolVersions = useCallback(
+    async (options?: { force?: boolean }) => {
+      const force = options?.force ?? false;
+      // 命中新鲜缓存：切回「关于」Tab 触发的重挂直接复用上次结果，跳过 6 个 `--version`
+      // 子进程 + 6 个 latest 版本网络请求。手动「刷新」传 force 绕过缓存强制重查。
+      if (
+        !force &&
+        toolVersionsCache &&
+        Date.now() - toolVersionsCache.at < TOOL_VERSIONS_CACHE_TTL_MS
+      ) {
+        setToolVersions(toolVersionsCache.data);
+        setIsLoadingTools(false);
+        return;
+      }
+      setIsLoadingTools(true);
+      try {
+        // 逐工具并发探测：每个工具一完成就合并进 toolVersions（并写模块缓存）、清掉自己
+        // 的 loadingTools 标志，对应卡片随即独立刷新——而非等全部探测完才一次性显示（后端
+        // 原本对 6 个工具串行 await，总耗时累加；并发后压成「最慢的那一个」）。refreshTool-
+        // Versions 已内建按 name 合并 + per-tool loading + try/catch 兜底（单工具失败返回 []
+        // 不拖累其余），故 Promise.all 永不 reject。Respect current shell/flag overrides.
+        await Promise.all(
+          TOOL_NAMES.map((toolName) =>
+            refreshToolVersions([toolName], wslShellByTool),
+          ),
+        );
+      } finally {
+        // 全量探测结束：把缓存时间戳刷新为现在，标记「刚完成一次全量加载」、重置 TTL。
+        if (toolVersionsCache) {
+          toolVersionsCache = { ...toolVersionsCache, at: Date.now() };
+        }
+        setIsLoadingTools(false);
+      }
+    },
+    [wslShellByTool, refreshToolVersions],
+  );
 
   const handleToolShellChange = async (toolName: ToolName, value: string) => {
     const wslShell = value === "auto" ? null : value;
@@ -332,18 +399,20 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      try {
-        const [appVersion] = await Promise.all([
-          getVersion(),
-          loadAllToolVersions(),
-        ]);
 
+    // 本软件自身版本走本地调用（getVersion，无网络，毫秒级），与工具版本探测彼此独立。
+    // 之前两者被塞进同一个 Promise.all，导致 setVersion / setIsLoadingVersion 被压在
+    // 「全部工具检查完成」之后——图标下方的版本徽标因此要干等 6 个工具全检完才显示。
+    // 拆成两条独立链路：应用版本一拿到就立刻显示，工具探测各自渐进刷新，互不阻塞。
+    const loadAppVersion = async () => {
+      try {
+        const appVersion = await getVersion();
+        appVersionCache = appVersion;
         if (active) {
           setVersion(appVersion);
         }
       } catch (error) {
-        console.error("[AboutSection] Failed to load info", error);
+        console.error("[AboutSection] Failed to load app version", error);
         if (active) {
           setVersion(null);
         }
@@ -354,7 +423,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
     };
 
-    void load();
+    void loadAppVersion();
+    void loadAllToolVersions();
     return () => {
       active = false;
     };
@@ -392,7 +462,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, [t, updateInfo?.availableVersion, version]);
 
   const handleCheckUpdate = useCallback(async () => {
-    if (hasUpdate && updateHandle) {
+    if (hasUpdate) {
       if (isPortable) {
         try {
           await settingsApi.checkUpdates();
@@ -405,11 +475,16 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       setIsDownloading(true);
       try {
         resetDismiss();
-        await updateHandle.downloadAndInstall();
-        await relaunchApp();
+        const installed = await settingsApi.installUpdateAndRestart();
+        if (!installed) {
+          toast.success(t("settings.upToDate"), { closeButton: true });
+        }
       } catch (error) {
         console.error("[AboutSection] Update failed", error);
-        toast.error(t("settings.updateFailed"));
+        toast.error(t("settings.updateFailed"), {
+          description: extractErrorMessage(error) || undefined,
+          closeButton: true,
+        });
         try {
           await settingsApi.checkUpdates();
         } catch (fallbackError) {
@@ -431,9 +506,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
     } catch (error) {
       console.error("[AboutSection] Check update failed", error);
-      toast.error(t("settings.checkUpdateFailed"));
+      toast.error(t("settings.checkUpdateFailed"), {
+        description: extractErrorMessage(error) || undefined,
+        closeButton: true,
+      });
     }
-  }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t, updateHandle]);
+  }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t]);
 
   const handleCopyInstallCommands = useCallback(async () => {
     try {
@@ -680,7 +758,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   // 只要有一个工具被锁,整批不开新一轮,因为后端 set -e 串行的语义假设是「一次性
   // 单脚本」,跨两次 IPC 并发会破坏它。
   const handleRunToolAction = useCallback(
-    async (toolNames: ToolName[], action: ToolLifecycleAction) => {
+    async (
+      toolNames: ToolName[],
+      action: ToolLifecycleAction,
+      options?: { fromBatchEntry?: boolean },
+    ) => {
       if (toolNames.length === 0) return;
       if (
         toolNames.some(
@@ -696,6 +778,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         toolNames.forEach((name) => next.add(name));
         return next;
       });
+      // 「全部升级」入口在 probe 阶段就点亮 spinner:batchAction 若只由 executeRun
+      // 置位,预检的数秒(探测超时兜底时更久)里按钮只 disabled 不转圈,观感如
+      // "点了没反应"。按入口来源而非 toolNames.length 判定——「全部升级(1)」
+      // 传入长度 1,按数量判会漏。executeRun 内部会再置位/清除,重复 set 无害;
+      // 弹确认框路径由 finally 清掉,对话框期间不转圈。
+      const fromBatchEntry = options?.fromBatchEntry ?? false;
+      if (fromBatchEntry) {
+        setBatchAction(action);
+      }
       try {
         if (action === "install") {
           await executeRun(toolNames, action);
@@ -715,8 +806,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           await executeRun(toolNames, action);
           return;
         }
-        setPendingUpgrade({ toolNames, plans: needConfirm });
+        setPendingUpgrade({ toolNames, plans: needConfirm, fromBatchEntry });
       } finally {
+        if (fromBatchEntry) {
+          setBatchAction(null);
+        }
         setPreflightTools((prev) => {
           const next = new Set(prev);
           toolNames.forEach((name) => next.delete(name));
@@ -729,7 +823,17 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   const handleConfirmUpgrade = useCallback(() => {
     if (pendingUpgrade) {
-      void executeRun(pendingUpgrade.toolNames, "update");
+      const { toolNames, fromBatchEntry } = pendingUpgrade;
+      // executeRun 按数量判 isBatch，「全部升级(1)」确认后执行期会漏置 batchAction，
+      // 由入口来源在这里补上；对 >1 的场景 executeRun 会重复置位/清除，无害。
+      if (fromBatchEntry) {
+        setBatchAction("update");
+      }
+      void executeRun(toolNames, "update").finally(() => {
+        if (fromBatchEntry) {
+          setBatchAction(null);
+        }
+      });
     }
     setPendingUpgrade(null);
   }, [pendingUpgrade, executeRun]);
@@ -768,30 +872,32 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-6 space-y-5 shadow-sm"
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <img src={appIcon} alt="CC Switch" className="h-5 w-5" />
-              <h4 className="text-lg font-semibold text-foreground">
-                CC Switch
-              </h4>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="gap-1.5 bg-background/80">
-                <span className="text-muted-foreground">
-                  {t("common.version")}
-                </span>
-                {isLoadingVersion ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <span className="font-medium">{`v${displayVersion}`}</span>
-                )}
-              </Badge>
-              {isPortable && (
-                <Badge variant="secondary" className="gap-1.5">
-                  <Info className="h-3 w-3" />
-                  {t("settings.portableMode")}
+          <div className="flex items-center gap-8">
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2">
+                <img src={appIcon} alt="CC Switch" className="h-5 w-5" />
+                <h4 className="text-lg font-semibold text-foreground">
+                  CC Switch
+                </h4>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="gap-1.5 bg-background/80">
+                  <span className="text-muted-foreground">
+                    {t("common.version")}
+                  </span>
+                  {isLoadingVersion ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <span className="font-medium">{`v${displayVersion}`}</span>
+                  )}
                 </Badge>
-              )}
+                {isPortable && (
+                  <Badge variant="secondary" className="gap-1.5">
+                    <Info className="h-3 w-3" />
+                    {t("settings.portableMode")}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
 
@@ -908,7 +1014,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               size="sm"
               variant="outline"
               className="h-7 gap-1.5 text-xs"
-              onClick={() => loadAllToolVersions()}
+              onClick={() => loadAllToolVersions({ force: true })}
               disabled={isLoadingTools || isAnyBusy}
             >
               <RefreshCw
@@ -921,7 +1027,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             <Button
               size="sm"
               className="h-7 gap-1.5 text-xs"
-              onClick={() => handleRunToolAction(updatableToolNames, "update")}
+              onClick={() =>
+                handleRunToolAction(updatableToolNames, "update", {
+                  fromBatchEntry: true,
+                })
+              }
               disabled={
                 isLoadingTools || isAnyBusy || updatableToolNames.length === 0
               }
@@ -943,8 +1053,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             const tool = toolVersionByName.get(toolName);
             const appConfig = APP_ICON_MAP[TOOL_APP_IDS[toolName]];
             const displayName = TOOL_DISPLAY_NAMES[toolName];
+            // 单卡片 loading 用「结果是否已到」而非「整批是否结束」驱动，实现渐进式刷新：
+            //   - loadingTools[t]：本工具探测在途（首次加载或单工具刷新）；
+            //   - isLoadingTools && !has(t)：整批进行中且该工具尚未返回——覆盖首帧/刷新时
+            //     未完成卡片的 loading 外观。某工具结果一落进 toolVersions，has(t) 即为 true，
+            //     该卡片立刻脱离 loading（哪怕全局 isLoadingTools 还为 true），其它卡片不受影响。
             const isToolVersionLoading =
-              isLoadingTools || Boolean(loadingTools[toolName]);
+              Boolean(loadingTools[toolName]) ||
+              (isLoadingTools && !toolVersionByName.has(toolName));
             const isOutdated = isUpdateAvailable(
               tool?.version,
               tool?.latest_version,
@@ -1047,9 +1163,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <Select
                       value={wslShellByTool[toolName]?.wslShell || "auto"}
                       onValueChange={(v) => handleToolShellChange(toolName, v)}
-                      disabled={
-                        isLoadingTools || loadingTools[toolName] || isAnyBusy
-                      }
+                      disabled={isToolVersionLoading || isAnyBusy}
                     >
                       <SelectTrigger className="h-7 w-[82px] text-xs">
                         <SelectValue />
@@ -1068,9 +1182,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       onValueChange={(v) =>
                         handleToolShellFlagChange(toolName, v)
                       }
-                      disabled={
-                        isLoadingTools || loadingTools[toolName] || isAnyBusy
-                      }
+                      disabled={isToolVersionLoading || isAnyBusy}
                     >
                       <SelectTrigger className="h-7 w-[82px] text-xs">
                         <SelectValue />
@@ -1124,7 +1236,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       onClick={() => handleRunToolAction([toolName], action)}
                       disabled={isToolVersionLoading || isAnyBusy}
                     >
-                      {runningAction ? (
+                      {/* preflight（升级前冲突探测）阶段也转圈：此时 toolActions
+                          尚未置位，只 disabled 不转圈会让探测的数秒像"点了没反应"。 */}
+                      {runningAction || preflightTools.has(toolName) ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : action === "install" ? (
                         <Download className="h-3.5 w-3.5" />

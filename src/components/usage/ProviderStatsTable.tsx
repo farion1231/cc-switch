@@ -14,18 +14,26 @@ import type { UsageRangeSelection } from "@/types/usage";
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
 export function ProviderStatsTable({
   range,
   appType,
+  providerName,
+  model,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useProviderStats(range, appType, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data: stats, isLoading } = useProviderStats(
+    range,
+    { appType, providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   if (isLoading) {
     return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;

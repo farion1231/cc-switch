@@ -60,37 +60,40 @@ fn gemini_stream_usage_event_filter(data: &str) -> bool {
 // ============================================================================
 
 /// Claude 流式响应模型提取（优先使用 usage.model）
-fn claude_model_extractor(events: &[Value], request_model: &str) -> String {
+///
+/// 空字符串模型名视为缺失（转换层对无回显上游会合成 model:""），
+/// 落到 fallback_model（映射后的出站模型或客户端请求模型）。
+fn claude_model_extractor(events: &[Value], fallback_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_claude_stream_events(events) {
-        if let Some(model) = usage.model {
+        if let Some(model) = usage.model.filter(|m| !m.is_empty()) {
             return model;
         }
     }
-    request_model.to_string()
+    fallback_model.to_string()
 }
 
 /// OpenAI Chat Completions 流式响应模型提取（优先使用 usage.model）
-fn openai_model_extractor(events: &[Value], request_model: &str) -> String {
+fn openai_model_extractor(events: &[Value], fallback_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_openai_stream_events(events) {
-        if let Some(model) = usage.model {
+        if let Some(model) = usage.model.filter(|m| !m.is_empty()) {
             return model;
         }
     }
     // 回退：从事件中直接提取
     events
         .iter()
-        .find_map(|e| e.get("model")?.as_str())
-        .unwrap_or(request_model)
+        .find_map(|e| e.get("model")?.as_str().filter(|m| !m.is_empty()))
+        .unwrap_or(fallback_model)
         .to_string()
 }
 
 /// Codex 智能流式响应模型提取（自动检测格式）
-fn codex_auto_model_extractor(events: &[Value], request_model: &str) -> String {
+fn codex_auto_model_extractor(events: &[Value], fallback_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_codex_stream_events_auto(events) {
-        if let Some(model) = usage.model {
+        if let Some(model) = usage.model.filter(|m| !m.is_empty()) {
             return model;
         }
     }
@@ -99,28 +102,33 @@ fn codex_auto_model_extractor(events: &[Value], request_model: &str) -> String {
         .iter()
         .find_map(|e| {
             if e.get("type")?.as_str()? == "response.completed" {
-                e.get("response")?.get("model")?.as_str()
+                e.get("response")?
+                    .get("model")?
+                    .as_str()
+                    .filter(|m| !m.is_empty())
             } else {
                 None
             }
         })
         .or_else(|| {
             // 再回退：从 OpenAI 格式事件中提取
-            events.iter().find_map(|e| e.get("model")?.as_str())
+            events
+                .iter()
+                .find_map(|e| e.get("model")?.as_str().filter(|m| !m.is_empty()))
         })
-        .unwrap_or(request_model)
+        .unwrap_or(fallback_model)
         .to_string()
 }
 
 /// Gemini 流式响应模型提取（优先使用 usage.model）
-fn gemini_model_extractor(events: &[Value], request_model: &str) -> String {
+fn gemini_model_extractor(events: &[Value], fallback_model: &str) -> String {
     // 首先尝试从解析的 usage 中获取模型
     if let Some(usage) = TokenUsage::from_gemini_stream_chunks(events) {
-        if let Some(model) = usage.model {
+        if let Some(model) = usage.model.filter(|m| !m.is_empty()) {
             return model;
         }
     }
-    request_model.to_string()
+    fallback_model.to_string()
 }
 
 // ============================================================================

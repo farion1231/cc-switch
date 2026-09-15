@@ -3,10 +3,11 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
+    content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
     forwarder::ActiveConnectionGuard,
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
-    hyper_client::ProxyResponse,
+    hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -19,7 +20,6 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
-    io::Read,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -29,46 +29,8 @@ use std::{
 use tokio::sync::Mutex;
 
 // ============================================================================
-// 响应解压
+// 响应头处理
 // ============================================================================
-
-/// 根据 content-encoding 解压响应体字节
-///
-/// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
-fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    match content_encoding {
-        "gzip" | "x-gzip" => {
-            let mut decoder = flate2::read::GzDecoder::new(body);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
-        }
-        "deflate" => {
-            let mut decoder = flate2::read::DeflateDecoder::new(body);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
-        }
-        "br" => {
-            let mut decompressed = Vec::new();
-            brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
-            Ok(decompressed)
-        }
-        _ => {
-            log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
-            Ok(body.to_vec())
-        }
-    }
-}
-
-/// 从响应头提取 content-encoding（忽略 identity 和 chunked）
-fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("content-encoding")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && s != "identity")
-}
 
 /// RFC 2616 / RFC 7230 中定义的不应被代理继续转发的响应头。
 const HOP_BY_HOP_RESPONSE_HEADERS: &[&str] = &[
@@ -124,10 +86,11 @@ pub(crate) async fn read_decoded_body(
 ) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
     let mut headers = response.headers().clone();
     let status = response.status();
+    let bytes_future = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES);
     let raw_bytes = if body_timeout.is_zero() {
-        response.bytes().await?
+        bytes_future.await?
     } else {
-        tokio::time::timeout(body_timeout, response.bytes())
+        tokio::time::timeout(body_timeout, bytes_future)
             .await
             .map_err(|_| {
                 ProxyError::Timeout(format!(
@@ -149,12 +112,19 @@ pub(crate) async fn read_decoded_body(
 
     if let Some(encoding) = get_content_encoding(&headers) {
         log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
-        match decompress_body(&encoding, &raw_bytes) {
-            Ok(decompressed) => {
+        match decompress_body_with_limit(&encoding, &raw_bytes, MAX_RESPONSE_BODY_BYTES) {
+            Ok(Some(decompressed)) => {
+                // 解码器在预算耗尽处即截停，此处必然 ≤ MAX_RESPONSE_BODY_BYTES
                 body_bytes = Bytes::from(decompressed);
                 decoded = true;
             }
-            Err(e) => {
+            // 不支持的编码：原样透传且保留 content-encoding 头，
+            // 让下游诊断/客户端知道这仍是压缩字节
+            Ok(None) => {}
+            Err(DecompressError::TooLarge { .. }) => {
+                return Err(ProxyError::ResponseBodyTooLarge(MAX_RESPONSE_BODY_BYTES));
+            }
+            Err(DecompressError::Io(e)) => {
                 log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
             }
         }
@@ -260,9 +230,9 @@ pub async fn handle_non_streaming(
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(
-        "[{}] 上游响应体内容: {}",
+        "[{}] 上游响应体已接收: bytes={} (content omitted)",
         ctx.tag,
-        String::from_utf8_lossy(&body_bytes)
+        body_bytes.len()
     );
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
@@ -270,14 +240,21 @@ pub async fn handle_non_streaming(
         if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
             // 解析使用量
             if let Some(usage) = (parser_config.response_parser)(&json_value) {
-                // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
-                let model = if let Some(ref m) = usage.model {
-                    m.clone()
-                } else if let Some(m) = json_value.get("model").and_then(|m| m.as_str()) {
-                    m.to_string()
-                } else {
-                    ctx.request_model.clone()
-                };
+                // 归因优先级：usage 解析出的模型 → 响应 model 字段 → 映射后的出站
+                // 模型（路由接管真值）→ 客户端请求模型。空字符串视为缺失。
+                let model = usage
+                    .model
+                    .clone()
+                    .filter(|m| !m.is_empty())
+                    .or_else(|| {
+                        json_value
+                            .get("model")
+                            .and_then(|m| m.as_str())
+                            .filter(|m| !m.is_empty())
+                            .map(str::to_string)
+                    })
+                    .or_else(|| ctx.outbound_model.clone())
+                    .unwrap_or_else(|| ctx.request_model.clone());
 
                 spawn_log_usage(
                     state,
@@ -292,8 +269,10 @@ pub async fn handle_non_streaming(
                 let model = json_value
                     .get("model")
                     .and_then(|m| m.as_str())
-                    .unwrap_or(&ctx.request_model)
-                    .to_string();
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| ctx.outbound_model.clone())
+                    .unwrap_or_else(|| ctx.request_model.clone());
                 spawn_log_usage(
                     state,
                     ctx,
@@ -318,7 +297,7 @@ pub async fn handle_non_streaming(
                 state,
                 ctx,
                 TokenUsage::default(),
-                &ctx.request_model,
+                ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model),
                 &ctx.request_model,
                 status.as_u16(),
                 false,
@@ -482,7 +461,7 @@ impl Drop for SseUsageFinishGuard {
 // ============================================================================
 
 /// 创建使用量收集器
-fn create_usage_collector(
+pub(crate) fn create_usage_collector(
     ctx: &RequestContext,
     state: &ProxyState,
     status_code: u16,
@@ -500,7 +479,16 @@ fn create_usage_collector(
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let request_model = ctx.request_model.clone();
-    let app_type_str = parser_config.app_type_str;
+    // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
+    // 其次才是客户端请求别名
+    let fallback_model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
+    // 用 ctx 的 app_type 而不是 parser_config 的：Claude Desktop 流式透传复用
+    // CLAUDE_PARSER_CONFIG（app_type_str="claude"），按 parser_config 记账会把
+    // claude-desktop 的行错记到 claude 名下，导致供应商计价覆盖解析不到。
+    let app_type_str = ctx.app_type_str;
     let tag = ctx.tag;
     let start_time = ctx.start_time;
     let stream_parser = parser_config.stream_parser;
@@ -512,13 +500,14 @@ fn create_usage_collector(
         parser_config.stream_event_filter,
         move |events, first_token_ms| {
             if let Some(usage) = stream_parser(&events) {
-                let model = model_extractor(&events, &request_model);
+                let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
+                let outbound_model = fallback_model.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -527,6 +516,7 @@ fn create_usage_collector(
                         app_type_str,
                         &model,
                         &request_model,
+                        &outbound_model,
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -537,12 +527,13 @@ fn create_usage_collector(
                     .await;
                 });
             } else {
-                let model = model_extractor(&events, &request_model);
+                let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
+                let outbound_model = fallback_model.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -551,6 +542,7 @@ fn create_usage_collector(
                         app_type_str,
                         &model,
                         &request_model,
+                        &outbound_model,
                         TokenUsage::default(),
                         latency_ms,
                         first_token_ms,
@@ -588,6 +580,11 @@ fn spawn_log_usage(
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
+    // 「按请求计价」模式的锚点：映射后的出站模型，无映射时等于 request_model
+    let outbound_model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
     let latency_ms = ctx.latency_ms();
     let session_id = ctx.session_id.clone();
 
@@ -598,6 +595,7 @@ fn spawn_log_usage(
             &app_type_str,
             &model,
             &request_model,
+            &outbound_model,
             usage,
             latency_ms,
             None,
@@ -618,6 +616,11 @@ pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
 }
 
 /// 内部使用量记录函数
+///
+/// `outbound_model` 是「按请求计价」模式的锚点：实际发往上游的模型
+/// （路由接管映射后的真值，无映射时等于 request_model）。该模式的语义是
+/// 「按代理发出的请求计价、不信任上游回显」，接管场景下发出的请求模型是
+/// 映射后的 Y 而非客户端别名 X，按 X 计价会用错定价表行。
 #[allow(clippy::too_many_arguments)]
 async fn log_usage_internal(
     state: &ProxyState,
@@ -625,6 +628,7 @@ async fn log_usage_internal(
     app_type: &str,
     model: &str,
     request_model: &str,
+    outbound_model: &str,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -638,12 +642,13 @@ async fn log_usage_internal(
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
     let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
-        request_model
+        outbound_model
     } else {
         model
     };
 
-    let request_id = usage.dedup_request_id();
+    let dedup_scope = super::usage::parser::dedup_scope_for_app(app_type, provider_id);
+    let request_id = usage.dedup_request_id(dedup_scope);
 
     log::debug!(
         "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
@@ -762,11 +767,10 @@ pub fn create_logged_passthrough_stream(
                                                 }
                                                 _ => false,
                                             };
-                                            if collected {
-                                                log::debug!("[{tag}] <<< SSE 事件: {data}");
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE 数据: {data}");
-                                            }
+                                            log::trace!(
+                                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                                data.len()
+                                            );
                                         } else {
                                             log::debug!("[{tag}] <<< SSE: [DONE]");
                                         }
@@ -799,15 +803,53 @@ pub fn create_logged_passthrough_stream(
     }
 }
 
+fn is_safe_diagnostic_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-type"
+            | "content-encoding"
+            | "content-length"
+            | "retry-after"
+            | "cf-ray"
+            | "x-request-id"
+            | "request-id"
+            | "x-correlation-id"
+    ) || name.starts_with("x-ratelimit-")
+        || name.starts_with("ratelimit-")
+}
+
+fn bounded_header_value(value: &axum::http::HeaderValue) -> Option<String> {
+    let value = value.to_str().ok()?;
+    let mut bounded = value.chars().take(160).collect::<String>();
+    if value.chars().count() > 160 {
+        bounded.push('…');
+    }
+    Some(bounded)
+}
+
 fn format_headers(headers: &HeaderMap) -> String {
-    headers
-        .iter()
-        .map(|(key, value)| {
-            let value_str = value.to_str().unwrap_or("<non-utf8>");
-            format!("{key}={value_str}")
+    let mut entries = headers
+        .keys()
+        .map(|key| {
+            let name = key.as_str();
+            if !is_safe_diagnostic_header(name) {
+                return name.to_string();
+            }
+
+            let values = headers
+                .get_all(key)
+                .iter()
+                .filter_map(bounded_header_value)
+                .collect::<Vec<_>>();
+            if values.is_empty() {
+                name.to_string()
+            } else {
+                format!("{name}={}", values.join("|"))
+            }
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect::<Vec<_>>();
+    entries.sort();
+    format!("[{}]", entries.join(", "))
 }
 
 #[cfg(test)]
@@ -827,6 +869,49 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[test]
+    fn format_headers_keeps_only_allowlisted_diagnostic_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer super-secret".parse().unwrap());
+        headers.insert("set-cookie", "session=cookie-secret".parse().unwrap());
+        headers.insert("retry-after", "30".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "2".parse().unwrap());
+        headers.insert("cf-ray", "abc123-SJC".parse().unwrap());
+
+        let formatted = format_headers(&headers);
+        assert!(formatted.contains("authorization"), "{formatted}");
+        assert!(formatted.contains("set-cookie"), "{formatted}");
+        assert!(formatted.contains("retry-after=30"), "{formatted}");
+        assert!(formatted.contains("x-ratelimit-remaining=2"), "{formatted}");
+        assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
+        assert!(!formatted.contains("super-secret"), "{formatted}");
+        assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
+
+    #[tokio::test]
+    async fn read_decoded_body_rejects_compressed_bomb_without_full_expansion() {
+        // 128 MiB+1 全零 payload 的 gzip 只有 ~130 KiB：原始读取上限拦不住它，
+        // 只有解压侧的有界解码能拒绝。若解码退化为"先完整展开再比较"，
+        // 展开后长度 > MAX_RESPONSE_BODY_BYTES 的 payload 会成功返回（测试失败）。
+        let payload = vec![0u8; MAX_RESPONSE_BODY_BYTES + 1];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, &payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.len() < MAX_RESPONSE_BODY_BYTES);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        let response =
+            ProxyResponse::buffered(http::StatusCode::OK, headers, Bytes::from(compressed));
+
+        let result = read_decoded_body(response, "test", Duration::ZERO).await;
+        assert!(
+            matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))),
+            "压缩炸弹应被拒绝而不是完整展开: {:?}",
+            result.map(|(_, _, body)| body.len())
+        );
+    }
 
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
@@ -1015,6 +1100,7 @@ mod tests {
             app_type,
             "resp-model",
             "req-model",
+            "req-model",
             usage,
             10,
             None,
@@ -1048,6 +1134,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_request_pricing_mode_anchors_to_outbound_model() -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        let app_type = "claude";
+
+        db.set_pricing_model_source(app_type, "request").await?;
+        seed_pricing(&db)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('outbound-model', 'Outbound Model', '4.0', '0')",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        insert_provider(&db, "provider-3", app_type, ProviderMeta::default())?;
+
+        let state = build_state(db.clone());
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        // 路由接管场景：客户端请求 req-model（$2/M），代理实际发出 outbound-model
+        // （$4/M），上游回显 resp-model。「按请求计价」必须锚定实际发出的模型。
+        log_usage_internal(
+            &state,
+            "provider-3",
+            app_type,
+            "resp-model",
+            "req-model",
+            "outbound-model",
+            usage,
+            10,
+            None,
+            false,
+            200,
+            None,
+        )
+        .await;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (model, request_model, total_cost): (String, String, String) = conn
+            .query_row(
+                "SELECT model, request_model, total_cost_usd
+                 FROM proxy_request_logs WHERE provider_id = ?1",
+                ["provider-3"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // model / request_model 列不受计价锚点影响
+        assert_eq!(model, "resp-model");
+        assert_eq!(request_model, "req-model");
+        // 按 outbound-model（$4/M）计价，而不是 req-model（$2/M）或 resp-model（$1/M）
+        assert_eq!(
+            Decimal::from_str(&total_cost).unwrap(),
+            Decimal::from_str("4").unwrap()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_claude_desktop_inherits_claude_global_defaults() -> Result<(), AppError> {
+        use crate::proxy::usage::logger::UsageLogger;
+
+        let db = Arc::new(Database::memory()?);
+
+        // 全局计费配置只有 claude/codex/gemini 三行；claude-desktop 的
+        // 全局默认必须继承 claude，而不是静默落回工厂默认（1 / response）
+        db.set_default_cost_multiplier("claude", "1.5").await?;
+        db.set_pricing_model_source("claude", "request").await?;
+
+        let logger = UsageLogger::new(&db);
+        let (multiplier, source) = logger
+            .resolve_pricing_config("nonexistent-provider", "claude-desktop")
+            .await;
+
+        assert_eq!(multiplier, Decimal::from_str("1.5").unwrap());
+        assert_eq!(source, "request");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_log_usage_falls_back_to_global_defaults() -> Result<(), AppError> {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
@@ -1074,6 +1249,7 @@ mod tests {
             "provider-2",
             app_type,
             "resp-model",
+            "req-model",
             "req-model",
             usage,
             10,

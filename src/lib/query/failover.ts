@@ -3,17 +3,23 @@ import { failoverApi } from "@/lib/api/failover";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { proxyKeys } from "@/lib/query/proxy";
+import { getAppLabel } from "@/config/appConfig";
 
 // ========== 熔断器 Hooks ==========
 
 /**
  * 获取供应商健康状态
  */
-export function useProviderHealth(providerId: string, appType: string) {
+export function useProviderHealth(
+  providerId: string,
+  appType: string,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ["providerHealth", providerId, appType],
     queryFn: () => failoverApi.getProviderHealth(providerId, appType),
-    enabled: !!providerId && !!appType,
+    enabled: enabled && !!providerId && !!appType,
     refetchInterval: 5000, // 每 5 秒刷新一次
     retry: false,
   });
@@ -47,7 +53,7 @@ export function useResetCircuitBreaker() {
       });
       // 刷新代理状态（更新 active_targets）
       queryClient.invalidateQueries({
-        queryKey: ["proxyStatus"],
+        queryKey: proxyKeys.status,
       });
     },
   });
@@ -94,11 +100,11 @@ export function useCircuitBreakerStats(providerId: string, appType: string) {
 /**
  * 获取故障转移队列
  */
-export function useFailoverQueue(appType: string) {
+export function useFailoverQueue(appType: string, enabled = true) {
   return useQuery({
     queryKey: ["failoverQueue", appType],
     queryFn: () => failoverApi.getFailoverQueue(appType),
-    enabled: !!appType,
+    enabled: enabled && !!appType,
   });
 }
 
@@ -186,10 +192,11 @@ export function useRemoveFromFailoverQueue() {
 /**
  * 获取指定应用的自动故障转移开关状态
  */
-export function useAutoFailoverEnabled(appType: string) {
+export function useAutoFailoverEnabled(appType: string, enabled = true) {
   return useQuery({
     queryKey: ["autoFailoverEnabled", appType],
     queryFn: () => failoverApi.getAutoFailoverEnabled(appType),
+    enabled: enabled && !!appType,
     // 默认值为 false（与后端保持一致）
     placeholderData: false,
   });
@@ -222,12 +229,7 @@ export function useSetAutoFailoverEnabled() {
     },
 
     onSuccess: (_data, variables) => {
-      const appLabel =
-        variables.appType === "claude"
-          ? "Claude"
-          : variables.appType === "codex"
-            ? "Codex"
-            : "Gemini";
+      const appLabel = getAppLabel(variables.appType);
 
       toast.success(
         variables.enabled
@@ -281,7 +283,7 @@ export function useSetAutoFailoverEnabled() {
         queryKey: ["providers", variables.appType],
       });
       queryClient.invalidateQueries({
-        queryKey: ["proxyStatus"],
+        queryKey: proxyKeys.status,
       });
     },
   });

@@ -80,6 +80,8 @@ struct Usage {
 struct PromptTokensDetails {
     #[serde(default)]
     cached_tokens: u32,
+    #[serde(default)]
+    cache_write_tokens: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -90,25 +92,33 @@ struct ToolBlockState {
     started: bool,
     pending_args: String,
     /// 连续空白字符计数 — 用于检测 Copilot 无限换行 bug
-    /// 当 function call 参数中出现连续 20+ 空白字符时，强制终止流
+    /// 当 function call 参数中的连续空白字符达到阈值时，强制终止流
     consecutive_whitespace: usize,
     /// 是否已因无限空白 bug 被中止
     aborted: bool,
 }
 
 /// 无限空白 bug 的连续空白字符阈值
-const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
+const INFINITE_WHITESPACE_THRESHOLD: usize = 500;
 
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
+    // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去 cache_read 与 cache_creation
+    // （三桶互斥，恒等 input + cache_read + cache_creation == prompt_tokens）。
+    let cached = extract_cache_read_tokens(usage).unwrap_or(0);
+    let cache_creation = extract_cache_write_tokens(usage).unwrap_or(0);
+    let input_tokens = usage
+        .prompt_tokens
+        .saturating_sub(cached)
+        .saturating_sub(cache_creation);
     let mut usage_json = json!({
-        "input_tokens": usage.prompt_tokens,
+        "input_tokens": input_tokens,
         "output_tokens": usage.completion_tokens
     });
-    if let Some(cached) = extract_cache_read_tokens(usage) {
+    if cached > 0 {
         usage_json["cache_read_input_tokens"] = json!(cached);
     }
-    if let Some(created) = usage.cache_creation_input_tokens {
-        usage_json["cache_creation_input_tokens"] = json!(created);
+    if cache_creation > 0 {
+        usage_json["cache_creation_input_tokens"] = json!(cache_creation);
     }
     usage_json
 }
@@ -223,12 +233,20 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 "output_tokens": 0
                                             });
                                             if let Some(u) = &chunk.usage {
-                                                start_usage["input_tokens"] = json!(u.prompt_tokens);
-                                                if let Some(cached) = extract_cache_read_tokens(u) {
+                                                let cached = extract_cache_read_tokens(u).unwrap_or(0);
+                                                let cache_creation =
+                                                    extract_cache_write_tokens(u).unwrap_or(0);
+                                                let input = u
+                                                    .prompt_tokens
+                                                    .saturating_sub(cached)
+                                                    .saturating_sub(cache_creation);
+                                                start_usage["input_tokens"] = json!(input);
+                                                if cached > 0 {
                                                     start_usage["cache_read_input_tokens"] = json!(cached);
                                                 }
-                                                if let Some(created) = u.cache_creation_input_tokens {
-                                                    start_usage["cache_creation_input_tokens"] = json!(created);
+                                                if cache_creation > 0 {
+                                                    start_usage["cache_creation_input_tokens"] =
+                                                        json!(cache_creation);
                                                 }
                                             }
 
@@ -249,7 +267,17 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         }
 
                                         // 处理 reasoning（thinking）
-                                        if let Some(reasoning) = &choice.delta.reasoning {
+                                        // 某些上游始终填充 reasoning_content，输出正文时也带上空字符串。空值会匹配
+                                        // Some("") 进入本分支，与下方 content 分支轮流改写 current_non_tool_block_type，
+                                        // 导致单个 chunk 内 text/thinking 块被反复关闭重开，正文碎片化。
+                                        // 非流式路径 openai_to_anthropic 已对 reasoning_content 做同样的空值过滤，
+                                        // 此处与之保持一致（也与下方 content 分支的 !content.is_empty() 对称）。
+                                        if let Some(reasoning) = choice
+                                            .delta
+                                            .reasoning
+                                            .as_ref()
+                                            .filter(|r| !r.is_empty())
+                                        {
                                             if current_non_tool_block_type != Some("thinking") {
                                                 if let Some(index) = current_non_tool_block_index.take() {
                                                     let event = json!({
@@ -667,6 +695,18 @@ fn extract_cache_read_tokens(usage: &Usage) -> Option<u32> {
         .filter(|&v| v > 0)
 }
 
+/// Extract cache-write tokens from direct compatibility fields or OpenAI details.
+fn extract_cache_write_tokens(usage: &Usage) -> Option<u32> {
+    if let Some(value) = usage.cache_creation_input_tokens {
+        return Some(value);
+    }
+    usage
+        .prompt_tokens_details
+        .as_ref()
+        .map(|details| details.cache_write_tokens)
+        .filter(|value| *value > 0)
+}
+
 /// 映射停止原因
 fn map_stop_reason(finish_reason: Option<&str>) -> Option<String> {
     finish_reason.map(|r| {
@@ -716,6 +756,24 @@ mod tests {
 
     fn event_type(event: &Value) -> Option<&str> {
         event.get("type").and_then(|v| v.as_str())
+    }
+
+    /// 收集某一类 content_block_delta 的文本字段并拼接，用于断言流式增量的最终内容。
+    fn collect_delta_text(events: &[Value], delta_type: &str, field: &str) -> String {
+        events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some(delta_type)
+            })
+            .map(|event| {
+                event
+                    .pointer(field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect()
     }
 
     #[test]
@@ -1022,7 +1080,7 @@ mod tests {
             message_delta
                 .pointer("/usage/input_tokens")
                 .and_then(|v| v.as_u64()),
-            Some(13312)
+            Some(13212)
         );
         assert_eq!(
             message_delta
@@ -1035,6 +1093,81 @@ mod tests {
                 .pointer("/usage/cache_read_input_tokens")
                 .and_then(|v| v.as_u64()),
             Some(100)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_chunk_subtracts_cache_read_and_creation_from_input() {
+        // prompt_tokens(1000) 含 cache_read(600) 与 cache_creation(300)；转 Anthropic 后
+        // input 应为 fresh，守恒：input(100) + cache_read(600) + cache_creation(300) == prompt(1000)。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_cc\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_cc\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":600,\"cache_write_tokens\":300}}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("should emit message_delta with usage");
+
+        // fresh input = 1000 - 600 - 300 = 100
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(100)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(600)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_creation_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(300)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_chunk_clamps_input_to_zero_when_cache_exceeds_prompt() {
+        // prompt(100) < cache_read(80)+cache_creation(50)=130：saturating 钳到 0，防下溢。
+        // 钉桩：阻止未来把 saturating_sub 误改成普通减法(debug panic / release wrap)。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_uf\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_uf\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":80},\"cache_creation_input_tokens\":50}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("should emit message_delta with usage");
+
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(0)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(80)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_creation_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(50)
         );
     }
 
@@ -1139,5 +1272,99 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_empty_reasoning_alongside_content_does_not_fragment_blocks() {
+        // 回归：某些上游输出正文时仍会填充 reasoning_content 字段（值为空字符串）。
+        // 修复前 reasoning 分支无空值保护，空字符串会进入分支并与 content 分支轮流
+        // 改写 current_non_tool_block_type，使 text/thinking 块被反复关闭重开，正文
+        // 被切成多个碎片且夹带空 thinking 块。修复后应只有一个 text 块，且不产生
+        // 任何 thinking 块。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"某个历史\",\"reasoning_content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"？\",\"reasoning_content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        // 锁死块的 index、类型与顺序：整条流只应有一个 text 块，位于 index 0。
+        let block_starts: Vec<(Option<u64>, &str)> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .map(|event| {
+                (
+                    event.get("index").and_then(|v| v.as_u64()),
+                    event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            block_starts,
+            vec![(Some(0), "text")],
+            "empty reasoning_content must not open any thinking block, and all content \
+             chunks must append to a single text block"
+        );
+
+        // 不应产生任何 thinking_delta（包括空的）
+        let thinking: String = collect_delta_text(&events, "thinking_delta", "/delta/thinking");
+        assert!(
+            thinking.is_empty(),
+            "no thinking_delta should be emitted, got: {:?}",
+            thinking
+        );
+
+        // 所有 text_delta 应落在同一个块上，拼接后是完整句子
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "某个历史？"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_non_empty_reasoning_still_creates_thinking_block() {
+        // 保护性测试：确保上面的修复没有误伤——真正带内容的 reasoning 仍应产出
+        // thinking 块。断言同时锁死块的 index、类型、顺序与 thinking 内容。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"reasoning_content\":\"让我想想\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"content\":\"答案是 42\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_think\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let block_starts: Vec<(Option<u64>, &str)> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .map(|event| {
+                (
+                    event.get("index").and_then(|v| v.as_u64()),
+                    event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            block_starts,
+            vec![(Some(0), "thinking"), (Some(1), "text")],
+            "real reasoning must yield exactly one thinking block followed by one text block"
+        );
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "让我想想"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "答案是 42"
+        );
     }
 }

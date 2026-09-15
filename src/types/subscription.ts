@@ -8,6 +8,9 @@ export interface QuotaTier {
   name: string;
   utilization: number; // 0-100
   resetsAt: string | null;
+  usedValueUsd?: number | null;
+  maxValueUsd?: number | null;
+  planLabel?: string | null;
 }
 
 export interface ExtraUsage {

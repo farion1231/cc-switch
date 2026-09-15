@@ -22,11 +22,11 @@ interface CodexConfigEditorProps {
 
   useCommonConfig: boolean;
 
-  onCommonConfigToggle: (checked: boolean) => void;
+  onCommonConfigToggle: (checked: boolean) => void | Promise<void>;
 
   commonConfigSnippet: string;
 
-  onCommonConfigSnippetChange: (value: string) => boolean;
+  onCommonConfigSnippetChange: (value: string) => boolean | Promise<boolean>;
 
   onCommonConfigErrorClear: () => void;
 

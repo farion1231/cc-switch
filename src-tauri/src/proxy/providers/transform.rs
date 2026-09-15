@@ -3,7 +3,14 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
-use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
+use crate::proxy::{
+    error::ProxyError,
+    json_canonical::canonical_json_string,
+    tool_media::{
+        chat_media_part_from_tool_part, flush_pending_chat_tool_media, plan_chat_tool_output_media,
+        queue_chat_tool_output_media, ToolMediaScope,
+    },
+};
 use serde_json::{json, Value};
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
@@ -54,25 +61,33 @@ pub fn is_openai_o_series(model: &str) -> bool {
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
 }
 
-/// Detect OpenAI models that support reasoning_effort.
+/// Detect Responses-compatible models that support reasoning effort.
 ///
 /// Supported families:
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
+/// - xAI Grok Build models. `grok-4.5`/`grok-4.6` are the documented Grok
+///   Build models; retain the previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
-    is_openai_o_series(model)
-        || model
-            .to_lowercase()
+    let normalized = model.to_lowercase();
+    is_openai_o_series(&normalized)
+        || normalized
             .strip_prefix("gpt-")
             .and_then(|rest| rest.chars().next())
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
+        || normalized == "grok-4.5"
+        || normalized.starts_with("grok-4.5-")
+        || normalized == "grok-4.6"
+        || normalized.starts_with("grok-4.6-")
+        || normalized.starts_with("grok-build-")
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
 /// 1. Explicit `output_config.effort` — preserves the user's intent directly.
-///    `low`/`medium`/`high` map 1:1; `max` maps to `xhigh`
+///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
+///    `/effort xhigh` sends); `max` maps to `xhigh`
 ///    (supported by mainstream GPT models). Unknown values are ignored.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
@@ -89,6 +104,7 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
+            "xhigh" => Some("xhigh"),
             "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
             _ => None,              // unknown value — do not inject
         };
@@ -112,13 +128,17 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 }
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
+///
+/// 转换工具库 API：当前无生产调用方（连通性检查不再发真实请求，曾是其唯一 crate 内
+/// 消费者），但保留其转换逻辑与下方测试套件，供代理转换路径复用 / 未来接线。
+#[allow(dead_code)]
 pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
     anthropic_to_openai_with_reasoning_content(body, false)
 }
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 ///
-/// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi/DeepSeek
+/// `preserve_reasoning_content` 仅用于明确需要 DeepSeek/MiMo
 /// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
 /// 请求体，避免向严格后端发送未知字段。
 pub fn anthropic_to_openai_with_reasoning_content(
@@ -142,19 +162,19 @@ pub fn anthropic_to_openai_with_reasoning_content(
                 messages.push(json!({"role": "system", "content": text}));
             }
         } else if let Some(arr) = system.as_array() {
-            // 多个 system message — preserve cache_control for compatible proxies
+            // 顶层 system 数组合并为一条 system 消息（跨轮字节稳定，不影响前缀缓存）
+            let mut parts = Vec::new();
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
                     let text = strip_leading_anthropic_billing_header(text);
                     if text.is_empty() {
                         continue;
                     }
-                    let mut sys_msg = json!({"role": "system", "content": text});
-                    if let Some(cc) = msg.get("cache_control") {
-                        sys_msg["cache_control"] = cc.clone();
-                    }
-                    messages.push(sys_msg);
+                    parts.push(text.to_string());
                 }
+            }
+            if !parts.is_empty() {
+                messages.push(json!({"role": "system", "content": parts.join("\n")}));
             }
         }
     }
@@ -169,7 +189,6 @@ pub fn anthropic_to_openai_with_reasoning_content(
         }
     }
 
-    normalize_openai_system_messages(&mut messages);
     result["messages"] = json!(messages);
 
     // 转换参数 — o-series 模型需要 max_completion_tokens
@@ -207,18 +226,18 @@ pub fn anthropic_to_openai_with_reasoning_content(
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
-                let mut tool = json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                        "description": t.get("description"),
-                        "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
-                    }
+                let mut function = json!({
+                    "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
                 });
-                if let Some(cc) = t.get("cache_control") {
-                    tool["cache_control"] = cc.clone();
+                // 缺失的 description 省略而非输出 null：hosted 工具（web_search 等）
+                // 与未填描述的自定义/MCP 工具都不带该字段，严格上游收到 null 会
+                // 拒绝整个请求（400 "expected string, received null"）。
+                if let Some(description) = t.get("description").filter(|d| !d.is_null()) {
+                    function["description"] = description.clone();
                 }
-                tool
+                function["parameters"] =
+                    clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})));
+                json!({"type": "function", "function": function})
             })
             .collect();
 
@@ -232,6 +251,33 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     Ok(result)
+}
+
+/// 为 OpenAI Chat Completions 流式请求注入 `stream_options.include_usage`。
+///
+/// OpenAI 兼容上游在流式下默认不在 SSE 里返回 usage，必须显式声明 include_usage
+/// 才会在末尾吐 usage chunk。缺这一注入会导致流式请求的 token/成本/缓存全部漏记
+/// （input/output/cache 全为 0）。保留客户端可能透传的其它 stream_options 字段，
+/// 仅补 include_usage；非流式请求不动。
+///
+/// 由 Claude→openai_chat（claude.rs）与 Codex Responses→Chat（transform_codex_chat.rs）
+/// 两条转换路径共用，确保两个客户端方向行为一致。
+pub(crate) fn inject_openai_stream_include_usage(result: &mut Value) {
+    let is_stream = result
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !is_stream {
+        return;
+    }
+    match result.get_mut("stream_options") {
+        Some(Value::Object(opts)) => {
+            opts.insert("include_usage".to_string(), json!(true));
+        }
+        _ => {
+            result["stream_options"] = json!({ "include_usage": true });
+        }
+    }
 }
 
 /// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
@@ -271,78 +317,6 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
     }
 }
 
-fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
-    let system_count = messages
-        .iter()
-        .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("system"))
-        .count();
-
-    if system_count == 0 {
-        return;
-    }
-
-    if system_count == 1 {
-        if let Some(index) = messages.iter().position(|message| {
-            message.get("role").and_then(|value| value.as_str()) == Some("system")
-        }) {
-            if index > 0 {
-                let message = messages.remove(index);
-                messages.insert(0, message);
-            }
-        }
-        return;
-    }
-
-    let mut parts = Vec::new();
-    let mut inherited_cache_control: Option<Value> = None;
-    let mut cache_control_conflict = false;
-    let mut saw_cache_control = false;
-    let mut saw_missing_cache_control = false;
-    messages.retain(|message| {
-        if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-            return true;
-        }
-
-        match message.get("content") {
-            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
-            Some(Value::Array(content_parts)) => {
-                let text = content_parts
-                    .iter()
-                    .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    parts.push(text);
-                }
-            }
-            _ => {}
-        }
-
-        if let Some(cache_control) = message.get("cache_control") {
-            saw_cache_control = true;
-            match &inherited_cache_control {
-                None => inherited_cache_control = Some(cache_control.clone()),
-                Some(existing) if existing == cache_control => {}
-                Some(_) => cache_control_conflict = true,
-            }
-        } else {
-            saw_missing_cache_control = true;
-        }
-
-        false
-    });
-
-    if !parts.is_empty() {
-        let mut merged = json!({"role": "system", "content": parts.join("\n")});
-        if !(cache_control_conflict || (saw_cache_control && saw_missing_cache_control)) {
-            if let Some(cache_control) = inherited_cache_control {
-                merged["cache_control"] = cache_control;
-            }
-        }
-        messages.insert(0, merged);
-    }
-}
-
 /// 转换单条消息到 OpenAI 格式（可能产生多条消息）
 fn convert_message_to_openai(
     role: &str,
@@ -369,7 +343,8 @@ fn convert_message_to_openai(
     if let Some(blocks) = content.as_array() {
         let mut content_parts = Vec::new();
         let mut tool_calls = Vec::new();
-        // reasoning_parts: 仅在兼容 Moonshot/Kimi/DeepSeek thinking tool-call 路径时
+        let mut pending_tool_media = Vec::new();
+        // reasoning_parts: 仅在兼容 DeepSeek/MiMo thinking tool-call 路径时
         // 生成 reasoning_content，通用 OpenAI-compatible 路径不发送该非标准字段。
         let mut reasoning_parts = Vec::new();
 
@@ -379,24 +354,14 @@ fn convert_message_to_openai(
             match block_type {
                 "text" => {
                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                        let mut part = json!({"type": "text", "text": text});
-                        if let Some(cc) = block.get("cache_control") {
-                            part["cache_control"] = cc.clone();
-                        }
-                        content_parts.push(part);
+                        content_parts.push(json!({"type": "text", "text": text}));
                     }
                 }
                 "image" => {
-                    if let Some(source) = block.get("source") {
-                        let media_type = source
-                            .get("media_type")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("image/png");
-                        let data = source.get("data").and_then(|d| d.as_str()).unwrap_or("");
-                        content_parts.push(json!({
-                            "type": "image_url",
-                            "image_url": {"url": format!("data:{};base64,{}", media_type, data)}
-                        }));
+                    if let Some(image) =
+                        chat_media_part_from_tool_part(block, ToolMediaScope::ImagesOnly)
+                    {
+                        content_parts.push(image);
                     }
                 }
                 "tool_use" => {
@@ -419,10 +384,22 @@ fn convert_message_to_openai(
                         .and_then(|i| i.as_str())
                         .unwrap_or("");
                     let content_val = block.get("content");
-                    let content_str = match content_val {
-                        Some(Value::String(s)) => s.clone(),
-                        Some(v) => canonical_json_string(v),
-                        None => String::new(),
+                    let media_plan = content_val.cloned().and_then(plan_chat_tool_output_media);
+                    let content_str = if let Some(media_plan) = media_plan {
+                        queue_chat_tool_output_media(
+                            &mut pending_tool_media,
+                            tool_use_id,
+                            media_plan.media_parts,
+                        );
+                        media_plan.tool_content
+                    } else {
+                        // Keep the no-media representation exactly equal to
+                        // the legacy converter for prompt-cache stability.
+                        match content_val {
+                            Some(Value::String(s)) => s.clone(),
+                            Some(v) => canonical_json_string(v),
+                            None => String::new(),
+                        }
                     };
                     result.push(json!({
                         "role": "tool",
@@ -450,6 +427,11 @@ fn convert_message_to_openai(
             }
         }
 
+        // Chat tool messages cannot carry image parts. Keep parallel tool
+        // results adjacent, then present all extracted media in one user turn
+        // before any ordinary message content from the same Anthropic turn.
+        flush_pending_chat_tool_media(&mut result, &mut pending_tool_media);
+
         // 添加带内容和/或工具调用的消息
         if !content_parts.is_empty() || !tool_calls.is_empty() {
             let mut msg = json!({"role": role});
@@ -458,14 +440,9 @@ fn convert_message_to_openai(
             if content_parts.is_empty() {
                 msg["content"] = Value::Null;
             } else if content_parts.len() == 1 {
-                // When cache_control is present, keep array format to preserve it
-                let has_cache_control = content_parts[0].get("cache_control").is_some();
-                if !has_cache_control {
-                    if let Some(text) = content_parts[0].get("text") {
-                        msg["content"] = text.clone();
-                    } else {
-                        msg["content"] = json!(content_parts);
-                    }
+                // 单 text block 简化为纯字符串
+                if let Some(text) = content_parts[0].get("text") {
+                    msg["content"] = text.clone();
                 } else {
                     msg["content"] = json!(content_parts);
                 }
@@ -498,9 +475,21 @@ fn convert_message_to_openai(
     Ok(result)
 }
 
-/// 清理 JSON schema（移除不支持的 format）
-pub fn clean_schema(mut schema: Value) -> Value {
+/// 清理工具参数的 JSON schema，并为根 schema 补齐 OpenAI 要求的 object 类型。
+pub fn clean_schema(schema: Value) -> Value {
+    clean_schema_inner(schema, true)
+}
+
+fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
     if let Some(obj) = schema.as_object_mut() {
+        let missing_type = is_root && !obj.contains_key("type");
+        if missing_type {
+            obj.insert("type".to_string(), json!("object"));
+        }
+        if missing_type && !obj.contains_key("properties") {
+            obj.insert("properties".to_string(), json!({}));
+        }
+
         // 移除 "format": "uri"
         if obj.get("format").and_then(|v| v.as_str()) == Some("uri") {
             obj.remove("format");
@@ -509,12 +498,12 @@ pub fn clean_schema(mut schema: Value) -> Value {
         // 递归清理嵌套 schema
         if let Some(properties) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
             for (_, value) in properties.iter_mut() {
-                *value = clean_schema(value.clone());
+                *value = clean_schema_inner(value.clone(), false);
             }
         }
 
         if let Some(items) = obj.get_mut("items") {
-            *items = clean_schema(items.clone());
+            *items = clean_schema_inner(items.clone(), false);
         }
     }
     schema
@@ -656,10 +645,37 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 
     // usage — map cache tokens from OpenAI format to Anthropic format
     let usage = body.get("usage").cloned().unwrap_or(json!({}));
+    // OpenAI prompt_tokens 含缓存命中，Anthropic input_tokens 不含 → 减去 cache_read 与
+    // cache_creation，使 input 成为 fresh input。本路径以 app_type="claude" 记账（calculator
+    // 不再扣减），若不减则缓存会被计入 input 与各 cache 桶两次。三桶互斥，恒等：
+    // input + cache_read + cache_creation == prompt_tokens（inclusive 上游）。
+    // 与流式 build_anthropic_usage_json (#2774) 及 transform_gemini 的 saturating_sub 对称。
+    // 最终 cache_read/cache_creation：直传字段优先于 OpenAI nested details。
+    let cached = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cache_write_tokens")
+                .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
     let input_tokens = usage
         .get("prompt_tokens")
         .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .unwrap_or(0)
+        .saturating_sub(cached)
+        .saturating_sub(cache_creation) as u32;
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_u64())
@@ -670,19 +686,11 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         "output_tokens": output_tokens
     });
 
-    // OpenAI standard: prompt_tokens_details.cached_tokens
-    if let Some(cached) = usage
-        .pointer("/prompt_tokens_details/cached_tokens")
-        .and_then(|v| v.as_u64())
-    {
+    if cached > 0 {
         usage_json["cache_read_input_tokens"] = json!(cached);
     }
-    // Some compatible servers return these fields directly
-    if let Some(v) = usage.get("cache_read_input_tokens") {
-        usage_json["cache_read_input_tokens"] = v.clone();
-    }
-    if let Some(v) = usage.get("cache_creation_input_tokens") {
-        usage_json["cache_creation_input_tokens"] = v.clone();
+    if cache_creation > 0 {
+        usage_json["cache_creation_input_tokens"] = json!(cache_creation);
     }
 
     let result = json!({
@@ -826,10 +834,79 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["type"],
+            json!("object")
+        );
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["properties"]["location"]["type"],
+            json!("string")
+        );
     }
 
     #[test]
-    fn test_anthropic_to_openai_preserves_matching_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_defaults_missing_tool_schema_type() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "What's the weather?"}],
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get weather info",
+                "input_schema": {"properties": {"location": {"type": "string"}}}
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(parameters["type"], json!("object"));
+        assert_eq!(
+            parameters["properties"]["location"]["type"],
+            json!("string")
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_defaults_empty_tool_schema() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Do work"}],
+            "tools": [{"name": "do_work", "input_schema": {}}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(parameters, &json!({"type": "object", "properties": {}}));
+    }
+
+    #[test]
+    fn test_clean_schema_only_defaults_root_to_object() {
+        let schema = json!({
+            "properties": {
+                "nullable_value": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}]
+                },
+                "list": {
+                    "items": {"type": "string"}
+                }
+            }
+        });
+
+        let result = clean_schema(schema);
+        assert_eq!(result["type"], json!("object"));
+        assert_eq!(
+            result["properties"]["nullable_value"],
+            json!({"anyOf": [{"type": "string"}, {"type": "null"}]})
+        );
+        assert_eq!(
+            result["properties"]["list"],
+            json!({"items": {"type": "string"}})
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_cache_control_from_merged_system() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -847,12 +924,12 @@ mod tests {
             result["messages"][0]["content"],
             "You are Claude Code.\nBe concise."
         );
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
+        assert!(result["messages"][0].get("cache_control").is_none());
         assert_eq!(result["messages"][1]["role"], "user");
     }
 
     #[test]
-    fn test_anthropic_to_openai_drops_mixed_present_absent_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_strips_cache_control_from_mixed_system() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -873,7 +950,41 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_drops_conflicting_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_preserves_mid_conversation_system_in_place() {
+        // Claude Code 会在对话中间注入 system 消息（如 <total_tokens>），
+        // 必须保持原位，不合并不上提，否则破坏前缀缓存。
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {"role": "system", "content": "<total_tokens>14963538 tokens left</total_tokens>"},
+                {"role": "user", "content": "Continue"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // 顶层 system 在最前面
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are Claude Code.");
+
+        // 中途 system 保持原位（第 3 条，index=3），不被合并或上提
+        assert_eq!(messages[3]["role"], "system");
+        assert_eq!(
+            messages[3]["content"],
+            "<total_tokens>14963538 tokens left</total_tokens>"
+        );
+
+        // 总共 5 条消息，没有合并
+        assert_eq!(messages.len(), 5);
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_strips_cache_control_from_conflicting_system() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -918,7 +1029,7 @@ mod tests {
     #[test]
     fn test_anthropic_to_openai_tool_use_preserves_reasoning_content() {
         let input = json!({
-            "model": "kimi-k2.6",
+            "model": "deepseek-v4-flash",
             "max_tokens": 1024,
             "messages": [{
                 "role": "assistant",
@@ -940,7 +1051,7 @@ mod tests {
     #[test]
     fn test_anthropic_to_openai_tool_use_injects_placeholder_reasoning_content_when_missing() {
         let input = json!({
-            "model": "kimi-k2.6",
+            "model": "deepseek-v4-flash",
             "max_tokens": 1024,
             "messages": [{
                 "role": "assistant",
@@ -956,6 +1067,35 @@ mod tests {
         assert_eq!(msg["reasoning_content"], "tool call");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_omits_missing_tool_description() {
+        let input = json!({
+            "model": "claude-opus-5",
+            "max_tokens": 50,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"name": "Bash", "description": "Run a bash command",
+                 "input_schema": {"type": "object"}},
+                {"name": "NoDesc",
+                 "input_schema": {"type": "object"}},
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": 8}
+            ]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 3);
+        // 带 description 的工具原样保留
+        assert_eq!(
+            tools[0]["function"]["description"],
+            json!("Run a bash command")
+        );
+        // 缺 description 的自定义工具与 hosted 工具：省略字段，而不是序列化成 null
+        assert!(tools[1]["function"].get("description").is_none());
+        assert!(tools[2]["function"].get("description").is_none());
+        assert!(tools[1]["function"].get("parameters").is_some());
     }
 
     #[test]
@@ -1037,6 +1177,164 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_openai_no_media_tool_results_keep_legacy_representation() {
+        let raw_json_string = "{ \"status\": \"ok\", \"count\": 2 }";
+        let input = json!({
+            "model": "claude-3-opus",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_string",
+                        "content": raw_json_string
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_array",
+                        "content": [{"type": "text", "text": "plain"}]
+                    }
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["content"], raw_json_string);
+        assert_eq!(
+            messages[1]["content"],
+            canonical_json_string(&json!([{"type": "text", "text": "plain"}]))
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_moves_tool_result_image_to_user_message() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "call_image",
+                    "content": [
+                        {"type": "text", "text": "caption"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "CLAUDE_CHAT_IMAGE_SENTINEL"
+                            },
+                            "cache_control": {"type": "ephemeral"},
+                            "prompt_cache_breakpoint": true
+                        }
+                    ]
+                }]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(messages[0]["tool_call_id"], "call_image");
+        assert!(messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("tool result media moved"));
+        assert!(!messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("CLAUDE_CHAT_IMAGE_SENTINEL"));
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(
+            messages[1]["content"][0]["text"],
+            "[cc-switch: media output of tool call call_image]"
+        );
+        assert_eq!(messages[1]["content"][1]["type"], "image_url");
+        assert!(messages[1]["content"][1].get("cache_control").is_none());
+        assert!(messages[1]["content"][1]
+            .get("prompt_cache_breakpoint")
+            .is_none());
+        assert_eq!(
+            messages[1]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,CLAUDE_CHAT_IMAGE_SENTINEL"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_batches_parallel_tool_result_media() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_1",
+                        "content": [{
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": "image/png", "data": "ONE"}
+                        }]
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_2",
+                        "content": [{
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": "image/jpeg", "data": "TWO"}
+                        }]
+                    }
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_maps_remote_image_source() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.com/image.png"
+                    },
+                    "cache_control": {"type": "ephemeral"},
+                    "prompt_cache_breakpoint": true
+                }]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(
+            result["messages"][0]["content"][0]["image_url"]["url"],
+            "https://example.com/image.png"
+        );
+        assert!(result["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        assert!(result["messages"][0]["content"][0]
+            .get("prompt_cache_breakpoint")
+            .is_none());
+    }
+
+    #[test]
     fn test_openai_to_anthropic_simple() {
         let input = json!({
             "id": "chatcmpl-123",
@@ -1084,7 +1382,7 @@ mod tests {
             Some("chatcmpl-claude-compatible")
         );
         assert_eq!(
-            usage.dedup_request_id(),
+            usage.dedup_request_id(None),
             "session:chatcmpl-claude-compatible"
         );
     }
@@ -1199,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_cache_control_preserved() {
+    fn test_anthropic_to_openai_strips_all_cache_control() {
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -1221,19 +1519,89 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input).unwrap();
-        // System message cache_control preserved
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
-        // Text block cache_control preserved
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["type"],
-            "ephemeral"
+        // System message: no cache_control
+        assert!(result["messages"][0].get("cache_control").is_none());
+        // User message: content simplified to string (no cache_control → flat string)
+        assert_eq!(result["messages"][1]["content"], "Hello");
+        // Tool: no cache_control
+        assert!(result["tools"][0].get("cache_control").is_none());
+    }
+
+    /// 精确复现 Issue #3805 报告的 400 错误场景:
+    /// GLM/Qwen 等严格校验模型拒绝 cache_control 和 content 数组格式
+    #[test]
+    fn test_regression_gh3805_no_cache_control_leak_to_openai() {
+        let input = json!({
+            "model": "glm-5.1",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "You are helpful.", "cache_control": {"type": "ephemeral"}}
+            ],
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Hello", "cache_control": {"type": "ephemeral"}}
+                ]}
+            ],
+            "tools": [{
+                "name": "search",
+                "description": "Search the web",
+                "input_schema": {"type": "object"},
+                "cache_control": {"type": "ephemeral"}
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        // 验证: messages 中不存在 cache_control
+        for (i, msg) in result["messages"].as_array().unwrap().iter().enumerate() {
+            assert!(
+                msg.get("cache_control").is_none(),
+                "messages[{i}] must not have cache_control"
+            );
+        }
+
+        // 验证: content 中没有 cache_control
+        for (i, msg) in result["messages"].as_array().unwrap().iter().enumerate() {
+            if let Some(content) = msg.get("content") {
+                assert!(
+                    !content.is_array()
+                        || content
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|part| part.get("cache_control").is_none()),
+                    "messages[{i}] content parts must not have cache_control"
+                );
+            }
+        }
+
+        // 验证: system content 为纯字符串格式（不是数组）
+        let sys_msg = &result["messages"][0];
+        assert_eq!(sys_msg["role"], "system");
+        assert!(
+            sys_msg["content"].is_string(),
+            "system content must be string, got: {}",
+            sys_msg["content"]
         );
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["ttl"],
-            "5m"
+
+        // 验证: user content 为纯字符串格式（不是数组）
+        let user_msg = &result["messages"][1];
+        assert_eq!(user_msg["role"], "user");
+        assert!(
+            user_msg["content"].is_string(),
+            "user content must be string, got: {}",
+            user_msg["content"]
         );
-        // Tool cache_control preserved
-        assert_eq!(result["tools"][0]["cache_control"]["type"], "ephemeral");
+
+        // 验证: tools 中不存在 cache_control
+        if let Some(tools) = result["tools"].as_array() {
+            for (i, tool) in tools.iter().enumerate() {
+                assert!(
+                    tool.get("cache_control").is_none(),
+                    "tools[{i}] must not have cache_control"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1256,7 +1624,8 @@ mod tests {
         });
 
         let result = openai_to_anthropic(input).unwrap();
-        assert_eq!(result["usage"]["input_tokens"], 100);
+        // prompt_tokens(100) 含 cached(80)，转换后 input 应为 fresh = 100 - 80 = 20
+        assert_eq!(result["usage"]["input_tokens"], 20);
         assert_eq!(result["usage"]["output_tokens"], 50);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 80);
     }
@@ -1280,8 +1649,36 @@ mod tests {
         });
 
         let result = openai_to_anthropic(input).unwrap();
+        // cache_read(60)+cache_creation(20) 均从 prompt(100) 扣除，fresh = 100 - 60 - 20 = 20
+        // 守恒：input(20) + cache_read(60) + cache_creation(20) == prompt(100)
+        assert_eq!(result["usage"]["input_tokens"], 20);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 20);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_clamps_input_when_cache_exceeds_prompt() {
+        // prompt(100) < cache_read(60)+cache_creation(50)=110：saturating 钳到 0，防下溢。
+        // 钉桩：阻止未来把 saturating_sub 误改成普通减法(debug panic / release wrap)。
+        let input = json!({
+            "id": "chatcmpl-uf",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "x"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "cache_read_input_tokens": 60,
+                "cache_creation_input_tokens": 50
+            }
+        });
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["usage"]["input_tokens"], 0);
+        assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
+        assert_eq!(result["usage"]["cache_creation_input_tokens"], 50);
     }
 
     #[test]
@@ -1375,8 +1772,13 @@ mod tests {
         assert!(supports_reasoning_effort("gpt-5"));
         assert!(supports_reasoning_effort("gpt-5.4"));
         assert!(supports_reasoning_effort("gpt-5-codex"));
+        assert!(supports_reasoning_effort("grok-4.5"));
+        assert!(supports_reasoning_effort("grok-4.6"));
+        assert!(supports_reasoning_effort("grok-4.6-build"));
+        assert!(supports_reasoning_effort("grok-build-0.1"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
+        assert!(!supports_reasoning_effort("grok-4"));
     }
 
     // ── resolve_reasoning_effort unit tests ──
@@ -1402,6 +1804,13 @@ mod tests {
     #[test]
     fn test_output_config_max_maps_to_reasoning_effort_xhigh() {
         let body = json!({"output_config": {"effort": "max"}});
+        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    #[test]
+    fn test_output_config_xhigh_maps_verbatim() {
+        // Claude Code's `/effort xhigh` sends output_config.effort="xhigh"
+        let body = json!({"output_config": {"effort": "xhigh"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
     }
 

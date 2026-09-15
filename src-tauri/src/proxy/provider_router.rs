@@ -12,6 +12,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Codex Official requests carry the selected account's native Authorization
+/// header. Reusing that request against another account card would cross the
+/// account boundary, so these cards must never participate in provider retry.
+pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) -> bool {
+    app_type != AppType::Codex.as_str()
+        || !crate::proxy::providers::is_codex_official_provider(provider)
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -38,6 +46,19 @@ impl ProviderRouter {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
+        let current_id = AppType::from_str(app_type)
+            .ok()
+            .and_then(|app_enum| {
+                crate::settings::get_effective_current_provider(&self.db, &app_enum)
+                    .ok()
+                    .flatten()
+            })
+            .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
+        let current_provider = current_id
+            .as_deref()
+            .map(|id| self.db.get_provider_by_id(id, app_type))
+            .transpose()?
+            .flatten();
 
         // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
@@ -48,7 +69,17 @@ impl ProviderRouter {
             }
         };
 
-        if auto_failover_enabled {
+        if auto_failover_enabled
+            && current_provider
+                .as_ref()
+                .is_some_and(|provider| !provider_supports_failover(app_type, provider))
+        {
+            // A selected Codex Official account is an explicit account choice.
+            // Keep it as a single route even if an old failover setting remains
+            // enabled; retrying would reuse its inbound token for another card.
+            total_providers = 1;
+            result.push(current_provider.expect("checked above"));
+        } else if auto_failover_enabled {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
             let all_providers = self.db.get_all_providers(app_type)?;
 
@@ -60,12 +91,14 @@ impl ProviderRouter {
                 .map(|item| item.provider_id)
                 .collect();
 
-            total_providers = ordered_ids.len();
-
             for provider_id in ordered_ids {
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
+                if !provider_supports_failover(app_type, &provider) {
+                    continue;
+                }
+                total_providers += 1;
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -78,20 +111,9 @@ impl ProviderRouter {
             }
         } else {
             // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
-            let current_id = AppType::from_str(app_type)
-                .ok()
-                .and_then(|app_enum| {
-                    crate::settings::get_effective_current_provider(&self.db, &app_enum)
-                        .ok()
-                        .flatten()
-                })
-                .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
-
-            if let Some(current_id) = current_id {
-                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
-                    total_providers = 1;
-                    result.push(current);
-                }
+            if let Some(current) = current_provider {
+                total_providers = 1;
+                result.push(current);
             }
         }
 
@@ -273,10 +295,31 @@ impl ProviderRouter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
     use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
+
+    fn managed_codex_official(id: &str, account_id: &str) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some(account_id.to_string()),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
 
     struct TempHome {
         #[allow(dead_code)]
@@ -423,6 +466,77 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_current_stays_single_route_when_failover_is_stale() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let official = managed_codex_official("official-a", "account-a");
+        let fallback = Provider::with_id(
+            "fallback".to_string(),
+            "Fallback".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("codex", &official).unwrap();
+        db.save_provider("codex", &fallback).unwrap();
+        db.set_current_provider("codex", &official.id).unwrap();
+        db.add_to_failover_queue("codex", &fallback.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("codex").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let providers = ProviderRouter::new(db)
+            .select_providers("codex")
+            .await
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, official.id);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stale_codex_official_queue_entries_are_not_retry_targets() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let current = Provider::with_id(
+            "third-party".to_string(),
+            "Third Party".to_string(),
+            json!({}),
+            None,
+        );
+        let official = managed_codex_official("official-a", "account-a");
+        let fallback = Provider::with_id(
+            "fallback".to_string(),
+            "Fallback".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("codex", &current).unwrap();
+        db.save_provider("codex", &official).unwrap();
+        db.save_provider("codex", &fallback).unwrap();
+        db.set_current_provider("codex", &current.id).unwrap();
+        db.add_to_failover_queue("codex", &official.id).unwrap();
+        db.add_to_failover_queue("codex", &fallback.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("codex").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let providers = ProviderRouter::new(db)
+            .select_providers("codex")
+            .await
+            .unwrap();
+        assert_eq!(
+            providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fallback"]
+        );
     }
 
     #[tokio::test]
