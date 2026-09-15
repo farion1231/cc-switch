@@ -280,6 +280,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["cohere"],
     defaultColor: "#39594D",
   },
+  commandcode: {
+    name: "commandcode",
+    displayName: "Command Code",
+    category: "ai-provider",
+    keywords: [
+      "commandcode",
+      "command code",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "#000000",
+  },
   copilot: {
     name: "copilot",
     displayName: "copilot",
