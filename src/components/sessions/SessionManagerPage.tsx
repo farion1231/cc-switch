@@ -91,7 +91,8 @@ type ProviderFilter =
   | "openclaw"
   | "gemini"
   | "hermes"
-  | "pi";
+  | "pi"
+  | "omp";
 
 type SessionListViewMode = "flat" | "grouped";
 
@@ -1176,6 +1177,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               <div className="flex items-center gap-2">
                                 <ProviderIcon icon="pi" name="pi" size={14} />
                                 <span>Pi</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="omp">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon icon="omp" name="omp" size={14} />
+                                <span>OMP</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

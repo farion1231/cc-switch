@@ -6,6 +6,12 @@ export interface PiCurrentState {
   defaultProviderId: string | null;
 }
 
+/** OMP's native provider membership state (not proxy/current-provider state). */
+export interface OmpCurrentState {
+  enabledProviderIds: string[];
+  defaultProviderId: string | null;
+}
+
 export type PiSessionDiscovery =
   | {
       status: "available";
@@ -36,5 +42,11 @@ export const piApi = {
 
   async getSessionDiscovery(): Promise<PiSessionDiscovery> {
     return await invoke("get_pi_session_discovery");
+  },
+};
+
+export const ompApi = {
+  async getCurrentState(): Promise<OmpCurrentState> {
+    return await invoke("get_omp_current_state");
   },
 };

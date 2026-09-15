@@ -231,13 +231,14 @@ function validateAbsoluteHttpUrl(value: string, errorMessage: string): void {
   }
 }
 
-function positiveNumber(
+function optionalPositiveNumber(
   value: string,
   errorMessage: string,
   fieldSelector: string,
-): number {
+): number | undefined {
+  if (value.trim() === "") return undefined;
   const parsed = Number(value);
-  if (value.trim() === "" || !Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new PiFormValidationError(errorMessage, fieldSelector, true);
   }
   return parsed;
@@ -1136,7 +1137,7 @@ export function PiProviderForm({
           );
         }
         const contextWindow = includeContextWindow
-          ? positiveNumber(
+          ? optionalPositiveNumber(
               model.contextWindow,
               t("pi.form.positiveNumberRequired", {
                 label: t("pi.form.contextWindow"),
@@ -1145,7 +1146,7 @@ export function PiProviderForm({
             )
           : undefined;
         const maxTokens = includeMaxTokens
-          ? positiveNumber(
+          ? optionalPositiveNumber(
               model.maxTokens,
               t("pi.form.positiveNumberRequired", {
                 label: t("pi.form.maxTokens"),
@@ -1153,6 +1154,7 @@ export function PiProviderForm({
               `#pi-model-max-tokens-${model.key}`,
             )
           : undefined;
+
         if (
           model.hasThinkingLevelMap &&
           !isPiThinkingLevelMap(model.thinkingLevelMap)
@@ -1652,17 +1654,7 @@ export function PiProviderForm({
                               </div>
                             </div>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.contextWindow")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.contextWindow")}
                               htmlFor={`pi-model-context-window-${model.key}`}
                             >
                               <Input
@@ -1672,7 +1664,6 @@ export function PiProviderForm({
                                 step="any"
                                 min="1"
                                 inputMode="decimal"
-                                required={!isEdit || model.hasContextWindow}
                                 value={model.contextWindow}
                                 onChange={(event) =>
                                   updateModelOverride(model.key, {
@@ -1684,17 +1675,7 @@ export function PiProviderForm({
                               />
                             </Field>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.maxTokens")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.maxTokens")}
                               htmlFor={`pi-model-max-tokens-${model.key}`}
                             >
                               <Input
@@ -1704,7 +1685,6 @@ export function PiProviderForm({
                                 step="any"
                                 min="1"
                                 inputMode="decimal"
-                                required={!isEdit || model.hasMaxTokens}
                                 value={model.maxTokens}
                                 onChange={(event) =>
                                   updateModelOverride(model.key, {

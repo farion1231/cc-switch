@@ -97,6 +97,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -548,6 +549,25 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（OMP 用量改由会话 JSONL 重建）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（添加 OMP Skills 状态）");
+                        // 旧版/测试夹具可能没有 skills 表；完整数据库会在建表
+                        // 时带上该列，部分数据库则无需执行这一步。
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skills",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1595,6 +1615,41 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v18 -> v19: OMP 用量导入从已废弃的 `usage.db`（`data_source =
+    /// 'omp_usage_db'`，request_id 为“源文件路径+行号”哈希）切换到会话 JSONL
+    /// （`data_source = 'omp_session'`，独立身份命名空间）。两套账本没有共同
+    /// 键，保留旧行会让新机制重导时把同一批请求双倍计费；清空旧明细、旧账本
+    /// 与 omp 汇总行，由首轮 JSONL 同步从会话文件全量重建历史。
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        // 测试夹具/异常库可能缺表或缺 data_source 列（v13 才引入）：没有列
+        // 就没有旧导入器写入的行，直接跳过。
+        if Self::table_exists(conn, "proxy_request_logs")?
+            && Self::has_column(conn, "proxy_request_logs", "data_source")?
+        {
+            conn.execute(
+                "DELETE FROM proxy_request_logs WHERE data_source = 'omp_usage_db'",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("v18 -> v19 清理 OMP 旧用量明细失败: {e}")))?;
+        }
+        if Self::table_exists(conn, "session_usage_dedup")? {
+            conn.execute(
+                "DELETE FROM session_usage_dedup WHERE data_source = 'omp_usage_db'",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("v18 -> v19 清理 OMP 旧去重账本失败: {e}")))?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")?
+            && Self::has_column(conn, "usage_daily_rollups", "app_type")?
+        {
+            // 代理层从不服务 omp（AppType::Omp 无代理适配器），app_type='omp'
+            // 的汇总行只可能来自旧导入器；rollup 表无 data_source 列，按应用清理。
+            conn.execute("DELETE FROM usage_daily_rollups WHERE app_type = 'omp'", [])
+                .map_err(|e| AppError::Database(format!("v18 -> v19 清理 OMP 汇总行失败: {e}")))?;
         }
         Ok(())
     }
@@ -3793,6 +3848,46 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_purges_legacy_omp_usage_db_rows() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, cache_read_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES
+                ('omp_usage:legacy', 'unknown', 'omp', 'm', 1, 1, 0, 0, 200, 1, 'omp_usage_db'),
+                ('omp_session:new', 'native', 'omp', 'm', 1, 1, 0, 0, 200, 1, 'omp_session');
+             INSERT INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('omp_usage_db', 'omp_usage:legacy', 'omp_usage:legacy', 0);
+             INSERT INTO usage_daily_rollups (date, app_type, provider_id, model)
+             VALUES ('2026-08-05', 'omp', 'unknown', 'm');",
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let counts: (i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'omp_usage_db'),
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'omp_session'),
+                (SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'omp_usage_db')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(counts, (0, 1, 0));
+        let rollups: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups WHERE app_type = 'omp'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rollups, 0);
         Ok(())
     }
 }

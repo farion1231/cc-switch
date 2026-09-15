@@ -1,7 +1,11 @@
-//! Pi coding-agent session usage importer.
+//! Pi/OMP session usage importer.
 //!
-//! Pi records normalized token and cost data in its session JSONL files. This
-//! importer keeps direct (non-proxy) Pi usage visible in the shared dashboard.
+//! Pi records normalized token and cost data in its session JSONL files.
+//! OMP (Oh My Pi) writes the same tree protocol (with an extra
+//! `{"type":"title"}` preamble line before the header), so both importers
+//! share this machinery via a [`SessionAppProfile`] that carries the
+//! per-app ledger namespace. This keeps direct (non-proxy) usage visible in
+//! the shared dashboard.
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -20,9 +24,53 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-const APP_TYPE: &str = "pi";
-const DATA_SOURCE: &str = "pi_session";
-const PROVIDER_PLACEHOLDER: &str = "_pi_session";
+/// Per-app namespace for the shared Pi-tree importer. Pi and OMP produce
+/// byte-identical record semantics but must not collide in the global
+/// `proxy_request_logs.request_id` primary key or the dedup ledger, so every
+/// label/prefix that reaches storage is profile-provided.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SessionAppProfile {
+    pub(crate) app_type: &'static str,
+    pub(crate) data_source: &'static str,
+    pub(crate) display_name: &'static str,
+    pub(crate) provider_placeholder: &'static str,
+    pub(crate) request_label: &'static str,
+    pub(crate) semantic_label: &'static str,
+    pub(crate) request_id_prefix: &'static str,
+    pub(crate) semantic_id_prefix: &'static str,
+    pub(crate) tail_label: &'static str,
+    /// OMP's lenient layout: tolerates `{"type":"title"}` preamble lines
+    /// before the session header (Pi's parser rejects anything but a
+    /// header-first file) and headerless garbage files (e.g. a lone
+    /// `session_exit` line left by a SIGHUP-killed session) import as empty.
+    pub(crate) allow_pre_header_lines: bool,
+}
+
+pub(crate) const PI_PROFILE: SessionAppProfile = SessionAppProfile {
+    app_type: "pi",
+    data_source: "pi_session",
+    display_name: "Pi",
+    provider_placeholder: "_pi_session",
+    request_label: "pi-session-request-v3",
+    semantic_label: "pi-session-semantic-v1",
+    request_id_prefix: "pi_session:",
+    semantic_id_prefix: "pi_session_semantic:",
+    tail_label: "pi-session-tail-v1",
+    allow_pre_header_lines: false,
+};
+
+pub(crate) const OMP_PROFILE: SessionAppProfile = SessionAppProfile {
+    app_type: "omp",
+    data_source: "omp_session",
+    display_name: "OMP",
+    provider_placeholder: "_omp_session",
+    request_label: "omp-session-request-v3",
+    semantic_label: "omp-session-semantic-v1",
+    request_id_prefix: "omp_session:",
+    semantic_id_prefix: "omp_session_semantic:",
+    tail_label: "omp-session-tail-v1",
+    allow_pre_header_lines: true,
+};
 const UNKNOWN_MODEL: &str = "unknown";
 const MAX_USAGE_LABEL_BYTES: usize = 512;
 const MIN_SQLITE_UNIX_MILLIS: i64 = -62_167_219_200_000;
@@ -137,7 +185,16 @@ pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     Ok(sync_pi_files(db, &files))
 }
 
-fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
+pub(crate) fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
+    sync_session_files(db, files, &PI_PROFILE)
+}
+
+/// Shared Pi/OMP import loop over an explicit file list.
+pub(crate) fn sync_session_files(
+    db: &Database,
+    files: &[PathBuf],
+    profile: &SessionAppProfile,
+) -> SessionSyncResult {
     let mut result = SessionSyncResult {
         files_scanned: files.len().min(u32::MAX as usize) as u32,
         ..Default::default()
@@ -153,11 +210,11 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
     };
 
     for file_path in files {
-        match sync_single_pi_file(db, file_path, &cursors) {
+        match sync_single_pi_file(db, file_path, &cursors, profile) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
-                log::warn!("[PI-SYNC] 会话文件解析失败: {message}");
+                log::warn!("[{}-SYNC] 会话文件解析失败: {message}", profile.app_type);
                 result.errors.push(message);
             }
         }
@@ -165,7 +222,8 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
 
     if result.imported > 0 {
         log::info!(
-            "[PI-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个文件",
+            "[{}-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个文件",
+            profile.app_type,
             result.imported,
             result.skipped,
             result.files_scanned
@@ -178,26 +236,33 @@ fn sync_single_pi_file(
     db: &Database,
     file_path: &Path,
     cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+    profile: &SessionAppProfile,
 ) -> Result<SessionSyncResult, AppError> {
-    let metadata = fs::symlink_metadata(file_path)
-        .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
+    let metadata = fs::symlink_metadata(file_path).map_err(|error| {
+        AppError::Config(format!(
+            "无法读取 {} 会话文件元数据: {error}",
+            profile.display_name
+        ))
+    })?;
     if !metadata.file_type().is_file()
         || file_path.extension().and_then(|value| value.to_str()) != Some("jsonl")
     {
-        return Err(AppError::Config(
-            "Pi 会话路径不是普通 JSONL 文件".to_string(),
-        ));
+        return Err(AppError::Config(format!(
+            "{} 会话路径不是普通 JSONL 文件",
+            profile.display_name
+        )));
     }
     if metadata.len() > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
         return Err(AppError::Config(format!(
-            "Pi 会话文件超过 {} 字节安全上限",
+            "{} 会话文件超过 {} 字节安全上限",
+            profile.display_name,
             crate::session_manager::providers::pi::MAX_SESSION_BYTES
         )));
     }
 
     let file_path_string = file_path.to_string_lossy().to_string();
     let modified = metadata_modified_nanos(&metadata);
-    let revision = pi_file_revision(file_path, &metadata, modified)?;
+    let revision = pi_file_revision(file_path, &metadata, modified, profile)?;
     let previous = decode_pi_sync_state(cursors.get(&file_path_string));
     if previous.is_some_and(|state| state.revision == revision) {
         return Ok(SessionSyncResult::default());
@@ -211,7 +276,7 @@ fn sync_single_pi_file(
         Some(state)
             if state.revision.complete
                 && revision.file_size > state.revision.file_size
-                && pi_prefix_tail_matches(file_path, state.revision)? =>
+                && pi_prefix_tail_matches(file_path, state.revision, profile)? =>
         {
             (state.last_line_offset, Some(state.revision.file_size))
         }
@@ -223,14 +288,18 @@ fn sync_single_pi_file(
         start_at_byte,
         revision.file_size,
         modified,
+        profile,
     )?;
     let conn = lock_conn!(db.conn);
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| AppError::Database(format!("启动 Pi 用量导入事务失败: {error}")))?;
+    let tx = conn.unchecked_transaction().map_err(|error| {
+        AppError::Database(format!(
+            "启动 {} 用量导入事务失败: {error}",
+            profile.display_name
+        ))
+    })?;
     let mut result = SessionSyncResult::default();
     for record in &parsed.records {
-        if insert_pi_record(&tx, record)? {
+        if insert_pi_record(&tx, record, profile)? {
             result.imported = result.imported.saturating_add(1);
         } else {
             result.skipped = result.skipped.saturating_add(1);
@@ -238,8 +307,12 @@ fn sync_single_pi_file(
     }
 
     update_pi_sync_state_on_conn(&tx, &file_path_string, revision, parsed.last_complete_line)?;
-    tx.commit()
-        .map_err(|error| AppError::Database(format!("提交 Pi 用量导入事务失败: {error}")))?;
+    tx.commit().map_err(|error| {
+        AppError::Database(format!(
+            "提交 {} 用量导入事务失败: {error}",
+            profile.display_name
+        ))
+    })?;
     if parsed.incomplete_tail {
         result.deferred_files = 1;
     }
@@ -295,19 +368,29 @@ fn pi_file_revision(
     file_path: &Path,
     metadata: &fs::Metadata,
     modified_nanos: i64,
+    profile: &SessionAppProfile,
 ) -> Result<PiFileRevision, AppError> {
     let tail_len = metadata.len().min(REVISION_TAIL_BYTES);
     let mut tail = vec![0; tail_len as usize];
     if tail_len > 0 {
-        let mut file = File::open(file_path)
-            .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+        let mut file = File::open(file_path).map_err(|error| {
+            AppError::Config(format!(
+                "无法打开 {} 会话文件: {error}",
+                profile.display_name
+            ))
+        })?;
         file.seek(SeekFrom::Start(metadata.len() - tail_len))
             .and_then(|_| file.read_exact(&mut tail))
-            .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件尾部: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "无法读取 {} 会话文件尾部: {error}",
+                    profile.display_name
+                ))
+            })?;
     }
 
     let complete = tail.last() == Some(&b'\n');
-    let tail_fingerprint = pi_tail_fingerprint(&tail);
+    let tail_fingerprint = pi_tail_fingerprint(&tail, profile);
     Ok(PiFileRevision {
         modified_nanos,
         file_size: metadata.len(),
@@ -316,22 +399,35 @@ fn pi_file_revision(
     })
 }
 
-fn pi_prefix_tail_matches(file_path: &Path, previous: PiFileRevision) -> Result<bool, AppError> {
+fn pi_prefix_tail_matches(
+    file_path: &Path,
+    previous: PiFileRevision,
+    profile: &SessionAppProfile,
+) -> Result<bool, AppError> {
     let tail_len = previous.file_size.min(REVISION_TAIL_BYTES);
     let mut tail = vec![0; tail_len as usize];
     if tail_len > 0 {
-        let mut file = File::open(file_path)
-            .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+        let mut file = File::open(file_path).map_err(|error| {
+            AppError::Config(format!(
+                "无法打开 {} 会话文件: {error}",
+                profile.display_name
+            ))
+        })?;
         file.seek(SeekFrom::Start(previous.file_size - tail_len))
             .and_then(|_| file.read_exact(&mut tail))
-            .map_err(|error| AppError::Config(format!("无法校验 Pi 会话追加边界: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "无法校验 {} 会话追加边界: {error}",
+                    profile.display_name
+                ))
+            })?;
     }
-    Ok(pi_tail_fingerprint(&tail) == previous.tail_fingerprint)
+    Ok(pi_tail_fingerprint(&tail, profile) == previous.tail_fingerprint)
 }
 
-fn pi_tail_fingerprint(tail: &[u8]) -> u32 {
+fn pi_tail_fingerprint(tail: &[u8], profile: &SessionAppProfile) -> u32 {
     let mut hasher = Sha256::new();
-    hash_field(&mut hasher, b"pi-session-tail-v1");
+    hash_field(&mut hasher, profile.tail_label.as_bytes());
     hash_field(&mut hasher, tail);
     let digest = hasher.finalize();
     u32::from_be_bytes(digest[..4].try_into().unwrap_or_default())
@@ -343,9 +439,14 @@ fn parse_pi_file(
     start_at_byte: Option<u64>,
     snapshot_size: u64,
     file_modified_nanos: i64,
+    profile: &SessionAppProfile,
 ) -> Result<ParsedPiFile, AppError> {
-    let file = File::open(file_path)
-        .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
+    let file = File::open(file_path).map_err(|error| {
+        AppError::Config(format!(
+            "无法打开 {} 会话文件: {error}",
+            profile.display_name
+        ))
+    })?;
     let mut reader = BufReader::new(file);
     let mut buffer = String::new();
     let mut line_number = 0i64;
@@ -364,15 +465,24 @@ fn parse_pi_file(
         let read = Read::by_ref(&mut reader)
             .take(remaining)
             .read_line(&mut buffer)
-            .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件: {error}")))?;
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "无法读取 {} 会话文件: {error}",
+                    profile.display_name
+                ))
+            })?;
         if read == 0 {
-            return Err(AppError::Config("Pi 会话文件在读取期间被截断".to_string()));
+            return Err(AppError::Config(format!(
+                "{} 会话文件在读取期间被截断",
+                profile.display_name
+            )));
         }
         bytes_read = bytes_read.saturating_add(read as u64);
         if bytes_read > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
-            return Err(AppError::Config(
-                "Pi 会话文件读取时超过安全上限".to_string(),
-            ));
+            return Err(AppError::Config(format!(
+                "{} 会话文件读取时超过安全上限",
+                profile.display_name
+            )));
         }
         let has_newline = buffer.ends_with('\n');
         let line = buffer.trim();
@@ -391,7 +501,8 @@ fn parse_pi_file(
         line_number = line_number.saturating_add(1);
         if line_number > crate::session_manager::providers::pi::MAX_TREE_ENTRIES as i64 + 1 {
             return Err(AppError::Config(format!(
-                "Pi 会话超过 {} 条 entry 安全上限",
+                "{} 会话超过 {} 条 entry 安全上限",
+                profile.display_name,
                 crate::session_manager::providers::pi::MAX_TREE_ENTRIES
             )));
         }
@@ -408,9 +519,15 @@ fn parse_pi_file(
 
         if session_id.is_none() {
             if value.get("type").and_then(Value::as_str) != Some("session") {
-                return Err(AppError::Config(
-                    "Pi 会话的首条有效 JSON 不是 session header".to_string(),
-                ));
+                // OMP prepends `{"type":"title"}` lines before the header; Pi
+                // files must start with the header or the file is corrupt.
+                if !profile.allow_pre_header_lines {
+                    return Err(AppError::Config(format!(
+                        "{} 会话的首条有效 JSON 不是 session header",
+                        profile.display_name
+                    )));
+                }
+                continue;
             }
             session_id = value
                 .get("id")
@@ -418,13 +535,19 @@ fn parse_pi_file(
                 .filter(|id| crate::session_manager::providers::pi::is_valid_tree_id(id))
                 .map(str::to_string);
             if session_id.is_none() {
-                return Err(AppError::Config("Pi 会话 header 缺少 id".to_string()));
+                return Err(AppError::Config(format!(
+                    "{} 会话 header 缺少 id",
+                    profile.display_name
+                )));
             }
             let header_timestamp_millis = value.get("timestamp").and_then(parse_timestamp_millis);
             session_timestamp = header_timestamp_millis.map(|timestamp| timestamp / 1000);
             if let Some(byte_offset) = start_at_byte.filter(|offset| *offset >= bytes_read) {
                 reader.seek(SeekFrom::Start(byte_offset)).map_err(|error| {
-                    AppError::Config(format!("无法定位 Pi 会话增量边界: {error}"))
+                    AppError::Config(format!(
+                        "无法定位 {} 会话增量边界: {error}",
+                        profile.display_name
+                    ))
                 })?;
                 bytes_read = byte_offset;
                 line_number = start_after_line;
@@ -436,13 +559,17 @@ fn parse_pi_file(
             session_id.as_deref().unwrap_or_default(),
             session_timestamp,
             file_modified_nanos / 1_000_000_000,
+            profile,
         ) {
             records.push(record);
         }
     }
 
-    if session_id.is_none() && !incomplete_tail {
-        return Err(AppError::Config("Pi 会话没有有效 header".to_string()));
+    if session_id.is_none() && !incomplete_tail && !profile.allow_pre_header_lines {
+        return Err(AppError::Config(format!(
+            "{} 会话没有有效 header",
+            profile.display_name
+        )));
     }
     Ok(ParsedPiFile {
         records,
@@ -456,6 +583,7 @@ fn parse_usage_record(
     session_id: &str,
     session_timestamp: Option<i64>,
     file_timestamp: i64,
+    profile: &SessionAppProfile,
 ) -> Option<PiUsageRecord> {
     let entry_type = entry.get("type").and_then(Value::as_str)?;
     let (kind, usage_value, message) = match entry_type {
@@ -501,7 +629,7 @@ fn parse_usage_record(
 
     let (provider_id, model, request_model) = if kind == "assistant" {
         let message = message?;
-        let provider = bounded_label(message.get("provider"), PROVIDER_PLACEHOLDER);
+        let provider = bounded_label(message.get("provider"), profile.provider_placeholder);
         let requested = bounded_label(message.get("model"), UNKNOWN_MODEL);
         let actual = nonempty_string(message.get("responseModel"))
             .map(truncate_usage_label)
@@ -510,7 +638,7 @@ fn parse_usage_record(
         (provider, actual, requested)
     } else {
         (
-            PROVIDER_PLACEHOLDER.to_string(),
+            profile.provider_placeholder.to_string(),
             UNKNOWN_MODEL.to_string(),
             UNKNOWN_MODEL.to_string(),
         )
@@ -526,13 +654,13 @@ fn parse_usage_record(
         match stop_reason {
             Some("error") | Some("aborted") => {
                 let fallback = if stop_reason == Some("aborted") {
-                    "Pi request aborted"
+                    format!("{} request aborted", profile.display_name)
                 } else {
-                    "Pi request failed"
+                    format!("{} request failed", profile.display_name)
                 };
                 let error = message
                     .and_then(|value| nonempty_string(value.get("errorMessage")))
-                    .unwrap_or(fallback)
+                    .unwrap_or(fallback.as_str())
                     .chars()
                     .take(4096)
                     .collect();
@@ -551,7 +679,7 @@ fn parse_usage_record(
         (200, None)
     };
 
-    let identity = pi_request_identity(entry, kind, usage_value, message);
+    let identity = pi_request_identity(entry, kind, usage_value, message, profile);
 
     Some(PiUsageRecord {
         request_id: identity.request_id,
@@ -653,9 +781,10 @@ fn pi_request_identity(
     kind: &str,
     usage: &Value,
     message: Option<&Value>,
+    profile: &SessionAppProfile,
 ) -> PiRequestIdentity {
     let mut hasher = Sha256::new();
-    hash_field(&mut hasher, b"pi-session-semantic-v1");
+    hash_field(&mut hasher, profile.semantic_label.as_bytes());
     hash_field(&mut hasher, kind.as_bytes());
 
     for (label, value) in [
@@ -697,17 +826,21 @@ fn pi_request_identity(
     }
     hash_field(&mut hasher, b"usage");
     hash_json(&mut hasher, usage);
-    let semantic_id = format!("pi_session_semantic:{:x}", hasher.finalize());
+    let semantic_id = format!("{}{:x}", profile.semantic_id_prefix, hasher.finalize());
     let entry_id = nonempty_string(entry.get("id"));
     let request_id = if let Some(entry_id) = entry_id {
         let mut request_hasher = Sha256::new();
-        hash_field(&mut request_hasher, b"pi-session-request-v3");
+        hash_field(&mut request_hasher, profile.request_label.as_bytes());
         hash_field(&mut request_hasher, kind.as_bytes());
         hash_field(&mut request_hasher, entry_id.as_bytes());
         if let Some(timestamp) = entry.get("timestamp") {
             hash_json(&mut request_hasher, timestamp);
         }
-        format!("pi_session:{:x}", request_hasher.finalize())
+        format!(
+            "{}{:x}",
+            profile.request_id_prefix,
+            request_hasher.finalize()
+        )
     } else {
         semantic_id.clone()
     };
@@ -758,14 +891,23 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+fn insert_pi_record(
+    conn: &rusqlite::Connection,
+    record: &PiUsageRecord,
+    profile: &SessionAppProfile,
+) -> Result<bool, AppError> {
     let request_seen: bool = conn
         .query_row(
             PI_REQUEST_DEDUP_SQL,
-            rusqlite::params![DATA_SOURCE, record.request_id],
+            rusqlite::params![profile.data_source, record.request_id],
             |row| row.get(0),
         )
-        .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+        .map_err(|error| {
+            AppError::Database(format!(
+                "查询 {} 用量去重账本失败: {error}",
+                profile.display_name
+            ))
+        })?;
     let already_seen = request_seen
         || conn
             .query_row(
@@ -774,10 +916,15 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
                 } else {
                     PI_SEMANTIC_DEDUP_SQL
                 },
-                rusqlite::params![DATA_SOURCE, record.semantic_id],
+                rusqlite::params![profile.data_source, record.semantic_id],
                 |row| row.get(0),
             )
-            .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+            .map_err(|error| {
+                AppError::Database(format!(
+                    "查询 {} 用量去重账本失败: {error}",
+                    profile.display_name
+                ))
+            })?;
     if already_seen {
         return Ok(false);
     }
@@ -786,13 +933,18 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
          (data_source, request_id, semantic_id, has_entry_id)
          VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![
-            DATA_SOURCE,
+            profile.data_source,
             record.request_id,
             record.semantic_id,
             i64::from(record.has_entry_id),
         ],
     )
-    .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    .map_err(|error| {
+        AppError::Database(format!(
+            "写入 {} 用量去重账本失败: {error}",
+            profile.display_name
+        ))
+    })?;
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -805,7 +957,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     let costs = record.costs.reported().or_else(|| {
         find_model_pricing(conn, &record.model).map(|pricing| {
             let calculated =
-                CostCalculator::calculate_for_app(APP_TYPE, &usage, &pricing, Decimal::ONE);
+                CostCalculator::calculate_for_app(profile.app_type, &usage, &pricing, Decimal::ONE);
             (
                 calculated.input_cost,
                 calculated.output_cost,
@@ -840,7 +992,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
         rusqlite::params![
             record.request_id,
             record.provider_id,
-            APP_TYPE,
+            profile.app_type,
             record.model,
             record.request_model,
             record.model,
@@ -859,15 +1011,20 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             record.status_code,
             record.error_message,
             record.session_id,
-            Some(DATA_SOURCE),
+            Some(profile.data_source),
             1i64,
             "1.0",
             record.created_at,
-            DATA_SOURCE,
+            profile.data_source,
         ],
     )
     .map(|changed| changed > 0)
-    .map_err(|error| AppError::Database(format!("插入 Pi 会话用量失败: {error}")))
+    .map_err(|error| {
+        AppError::Database(format!(
+            "插入 {} 会话用量失败: {error}",
+            profile.display_name
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -916,9 +1073,10 @@ mod tests {
         ] {
             let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
             let plan = statement
-                .query_map(rusqlite::params![DATA_SOURCE, "identity"], |row| {
-                    row.get::<_, String>(3)
-                })?
+                .query_map(
+                    rusqlite::params![PI_PROFILE.data_source, "identity"],
+                    |row| row.get::<_, String>(3),
+                )?
                 .collect::<Result<Vec<_>, _>>()?;
             assert!(
                 plan.iter().any(|step| step.contains(expected)),
@@ -1010,7 +1168,8 @@ mod tests {
 
         let providers = db.get_provider_stats(None, None, Some("pi"), None, None)?;
         assert!(providers.iter().any(|provider| {
-            provider.provider_id == PROVIDER_PLACEHOLDER && provider.provider_name == "Pi (Session)"
+            provider.provider_id == PI_PROFILE.provider_placeholder
+                && provider.provider_name == "Pi (Session)"
         }));
         Ok(())
     }
@@ -1092,7 +1251,8 @@ mod tests {
         message.insert("model".to_string(), Value::String(oversized.clone()));
         message.insert("responseModel".to_string(), Value::String(oversized));
 
-        let record = parse_usage_record(&entry, "session", None, 0).expect("usage record");
+        let record =
+            parse_usage_record(&entry, "session", None, 0, &PI_PROFILE).expect("usage record");
         for label in [record.provider_id, record.model, record.request_model] {
             assert!(label.len() <= MAX_USAGE_LABEL_BYTES);
             assert!(std::str::from_utf8(label.as_bytes()).is_ok());
@@ -1107,8 +1267,8 @@ mod tests {
         entry["timestamp"] = Value::from(i64::MIN);
         entry["message"]["timestamp"] = Value::from(i64::MAX);
 
-        let record =
-            parse_usage_record(&entry, "session", Some(1_700_000_000), 0).expect("usage record");
+        let record = parse_usage_record(&entry, "session", Some(1_700_000_000), 0, &PI_PROFILE)
+            .expect("usage record");
         assert_eq!(record.created_at, 1_700_000_000);
     }
 
@@ -1304,7 +1464,7 @@ mod tests {
             writeln!(file, "{second}").expect("append second record");
         }
 
-        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified)?;
+        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified, &PI_PROFILE)?;
         assert_eq!(parsed.records.len(), 1);
         assert_eq!(parsed.last_complete_line, 2);
         Ok(())

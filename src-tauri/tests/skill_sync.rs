@@ -24,7 +24,24 @@ fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
 
 #[cfg(windows)]
 fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::windows::fs::symlink_dir(src, dest).expect("create symlink");
+    // Creating a symbolic link requires SeCreateSymbolicLinkPrivilege on Windows,
+    // which is not enabled for ordinary developer/test processes.  A directory
+    // junction has the same directory-link behavior needed by these tests and
+    // can be created without elevation.
+    let status = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &dest.to_string_lossy(),
+            &src.to_string_lossy(),
+        ])
+        .status()
+        .expect("create directory junction");
+    assert!(
+        status.success(),
+        "create directory junction: {src:?} -> {dest:?}, exit status {status}"
+    );
 }
 
 #[test]

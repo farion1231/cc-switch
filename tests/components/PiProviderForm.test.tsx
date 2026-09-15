@@ -822,10 +822,8 @@ describe("PiProviderForm", () => {
     expect(submitted).not.toHaveProperty("piActivateModelId");
   });
 
-  it("requires custom model limits instead of inferring Pi metadata", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-
+  it("allows custom model limits to remain empty", async () => {
+    const onSubmit = vi.fn();
     render(
       <PiProviderForm
         appId="pi"
@@ -834,69 +832,46 @@ describe("PiProviderForm", () => {
         onCancel={() => {}}
       />,
     );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "providerPreset.custom" }));
     fireEvent.change(screen.getByPlaceholderText("my-provider"), {
       target: { value: "verified-provider" },
     });
     fireEvent.change(screen.getByLabelText("provider.name"), {
       target: { value: "Verified provider" },
     });
-    fireEvent.change(
-      screen.getByPlaceholderText("https://api.example.com/v1"),
-      {
-        target: { value: "https://api.example.com/v1" },
-      },
-    );
+    fireEvent.change(screen.getByPlaceholderText("https://api.example.com/v1"), {
+      target: { value: "https://api.example.com/v1" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
     fireEvent.change(screen.getByPlaceholderText("model-id"), {
       target: { value: "opaque-model" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起模型详情" }));
 
-    expect(
-      screen.queryByLabelText("pi.form.contextWindow"),
-    ).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "展开或收起模型详情" }),
-    );
-    expect(screen.getByLabelText("pi.form.reasoning")).not.toBeChecked();
-    expect(screen.getByLabelText("pi.form.imageInput")).not.toBeChecked();
-    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(null);
-    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(null);
-
-    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "pi.form.positiveNumberRequired",
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
-
-    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
-      target: { value: "128000" },
-    });
-    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
-      target: { value: "16384" },
-    });
-    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
+    expect(screen.getByLabelText("pi.form.contextWindow")).not.toBeRequired();
+    expect(screen.getByLabelText("pi.form.maxTokens")).not.toBeRequired();
+    fireEvent.click(screen.getByRole("button", { name: "Save Pi provider" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const submitted = onSubmit.mock.calls[0][0];
-    expect(submitted.providerKey).toBe("verified-provider");
-    expect(JSON.parse(submitted.settingsConfig)).toEqual({
-      name: "Verified provider",
-      api: "openai-completions",
-      baseUrl: "https://api.example.com/v1",
-      models: [
-        {
-          id: "opaque-model",
-          name: "opaque-model",
-          reasoning: false,
-          input: ["text"],
-          contextWindow: 128_000,
-          maxTokens: 16_384,
-        },
-      ],
-    });
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).models[0]).not.toHaveProperty("contextWindow");
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).models[0]).not.toHaveProperty("maxTokens");
+  });
+
+  it("preserves entered custom model limits", async () => {
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save Pi provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "providerPreset.custom" }));
+    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起模型详情" }));
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), { target: { value: "128000" } });
+    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), { target: { value: "16384" } });
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(128000);
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(16384);
   });
 
   it("renders validation errors in the form and focuses the invalid field", async () => {

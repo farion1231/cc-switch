@@ -32,6 +32,7 @@ const APP_CONFIG: Array<{
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
   { id: "pi", icon: "pi", nameKey: "apps.pi" },
+  { id: "omp", icon: "omp", nameKey: "apps.omp" },
 ];
 
 export function AppVisibilitySettings({
@@ -40,7 +41,10 @@ export function AppVisibilitySettings({
 }: AppVisibilitySettingsProps) {
   const { t } = useTranslation();
 
-  const visibleApps: VisibleApps = settings.visibleApps ?? DEFAULT_VISIBLE_APPS;
+  const visibleApps: VisibleApps = {
+    ...DEFAULT_VISIBLE_APPS,
+    ...settings.visibleApps,
+  };
 
   // Count how many apps are currently visible
   const visibleCount = Object.values(visibleApps).filter(Boolean).length;

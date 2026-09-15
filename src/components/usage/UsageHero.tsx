@@ -52,8 +52,6 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     iconBg: "bg-amber-500/10",
   },
   codex: {
-    // OpenAI/Codex 走黑白单色调；中性灰在深浅模式都能透出方块底色，
-    // 不像纯黑 bg-black/10 在深色背景下会糊掉。
     accent: "text-neutral-700 dark:text-neutral-300",
     iconBg: "bg-neutral-500/10",
   },
@@ -72,6 +70,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
   pi: {
     accent: "text-fuchsia-600 dark:text-fuchsia-400",
     iconBg: "bg-fuchsia-500/10",
+  },
+  omp: {
+    accent: "text-purple-600 dark:text-purple-400",
+    iconBg: "bg-purple-500/10",
   },
 };
 
