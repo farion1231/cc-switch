@@ -2,6 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
+
 const {
   getModelsDevSyncConfig,
   saveModelsDevSyncConfig,
@@ -84,11 +90,11 @@ describe("ModelsDevAutoSyncPanel", () => {
       changed: 1,
       syncedAt: Date.now(),
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command !== "fetch_models_dev_pricing") {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      return JSON.stringify({
           openai: {
             name: "OpenAI",
             models: {
@@ -109,9 +115,8 @@ describe("ModelsDevAutoSyncPanel", () => {
               },
             },
           },
-        }),
-      }),
-    );
+        });
+    });
   });
 
   it("loads automatic sync as disabled by default", async () => {
