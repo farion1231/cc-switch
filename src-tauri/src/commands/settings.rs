@@ -57,6 +57,13 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
+/// 保存主页面最后聚焦的应用
+#[tauri::command]
+pub async fn set_last_active_app(app: crate::app_config::AppType) -> Result<bool, String> {
+    crate::settings::set_last_active_app(app).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
@@ -68,7 +75,10 @@ pub async fn save_settings(
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    // last_active_app 由专用命令更新；锁内保留它，避免全量设置保存的旧快照
+    // 与应用切换并发时覆盖较新的选择。
+    crate::settings::update_settings_preserving_last_active_app(merged)
+        .map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -82,7 +92,9 @@ pub async fn save_settings(
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+            if let Err(rollback_err) =
+                crate::settings::update_settings_preserving_last_active_app(existing)
+            {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(

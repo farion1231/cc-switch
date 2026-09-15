@@ -219,6 +219,12 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
 
+  http.post(`${TAURI_ENDPOINT}/set_last_active_app`, async ({ request }) => {
+    const { app } = await withJson<{ app: AppId }>(request);
+    setSettings({ lastActiveApp: app });
+    return success(true);
+  }),
+
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {

@@ -39,6 +39,10 @@ export const settingsApi = {
     return await invoke("save_settings", { settings });
   },
 
+  async setLastActiveApp(app: AppId): Promise<boolean> {
+    return await invoke("set_last_active_app", { app });
+  },
+
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
   async hasCodexUnifyHistoryBackup(): Promise<boolean> {
     return await invoke("has_codex_unify_history_backup");
