@@ -188,6 +188,11 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 是否启用「流式语义预读」：在首个有效输出事件到达前不把流提交给客户端，
+    /// 让「上游刚开流就报错（如过载）」也能在本次请求内换到下一家供应商。
+    ///
+    /// 只有确实存在可转移的下一家时才开启，否则白白增加首字节延迟。
+    stream_priming_enabled: bool,
 }
 
 impl RequestForwarder {
@@ -255,6 +260,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        stream_priming_enabled: bool,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -278,6 +284,7 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            stream_priming_enabled,
         }
     }
 
@@ -2431,6 +2438,22 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
+            } else if self.stream_priming_enabled
+                && matches!(app_type, AppType::Codex | AppType::GrokBuild)
+                && !codex_responses_to_chat
+                && !codex_responses_to_anthropic
+                && !codex_official_auth_passthrough
+                && request_is_streaming
+                && response.is_sse()
+            {
+                // Codex 原生 Responses 透传：上游同样是 Responses 协议，因此可以沿用
+                // 「首个有效输出事件之前不提交」的预读规则。上游一开流就报
+                // `error` / `response.failed`（供应商过载最常见的形态）时，本次请求
+                // 就能直接换到下一家供应商，客户端不会看到 stream disconnected。
+                //
+                // 预读只影响提交时机，不影响已提交后的字节内容；超过预读上限或
+                // 首字节超时会退回原样提交，避免长思考阶段被无限缓冲。
+                response = self.validate_responses_stream_start(response).await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -3892,6 +3915,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            stream_priming_enabled: false,
         }
     }
 

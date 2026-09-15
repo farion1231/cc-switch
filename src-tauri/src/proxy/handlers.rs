@@ -42,6 +42,7 @@ use super::{
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
+    stream_outcome::StreamFailureReporter,
     types::*,
     usage::parser::TokenUsage,
     ProxyError,
@@ -521,6 +522,7 @@ async fn handle_claude_transform(
             usage_collector,
             timeout_config,
             connection_guard,
+            Some(StreamFailureReporter::for_request(ctx, state)),
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1224,6 +1226,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            Some(StreamFailureReporter::for_request(ctx, state)),
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1420,6 +1423,7 @@ async fn handle_codex_chat_to_responses_transform(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            Some(StreamFailureReporter::for_request(ctx, state)),
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1793,6 +1797,7 @@ fn build_codex_anthropic_sse_response(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        Some(StreamFailureReporter::for_request(ctx, state)),
     );
 
     let mut headers = axum::http::HeaderMap::new();
