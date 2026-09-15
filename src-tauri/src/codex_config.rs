@@ -4669,10 +4669,7 @@ model_providers = { rightcode = { name = "RightCode", experimental_bearer_token 
             doc.get("model_provider").and_then(|v| v.as_str()),
             Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
         );
-        assert_eq!(
-            doc.get("model").and_then(|v| v.as_str()),
-            Some("gpt-5.4")
-        );
+        assert_eq!(doc.get("model").and_then(|v| v.as_str()), Some("gpt-5.4"));
         let custom = doc["model_providers"][CC_SWITCH_CODEX_MODEL_PROVIDER_ID]
             .as_table()
             .expect("custom provider table");
@@ -6127,7 +6124,9 @@ base_url = "https://bedrock.example/v1"
             let text = plan.config_text.expect("plan carries config");
             let doc: toml::Table = toml::from_str(&text).expect("parse header-auth config");
             assert!(
-                doc["model_providers"]["hdr"].get("requires_openai_auth").is_none(),
+                doc["model_providers"]["hdr"]
+                    .get("requires_openai_auth")
+                    .is_none(),
                 "header-auth cards must not be stamped (preserve={preserve}); got:\n{text}"
             );
         }
