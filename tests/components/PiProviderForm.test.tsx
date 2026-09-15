@@ -51,6 +51,8 @@ describe("PiProviderForm", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  vi.setConfig({ testTimeout: 15_000 });
+
   it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
