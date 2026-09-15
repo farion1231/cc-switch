@@ -257,6 +257,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                     apps: McpApps {
                         claude: false,
                         codex: false,
+                        cursor: false,
                         gemini: false,
                         grokbuild: false,
                         opencode: true,

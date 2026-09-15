@@ -8,6 +8,7 @@ import {
   OpenClawIcon,
 } from "@/components/BrandIcons";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { MousePointer2 } from "lucide-react";
 
 export interface AppConfig {
   label: string;
@@ -26,6 +27,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "cursor",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -38,6 +40,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  cursor: false,
 };
 
 /** App IDs shown in Skills panels. */
@@ -49,6 +52,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
   "pi",
+  "cursor",
 ];
 
 export type ProxyAppId = Extract<
@@ -93,6 +97,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "cursor",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -192,6 +197,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: <MousePointer2 size={14} />,
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
 };
 
