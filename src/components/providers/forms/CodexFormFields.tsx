@@ -40,6 +40,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
@@ -220,6 +221,61 @@ const CODEX_REASONING_LEVELS = [
 // values, so "back to Auto" needs a non-empty value mapped to undefined.
 const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
 
+const CODEX_INPUT_MODALITIES = ["text", "image"] as const;
+
+function InputModalitiesEditor({
+  modalities,
+  onModalitiesChange,
+}: {
+  modalities?: string[];
+  onModalitiesChange: (modalities: string[] | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  // text is always present by default and cannot be unset
+  const selected = (modalities ?? ["text"]).filter((m) =>
+    (CODEX_INPUT_MODALITIES as readonly string[]).includes(m),
+  );
+
+  const toggleModality = (modality: string) => {
+    if (modality === "text") return; // locked
+    const picked = selected.includes(modality)
+      ? selected.filter((item) => item !== modality)
+      : [...selected, modality];
+    onModalitiesChange(picked.length > 0 ? picked : undefined);
+  };
+
+  return (
+    <div className="flex items-center gap-3">
+      <label className="inline-flex items-center gap-1.5 text-xs text-foreground opacity-70">
+        <Checkbox
+          checked={true}
+          disabled
+          aria-disabled
+          className="h-3 w-3 data-[state=checked]:bg-foreground data-[state=checked]:border-foreground"
+          aria-label={t("codexConfig.inputModalityText", {
+            defaultValue: "Text",
+          })}
+        />
+        <span>
+          {t("codexConfig.inputModalityText", { defaultValue: "Text" })}
+        </span>
+      </label>
+      <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <Checkbox
+          checked={selected.includes("image")}
+          onCheckedChange={() => toggleModality("image")}
+          className="h-3 w-3 data-[state=checked]:bg-foreground data-[state=checked]:border-foreground"
+          aria-label={t("codexConfig.inputModalityImage", {
+            defaultValue: "Image",
+          })}
+        />
+        <span>
+          {t("codexConfig.inputModalityImage", { defaultValue: "Image" })}
+        </span>
+      </label>
+    </div>
+  );
+}
 function ReasoningLevelsEditor({
   levels,
   defaultLevel,
@@ -1214,7 +1270,7 @@ export function CodexFormFields({
                 {catalogRows.length > 0 && (
                   <div className="space-y-2">
                     {/* 列头：md+ 显示 */}
-                    <div className="hidden grid-cols-[1fr_1fr_140px_1fr_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                    <div className="hidden grid-cols-[1fr_1fr_140px_100px_1fr_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                       <span>
                         {t("codexConfig.catalogColumnDisplay", {
                           defaultValue: "菜单显示名",
@@ -1231,6 +1287,11 @@ export function CodexFormFields({
                         })}
                       </span>
                       <span>
+                        {t("codexConfig.catalogColumnImage", {
+                          defaultValue: "输入类型",
+                        })}
+                      </span>
+                      <span>
                         {t("codexConfig.catalogColumnReasoning", {
                           defaultValue: "思考等级",
                         })}
@@ -1241,7 +1302,7 @@ export function CodexFormFields({
                     {catalogRows.map((row, index) => (
                       <div
                         key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_1fr_36px]"
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_100px_1fr_36px]"
                       >
                         <Input
                           value={row.displayName ?? ""}
@@ -1327,6 +1388,14 @@ export function CodexFormFields({
                           onDefaultLevelChange={(level) =>
                             handleUpdateCatalogRow(index, {
                               defaultReasoningLevel: level,
+                            })
+                          }
+                        />
+                        <InputModalitiesEditor
+                          modalities={row.inputModalities}
+                          onModalitiesChange={(modalities) =>
+                            handleUpdateCatalogRow(index, {
+                              inputModalities: modalities,
                             })
                           }
                         />
