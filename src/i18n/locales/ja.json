@@ -384,7 +384,11 @@
       },
       "globalProxy": {
         "title": "グローバル送信プロキシ",
-        "description": "CC Switch が外部 API にアクセスする際のプロキシを設定"
+        "description": "CC Switch が外部 API にアクセスする際のプロキシを設定",
+        "badgeExplicit": "カスタムプロキシ",
+        "badgeSystem": "システムプロキシ",
+        "badgeDirect": "直接接続",
+        "badgeUnreachable": "プロキシ到達不可"
       },
       "data": {
         "title": "データ管理",
@@ -875,7 +879,7 @@
     "saving": "保存中...",
     "globalProxy": {
       "label": "グローバルプロキシ",
-      "hint": "すべてのリクエスト（API、Skills ダウンロードなど）をプロキシ経由で送信します。ローカルルーティング有効時、アプリのリクエストもこのプロキシを経由します。空欄で直接接続。",
+      "hint": "設定するとすべてのリクエスト（API、使用量の取得、Skills のダウンロードなど）とローカルルーティングの転送がこのプロキシを経由します。空欄の場合は「システムプロキシに従う」スイッチで、システムプロキシに従うか直接接続するかが決まります。ローカルルーティングによる Claude（Anthropic 形式）プロバイダーへの転送はシステムプロキシを使わず、空欄なら直接接続します。",
       "username": "ユーザー名（任意）",
       "password": "パスワード（任意）",
       "test": "接続テスト",
@@ -899,7 +903,26 @@
       "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
       "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}",
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
-      "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
+      "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません",
+      "followSystemProxy": "システムプロキシに従う",
+      "followSystemProxyDescription": "プロキシ URL が未設定のとき、HTTP_PROXY / HTTPS_PROXY 環境変数と OS のプロキシ設定を使用します。プロキシアプリの終了やポート変更後も接続に失敗する場合は、オフにして直接接続してください。",
+      "followSystemProxyExplicitHint": "プロキシ URL が設定されているため、システムプロキシと環境変数は使用されません。",
+      "status": {
+        "label": "現在の設定：",
+        "explicit": "カスタムプロキシ {{url}}",
+        "system": "システムプロキシに従う · {{url}}",
+        "systemNone": "システムプロキシに従う · 未設定のため直接接続",
+        "systemScope": "Anthropic API ホストに対する解決結果を表示しています。バイパス規則（NO_PROXY など）は宛先ホストごとに適用されるため、他のプロバイダーでは異なる場合があります。ローカルルーティングによる Claude（Anthropic 形式）プロバイダーへの転送はシステムプロキシを使わず、プロキシ URL が未設定なら直接接続します。",
+        "direct": "直接接続（システムプロキシに従わない）",
+        "sourceEnv": "ソース：環境変数（起動時に読み込み）",
+        "sourceSystem": "ソース：OS のプロキシ設定",
+        "reachable": "ポート到達可能",
+        "unreachable": "ポート到達不可",
+        "changed": "システムプロキシ設定が変更されました。現在は {{url}}",
+        "changedToNone": "システムプロキシ設定が変更されました。現在は未設定です",
+        "changedSameUrl": "システムプロキシ設定が変更されました（アドレスは同じ。認証情報または HTTP プロキシが更新されています）",
+        "reapply": "再適用"
+      }
     },
     "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
   },

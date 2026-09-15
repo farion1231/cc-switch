@@ -2,10 +2,10 @@
 //!
 //! 提供获取、设置和测试全局代理的 Tauri 命令。
 
-use crate::proxy::http_client;
+use crate::proxy::http_client::{self, SystemProxySource};
 use crate::store::AppState;
 use serde::Serialize;
-use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 /// 获取全局代理 URL
@@ -66,6 +66,32 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
             .unwrap_or_else(|| "direct connection".to_string())
     );
 
+    Ok(())
+}
+
+/// 获取「跟随系统代理」开关
+#[tauri::command]
+pub fn get_follow_system_proxy(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .get_follow_system_proxy()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置「跟随系统代理」开关
+///
+/// 与 set_global_proxy_url 同样的顺序：先写 DB，再应用到运行态
+#[tauri::command]
+pub fn set_follow_system_proxy(
+    state: tauri::State<'_, AppState>,
+    follow: bool,
+) -> Result<(), String> {
+    state
+        .db
+        .set_follow_system_proxy(follow)
+        .map_err(|e| e.to_string())?;
+    http_client::set_follow_system_proxy(follow)?;
+    log::info!("[GlobalProxy] Follow system proxy: {follow}");
     Ok(())
 }
 
@@ -157,26 +183,106 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
     })
 }
 
-/// 获取当前出站代理状态
-///
-/// 返回当前是否启用了出站代理以及代理 URL。
-#[tauri::command]
-pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
-    let url = http_client::get_current_proxy_url();
-    UpstreamProxyStatus {
-        enabled: url.is_some(),
-        proxy_url: url,
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutboundProxyMode {
+    Explicit,
+    System,
+    Direct,
 }
 
 /// 出站代理状态信息
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpstreamProxyStatus {
-    /// 是否启用代理
+    /// 是否配置了显式代理
     pub enabled: bool,
-    /// 代理 URL
+    /// 显式代理 URL
     pub proxy_url: Option<String>,
+    pub follow_system_proxy: bool,
+    pub mode: OutboundProxyMode,
+    /// 当前客户端烘焙的系统代理（已脱敏）；None = 客户端未跟随任何系统代理
+    pub system_proxy_url: Option<String>,
+    /// 烘焙那一刻记下的来源，与 `system_proxy_url` 同期，不是实时重解析的结果
+    pub system_proxy_source: Option<SystemProxySource>,
+    /// 对烘焙代理端口的一次 TCP 探测；无法解析主机端口时为 None
+    pub system_proxy_reachable: Option<bool>,
+    /// 系统代理设置在客户端构建之后发生了变化，需重新应用才生效
+    pub system_proxy_changed: bool,
+    pub current_system_proxy_url: Option<String>,
+}
+
+/// 获取当前出站代理状态（含系统代理来源、可达性与是否已变化）
+#[tauri::command]
+pub async fn get_upstream_proxy_status() -> Result<UpstreamProxyStatus, String> {
+    // TCP 探测与系统配置读取都是阻塞调用，不能放在主线程
+    tokio::task::spawn_blocking(collect_upstream_proxy_status)
+        .await
+        .map_err(|e| format!("Failed to collect proxy status: {e}"))
+}
+
+fn collect_upstream_proxy_status() -> UpstreamProxyStatus {
+    let explicit = http_client::get_current_proxy_url();
+    let follow = http_client::follow_system_proxy();
+    let mode = outbound_proxy_mode(explicit.as_deref(), follow);
+    let (baked, (current, changed)) = if mode == OutboundProxyMode::System {
+        (
+            http_client::baked_system_proxy(),
+            // 展示的「当前值」与「是否已变化」出自后端同一次解析，二者不会对不上
+            http_client::system_proxy_status(),
+        )
+    } else {
+        (None, (None, false))
+    };
+    let baked_url = baked.as_ref().map(|(url, _)| url.as_str());
+
+    UpstreamProxyStatus {
+        enabled: explicit.is_some(),
+        proxy_url: explicit,
+        follow_system_proxy: follow,
+        mode,
+        system_proxy_url: baked_url.map(http_client::mask_url),
+        system_proxy_source: baked.as_ref().map(|(_, source)| *source),
+        system_proxy_reachable: baked_url.and_then(proxy_reachable),
+        system_proxy_changed: changed,
+        current_system_proxy_url: current.as_deref().map(http_client::mask_url),
+    }
+}
+
+pub(crate) fn outbound_proxy_mode(
+    explicit: Option<&str>,
+    follow_system_proxy: bool,
+) -> OutboundProxyMode {
+    if explicit.is_some() {
+        OutboundProxyMode::Explicit
+    } else if follow_system_proxy {
+        OutboundProxyMode::System
+    } else {
+        OutboundProxyMode::Direct
+    }
+}
+
+/// 解析不出主机和端口（如无端口的 socks5 地址）就不下结论，避免把「不知道」显示成「不可达」
+fn proxy_reachable(proxy_url: &str) -> Option<bool> {
+    let parsed = url::Url::parse(proxy_url).ok()?;
+    let port = parsed.port_or_known_default()?;
+    // 按 Host 分支而不是把 host_str() 交给 to_socket_addrs：IPv6 字面量的 host_str 带着方括号，
+    // 解析器只会拿它当主机名去查 DNS 并失败，可达性就退化成「不知道」
+    let addrs: Vec<SocketAddr> = match parsed.host()? {
+        url::Host::Ipv4(ip) => vec![SocketAddr::from((ip, port))],
+        url::Host::Ipv6(ip) => vec![SocketAddr::from((ip, port))],
+        // 主机名可能解析出多个地址（localhost 常见 ::1 与 127.0.0.1 并存），只要任一地址
+        // 能连上就算可达，否则只监听 IPv4 的代理会被误报为不可达
+        url::Host::Domain(name) => (name, port).to_socket_addrs().ok()?.collect(),
+    };
+    if addrs.is_empty() {
+        return None;
+    }
+    Some(
+        addrs
+            .iter()
+            .any(|addr| TcpStream::connect_timeout(addr, Duration::from_millis(500)).is_ok()),
+    )
 }
 
 /// 检测到的代理信息
@@ -244,4 +350,78 @@ pub async fn scan_local_proxies() -> Vec<DetectedProxy> {
     })
     .await
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_prefers_explicit_then_follow_flag() {
+        assert_eq!(
+            outbound_proxy_mode(Some("http://127.0.0.1:7890"), false),
+            OutboundProxyMode::Explicit
+        );
+        assert_eq!(outbound_proxy_mode(None, true), OutboundProxyMode::System);
+        assert_eq!(outbound_proxy_mode(None, false), OutboundProxyMode::Direct);
+    }
+
+    #[test]
+    fn proxy_reachable_probes_tcp_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let live = format!("http://{}", listener.local_addr().unwrap());
+        assert_eq!(proxy_reachable(&live), Some(true));
+
+        let dead_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert_eq!(
+            proxy_reachable(&format!("http://127.0.0.1:{dead_port}")),
+            Some(false)
+        );
+
+        assert_eq!(proxy_reachable("not a url"), None);
+        // socks5 没有众所周知的默认端口，缺端口时不下结论
+        assert_eq!(proxy_reachable("socks5://127.0.0.1"), None);
+    }
+
+    #[test]
+    fn proxy_reachable_accepts_any_resolved_address() {
+        // localhost 通常同时解析出 ::1 与 127.0.0.1；代理只监听 IPv4 也必须判为可达
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert_eq!(
+            proxy_reachable(&format!("http://localhost:{port}")),
+            Some(true)
+        );
+
+        let dead_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert_eq!(
+            proxy_reachable(&format!("http://localhost:{dead_port}")),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn proxy_reachable_probes_ipv6_literal_hosts() {
+        let listener = std::net::TcpListener::bind("[::1]:0").unwrap();
+        let live = format!("http://{}", listener.local_addr().unwrap());
+        assert_eq!(proxy_reachable(&live), Some(true));
+
+        let dead_port = std::net::TcpListener::bind("[::1]:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert_eq!(
+            proxy_reachable(&format!("http://[::1]:{dead_port}")),
+            Some(false)
+        );
+    }
 }

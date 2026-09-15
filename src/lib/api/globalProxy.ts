@@ -15,12 +15,24 @@ export interface ProxyTestResult {
   error: string | null;
 }
 
+export type OutboundProxyMode = "explicit" | "system" | "direct";
+export type SystemProxySource = "env" | "system";
+
 /**
  * 出站代理状态
  */
 export interface UpstreamProxyStatus {
   enabled: boolean;
   proxyUrl: string | null;
+  followSystemProxy: boolean;
+  mode: OutboundProxyMode;
+  /** 当前客户端烘焙的系统代理（已脱敏）；null = 客户端没有跟随任何系统代理 */
+  systemProxyUrl: string | null;
+  systemProxySource: SystemProxySource | null;
+  systemProxyReachable: boolean | null;
+  /** 系统代理设置在客户端构建后发生了变化，需重新应用 */
+  systemProxyChanged: boolean;
+  currentSystemProxyUrl: string | null;
 }
 
 /**
@@ -50,6 +62,29 @@ export async function getGlobalProxyUrl(): Promise<string | null> {
 export async function setGlobalProxyUrl(url: string): Promise<void> {
   try {
     return await invoke("set_global_proxy_url", { url });
+  } catch (error) {
+    // Tauri invoke 错误可能是字符串
+    throw new Error(typeof error === "string" ? error : String(error));
+  }
+}
+
+/**
+ * 未填写代理地址时是否跟随系统代理（含 HTTP_PROXY 等环境变量）
+ *
+ * @returns true 表示跟随，false 表示直连
+ */
+export async function getFollowSystemProxy(): Promise<boolean> {
+  return invoke<boolean>("get_follow_system_proxy");
+}
+
+/**
+ * 设置未填写代理地址时是否跟随系统代理
+ *
+ * @param follow - true 跟随系统代理与环境变量，false 直连
+ */
+export async function setFollowSystemProxy(follow: boolean): Promise<void> {
+  try {
+    return await invoke("set_follow_system_proxy", { follow });
   } catch (error) {
     // Tauri invoke 错误可能是字符串
     throw new Error(typeof error === "string" ? error : String(error));
