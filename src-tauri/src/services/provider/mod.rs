@@ -5948,6 +5948,26 @@ impl ProviderService {
             )?;
         }
 
+        // Claude Code asks for confirmation when a provider supplies a custom
+        // ANTHROPIC_API_KEY. Switching providers is an explicit user action,
+        // so approve that selected key after the live config has been written.
+        // A malformed or unavailable user config must not undo a successful
+        // provider switch.
+        if matches!(app_type, AppType::Claude) {
+            if let Some(api_key) = provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_API_KEY")
+                .and_then(Value::as_str)
+            {
+                if let Err(error) = crate::claude_mcp::approve_claude_code_api_key(api_key) {
+                    log::warn!(
+                        "Failed to approve Claude Code API key for provider '{}': {error}",
+                        provider.id
+                    );
+                }
+            }
+        }
+
         // A material-less official Codex provider gets a config-only live
         // write, which can leave the previous third-party key in
         // ~/.codex/auth.json and strand the user on a 401 with no login
