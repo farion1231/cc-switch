@@ -843,6 +843,71 @@ impl OmoService {
         }
     }
 
+    fn merge_objects(
+        base: &Map<String, Value>,
+        override_: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        let mut merged = base.clone();
+        for (key, override_value) in override_ {
+            let value = match (merged.get(key), override_value) {
+                (Some(Value::Object(base)), Value::Object(override_)) => {
+                    Value::Object(Self::merge_objects(base, override_))
+                }
+                _ => override_value.clone(),
+            };
+            merged.insert(key.clone(), value);
+        }
+        merged
+    }
+
+    fn imported_agents(
+        v: &OmoVariant,
+        obj: &Map<String, Value>,
+    ) -> Result<Option<Value>, AppError> {
+        if v.category != SLIM.category {
+            return Ok(obj.get("agents").cloned());
+        }
+
+        let root_agents = match obj.get("agents") {
+            Some(Value::Object(agents)) => Some(agents),
+            Some(_) => {
+                return Err(AppError::Config(
+                    "OMO Slim agents must be an object".to_string(),
+                ));
+            }
+            None => None,
+        };
+        let Some(preset) = obj.get("preset") else {
+            return Ok(root_agents.cloned().map(Value::Object));
+        };
+        let preset = preset
+            .as_str()
+            .ok_or_else(|| AppError::Config("OMO Slim preset must be a string".to_string()))?;
+        if preset.is_empty() {
+            return Ok(root_agents.cloned().map(Value::Object));
+        }
+
+        let presets = obj
+            .get("presets")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                AppError::Config(
+                    "OMO Slim presets must be an object when preset is set".to_string(),
+                )
+            })?;
+        let active = presets.get(preset).ok_or_else(|| {
+            AppError::Config(format!("OMO Slim preset \"{preset}\" was not found"))
+        })?;
+        let active = active.as_object().ok_or_else(|| {
+            AppError::Config(format!("OMO Slim preset \"{preset}\" must be an object"))
+        })?;
+
+        let merged = root_agents
+            .map(|agents| Self::merge_objects(active, agents))
+            .unwrap_or_else(|| active.clone());
+        Ok(Some(Value::Object(merged)))
+    }
+
     fn profile_data_from_provider(provider: &Provider, v: &OmoVariant) -> OmoProfileData {
         let agents = provider.settings_config.get("agents").cloned();
         let categories = if v.has_categories {
@@ -1056,8 +1121,8 @@ impl OmoService {
         let obj = Self::read_config_object(&location)?;
 
         let mut settings = Map::new();
-        if let Some(agents) = obj.get("agents") {
-            settings.insert("agents".to_string(), agents.clone());
+        if let Some(agents) = Self::imported_agents(v, &obj)? {
+            settings.insert("agents".to_string(), agents);
         }
         if v.has_categories {
             if let Some(categories) = obj.get("categories") {
@@ -1112,12 +1177,12 @@ impl OmoService {
 
         let obj = Self::read_config_object(&location)?;
 
-        Ok(Self::build_local_file_data(
+        Self::build_local_file_data(
             v,
             &obj,
             actual_path.to_string_lossy().to_string(),
             last_modified,
-        ))
+        )
     }
 
     fn build_local_file_data(
@@ -1125,8 +1190,8 @@ impl OmoService {
         obj: &Map<String, Value>,
         file_path: String,
         last_modified: Option<String>,
-    ) -> OmoLocalFileData {
-        let agents = obj.get("agents").cloned();
+    ) -> Result<OmoLocalFileData, AppError> {
+        let agents = Self::imported_agents(v, obj)?;
         let categories = if v.has_categories {
             obj.get("categories").cloned()
         } else {
@@ -1140,13 +1205,13 @@ impl OmoService {
             Some(Value::Object(other))
         };
 
-        OmoLocalFileData {
+        Ok(OmoLocalFileData {
             agents,
             categories,
             other_fields,
             file_path,
             last_modified,
-        }
+        })
     }
 }
 
@@ -1647,7 +1712,8 @@ mod tests {
             &obj_map,
             "/tmp/oh-my-opencode.jsonc".to_string(),
             None,
-        );
+        )
+        .unwrap();
 
         // All non-agents/categories fields should be in other_fields
         let other = data.other_fields.unwrap();
@@ -1667,6 +1733,128 @@ mod tests {
         // agents and categories should NOT be in other_fields
         assert!(!other_obj.contains_key("agents"));
         assert!(!other_obj.contains_key("categories"));
+    }
+
+    #[test]
+    fn test_slim_import_uses_only_active_preset_and_preserves_source_fields() {
+        let obj = serde_json::json!({
+            "preset": "opencode-go",
+            "presets": {
+                "openai": {
+                    "orchestrator": { "model": "openai/gpt-5.6" }
+                },
+                "opencode-go": {
+                    "orchestrator": {
+                        "model": "opencode-go/deepseek-v4-flash",
+                        "variant": "high"
+                    },
+                    "custom-reviewer": {
+                        "model": "opencode-go/deepseek-v4-pro",
+                        "temperature": 0.2
+                    }
+                }
+            },
+            "custom_top_level": { "enabled": true }
+        });
+        let obj_map = obj.as_object().unwrap().clone();
+
+        let data = OmoService::build_local_file_data(
+            &SLIM,
+            &obj_map,
+            "/tmp/oh-my-opencode-slim.json".to_string(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(data.agents.unwrap(), obj["presets"]["opencode-go"].clone());
+        let other = data.other_fields.unwrap();
+        assert_eq!(other["preset"], "opencode-go");
+        assert_eq!(other["presets"], obj["presets"]);
+        assert_eq!(other["custom_top_level"], obj["custom_top_level"]);
+        assert_eq!(Value::Object(obj_map), obj);
+    }
+
+    #[test]
+    fn test_slim_import_deep_merges_root_agent_overrides() {
+        let obj = serde_json::json!({
+            "preset": "active",
+            "presets": {
+                "active": {
+                    "oracle": {
+                        "model": "preset/model",
+                        "variant": "high",
+                        "permissions": { "read": true, "write": false }
+                    },
+                    "explorer": { "model": "preset/explorer" }
+                }
+            },
+            "agents": {
+                "oracle": {
+                    "variant": "max",
+                    "permissions": { "write": true }
+                },
+                "fixer": { "model": "root/fixer" }
+            }
+        });
+
+        let agents = OmoService::imported_agents(&SLIM, obj.as_object().unwrap())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(agents["oracle"]["model"], "preset/model");
+        assert_eq!(agents["oracle"]["variant"], "max");
+        assert_eq!(agents["oracle"]["permissions"]["read"], true);
+        assert_eq!(agents["oracle"]["permissions"]["write"], true);
+        assert_eq!(agents["explorer"]["model"], "preset/explorer");
+        assert_eq!(agents["fixer"]["model"], "root/fixer");
+    }
+
+    #[test]
+    fn test_slim_import_without_active_preset_keeps_top_level_agents() {
+        let agents = serde_json::json!({"oracle": {"model": "root/model"}});
+        for obj in [
+            serde_json::json!({"agents": agents}),
+            serde_json::json!({
+                "preset": "",
+                "presets": {"unused": {"oracle": {"model": "unused/model"}}},
+                "agents": agents
+            }),
+            serde_json::json!({
+                "preset": "empty",
+                "presets": {"empty": {}},
+                "agents": agents
+            }),
+        ] {
+            assert_eq!(
+                OmoService::imported_agents(&SLIM, obj.as_object().unwrap()).unwrap(),
+                Some(agents.clone())
+            );
+        }
+
+        let standard = serde_json::json!({
+            "preset": "active",
+            "presets": {"active": {"oracle": {"model": "preset/model"}}},
+            "agents": agents
+        });
+        assert_eq!(
+            OmoService::imported_agents(&STANDARD, standard.as_object().unwrap()).unwrap(),
+            Some(agents)
+        );
+    }
+
+    #[test]
+    fn test_slim_import_rejects_invalid_active_preset_shapes() {
+        let cases = [
+            serde_json::json!({"preset": 1}),
+            serde_json::json!({"preset": "active"}),
+            serde_json::json!({"preset": "missing", "presets": {}}),
+            serde_json::json!({"preset": "active", "presets": {"active": []}}),
+            serde_json::json!({"agents": []}),
+        ];
+
+        for obj in cases {
+            assert!(OmoService::imported_agents(&SLIM, obj.as_object().unwrap()).is_err());
+        }
     }
 
     #[test]
