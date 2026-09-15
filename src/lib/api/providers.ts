@@ -91,6 +91,18 @@ export const providersApi = {
     return await invoke("switch_provider", { id, app: appId });
   },
 
+  async clearCurrent(appId: AppId): Promise<void> {
+    return await invoke("clear_current_provider", { app: appId });
+  },
+
+  /**
+   * 取消使用并关闭代理接管（takeover 激活时使用）
+   * 恢复 Live 配置并清当前 provider 标记
+   */
+  async clearCurrentWithTakeover(appId: AppId): Promise<void> {
+    return await invoke("clear_current_provider_with_takeover", { app: appId });
+  },
+
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
   },
