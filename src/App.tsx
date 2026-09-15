@@ -333,7 +333,8 @@ function App() {
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi" ||
-    sharedFeatureApp === "deepseek-harness" || sharedFeatureApp === "mcode";
+    sharedFeatureApp === "deepseek-harness" ||
+    sharedFeatureApp === "mcode";
   const hasMcpSupport =
     sharedFeatureApp !== "pi" && sharedFeatureApp !== "deepseek-harness";
 
