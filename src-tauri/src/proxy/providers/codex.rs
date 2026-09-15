@@ -73,7 +73,7 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
-pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+pub fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
         .map_or(endpoint, |(path, _query)| path);
@@ -81,7 +81,11 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     matches!(
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_chat_completions(provider)
+    )
+}
+
+pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_chat_completions(provider)
 }
 
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
@@ -392,6 +396,9 @@ pub fn resolve_codex_catalog_tool_profile(
     // api_format, mirroring the Claude-side managed-provider invariant.
     if provider.is_xai_oauth() {
         return CodexCatalogToolProfile::NativeResponses;
+    }
+    if provider.is_github_copilot() {
+        return CodexCatalogToolProfile::Copilot;
     }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
@@ -959,6 +966,10 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
+        if provider.is_github_copilot() {
+            return Ok("https://api.githubcopilot.com".to_string());
+        }
+
         // xAI OAuth: ignore editable provider base URLs and always use the xAI
         // API origin associated with the managed token.
         if provider.is_xai_oauth() {
@@ -1015,6 +1026,13 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if provider.is_github_copilot() {
+            return Some(AuthInfo::new(
+                "copilot_placeholder".to_string(),
+                AuthStrategy::GitHubCopilot,
+            ));
+        }
+
         // xAI OAuth (Grok subscription): placeholder credentials only; the real
         // access_token is resolved per-request by the forwarder via XaiOAuthManager.
         if provider.is_xai_oauth() {
@@ -1085,6 +1103,9 @@ impl ProviderAdapter for CodexAdapter {
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
         use super::adapter::auth_header_value;
+        if auth.strategy == AuthStrategy::GitHubCopilot {
+            return super::copilot_auth::build_copilot_request_headers(&auth.api_key);
+        }
         let bearer = format!("Bearer {}", auth.api_key);
         // Anthropic gateway: send only x-api-key (anthropic-version is filled in by
         // the forwarder). Mutually exclusive with Bearer to avoid a 401 from the
@@ -1105,6 +1126,7 @@ impl ProviderAdapter for CodexAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {
@@ -1122,6 +1144,41 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn create_copilot_provider() -> Provider {
+        let mut provider = create_provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..ProviderMeta::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn codex_adapter_uses_managed_copilot_auth_and_endpoint() {
+        let adapter = CodexAdapter::new();
+        let provider = create_copilot_provider();
+
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            "https://api.githubcopilot.com"
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert!(headers
+            .iter()
+            .any(|(name, _)| name.as_str() == "copilot-integration-id"));
+    }
+
+    #[test]
+    fn codex_responses_endpoint_detection_ignores_query() {
+        assert!(is_codex_responses_endpoint("/responses"));
+        assert!(is_codex_responses_endpoint(
+            "/v1/responses/compact?client_version=0.149"
+        ));
+        assert!(!is_codex_responses_endpoint("/alpha/search"));
     }
 
     #[test]
@@ -1537,6 +1594,12 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&chat),
             CodexCatalogToolProfile::ProxyChat
+        );
+
+        let copilot = create_copilot_provider();
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&copilot),
+            CodexCatalogToolProfile::Copilot
         );
 
         // Host fallback (#6944): a DB row saved while the Zhipu preset was still

@@ -203,6 +203,8 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // Missing means automatic capability routing, including legacy Copilot cards.
+  codexCopilotApiFormat?: CodexCopilotApiFormat;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -260,6 +262,8 @@ export type ClaudeApiFormat =
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
 export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
+
+export type CodexCopilotApiFormat = "auto" | "openai_responses" | "openai_chat";
 
 export interface CodexCatalogModel {
   model: string;

@@ -398,6 +398,16 @@ pub struct ClaudeDesktopModelRoute {
     pub supports_1m: Option<bool>,
 }
 
+/// Codex Copilot protocol selection; independent of legacy `apiFormat` metadata.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexCopilotApiFormat {
+    #[default]
+    Auto,
+    OpenaiResponses,
+    OpenaiChat,
+}
+
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CodexChatReasoningConfig {
@@ -494,6 +504,13 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Codex Copilot only: absent or auto prefers advertised Responses, then Chat.
+    /// Legacy `apiFormat` does not imply an explicit Copilot protocol override.
+    #[serde(
+        rename = "codexCopilotApiFormat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_copilot_api_format: Option<CodexCopilotApiFormat>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
@@ -1016,8 +1033,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
-        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
+        ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1094,6 +1112,51 @@ mod tests {
     fn provider_meta_omits_max_output_tokens_when_none() {
         let value = serde_json::to_value(ProviderMeta::default()).expect("serialize ProviderMeta");
         assert!(value.get("maxOutputTokens").is_none());
+    }
+
+    #[test]
+    fn codex_copilot_api_format_roundtrips_supported_values() {
+        for (wire, expected) in [
+            ("auto", CodexCopilotApiFormat::Auto),
+            ("openai_responses", CodexCopilotApiFormat::OpenaiResponses),
+            ("openai_chat", CodexCopilotApiFormat::OpenaiChat),
+        ] {
+            let value = json!({
+                "apiFormat": "openai_chat",
+                "codexCopilotApiFormat": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.codex_copilot_api_format, Some(expected));
+            assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn codex_copilot_api_format_preserves_legacy_absence() {
+        for value in [
+            json!({}),
+            json!({"apiFormat": "openai_chat"}),
+            json!({"apiFormat": "openai_responses"}),
+        ] {
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(meta.codex_copilot_api_format, None);
+            assert_eq!(
+                meta.codex_copilot_api_format.unwrap_or_default(),
+                CodexCopilotApiFormat::Auto
+            );
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn codex_copilot_api_format_rejects_unknown_values() {
+        for value in ["anthropic", "messages", "openai", "unknown", ""] {
+            assert!(serde_json::from_value::<ProviderMeta>(json!({
+                "codexCopilotApiFormat": value
+            }))
+            .is_err());
+        }
     }
 
     #[test]
