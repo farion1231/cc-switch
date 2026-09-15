@@ -152,6 +152,14 @@ impl SseOutcomeTracker {
 }
 
 /// 判定一个数据块是否为协议终止事件
+///
+/// 各线路的"正常收尾"信号并不统一：
+/// - Responses：`response.completed` / `response.incomplete` / `response.done`
+/// - Anthropic Messages：`message_stop`
+/// - OpenAI Chat Completions：`[DONE]`（部分网关省略）
+/// - Gemini 原生 `alt=sse`：最后一个候选块带 `finishReason`（如 `STOP`），**没有** `[DONE]`
+///
+/// 漏掉任何一家都会把「正常结束」误判成「被截断」，进而错误地扣供应商健康度。
 fn is_terminal_event(raw: &str, event_name: Option<&str>) -> bool {
     if matches!(
         event_name,
@@ -166,7 +174,52 @@ fn is_terminal_event(raw: &str, event_name: Option<&str>) -> bool {
         "message_stop",
         "message_stop_event",
     ];
-    TERMINAL_TYPES.iter().any(|marker| raw.contains(marker))
+    if TERMINAL_TYPES.iter().any(|marker| raw.contains(marker)) {
+        return true;
+    }
+
+    // 带 finish 语义的收尾（Gemini 原生 / OpenAI 兼容）：只在关键字出现时才解析 JSON。
+    const FINISH_HINTS: &[&str] = &["finishReason", "finish_reason", "blockReason"];
+    if FINISH_HINTS.iter().any(|hint| raw.contains(hint)) {
+        if let Ok(value) = serde_json::from_str::<Value>(raw) {
+            return has_finish_signal(&value);
+        }
+    }
+    false
+}
+
+/// 是否存在"本次生成已收尾"的信号
+///
+/// `finishReason`（Gemini）/ `finish_reason`（OpenAI 兼容）非空即表示该候选已结束；
+/// `promptFeedback.blockReason` 表示请求被安全策略拦截后正常结束（同样是正常收尾，
+/// 不是传输失败）。注意增量块里的 `"finish_reason": null` 不算。
+fn has_finish_signal(value: &Value) -> bool {
+    fn meaningful(value: &Value) -> bool {
+        !value.is_null() && value.as_str().is_none_or(|text| !text.is_empty())
+    }
+
+    fn finish_of(item: &Value) -> bool {
+        ["finishReason", "finish_reason"]
+            .iter()
+            .any(|key| item.get(key).is_some_and(meaningful))
+    }
+
+    if finish_of(value) {
+        return true;
+    }
+    if value
+        .get("promptFeedback")
+        .and_then(|feedback| feedback.get("blockReason"))
+        .is_some_and(meaningful)
+    {
+        return true;
+    }
+    ["candidates", "choices"].iter().any(|key| {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(finish_of))
+    })
 }
 
 /// 从数据块中提取「上游错误事件」的消息；不是错误事件时返回 `None`
@@ -426,6 +479,48 @@ mod tests {
             tracker.finish(Some("上游连接中断: connection reset".to_string())),
             StreamOutcome::Truncated("上游连接中断: connection reset".to_string())
         );
+    }
+
+    /// Gemini 原生流以 `finishReason` 收尾，没有 `[DONE]`：必须判为正常完成
+    #[test]
+    fn gemini_finish_reason_completes_stream() {
+        let mut tracker = SseOutcomeTracker::new(true);
+        tracker.on_block(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}]}\n\n",
+        );
+        tracker.on_block(
+            "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\" world\"}]}}],\"usageMetadata\":{\"totalTokenCount\":15}}\n\n",
+        );
+        assert_eq!(tracker.finish(None), StreamOutcome::Completed);
+    }
+
+    /// Gemini 因安全策略拦截时同样是正常收尾（无候选块，只有 blockReason）
+    #[test]
+    fn gemini_block_reason_completes_stream() {
+        let mut tracker = SseOutcomeTracker::new(true);
+        tracker.on_block("data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\n\n");
+        assert_eq!(tracker.finish(None), StreamOutcome::Completed);
+    }
+
+    /// 省略 `[DONE]` 的 OpenAI 兼容网关：`finish_reason` 非空即视为收尾
+    #[test]
+    fn openai_finish_reason_without_done_completes_stream() {
+        let mut tracker = SseOutcomeTracker::new(true);
+        tracker.on_block(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+        );
+        tracker.on_block("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n");
+        assert_eq!(tracker.finish(None), StreamOutcome::Completed);
+    }
+
+    /// 增量块里的 `finish_reason: null` 不能当成收尾
+    #[test]
+    fn null_finish_reason_is_not_terminal() {
+        let mut tracker = SseOutcomeTracker::new(true);
+        tracker.on_block(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+        );
+        assert!(matches!(tracker.finish(None), StreamOutcome::Truncated(_)));
     }
 
     #[test]
