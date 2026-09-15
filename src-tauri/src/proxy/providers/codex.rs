@@ -798,7 +798,7 @@ fn infer_aggregator_platform_config(
     None
 }
 
-fn is_chat_wire_api(value: &str) -> bool {
+pub(crate) fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "chat"
@@ -810,7 +810,7 @@ fn is_chat_wire_api(value: &str) -> bool {
     )
 }
 
-fn is_anthropic_wire_api(value: &str) -> bool {
+pub(crate) fn is_anthropic_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "anthropic" | "anthropic_messages" | "anthropic-messages" | "claude" | "messages"
@@ -834,7 +834,7 @@ pub fn is_origin_only_url(value: &str) -> bool {
     }
 }
 
-fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
+pub(crate) fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
 
     if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {

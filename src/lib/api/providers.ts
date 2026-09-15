@@ -46,6 +46,18 @@ export interface ClaudeDesktopDefaultRoute {
   supports1m: boolean;
 }
 
+/** 跨应用复制的逐目标结果（对应后端 CopyTargetOutcome）。 */
+export interface CopyTargetOutcome {
+  targetApp: string;
+  status: "copied" | "skipped" | "failed";
+  newProviderId: string | null;
+  reason: {
+    key: string;
+    params: Record<string, string>;
+    fallback: string;
+  } | null;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -97,6 +109,18 @@ export const providersApi = {
 
   async importClaudeDesktopFromClaude(): Promise<number> {
     return await invoke("import_claude_desktop_providers_from_claude");
+  },
+
+  async copyToApps(
+    sourceApp: AppId,
+    providerId: string,
+    targetApps: AppId[],
+  ): Promise<CopyTargetOutcome[]> {
+    return await invoke("copy_provider_to_apps", {
+      sourceApp,
+      providerId,
+      targetApps,
+    });
   },
 
   async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
