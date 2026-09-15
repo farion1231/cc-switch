@@ -6,10 +6,54 @@ use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 pub(crate) fn data_dir() -> PathBuf {
-    get_home_dir().join(".minimax")
+    explicit_data_dir(
+        std::env::var("MINIMAX_DATA_DIR").ok().as_deref(),
+        std::env::var("MAVIS_DATA_DIR").ok().as_deref(),
+    )
+    .unwrap_or_else(|| get_home_dir().join(".minimax"))
+}
+
+fn explicit_data_dir(minimax: Option<&str>, mavis: Option<&str>) -> Option<PathBuf> {
+    [minimax, mavis]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+// Callers hold their feature lock across the native write and database commit.
+pub(crate) fn write_and_commit<T>(
+    path: &Path,
+    write: impl FnOnce() -> Result<(), AppError>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let previous = match fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    write()?;
+    match commit() {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            let rollback = match previous {
+                Some(bytes) => atomic_write_private(path, &bytes),
+                None => fs::remove_file(path).map_err(|error| AppError::io(path, error)),
+            };
+            if let Err(rollback_error) = rollback {
+                return Err(AppError::Message(format!(
+                    "MiniMax Code update failed ({error}); restoring {} also failed: {rollback_error}",
+                    path.display()
+                )));
+            }
+            Err(error)
+        }
+    }
 }
 
 pub(crate) fn config_path() -> PathBuf {
@@ -126,9 +170,23 @@ fn update(path: &Path, id: &str, provider: Option<Value>) -> Result<(), AppError
         path.to_path_buf()
     };
     let lock_path = PathBuf::from(format!("{}.lock", path.display()));
-    fs::create_dir(&lock_path).map_err(|_| {
-        AppError::Conflict("MCode configuration is busy; retry after MCode finishes saving".into())
-    })?;
+    if let Err(error) = fs::create_dir(&lock_path) {
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(AppError::io(&lock_path, error));
+        }
+        let stale = fs::metadata(&lock_path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|mtime| mtime.elapsed().ok())
+            .is_some_and(|age| age > Duration::from_secs(10));
+        if !stale {
+            return Err(AppError::Conflict(
+                "MCode configuration is busy; retry after MCode finishes saving".into(),
+            ));
+        }
+        fs::remove_dir(&lock_path).map_err(|e| AppError::io(&lock_path, e))?;
+        fs::create_dir(&lock_path).map_err(|e| AppError::io(&lock_path, e))?;
+    }
     let _lock = ConfigLock(lock_path);
     let mut document = read(&path)?;
     let prefix = format!("custom_provider:{id}/");
@@ -202,6 +260,41 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn native_data_directory_precedence_and_blank_values() {
+        assert_eq!(
+            explicit_data_dir(Some(" /primary "), Some("/legacy")),
+            Some("/primary".into())
+        );
+        assert_eq!(
+            explicit_data_dir(Some(" \t"), Some(" /legacy ")),
+            Some("/legacy".into())
+        );
+        assert_eq!(explicit_data_dir(None, Some("")), None);
+        assert_eq!(explicit_data_dir(None, None), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn reclaims_a_stale_native_lock_but_preserves_an_active_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let lock = path.with_extension("yaml.lock");
+        fs::create_dir(&lock).unwrap();
+        assert!(update(&path, "test", Some(json!({}))).is_err());
+        assert!(lock.exists());
+        fs::File::open(&lock)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(11))
+            .unwrap();
+        update(&path, "test", Some(json!({"name":"Recovered"}))).unwrap();
+        assert!(!lock.exists());
+        assert_eq!(
+            read(&path).unwrap()["custom_provider"]["test"]["name"],
+            "Recovered"
+        );
+    }
+
     #[test]
     fn native_provider_can_omit_api_format() {
         let mut provider = json!({"options":{"baseURL":"https://example.com","apiKey":"test-key"},"models":{"model":{}}});

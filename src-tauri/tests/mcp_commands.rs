@@ -16,6 +16,98 @@ use support::{
 };
 
 #[test]
+fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".minimax/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for id in ["a-conflict", "b-shared"] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id":id, "name":id, "server":{"type":"http","url":"https://example.com/mcp"},
+            "apps":{"claude":true}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+    let original = json!({"mcpServers":{
+        "a-conflict":{"command":"different"},
+        "b-shared":{"type":"streamable-http","url":"https://example.com/mcp","timeout":5000,"description":"native","tools":[{"name":"tool"}]},
+        "c-new":{"command":"node"}
+    }});
+    fs::write(&path, original.to_string()).unwrap();
+    let error = McpService::import_from_all_apps(&state)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("a-conflict"));
+    assert!(!error.contains("b-shared"));
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(!servers["a-conflict"].apps.mcode);
+    assert!(servers["b-shared"].apps.mcode && servers["b-shared"].apps.claude);
+    assert!(servers["c-new"].apps.mcode);
+    McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    for field in ["timeout", "description", "tools"] {
+        assert_eq!(
+            written["mcpServers"]["b-shared"][field],
+            original["mcpServers"]["b-shared"][field]
+        );
+    }
+    assert_eq!(
+        written["mcpServers"]["a-conflict"],
+        original["mcpServers"]["a-conflict"]
+    );
+}
+
+#[test]
+fn mcode_write_failures_keep_managed_mcp_state_for_all_write_entries() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".minimax/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"managed", "name":"Managed", "server":{"command":"node"}, "apps":{"mcode":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+    fs::write(&path, "invalid json").unwrap();
+    assert!(McpService::toggle_app(&state, &server.id, AppType::Mcode, false).is_err());
+    let mut disabled = server.clone();
+    disabled.apps.mcode = false;
+    assert!(McpService::upsert_server(&state, disabled.clone()).is_err());
+    let mut edited = server.clone();
+    edited.server = json!({"command":"replacement"});
+    assert!(McpService::upsert_server(&state, edited).is_err());
+    assert!(McpService::delete_server(&state, &server.id).is_err());
+    let current = &state.db.get_all_mcp_servers().unwrap()[&server.id];
+    assert!(current.apps.mcode);
+    assert_eq!(current.server, server.server);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "invalid json");
+    state.db.save_mcp_server(&disabled).unwrap();
+    assert!(McpService::toggle_app(&state, &server.id, AppType::Mcode, true).is_err());
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .mcode
+    );
+    fs::write(&path, "{}").unwrap();
+    McpService::toggle_app(&state, &server.id, AppType::Mcode, true).unwrap();
+    assert!(
+        state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .mcode
+    );
+    McpService::toggle_app(&state, &server.id, AppType::Mcode, false).unwrap();
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .mcode
+    );
+}
+
+#[test]
 fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();

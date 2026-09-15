@@ -2,7 +2,7 @@
 use crate::session_manager::{SessionMessage, SessionMeta};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn database_path() -> PathBuf {
     crate::mcode_config::data_dir().join("v2/sqlite/runtime-state.sqlite")
@@ -13,10 +13,16 @@ pub(crate) fn open_database() -> rusqlite::Result<Connection> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    if !database_path().exists() {
+    let Ok(data_dir) = std::path::absolute(crate::mcode_config::data_dir()) else {
+        return vec![];
+    };
+    let database = data_dir.join("v2/sqlite/runtime-state.sqlite");
+    if !database.exists() {
         return vec![];
     }
-    match open_database().and_then(|conn| scan(&conn)) {
+    match Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .and_then(|conn| scan(&conn, &data_dir))
+    {
         Ok(sessions) => sessions,
         Err(error) => {
             log::warn!("Cannot read MCode sessions: {error}");
@@ -25,10 +31,20 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     }
 }
 
-fn scan(conn: &Connection) -> rusqlite::Result<Vec<SessionMeta>> {
+fn scan(conn: &Connection, data_dir: &Path) -> rusqlite::Result<Vec<SessionMeta>> {
+    #[cfg(not(windows))]
+    let command = format!(
+        "env MINIMAX_DATA_DIR={} mcode",
+        crate::session_manager::terminal::shell_escape(&data_dir.to_string_lossy())
+    );
+    #[cfg(windows)]
+    let command = format!(
+        "$env:MINIMAX_DATA_DIR = '{}'; mcode",
+        data_dir.to_string_lossy().replace('\'', "''")
+    );
     let mut query = conn.prepare(
         "SELECT session_id, title, workspace_dir, created_at_ms, updated_at_ms
-         FROM local_runtime_sessions WHERE visibility <> 'hidden'
+         FROM local_runtime_sessions WHERE visibility <> 'hidden' AND archived = 0
          AND parent_session_id IS NULL AND session_kind NOT IN ('peek', 'channel', 'cron')
          ORDER BY updated_at_ms DESC",
     )?;
@@ -40,7 +56,7 @@ fn scan(conn: &Connection) -> rusqlite::Result<Vec<SessionMeta>> {
             resume_command: id
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-                .then(|| format!("mcode --session {id}")),
+                .then(|| format!("{command} --session {id}")),
             session_id: id,
             title: row.get(1)?,
             summary: None,
@@ -109,11 +125,12 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE local_runtime_sessions (
             session_id TEXT, title TEXT, workspace_dir TEXT, created_at_ms INTEGER,
-            updated_at_ms INTEGER, visibility TEXT, parent_session_id TEXT, session_kind TEXT);
+            updated_at_ms INTEGER, visibility TEXT, parent_session_id TEXT, session_kind TEXT, archived INTEGER);
             INSERT INTO local_runtime_sessions VALUES
-            ('mvs_public','Project','/work',100,200,'visible',NULL,'conversation'),
-            ('mvs_child','Child','/work',100,200,'visible','mvs_public','task'),
-            ('mvs_hidden','Hidden','/work',100,200,'hidden',NULL,'conversation');
+            ('mvs_public','Project','/work',100,200,'visible',NULL,'conversation',0),
+            ('mvs_child','Child','/work',100,200,'visible','mvs_public','task',0),
+            ('mvs_hidden','Hidden','/work',100,200,'hidden',NULL,'conversation',0),
+            ('mvs_archived','Archived','/work',100,200,'visible',NULL,'conversation',1);
             CREATE TABLE local_runtime_messages (session_id TEXT, display_messages_json TEXT);
             CREATE TABLE local_runtime_message_row_migrations (session_id TEXT);
             INSERT INTO local_runtime_message_row_migrations VALUES ('mvs_public');
@@ -121,12 +138,35 @@ mod tests {
             INSERT INTO local_runtime_message_rows VALUES
             (1,'mvs_public','user','{\"msg_content\":\"Fix this project\"}',100),
             (2,'mvs_public','assistant','{\"msg_content\":\"Tests passed\"}',200);").unwrap();
-        let sessions = scan(&conn).unwrap();
+        let data_dir = Path::new("/tmp/MiniMax Code's $(printf expanded)");
+        let sessions = scan(&conn, data_dir).unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(
-            sessions[0].resume_command.as_deref(),
-            Some("mcode --session mvs_public")
-        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = tempfile::tempdir().unwrap();
+            let executable = bin.path().join("mcode");
+            std::fs::write(
+                &executable,
+                "#!/bin/sh\nprintf '%s\\n' \"$MINIMAX_DATA_DIR\" \"$@\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(sessions[0].resume_command.as_ref().unwrap())
+                .env("PATH", format!("{}:/usr/bin:/bin", bin.path().display()))
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!("{}\n--session\nmvs_public\n", data_dir.display())
+            );
+        }
+        #[cfg(windows)]
+        assert_eq!(sessions[0].resume_command.as_deref(),
+            Some("$env:MINIMAX_DATA_DIR = '/tmp/MiniMax Code''s $(printf expanded)'; mcode --session mvs_public"));
         let messages = read_messages(&conn, "mvs_public").unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].content, "Tests passed");

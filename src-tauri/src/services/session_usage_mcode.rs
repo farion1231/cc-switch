@@ -2,6 +2,7 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::{session_usage::SessionSyncResult, usage_stats::find_model_pricing};
 use crate::session_manager::providers::mcode;
 use rusqlite::params;
@@ -69,12 +70,12 @@ fn sync_from_database(
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                 total_cost_usd, latency_ms, status_code, session_id, provider_type,
-                is_streaming, cost_multiplier, created_at, data_source
+                is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
              ) VALUES (?1, '_mcode_session', 'mcode', ?2, ?2, ?3, ?4, ?5, ?6,
-                       '0', '0', '0', '0', ?7, 0, 200, ?8, 'mcode_session', 1, '1', ?9, 'mcode_session')",
+                       '0', '0', '0', '0', ?7, 0, 200, ?8, 'mcode_session', 1, '1', ?9, 'mcode_session', ?10)",
             params![request_id, model, usage.input_tokens, usage.output_tokens,
                 usage.cache_read_tokens, usage.cache_creation_tokens, cost, session_id,
-                row.get::<_, i64>(3)? / 1000],
+                row.get::<_, i64>(3)? / 1000, INPUT_TOKEN_SEMANTICS_FRESH],
         )?;
         result.imported += changed as u32;
         result.skipped += u32::from(changed == 0);
@@ -148,6 +149,14 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             let values=conn.query_row("SELECT input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,total_cost_usd FROM proxy_request_logs WHERE app_type='mcode'",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?))).unwrap();
             assert_eq!(values, (10, 23, 40, 5, "0".into()));
+            let semantics: i64 = conn
+                .query_row(
+                    "SELECT input_token_semantics FROM proxy_request_logs WHERE app_type='mcode'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(semantics, INPUT_TOKEN_SEMANTICS_FRESH);
             conn.execute("DELETE FROM proxy_request_logs", []).unwrap();
         }
         assert_eq!(
