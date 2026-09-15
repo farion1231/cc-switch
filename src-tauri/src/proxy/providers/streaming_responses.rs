@@ -3488,6 +3488,27 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     terminated = true;
                                     continue;
                                 }
+                                if event_name == "response.completed"
+                                    && next_content_index == 0
+                                    && !has_substantive_output
+                                    && open_indices.is_empty()
+                                    && response_obj.get("output").and_then(Value::as_array).is_some()
+                                {
+                                    for event in responses_json_to_anthropic_sse(
+                                        response_obj.clone(),
+                                        Some(hosted_web_search_name.as_str()),
+                                        max_web_search_uses,
+                                    ) {
+                                        if has_sent_message_start
+                                            && event.starts_with(b"event: message_start\n")
+                                        {
+                                            continue;
+                                        }
+                                        yield Ok(event);
+                                    }
+                                    terminated = true;
+                                    continue;
+                                }
                                 if !has_sent_message_start {
                                     if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
                                         message_id = Some(id.to_string());
@@ -6427,6 +6448,56 @@ mod tests {
             vec!["Combined [answer](https://example.com/result)."]
         );
         assert!(merged.contains("\"web_search_requests\":2"));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_only_web_search_preserves_output_order() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before\",\"annotations\":[]}]},{\"id\":\"ws_order\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"After\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let events = sse_data_values(&merged);
+        let block_types: Vec<&str> = events
+            .iter()
+            .filter(|event| {
+                event.get("type").and_then(Value::as_str) == Some("content_block_start")
+            })
+            .filter_map(|event| event.pointer("/content_block/type").and_then(Value::as_str))
+            .collect();
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
+            .collect();
+
+        assert_eq!(
+            block_types,
+            vec!["text", "server_tool_use", "web_search_tool_result", "text"]
+        );
+        assert_eq!(text_deltas, vec!["Before", "After"]);
+        assert_eq!(merged.matches("event: message_start").count(), 1);
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_output_does_not_duplicate_done_reasoning() {
+        let input = concat!(
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_done\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reasoning\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_done\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}]}]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+
+        assert_eq!(merged.matches("\"type\":\"thinking_delta\"").count(), 1);
         assert!(merged.contains("event: message_stop"));
     }
 
