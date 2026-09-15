@@ -1349,6 +1349,8 @@ mod tests {
     #[tokio::test]
     async fn stream_error_event_marks_provider_failed() {
         let db = Arc::new(Database::memory().expect("memory db"));
+        insert_provider(&db, "provider-1", "codex", ProviderMeta::default())
+            .expect("insert provider");
         let state = build_state(db);
         let reporter = StreamFailureReporter::new(
             state.provider_router.clone(),
@@ -1375,6 +1377,27 @@ mod tests {
             last_error.contains("Our servers are currently overloaded"),
             "{last_error}"
         );
+        drop(status);
+
+        // 记账走后台任务，轮询等待健康度落库（驱动熔断器的那条记录）
+        let mut failures = 0;
+        for _ in 0..40 {
+            let health = state
+                .db
+                .get_provider_health("provider-1", "codex")
+                .await
+                .expect("provider health");
+            failures = health.consecutive_failures;
+            if failures >= 1 {
+                assert!(
+                    health.last_error.unwrap_or_default().contains("overloaded"),
+                    "健康记录应保留上游错误信息"
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(failures >= 1, "供应商失败必须落库，实际 {failures}");
     }
 
     /// 流未发送终止事件就结束 → 同样按供应商失败记账
