@@ -1,6 +1,13 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
-import { motion } from "framer-motion";
+import {
+  Server,
+  Activity,
+  Zap,
+  Globe,
+  ShieldAlert,
+  RotateCcw,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
   Accordion,
@@ -134,6 +141,41 @@ export function ProxyTabContent({
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
             />
+
+            <div className="mt-4 space-y-3">
+              <ToggleRow
+                icon={<RotateCcw className="h-4 w-4 text-blue-500" />}
+                title={t("settings.advanced.proxy.autoRestoreOnStartup")}
+                description={t(
+                  "settings.advanced.proxy.autoRestoreOnStartupDescription",
+                )}
+                checked={settings?.proxyRestoreOnStartup ?? false}
+                onCheckedChange={(checked) =>
+                  void onAutoSave({ proxyRestoreOnStartup: checked })
+                }
+              />
+
+              <AnimatePresence initial={false}>
+                {(settings?.proxyRestoreOnStartup ?? false) &&
+                  !(settings?.launchOnStartup ?? false) && (
+                    <motion.div
+                      key="auto-restore-needs-autostart"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.25 }}
+                    >
+                      <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                        <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                          {t(
+                            "settings.advanced.proxy.autoRestoreOnStartupNeedsAutostart",
+                          )}
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+              </AnimatePresence>
+            </div>
           </AccordionContent>
         </AccordionItem>
 
