@@ -14,6 +14,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod gemini_session;
 mod grok_config;
 pub mod hermes_config;
 mod init_status;
