@@ -92,9 +92,14 @@ fn normalize_wt_guid(guid: &str) -> String {
 }
 
 #[cfg(any(target_os = "windows", test))]
+const POWERSHELL_CORE_PROFILE_SOURCE: &str = "Windows.Terminal.PowershellCore";
+#[cfg(any(target_os = "windows", test))]
+const POWERSHELL_CORE_PROFILE_GUID: &str = "574e775e-4f2a-5b96-ac1e-a2962a402336";
+
+#[cfg(any(target_os = "windows", test))]
 fn known_wt_shell_from_normalized_guid(guid: &str) -> Option<WtDefaultShell> {
     match guid {
-        "574e775e-4f2a-5b96-ac1e-a2962a402336" => Some(WtDefaultShell::Pwsh),
+        POWERSHELL_CORE_PROFILE_GUID => Some(WtDefaultShell::Pwsh),
         "61c54bbd-c2c6-5271-96e7-009a87ff44bf" => Some(WtDefaultShell::PowerShell),
         "0caa0dad-35be-5f56-a8ff-afceeeaa6101" => Some(WtDefaultShell::Cmd),
         _ => None,
@@ -415,7 +420,7 @@ fn classify_wt_profile(
     // Dynamic profiles may omit an inspectable commandline; only known sources
     // with a fixed meaning are accepted.
     if let Some(source) = profile.get("source").and_then(|v| v.as_str()) {
-        if source == "Windows.Terminal.PowershellCore" {
+        if source == POWERSHELL_CORE_PROFILE_SOURCE {
             return Some(WtDefaultShell::Pwsh);
         }
 
@@ -471,6 +476,26 @@ fn wt_profile_guid(profile: &serde_json::Value) -> Option<uuid::Uuid> {
     Some(wt_uuid_v5(namespace, name))
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn wt_source_is_disabled(source: &str, disabled_sources: &[serde_json::Value]) -> bool {
+    disabled_sources
+        .iter()
+        .any(|disabled| disabled.as_str() == Some(source))
+}
+
+/// Disabled generators leave their customization stubs in `profiles.list`, but
+/// WT marks those profiles orphaned because the generated parent is absent.
+#[cfg(any(target_os = "windows", test))]
+fn wt_profile_source_is_disabled(
+    profile: &serde_json::Value,
+    disabled_sources: &[serde_json::Value],
+) -> bool {
+    profile
+        .get("source")
+        .and_then(|value| value.as_str())
+        .is_some_and(|source| wt_source_is_disabled(source, disabled_sources))
+}
+
 /// Parse Windows Terminal settings.json and keep the default profile selector
 /// alongside its shell, so launch uses the same profile that was classified.
 #[cfg(any(target_os = "windows", test))]
@@ -492,6 +517,11 @@ fn parse_wt_default_profile(
     if default_profile.is_empty() {
         return None;
     }
+    let disabled_profile_sources = json
+        .get("disabledProfileSources")
+        .and_then(|value| value.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default();
 
     // Support modern `profiles.list` and the legacy flat `profiles` array.
     let profiles = json.get("profiles");
@@ -526,19 +556,23 @@ fn parse_wt_default_profile(
         // by name, so an earlier same-name profile must not steal the match.
         let matched = default_guid
             .and_then(|expected| {
-                list.iter().find_map(|item| {
-                    let guid = wt_profile_guid(item)?;
-                    (guid == expected).then_some((item, guid))
-                })
+                list.iter()
+                    .filter(|item| !wt_profile_source_is_disabled(item, disabled_profile_sources))
+                    .find_map(|item| {
+                        let guid = wt_profile_guid(item)?;
+                        (guid == expected).then_some((item, guid))
+                    })
             })
             .or_else(|| {
-                list.iter().find_map(|item| {
-                    let guid = wt_profile_guid(item)?;
-                    item.get("name")
-                        .and_then(|name| name.as_str())
-                        .is_some_and(|name| name == default_profile)
-                        .then_some((item, guid))
-                })
+                list.iter()
+                    .filter(|item| !wt_profile_source_is_disabled(item, disabled_profile_sources))
+                    .find_map(|item| {
+                        let guid = wt_profile_guid(item)?;
+                        item.get("name")
+                            .and_then(|name| name.as_str())
+                            .is_some_and(|name| name == default_profile)
+                            .then_some((item, guid))
+                    })
             });
 
         if let Some((item, guid)) = matched {
@@ -556,6 +590,14 @@ fn parse_wt_default_profile(
                 shell: classify_wt_profile(item, inherited_commandline)?,
             });
         }
+    }
+
+    // The PowerShell Core generator may be disabled while its well-known GUID
+    // remains configured as defaultProfile. Do not launch that unavailable selector.
+    if default_norm_guid == POWERSHELL_CORE_PROFILE_GUID
+        && wt_source_is_disabled(POWERSHELL_CORE_PROFILE_SOURCE, disabled_profile_sources)
+    {
+        return None;
     }
 
     // Unlisted built-in profiles use the same version rule; an unknown version
@@ -1213,6 +1255,59 @@ mod tests {
         assert_eq!(
             parse_wt_default_profile(name_config, None).map(|profile| profile.shell),
             Some(WtDefaultShell::Pwsh)
+        );
+    }
+
+    #[test]
+    fn disabled_dynamic_profile_sources_use_explicit_fallback() {
+        for default_profile in ["{574e775e-4f2a-5b96-ac1e-a2962a402336}", "PowerShell"] {
+            let disabled_listed_profile = serde_json::json!({
+                "defaultProfile": default_profile,
+                "disabledProfileSources": [
+                    null,
+                    "Windows.Terminal.PowershellCore"
+                ],
+                "profiles": {"list": [{
+                    "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+                    "name": "PowerShell",
+                    "source": "Windows.Terminal.PowershellCore"
+                }]}
+            });
+            let profile = parse_wt_default_profile(&disabled_listed_profile.to_string(), None);
+            assert_eq!(
+                profile, None,
+                "a customization stub from a disabled generator is not an active profile"
+            );
+            assert_eq!(
+                select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'"),
+                build_wt_cmd_fallback_args()
+            );
+        }
+
+        let disabled_unlisted_builtin = serde_json::json!({
+            "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+            "disabledProfileSources": ["Windows.Terminal.PowershellCore"]
+        });
+        assert_eq!(
+            parse_wt_default_profile(&disabled_unlisted_builtin.to_string(), None),
+            None,
+            "the built-in GUID fallback must honor disabledProfileSources"
+        );
+
+        let unrelated_disabled_source = serde_json::json!({
+            "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+            "disabledProfileSources": ["Windows.Terminal.Wsl"],
+            "profiles": {"list": [{
+                "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+                "name": "PowerShell",
+                "source": "Windows.Terminal.PowershellCore"
+            }]}
+        });
+        assert_eq!(
+            parse_wt_default_profile(&unrelated_disabled_source.to_string(), None)
+                .map(|profile| profile.shell),
+            Some(WtDefaultShell::Pwsh),
+            "disabling a different generator must not hide PowerShell Core"
         );
     }
 
