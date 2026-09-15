@@ -3374,7 +3374,7 @@ fn preserve_codex_sibling_provider_definitions(config_text: &str) -> Result<Stri
         // 已存在则不覆盖（可能是用户手写的定义）
         let exists = doc
             .get("model_providers")
-            .and_then(|item| item.as_table())
+            .and_then(|item| item.as_table_like())
             .is_some_and(|providers| providers.contains_key(id));
         if exists {
             continue;
@@ -3384,11 +3384,15 @@ fn preserve_codex_sibling_provider_definitions(config_text: &str) -> Result<Stri
             parent.set_implicit(true);
             doc["model_providers"] = toml_edit::Item::Table(parent);
         }
+        // 标准表与 inline 容器分开插：inline 容器装标准表会写出非法 TOML。
         if let Some(providers) = doc["model_providers"].as_table_mut() {
             providers.insert(
                 id,
                 toml_edit::Item::Table(codex_unified_official_provider_table()),
             );
+            changed = true;
+        } else if let Some(providers) = doc["model_providers"].as_inline_table_mut() {
+            providers.insert(id, codex_unified_official_provider_inline_value());
             changed = true;
         }
     }
@@ -3542,6 +3546,17 @@ fn codex_unified_official_provider_table() -> toml_edit::Table {
     codex_official_provider_table(None, true)
 }
 
+/// 官方 provider 定义的 inline 形态（`model_providers = { custom = {...} }`
+/// 容器只能装 inline 表，插标准表会写出非法 TOML）。
+fn codex_unified_official_provider_inline_value() -> toml_edit::Value {
+    let mut table = toml_edit::InlineTable::new();
+    table.insert("name", toml_edit::Value::from("OpenAI"));
+    table.insert("requires_openai_auth", toml_edit::Value::from(true));
+    table.insert("supports_websockets", toml_edit::Value::from(true));
+    table.insert("wire_api", toml_edit::Value::from("responses"));
+    toml_edit::Value::InlineTable(table)
+}
+
 fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
     for (_, item) in providers.iter_mut() {
         if let Some(table) = item.as_table_mut() {
@@ -3656,7 +3671,7 @@ pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, Ap
     Ok(doc.to_string())
 }
 
-fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
+fn table_matches_codex_unified_official_provider(table: &dyn toml_edit::TableLike) -> bool {
     table.len() == 4
         && table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
         && table
@@ -3691,14 +3706,19 @@ pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, 
             return Ok(config_text.to_string());
         }
         // "openai" 是官方 provider 模板里唯一会出现的合法值，不是用户手写
-        // 的第三方路由，直接改写为 custom 桶不会误伤（#6340）。
+        // 的第三方路由，直接改写为 custom 桶不会误伤（#6340）。例外：
+        // 顶层 `openai_base_url` 只对内置 openai provider 生效，是官方卡
+        // 配中转端点的老形态——改写会让该 URL 静默失效，保持原样拒绝注入。
+        if doc.get("openai_base_url").is_some() {
+            return Ok(config_text.to_string());
+        }
     }
 
     let existing_custom_conflicts = doc
         .get("model_providers")
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .is_some_and(|table| !table_matches_codex_unified_official_provider(table));
     if existing_custom_conflicts {
         log::warn!(
@@ -3714,11 +3734,21 @@ pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, 
         parent.set_implicit(true);
         doc["model_providers"] = toml_edit::Item::Table(parent);
     }
-    if let Some(providers) = doc["model_providers"].as_table_mut() {
-        if !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) {
+    let needs_entry = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .is_none_or(|providers| !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID));
+    if needs_entry {
+        // 标准表与 inline 容器分开插：inline 容器装标准表会写出非法 TOML。
+        if let Some(providers) = doc["model_providers"].as_table_mut() {
             providers.insert(
                 CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
                 toml_edit::Item::Table(codex_unified_official_provider_table()),
+            );
+        } else if let Some(providers) = doc["model_providers"].as_inline_table_mut() {
+            providers.insert(
+                CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+                codex_unified_official_provider_inline_value(),
             );
         }
     }
@@ -3744,9 +3774,9 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
     }
     let matches_injected = doc
         .get("model_providers")
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .is_some_and(table_matches_codex_unified_official_provider);
     if !matches_injected {
         return Ok(config_text.to_string());
@@ -4774,6 +4804,50 @@ base_url = "https://relay.example/v1"
             doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
             Some("sk-user-key")
         );
+    }
+
+    #[test]
+    fn sibling_provider_definitions_preserved_for_inline_provider_map() {
+        // inline 形态的 model_providers（`model_providers = { relay = {...} }`）：
+        // 兄弟定义以 inline 表补写，产出仍是合法 TOML。
+        let config = r#"model_provider = "relay"
+model_providers = { relay = { name = "Relay", base_url = "https://relay.example/v1", wire_api = "responses" } }
+"#;
+        let result = preserve_codex_sibling_provider_definitions(config).expect("preserve");
+        let doc: toml::Table = toml::from_str(&result).expect("parse");
+
+        let custom = doc["model_providers"]["custom"].as_table().expect("custom");
+        assert_eq!(custom["name"].as_str(), Some("OpenAI"));
+        assert_eq!(custom["requires_openai_auth"].as_bool(), Some(true));
+        assert!(custom.get("base_url").is_none());
+        assert!(
+            doc["model_providers"]["cc-switch-official"].is_table(),
+            "cc-switch-official appended too"
+        );
+        // 活跃 provider 原样
+        assert_eq!(
+            doc["model_providers"]["relay"]["base_url"].as_str(),
+            Some("https://relay.example/v1")
+        );
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_openai_reroute_with_base_url() {
+        // 官方卡配中转的老形态：顶层 openai_base_url 只对内置 openai 生效，
+        // 改写 selector 会让该 URL 静默失效，必须整体拒绝注入。
+        let reroute =
+            "model_provider = \"openai\"\nopenai_base_url = \"https://relay.example/v1\"\n";
+        let unchanged = inject_codex_unified_session_bucket(reroute).expect("inject");
+        assert_eq!(unchanged, reroute);
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_conflicting_inline_custom_entry() {
+        // inline 形态的冲突 custom 表（带 base_url）：冲突检查必须识别
+        // inline 容器，否则改写 selector 会激活这张未经检查的表。
+        let inline_conflict = "model_provider = \"openai\"\nmodel_providers = { custom = { name = \"MyRelay\", base_url = \"https://my-relay.example/v1\", wire_api = \"responses\", requires_openai_auth = true } }\n";
+        let unchanged = inject_codex_unified_session_bucket(inline_conflict).expect("inject");
+        assert_eq!(unchanged, inline_conflict);
     }
 
     #[test]
