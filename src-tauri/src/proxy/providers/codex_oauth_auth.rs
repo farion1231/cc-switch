@@ -1623,6 +1623,20 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
+    pub(crate) async fn test_cache_access_token(&self, account_id: &str, token: &str) {
+        assert!(self.accounts.read().await.contains_key(account_id));
+        let now = chrono::Utc::now().timestamp_millis();
+        self.access_tokens.write().await.insert(
+            account_id.to_string(),
+            CachedAccessToken {
+                token: token.to_string(),
+                expires_at_ms: now + 3_600_000,
+                obtained_at_ms: now,
+            },
+        );
+    }
+
+    #[cfg(test)]
     pub(crate) async fn test_refresh_token_for_account(&self, account_id: &str) -> Option<String> {
         self.accounts
             .read()
