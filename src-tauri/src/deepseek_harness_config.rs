@@ -211,7 +211,14 @@ pub fn remove_provider() -> Result<(), AppError> {
         })?;
     }
 
-    update_credential_reference(API_KEY_REF, None)?;
+    // Custom routes may legally share DEEPSEEK_API_KEY; keep the credential
+    // alive when a surviving route still points at it.
+    let still_referenced = read_native_state()?.providers.values().any(|provider| {
+        provider.config.get("apiKeyEnv").and_then(Value::as_str) == Some(API_KEY_REF)
+    });
+    if !still_referenced {
+        update_credential_reference(API_KEY_REF, None)?;
+    }
     Ok(())
 }
 
@@ -334,7 +341,14 @@ pub fn remove_pi_ai_provider(provider_id: &str) -> Result<(), AppError> {
         Ok(())
     })?;
     if let Some(reference) = credential_ref {
-        update_credential_reference(&reference, None)?;
+        // Custom routes may share one credential ref (including DEEPSEEK_API_KEY):
+        // only clear it when no surviving route still points at it.
+        let still_referenced = read_native_state()?.providers.values().any(|provider| {
+            provider.config.get("apiKeyEnv").and_then(Value::as_str) == Some(reference.as_str())
+        });
+        if !still_referenced {
+            update_credential_reference(&reference, None)?;
+        }
     }
     Ok(())
 }

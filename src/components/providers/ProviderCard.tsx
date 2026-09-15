@@ -260,11 +260,15 @@ export function ProviderCard({
     if (appId !== "deepseek-harness") return [];
     const models = (provider.settingsConfig as Record<string, unknown>)?.models;
     if (!Array.isArray(models)) return [];
+    // Bare strings are a valid native catalog shape; treat them as model ids
+    // the same way the form's normalizeDshModels does.
     return models
       .map((model) =>
-        model && typeof model === "object"
-          ? String((model as Record<string, unknown>).id ?? "").trim()
-          : "",
+        typeof model === "string"
+          ? model.trim()
+          : model && typeof model === "object"
+            ? String((model as Record<string, unknown>).id ?? "").trim()
+            : "",
       )
       .filter(Boolean);
   }, [appId, provider.settingsConfig]);

@@ -92,18 +92,23 @@ pub(super) fn update(
         &provider,
     )?;
     let native = crate::deepseek_harness_config::read_native_state()?;
+    // DB-only providers (e.g. duplicates created with addToLive = false) must
+    // stay out of settings.yaml: an edit only updates the database row until
+    // the user explicitly adds the route to the live configuration.
+    let in_native = native.providers.contains_key(provider.id.as_str());
     // The edit form's default-model field only takes effect on the route that
     // is currently selected in DSH; applying it unconditionally would let an
     // edit of a background provider silently steal the native selection.
-    let desired_model = if native.current_provider.as_deref() == Some(provider.id.as_str()) {
-        provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.dsh_current_model.as_deref())
-            .filter(|model| !model.trim().is_empty())
-    } else {
-        None
-    };
+    let desired_model =
+        if in_native && native.current_provider.as_deref() == Some(provider.id.as_str()) {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.dsh_current_model.as_deref())
+                .filter(|model| !model.trim().is_empty())
+        } else {
+            None
+        };
     // Validate before any write so an unknown model cannot half-commit the
     // native file and the database row that the writes below already made.
     if let Some(model) = desired_model {
@@ -114,7 +119,9 @@ pub(super) fn update(
             )));
         }
     }
-    write_native_provider(&provider)?;
+    if in_native {
+        write_native_provider(&provider)?;
+    }
     state.db.save_provider(APP, &provider)?;
     if let Some(model) = desired_model {
         if native.current_model.as_deref() != Some(model) {
@@ -529,6 +536,108 @@ mod tests {
         // The removed route was not the current one: the default-model pointer
         // must survive untouched.
         assert!(settings.contains("agent-default-model"));
+    }
+
+    #[test]
+    #[serial]
+    fn remove_keeps_credentials_still_referenced_by_sibling_routes() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        // Make both pi-ai routes share one credential ref.
+        std::fs::write(
+            home._dir.path().join("settings.yaml"),
+            "llm-pi-ai:\n  providers:\n    route-a:\n      displayName: A\n      baseURL: https://a.example/v1\n      apiKeyEnv: COMPANY_API_KEY\n      models:\n        - id: m-a\n    route-b:\n      displayName: B\n      baseURL: https://b.example/v1\n      apiKeyEnv: COMPANY_API_KEY\n      models:\n        - id: m-b\n",
+        )
+        .unwrap();
+        import_from_live(&state).unwrap();
+
+        delete(&state, "route-a").unwrap();
+        let credentials =
+            std::fs::read_to_string(home._dir.path().join(".credentials.yaml")).unwrap();
+        assert!(
+            credentials.contains("COMPANY_API_KEY"),
+            "shared ref must survive while route-b still uses it"
+        );
+
+        delete(&state, "route-b").unwrap();
+        let credentials =
+            std::fs::read_to_string(home._dir.path().join(".credentials.yaml")).unwrap();
+        assert!(
+            !credentials.contains("COMPANY_API_KEY"),
+            "unreferenced credentials are cleaned up"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn remove_official_route_keeps_shared_deepseek_credential() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        // The custom route shares DEEPSEEK_API_KEY with the official route.
+        std::fs::write(
+            home._dir.path().join("settings.yaml"),
+            "llm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\n  models:\n    - id: deepseek-v4-pro\nllm-pi-ai:\n  providers:\n    company:\n      displayName: Company\n      baseURL: https://gateway.example/v1\n      apiKeyEnv: DEEPSEEK_API_KEY\n      models:\n        - id: glm-5.3\n",
+        )
+        .unwrap();
+        import_from_live(&state).unwrap();
+
+        remove_from_live(&state, crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID).unwrap();
+
+        let credentials =
+            std::fs::read_to_string(home._dir.path().join(".credentials.yaml")).unwrap();
+        assert!(
+            credentials.contains("DEEPSEEK_API_KEY"),
+            "the official route must not clear a shared credential"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn update_keeps_db_only_providers_out_of_native_config() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        let mut copy = Provider::with_id(
+            "company-copy".to_string(),
+            "Company Copy".to_string(),
+            json!({
+                "displayName": "Company Copy",
+                "api": "openai-completions",
+                "baseURL": "https://copy.example/v1",
+                "apiKeyEnv": "COMPANY_API_KEY",
+                "apiKey": "secret",
+                "models": [{"id": "m-1"}]
+            }),
+            None,
+        );
+        copy.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("dsh_pi_ai".to_string()),
+            ..Default::default()
+        });
+        add(&state, copy, false).unwrap();
+        let settings_before =
+            std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+
+        let mut edited = state
+            .db
+            .get_provider_by_id("company-copy", APP)
+            .unwrap()
+            .unwrap();
+        edited.name = "Renamed Copy".to_string();
+        update(&state, None, edited).unwrap();
+
+        let settings_after =
+            std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        assert_eq!(
+            settings_before, settings_after,
+            "editing a DB-only provider must not touch the native file"
+        );
+        assert!(!crate::deepseek_harness_config::read_native_state()
+            .unwrap()
+            .providers
+            .contains_key("company-copy"));
     }
 
     #[test]
