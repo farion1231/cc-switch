@@ -402,6 +402,7 @@ pub enum AppType {
     )]
     ClaudeDesktop,
     Codex,
+    #[serde(alias = "antigravity")]
     Gemini,
     GrokBuild,
     OpenCode,
@@ -473,7 +474,7 @@ impl FromStr for AppType {
             "claude" => Ok(AppType::Claude),
             "claude-desktop" | "claude_desktop" | "claudedesktop" => Ok(AppType::ClaudeDesktop),
             "codex" => Ok(AppType::Codex),
-            "gemini" => Ok(AppType::Gemini),
+            "gemini" | "antigravity" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
