@@ -266,12 +266,8 @@ pub(crate) fn apply_plugin_sse_transform_if_needed(
                 is_bedrock: is_bedrock_provider(&ctx.provider),
             }),
         };
-        let transformed = create_sse_plugin_transform_stream(
-            stream,
-            state.plugins.clone(),
-            plugin_ctx,
-            ctx.tag,
-        );
+        let transformed =
+            create_sse_plugin_transform_stream(stream, state.plugins.clone(), plugin_ctx, ctx.tag);
         Box::pin(create_logged_passthrough_stream(
             transformed,
             tag,
@@ -443,7 +439,11 @@ fn transform_sse_block(
     }
 
     // 重 emitted：非 data 行按原样保序保留，data 行合并为单行 `data: <new>`
-    let line_ending: &str = if delimiter == "\r\n\r\n" { "\r\n" } else { "\n" };
+    let line_ending: &str = if delimiter == "\r\n\r\n" {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut out_lines: Vec<String> = Vec::new();
     let mut data_emitted = false;
     for line in block.lines() {
@@ -564,10 +564,11 @@ pub async fn handle_non_streaming(
     // 格式转换路径（handle_claude_transform 等）在各自聚合分支通过
     // apply_post_response_plugin_transform_if_needed 接入同一挂点；
     // 流式路径由 SseChunk 挂点处理（见 apply_plugin_sse_transform_if_needed）。
-    if status.is_success() && !state
-        .plugins
-        .plugins_for_stage(PluginStage::PostResponse)
-        .is_empty()
+    if status.is_success()
+        && !state
+            .plugins
+            .plugins_for_stage(PluginStage::PostResponse)
+            .is_empty()
     {
         if let Ok(mut body_value) = serde_json::from_slice::<Value>(&body_bytes) {
             let plugin_ctx = PluginRequestContext {
@@ -1639,12 +1640,12 @@ mod tests {
         }
     }
 
-    fn replace_registry(
-        needle: &'static str,
-        replacement: &'static str,
-    ) -> Arc<PluginRegistry> {
+    fn replace_registry(needle: &'static str, replacement: &'static str) -> Arc<PluginRegistry> {
         let registry = PluginRegistry::new();
-        registry.register(Arc::new(SseReplacePlugin { needle, replacement }));
+        registry.register(Arc::new(SseReplacePlugin {
+            needle,
+            replacement,
+        }));
         Arc::new(registry)
     }
 
@@ -1654,8 +1655,7 @@ mod tests {
         registry: Arc<PluginRegistry>,
     ) -> Vec<u8> {
         let stream = futures::stream::iter(chunks);
-        let wrapped =
-            create_sse_plugin_transform_stream(stream, registry, sse_test_ctx(), "Test");
+        let wrapped = create_sse_plugin_transform_stream(stream, registry, sse_test_ctx(), "Test");
         let mut out = Vec::new();
         tokio::pin!(wrapped);
         while let Some(item) = wrapped.next().await {
@@ -1698,7 +1698,9 @@ mod tests {
 
         // CRLF 块被修改：行尾与分隔符沿用 \r\n 样式
         let out = collect_transformed(
-            to_chunks(vec![b"id: 7\r\n: keep\r\nevent: m\r\ndata: \"AAA\"\r\n\r\n"]),
+            to_chunks(vec![
+                b"id: 7\r\n: keep\r\nevent: m\r\ndata: \"AAA\"\r\n\r\n",
+            ]),
             replace_registry("AAA", "BBB"),
         )
         .await;
@@ -1741,11 +1743,7 @@ mod tests {
         let block = "event: m\ndata: {\"t\":\"你好\"}\n\n".to_string();
         let bytes = block.as_bytes();
         // 在 "你" 的第 2 个字节处切开
-        let split = bytes
-            .windows(3)
-            .position(|w| w == "你".as_bytes())
-            .unwrap()
-            + 2;
+        let split = bytes.windows(3).position(|w| w == "你".as_bytes()).unwrap() + 2;
         let out = collect_transformed(
             vec![
                 Ok(Bytes::copy_from_slice(&bytes[..split])),
@@ -1761,7 +1759,9 @@ mod tests {
     async fn sse_wrapper_flushes_incomplete_tail_block() {
         // 流结束时缓冲里残余的不完整块原样冲出（不参与管线）
         let out = collect_transformed(
-            to_chunks(vec![b"data: {\"t\":\"AA\"}\n\ndata: tail-without-delimiter"]),
+            to_chunks(vec![
+                b"data: {\"t\":\"AA\"}\n\ndata: tail-without-delimiter",
+            ]),
             replace_registry("AA", "XX"),
         )
         .await;
@@ -1775,9 +1775,11 @@ mod tests {
     async fn sse_wrapper_empty_registry_passthrough_identical() {
         // 无插件注册时（handle_streaming 不会走此路径，防御性透传）字节级一致
         let original = "event: a\ndata: {\"x\":1}\n\nevent: b\r\ndata: {\"y\":2}\r\n\r\n";
-        let out =
-            collect_transformed(to_chunks(vec![original.as_bytes()]), Arc::new(PluginRegistry::new()))
-                .await;
+        let out = collect_transformed(
+            to_chunks(vec![original.as_bytes()]),
+            Arc::new(PluginRegistry::new()),
+        )
+        .await;
         assert_eq!(out, original.as_bytes());
     }
 }

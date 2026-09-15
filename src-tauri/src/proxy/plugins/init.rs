@@ -210,12 +210,15 @@ mod tests {
         write_plugin(tmp.path(), "good", "good-plugin");
 
         let db = Arc::new(Database::memory().unwrap());
-        db.set_setting("plugins_config", r#"{"enabled": false}"#).unwrap();
+        db.set_setting("plugins_config", r#"{"enabled": false}"#)
+            .unwrap();
 
         let registry = build_registry(db, tmp.path());
         // 全局关闭：注册表内容保留，但全局开关关闭 → 管线为空、条目展示为禁用
         assert!(!registry.global_enabled());
-        assert!(registry.plugins_for_stage(PluginStage::PreRequest).is_empty());
+        assert!(registry
+            .plugins_for_stage(PluginStage::PreRequest)
+            .is_empty());
         let infos = registry.list();
         assert!(!infos.is_empty());
         assert!(infos.iter().all(|i| !i.enabled));

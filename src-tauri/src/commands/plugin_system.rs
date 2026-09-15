@@ -50,7 +50,9 @@ pub async fn plugin_set_enabled(
         .unwrap_or_default();
     merged.enabled = Some(enabled);
 
-    state.plugins.set_override(&id, merged.enabled, merged.priority);
+    state
+        .plugins
+        .set_override(&id, merged.enabled, merged.priority);
 
     let mut config = state.db.get_plugins_config().map_err(|e| e.to_string())?;
     config.overrides.insert(id, merged);
@@ -76,7 +78,9 @@ pub async fn plugin_set_priority(
         .unwrap_or_default();
     merged.priority = Some(priority);
 
-    state.plugins.set_override(&id, merged.enabled, merged.priority);
+    state
+        .plugins
+        .set_override(&id, merged.enabled, merged.priority);
 
     let mut config = state.db.get_plugins_config().map_err(|e| e.to_string())?;
     config.overrides.insert(id, merged);
@@ -107,7 +111,9 @@ pub async fn plugin_set_all_enabled(
 
 /// 重扫用户插件目录并重新应用 overrides / 全局开关
 #[tauri::command]
-pub async fn plugin_reload(state: tauri::State<'_, AppState>) -> Result<PluginReloadResult, String> {
+pub async fn plugin_reload(
+    state: tauri::State<'_, AppState>,
+) -> Result<PluginReloadResult, String> {
     crate::proxy::plugins::reload_user_plugins(&state.plugins, &state.db);
 
     let infos = state.plugins.list();
@@ -119,7 +125,10 @@ pub async fn plugin_reload(state: tauri::State<'_, AppState>) -> Result<PluginRe
         .iter()
         .filter_map(|i| i.error.as_ref().map(|e| format!("{}: {e}", i.id)))
         .collect();
-    log::info!("[PLUGIN] 用户插件重载完成: loaded={loaded}, errors={}", errors.len());
+    log::info!(
+        "[PLUGIN] 用户插件重载完成: loaded={loaded}, errors={}",
+        errors.len()
+    );
     Ok(PluginReloadResult { loaded, errors })
 }
 
@@ -181,8 +190,8 @@ pub async fn plugin_import(
     }
     let content = std::fs::read_to_string(&manifest_path)
         .map_err(|e| format!("读取 plugin.json 失败: {e}"))?;
-    let manifest: PluginManifest = serde_json::from_str(&content)
-        .map_err(|e| format!("plugin.json 解析失败: {e}"))?;
+    let manifest: PluginManifest =
+        serde_json::from_str(&content).map_err(|e| format!("plugin.json 解析失败: {e}"))?;
     manifest
         .validate()
         .map_err(|e| format!("plugin.json 校验失败: {e}"))?;
@@ -206,7 +215,10 @@ pub async fn plugin_import(
     crate::proxy::plugins::reload_user_plugins(&state.plugins, &state.db);
     let plugin_id = format!("user:{}", manifest.id);
     log::info!("[PLUGIN] 已导入用户插件 {dir_name} ({plugin_id})");
-    Ok(PluginImportResult { plugin_id, dir_name })
+    Ok(PluginImportResult {
+        plugin_id,
+        dir_name,
+    })
 }
 
 /// 合并单个插件覆盖的共用逻辑占位（供未来扩展）；当前保留 PluginOverride 引用避免未用告警

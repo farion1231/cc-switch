@@ -189,8 +189,9 @@ impl PluginProcessRunner for TokioProcessRunner {
                         .enable_all()
                         .build()
                     {
-                        Ok(rt) => rt
-                            .block_on(TokioProcessRunner.run_async(&cmd, &cwd, &input, timeout)),
+                        Ok(rt) => {
+                            rt.block_on(TokioProcessRunner.run_async(&cmd, &cwd, &input, timeout))
+                        }
                         Err(e) => Err(PluginError::Io(e)),
                     };
                     let _ = tx.send(result);
@@ -296,11 +297,12 @@ impl PersistentTransport for PersistentProcessTransport {
         // - 不在运行时内：直接 blocking_recv
         match tokio::runtime::Handle::try_current() {
             Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| handle.block_on(reply_rx))
-                    .map_err(|_| PluginError::Execution {
+                tokio::task::block_in_place(|| handle.block_on(reply_rx)).map_err(|_| {
+                    PluginError::Execution {
                         plugin_id: self.plugin_id.clone(),
                         message: "常驻插件 worker 异常终止".to_string(),
-                    })?
+                    }
+                })?
             }
             Ok(_) => {
                 let (tx2, rx2) = std::sync::mpsc::channel();
@@ -309,10 +311,12 @@ impl PersistentTransport for PersistentProcessTransport {
                         .build()
                         .ok()
                         .and_then(|rt| rt.block_on(reply_rx).ok())
-                        .unwrap_or_else(|| Err(PluginError::Execution {
-                            plugin_id: "persistent".to_string(),
-                            message: "等待常驻插件回执线程异常终止".to_string(),
-                        }));
+                        .unwrap_or_else(|| {
+                            Err(PluginError::Execution {
+                                plugin_id: "persistent".to_string(),
+                                message: "等待常驻插件回执线程异常终止".to_string(),
+                            })
+                        });
                     let _ = tx2.send(result);
                 });
                 rx2.recv().map_err(|_| PluginError::Execution {
@@ -338,7 +342,10 @@ fn persistent_worker_main(
     cwd: PathBuf,
     mut rx: tokio::sync::mpsc::Receiver<PersistentWorkerMsg>,
 ) {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
         log::warn!("[PLUGIN] 常驻插件 {plugin_id} worker runtime 创建失败，插件不可用");
         return;
     };
@@ -347,11 +354,14 @@ fn persistent_worker_main(
         while let Some(msg) = rx.recv().await {
             match msg {
                 PersistentWorkerMsg::Shutdown => break,
-                PersistentWorkerMsg::Call { input, timeout, reply } => {
-                    let result = persistent_call(
-                        &mut session, &plugin_id, &command, &cwd, &input, timeout,
-                    )
-                    .await;
+                PersistentWorkerMsg::Call {
+                    input,
+                    timeout,
+                    reply,
+                } => {
+                    let result =
+                        persistent_call(&mut session, &plugin_id, &command, &cwd, &input, timeout)
+                            .await;
                     let _ = reply.send(result);
                 }
             }
@@ -372,14 +382,20 @@ async fn persistent_call(
     for attempt in 0..2usize {
         if session.is_none() {
             *session = Some(persistent_spawn(plugin_id, command, cwd).await?);
-            log::debug!("[PLUGIN] 常驻插件 {plugin_id} 进程已启动（第 {} 次拉起）", attempt + 1);
+            log::debug!(
+                "[PLUGIN] 常驻插件 {plugin_id} 进程已启动（第 {} 次拉起）",
+                attempt + 1
+            );
         }
         let live = session.as_mut().expect("会话已保证存在");
         let exchange = persistent_exchange(plugin_id, live, input);
         match tokio::time::timeout(timeout, exchange).await {
             Ok(Ok(line)) => return Ok(line),
             Ok(Err(e)) => {
-                log::warn!("[PLUGIN] 常驻插件 {plugin_id} 调用失败（第 {} 次）: {e}", attempt + 1);
+                log::warn!(
+                    "[PLUGIN] 常驻插件 {plugin_id} 调用失败（第 {} 次）: {e}",
+                    attempt + 1
+                );
             }
             Err(_) => {
                 log::warn!(
@@ -439,10 +455,7 @@ async fn persistent_spawn(
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]);
-                        log::debug!(
-                            "[PLUGIN] 常驻插件 {plugin_id} stderr: {}",
-                            text.trim_end()
-                        );
+                        log::debug!("[PLUGIN] 常驻插件 {plugin_id} stderr: {}", text.trim_end());
                     }
                 }
             }
@@ -869,8 +882,7 @@ mod tests {
                 continue;
             }
             let content = fs::read_to_string(&manifest_path).expect("read manifest");
-            let manifest: PluginManifest =
-                serde_json::from_str(&content).expect("parse manifest");
+            let manifest: PluginManifest = serde_json::from_str(&content).expect("parse manifest");
             manifest
                 .validate()
                 .unwrap_or_else(|e| panic!("{} 校验失败: {e}", manifest_path.display()));
@@ -920,15 +932,12 @@ mod tests {
             input: &str,
             timeout: Duration,
         ) -> Result<String, PluginError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((
-                    cmd.to_vec(),
-                    cwd.to_path_buf(),
-                    input.to_string(),
-                    timeout.as_millis(),
-                ));
+            self.calls.lock().unwrap().push((
+                cmd.to_vec(),
+                cwd.to_path_buf(),
+                input.to_string(),
+                timeout.as_millis(),
+            ));
             match &self.output {
                 MockOutput::Text(text) => Ok(text.clone()),
                 MockOutput::Fail(message) => Err(PluginError::Execution {
@@ -1115,7 +1124,12 @@ mod tests {
 
         let mut data = "original payload".to_string();
         let changed = plugin
-            .transform_sse_event(&ctx(PluginStage::SseChunk), Some("content_block_delta"), &mut data, &mut ())
+            .transform_sse_event(
+                &ctx(PluginStage::SseChunk),
+                Some("content_block_delta"),
+                &mut data,
+                &mut (),
+            )
             .unwrap();
         assert!(changed);
         assert_eq!(data, "changed payload");
@@ -1165,7 +1179,10 @@ mod tests {
 
         let mut body = json!({"model": "original"});
         let result = plugin.transform_request(&ctx(PluginStage::PreRequest), &mut body);
-        assert!(result.is_err(), "传输失败应返回 Err（fail-open 由管线处理）");
+        assert!(
+            result.is_err(),
+            "传输失败应返回 Err（fail-open 由管线处理）"
+        );
         assert_eq!(body, json!({"model": "original"}), "失败不得改写 body");
     }
 

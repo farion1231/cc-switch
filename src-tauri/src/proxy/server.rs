@@ -1312,8 +1312,7 @@ mod tests {
                             .map(|value| value.as_str().to_string())
                             .unwrap_or_else(|| parts.uri.path().to_string()),
                         authorization: None,
-                        body: serde_json::from_slice(&body_bytes)
-                            .unwrap_or(Value::Null),
+                        body: serde_json::from_slice(&body_bytes).unwrap_or(Value::Null),
                     });
                     (
                         StatusCode::OK,
@@ -1353,8 +1352,7 @@ mod tests {
 
         // 4. 注册表加载真实的外部插件
         let registry = Arc::new(PluginRegistry::new());
-        let (plugins, errors) =
-            crate::proxy::plugins::external::load_user_plugins(tmp.path());
+        let (plugins, errors) = crate::proxy::plugins::external::load_user_plugins(tmp.path());
         assert!(errors.is_empty(), "load errors: {errors:?}");
         assert_eq!(plugins.len(), 1, "one user plugin loaded");
         for plugin in plugins {
@@ -1375,7 +1373,10 @@ mod tests {
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
         let response = client
-            .post(format!("http://127.0.0.1:{}/chat/completions", proxy_info.port))
+            .post(format!(
+                "http://127.0.0.1:{}/chat/completions",
+                proxy_info.port
+            ))
             .header(header::AUTHORIZATION, "Bearer client-secret")
             .json(&json!({
                 "model": "gpt-4o",
@@ -1470,8 +1471,10 @@ mod tests {
     async fn start_sse_proxy(
         registry: Arc<PluginRegistry>,
     ) -> (ProxyServer, u16, tokio::task::JoinHandle<()>) {
-        let mock_app =
-            Router::new().route("/v1/chat/completions", post(|| async { sse_upstream_response() }));
+        let mock_app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async { sse_upstream_response() }),
+        );
         let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind mock upstream");

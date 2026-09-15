@@ -1,6 +1,10 @@
 // 插件系统前端类型（与 src-tauri PluginInfo 序列化结构对应，serde camelCase）
 
-export type PluginStage = "pre_request" | "pre_send" | "post_response" | "sse_chunk";
+export type PluginStage =
+  | "pre_request"
+  | "pre_send"
+  | "post_response"
+  | "sse_chunk";
 
 export interface PluginInfo {
   /** "builtin:cache-injector" | "user:my-plugin"；加载失败条目可能是 "user:<目录名>" */
