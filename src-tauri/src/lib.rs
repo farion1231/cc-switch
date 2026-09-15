@@ -20,6 +20,7 @@ mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
+mod mcode_config;
 mod mcp;
 mod model_capabilities;
 mod openclaw_config;
@@ -41,7 +42,8 @@ mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
-    get_codex_auth_path, get_codex_config_path, read_codex_live_settings, write_codex_live_atomic,
+    extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
+    read_codex_live_settings, write_codex_live_atomic,
 };
 pub use commands::open_provider_terminal;
 pub use commands::*;
@@ -71,6 +73,8 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -382,6 +386,22 @@ pub fn run() {
                 }
             }
         }));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let startup_page_handled = AtomicBool::new(false);
+        builder = builder.on_page_load(move |webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+                && payload.url().scheme() != "about"
+                && !startup_page_handled.swap(true, Ordering::Relaxed)
+                && !crate::settings::get_settings().silent_startup
+            {
+                let _ = webview.window().show();
+                log::info!("主页面加载完成，主窗口已显示");
+            }
+        });
     }
 
     let builder = builder
@@ -746,16 +766,6 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
-            match crate::services::provider::ProviderService::migrate_legacy_codex_official_managed_binding(
-                &app_state,
-            ) {
-                Ok(Some(provider_id)) => log::info!(
-                    "✓ Migrated legacy Codex Official account binding to {provider_id}"
-                ),
-                Ok(None) => {}
-                Err(e) => log::warn!("✗ Failed to migrate legacy Codex Official binding: {e}"),
-            }
-
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -980,6 +990,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
+                    crate::app_config::AppType::Mcode,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1260,6 +1271,11 @@ pub fn run() {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
                     async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
+                        // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
+                        // 费用回填只修补数据库既有行（含代理记账行），不读会话文件
+                        if !backfill && !crate::settings::get_settings().session_auto_sync_enabled {
+                            return;
+                        }
                         let _guard = crate::services::session_usage::session_sync_mutex()
                             .lock()
                             .await;
@@ -1268,6 +1284,9 @@ pub fn run() {
                                 if let Err(error) = db.backfill_missing_usage_costs() {
                                     log::warn!("Usage cost startup backfill failed: {error}");
                                 }
+                            }
+                            if !crate::settings::get_settings().session_auto_sync_enabled {
+                                return crate::services::session_usage::SessionSyncResult::default();
                             }
                             crate::services::session_usage::sync_all_unlocked(&db)
                         });
@@ -1331,7 +1350,11 @@ pub fn run() {
                     log::info!("静默启动模式：主窗口已隐藏");
                 } else {
                     // 正常启动模式：显示窗口
+                    #[cfg(not(target_os = "windows"))]
                     let _ = window.show();
+                    #[cfg(target_os = "windows")]
+                    log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
+                    #[cfg(not(target_os = "windows"))]
                     log::info!("正常启动模式：主窗口已显示");
 
                     // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
@@ -1458,7 +1481,8 @@ pub fn run() {
             commands::delete_profile,
             commands::clear_current_profile,
             commands::apply_profile,
-            // model list fetch (OpenAI-compatible /v1/models)
+            // Fetch OpenAI-compatible and Anthropic model lists. Response data structure:
+            // data[].id, data[]?.owned_by. Special: supports Zhipu OpenAI Responses models[].slug.
             commands::fetch_models_for_config,
             commands::get_opencode_models,
             // ours: endpoint speed test + custom endpoint management
@@ -1652,6 +1676,7 @@ pub fn run() {
             // Generic managed auth commands
             commands::auth_start_login,
             commands::auth_poll_for_account,
+            commands::auth_cancel_login,
             commands::auth_list_accounts,
             commands::auth_get_status,
             commands::auth_remove_account,

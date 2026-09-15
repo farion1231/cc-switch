@@ -235,6 +235,81 @@ describe("OpenCodeFormFields", () => {
     });
   });
 
+  it("commits an unfinished model ID composition on its first blur", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({ onModelsChange });
+    const modelIdInput = screen.getByDisplayValue("kimi-k2");
+
+    fireEvent.compositionStart(modelIdInput);
+    fireEvent.change(modelIdInput, { target: { value: "中文模型" } });
+    fireEvent.blur(modelIdInput);
+
+    expect(onModelsChange).toHaveBeenCalledTimes(1);
+    expect(onModelsChange).toHaveBeenCalledWith({
+      中文模型: {
+        name: "Kimi K2",
+        limit: { context: 1048576, output: 131072 },
+      },
+    });
+  });
+
+  it("commits an unfinished model option key composition on its first blur", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({
+      models: {
+        "kimi-k2": {
+          name: "Kimi K2",
+          options: { provider: "baseten" },
+        },
+      },
+      onModelsChange,
+    });
+    expandFirstModel();
+    const optionKeyInput = screen.getByDisplayValue("provider");
+
+    fireEvent.compositionStart(optionKeyInput);
+    fireEvent.change(optionKeyInput, { target: { value: "路由" } });
+    fireEvent.blur(optionKeyInput);
+
+    expect(onModelsChange).toHaveBeenCalledTimes(1);
+    expect(onModelsChange).toHaveBeenCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        options: { 路由: "baseten" },
+      },
+    });
+  });
+
+  it("reconciles a model option draft after JSON canonicalization", () => {
+    const onModelsChange = vi.fn();
+    const models = {
+      "kimi-k2": {
+        name: "Kimi K2",
+        options: { provider: { order: ["baseten"] } },
+      },
+    };
+    const { rerender, props } = renderOpenCodeForm({ models, onModelsChange });
+    expandFirstModel();
+    const optionValueInput = screen.getByDisplayValue('{"order":["baseten"]}');
+
+    fireEvent.change(optionValueInput, {
+      target: { value: '{ "order": ["baseten"] }' },
+    });
+    expect(onModelsChange).toHaveBeenCalledWith(models);
+
+    // Parsing the edit and stringifying it again produces the same prop value
+    // as before, so only the idle blur reconciliation can reset the draft.
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} models={models} />
+      </FormShell>,
+    );
+    expect(optionValueInput).toHaveValue('{ "order": ["baseten"] }');
+
+    fireEvent.blur(optionValueInput);
+    expect(optionValueInput).toHaveValue('{"order":["baseten"]}');
+  });
+
   it("updates model token limits as structured numbers", () => {
     const onModelsChange = vi.fn();
     renderOpenCodeForm({ onModelsChange });

@@ -433,6 +433,7 @@ describe("useProviderActions", () => {
     const provider = createProvider({
       id: "generated-uuid",
       category: "official",
+      settingsConfig: { auth: {}, config: "" },
       meta: {
         providerType: "codex_oauth",
         authBinding: {

@@ -42,7 +42,8 @@
     "deleting": "削除中...",
     "auto": "自動",
     "enabled": "有効",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "collapse": "折りたたむ"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -83,7 +84,8 @@
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "自動アップグレードを無効化"
+    "disableAutoUpgrade": "自動アップグレードを無効化",
+    "disableArtifact": "Artifact ツールを無効化"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -299,6 +301,7 @@
     "openclawNoModels": "モデルが設定されていません",
     "openclawModelNotFound": "選択したモデルは存在しません。更新してからもう一度お試しください。",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
+    "codexAuthCleanupFailed": "切り替えは成功しましたが、auth.json を削除できませんでした。公式ログイン資格情報がディスクに残っています。完全に削除するには Codex 設定ディレクトリの auth.json を手動で削除してください",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
@@ -762,6 +765,7 @@
           "alacritty": "Alacritty",
           "kitty": "Kitty",
           "ghostty": "Ghostty",
+          "otty": "Otty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
           "warp": "Warp"
@@ -921,7 +925,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "mcode": "MiniMax Code"
   },
   "pi": {
     "empty": {
@@ -987,7 +992,8 @@
       "effectiveApiRequired": "モデル {{id}} には、直接またはプロバイダーから継承した API が必要です",
       "effectiveBaseUrlRequired": "モデル {{id}} には、直接またはプロバイダーから継承したベース URL が必要です",
       "duplicateModel": "モデル ID {{id}} が重複しています",
-      "modelRequired": "モデルを 1 つ以上追加してください"
+      "modelRequired": "モデルを 1 つ以上追加してください",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します"
     },
     "current": {
       "readFailed": "Pi のプロバイダー設定を読み込めません",
@@ -1072,7 +1078,12 @@
     "contextWindowInvalid": "コンテキストウィンドウは正の整数で指定してください",
     "profile": "クライアントモデルプロファイル",
     "rawConfig": "config.toml",
-    "invalidToml": "config.toml の形式が不正です: {{error}}"
+    "invalidToml": "config.toml の形式が不正です: {{error}}",
+    "defaultModelPlaceholder": "例: grok-4.5",
+    "defaultModelHint": "Grok Build がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。",
+    "advancedSectionHint": "上流フォーマット、思考機能、カスタム User-Agent の設定を含みます。Chat Completions / Anthropic Messages プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
+    "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、リクエストの reasoning effort を上流の Chat パラメータに変換します。",
+    "maxOutputTokensHint": "デフォルト上限 8192 では長い回答や深い思考時に切り詰められることがあります（stop_reason=max_tokens）。この値は Anthropic 経路で max_tokens を上書きします。モデル／ゲートウェイの実際の出力上限を超えると 400 になる場合があります。空欄でデフォルトの 8192 を使用します。"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1208,13 +1219,10 @@
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
       "apikeyfun": "APIKEY.FUN は CC Switch ユーザー向けに特別優待を提供しています。専用リンクから登録すると、最大でチャージ永久 5% オフを受けられます。",
       "apinebula": "APINEBULA は CC Switch ユーザー向けに特別割引を提供しています。専用リンクから登録し、チャージ時にプロモコード「ccswitch」を入力すると、さらに 10% OFF の割引が適用されます。",
-      "atlascloud": "Atlas Cloud は、1 つの API で動画・画像生成や LLM を利用できる全モーダル対応の AI 推論プラットフォームです。より低コストで API を利用できる新しい「コーディングプラン」プロモーションをご確認ください。",
       "patewayai": "PatewayAI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると $3 のクレジットがもらえます。",
       "claudeapi": "ClaudeAPI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録するとテストクレジットを受け取ることができます。",
       "claudecn": "ClaudeCN は登録企業が運営するエンタープライズグレードの AI ゲートウェイプラットフォームで、企業調達プロセスをサポートし、法人支払い、契約、コンプライアンス保証を提供します。",
       "runapi": "RunAPI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると、初回チャージが 10% オフになります。",
-      "minimax_cn": "MiniMax Coding Plan 特別価格、Starter ¥9.9 から",
-      "minimax_en": "MiniMax Coding Plan Black Friday、Starter が月額 $2（80% OFF）",
       "opencode_go": "このリンクから OpenCode Go を購読すると、初月はわずか $5、さらに $5 分のクレジットがもらえます！",
       "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
       "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
@@ -1239,13 +1247,17 @@
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 1.99 ドルで 50 ドル相当の Trial プランを購入できます（有効期間 7 日間）！",
       "zetaapi": "ZetaAPI はモデルを水増し・劣化させず、公式価格の 35% から利用できます。CC Switch 利用者限定特典：このリンクから登録し、初回チャージ時にプロモコード CC-SWITCH を使うと初回チャージ 10% オフ！",
       "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
-      "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！"
+      "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
+      "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
+      "9527code": "9527 CODE はエンタープライズ級のフルスペック AI 中継プラットフォームで、Claude Code や Codex などの主要モデルに高速・安定した中継サービスを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。新規ユーザーはサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なし！",
+      "soleapi": "SoleAPI は開発者と企業向けの AI モデルゲートウェイ。API キー 1 つで Claude・GPT・Gemini など 30 以上の主要モデルを利用でき、OpenAI / Anthropic プロトコルにネイティブ対応。リアルタイムのスマートルーティングとミリ秒単位の自動切替で可用性 99.99%、24 時間 365 日サポート。専用リンクから登録すると無料のお試しクレジット、友人招待で継続的なキャッシュバック！"
     },
     "presets": {
       "ucloud": "Compshare",
       "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "qiniu": "Qiniu",
+      "doubaoseed": "Volcengine Doubao",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -1424,6 +1436,7 @@
     "reauthLogin": "再ログイン",
     "reauthSelectHint": "このアカウントは管理バインドを有効にするため再ログインが必要です。",
     "reauthNow": "今すぐ再ログイン",
+    "duplicateAccount": "この ChatGPT アカウントは追加済みです。既存のアカウントを使用してください。",
     "loggedInAccounts": "ログイン済みアカウント",
     "defaultAccount": "デフォルト",
     "selected": "選択中",
@@ -1514,7 +1527,6 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を適用」がオンの場合、config.toml の末尾に追記されます",
-    "enableGoalMode": "Goal mode を有効化",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
     "apiUrlLabel": "API リクエスト URL",
@@ -1722,9 +1734,17 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "rawInputLabel": "原始",
+    "sessionSync": {
+      "title": "セッションログの自動スキャン",
+      "description": "各クライアントのローカルセッションログを定期的にスキャンして使用量を集計します。オフにすると手動同期時のみスキャンします",
+      "syncNow": "今すぐ同期",
+      "syncCompleted": "同期完了：{{imported}} 件追加、{{files}} ファイルをスキャン、エラー {{errors}} 件",
+      "syncFailed": "セッション使用量の同期に失敗しました：{{error}}"
+    },
     "rebuildCodex": {
       "title": "Codex 使用量メンテナンス",
       "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
@@ -2028,7 +2048,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mcode": "MiniMax Code"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -2205,6 +2226,7 @@
     }
   },
   "profiles": {
+    "switcherAriaLabel": "プロジェクト：{{name}}",
     "switcherTooltip": {
       "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
       "claude-desktop": "プロジェクト：Claude Desktop のプロバイダーをワンクリックで切り替え",
@@ -2888,6 +2910,7 @@
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "takeover": {
+      "ariaLabel": "{{appLabel}} ローカルルーティング",
       "hint": "ルーティングするアプリを選択します。有効にすると、そのアプリのリクエストはローカルルーティング経由で転送されます",
       "enabled": "{{app}} ルーティング有効",
       "disabled": "{{app}} ルーティング無効",
@@ -3268,6 +3291,7 @@
     "fiveHour": "5時間",
     "sevenDay": "7日間",
     "sevenDayOpus": "7日間(Opus)",
+    "sevenDayFable": "Fable",
     "sevenDaySonnet": "7日間(Sonnet)",
     "thirtyDay": "30日間",
     "geminiPro": "Pro",

@@ -162,7 +162,7 @@ describe("AddProviderDialog", () => {
     });
   });
 
-  it("submits the managed account selected from the Codex Official preset", async () => {
+  it("submits the optional managed account from the Codex Official preset", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
     const officialPresetIndex = codexProviderPresets.findIndex(
       (preset) =>
@@ -201,7 +201,6 @@ describe("AddProviderDialog", () => {
     expect(handleSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "official",
-        ensureCodexOfficialSeed: true,
         meta: expect.objectContaining({
           authBinding: {
             source: "managed_account",
@@ -210,6 +209,9 @@ describe("AddProviderDialog", () => {
           },
         }),
       }),
+    );
+    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
+      "ensureCodexOfficialSeed",
     );
   });
 

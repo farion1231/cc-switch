@@ -58,8 +58,8 @@ describe("JieKou AI provider presets", () => {
         },
       },
       endpointCandidates: [anthropicBaseUrl],
+      modelsUrl: `${openAiBaseUrl}/models`,
     });
-    expect(preset).not.toHaveProperty("modelsUrl");
   });
 
   it("configures Claude Desktop with the Anthropic endpoint", () => {

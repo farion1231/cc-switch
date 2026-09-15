@@ -112,7 +112,7 @@ CC Switch User Manual
 
 ### v3.16.0 Highlights
 
-- **Codex Chat Completions routing**: route Chat-only providers such as DeepSeek, Kimi, GLM, and MiniMax through Codex. See [2.1 Add Provider](./2-providers/2.1-add.md)
+- **Codex Chat Completions routing**: route Chat-only providers such as Baidu Qianfan, StepFun, and SiliconFlow through Codex. See [2.1 Add Provider](./2-providers/2.1-add.md)
 - **Managed CLI tool lifecycle**: install, update, update all, and diagnose Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes from Settings / About. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
 - **Provider and model refresh**: new partner presets, refreshed default models and pricing, Claude Opus 4.8 defaults, and GPT 5.5 defaults where applicable
 - **Routing support badges**: Claude Code / Codex provider cards indicate whether a provider can be served through Local Routing

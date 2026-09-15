@@ -108,6 +108,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     isRemovingAccount,
     isSettingDefaultAccount,
     addAccount,
+    reauthAccount,
+    retryAuth,
     removeAccount,
     setDefaultAccount,
     cancelAuth,
@@ -498,19 +500,21 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {account.reauth_required && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 gap-1 border-amber-400/70 px-2 text-xs text-amber-700 hover:bg-amber-100 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-900/40"
-                        onClick={addAccount}
-                        disabled={isAddingAccount}
-                      >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        {t("codexOauth.reauthLogin", "重新登录")}
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className={`h-7 gap-1 px-2 text-xs ${
+                        account.reauth_required
+                          ? "border-amber-400/70 text-amber-700 hover:bg-amber-100 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                          : "text-muted-foreground"
+                      }`}
+                      onClick={() => reauthAccount(account.id)}
+                      disabled={isAddingAccount}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {t("codexOauth.reauthLogin", "重新登录")}
+                    </Button>
                     {defaultAccountId !== account.id && (
                       <Button
                         type="button"
@@ -642,7 +646,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
           <div className="flex gap-2">
             <Button
               type="button"
-              onClick={addAccount}
+              onClick={retryAuth}
               variant="outline"
               size="sm"
             >

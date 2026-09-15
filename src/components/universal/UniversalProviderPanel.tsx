@@ -39,6 +39,7 @@ const APP_LABELS: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  mcode: "MiniMax Code",
 };
 
 interface UniversalProviderPanelProps {

@@ -18,6 +18,7 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
       value,
       onValueChange,
       normalize,
+      onBlur,
       onCompositionStart,
       onCompositionEnd,
       ...props
@@ -62,6 +63,23 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
             return;
           }
           commit(nextValue);
+        }}
+        onBlur={(event) => {
+          if (composingRef.current) {
+            // Some WebKit window-switch paths blur the input without first
+            // delivering compositionend. Commit the marked text once and
+            // leave the duplicate-event guard armed for a late event.
+            composingRef.current = false;
+            commit(event.currentTarget.value);
+          } else {
+            // The parent may parse and stringify a committed value back to the
+            // same prop it already held. In that case the value effect cannot
+            // observe a dependency change, so blur is the idle reconciliation
+            // point for both the visible draft and duplicate-event baseline.
+            externalValueRef.current = value;
+            setDraft(value);
+          }
+          onBlur?.(event);
         }}
         onCompositionStart={(event) => {
           composingRef.current = true;
