@@ -1419,10 +1419,69 @@ mod tests {
         )
         .await;
 
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.added")
+            .unwrap();
+        let delta = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.delta")
+            .unwrap();
+        let arguments_done = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.done")
+            .unwrap();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.done")
+            .unwrap();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        let expected_id = "tsc_call_tool_search_1";
+        assert_eq!(added["item"]["id"], expected_id);
+        assert_eq!(delta["item_id"], expected_id);
+        assert_eq!(arguments_done["item_id"], expected_id);
+        assert_eq!(done["item"]["id"], expected_id);
+        assert_eq!(completed["response"]["output"][0]["id"], expected_id);
+        assert_eq!(done["item"]["type"], "tool_search_call");
+        assert_eq!(done["item"]["execution"], "client");
+        assert_eq!(done["item"]["call_id"], "call_tool_search_1");
+        assert_eq!(done["item"]["arguments"]["query"], "Gmail search emails");
+    }
+
+    #[tokio::test]
+    async fn restores_injected_tool_search_on_streamed_tool_call_items_once() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "function", "name": "plain", "parameters": {}}],
+            "input": "Search for desktop task tools."
+        });
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_tool_search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"query\\\":\\\"automation thread tools\\\",\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"limit\\\":8}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            context,
+        )
+        .await;
+
         assert!(output.contains("\"type\":\"tool_search_call\""));
         assert!(output.contains("\"execution\":\"client\""));
         assert!(output.contains("\"call_id\":\"call_tool_search_1\""));
-        assert!(output.contains("\"query\":\"Gmail search emails\""));
+        assert!(output.contains("\"query\":\"automation thread tools\""));
+        assert!(output.matches("\"type\":\"tool_search_call\"").count() >= 2);
+        assert_eq!(
+            output.matches("event: response.output_item.done").count(),
+            1
+        );
     }
 
     #[tokio::test]

@@ -73,15 +73,18 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
-pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
         .map_or(endpoint, |(path, _query)| path);
-
     matches!(
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_chat_completions(provider)
+    )
+}
+
+pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_chat_completions(provider)
 }
 
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
@@ -196,14 +199,7 @@ pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
 }
 
 pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint: &str) -> bool {
-    let path = endpoint
-        .split_once('?')
-        .map_or(endpoint, |(path, _query)| path);
-
-    matches!(
-        path,
-        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_anthropic(provider)
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_anthropic(provider)
 }
 
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
@@ -374,6 +370,22 @@ pub fn is_codex_native_responses_url(base_url: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
+/// Whether a request passing through the local CC-Switch Codex proxy should
+/// receive the deferred-tool discovery shim. Direct/non-takeover Codex config
+/// that points at an upstream directly never reaches this routing layer and
+/// therefore cannot be changed by CC-Switch.
+pub fn should_inject_codex_tool_search_shim(provider: &Provider, endpoint: &str) -> bool {
+    is_codex_responses_endpoint(endpoint) && !is_codex_official_provider(provider)
+}
+
+/// Native Responses upstreams return the synthetic shim as a regular
+/// `function_call`; Chat/Anthropic paths already restore it in their adapters.
+pub fn should_restore_codex_native_tool_search(provider: &Provider, endpoint: &str) -> bool {
+    should_inject_codex_tool_search_shim(provider, endpoint)
+        && !codex_provider_uses_chat_completions(provider)
+        && !codex_provider_uses_anthropic(provider)
+}
+
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
 /// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
 /// generated catalog never disagrees with the routed transform. A provider whose
@@ -439,6 +451,33 @@ pub fn resolve_codex_catalog_tool_profile(
                 .and_then(|v| v.as_str())
         });
     CodexCatalogToolProfile::from_api_format(api_format)
+}
+
+/// Resolve the catalog profile used while CC-Switch owns the local Codex route.
+/// Direct native Responses configs stay conservative, while a non-official
+/// native Responses provider can advertise ToolSearch because the local proxy
+/// supplies the compatibility transport.
+pub fn resolve_codex_proxy_catalog_tool_profile(
+    provider: &Provider,
+) -> crate::codex_config::CodexCatalogToolProfile {
+    use crate::codex_config::CodexCatalogToolProfile;
+    let profile = resolve_codex_catalog_tool_profile(provider);
+    if !is_codex_official_provider(provider)
+        && matches!(
+            profile,
+            CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic
+        )
+    {
+        match profile {
+            CodexCatalogToolProfile::NativeResponses => {
+                CodexCatalogToolProfile::ProxiedNativeResponses
+            }
+            CodexCatalogToolProfile::Anthropic => CodexCatalogToolProfile::ProxiedAnthropic,
+            _ => unreachable!(),
+        }
+    } else {
+        profile
+    }
 }
 
 /// Extract the real upstream model configured for a Codex provider.
@@ -1521,6 +1560,11 @@ wire_api = "anthropic"
             resolve_codex_catalog_tool_profile(&settings_anthropic),
             CodexCatalogToolProfile::Anthropic
         );
+        assert_eq!(
+            resolve_codex_proxy_catalog_tool_profile(&settings_anthropic),
+            CodexCatalogToolProfile::ProxiedAnthropic,
+            "proxy-owned Anthropic routing needs the ToolSearch-capable proxy profile"
+        );
 
         // Native openai_responses (meta) → NativeResponses; chat → ProxyChat.
         let mut native = create_provider(json!({}));
@@ -1531,6 +1575,20 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&native),
             CodexCatalogToolProfile::NativeResponses
+        );
+        assert_eq!(
+            resolve_codex_proxy_catalog_tool_profile(&native),
+            CodexCatalogToolProfile::ProxiedNativeResponses,
+            "a non-official native provider gets ToolSearch capability only on the local proxy route"
+        );
+
+        let mut official = native.clone();
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+        assert_eq!(
+            resolve_codex_proxy_catalog_tool_profile(&official),
+            CodexCatalogToolProfile::NativeResponses,
+            "official Codex routing must not receive the custom-provider ToolSearch capability"
         );
 
         let chat = create_provider(json!({ "apiFormat": "openai_chat" }));
@@ -1765,6 +1823,73 @@ wire_api = "anthropic"
         assert!(!CodexAdapter::is_official_client("some codex_vscode/1.0.0"));
         assert!(!CodexAdapter::is_official_client(
             "prefix_codex_cli_rs/1.0.0"
+        ));
+    }
+
+    #[test]
+    fn tool_search_shim_is_scoped_to_local_third_party_responses_routes() {
+        let native = create_provider(json!({"base_url": "https://relay.example.com/v1"}));
+        assert!(should_inject_codex_tool_search_shim(&native, "/responses"));
+        assert!(should_restore_codex_native_tool_search(
+            &native,
+            "/responses"
+        ));
+        assert!(!should_inject_codex_tool_search_shim(
+            &native,
+            "/chat/completions"
+        ));
+
+        let mut chat = create_provider(json!({"apiFormat": "openai_chat"}));
+        chat.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+        assert!(should_inject_codex_tool_search_shim(&chat, "/responses"));
+        assert!(!should_restore_codex_native_tool_search(
+            &chat,
+            "/responses"
+        ));
+
+        let mut anthropic = create_provider(json!({"apiFormat": "anthropic"}));
+        anthropic.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+        assert!(should_inject_codex_tool_search_shim(
+            &anthropic,
+            "/responses"
+        ));
+        assert!(!should_restore_codex_native_tool_search(
+            &anthropic,
+            "/responses"
+        ));
+
+        let mut official = create_provider(json!({}));
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+        assert!(!should_inject_codex_tool_search_shim(
+            &official,
+            "/responses"
+        ));
+        assert!(!should_restore_codex_native_tool_search(
+            &official,
+            "/responses"
+        ));
+    }
+
+    #[test]
+    fn tool_search_shim_supports_third_party_provider_with_stale_official_category() {
+        let mut provider = create_provider(json!({"base_url": "https://api.deepseek.com/v1"}));
+        provider.id = "deepseek-responses".to_string();
+        provider.category = Some("official".to_string());
+
+        assert!(should_inject_codex_tool_search_shim(
+            &provider,
+            "/responses"
+        ));
+        assert!(should_restore_codex_native_tool_search(
+            &provider,
+            "/responses"
         ));
     }
 
