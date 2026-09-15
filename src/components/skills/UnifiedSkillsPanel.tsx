@@ -222,6 +222,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       openclaw: 0,
       hermes: 0,
       pi: 0,
+      workbuddy: 0, // WorkBuddy 不参与 Skill 同步，永不写入，仅为类型索引占位
     };
     if (!skills) return counts;
     skills.forEach((skill) => {

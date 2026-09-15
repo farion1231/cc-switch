@@ -182,6 +182,19 @@ impl StreamCheckService {
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
+            AppType::WorkBuddy => provider
+                .settings_config
+                .get("baseUrl")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim_end_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "workbuddy.provider.base_url_missing",
+                        "WorkBuddy provider 缺少 baseUrl",
+                        "WorkBuddy provider is missing baseUrl",
+                    )
+                }),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),

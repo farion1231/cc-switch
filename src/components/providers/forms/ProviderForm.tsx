@@ -55,9 +55,14 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  workbuddyProviderPresets,
+  type WorkBuddyProviderPreset,
+} from "@/config/workbuddyProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { WorkBuddyFormFields } from "./WorkBuddyFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -111,6 +116,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useWorkbuddyFormState,
   useCopilotAuth,
   useCodexOauth,
   useXaiOauth,
@@ -126,6 +132,7 @@ import {
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { WORKBUDDY_DEFAULT_CONFIG } from "./hooks/useWorkbuddyFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -139,7 +146,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | WorkBuddyProviderPreset;
 };
 
 function getPresetProviderType(
@@ -451,7 +459,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "workbuddy"
+                    ? WORKBUDDY_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -774,6 +784,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "workbuddy") {
+      return workbuddyProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `workbuddy-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -1018,6 +1033,13 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const workbuddyForm = useWorkbuddyFormState({
+    initialData,
+    appId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -1251,6 +1273,35 @@ function ProviderFormFull({
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
         return;
+      }
+    }
+
+    // WorkBuddy：无 providerKey（provider id 由后端按 URL host 推导），
+    // 仅做软校验，允许用户确认后继续保存。
+    if (appId === "workbuddy") {
+      if (!workbuddyForm.workbuddyBaseUrl.trim()) {
+        issues.push(
+          t("workbuddy.form.baseUrlRequired", {
+            defaultValue: "请填写网关地址",
+          }),
+        );
+      }
+      if (!workbuddyForm.workbuddyApiKey.trim()) {
+        issues.push(
+          t("workbuddy.form.apiKeyRequired", {
+            defaultValue: "请填写 API Key",
+          }),
+        );
+      }
+      const validWorkbuddyModels = workbuddyForm.workbuddyModels.filter(
+        (model) => model.id.trim() !== "",
+      );
+      if (validWorkbuddyModels.length === 0) {
+        issues.push(
+          t("workbuddy.form.modelsRequired", {
+            defaultValue: "请至少配置一个模型",
+          }),
+        );
       }
     }
 
@@ -1581,6 +1632,29 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "workbuddy") {
+      // 剔除未填写 id 的空模型行，避免写入无效条目到 models.json
+      try {
+        const configObj = JSON.parse(
+          values.settingsConfig.trim() || "{}",
+        ) as Record<string, unknown>;
+        if (Array.isArray(configObj.models)) {
+          const cleaned = (
+            configObj.models as Record<string, unknown>[]
+          ).filter(
+            (model) => typeof model?.id === "string" && model.id.trim() !== "",
+          );
+          if (cleaned.length > 0) {
+            configObj.models = cleaned;
+          } else {
+            delete configObj.models;
+          }
+        }
+        settingsConfig = JSON.stringify(configObj);
+      } catch (err) {
+        console.error("[ProviderForm] Invalid WorkBuddy settingsConfig:", err);
+        settingsConfig = values.settingsConfig.trim();
+      }
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -1931,6 +2005,20 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (WorkBuddy)
+  const {
+    shouldShowApiKeyLink: shouldShowWorkbuddyApiKeyLink,
+    websiteUrl: workbuddyWebsiteUrl,
+    isPartner: isWorkbuddyPartner,
+    partnerPromotionKey: workbuddyPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "workbuddy",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1970,6 +2058,9 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "workbuddy") {
+        workbuddyForm.resetWorkbuddyState();
       }
       return;
     }
@@ -2088,6 +2179,23 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // WorkBuddy preset handling
+    if (appId === "workbuddy") {
+      const preset = entry.preset as WorkBuddyProviderPreset;
+      const config = preset.settingsConfig;
+
+      workbuddyForm.resetWorkbuddyState(config);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2629,6 +2737,23 @@ function ProviderFormFull({
             />
           )}
 
+          {/* WorkBuddy 专属字段 */}
+          {appId === "workbuddy" && (
+            <WorkBuddyFormFields
+              baseUrl={workbuddyForm.workbuddyBaseUrl}
+              onBaseUrlChange={workbuddyForm.handleWorkbuddyBaseUrlChange}
+              apiKey={workbuddyForm.workbuddyApiKey}
+              onApiKeyChange={workbuddyForm.handleWorkbuddyApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowWorkbuddyApiKeyLink}
+              websiteUrl={workbuddyWebsiteUrl}
+              isPartner={isWorkbuddyPartner}
+              partnerPromotionKey={workbuddyPartnerPromotionKey}
+              models={workbuddyForm.workbuddyModels}
+              onModelsChange={workbuddyForm.handleWorkbuddyModelsChange}
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2717,7 +2842,9 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" ||
+            appId === "hermes" ||
+            appId === "workbuddy" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2733,7 +2860,20 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "workbuddy"
+                        ? `{
+  "baseUrl": "https://api.example.com/v1",
+  "apiKey": "your-api-key-here",
+  "models": [
+    {
+      "id": "model-id",
+      "name": "Model Name",
+      "contextWindow": 200000,
+      "supportsToolCall": true
+    }
+  ]
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
@@ -2779,7 +2919,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "workbuddy" && (
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}

@@ -142,6 +142,7 @@ const UnifiedMcpPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      workbuddy: 0, // WorkBuddy 不参与 MCP，永不写入，仅为类型索引占位
     };
     serverEntries.forEach(([_, server]) => {
       for (const app of MCP_APP_IDS) {

@@ -50,6 +50,8 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  // WorkBuddy 不参与代理接管，可选
+  workbuddy?: boolean;
 }
 
 export interface ProviderHealth {

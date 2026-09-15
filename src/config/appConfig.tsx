@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "workbuddy",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -38,6 +39,8 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  // WorkBuddy is hidden by default; users opt in from settings.
+  workbuddy: false,
 };
 
 /** App IDs shown in Skills panels. */
@@ -70,7 +73,7 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "workbuddy"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -78,14 +81,21 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "workbuddy",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
 }
 
-/** Pi has no native MCP registry; do not manufacture a disabled mirror. */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
+/**
+ * Pi has no native MCP registry and WorkBuddy manages its own MCP config;
+ * do not manufacture a disabled mirror for either.
+ */
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "pi" | "workbuddy"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -192,6 +202,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  workbuddy: {
+    label: "WorkBuddy",
+    icon: (
+      <ProviderIcon
+        icon="workbuddy"
+        name="WorkBuddy"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
 };
 
