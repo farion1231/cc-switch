@@ -3259,6 +3259,8 @@
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}后重置",
+    "resetsInAt": "{{time}}后重置（{{at}}）",
+    "resetsAt": "重置于 {{at}}",
     "extraUsage": "超额用量",
     "expired": "会话已过期",
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
