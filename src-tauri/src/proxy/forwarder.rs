@@ -1684,6 +1684,25 @@ impl RequestForwarder {
             self.apply_media_prevention(&mut request_body, provider);
         }
 
+        // Official Codex Responses rejects array-valued reasoning content that was
+        // persisted by a third-party Responses provider.  When the same malformed
+        // item also carries encrypted_content, the foreign value fails validation
+        // immediately after content is fixed.  Normalize only the official native
+        // Responses path and only the in-memory outbound copy; never rewrite history.
+        if should_sanitize_official_codex_reasoning_replay(
+            endpoint,
+            codex_official_auth_passthrough,
+            codex_responses_to_chat,
+            codex_responses_to_anthropic,
+        ) {
+            let sanitized = sanitize_official_codex_reasoning_replay(&mut request_body);
+            if sanitized > 0 {
+                log::debug!(
+                    "[Codex] Normalized {sanitized} incompatible reasoning replay item(s) for official Responses upstream"
+                );
+            }
+        }
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let mut filtered_body = prepare_upstream_request_body(request_body);
@@ -2953,6 +2972,23 @@ fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
         .map_or((endpoint, None), |(path, query)| (path, Some(query)))
 }
 
+fn is_regular_codex_responses_endpoint(endpoint: &str) -> bool {
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(path.trim_end_matches('/'), "/responses" | "/v1/responses")
+}
+
+fn should_sanitize_official_codex_reasoning_replay(
+    endpoint: &str,
+    codex_official_auth_passthrough: bool,
+    codex_responses_to_chat: bool,
+    codex_responses_to_anthropic: bool,
+) -> bool {
+    codex_official_auth_passthrough
+        && !codex_responses_to_chat
+        && !codex_responses_to_anthropic
+        && is_regular_codex_responses_endpoint(endpoint)
+}
+
 fn strip_beta_query(query: Option<&str>) -> Option<String> {
     let filtered = query.map(|query| {
         query
@@ -3738,6 +3774,44 @@ fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
 
+/// Normalize third-party reasoning items for the official Codex Responses input
+/// contract.  The caller must gate this to the official native Responses path and
+/// pass an outbound request copy; this function does not inspect or mutate history.
+///
+/// A reasoning item with array-valued `content` is incompatible with the official
+/// request schema.  If that same item carries a non-null `encrypted_content`, it is
+/// treated as the paired foreign state exposed by the same malformed item and is
+/// cleared as well.  Standalone encrypted reasoning items remain untouched.
+fn sanitize_official_codex_reasoning_replay(body: &mut Value) -> usize {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+
+    let mut sanitized = 0;
+    for item in input.iter_mut() {
+        if item.get("type").and_then(Value::as_str) != Some("reasoning")
+            || !matches!(item.get("content"), Some(Value::Array(_)))
+        {
+            continue;
+        }
+
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+
+        object.insert("content".to_string(), Value::Null);
+        if object
+            .get("encrypted_content")
+            .is_some_and(|value| !value.is_null())
+        {
+            object.insert("encrypted_content".to_string(), Value::Null);
+        }
+        sanitized += 1;
+    }
+
+    sanitized
+}
+
 fn log_prompt_cache_trace(
     app_type: &AppType,
     provider: &Provider,
@@ -4025,6 +4099,152 @@ mod tests {
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
         );
+    }
+
+    #[test]
+    fn official_reasoning_replay_sanitizes_paired_fields_only() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_foreign",
+                    "content": [{"type": "reasoning_text", "text": "third-party"}],
+                    "encrypted_content": "foreign-ciphertext",
+                    "summary": [{"type": "summary_text", "text": "keep"}],
+                    "status": "completed"
+                },
+                {
+                    "type": "reasoning",
+                    "id": "rs_official",
+                    "content": null,
+                    "encrypted_content": "official-ciphertext"
+                },
+                {
+                    "type": "reasoning",
+                    "id": "rs_standalone",
+                    "encrypted_content": "standalone-ciphertext"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "keep message"}]
+                }
+            ]
+        });
+
+        assert_eq!(sanitize_official_codex_reasoning_replay(&mut body), 1);
+        assert_eq!(body["input"][0]["content"], Value::Null);
+        assert_eq!(body["input"][0]["encrypted_content"], Value::Null);
+        assert_eq!(
+            body["input"][0]["summary"],
+            json!([{"type": "summary_text", "text": "keep"}])
+        );
+        assert_eq!(body["input"][0]["id"], "rs_foreign");
+        assert_eq!(body["input"][1]["encrypted_content"], "official-ciphertext");
+        assert_eq!(
+            body["input"][2]["encrypted_content"],
+            "standalone-ciphertext"
+        );
+        assert_eq!(body["input"][3]["content"][0]["text"], "keep message");
+    }
+
+    #[test]
+    fn official_reasoning_replay_sanitizes_content_without_adding_encrypted_content() {
+        let mut body = json!({
+            "input": [{
+                "type": "reasoning",
+                "content": []
+            }]
+        });
+
+        assert_eq!(sanitize_official_codex_reasoning_replay(&mut body), 1);
+        assert_eq!(body["input"][0]["content"], Value::Null);
+        assert!(body["input"][0].get("encrypted_content").is_none());
+    }
+
+    #[test]
+    fn official_reasoning_replay_ignores_non_array_and_non_reasoning_content() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "reasoning",
+                    "content": null,
+                    "encrypted_content": "official-ciphertext"
+                },
+                {
+                    "type": "reasoning",
+                    "content": "plain reasoning",
+                    "encrypted_content": "official-ciphertext-2"
+                },
+                {
+                    "type": "message",
+                    "content": [{"type": "input_text", "text": "keep"}],
+                    "encrypted_content": "not-a-reasoning-field"
+                }
+            ]
+        });
+        let original = body.clone();
+
+        assert_eq!(sanitize_official_codex_reasoning_replay(&mut body), 0);
+        assert_eq!(body, original);
+
+        for malformed in [json!({}), json!({"input": "not-an-array"}), Value::Null] {
+            let mut malformed = malformed;
+            assert_eq!(sanitize_official_codex_reasoning_replay(&mut malformed), 0);
+        }
+    }
+
+    #[test]
+    fn official_reasoning_replay_is_idempotent_and_gate_excludes_other_paths() {
+        let mut body = json!({
+            "input": [{
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "third-party"}],
+                "encrypted_content": "foreign-ciphertext"
+            }]
+        });
+
+        assert_eq!(sanitize_official_codex_reasoning_replay(&mut body), 1);
+        let once = body.clone();
+        assert_eq!(sanitize_official_codex_reasoning_replay(&mut body), 0);
+        assert_eq!(body, once);
+
+        assert!(should_sanitize_official_codex_reasoning_replay(
+            "/responses?beta=true",
+            true,
+            false,
+            false,
+        ));
+        assert!(should_sanitize_official_codex_reasoning_replay(
+            "/v1/responses/",
+            true,
+            false,
+            false,
+        ));
+        assert!(!should_sanitize_official_codex_reasoning_replay(
+            "/responses/compact",
+            true,
+            false,
+            false,
+        ));
+        assert!(!should_sanitize_official_codex_reasoning_replay(
+            "/responses",
+            false,
+            false,
+            false,
+        ));
+        assert!(!should_sanitize_official_codex_reasoning_replay(
+            "/responses",
+            true,
+            true,
+            false,
+        ));
+        assert!(!should_sanitize_official_codex_reasoning_replay(
+            "/responses",
+            true,
+            false,
+            true,
+        ));
     }
 
     #[test]
