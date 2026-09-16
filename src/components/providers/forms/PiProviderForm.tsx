@@ -105,8 +105,12 @@ interface PiModelDraft {
   hasInput: boolean;
   contextWindow: string;
   hasContextWindow: boolean;
+  /** True when contextWindow was last filled from fetched /v1/models metadata. */
+  autoContextWindow: boolean;
   maxTokens: string;
   hasMaxTokens: boolean;
+  /** True when maxTokens was last filled from fetched /v1/models metadata. */
+  autoMaxTokens: boolean;
   thinkingLevelMap: unknown;
   hasThinkingLevelMap: boolean;
   passthrough: Record<string, unknown>;
@@ -285,8 +289,10 @@ function modelDraft(
     hasInput: hasOwn(model, "input"),
     contextWindow: optionalNumberText(model.contextWindow),
     hasContextWindow: hasOwn(model, "contextWindow"),
+    autoContextWindow: false,
     maxTokens: optionalNumberText(model.maxTokens),
     hasMaxTokens: hasOwn(model, "maxTokens"),
+    autoMaxTokens: false,
     thinkingLevelMap: model.thinkingLevelMap,
     hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
@@ -305,8 +311,10 @@ function newModel(): PiModelDraft {
     hasInput: true,
     contextWindow: "",
     hasContextWindow: true,
+    autoContextWindow: false,
     maxTokens: "",
     hasMaxTokens: true,
+    autoMaxTokens: false,
     thinkingLevelMap: undefined,
     hasThinkingLevelMap: false,
     passthrough: {},
@@ -862,14 +870,34 @@ export function PiProviderForm({
                 (model.name.length === 0 || model.name === model.id)
                   ? id
                   : model.name,
-              // When selecting from fetched metadata, always sync auto-filled
-              // limits so a model without limits clears stale previous values.
               ...(fetched
                 ? {
-                    contextWindow: contextWindow ?? "",
-                    hasContextWindow: contextWindow !== undefined,
-                    maxTokens: maxTokens ?? "",
-                    hasMaxTokens: maxTokens !== undefined,
+                    ...(contextWindow !== undefined
+                      ? {
+                          contextWindow,
+                          hasContextWindow: true,
+                          autoContextWindow: true,
+                        }
+                      : model.autoContextWindow
+                        ? {
+                            contextWindow: "",
+                            hasContextWindow: false,
+                            autoContextWindow: false,
+                          }
+                        : {}),
+                    ...(maxTokens !== undefined
+                      ? {
+                          maxTokens,
+                          hasMaxTokens: true,
+                          autoMaxTokens: true,
+                        }
+                      : model.autoMaxTokens
+                        ? {
+                            maxTokens: "",
+                            hasMaxTokens: false,
+                            autoMaxTokens: false,
+                          }
+                        : {}),
                   }
                 : {}),
             }
@@ -1698,6 +1726,7 @@ export function PiProviderForm({
                                   updateModelOverride(model.key, {
                                     contextWindow: event.target.value,
                                     hasContextWindow: true,
+                                    autoContextWindow: false,
                                   })
                                 }
                                 placeholder="128000"
@@ -1730,6 +1759,7 @@ export function PiProviderForm({
                                   updateModelOverride(model.key, {
                                     maxTokens: event.target.value,
                                     hasMaxTokens: true,
+                                    autoMaxTokens: false,
                                   })
                                 }
                                 placeholder="16384"

@@ -1014,6 +1014,10 @@ describe("PiProviderForm", () => {
             maxInputTokens: 1_000_000,
             maxOutputTokens: 128_000,
           },
+          {
+            id: "plain-model",
+            ownedBy: "openai",
+          },
         ]),
       ),
     );
@@ -1073,6 +1077,19 @@ describe("PiProviderForm", () => {
       contextWindow: 1_000_000,
       maxTokens: 128_000,
     });
+
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(await screen.findByRole("option", { name: "plain-model" }));
+    expect(modelIdInput).toHaveValue("plain-model");
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(null);
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(null);
+    const plainModel = JSON.parse(configEditor.value).models[0];
+    expect(plainModel).toMatchObject({
+      id: "plain-model",
+      name: "plain-model",
+    });
+    expect(plainModel).not.toHaveProperty("contextWindow");
+    expect(plainModel).not.toHaveProperty("maxTokens");
   });
 
   it("ignores a stale model-list response after the request config changes", async () => {
