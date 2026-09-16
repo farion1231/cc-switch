@@ -10,6 +10,17 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
 import { isAdditiveAppId } from "@/config/appConfig";
+import { TEMPLATE_TYPES } from "@/config/constants";
+
+/**
+ * Templates whose backend fills `UsageData.extra` with `tier.resets_at`.
+ * `extra` is otherwise free-form display text, so only these may have an ISO
+ * string in it read as a quota reset.
+ */
+const EXTRA_IS_RESET_TEMPLATES = new Set<string>([
+  TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
+  TEMPLATE_TYPES.TOKEN_PLAN,
+]);
 
 interface UsageFooterProps {
   provider: Provider;
@@ -58,6 +69,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const { t } = useTranslation();
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
+  const extraIsResetTime = EXTRA_IS_RESET_TEMPLATES.has(
+    provider.meta?.usage_script?.templateType ?? "",
+  );
 
   // 统一的用量查询（自动查询仅对当前激活的供应商启用）
   // 累加模式：使用 isInConfig 代替 isCurrent
@@ -195,7 +209,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   if (inline) {
     const firstUsage = usageDataList[0];
     const isExpired = firstUsage.isValid === false;
-    const extraText = formatExtraText(firstUsage.extra, t);
+    const extraText = formatExtraText(firstUsage.extra, t, extraIsResetTime);
 
     return (
       <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
@@ -308,7 +322,11 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       {/* 套餐列表 */}
       <div className="flex flex-col gap-3">
         {usageDataList.map((usageData, index) => (
-          <UsagePlanItem key={index} data={usageData} />
+          <UsagePlanItem
+            key={index}
+            data={usageData}
+            extraIsResetTime={extraIsResetTime}
+          />
         ))}
       </div>
     </div>
@@ -318,7 +336,10 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 // ── 通用用量组件 ────────────────────────────────────────────
 
 // 单个套餐数据展示组件
-const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+const UsagePlanItem: React.FC<{
+  data: UsageData;
+  extraIsResetTime: boolean;
+}> = ({ data, extraIsResetTime }) => {
   const { t } = useTranslation();
   const {
     planName,
@@ -334,8 +355,9 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
   // 判断套餐是否失效（isValid 为 false 或未定义时视为有效）
   const isExpired = isValid === false;
   // `extra` may carry a bare `resets_at` ISO string — render it on the local
-  // clock rather than printing the raw UTC value.
-  const extraText = formatExtraText(extra, t);
+  // clock rather than printing the raw UTC value. Only the templates that
+  // actually put a reset time there get that reading.
+  const extraText = formatExtraText(extra, t, extraIsResetTime);
 
   return (
     <div className="flex items-center gap-3">

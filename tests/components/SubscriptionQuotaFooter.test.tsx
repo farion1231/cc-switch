@@ -164,30 +164,40 @@ describe("localClockStr", () => {
 
 describe("formatExtraText", () => {
   it("turns a bare resets_at ISO string into countdown plus local time", () => {
-    expect(formatExtraText(resetAt, t)).toBe(
+    expect(formatExtraText(resetAt, t, true)).toBe(
       `2d12h后重置（${expectedLocalClock(resetAt)}）`,
     );
   });
 
   it("falls back to the plain local moment once the window has passed", () => {
     const past = "2026-09-08T00:00:00Z";
-    expect(formatExtraText(past, t)).toBe(`重置于 ${expectedLocalClock(past)}`);
+    expect(formatExtraText(past, t, true)).toBe(
+      `重置于 ${expectedLocalClock(past)}`,
+    );
+  });
+
+  it("leaves ISO-shaped custom script text alone unless the template says so", () => {
+    // `extra` is free-form display text for script authors, so an ISO string
+    // there could be an expiry or a billing date, not a quota reset — only
+    // templates that actually fill it from `resets_at` may claim that meaning.
+    expect(formatExtraText(resetAt, t)).toBe(resetAt);
+    expect(formatExtraText(resetAt, t, false)).toBe(resetAt);
   });
 
   it("passes through payloads that are not absolute timestamps", () => {
-    expect(formatExtraText("$12.34/$20.00", t)).toBe("$12.34/$20.00");
-    expect(formatExtraText(`{"resetsAt":"${resetAt}"}`, t)).toBe(
+    expect(formatExtraText("$12.34/$20.00", t, true)).toBe("$12.34/$20.00");
+    expect(formatExtraText(`{"resetsAt":"${resetAt}"}`, t, true)).toBe(
       `{"resetsAt":"${resetAt}"}`,
     );
     // Naive (offset-less) values keep their raw form: we can't tell which
     // timezone they were written in, so re-labelling them would be a guess.
-    expect(formatExtraText("2026-09-12T00:00:00", t)).toBe(
+    expect(formatExtraText("2026-09-12T00:00:00", t, true)).toBe(
       "2026-09-12T00:00:00",
     );
   });
 
   it("returns null for an absent payload", () => {
-    expect(formatExtraText(null, t)).toBeNull();
-    expect(formatExtraText(undefined, t)).toBeNull();
+    expect(formatExtraText(null, t, true)).toBeNull();
+    expect(formatExtraText(undefined, t, true)).toBeNull();
   });
 });

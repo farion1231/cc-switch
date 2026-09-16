@@ -130,14 +130,21 @@ export function resetCountdownLabel(
  * Render a raw `extra` payload. The backend usage paths stuff `resets_at` in
  * there as a bare ISO string, which used to be printed verbatim — a UTC wall
  * clock the user had to convert by hand. Turn those into a countdown plus the
- * local reset moment; anything else (custom scripts, USD payloads) is passed
- * through untouched.
+ * local reset moment.
+ *
+ * `extra` is documented to script authors as free-form display text, so a bare
+ * ISO string coming out of a custom JS usage script may mean anything — an
+ * expiry, a billing date, anything but a quota reset. Only the templates known
+ * to fill `extra` from `resets_at` may claim that meaning, via `isResetTime`;
+ * everything else passes through untouched.
  */
 export function formatExtraText(
   extra: string | null | undefined,
   t: (key: string, options?: Record<string, string>) => string,
+  isResetTime = false,
 ): string | null {
   if (!extra) return null;
+  if (!isResetTime) return extra;
   if (!isAbsoluteTimestamp(extra)) return extra;
 
   const at = localClockStr(extra);
