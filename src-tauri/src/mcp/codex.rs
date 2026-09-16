@@ -35,7 +35,7 @@ pub fn is_legacy_url_stdio_corruption(server: &Value) -> bool {
     let has_command = obj
         .get("command")
         .and_then(|v| v.as_str())
-        .map_or(false, |s| !s.is_empty());
+        .is_some_and(|s| !s.is_empty());
     is_stdio && has_url && !has_command
 }
 
