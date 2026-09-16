@@ -1665,6 +1665,7 @@ pub fn run() {
             terminal_workbench::write_embedded_terminal,
             terminal_workbench::resize_embedded_terminal,
             terminal_workbench::close_embedded_terminal,
+            terminal_workbench::clear_terminal_history,
             terminal_workbench::list_projects,
             terminal_workbench::create_project,
             terminal_workbench::update_project,

@@ -67,6 +67,13 @@ pub struct TerminalInstance {
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_launch_at: Option<i64>,
+    /// 重启应用后是否自动恢复到上次的工具会话（claude / opencode）。
+    /// 缺省视为 true；置 false 则每次都开一个全新会话。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resume: Option<bool>,
+    /// 用户显式指定要恢复的会话 id（优先于自动探测）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_session_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -246,6 +253,7 @@ pub fn create_terminal_instance(
     #[allow(non_snake_case)] customCommand: Option<String>,
     args: Option<String>,
     terminal: Option<String>,
+    #[allow(non_snake_case)] autoResume: Option<bool>,
 ) -> Result<TerminalHubState, String> {
     let mut hub = read_hub();
     hub.instances.push(TerminalInstance {
@@ -265,6 +273,8 @@ pub fn create_terminal_instance(
         pid: None,
         created_at: now_secs(),
         last_launch_at: None,
+        auto_resume: autoResume,
+        last_session_id: None,
     });
     write_hub(&hub)?;
     Ok(hub)
@@ -275,6 +285,8 @@ pub fn delete_terminal_instance(id: String) -> Result<TerminalHubState, String> 
     let mut hub = read_hub();
     hub.instances.retain(|item| item.id != id);
     write_hub(&hub)?;
+    // 连同落盘的滚动历史一起清除，避免残留文件无限堆积
+    remove_persisted_history(&id);
 
     // 清理该实例残留的内嵌会话（进程 + 订阅者）：HUD 与大屏是独立前端实例，
     // 另一窗口启动的 pty 会话在前端本地注册表里可能没有记录，删除实例时
@@ -313,6 +325,56 @@ pub enum EmbeddedOutputEvent {
 
 /// 输出历史上限：截断保留最近 N 字节（重连时回放恢复屏幕）。
 const HISTORY_LIMIT: usize = 2 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// 输出历史落盘：应用重启后 PTY 进程无法存活，但滚动内容可以。
+// 每个终端实例一个文件，重连（ensure）时回放，做到「重启后仍能加载会话」。
+// ---------------------------------------------------------------------------
+
+/// 单个实例落盘的上限（只保留最近 N 字节，避免 settings 目录无限膨胀）。
+const PERSIST_HISTORY_LIMIT: usize = 512 * 1024;
+/// 落盘节流间隔：读线程空闲时也会周期性醒来，够用了。
+const PERSIST_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// 历史文件路径；instance id 只保留安全字符，防止路径穿越。
+fn history_file_path(instance_id: &str) -> Option<PathBuf> {
+    let safe: String = instance_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if safe.is_empty() {
+        return None;
+    }
+    let dir = crate::config::get_app_config_dir().join("terminal-history");
+    fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("{safe}.log")))
+}
+
+/// 原子写入历史（写临时文件后 rename，避免退出中断留下半截文件）。
+fn persist_history(instance_id: &str, history: &[u8]) {
+    let Some(path) = history_file_path(instance_id) else {
+        return;
+    };
+    let start = history.len().saturating_sub(PERSIST_HISTORY_LIMIT);
+    let bytes = &history[start..];
+    let tmp = path.with_extension("log.tmp");
+    if fs::write(&tmp, bytes).is_ok() {
+        let _ = fs::rename(&tmp, &path);
+    }
+}
+
+fn load_persisted_history(instance_id: &str) -> Vec<u8> {
+    match history_file_path(instance_id) {
+        Some(path) => fs::read(&path).unwrap_or_default(),
+        None => Vec::new(),
+    }
+}
+
+fn remove_persisted_history(instance_id: &str) {
+    if let Some(path) = history_file_path(instance_id) {
+        let _ = fs::remove_file(&path);
+    }
+}
 
 /// 后端持有的内嵌终端会话（与前端连接数无关，进程存活期间保持）。
 struct EmbeddedSession {
@@ -371,14 +433,26 @@ fn broadcast_to(
 /// 返回 pty id（会话标识，可多次 attach）。
 #[tauri::command]
 pub fn ensure_embedded_terminal(config: TerminalLaunchConfig) -> Result<u64, String> {
-    let mut sessions = EMBEDDED.lock().unwrap();
-    for (id, session) in sessions.iter() {
-        if session.instance_id == config.instance_id && !session.exited.load(Ordering::Relaxed) {
-            return Ok(*id);
+    {
+        let sessions = EMBEDDED.lock().unwrap();
+        for (id, session) in sessions.iter() {
+            if session.instance_id == config.instance_id && !session.exited.load(Ordering::Relaxed) {
+                return Ok(*id);
+            }
         }
     }
 
-    let command = build_shell_command(&config);
+    // 会话恢复（读盘 + 查工具会话）：耗时操作，放在 EMBEDDED 锁之外。
+    // persisted 非空 ⇒ 该终端在上一轮应用生命周期里跑过，这次属于「重启后恢复」，
+    // 需要回放历史并尽量恢复工具会话；否则按全新终端处理。
+    let persisted = load_persisted_history(&config.instance_id);
+    let restoring = !persisted.is_empty();
+    let instance = read_hub()
+        .instances
+        .into_iter()
+        .find(|item| item.id == config.instance_id);
+    let resume = resolve_resume_session(&config, instance.as_ref(), restoring);
+    let command = build_shell_command_with(&config, resume.as_deref());
 
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -422,12 +496,15 @@ pub fn ensure_embedded_terminal(config: TerminalLaunchConfig) -> Result<u64, Str
 
     let child_shared: Arc<Mutex<Option<Box<dyn portable_pty::Child + Send + Sync>>>> =
         Arc::new(Mutex::new(Some(child)));
-    let history = Arc::new(Mutex::new(Vec::<u8>::new()));
+    // 用上一轮的落盘内容作为历史起点：前端 attach 时立即回放，
+    // 于是重启应用后看到的是原来的会话内容，而不是一个空白新终端。
+    let history = Arc::new(Mutex::new(persisted));
     let listeners: Arc<Mutex<Vec<std::sync::mpsc::Sender<EmbeddedOutputEvent>>>> =
         Arc::new(Mutex::new(Vec::new()));
     let exited = Arc::new(AtomicBool::new(false));
 
     let id = NEXT_PTY_ID.fetch_add(1, Ordering::Relaxed);
+    let mut sessions = EMBEDDED.lock().unwrap();
     sessions.insert(
         id,
         EmbeddedSession {
@@ -445,8 +522,11 @@ pub fn ensure_embedded_terminal(config: TerminalLaunchConfig) -> Result<u64, Str
     // 读线程：PTY 输出 → 历史 + 广播。
     // 注意 ConPTY 的 ReadFile 在无数据时可能返回 0 字节（并非 EOF），
     // 必须结合子进程状态判断真实退出，否则运行中的终端会被误报为已退出。
+    let flush_id = config.instance_id.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut last_flush = std::time::Instant::now();
+        let mut dirty = false;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
@@ -473,10 +553,24 @@ pub fn ensure_embedded_terminal(config: TerminalLaunchConfig) -> Result<u64, Str
                             h.drain(..drop_len);
                         }
                     }
+                    dirty = true;
                     broadcast_to(listeners.clone(), EmbeddedOutputEvent::Data { data: chunk });
                 }
                 Err(_) => break,
             }
+            // 节流落盘：只在内容有变化且距上次落盘超过阈值时写，
+            // 避免大输出时反复写整个历史（上限 512KB）。
+            if dirty && last_flush.elapsed() >= PERSIST_FLUSH_INTERVAL {
+                let snapshot = history.lock().unwrap().clone();
+                persist_history(&flush_id, &snapshot);
+                last_flush = std::time::Instant::now();
+                dirty = false;
+            }
+        }
+        // 退出前收尾落盘，保证重启后能完整回放
+        if dirty || last_flush.elapsed() >= PERSIST_FLUSH_INTERVAL {
+            let snapshot = history.lock().unwrap().clone();
+            persist_history(&flush_id, &snapshot);
         }
         exited.store(true, Ordering::Relaxed);
         broadcast_to(listeners.clone(), EmbeddedOutputEvent::Exit { code: None });
@@ -578,6 +672,11 @@ pub async fn close_embedded_terminal(pty_id: u64) -> Result<(), String> {
     let session = EMBEDDED.lock().unwrap().remove(&pty_id);
     if let Some(session) = session {
         session.exited.store(true, Ordering::Relaxed);
+        // 收尾落盘：用户主动停止时也要保留滚动内容，下次启动可回放
+        {
+            let snapshot = session.history.lock().unwrap().clone();
+            persist_history(&session.instance_id, &snapshot);
+        }
         if let Some(mut child) = session.child.lock().unwrap().take() {
             let pid = child.process_id();
             child.kill().ok();
@@ -604,6 +703,11 @@ pub fn cleanup_all_embedded() {
     let sessions = EMBEDDED.lock().unwrap().drain().collect::<Vec<_>>();
     for (_id, session) in sessions {
         session.exited.store(true, Ordering::Relaxed);
+        // 应用退出：把滚动内容落盘，下次启动 ensure 时回放（会话恢复的关键）
+        {
+            let snapshot = session.history.lock().unwrap().clone();
+            persist_history(&session.instance_id, &snapshot);
+        }
         if let Some(mut child) = session.child.lock().unwrap().take() {
             let pid = child.process_id();
             child.kill().ok();
@@ -616,6 +720,16 @@ pub fn cleanup_all_embedded() {
             }
         }
     }
+}
+
+/// 清除某个终端实例落盘的输出历史（「清除会话并重新初始化」用）。
+/// 只删磁盘快照，不影响正在运行的会话；需要真正全新终端时先关闭会话再调用。
+#[tauri::command]
+pub fn clear_terminal_history(
+    #[allow(non_snake_case)] instanceId: String,
+) -> Result<(), String> {
+    remove_persisted_history(&instanceId);
+    Ok(())
 }
 
 // ============================================================================
@@ -653,6 +767,11 @@ pub fn detect_available_terminals() -> Vec<String> {
 
 /// 根据实例配置构造要执行的命令（与前端 resolveShellCommand 语义一致）。
 fn build_shell_command(config: &TerminalLaunchConfig) -> String {
+    build_shell_command_with(config, None)
+}
+
+/// 在 `build_shell_command` 基础上追加会话恢复参数（`--resume <id>` / `--session <id>`）。
+fn build_shell_command_with(config: &TerminalLaunchConfig, resume: Option<&str>) -> String {
     if config.tool == "shell" {
         return String::new();
     }
@@ -665,11 +784,77 @@ fn build_shell_command(config: &TerminalLaunchConfig) -> String {
             .to_string();
     }
     let args = config.args.as_deref().unwrap_or("").trim();
-    if args.is_empty() {
+    let resume = resume.map(str::trim).filter(|s| !s.is_empty());
+    let resume_flag = session_resume_flag(&config.tool);
+    let mut command = if args.is_empty() {
         config.tool.clone()
     } else {
         format!("{} {}", config.tool, args)
+    };
+    if let (Some(flag), Some(session)) = (resume_flag, resume) {
+        command.push_str(&format!(" {flag} {session}"));
     }
+    command
+}
+
+/// 工具 → 会话恢复参数名（与前端 SESSION_ARG_FLAG 保持一致）。
+fn session_resume_flag(tool: &str) -> Option<&'static str> {
+    match tool {
+        "claude" => Some("--resume"),
+        "opencode" => Some("--session"),
+        _ => None,
+    }
+}
+
+/// 启动参数里已有的会话标记（用户显式指定时不再自动追加）。
+const SESSION_ARG_TOKENS: &[&str] = &["--resume", "--session", "--continue", "-c", "-r", "-s"];
+
+/// 决定本次启动要恢复到哪个工具会话（返回 None 表示开全新会话）。
+///
+/// 只在「重启后恢复」场景生效：即该实例有落盘历史（上一轮跑过）。
+/// 首次创建的终端不会误恢复别人的会话。
+fn resolve_resume_session(
+    config: &TerminalLaunchConfig,
+    instance: Option<&TerminalInstance>,
+    restoring: bool,
+) -> Option<String> {
+    if session_resume_flag(&config.tool).is_none() {
+        return None;
+    }
+    // 用户已在启动参数里写了会话标记：尊重显式配置
+    let args = config.args.as_deref().unwrap_or("");
+    if args
+        .split_whitespace()
+        .any(|token| SESSION_ARG_TOKENS.contains(&token))
+    {
+        return None;
+    }
+    // 用户显式指定的会话 id 优先
+    if let Some(sid) = instance
+        .and_then(|item| item.last_session_id.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(sid.to_string());
+    }
+    if !restoring {
+        return None;
+    }
+    // 默认开启自动恢复；auto_resume = false 时保持全新会话
+    if instance.and_then(|item| item.auto_resume) == Some(false) {
+        return None;
+    }
+    let dir = if config.project_dir.trim().is_empty() {
+        None
+    } else {
+        Some(config.project_dir.as_str())
+    };
+    let latest = match config.tool.as_str() {
+        "claude" => claude_sessions(dir).into_iter().next(),
+        "opencode" => opencode_sessions(dir).into_iter().next(),
+        _ => None,
+    };
+    latest.map(|item| item.session_id)
 }
 
 /// 拉起原生终端，返回可管理 PID（不可管理时返回 0）。

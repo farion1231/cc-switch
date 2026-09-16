@@ -81,6 +81,14 @@ export const terminalApi = {
     return invoke<void>("close_embedded_terminal", { ptyId });
   },
 
+  /**
+   * 清除某个终端实例落盘的输出历史。
+   * 「清除会话并重新初始化」时调用：否则重启后仍会回放旧内容、并尝试恢复旧会话。
+   */
+  async clearTerminalHistory(instanceId: string): Promise<void> {
+    return invoke<void>("clear_terminal_history", { instanceId });
+  },
+
   async getState(): Promise<TerminalHubState> {
     return invoke<TerminalHubState>("get_terminal_hub_state");
   },
@@ -101,6 +109,7 @@ export const terminalApi = {
       customCommand: payload.customCommand ?? null,
       args: payload.args ?? null,
       terminal: payload.terminal ?? null,
+      autoResume: payload.autoResume ?? null,
     });
   },
 

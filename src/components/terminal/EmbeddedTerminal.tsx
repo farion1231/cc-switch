@@ -6,6 +6,7 @@ import { ArrowDown } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { terminalApi } from "@/lib/api/terminal";
+import { terminalQueue } from "@/lib/terminalQueue";
 import type { TerminalInstance } from "@/types/terminal";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { TerminalPrompt } from "./TerminalPrompt";
@@ -132,6 +133,27 @@ export function EmbeddedTerminal({
     },
     [onExitChange],
   );
+
+  /**
+   * 队列发送器：往本会话写内容 + 回车。
+   * 注册到队列 store 后，排队发送就绑定到这个终端（跟随终端）。
+   */
+  const sendText = useCallback(async (text: string) => {
+    const ptyId = ptyIdRef.current;
+    if (ptyId === null) {
+      throw new Error("当前终端会话不可用");
+    }
+    // 换行统一成 \r\n：cmd/ConPTY 只认回车执行，裸 \n 会打断当前行
+    const payload = text.replace(/\r\n|\r|\n/g, "\r\n");
+    await terminalApi.writeEmbedded(ptyId, payload);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await terminalApi.writeEmbedded(ptyId, "\r");
+  }, []);
+
+  useEffect(() => {
+    terminalQueue.registerSender(instance.id, sendText);
+    return () => terminalQueue.unregisterSender(instance.id);
+  }, [instance.id, sendText]);
 
   /** 自适应终端尺寸并同步 PTY（校验 dims，避免未布局时算出非法行列）。 */
   const doFit = useCallback(() => {
@@ -283,6 +305,8 @@ export function EmbeddedTerminal({
       await terminalApi.attachEmbedded(ptyId, (evt) => {
         if (evt.kind === "data") {
           term.write(new Uint8Array(evt.data));
+          // 告知队列「本终端有输出」：排队发送靠输出静默判定上一条是否执行完
+          terminalQueue.notifyOutput(instance.id);
         } else {
           reportExit(true);
         }
@@ -388,7 +412,7 @@ export function EmbeddedTerminal({
           </button>
         )}
       </div>
-      <TerminalPrompt getPtyId={() => ptyIdRef.current} />
+      <TerminalPrompt instanceId={instance.id} getPtyId={() => ptyIdRef.current} />
       {(exited || bootError) && (
         <div className="flex shrink-0 items-center justify-center gap-2 border-t border-border py-2 text-[11px] text-muted-foreground">
           <span>

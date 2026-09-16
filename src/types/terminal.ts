@@ -53,6 +53,13 @@ export interface TerminalInstance {
   pid?: number;
   createdAt: number;
   lastLaunchAt?: number;
+  /**
+   * 重启应用后是否自动恢复到上次的工具会话（claude / opencode）。
+   * 缺省视为 true；置 false 时每次都开全新会话。
+   */
+  autoResume?: boolean;
+  /** 用户显式指定要恢复的会话 id（优先于自动探测最近会话）。 */
+  lastSessionId?: string;
 }
 
 export interface TerminalHubState {
@@ -87,6 +94,8 @@ export interface CreateTerminalPayload {
   /** 附加启动参数（追加在工具名之后） */
   args?: string | null;
   terminal?: string | null;
+  /** 重启应用后是否自动恢复上次会话（claude / opencode） */
+  autoResume?: boolean;
 }
 
 /** 工具本机会话上下文条目（用于终端面板快速恢复会话）。 */

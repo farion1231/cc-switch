@@ -10,6 +10,7 @@ import {
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 
 import { terminalApi } from "@/lib/api/terminal";
+import { terminalQueue } from "@/lib/terminalQueue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type {
   CreateTerminalPayload,
@@ -306,18 +307,24 @@ export function useTerminalHub() {
     [persist],
   );
 
+  /**
+   * 新建终端。返回新建实例的 id（失败返回 null）——调用方据此立即选中
+   * 新终端，避免「建完了还得再点一下」。
+   */
   const createTerminal = useCallback(
-    async (payload: CreateTerminalPayload): Promise<boolean> => {
+    async (payload: CreateTerminalPayload): Promise<string | null> => {
+      const before = new Set(stateRef.current.instances.map((item) => item.id));
       try {
         const next = await terminalApi.createInstance(payload);
         applyState(next);
-        return true;
+        const created = next.instances.find((item) => !before.has(item.id));
+        return created?.id ?? null;
       } catch (error) {
         console.error("[terminalHub] failed to create terminal", error);
         toast.error(
           `${t("terminalHub.createFailed", { defaultValue: "新建终端失败" })}: ${extractErrorMessage(error)}`,
         );
-        return false;
+        return null;
       }
     },
     [applyState, t],
@@ -344,6 +351,8 @@ export function useTerminalHub() {
           delete copy[id];
           return copy;
         });
+        // 连同该终端的发送队列一起清理（队列按终端隔离，不留孤儿数据）
+        terminalQueue.dispose(id);
       } catch (error) {
         console.error("[terminalHub] failed to delete terminal", error);
         toast.error(
@@ -486,9 +495,32 @@ export function useTerminalHub() {
     [registerEmbedded, setEmbeddedExited, t],
   );
 
-  /** 清除并重新初始化终端：结束旧进程（内嵌 PTY 或系统终端）并重新拉起。 */
+  /**
+   * 清除并重新初始化终端：结束旧进程（内嵌 PTY 或系统终端）、删掉落盘历史，
+   * 再重新拉起——否则重启应用后仍会回放旧内容并自动恢复旧会话。
+   */
   const resetTerminal = useCallback(
     async (id: string) => {
+      // 清落盘历史：让本次「重置」真正得到全新会话（重启后不再恢复）
+      try {
+        await terminalApi.clearTerminalHistory(id);
+      } catch {
+        // 历史文件可能不存在，忽略
+      }
+      // 「重置」语义是全新会话：同时清掉显式指定的恢复目标，
+      // 否则重启应用后又会跳回同一个会话。
+      {
+        const current = stateRef.current;
+        const target = current.instances.find((item) => item.id === id);
+        if (target?.lastSessionId) {
+          await persist({
+            ...current,
+            instances: current.instances.map((item) =>
+              item.id === id ? { ...item, lastSessionId: undefined } : item,
+            ),
+          });
+        }
+      }
       const ptyId = embeddedPtyRef.current[id];
       if (ptyId !== undefined) {
         try {

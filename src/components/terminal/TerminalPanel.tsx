@@ -1610,7 +1610,7 @@ export function TerminalPanel({
           const { x, y, instance } = contextMenu;
           const status = instanceAliveStatus(instance, hub);
           const menuWidth = 176;
-          const menuHeight = 152;
+          const menuHeight = 186;
           const left = Math.max(
             8,
             Math.min(x, window.innerWidth - menuWidth - 8),
@@ -1665,6 +1665,28 @@ export function TerminalPanel({
                   defaultValue: "重置会话",
                 })}
               </button>
+              {SESSION_TOOLS.includes(instance.tool) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContextMenu(null);
+                    const next = instance.autoResume === false;
+                    hub.updateInstance(instance.id, { autoResume: next });
+                    toast.success(
+                      next
+                        ? "已开启：重启应用后自动恢复该终端会话"
+                        : "已关闭：重启应用后开全新会话",
+                    );
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted"
+                  title="控制重启应用后是否自动恢复该终端的会话与内容"
+                >
+                  <History className="h-3.5 w-3.5 text-muted-foreground" />
+                  {instance.autoResume === false
+                    ? "开启重启自动恢复"
+                    : "关闭重启自动恢复"}
+                </button>
+              )}
               <div className="my-1 h-px bg-border" />
               <button
                 type="button"
@@ -1753,7 +1775,20 @@ export function TerminalPanel({
           onListSessions={(tool, projectDir) =>
             terminalApi.listToolSessions(tool, projectDir)
           }
-          onSubmit={(payload) => hub.createTerminal(payload)}
+          onSubmit={async (payload) => {
+            // 新建即选中：创建成功后直接切到新终端并激活会话，
+            // 同时展开它所属的项目分组（否则树里看不见新条目）
+            const createdId = await hub.createTerminal(payload);
+            if (createdId) {
+              const groupId = payload.projectId;
+              if (groupId) {
+                setExpandedIds((prev) => new Set(prev).add(groupId));
+              }
+              setSelectedId(createdId);
+              hub.setActiveInstanceId(createdId);
+            }
+            return createdId;
+          }}
         />
       )}
 

@@ -50,7 +50,8 @@ export interface NewTerminalDialogProps {
     tool: TerminalTool,
     projectDir: string,
   ) => Promise<ToolSessionInfo[]>;
-  onSubmit: (payload: CreateTerminalPayload) => Promise<boolean>;
+  /** 提交新建；返回新建实例 id（失败返回 null），调用方据此自动选中新终端。 */
+  onSubmit: (payload: CreateTerminalPayload) => Promise<string | null>;
 }
 
 /** 终端工具 → 对应的应用 id（用于决定注入哪套环境变量）。 */
@@ -173,6 +174,8 @@ export function NewTerminalDialog({
   const [argsMemory, setArgsMemory] = useState<
     Partial<Record<TerminalTool, string>>
   >(loadArgsMemory);
+  /** 重启应用后是否自动恢复到上次会话（claude / opencode） */
+  const [autoResume, setAutoResume] = useState(true);
 
   // 最近会话
   const [sessions, setSessions] = useState<ToolSessionInfo[]>([]);
@@ -197,6 +200,7 @@ export function NewTerminalDialog({
     setTerminalHost(getDefaultTerminalHost());
     setSessions([]);
     setSelectedSessionId("__none__");
+    setAutoResume(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, appLabel, defaultProjectDir]);
 
@@ -302,7 +306,7 @@ export function NewTerminalDialog({
       if (tool !== "shell" && tool !== "custom") {
         setArgsMemory((prev) => rememberArgs(prev, tool, args));
       }
-      const ok = await onSubmit({
+      const createdId = await onSubmit({
         name: trimmedName,
         app: TOOL_APP_MAP[tool] ?? appId,
         projectDir: trimmedDir,
@@ -311,8 +315,9 @@ export function NewTerminalDialog({
         customCommand: tool === "custom" ? trimmedCommand : null,
         args: tool === "shell" || tool === "custom" ? null : args.trim(),
         terminal: terminalHost || null,
+        autoResume,
       });
-      if (ok) onOpenChange(false);
+      if (createdId) onOpenChange(false);
     } finally {
       setPending(false);
     }
@@ -445,6 +450,27 @@ export function NewTerminalDialog({
                       "启动参数会追加在工具名之后；可在设置中配置各工具的默认模板。",
                   })}
                 </p>
+                {/* 会话恢复开关：仅对支持 --resume/--session 的工具有意义 */}
+                {SESSION_TOOLS.includes(tool) ? (
+                  <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/60 bg-background/60 px-2.5 py-2">
+                    <input
+                      type="checkbox"
+                      checked={autoResume}
+                      onChange={(event) => setAutoResume(event.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground">
+                        重启后自动恢复会话
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
+                        应用重启时自动回滚终端内容，并带上{" "}
+                        {tool === "claude" ? "--resume" : "--session"}{" "}
+                        恢复上次的对话；关闭则每次都开全新会话。
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
               </div>
             ) : null}
 
