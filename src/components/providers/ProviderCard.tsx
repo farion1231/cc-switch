@@ -597,7 +597,7 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-3 sm:flex-initial">
+        <div className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-3 pr-0 transition-[padding] duration-200 group-hover:pr-48 sm:flex-initial sm:group-hover:pr-52">
           <div className="ml-auto min-w-0 max-w-full overflow-hidden">
             <div className="flex min-w-0 max-w-full items-center gap-1">
               {isCopilot ? (
@@ -679,7 +679,7 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          <div className="pointer-events-none absolute right-3 top-2 z-10 flex max-w-[60%] flex-wrap items-center justify-end gap-1.5 rounded-lg border border-border bg-popover/95 p-1 opacity-0 shadow-md transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}

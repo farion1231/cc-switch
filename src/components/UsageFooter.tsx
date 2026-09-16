@@ -144,9 +144,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
   if (isTokenPlan && inline) {
     return (
-      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
+      <div className="flex min-w-0 max-w-full flex-col items-end gap-1 overflow-hidden text-xs whitespace-nowrap flex-shrink-0">
         {/* 第一行：查询时间 + 刷新 */}
-        <div className="flex items-center gap-2 justify-end">
+        <div className="flex min-w-0 max-w-full items-center gap-2 justify-end overflow-hidden">
           <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
             <Clock size={10} />
             {lastQueriedAt
@@ -166,14 +166,17 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           </button>
         </div>
         {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden">
           {(() => {
             const tiers = usageDataList.map((d) => toQuotaTier(d));
             const planLabel = tiers[0]?.planLabel;
             return (
               <>
                 {planLabel && (
-                  <span className="font-semibold text-muted-foreground">
+                  <span
+                    className="min-w-0 truncate font-semibold text-muted-foreground"
+                    title={planLabel}
+                  >
                     💰 {planLabel}
                   </span>
                 )}
@@ -219,7 +222,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
         </div>
 
         {/* 第二行：用量和剩余 */}
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden">
           {/* 已用 */}
           {firstUsage.used !== undefined && (
             <div className="flex items-center gap-0.5">
