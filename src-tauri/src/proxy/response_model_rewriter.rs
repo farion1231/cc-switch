@@ -10,7 +10,7 @@
 //!   [`super::model_mapper::strip_one_m_suffix_for_upstream`] 对齐）。
 //! - 所有 usage 记账都在回写之前基于原始响应完成，归因模型不受影响。
 
-use super::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use super::sse::{sse_data, sse_lines, strip_sse_field, SseDecoder, SseFrame};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -86,94 +86,114 @@ pub fn rewrite_json_body_model(body: &[u8], target: &str) -> Option<Vec<u8>> {
     serde_json::to_vec(&value).ok()
 }
 
-/// 改写一个 SSE 事件块（不含结尾空行）里 data 载荷的 model 字段。
+/// 改写一个 SSE 事件块里 data 载荷的 model 字段（允许包含结尾空行）。
 ///
 /// 未改动时返回 `Cow::Borrowed` 原样引用，避免热路径上的无效分配；
 /// `event:` / `id:` / 注释等非 data 行始终原样保留。
 pub fn rewrite_sse_block_model<'a>(block: &'a str, target: &str) -> Cow<'a, str> {
     // 廉价前置：块里没有 model 字段时直接跳过 JSON 解析
-    if !block.contains("\"model\"") {
+    // JSON 字段名也可能写成 "mo\u0064el"；含转义时交给 JSON 解析器判断。
+    if !block.contains("\"model\"") && !block.contains("\\u") {
         return Cow::Borrowed(block);
     }
 
-    let mut changed = false;
+    let Some(data) = sse_data(block) else {
+        return Cow::Borrowed(block);
+    };
+    let Ok(mut value) = serde_json::from_str::<Value>(&data) else {
+        return Cow::Borrowed(block);
+    };
+    if !rewrite_value_model(&mut value, target) {
+        return Cow::Borrowed(block);
+    }
+    let Ok(serialized) = serde_json::to_string(&value) else {
+        return Cow::Borrowed(block);
+    };
+
+    // 只有实际回写才分配输出。多行 data 合并到最后一个 data 行，保留
+    // 它与事件结束空行之间的换行符，避免混合 CR/LF 在删行后意外合成 CRLF。
+    let mut remaining_data = match &data {
+        Cow::Borrowed(_) => 1,
+        Cow::Owned(_) => sse_lines(block)
+            .enumerate()
+            .filter(|(index, (line, _))| {
+                let field = if *index == 0 {
+                    line.strip_prefix('\u{feff}').unwrap_or(line)
+                } else {
+                    line
+                };
+                strip_sse_field(field, "data").is_some()
+            })
+            .count(),
+    };
     let mut out = String::with_capacity(block.len());
-
-    for (i, line) in block.lines().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-
-        let Some(data) = strip_sse_field(line, "data") else {
-            out.push_str(line);
-            continue;
+    for (index, (line, ending)) in sse_lines(block).enumerate() {
+        let field = if index == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line
         };
-        if data.trim() == "[DONE]" || !data.contains("\"model\"") {
-            out.push_str(line);
-            continue;
-        }
-
-        let Ok(mut value) = serde_json::from_str::<Value>(data) else {
-            out.push_str(line);
-            continue;
-        };
-        if !rewrite_value_model(&mut value, target) {
-            out.push_str(line);
-            continue;
-        }
-
-        match serde_json::to_string(&value) {
-            Ok(serialized) => {
-                changed = true;
+        if strip_sse_field(field, "data").is_some() {
+            if field.len() != line.len() {
+                out.push('\u{feff}');
+            }
+            remaining_data -= 1;
+            if remaining_data == 0 {
                 out.push_str("data: ");
                 out.push_str(&serialized);
+                out.push_str(ending);
             }
-            // 序列化失败不该发生（刚解析成功的 Value），兜底保留原始行
-            Err(_) => out.push_str(line),
+        } else {
+            out.push_str(line);
+            out.push_str(ending);
         }
     }
-
-    if changed {
-        Cow::Owned(out)
-    } else {
-        Cow::Borrowed(block)
-    }
+    Cow::Owned(out)
 }
 
 /// 包装一个字节流，逐个 SSE 事件回写 model 字段。
 ///
-/// 事件边界按 `\n\n` / `\r\n\r\n` 切分（与 [`take_sse_block`] 一致），
-/// 未到结尾空行的数据会缓冲等待——SSE 事件在分隔符之前对客户端本就不可见，
-/// 因此这不改变可观察的时序语义。流尾未终止的残余数据原样透传。
+/// 按 SSE 的 LF / CRLF / CR 行结束规则增量分帧。事件前的注释心跳
+/// 即时透传；data 事件等待结尾空行后回写。未修改的单 chunk
+/// 事件复用原始 Bytes，跨 chunk 事件只缓冲一次。正常 EOF 的尾部原样透传。
 pub fn create_model_rewriting_stream(
     stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     target: String,
 ) -> impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut decoder = SseDecoder::default();
 
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-                    while let Some(block) = take_sse_block(&mut buffer) {
-                        let rewritten = rewrite_sse_block_model(&block, &target);
-                        yield Ok(Bytes::from(format!("{rewritten}\n\n")));
+                    decoder.push(bytes);
+                    while let Some(frame) = decoder.next_frame() {
+                        yield Ok(match frame {
+                            SseFrame::Passthrough(bytes) => bytes,
+                            SseFrame::Event(bytes) => match std::str::from_utf8(&bytes) {
+                                Ok(block) => match rewrite_sse_block_model(block, &target) {
+                                    Cow::Borrowed(_) => bytes,
+                                    Cow::Owned(rewritten) => Bytes::from(rewritten),
+                                },
+                                // 无效 UTF-8 不应被有损转换破坏；保留上游原始字节。
+                                Err(_) => bytes,
+                            },
+                        });
                     }
                 }
-                Err(e) => yield Err(e),
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
             }
         }
 
         // 流正常结束：冲刷未终止的尾部残余，原样透传
-        if !utf8_remainder.is_empty() {
-            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
-        }
-        if !buffer.is_empty() {
-            yield Ok(Bytes::from(buffer));
+        let tail = decoder.finish();
+        if !tail.is_empty() {
+            yield Ok(tail);
         }
     }
 }
@@ -193,7 +213,160 @@ pub fn wrap_stream_for_model_rewrite(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
     use serde_json::json;
+
+    async fn rewrite_chunks(bytes: Bytes, chunk_size: usize) -> Bytes {
+        let chunks: Vec<_> = (0..bytes.len())
+            .step_by(chunk_size)
+            .map(|start| {
+                Ok::<_, std::io::Error>(bytes.slice(start..(start + chunk_size).min(bytes.len())))
+            })
+            .collect();
+        let output = create_model_rewriting_stream(futures::stream::iter(chunks), "alias".into())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        Bytes::from(output.concat())
+    }
+
+    #[tokio::test]
+    async fn stream_preserves_content_tools_and_usage_with_all_line_endings() {
+        let original = json!({
+            "model": "upstream",
+            "choices": [{"delta": {
+                "content": "你好😀",
+                "reasoning_content": "reasoning",
+                "tool_calls": [{"function": {"name": "edit", "arguments": "{\"model\":\"keep-me\"}"}}]
+            }}],
+            "usage": {"prompt_tokens": 7}
+        });
+        let mut expected = original.clone();
+        expected["model"] = json!("alias");
+        for ending in ["\n", "\r\n", "\r"] {
+            let raw = Bytes::from(format!(
+                "event: chunk{ending}data: {original}{ending}{ending}"
+            ));
+            for size in [1, 2, 7, 4096] {
+                let output = rewrite_chunks(raw.clone(), size).await;
+                let data = sse_data(std::str::from_utf8(&output).unwrap()).unwrap();
+                assert_eq!(serde_json::from_str::<Value>(&data).unwrap(), expected);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_rewrites_multiline_data_without_merging_mixed_line_endings() {
+        for first_ending in ["\n", "\r\n", "\r"] {
+            for delimiter in ["\n\n", "\r\n\r\n", "\r\r", "\r\n\n", "\n\r"] {
+                let raw = Bytes::from(format!(
+                    "data: {{\"model\":\"upstream\",{first_ending}id: event-1\rdata: \"usage\":{{\"input_tokens\":7}}}}{delimiter}"
+                ));
+                for size in [1, 7, 4096] {
+                    let output = rewrite_chunks(raw.clone(), size).await;
+                    let mut decoder = SseDecoder::default();
+                    decoder.push(output);
+                    let mut events = vec![];
+                    while let Some(frame) = decoder.next_frame() {
+                        if let SseFrame::Event(bytes) = frame {
+                            let data = sse_data(std::str::from_utf8(&bytes).unwrap()).unwrap();
+                            events.push(serde_json::from_str::<Value>(&data).unwrap());
+                        }
+                    }
+                    assert!(decoder.finish().is_empty());
+                    assert_eq!(
+                        events,
+                        [json!({"model":"alias", "usage":{"input_tokens":7}})]
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn unchanged_event_reuses_original_bytes_including_invalid_utf8() {
+        for raw in [
+            Bytes::from_static(b"data: {\"model\":\"alias\"}\r\n\r\n"),
+            Bytes::from_static(b"data: {\"text\":\"hi\"}\n\n"),
+            Bytes::from_static(b"data: {\"model\":broken}\n\n"),
+            Bytes::from_static(b"data: \xff\n\n"),
+        ] {
+            let stream = create_model_rewriting_stream(
+                futures::stream::iter(vec![Ok::<_, std::io::Error>(raw.clone())]),
+                "alias".into(),
+            );
+            futures::pin_mut!(stream);
+            let output = stream.next().await.unwrap().unwrap();
+            assert_eq!(output, raw);
+            assert_eq!(
+                output.as_ptr(),
+                raw.as_ptr(),
+                "unchanged event should not copy its body"
+            );
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[test]
+    fn heartbeat_and_cr_event_are_emitted_before_upstream_closes() {
+        for raw in [
+            b": keepalive\n".as_slice(),
+            b": keepalive\r",
+            b"data: {\"model\":\"upstream\"}\r\r",
+        ] {
+            let upstream =
+                futures::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::copy_from_slice(raw))])
+                    .chain(futures::stream::pending());
+            let output = create_model_rewriting_stream(upstream, "alias".into());
+            futures::pin_mut!(output);
+            assert!(matches!(output.next().now_or_never(), Some(Some(Ok(_)))));
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_stops_on_error_without_emitting_buffered_tail() {
+        let input = futures::stream::iter(vec![
+            Ok(Bytes::from_static(b"data: {\"model\":")),
+            Err(std::io::Error::other("upstream failed")),
+            Ok(Bytes::from_static(b"must not be polled")),
+        ]);
+        let output = create_model_rewriting_stream(input, "alias".into())
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output[0].as_ref().unwrap_err().to_string(),
+            "upstream failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_rewrites_large_fragmented_event() {
+        let text = "x".repeat(1024 * 1024);
+        let raw = Bytes::from(format!(
+            "data: {}\n\n",
+            json!({"response":{"model":"upstream","output":text}})
+        ));
+        let output = rewrite_chunks(raw, 4096).await;
+        let data = sse_data(std::str::from_utf8(&output).unwrap()).unwrap();
+        let value: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(value["response"]["model"], "alias");
+        assert_eq!(value["response"]["output"], text);
+    }
+
+    #[test]
+    fn escaped_model_key_and_leading_bom_are_rewritten() {
+        let block = "\u{feff}data: {\"mo\\u0064el\":\"upstream\"}\r\r";
+        let output = rewrite_sse_block_model(block, "alias");
+        assert!(output.starts_with('\u{feff}'));
+        let data = sse_data(&output).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&data).unwrap()["model"],
+            "alias"
+        );
+    }
 
     // ------------------------------------------------------------------
     // response_model_target
