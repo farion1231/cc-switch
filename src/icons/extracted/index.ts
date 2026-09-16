@@ -142,7 +142,7 @@ export const iconUrls: Record<string, string> = {
   unity2: _unity2,
   xycai: _xycai,
   zetaapi: _zetaapi,
-  laonongapi: _laonongapi
+  laonongapi: _laonongapi,
 };
 
 export const iconList = [
