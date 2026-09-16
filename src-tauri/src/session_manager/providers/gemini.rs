@@ -340,7 +340,7 @@ fn load_antigravity_messages(path: &Path) -> Result<Vec<SessionMessage>, String>
         result.push(SessionMessage {
             role: role.to_string(),
             content,
-            ts: value.get("created_at").and_then(parse_timestamp_to_ms),
+            ts: value.get("ts").and_then(parse_timestamp_to_ms),
         });
     }
 
@@ -508,6 +508,25 @@ mod tests {
 
         let content = "visible\n<ADDITIONAL_METADATA>secret</ADDITIONAL_METADATA>";
         assert_eq!(clean_antigravity_content(content.to_string()), "visible");
+    }
+
+    #[test]
+    fn load_antigravity_messages_reads_ts_timestamp() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("transcript.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"ts":1771061953,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"hello"}
+{"ts":1771061954033,"source":"MODEL","type":"PLANNER_RESPONSE","content":"world"}
+"#,
+        )
+        .expect("write transcript");
+
+        let messages = load_antigravity_messages(&path).expect("load transcript");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].ts, Some(1_771_061_953_000));
+        assert_eq!(messages[1].ts, Some(1_771_061_954_033));
     }
 
     #[test]
