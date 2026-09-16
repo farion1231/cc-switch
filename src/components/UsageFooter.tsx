@@ -144,9 +144,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
   if (isTokenPlan && inline) {
     return (
-      <div className="flex min-w-0 max-w-full flex-col items-end gap-1 overflow-hidden text-xs whitespace-nowrap sm:max-w-[min(55vw,520px)]">
+      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
         {/* 第一行：查询时间 + 刷新 */}
-        <div className="flex min-w-0 max-w-full items-center gap-2 justify-end overflow-hidden">
+        <div className="flex items-center gap-2 justify-end">
           <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
             <Clock size={10} />
             {lastQueriedAt
