@@ -26,6 +26,7 @@ import type {
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ProviderCategory,
+  ProviderApiKey,
   ProviderMeta,
 } from "@/types";
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
@@ -104,6 +105,9 @@ export function GrokBuildProviderForm({
   );
   const [baseUrl, setBaseUrl] = useState(initialConfig.baseUrl);
   const [apiKey, setApiKey] = useState(initialConfig.apiKey);
+  const [apiKeys, setApiKeys] = useState<ProviderApiKey[]>(
+    () => initialData?.meta?.apiKeys ?? [],
+  );
   const [contextWindow, setContextWindow] = useState(
     String(initialConfig.contextWindow),
   );
@@ -399,6 +403,12 @@ export function GrokBuildProviderForm({
         Number.isInteger(parsedMaxOutputTokens) && parsedMaxOutputTokens > 0
           ? parsedMaxOutputTokens
           : undefined,
+      apiKeys: apiKeys
+        .filter(({ key }) => key.trim())
+        .map(({ key, note }) => ({
+          key: key.trim(),
+          ...(note?.trim() ? { note: note.trim() } : {}),
+        })),
     };
     if (!providerId && Object.keys(customEndpoints).length > 0) {
       meta.custom_endpoints = customEndpoints;
@@ -449,6 +459,8 @@ export function GrokBuildProviderForm({
                 setApiKey(value);
                 syncStructuredConfig({ apiKey: value });
               }}
+              apiKeys={apiKeys.length ? apiKeys : [{ key: apiKey }]}
+              onApiKeysChange={setApiKeys}
               category={category}
               shouldShowApiKeyLink={Boolean(websiteUrl)}
               websiteUrl={websiteUrl}

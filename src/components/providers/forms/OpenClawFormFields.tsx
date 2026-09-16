@@ -22,7 +22,7 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { openclawApiProtocols } from "@/config/openclawProviderPresets";
-import type { ProviderCategory, OpenClawModel } from "@/types";
+import type { ProviderApiKey, ProviderCategory, OpenClawModel } from "@/types";
 
 interface OpenClawFormFieldsProps {
   // Base URL
@@ -32,6 +32,8 @@ interface OpenClawFormFieldsProps {
   // API Key
   apiKey: string;
   onApiKeyChange: (value: string) => void;
+  apiKeys?: ProviderApiKey[];
+  onApiKeysChange?: (keys: ProviderApiKey[]) => void;
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
@@ -56,6 +58,8 @@ export function OpenClawFormFields({
   onBaseUrlChange,
   apiKey,
   onApiKeyChange,
+  apiKeys,
+  onApiKeysChange,
   category,
   shouldShowApiKeyLink,
   websiteUrl,
@@ -246,6 +250,8 @@ export function OpenClawFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
+        apiKeys={apiKeys}
+        onApiKeysChange={onApiKeysChange}
         // OpenClaw 的 API key 始终由用户自填，没有 OAuth-only 的免 key 官方供应商，
         // 故不让 official 禁用输入框（与 Hermes 对齐）。
         category={category === "official" ? undefined : category}
