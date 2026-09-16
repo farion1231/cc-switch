@@ -2796,4 +2796,31 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "ainetcafe",
+      options: {
+        baseURL: "https://microquickjs.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "Kimi-K3": { name: "Kimi K3" },
+      },
+    },
+    category: "aggregator",
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 ];

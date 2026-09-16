@@ -2903,4 +2903,41 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ainetcafe",
+      "https://microquickjs.com/v1",
+      "Kimi-K3",
+    ),
+    endpointCandidates: ["https://microquickjs.com/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "Kimi-K3",
+        displayName: "Kimi K3",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+    ]),
+    // ainetcafe serves K3 with thinking always on; it honours top-level
+    // reasoning_effort (low/high/max) and returns reasoning_content.
+    // `thinking: {type: "disabled"}` is accepted but does not turn thinking off.
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
+      outputFormat: "reasoning_content",
+    },
+    category: "aggregator",
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+  },
 ];

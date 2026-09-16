@@ -2065,4 +2065,22 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
   },
+  {
+    name: "ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    settingsConfig: {
+      name: "ainetcafe",
+      base_url: "https://microquickjs.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "Kimi-K3", name: "Kimi K3", context_length: 262144 }],
+    },
+    category: "aggregator",
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+    suggestedDefaults: {
+      model: { default: "Kimi-K3", provider: "ainetcafe" },
+    },
+  },
 ];

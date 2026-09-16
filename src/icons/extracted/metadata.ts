@@ -747,6 +747,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
   },
+  ainetcafe: {
+    name: "ainetcafe",
+    displayName: "ainetcafe",
+    category: "ai-provider",
+    keywords: ["ainetcafe", "ai netcafe", "kimi k3"],
+    defaultColor: "#32FEA5",
+  },
   ppio: {
     name: "ppio",
     displayName: "PPIO",

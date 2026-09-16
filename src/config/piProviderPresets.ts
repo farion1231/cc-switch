@@ -2173,6 +2173,32 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "tencent",
     iconColor: "#00A4FF",
   },
+  {
+    name: "ainetcafe",
+    providerKey: "cc-switch-ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    settingsConfig: {
+      name: "ainetcafe",
+      baseUrl: "https://microquickjs.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("moonshotai/kimi-k3", {
+            id: "Kimi-K3",
+            contextWindow: 262_144,
+            maxTokens: 32_768,
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

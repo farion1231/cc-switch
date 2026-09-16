@@ -1515,4 +1515,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    category: "aggregator",
+    baseUrl: "https://microquickjs.com",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("Kimi-K3", "Kimi-K3", "Kimi-K3"),
+    endpointCandidates: ["https://microquickjs.com"],
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+  },
 ];
