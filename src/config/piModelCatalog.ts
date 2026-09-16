@@ -180,7 +180,7 @@ export const piModelCatalog = {
       maxTokens: 65_536,
     },
   },
-   "google/gemini-3.1-flash-lite": {
+  "google/gemini-3.1-flash-lite": {
     capabilities: {
       name: "gemini-3.1-flash-lite",
       reasoning: true,
