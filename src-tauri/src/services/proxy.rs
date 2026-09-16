@@ -3499,19 +3499,31 @@ impl ProxyService {
         Ok(())
     }
 
+    /// Carry the provider row's inline `modelCatalog` onto the takeover
+    /// settings, and only that.
+    ///
+    /// Presence-gated on purpose, mirroring
+    /// `prepare_codex_live_config_text_with_optional_catalog`: catalog
+    /// projection (and with it the rewriting or removal of the top-level
+    /// `model_catalog_json` pointer) may only run for a provider that actually
+    /// declares a mapping table. Fabricating `{ "models": [] }` for every
+    /// provider without one flipped that gate on and stripped a pointer the
+    /// provider's own `config.toml` text carries — the same silent loss the
+    /// restore path guards against
+    /// (`codex_restore_from_backup_preserves_model_catalog_pointer`), and the
+    /// reason a re-takeover emptied Codex's model picker (#7430). A provider
+    /// that declares an explicitly empty table still projects, so clearing the
+    /// mapping keeps clearing the live pointer.
     fn attach_codex_model_catalog_from_provider(
         live_config: &mut Value,
         provider: Option<&Provider>,
     ) {
-        let Some(provider) = provider else {
+        let Some(model_catalog) = provider
+            .and_then(|provider| provider.settings_config.get("modelCatalog"))
+            .cloned()
+        else {
             return;
         };
-
-        let model_catalog = provider
-            .settings_config
-            .get("modelCatalog")
-            .cloned()
-            .unwrap_or_else(|| json!({ "models": [] }));
 
         if let Some(root) = live_config.as_object_mut() {
             root.insert("modelCatalog".to_string(), model_catalog);
@@ -10765,5 +10777,123 @@ experimental_bearer_token = "PROXY_MANAGED"
             .expect("read backup")
             .expect("backup exists");
         assert_eq!(backup.original_config, original_backup);
+    }
+
+    /// Regression for #7430: the takeover write fabricated an empty inline
+    /// `modelCatalog` whenever the provider row had no mapping table. That
+    /// flipped catalog projection on for exactly those providers, and
+    /// projection stripped the `model_catalog_json` pointer the provider's own
+    /// `config.toml` text carries — silently emptying Codex's model picker on
+    /// every re-takeover. This is the loss the restore path already guards
+    /// against (`codex_restore_from_backup_preserves_model_catalog_pointer`);
+    /// the provider row is the SSOT, so a pointer it carries must survive.
+    #[test]
+    #[serial]
+    fn codex_takeover_keeps_provider_model_catalog_pointer_without_inline_catalog() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        let pointer = crate::codex_config::get_codex_model_catalog_path()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut provider = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-custom" },
+                "config": format!(
+                    "model_provider = \"custom\"\n\
+                     model = \"gpt-6-astra\"\n\
+                     model_catalog_json = \"{pointer}\"\n\
+                     model_reasoning_effort = \"high\"\n\n\
+                     [model_providers.custom]\n\
+                     name = \"Custom\"\n\
+                     base_url = \"https://api.example.com/v1\"\n\
+                     wire_api = \"responses\"\n"
+                )
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live");
+
+        let live = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            live.contains("model_catalog_json") && live.contains(pointer.as_str()),
+            "takeover must not strip the provider's own model_catalog_json pointer, got:\n{live}"
+        );
+        assert!(
+            live.contains("model = \"gpt-6-astra\""),
+            "the provider's default model must survive the takeover rewrite, got:\n{live}"
+        );
+        assert!(
+            live.contains("base_url = \"http://127.0.0.1:15721/v1\""),
+            "the takeover must still rewrite the route to the local proxy, got:\n{live}"
+        );
+    }
+
+    /// The flip side of the fix above: a provider that explicitly declares an
+    /// empty mapping table still clears Live's pointer, so "what the table shows
+    /// is what Codex lists" keeps holding. Only the fabricated stub is gone.
+    #[test]
+    #[serial]
+    fn codex_takeover_drops_pointer_for_explicitly_empty_catalog() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        let pointer = crate::codex_config::get_codex_model_catalog_path()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut provider = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-custom" },
+                "config": format!(
+                    "model_provider = \"custom\"\n\
+                     model_catalog_json = \"{pointer}\"\n\n\
+                     [model_providers.custom]\n\
+                     name = \"Custom\"\n\
+                     base_url = \"https://api.example.com/v1\"\n\
+                     wire_api = \"responses\"\n"
+                ),
+                "modelCatalog": { "models": [] }
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut takeover_settings = provider.settings_config.clone();
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut takeover_settings,
+            "http://127.0.0.1:15721/v1",
+            &provider,
+        )
+        .expect("apply takeover fields");
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("write takeover live");
+
+        let live = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(
+            !live.contains("model_catalog_json"),
+            "an explicitly empty mapping table must still clear the live pointer, got:\n{live}"
+        );
     }
 }

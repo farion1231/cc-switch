@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms/ProviderForm";
+import {
+  normalizeCodexCatalogModelsForSave,
+  resolveCodexCatalogForSave,
+} from "@/components/providers/forms/ProviderForm";
 import { mapCodexCatalogModelForForm } from "@/components/providers/forms/hooks/useCodexConfigState";
 
 describe("ProviderForm Codex catalog helpers", () => {
@@ -115,5 +118,26 @@ describe("ProviderForm Codex catalog helpers", () => {
         { model: "glm-5.2", reasoningLevels: [" high ", "max"] },
       ]),
     ).toEqual([{ model: "glm-5.2", reasoningLevels: ["high", "max"] }]);
+  });
+});
+
+describe("ProviderForm Codex catalog save payload", () => {
+  it("persists a filled mapping table as-is", () => {
+    expect(resolveCodexCatalogForSave([{ model: "glm-5.2" }], false)).toEqual({
+      models: [{ model: "glm-5.2" }],
+    });
+  });
+
+  it("persists an explicitly empty mapping when the user cleared the table", () => {
+    // The write layer only clears Live's model_catalog_json pointer for a
+    // provider that declares the key, so an emptied table must keep declaring
+    // it — otherwise the stale pointer (and the model list behind it) stays.
+    expect(resolveCodexCatalogForSave([], true)).toEqual({ models: [] });
+  });
+
+  it("declares nothing for a provider that never had a mapping", () => {
+    // #7430: an absent key means "never configured", which keeps the
+    // model_catalog_json pointer the provider's own config.toml carries.
+    expect(resolveCodexCatalogForSave([], false)).toBeUndefined();
   });
 });

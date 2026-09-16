@@ -154,6 +154,25 @@ function getPresetProviderType(
     : undefined;
 }
 
+/**
+ * The `modelCatalog` payload for a Codex provider save.
+ *
+ * A filled table is persisted as-is. An EMPTIED table has to persist the
+ * explicit empty mapping: the write layer only projects (and therefore only
+ * clears) Live's `model_catalog_json` pointer for a provider that declares the
+ * key, so omitting it after the user cleared the table would leave the stale
+ * pointer — and the model list behind it — in place. A provider that never had
+ * a mapping declares nothing, which keeps the pointer its own `config.toml`
+ * text carries (see `attach_codex_model_catalog_from_provider`).
+ */
+export const resolveCodexCatalogForSave = (
+  models: CodexCatalogModel[],
+  hadMappings: boolean,
+): { models: CodexCatalogModel[] } | undefined => {
+  if (models.length > 0) return { models };
+  return hadMappings ? { models: [] } : undefined;
+};
+
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
@@ -1514,12 +1533,26 @@ function ProviderFormFull({
             ? setCodexWireApi(codexConfigForSave, "responses")
             : codexConfigForSave;
         // 模型映射与「路由接管」解耦：对所有非官方供应商，填了就持久化
-        //（Chat 生成兼容路由、原生 Responses 生成 model-catalogs.json），
-        // 留空归一化为 [] 即不写。后端只看 modelCatalog.models 是否非空。
+        //（Chat 生成兼容路由、原生 Responses 生成 model-catalogs.json）。
+        // 留空时是否仍写 `modelCatalog` 取决于编辑前是否本来就有映射，见
+        // resolveCodexCatalogForSave。
         const normalizedCatalogModels =
           category !== "official"
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
+        const initialCatalogModels = (
+          initialData?.settingsConfig?.modelCatalog as
+            | { models?: unknown[] }
+            | undefined
+        )?.models;
+        const catalogForSave =
+          category !== "official"
+            ? resolveCodexCatalogForSave(
+                normalizedCatalogModels,
+                Array.isArray(initialCatalogModels) &&
+                  initialCatalogModels.length > 0,
+              )
+            : undefined;
         // The default-model field writes the top-level `model` into the TOML
         // as the user types; only when it was left empty fall back to the
         // first catalog row so "fill mapping only" keeps its old behavior.
@@ -1540,8 +1573,8 @@ function ProviderFormFull({
           config: string;
           modelCatalog?: { models: CodexCatalogModel[] };
         };
-        if (normalizedCatalogModels.length > 0) {
-          configObj.modelCatalog = { models: normalizedCatalogModels };
+        if (catalogForSave) {
+          configObj.modelCatalog = catalogForSave;
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
