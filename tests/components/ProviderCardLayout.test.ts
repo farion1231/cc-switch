@@ -29,7 +29,7 @@ describe("ProviderCard layout", () => {
     expect(source).toContain("flex min-w-0 flex-1 items-center gap-2");
     expect(source).toContain("min-w-0 flex-1 space-y-1");
     expect(source).toContain(
-      "inline-flex min-w-0 flex-1 items-center overflow-hidden text-left text-sm",
+      "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
     );
   });
 

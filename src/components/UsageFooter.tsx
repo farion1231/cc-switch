@@ -43,40 +43,6 @@ function toQuotaTier(data: UsageData): QuotaTier {
   };
 }
 
-/** 用量查询时间 + 手动刷新按钮：ProviderCard 将其放在 URL 行右侧 */
-export function UsageQueryStatus({
-  lastQueriedAt,
-  loading,
-  refetch,
-}: {
-  lastQueriedAt: number | null;
-  loading: boolean;
-  refetch: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex flex-shrink-0 items-center gap-1">
-      <span className="flex items-center gap-1 text-[10px] text-muted-foreground/70">
-        <Clock size={10} />
-        {lastQueriedAt
-          ? formatRelativeTime(lastQueriedAt, Date.now(), t)
-          : t("usage.never", { defaultValue: "从未更新" })}
-      </span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          refetch();
-        }}
-        disabled={loading}
-        className="flex-shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
-        title={t("usage.refreshUsage")}
-      >
-        <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-      </button>
-    </div>
-  );
-}
-
 const UsageFooter: React.FC<UsageFooterProps> = ({
   provider,
   providerId,
@@ -178,26 +144,46 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
   if (isTokenPlan && inline) {
     return (
-      <div className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden whitespace-nowrap text-xs">
-        {(() => {
-          const tiers = usageDataList.map((d) => toQuotaTier(d));
-          const planLabel = tiers[0]?.planLabel;
-          return (
-            <>
-              {planLabel && (
-                <span
-                  className="min-w-0 truncate font-semibold text-muted-foreground"
-                  title={planLabel}
-                >
-                  💰 {planLabel}
-                </span>
-              )}
-              {tiers.map((tier, index) => (
-                <TierBadge key={index} tier={tier} t={t} />
-              ))}
-            </>
-          );
-        })()}
+      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
+        {/* 第一行：查询时间 + 刷新 */}
+        <div className="flex items-center gap-2 justify-end">
+          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+            <Clock size={10} />
+            {lastQueriedAt
+              ? formatRelativeTime(lastQueriedAt, now, t)
+              : t("usage.never", { defaultValue: "从未更新" })}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
+            disabled={loading}
+            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
+            title={t("usage.refreshUsage")}
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
+        {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
+        <div className="flex items-center gap-2">
+          {(() => {
+            const tiers = usageDataList.map((d) => toQuotaTier(d));
+            const planLabel = tiers[0]?.planLabel;
+            return (
+              <>
+                {planLabel && (
+                  <span className="font-semibold text-muted-foreground">
+                    💰 {planLabel}
+                  </span>
+                )}
+                {tiers.map((tier, index) => (
+                  <TierBadge key={index} tier={tier} t={t} />
+                ))}
+              </>
+            );
+          })()}
+        </div>
       </div>
     );
   }
@@ -208,8 +194,33 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     const isExpired = firstUsage.isValid === false;
 
     return (
-      <div className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden whitespace-nowrap text-xs">
-        {/* 已用 */}
+      <div className="flex min-w-0 max-w-full flex-col items-end gap-1 overflow-hidden text-xs whitespace-nowrap sm:max-w-[min(55vw,520px)]">
+        {/* 第一行：更新时间和刷新按钮 */}
+        <div className="flex min-w-0 max-w-full items-center gap-2 justify-end overflow-hidden">
+          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+            <Clock size={10} />
+            {lastQueriedAt
+              ? formatRelativeTime(lastQueriedAt, now, t)
+              : t("usage.never", { defaultValue: "从未更新" })}
+          </span>
+
+          {/* 刷新按钮 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
+            disabled={loading}
+            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
+            title={t("usage.refreshUsage")}
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
+
+        {/* 第二行：用量和剩余 */}
+        <div className="flex items-center gap-2">
+          {/* 已用 */}
           {firstUsage.used !== undefined && (
             <div className="flex items-center gap-0.5">
               <span className="text-gray-500 dark:text-gray-400">
@@ -258,6 +269,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
               {firstUsage.extra}
             </span>
           )}
+        </div>
       </div>
     );
   }

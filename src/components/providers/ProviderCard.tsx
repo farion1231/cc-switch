@@ -17,9 +17,7 @@ import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
-import UsageFooter, {
-  UsageQueryStatus,
-} from "@/components/UsageFooter";
+import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
@@ -318,11 +316,10 @@ export function ProviderCard({
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
 
-  const usageQuery = useUsageQuery(provider.id, appId, {
+  const { data: usage } = useUsageQuery(provider.id, appId, {
     enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
     autoQueryInterval,
   });
-  const usage = usageQuery.data;
 
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
@@ -343,16 +340,6 @@ export function ProviderCard({
     }
     onOpenWebsite(displayUrl);
   };
-
-  // 通用用量 footer 的状态（时间 + 刷新），供 URL 行右侧的 UsageQueryStatus 使用
-  const usageFooterData =
-    usageEnabled && !isOfficial && !isOfficialSubscriptionUsage
-      ? {
-          lastQueriedAt: usageQuery.lastQueriedAt,
-          loading: usageQuery.isFetching,
-          refetch: usageQuery.refetch,
-        }
-      : null;
 
   // 判断是否是"当前使用中"的供应商
   // - OMO/OMO Slim 供应商：使用 isCurrent
@@ -592,193 +579,176 @@ export function ProviderCard({
                 )}
               </div>
             ) : displayUrl ? (
-              <div className="flex min-w-0 max-w-full items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleOpenWebsite}
-                  className={cn(
-                    "inline-flex min-w-0 flex-1 items-center overflow-hidden text-left text-sm",
-                    isClickableUrl
-                      ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
-                      : "text-muted-foreground cursor-default",
-                  )}
-                  title={displayUrl}
-                  disabled={!isClickableUrl}
-                >
-                  <span className="min-w-0 truncate">{displayUrl}</span>
-                </button>
-                {usageFooterData ? (
-                  <UsageQueryStatus
-                    lastQueriedAt={usageFooterData.lastQueriedAt}
-                    loading={usageFooterData.loading}
-                    refetch={usageFooterData.refetch}
-                  />
-                ) : null}
-              </div>
+              <button
+                type="button"
+                onClick={handleOpenWebsite}
+                className={cn(
+                  "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
+                  isClickableUrl
+                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
+                    : "text-muted-foreground cursor-default",
+                )}
+                title={displayUrl}
+                disabled={!isClickableUrl}
+              >
+                <span className="min-w-0 truncate">{displayUrl}</span>
+              </button>
             ) : null}
           </div>
         </div>
 
-        <div className="flex min-w-0 items-center justify-end gap-1">
-          {!displayUrl && usageFooterData ? (
-            <UsageQueryStatus
-              lastQueriedAt={usageFooterData.lastQueriedAt}
-              loading={usageFooterData.loading}
-              refetch={usageFooterData.refetch}
-            />
-          ) : null}
-          {hasMultiplePlans && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsExpanded(!isExpanded);
-              }}
-              className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
-              title={
-                isExpanded
-                  ? t("usage.collapse", { defaultValue: "收起" })
-                  : t("usage.expand", { defaultValue: "展开" })
-              }
-            >
-              {isExpanded ? (
-                <ChevronUp size={14} />
+        <div className="flex min-w-0 max-w-full flex-1 items-center justify-end gap-3 sm:flex-initial">
+          <div className="ml-auto min-w-0 max-w-full overflow-hidden">
+            <div className="flex min-w-0 max-w-full items-center gap-1">
+              {isCopilot ? (
+                <CopilotQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isCodexOauth ? (
+                !isBoundCodexOfficial || usageEnabled ? (
+                  <CodexOauthQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      isBoundCodexOfficial
+                        ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
+                        : undefined
+                    }
+                  />
+                ) : null
+              ) : isXaiOauth ? (
+                <XaiOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isOfficial ? (
+                officialSubscriptionEnabled ? (
+                  <SubscriptionQuotaFooter
+                    appId={appId}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      provider.meta?.usage_script?.autoQueryInterval ?? 0
+                    }
+                  />
+                ) : null
+              ) : hasMultiplePlans ? (
+                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">
+                    {t("usage.multiplePlans", {
+                      count: usage?.data?.length || 0,
+                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                    })}
+                  </span>
+                </div>
               ) : (
-                <ChevronDown size={14} />
+                <UsageFooter
+                  provider={provider}
+                  providerId={provider.id}
+                  appId={appId}
+                  usageEnabled={usageEnabled}
+                  isCurrent={isCurrent}
+                  isInConfig={isInConfig}
+                  inline={true}
+                />
               )}
-            </button>
-          )}
-        </div>
-      </div>
+              {hasMultiplePlans && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsExpanded(!isExpanded);
+                  }}
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  title={
+                    isExpanded
+                      ? t("usage.collapse", { defaultValue: "收起" })
+                      : t("usage.expand", { defaultValue: "展开" })
+                  }
+                >
+                  {isExpanded ? (
+                    <ChevronUp size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
 
-      {/* 用量信息行：与标题/URL 左对齐 */}
-      {usageEnabled && (isCopilot || isCodexOauth || isXaiOauth || isOfficial || hasMultiplePlans || usageFooterData) && (
-        <div className="mt-1 flex min-w-0 max-w-full items-center overflow-hidden pl-[70px]">
-          {isCopilot ? (
-            <CopilotQuotaFooter
-              meta={provider.meta}
-              inline={true}
-              isCurrent={isCurrent}
-            />
-          ) : isCodexOauth ? (
-            !isBoundCodexOfficial || usageEnabled ? (
-              <CodexOauthQuotaFooter
-                meta={provider.meta}
-                inline={true}
-                isCurrent={isCurrent}
-                autoQueryInterval={
-                  isBoundCodexOfficial
-                    ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
-                    : undefined
-                }
-              />
-            ) : null
-          ) : isXaiOauth ? (
-            <XaiOauthQuotaFooter
-              meta={provider.meta}
-              inline={true}
-              isCurrent={isCurrent}
-            />
-          ) : isOfficial ? (
-            officialSubscriptionEnabled ? (
-              <SubscriptionQuotaFooter
-                appId={appId}
-                inline={true}
-                isCurrent={isCurrent}
-                autoQueryInterval={
-                  provider.meta?.usage_script?.autoQueryInterval ?? 0
-                }
-              />
-            ) : null
-          ) : hasMultiplePlans ? (
-            isExpanded ? (
-              <UsageFooter
-                provider={provider}
-                providerId={provider.id}
-                appId={appId}
-                usageEnabled={usageEnabled}
-                isCurrent={isCurrent}
-                isInConfig={isInConfig}
-                inline={false}
-              />
-            ) : (
-              <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium">
-                  {t("usage.multiplePlans", {
-                    count: usage?.data?.length || 0,
-                    defaultValue: `${usage?.data?.length || 0} 个套餐`,
-                  })}
-                </span>
-              </div>
-            )
-          ) : (
-            <UsageFooter
-              provider={provider}
-              providerId={provider.id}
+          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+            <ProviderActions
               appId={appId}
-              usageEnabled={usageEnabled}
               isCurrent={isCurrent}
               isInConfig={isInConfig}
-              inline={true}
+              isTesting={isTesting}
+              isProxyTakeover={isProxyTakeover}
+              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isReadOnly={isHermesReadOnly}
+              isOmo={isAnyOmo}
+              onSwitch={() => onSwitch(provider)}
+              onEdit={() => onEdit(provider)}
+              onDuplicate={() => onDuplicate(provider)}
+              onTest={
+                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
+                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
+                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
+                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
+                // 官方是原生 1P 模式，根本不在请求路径上）。
+                onTest && provider.category !== "official"
+                  ? () => onTest(provider)
+                  : undefined
+              }
+              onConfigureUsage={
+                (isOfficial && !supportsOfficialSubscription) ||
+                isCopilot ||
+                (isCodexOauth && !isBoundCodexOfficial) ||
+                isXaiOauth
+                  ? undefined
+                  : () => onConfigureUsage(provider)
+              }
+              onDelete={() => onDelete(provider)}
+              onRemoveFromConfig={
+                onRemoveFromConfig
+                  ? () => onRemoveFromConfig(provider)
+                  : undefined
+              }
+              onDisableOmo={handleDisableAnyOmo}
+              onOpenTerminal={
+                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              }
+              isAutoFailoverEnabled={isAutoFailoverEnabled}
+              isInFailoverQueue={isInFailoverQueue}
+              onToggleFailover={
+                supportsOfficialRouting ? undefined : onToggleFailover
+              }
+              // OpenClaw: default model
+              isDefaultModel={isDefaultModel}
+              isRemovalProtected={isRemovalProtected}
+              isStateChangeProtected={isStateChangeProtected}
+              defaultModelOptions={openclawDefaultModelOptions}
+              onSetAsDefault={onSetAsDefault}
             />
-          )}
+          </div>
+        </div>
+      </div>
+
+      {isExpanded && hasMultiplePlans && (
+        <div className="mt-4 pt-4 border-t border-border-default">
+          <UsageFooter
+            provider={provider}
+            providerId={provider.id}
+            appId={appId}
+            usageEnabled={usageEnabled}
+            isCurrent={isCurrent}
+            isInConfig={isInConfig}
+            inline={false}
+          />
         </div>
       )}
-
-      {/* 悬停操作按钮：浮层 + 背景色保证可见性 */}
-      <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-popover/95 p-1 shadow-md opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-        <ProviderActions
-          appId={appId}
-          isCurrent={isCurrent}
-          isInConfig={isInConfig}
-          isTesting={isTesting}
-          isProxyTakeover={isProxyTakeover}
-          isOfficialBlockedByProxy={isOfficialBlockedByProxy}
-          isReadOnly={isHermesReadOnly}
-          isOmo={isAnyOmo}
-          onSwitch={() => onSwitch(provider)}
-          onEdit={() => onEdit(provider)}
-          onDuplicate={() => onDuplicate(provider)}
-          onTest={
-            // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
-            // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
-            // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
-            // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
-            // 官方是原生 1P 模式，根本不在请求路径上）。
-            onTest && provider.category !== "official"
-              ? () => onTest(provider)
-              : undefined
-          }
-          onConfigureUsage={
-            (isOfficial && !supportsOfficialSubscription) ||
-            isCopilot ||
-            (isCodexOauth && !isBoundCodexOfficial) ||
-            isXaiOauth
-              ? undefined
-              : () => onConfigureUsage(provider)
-          }
-          onDelete={() => onDelete(provider)}
-          onRemoveFromConfig={
-            onRemoveFromConfig
-              ? () => onRemoveFromConfig(provider)
-              : undefined
-          }
-          onDisableOmo={handleDisableAnyOmo}
-          onOpenTerminal={
-            onOpenTerminal ? () => onOpenTerminal(provider) : undefined
-          }
-          isAutoFailoverEnabled={isAutoFailoverEnabled}
-          isInFailoverQueue={isInFailoverQueue}
-          onToggleFailover={
-            supportsOfficialRouting ? undefined : onToggleFailover
-          }
-          // OpenClaw: default model
-          isDefaultModel={isDefaultModel}
-          isRemovalProtected={isRemovalProtected}
-          isStateChangeProtected={isStateChangeProtected}
-          defaultModelOptions={openclawDefaultModelOptions}
-          onSetAsDefault={onSetAsDefault}
-        />
-      </div>
     </div>
   );
 }
