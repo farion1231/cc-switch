@@ -434,13 +434,13 @@ export function ProviderCard({
               </h3>
 
               {isOmo && (
-                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                <span className="inline-flex flex-shrink-0 items-center whitespace-nowrap rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                   OMO
                 </span>
               )}
 
               {isOmoSlim && (
-                <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                <span className="inline-flex flex-shrink-0 items-center whitespace-nowrap rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                   Slim
                 </span>
               )}
@@ -500,7 +500,7 @@ export function ProviderCard({
 
               {isHermesReadOnly && (
                 <span
-                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                  className="inline-flex flex-shrink-0 items-center whitespace-nowrap rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
                   title={t("provider.managedByHermesHint", {
                     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
                   })}

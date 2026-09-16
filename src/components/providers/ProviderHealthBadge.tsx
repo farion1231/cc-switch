@@ -60,7 +60,7 @@ export function ProviderHealthBadge({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium",
+        "inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded-full text-xs font-medium",
         statusConfig.bgColor,
         statusConfig.textColor,
         className,

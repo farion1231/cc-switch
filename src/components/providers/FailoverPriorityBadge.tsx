@@ -19,7 +19,7 @@ export function FailoverPriorityBadge({
   return (
     <div
       className={cn(
-        "inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold",
+        "inline-flex flex-shrink-0 items-center whitespace-nowrap px-1.5 py-0.5 rounded text-xs font-semibold",
         "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
         className,
       )}
