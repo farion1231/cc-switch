@@ -14,7 +14,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { PluginInfo, PluginReloadResult } from "@/types/plugin";
+import type {
+  PluginInfo,
+  PluginListResult,
+  PluginReloadResult,
+} from "@/types/plugin";
 
 // 插件系统管理面板：调用 src-tauri 的 plugin_* 系列命令（契约见 docs/dev/plugin-system-contract.md 2.8）
 
@@ -31,7 +35,8 @@ export function PluginSettingsPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [isReloading, setIsReloading] = useState(false);
   const [reloadErrors, setReloadErrors] = useState<string[]>([]);
-  // 全局总开关本地态：以"是否全部启用"初始化（后端 plugin_list 不单独返回总开关）
+  // 全局总开关：由后端显式返回（绝不能从"全部条目是否启用"推导——单个插件的
+  // 用户覆盖会被误当总开关，Codex 审查 P1）
   const [globalEnabled, setGlobalEnabled] = useState(true);
   // 优先级输入草稿：失焦/回车时才提交，避免每敲一个字符调一次后端
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>(
@@ -40,16 +45,15 @@ export function PluginSettingsPanel() {
 
   const loadPlugins = useCallback(async () => {
     try {
-      const list = await invoke<PluginInfo[]>("plugin_list");
-      setPlugins(list);
+      const result = await invoke<PluginListResult>("plugin_list");
+      setPlugins(result.plugins);
+      setGlobalEnabled(result.globalEnabled);
       // 注意：这里不能清空 reloadErrors——重载成功后紧接着会调用本函数刷新列表，
       // 若在此清空，重载返回的加载错误提示会闪现即逝
-      const actionable = list.filter((p) => !p.error);
-      setGlobalEnabled(
-        actionable.length > 0 && actionable.every((p) => p.enabled),
-      );
       setPriorityDrafts(
-        Object.fromEntries(list.map((p) => [p.id, String(p.priority)])),
+        Object.fromEntries(
+          result.plugins.map((p) => [p.id, String(p.priority)]),
+        ),
       );
     } catch (e) {
       console.error("Failed to load plugins:", e);

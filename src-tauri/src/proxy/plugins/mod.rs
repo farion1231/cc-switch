@@ -55,6 +55,11 @@ pub trait ProxyPlugin: Send + Sync {
         None
     }
 
+    /// 运行时禁用本插件时调用（面板 override / 重载应用 overrides）。
+    /// 用于释放插件持有的资源——外部常驻插件借此终止子进程；重新启用后
+    /// 插件应能按需重新拉起。默认无操作。
+    fn on_disabled(&self) {}
+
     /// 请求变换（PreRequest / PreSend 阶段调用）
     /// 返回 Ok(true) 表示修改了 body；Ok(false) 表示未修改
     fn transform_request(

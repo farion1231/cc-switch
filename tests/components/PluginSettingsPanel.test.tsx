@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginSettingsPanel } from "@/components/settings/PluginSettingsPanel";
-import type { PluginInfo } from "@/types/plugin";
+import type { PluginInfo, PluginListResult } from "@/types/plugin";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
@@ -56,11 +56,12 @@ const failedPlugin: PluginInfo = {
   error: "插件清单无效: missing command",
 };
 
-const mockList = (plugins: PluginInfo[]) => {
+const mockList = (plugins: PluginInfo[], globalEnabled = true) => {
+  const result: PluginListResult = { plugins, globalEnabled };
   invokeMock.mockImplementation((command: string) => {
     switch (command) {
       case "plugin_list":
-        return Promise.resolve(plugins);
+        return Promise.resolve(result);
       case "plugin_set_enabled":
       case "plugin_set_priority":
       case "plugin_set_all_enabled":
@@ -182,6 +183,43 @@ describe("PluginSettingsPanel", () => {
         enabled: false,
       });
     });
+  });
+
+  it("takes the master switch state from the backend instead of deriving it", async () => {
+    // Codex 审查 P1：全局开关必须来自后端显式返回——单个插件被覆盖禁用时
+    // 总开关仍为开、行内开关保持可用，不得把用户覆盖误当总开关
+    mockList([builtinPlugin, { ...userPlugin, enabled: false }], true);
+    render(<PluginSettingsPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("My Plugin")).toBeInTheDocument();
+    });
+
+    const masterSwitch = screen
+      .getAllByRole("switch")
+      .find(
+        (el) => (el as HTMLButtonElement).getAttribute("aria-checked") === "true",
+      );
+    expect(masterSwitch).toBeDefined();
+
+    const rowSwitches = screen.getAllByRole("switch").slice(1);
+    expect(
+      rowSwitches.every((el) => !(el as HTMLButtonElement).disabled),
+    ).toBe(true);
+  });
+
+  it("disables row controls when the backend reports the master switch off", async () => {
+    mockList([{ ...builtinPlugin, enabled: false }], false);
+    render(<PluginSettingsPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Cache Injector")).toBeInTheDocument();
+    });
+
+    const rowSwitches = screen.getAllByRole("switch").slice(1);
+    expect(
+      rowSwitches.every((el) => (el as HTMLButtonElement).disabled),
+    ).toBe(true);
   });
 
   it("reloads plugins and shows returned errors", async () => {

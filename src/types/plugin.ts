@@ -26,3 +26,9 @@ export interface PluginReloadResult {
   loaded: number;
   errors: string[];
 }
+
+/** plugin_list 返回：插件列表 + 后端显式给出的全局开关（前端不得自行推导） */
+export interface PluginListResult {
+  plugins: PluginInfo[];
+  globalEnabled: boolean;
+}

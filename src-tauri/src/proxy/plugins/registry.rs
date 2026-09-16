@@ -137,6 +137,13 @@ impl PluginRegistry {
         let RegistryInner {
             plugins, overrides, ..
         } = &mut *inner;
+        // 禁用钩子：外部常驻插件借此终止子进程（重新启用后按需重新拉起，
+        // Codex 审查 P2——否则被禁用的第三方进程会一直存活到重载/退出）
+        if enabled == Some(false) {
+            if let Some(plugin) = plugins.iter().find(|p| p.id() == plugin_id) {
+                plugin.on_disabled();
+            }
+        }
         Self::sort_plugins(plugins, overrides);
     }
 
@@ -916,5 +923,66 @@ mod tests {
         ));
         assert_eq!(data, "z");
         assert_eq!(plugin.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// 运行时禁用钩子探针：记录 on_disabled 触发次数
+    struct DisableProbePlugin {
+        disable_count: AtomicUsize,
+    }
+
+    impl ProxyPlugin for DisableProbePlugin {
+        fn id(&self) -> &str {
+            "builtin:disable-probe"
+        }
+        fn display_name(&self) -> &str {
+            "DisableProbe"
+        }
+        fn description(&self) -> &str {
+            "test-only"
+        }
+        fn is_builtin(&self) -> bool {
+            true
+        }
+        fn stages(&self) -> &'static [PluginStage] {
+            &[PluginStage::PreRequest]
+        }
+        fn default_priority(&self) -> i32 {
+            500
+        }
+        fn on_disabled(&self) {
+            self.disable_count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_set_override_false_triggers_on_disabled() {
+        // Codex 审查 P2：禁用插件必须触发 on_disabled（外部常驻插件借此终止子进程）
+        let registry = PluginRegistry::new();
+        let probe = Arc::new(DisableProbePlugin {
+            disable_count: AtomicUsize::new(0),
+        });
+        registry.register(probe.clone());
+
+        registry.set_override("builtin:disable-probe", Some(false), None);
+        assert_eq!(
+            probe.disable_count.load(Ordering::SeqCst),
+            1,
+            "禁用应触发 on_disabled 钩子"
+        );
+
+        registry.set_override("builtin:disable-probe", Some(true), None);
+        assert_eq!(
+            probe.disable_count.load(Ordering::SeqCst),
+            1,
+            "启用不触发钩子"
+        );
+
+        // 调整优先级（enabled=None）不触发
+        registry.set_override("builtin:disable-probe", None, Some(10));
+        assert_eq!(
+            probe.disable_count.load(Ordering::SeqCst),
+            1,
+            "优先级调整不应触发钩子"
+        );
     }
 }

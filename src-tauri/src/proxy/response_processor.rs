@@ -169,6 +169,9 @@ pub async fn handle_streaming(
         format_headers(response.headers())
     );
     // 检查流式响应是否被压缩（SSE 通常不压缩，如果压缩则 SSE 解析会失败）
+    // 压缩流必须绕过 SseChunk 插件包装：把压缩字节喂给 UTF-8/SSE 解析器会产生
+    // 有损替换并破坏整个流，且 Content-Encoding 头仍指向压缩体（Codex 审查 P1）
+    let stream_compressed = get_content_encoding(response.headers()).is_some();
     if let Some(encoding) = get_content_encoding(response.headers()) {
         log::warn!(
             "[{}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
@@ -206,6 +209,7 @@ pub async fn handle_streaming(
         usage_collector,
         ctx.tag,
         connection_guard,
+        stream_compressed,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -240,13 +244,25 @@ pub(crate) fn apply_plugin_sse_transform_if_needed(
     usage_collector: Option<SseUsageCollector>,
     tag: &'static str,
     connection_guard: Option<ActiveConnectionGuard>,
+    stream_compressed: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
     let timeout_config = ctx.streaming_timeout_config();
-    if state
-        .plugins
-        .plugins_for_stage(PluginStage::SseChunk)
-        .is_empty()
+    // 压缩流（上游带 content-encoding）绕过 SseChunk 插件：解析压缩字节会损毁
+    // 数据流；插件本次跳过，字节原样透传（转换路径自建未压缩 SSE，恒传 false）
+    let sse_plugins_active = !stream_compressed
+        && !state
+            .plugins
+            .plugins_for_stage(PluginStage::SseChunk)
+            .is_empty();
+    if stream_compressed
+        && !state
+            .plugins
+            .plugins_for_stage(PluginStage::SseChunk)
+            .is_empty()
     {
+        log::info!("[{tag}] 上游流式响应带压缩编码，SseChunk 插件本次跳过（字节原样透传）");
+    }
+    if !sse_plugins_active {
         Box::pin(create_logged_passthrough_stream(
             stream,
             tag,
@@ -438,7 +454,9 @@ fn transform_sse_block(
         return None;
     }
 
-    // 重 emitted：非 data 行按原样保序保留，data 行合并为单行 `data: <new>`
+    // 重 emitted：非 data 行按原样保序保留；data 按换行拆分重发——合并值可能
+    // 含 \n（上游多行 data 按 SSE 规范以 \n 拼接，或插件返回多行文本），每个
+    // 段落都必须带 data: 前缀，裸行会被客户端当未知字段丢弃（Codex 审查 P2）
     let line_ending: &str = if delimiter == "\r\n\r\n" {
         "\r\n"
     } else {
@@ -450,10 +468,12 @@ fn transform_sse_block(
         let is_data_line = line == "data" || strip_sse_field(line, "data").is_some();
         if is_data_line {
             if !data_emitted {
-                out_lines.push(format!("data: {data}"));
+                for segment in data.split('\n') {
+                    out_lines.push(format!("data: {segment}"));
+                }
                 data_emitted = true;
             }
-            // 其余 data 行已合并进单行，丢弃
+            // 其余 data 行已并入拆分重发，丢弃
         } else {
             out_lines.push(line.to_string());
         }
@@ -1727,14 +1747,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sse_wrapper_multiple_data_lines_joined() {
-        // 多行 data 按 SSE 规范以 \n 拼接后进管线；修改后合并为单行 data
+    async fn sse_wrapper_multiple_data_lines_resplit_on_reemit() {
+        // 多行 data 按 SSE 规范以 \n 拼接后进管线；修改后按换行拆分重发——
+        // 每段都带 data: 前缀（裸行会被客户端当未知字段丢弃，Codex 审查 P2）
         let out = collect_transformed(
             to_chunks(vec![b"event: m\ndata: part-one-\ndata: AA\n\n"]),
             replace_registry("AA", "XX"),
         )
         .await;
-        assert_eq!(out, b"event: m\ndata: part-one-\nXX\n\n");
+        assert_eq!(out, b"event: m\ndata: part-one-\ndata: XX\n\n");
     }
 
     #[tokio::test]

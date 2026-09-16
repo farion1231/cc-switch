@@ -28,13 +28,27 @@ pub struct PluginReloadResult {
     pub errors: Vec<String>,
 }
 
-/// 列出全部插件元信息（合并内置/manifest 信息 + 运行时覆盖）
-#[tauri::command]
-pub async fn plugin_list(state: tauri::State<'_, AppState>) -> Result<Vec<PluginInfo>, String> {
-    Ok(state.plugins.list())
+/// 列出全部插件元信息（合并内置/manifest 信息 + 运行时覆盖）与全局开关。
+/// 全局开关由后端显式返回——前端不得从"全部条目是否启用"推导，否则会把
+/// 单个插件的用户覆盖误当总开关（Codex 审查 P1）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginListResult {
+    pub plugins: Vec<PluginInfo>,
+    pub global_enabled: bool,
 }
 
-/// 设置单个插件启用/禁用（合并已有 override，保留原 priority，然后持久化）
+#[tauri::command]
+pub async fn plugin_list(state: tauri::State<'_, AppState>) -> Result<PluginListResult, String> {
+    Ok(PluginListResult {
+        plugins: state.plugins.list(),
+        global_enabled: state.plugins.global_enabled(),
+    })
+}
+
+/// 设置单个插件启用/禁用（合并已有 override，保留原 priority，然后持久化）。
+/// 顺序：先持久化再改运行时——SQLite 失败时返回错误且运行时保持原状，
+/// 与 UI 的回滚语义一致（Codex 审查 P2）。
 #[tauri::command]
 pub async fn plugin_set_enabled(
     state: tauri::State<'_, AppState>,
@@ -50,20 +64,21 @@ pub async fn plugin_set_enabled(
         .unwrap_or_default();
     merged.enabled = Some(enabled);
 
-    state
-        .plugins
-        .set_override(&id, merged.enabled, merged.priority);
-
     let mut config = state.db.get_plugins_config().map_err(|e| e.to_string())?;
-    config.overrides.insert(id, merged);
+    config.overrides.insert(id.clone(), merged.clone());
     state
         .db
         .set_plugins_config(&config)
         .map_err(|e| e.to_string())?;
+
+    state
+        .plugins
+        .set_override(&id, merged.enabled, merged.priority);
     Ok(true)
 }
 
-/// 设置单个插件优先级（合并已有 override，保留原 enabled，然后持久化）
+/// 设置单个插件优先级（合并已有 override，保留原 enabled，然后持久化）。
+/// 顺序同 plugin_set_enabled：先持久化再改运行时。
 #[tauri::command]
 pub async fn plugin_set_priority(
     state: tauri::State<'_, AppState>,
@@ -78,33 +93,34 @@ pub async fn plugin_set_priority(
         .unwrap_or_default();
     merged.priority = Some(priority);
 
-    state
-        .plugins
-        .set_override(&id, merged.enabled, merged.priority);
-
     let mut config = state.db.get_plugins_config().map_err(|e| e.to_string())?;
-    config.overrides.insert(id, merged);
+    config.overrides.insert(id.clone(), merged.clone());
     state
         .db
         .set_plugins_config(&config)
         .map_err(|e| e.to_string())?;
+
+    state
+        .plugins
+        .set_override(&id, merged.enabled, merged.priority);
     Ok(true)
 }
 
-/// 设置插件系统全局开关（写 `plugins_config.enabled` 并同步注册表内存态）
+/// 设置插件系统全局开关（写 `plugins_config.enabled` 并同步注册表内存态）。
+/// 顺序同上：先持久化再改运行时。
 #[tauri::command]
 pub async fn plugin_set_all_enabled(
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<bool, String> {
-    state.plugins.set_global_enabled(enabled);
-
     let mut config: PluginsConfig = state.db.get_plugins_config().map_err(|e| e.to_string())?;
     config.enabled = enabled;
     state
         .db
         .set_plugins_config(&config)
         .map_err(|e| e.to_string())?;
+
+    state.plugins.set_global_enabled(enabled);
     log::info!("[PLUGIN] 插件系统全局开关已切换: {enabled}");
     Ok(true)
 }

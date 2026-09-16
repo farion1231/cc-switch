@@ -223,8 +223,14 @@ impl PluginProcessRunner for TokioProcessRunner {
 /// `sse_chunk` stage 的请求额外携带 `event` / `data` 字段，响应的 body 为
 /// `{"data": "…"}`。插件进程可维护跨调用状态（如流式 per-stream 缓冲）。
 /// 核心侧调用天然串行（worker 循环逐条处理），崩溃/超时自动重启进程重试一次。
+/// [`PersistentTransport::shutdown`] 用于运行时禁用插件时终止进程；
+/// 重新启用后下次 call 应能重新拉起（实现须支持复活）。
 pub trait PersistentTransport: Send + Sync {
     fn call(&self, input: &str, timeout: Duration) -> Result<String, PluginError>;
+
+    /// 终止常驻会话（worker/子进程）。之后再次 [`PersistentTransport::call`]
+    /// 必须能重新拉起并正常工作（插件被禁用后又启用的场景）。
+    fn shutdown(&self) {}
 }
 
 /// worker 线程任务
@@ -256,41 +262,59 @@ struct PersistentProcess {
 /// worker 循环逐条处理（天然串行，插件无需处理并发）。
 pub struct PersistentProcessTransport {
     plugin_id: String,
-    tx: tokio::sync::mpsc::Sender<PersistentWorkerMsg>,
+    command: Vec<String>,
+    cwd: PathBuf,
+    /// worker 发送端；shutdown 后置 None，下次 call 重新拉起 worker（可复活）。
+    /// Mutex 保护：shutdown 与 call 可能来自不同线程。
+    worker: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<PersistentWorkerMsg>>>,
 }
 
 impl PersistentProcessTransport {
-    /// 构造并启动 worker 线程（进程本体懒拉起：首次调用才 spawn）
+    /// 构造（worker 线程懒拉起：首次调用才创建；进程本体更晚：worker 首个调用才 spawn）
     pub fn new(plugin_id: String, command: Vec<String>, cwd: PathBuf) -> Self {
+        Self {
+            plugin_id,
+            command,
+            cwd,
+            worker: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn spawn_worker(&self) -> tokio::sync::mpsc::Sender<PersistentWorkerMsg> {
         let (tx, rx) = tokio::sync::mpsc::channel::<PersistentWorkerMsg>(16);
-        let worker_id = plugin_id.clone();
+        let worker_id = self.plugin_id.clone();
+        let command = self.command.clone();
+        let cwd = self.cwd.clone();
         std::thread::Builder::new()
-            .name(format!("plugin-persistent-{plugin_id}"))
+            .name(format!("plugin-persistent-{}", self.plugin_id))
             .spawn(move || persistent_worker_main(worker_id, command, cwd, rx))
             .expect("启动常驻插件 worker 线程失败");
-        Self { plugin_id, tx }
+        tx
     }
 }
 
 impl Drop for PersistentProcessTransport {
     fn drop(&mut self) {
-        let _ = self.tx.try_send(PersistentWorkerMsg::Shutdown);
+        PersistentTransport::shutdown(self);
     }
 }
 
 impl PersistentTransport for PersistentProcessTransport {
     fn call(&self, input: &str, timeout: Duration) -> Result<String, PluginError> {
+        let tx = {
+            let mut guard = self.worker.lock().unwrap();
+            guard.get_or_insert_with(|| self.spawn_worker()).clone()
+        };
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        self.tx
-            .try_send(PersistentWorkerMsg::Call {
-                input: input.to_string(),
-                timeout,
-                reply: reply_tx,
-            })
-            .map_err(|e| PluginError::Execution {
-                plugin_id: self.plugin_id.clone(),
-                message: format!("常驻插件任务投递失败（worker 已退出？）: {e}"),
-            })?;
+        tx.try_send(PersistentWorkerMsg::Call {
+            input: input.to_string(),
+            timeout,
+            reply: reply_tx,
+        })
+        .map_err(|e| PluginError::Execution {
+            plugin_id: self.plugin_id.clone(),
+            message: format!("常驻插件任务投递失败（worker 已退出？）: {e}"),
+        })?;
         // 回执等待按所处运行时形态分派（oneshot channel 跨 runtime 可用）：
         // - 多线程运行时：block_in_place 等待
         // - current-thread 运行时（测试）：不能阻塞驱动线程 → 专用线程等待
@@ -330,6 +354,16 @@ impl PersistentTransport for PersistentProcessTransport {
                     plugin_id: self.plugin_id.clone(),
                     message: "常驻插件 worker 异常终止".to_string(),
                 })?,
+        }
+    }
+
+    fn shutdown(&self) {
+        if let Some(tx) = self.worker.lock().unwrap().take() {
+            let _ = tx.try_send(PersistentWorkerMsg::Shutdown);
+            log::info!(
+                "[PLUGIN] 常驻插件 {} 会话已终止（禁用/卸载）；重新启用后下次调用自动重启",
+                self.plugin_id
+            );
         }
     }
 }
@@ -736,6 +770,14 @@ impl ProxyPlugin for ExternalPlugin {
     ) -> Result<bool, PluginError> {
         self.run_sse_transform(ctx, event_name, data)
     }
+
+    fn on_disabled(&self) {
+        // 运行时禁用：终止常驻子进程（否则第三方进程会存活到重载/退出）；
+        // 重新启用后下次 call 会重新拉起 worker 与进程
+        if let Some(transport) = &self.persistent {
+            transport.shutdown();
+        }
+    }
 }
 
 /// 解析命令：argv[0] 含路径分隔符且为相对路径时，相对于插件目录解析；
@@ -1051,6 +1093,7 @@ mod tests {
     struct MockPersistentTransport {
         responses: Mutex<Vec<Result<String, PluginError>>>,
         calls: Mutex<Vec<(String, u64)>>,
+        shutdown_calls: Mutex<usize>,
     }
 
     impl MockPersistentTransport {
@@ -1058,7 +1101,12 @@ mod tests {
             Arc::new(Self {
                 responses: Mutex::new(vec![Ok(response.to_string())]),
                 calls: Mutex::new(Vec::new()),
+                shutdown_calls: Mutex::new(0),
             })
+        }
+
+        fn shutdown_count(&self) -> usize {
+            *self.shutdown_calls.lock().unwrap()
         }
     }
 
@@ -1073,6 +1121,10 @@ mod tests {
                 .unwrap()
                 .pop()
                 .unwrap_or_else(|| Ok("{}".to_string()))
+        }
+
+        fn shutdown(&self) {
+            *self.shutdown_calls.lock().unwrap() += 1;
         }
     }
 
@@ -1168,6 +1220,7 @@ mod tests {
                 message: "进程崩溃".to_string(),
             })]),
             calls: Mutex::new(Vec::new()),
+            shutdown_calls: Mutex::new(0),
         });
         let plugin = ExternalPlugin::with_persistent_transport(
             persistent_manifest(),
@@ -1184,6 +1237,36 @@ mod tests {
             "传输失败应返回 Err（fail-open 由管线处理）"
         );
         assert_eq!(body, json!({"model": "original"}), "失败不得改写 body");
+    }
+
+    #[test]
+    fn test_persistent_plugin_disabled_shuts_down_transport() {
+        // Codex 审查 P2：运行时禁用必须终止常驻子进程（否则第三方进程存活到重载）
+        let transport = MockPersistentTransport::ok("{}");
+        let plugin = ExternalPlugin::with_persistent_transport(
+            persistent_manifest(),
+            Path::new("/tmp/plugins/demo"),
+            Arc::new(MockRunner::err("oneshot runner 不应被调用")),
+            transport.clone(),
+        )
+        .unwrap();
+        assert_eq!(transport.shutdown_count(), 0, "启用状态下不应关停");
+
+        plugin.on_disabled();
+        assert_eq!(transport.shutdown_count(), 1);
+
+        // 重复禁用幂等无害
+        plugin.on_disabled();
+        assert_eq!(transport.shutdown_count(), 2);
+
+        // oneshot 插件没有常驻传输：on_disabled 不应 panic
+        let oneshot = ExternalPlugin::new(
+            base_manifest(),
+            Path::new("/tmp/plugins/demo"),
+            Arc::new(MockRunner::ok("{}")),
+        )
+        .unwrap();
+        oneshot.on_disabled();
     }
 
     // -----------------------------------------------------------------------

@@ -518,6 +518,7 @@ async fn handle_claude_transform(
 
         // 转换路径的 SseChunk 插件挂点：插件流接在"转换完成后的最终输出"
         // （anthropic 形状 SSE）上，text / partial_json 还原白名单才能命中。
+        // 本流由转换器自建、未压缩（恒传 false），压缩绕过仅适用于透传流。
         let logged_stream = apply_plugin_sse_transform_if_needed(
             sse_stream,
             ctx,
@@ -525,6 +526,7 @@ async fn handle_claude_transform(
             usage_collector,
             "Claude/OpenRouter",
             connection_guard,
+            false,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1246,6 +1248,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             usage_collector,
             ctx.tag,
             connection_guard,
+            false,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1448,6 +1451,7 @@ async fn handle_codex_chat_to_responses_transform(
             usage_collector,
             ctx.tag,
             connection_guard,
+            false,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1833,6 +1837,7 @@ fn build_codex_anthropic_sse_response(
         usage_collector,
         ctx.tag,
         connection_guard,
+        false,
     );
 
     let mut headers = axum::http::HeaderMap::new();
