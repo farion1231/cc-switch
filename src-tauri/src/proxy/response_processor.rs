@@ -174,6 +174,20 @@ pub async fn handle_streaming(
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
 
+    // 响应模型回写（整流器子开关，默认关闭）。两点防御：
+    // - 压缩 SSE（上游无视 accept-encoding: identity）时跳过回写，保持原始字节
+    //   透传——文本改写会把压缩字节转成 U+FFFD 替换字符，造成不可逆损坏；
+    // - 回写会改变 SSE 字节数，带 Content-Length 的整包 SSE 会被下游按旧长度
+    //   截断/挂起，因此剥掉实体头让 axum 按流式重生成。
+    let rewrite_target = if get_content_encoding(response.headers()).is_none() {
+        ctx.response_model_rewrite_target()
+    } else {
+        None
+    };
+    if rewrite_target.is_some() {
+        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    }
+
     let mut builder = axum::response::Response::builder().status(status);
 
     // 复制响应头
@@ -199,7 +213,14 @@ pub async fn handle_streaming(
         connection_guard,
     );
 
-    let body = axum::body::Body::from_stream(logged_stream);
+    // usage 收集器在 logged_stream 内部看到的仍是上游回显的真实模型名，
+    // 回写只影响发给客户端的字节。
+    let final_stream = super::response_model_rewriter::wrap_stream_for_model_rewrite(
+        logged_stream,
+        rewrite_target,
+    );
+
+    let body = axum::body::Body::from_stream(final_stream);
     match builder.body(body) {
         Ok(resp) => resp,
         Err(e) => {
@@ -306,6 +327,23 @@ pub async fn handle_non_streaming(
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
+
+    // 响应模型回写（整流器子开关，默认关闭）：usage 记账已在上方基于原始字节
+    // 完成，这里只改写发给客户端的副本。body 被改写后原 content-length 等
+    // 实体头失真，需要剥掉由 axum 按新 body 重新生成。
+    let body_bytes = match ctx.response_model_rewrite_target() {
+        Some(target) => {
+            match super::response_model_rewriter::rewrite_json_body_model(&body_bytes, &target) {
+                Some(rewritten) => {
+                    log::debug!("[{}] 响应模型回写: → {target}（非流式）", ctx.tag);
+                    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                    Bytes::from(rewritten)
+                }
+                None => body_bytes,
+            }
+        }
+        None => body_bytes,
+    };
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
