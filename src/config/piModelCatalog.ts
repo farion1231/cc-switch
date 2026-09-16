@@ -182,7 +182,7 @@ export const piModelCatalog = {
   },
   "google/gemini-3.1-flash-lite": {
     capabilities: {
-      name: "gemini-3.1-flash-lite",
+      name: "Gemini 3.1 Flash Lite",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1_048_576,
