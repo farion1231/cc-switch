@@ -43,6 +43,8 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 ];
 
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
+const MISSING_TOOL_OUTPUT_PLACEHOLDER: &str =
+    "[cc-switch: tool call output missing from the replayed history]";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
@@ -286,7 +288,8 @@ pub fn responses_to_chat_completions_with_reasoning(
     if let Some(input) = body.get("input") {
         append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
     }
-    let messages = collapse_system_messages_to_head(messages);
+    let mut messages = collapse_system_messages_to_head(messages);
+    normalize_chat_tool_messages(&mut messages);
     result["messages"] = json!(messages);
 
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -577,6 +580,219 @@ fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
     }
     out.extend(rest);
     out
+}
+
+/// 严格 Chat Completions 上游（DeepSeek、Kimi 等）要求：带 `tool_calls` 的 assistant
+/// 消息之后必须紧跟一批连续的 `role="tool"` 消息，且每个 `tool_call_id` 恰好被回答一次。
+/// Codex 的 Responses 历史不保证这个形状：
+///
+/// - 图片类 tool output 的媒体会被搬进合成 user 消息；同一 assistant 批次的两个
+///   output 之间只要夹着 developer/user 消息（如 `<image_resize_notice>`），媒体消息
+///   就会落在两条 tool 消息之间，上游报 `An assistant message with 'tool_calls' must be
+///   followed by tool messages responding to each 'tool_call_id' (insufficient tool
+///   messages following tool_calls message)`。
+/// - 跨线程消息等场景会留下没有前置 `function_call` 的孤立 output，转成 `role="tool"`
+///   后必然被拒：`Messages with role 'tool' must be a response to a preceding message
+///   with 'tool_calls'`。
+///
+/// 与 Anthropic 桥的 `drop_incomplete_tool_turns` 对称，这里在增量转换之后统一收尾：
+/// 同一批次的 tool 消息收拢到 assistant 之后，被夹住的回合边界/媒体消息顺延到批次之后，
+/// 始终缺失输出的调用补一条占位 tool 消息，孤立 tool 消息降级为普通 user 消息。
+fn normalize_chat_tool_messages(messages: &mut Vec<Value>) {
+    let original = std::mem::take(messages);
+    let mut normalized: Vec<Value> = Vec::with_capacity(original.len());
+    let mut unanswered: Vec<String> = Vec::new();
+    let mut deferred: Vec<Value> = Vec::new();
+    let mut open_assistant_index: Option<usize> = None;
+
+    for message in original {
+        match message.get("role").and_then(Value::as_str) {
+            Some("assistant") => {
+                let call_ids = chat_tool_call_ids(&message);
+                if let Some(index) = open_assistant_index {
+                    if call_ids.is_empty() {
+                        // 前一批 tool 输出尚未收齐时，后续的纯文本 assistant 消息
+                        // 不能插进 tool 块；先顺延到批次闭合之后。
+                        deferred.push(message);
+                    } else {
+                        // 上一个 assistant 批次尚未回答完，新的 tool-call 批次
+                        // 继续合并进同一 assistant 消息，避免生成
+                        // `assistant(call_1), assistant(call_2), tool(call_1), tool(call_2)`
+                        // 这种严格上游必然拒绝的形状。
+                        merge_chat_tool_call_assistant(&mut normalized[index], message);
+                        unanswered.extend(call_ids);
+                    }
+                } else {
+                    if !call_ids.is_empty() {
+                        unanswered = call_ids;
+                        open_assistant_index = Some(normalized.len());
+                    }
+                    normalized.push(message);
+                }
+            }
+            Some("tool") => {
+                let call_id = message
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                match unanswered.iter().position(|open| *open == call_id) {
+                    Some(index) => {
+                        unanswered.remove(index);
+                        normalized.push(message);
+                        if unanswered.is_empty() {
+                            append_deferred_chat_messages(&mut normalized, &mut deferred);
+                            open_assistant_index = None;
+                        }
+                    }
+                    // 没有前置 `function_call` 的孤立 tool 消息：降级为 user 消息，
+                    // 既保住内容，又不触发上游的 tool_call_id 校验。
+                    None => {
+                        let demoted = orphan_tool_message_to_user_message(message);
+                        if unanswered.is_empty() {
+                            normalized.push(demoted);
+                        } else {
+                            deferred.push(demoted);
+                        }
+                    }
+                }
+            }
+            _ => {
+                if unanswered.is_empty() {
+                    normalized.push(message);
+                } else {
+                    // 批次仍开着：回合边界消息与合成媒体消息顺延到 tool 块之后，
+                    // 保证 tool 消息连续。
+                    deferred.push(message);
+                }
+            }
+        }
+    }
+
+    close_chat_tool_batch(&mut normalized, &mut unanswered, &mut deferred);
+    *messages = normalized;
+}
+
+/// 把新的 assistant tool-call 消息并入尚未闭合的 assistant 批次，保留两次
+/// 转换产生的 calls、正文和 reasoning，同时避免在 tool 输出之前插入新的
+/// assistant 消息。
+fn merge_chat_tool_call_assistant(target: &mut Value, source: Value) {
+    let source_calls = source
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(calls) = target.get_mut("tool_calls").and_then(Value::as_array_mut) {
+        calls.extend(source_calls);
+    }
+
+    merge_chat_assistant_content(target, &source);
+    if let (Some(target), Some(reasoning)) = (
+        target.as_object_mut(),
+        source.get("reasoning_content").and_then(Value::as_str),
+    ) {
+        append_reasoning_content(target, reasoning);
+    }
+}
+
+fn merge_chat_assistant_content(target: &mut Value, source: &Value) {
+    let Some(source_content) = source.get("content").filter(|value| !value.is_null()) else {
+        return;
+    };
+
+    match target.get_mut("content") {
+        None | Some(Value::Null) => {
+            if let Some(target) = target.as_object_mut() {
+                target.insert("content".to_string(), source_content.clone());
+            }
+        }
+        Some(Value::String(existing)) => match source_content {
+            Value::String(extra) if !extra.is_empty() => {
+                if !existing.is_empty() {
+                    existing.push_str("\n\n");
+                }
+                existing.push_str(extra);
+            }
+            Value::Array(parts) => {
+                let extra = parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if !extra.is_empty() {
+                    if !existing.is_empty() {
+                        existing.push_str("\n\n");
+                    }
+                    existing.push_str(&extra);
+                }
+            }
+            _ => {}
+        },
+        Some(Value::Array(existing)) => match source_content {
+            Value::Array(extra) => existing.extend(extra.clone()),
+            Value::String(extra) if !extra.is_empty() => {
+                existing.push(json!({ "type": "text", "text": extra }));
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+/// 关闭当前 tool 批次：仍未回答的调用补一条占位 tool 消息（严格上游要求每个
+/// `tool_call_id` 都被回答，少一个就报 insufficient tool messages），
+/// 再把批次内被顺延的消息放回序列。
+fn close_chat_tool_batch(
+    messages: &mut Vec<Value>,
+    unanswered: &mut Vec<String>,
+    deferred: &mut Vec<Value>,
+) {
+    for call_id in unanswered.drain(..) {
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": MISSING_TOOL_OUTPUT_PLACEHOLDER
+        }));
+    }
+    append_deferred_chat_messages(messages, deferred);
+}
+
+fn append_deferred_chat_messages(messages: &mut Vec<Value>, deferred: &mut Vec<Value>) {
+    messages.append(deferred);
+}
+
+fn chat_tool_call_ids(message: &Value) -> Vec<String> {
+    message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|call| call.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+fn orphan_tool_message_to_user_message(message: Value) -> Value {
+    let call_id = message
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let marker = format!("[cc-switch: orphan tool output for call {call_id}]");
+    let content = match message.get("content") {
+        Some(Value::String(text)) => Value::String(format!("{marker}\n{text}")),
+        Some(Value::Array(parts)) => {
+            let mut parts = parts.clone();
+            parts.insert(0, json!({ "type": "text", "text": marker }));
+            Value::Array(parts)
+        }
+        _ => Value::String(marker),
+    };
+
+    json!({
+        "role": "user",
+        "content": content
+    })
 }
 
 fn instruction_text(value: &Value) -> String {
@@ -4045,23 +4261,33 @@ mod tests {
             assert_eq!(result["messages"][1]["content"], expected);
         }
 
-        for item in [
-            json!({
-                "type": "custom_tool_call_output",
-                "call_id": "call_custom",
-                "status": "completed",
-                "output": {"text": "unchanged"}
-            }),
-            json!({
-                "type": "tool_search_output",
-                "call_id": "call_search",
-                "status": "completed",
-                "output": []
-            }),
+        for (item, call_id) in [
+            (
+                json!({
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_custom",
+                    "status": "completed",
+                    "output": {"text": "unchanged"}
+                }),
+                "call_custom",
+            ),
+            (
+                json!({
+                    "type": "tool_search_output",
+                    "call_id": "call_search",
+                    "status": "completed",
+                    "output": []
+                }),
+                "call_search",
+            ),
         ] {
             let expected = canonical_json_string(&item);
             let result = convert_test_input(vec![item]);
-            assert_eq!(result["messages"][0]["content"], expected);
+            assert_eq!(message_roles(&result), vec!["user"]);
+            assert_eq!(
+                result["messages"][0]["content"],
+                format!("[cc-switch: orphan tool output for call {call_id}]\n{expected}")
+            );
         }
     }
 
@@ -4080,16 +4306,17 @@ mod tests {
         ]);
         let messages = result_messages(&result);
 
-        assert_eq!(
-            message_roles(&result),
-            vec!["assistant", "assistant", "tool", "tool"]
-        );
-        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "tool"]);
+        assert_tool_blocks_are_legal(messages);
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 2);
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
-        assert_eq!(messages[0]["reasoning_content"], "tool call");
-        assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
-        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_2");
-        assert_eq!(messages[1]["reasoning_content"], "second batch reasoning");
+        assert_eq!(messages[0]["tool_calls"][1]["id"], "call_2");
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "tool call\n\nsecond batch reasoning"
+        );
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["tool_call_id"], "call_2");
     }
 
     #[test]
@@ -5264,5 +5491,153 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    /// Strict Chat upstreams require every assistant `tool_calls` message to be followed
+    /// by a contiguous run of `role="tool"` messages answering each `tool_call_id`
+    /// exactly once, and forbid `role="tool"` messages without such a declaration.
+    fn assert_tool_blocks_are_legal(messages: &[Value]) {
+        let mut answered: HashSet<String> = HashSet::new();
+        let mut index = 0;
+
+        while index < messages.len() {
+            let role = messages[index].get("role").and_then(Value::as_str);
+            if role == Some("tool") {
+                let call_id = messages[index]
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                assert!(
+                    answered.contains(call_id),
+                    "orphan tool message at {index}: tool_call_id={call_id}"
+                );
+                index += 1;
+                continue;
+            }
+
+            let declared = chat_tool_call_ids(&messages[index]);
+            if declared.is_empty() {
+                index += 1;
+                continue;
+            }
+
+            let mut pending: Vec<&str> = declared.iter().map(String::as_str).collect();
+            let mut cursor = index + 1;
+            while cursor < messages.len()
+                && messages[cursor].get("role").and_then(Value::as_str) == Some("tool")
+            {
+                let call_id = messages[cursor]
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let position = pending.iter().position(|open| *open == call_id);
+                assert!(
+                    position.is_some(),
+                    "tool message at {cursor} answers undeclared tool_call_id={call_id}"
+                );
+                pending.remove(position.unwrap());
+                answered.insert(call_id.to_string());
+                cursor += 1;
+            }
+            assert!(
+                pending.is_empty(),
+                "assistant at {index} leaves {pending:?} unanswered"
+            );
+            index += 1;
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_tool_block_contiguous_across_media_flush() {
+        // Regression: the media of an earlier tool output used to be flushed as a
+        // synthetic user message as soon as a developer notice showed up, which landed
+        // a `user` message between two tool messages of the same assistant batch.
+        // DeepSeek answered that history with
+        // `An assistant message with 'tool_calls' must be followed by tool messages
+        // responding to each 'tool_call_id' (insufficient tool messages ...)`.
+        let result = convert_test_input(vec![
+            test_function_call("call_1"),
+            test_function_call("call_2"),
+            test_function_call("call_3"),
+            test_function_output(
+                "call_1",
+                json!([{
+                    "type": "input_image",
+                    "image_url": large_test_image_data_url()
+                }]),
+            ),
+            json!({
+                "type": "message",
+                "role": "developer",
+                "content": [{
+                    "type": "input_text",
+                    "text": "<image_resize_notice>\nresized\n</image_resize_notice>"
+                }]
+            }),
+            test_function_output(
+                "call_2",
+                json!([{
+                    "type": "input_image",
+                    "image_url": large_test_image_data_url()
+                }]),
+            ),
+            test_function_output("call_3", json!("done")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_tool_blocks_are_legal(messages);
+        assert_eq!(
+            message_roles(&result),
+            vec![
+                "system",
+                "assistant",
+                "tool",
+                "tool",
+                "tool",
+                "user",
+                "user"
+            ]
+        );
+        assert_eq!(messages[2]["tool_call_id"], "call_1");
+        assert_eq!(messages[3]["tool_call_id"], "call_2");
+        assert_eq!(messages[4]["tool_call_id"], "call_3");
+    }
+
+    #[test]
+    fn responses_request_to_chat_backfills_unanswered_tool_call() {
+        // A batch whose output never reached this history would make the upstream
+        // report `insufficient tool messages following tool_calls message`.
+        let result = convert_test_input(vec![
+            test_function_call("call_a"),
+            test_function_call("call_b"),
+            test_function_output("call_a", json!("a result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_tool_blocks_are_legal(messages);
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "tool"]);
+        assert_eq!(messages[1]["tool_call_id"], "call_a");
+        assert_eq!(messages[1]["content"], "a result");
+        assert_eq!(messages[2]["tool_call_id"], "call_b");
+        assert_eq!(messages[2]["content"], MISSING_TOOL_OUTPUT_PLACEHOLDER);
+    }
+
+    #[test]
+    fn responses_request_to_chat_demotes_orphan_tool_output() {
+        // Cross-thread messages can leave a function_call_output without a preceding
+        // function_call; a `role="tool"` message without a declaration is rejected with
+        // `Messages with role 'tool' must be a response to a preceding message with
+        // 'tool_calls'`.
+        let result = convert_test_input(vec![test_function_output(
+            "call_ghost",
+            json!("orphan result"),
+        )]);
+        let messages = result_messages(&result);
+
+        assert_tool_blocks_are_legal(messages);
+        assert_eq!(message_roles(&result), vec!["user"]);
+        let content = messages[0]["content"].as_str().unwrap();
+        assert!(content.starts_with("[cc-switch: orphan tool output for call call_ghost]"));
+        assert!(content.contains("orphan result"));
     }
 }
