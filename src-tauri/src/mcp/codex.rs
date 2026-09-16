@@ -19,6 +19,26 @@ fn should_sync_codex_mcp() -> bool {
     crate::codex_config::get_codex_config_dir().exists()
 }
 
+/// Detect servers corrupted by the old URL-only import (type=stdio + url, no command).
+///
+/// The pre-fix importer defaulted URL-only entries to `stdio`, producing
+/// `{"type":"stdio","url":"..."}` — the live projection then wrote
+/// `command = ""` and the server broke. This shape is unambiguous: a real
+/// stdio server always has a non-empty command.
+pub fn is_legacy_url_stdio_corruption(server: &Value) -> bool {
+    let obj = match server.as_object() {
+        Some(o) => o,
+        None => return false,
+    };
+    let is_stdio = obj.get("type").and_then(|v| v.as_str()) == Some("stdio");
+    let has_url = obj.contains_key("url");
+    let has_command = obj
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map_or(false, |s| !s.is_empty());
+    is_stdio && has_url && !has_command
+}
+
 /// Infer the MCP transport when `type` is absent.
 ///
 /// Codex configs may omit `type` on URL-based servers. Defaulting to `stdio`
@@ -232,7 +252,13 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
             }
 
             if let Some(existing) = servers.get_mut(id) {
-                // 已存在：仅启用 Codex 应用
+                // 已存在：修复旧版 URL-only 导入导致的损坏（如有）
+                if is_legacy_url_stdio_corruption(&existing.server) {
+                    existing.server = spec_v.clone();
+                    changed += 1;
+                    log::info!("修复旧版 URL-only 导入的 MCP 服务器 '{id}'");
+                }
+                // 仅启用 Codex 应用
                 if !existing.apps.codex {
                     existing.apps.codex = true;
                     changed += 1;

@@ -346,9 +346,13 @@ impl McpService {
             if let Some(servers) = &temp_config.mcp.servers {
                 let mut existing = state.db.get_all_mcp_servers()?;
                 for server in servers.values() {
-                    // 已存在：仅启用 Codex，不覆盖其他字段（与导入模块语义保持一致）
+                    // 已存在：修复旧版 URL-only 导入导致的损坏（如有），
+                    // 然后仅启用 Codex，不覆盖其他字段（与导入模块语义保持一致）
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
+                        if crate::mcp::codex::is_legacy_url_stdio_corruption(&merged.server) {
+                            merged.server = server.server.clone();
+                        }
                         merged.apps.codex = true;
                         merged
                     } else {

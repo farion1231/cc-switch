@@ -12,7 +12,7 @@
 //! - `hermes` - Hermes MCP 同步和导入
 
 mod claude;
-mod codex;
+pub mod codex;
 mod gemini;
 mod grokbuild;
 mod hermes;
