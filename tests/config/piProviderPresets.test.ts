@@ -147,5 +147,26 @@ describe("Pi provider presets", () => {
         thinkingFormat: "deepseek",
       });
     }
+
+    const qwenCompat = {
+      thinkingFormat: "qwen",
+      supportsDeveloperRole: false,
+    };
+    for (const name of [
+      "千问AI平台",
+      "千问AI平台 Token Plan",
+      "QwenCloud",
+      "QwenCloud Token Plan",
+    ]) {
+      const models = preset(name).settingsConfig.models;
+      expect(models.every((item) => item.reasoning)).toBe(true);
+      for (const item of models) {
+        expect(item.compat).toEqual(qwenCompat);
+      }
+    }
+
+    for (const item of preset("QwenCloud For Coding").settingsConfig.models) {
+      expect(item.compat).toBeUndefined();
+    }
   });
 });

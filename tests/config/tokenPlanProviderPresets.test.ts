@@ -578,6 +578,31 @@ describe("Tencent Token Plan provider presets", () => {
   });
 });
 
+// OpenClaw 把 agents.defaults.models 当白名单：modelCatalog 的 key 若在
+// settingsConfig.models 里没有对应条目，导入后会被静默丢弃（openclaw#30152）。
+describe("OpenClaw suggestedDefaults.modelCatalog", () => {
+  it("only references models the preset declares", () => {
+    const orphans: string[] = [];
+
+    for (const preset of openclawProviderPresets) {
+      const catalog = preset.suggestedDefaults?.modelCatalog;
+      if (!catalog) continue;
+
+      const declared = new Set(
+        (preset.settingsConfig?.models ?? []).map((model) => model.id),
+      );
+      for (const key of Object.keys(catalog)) {
+        const modelId = key.slice(key.indexOf("/") + 1);
+        if (!declared.has(modelId)) {
+          orphans.push(`${preset.name}: ${key}`);
+        }
+      }
+    }
+
+    expect(orphans).toEqual([]);
+  });
+});
+
 describe("Tencent TokenHub (pay-as-you-go) Pi presets", () => {
   const DOMESTIC_API_KEY_URL =
     "https://console.cloud.tencent.com/tokenhub/apikey";
