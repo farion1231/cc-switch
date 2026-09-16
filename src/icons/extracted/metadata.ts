@@ -759,7 +759,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "Laonong API",
     category: "ai-provider",
     keywords: ["laonong", "laonongapi", "aggregator", "relay", "gateway"],
-    defaultColor: "#7B61FF", 
+    defaultColor: "#7B61FF",
   }, 
 };
 
