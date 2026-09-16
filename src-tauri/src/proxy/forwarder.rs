@@ -3735,7 +3735,21 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
 }
 
 fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+    let body = canonicalize_value(filter_private_params_with_whitelist(request_body, &[]));
+    let Value::Object(mut fields) = body else {
+        return body;
+    };
+    let Some(model) = fields.shift_remove("model") else {
+        return Value::Object(fields);
+    };
+
+    // Streaming gateways may need the model before they can route the body.
+    // Keep it ahead of large messages/input while retaining canonical order
+    // for all remaining fields and nested objects.
+    let mut ordered = serde_json::Map::with_capacity(fields.len() + 1);
+    ordered.insert("model".to_string(), model);
+    ordered.extend(fields);
+    Value::Object(ordered)
 }
 
 fn log_prompt_cache_trace(
@@ -4024,6 +4038,75 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_routes_before_large_messages() {
+        let body = json!({
+            "messages": [{"role": "user", "content": "x".repeat(256 * 1024)}],
+            "max_tokens": 128,
+            "model": "deepseek-flash",
+            "stream": true
+        });
+
+        let prepared = prepare_upstream_request_body(body.clone());
+        let encoded = serde_json::to_vec(&prepared).unwrap();
+
+        // A streaming gateway must be able to select its upstream from the
+        // prefix, without consuming the large messages payload first.
+        assert!(encoded.starts_with(br#"{"model":"deepseek-flash","max_tokens":128,"messages":"#));
+        assert_eq!(serde_json::from_slice::<Value>(&encoded).unwrap(), body);
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_keeps_model_first_after_overrides() {
+        let mut body = prepare_upstream_request_body(json!({
+            "messages": [],
+            "model": "before",
+            "stream": true
+        }));
+        let overrides = LocalProxyRequestOverrides {
+            headers: Default::default(),
+            body: Some(json!({"model": "after", "max_tokens": 128})),
+        };
+        assert!(apply_local_proxy_body_overrides(&mut body, &overrides));
+        let prepared = prepare_upstream_request_body(body);
+
+        assert_eq!(
+            serde_json::to_string(&prepared).unwrap(),
+            r#"{"model":"after","max_tokens":128,"messages":[],"stream":true}"#
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_preserves_canonical_rest_and_hashes() {
+        let left = json!({
+            "stream": true,
+            "model": "example",
+            "messages": [{"role": "user", "content": ["second", "first"]}],
+            "metadata": {"z": 1, "a": 2},
+            "_internal": "drop"
+        });
+        let right = json!({
+            "metadata": {"a": 2, "z": 1},
+            "messages": [{"content": ["second", "first"], "role": "user"}],
+            "model": "example",
+            "stream": true
+        });
+        let prepared = prepare_upstream_request_body(left);
+        let reordered = prepare_upstream_request_body(right.clone());
+        let encoded = serde_json::to_string(&prepared).unwrap();
+
+        assert_eq!(encoded, serde_json::to_string(&reordered).unwrap());
+        assert_eq!(
+            encoded,
+            r#"{"model":"example","messages":[{"content":["second","first"],"role":"user"}],"metadata":{"a":2,"z":1},"stream":true}"#
+        );
+        assert_eq!(prepared, right);
+        assert_eq!(
+            short_value_hash(Some(&prepared)),
+            short_value_hash(Some(&right))
         );
     }
 
