@@ -127,6 +127,13 @@ export function parseOpencodeConfigStrict(
 
 export const OPENCODE_KNOWN_MODEL_KEYS = ["name", "limit", "options"] as const;
 
+// 由展开区的结构化控件管理（能力开关 / 思考档位编辑器），不进入通用 KV 编辑器
+export const OPENCODE_STRUCTURED_MODEL_KEYS = [
+  "reasoning",
+  "modalities",
+  "variants",
+] as const;
+
 export function isKnownModelKey(key: string): boolean {
   return OPENCODE_KNOWN_MODEL_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_MODEL_KEYS)[number],
@@ -138,7 +145,10 @@ export function getModelExtraFields(
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(model)) {
-    if (!isKnownModelKey(k)) {
+    if (
+      !isKnownModelKey(k) &&
+      !(OPENCODE_STRUCTURED_MODEL_KEYS as readonly string[]).includes(k)
+    ) {
       extra[k] = typeof v === "string" ? v : JSON.stringify(v);
     }
   }
