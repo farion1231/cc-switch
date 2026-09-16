@@ -760,7 +760,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["laonong", "laonongapi", "aggregator", "relay", "gateway"],
     defaultColor: "#7B61FF",
-  }, 
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
