@@ -1907,11 +1907,15 @@ pub fn anthropic_to_responses(
                     "type": "function",
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
                 });
-                // 同 transform.rs：缺失的 description 省略而非输出 null，
-                // 否则严格上游会拒绝整个请求。
-                if let Some(description) = tool.get("description").filter(|d| !d.is_null()) {
-                    response_tool["description"] = description.clone();
-                }
+                // 同 transform.rs：description 归一化，空值（缺失/null/空白）
+                // 回退为工具名。仅省略字段不够——严格聚合端点要求该字段
+                // 存在且为非空字符串。
+                let description = tool.get("description").and_then(|d| d.as_str())
+                    .map(str::trim).filter(|d| !d.is_empty());
+                response_tool["description"] = json!(match description {
+                    Some(d) => d,
+                    None => tool.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                });
                 response_tool["parameters"] = super::transform::clean_schema(
                     tool.get("input_schema").cloned().unwrap_or(json!({})),
                 );
@@ -3368,10 +3372,31 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 2);
-        // 缺 description：省略字段而不是序列化成 null（严格上游会 400）
-        assert!(tools[0].get("description").is_none());
+        // 缺 description：回退为工具名（严格聚合端点要求该字段存在且非空）
+        assert_eq!(tools[0]["description"], json!("NoDesc"));
         assert!(tools[0].get("parameters").is_some());
         assert_eq!(tools[1]["description"], json!("Has one"));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_blank_description_falls_back_to_name() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"name": "BlankDesc", "description": "  ",
+                 "input_schema": {"type": "object"}},
+                {"name": "NullDesc", "description": null,
+                 "input_schema": {"type": "object"}}
+            ]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["description"], json!("BlankDesc"));
+        assert_eq!(tools[1]["description"], json!("NullDesc"));
     }
 
     #[test]
