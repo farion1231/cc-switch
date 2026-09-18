@@ -37,8 +37,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_default_config, import_deveco_providers_from_live, import_hermes_providers_from_live,
+    import_openclaw_providers_from_live, import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -5471,6 +5471,32 @@ impl ProviderService {
             }
             return Ok(saved);
         }
+        if app_type == AppType::DevEco {
+            // DevEco Code is additive mode: the native deveco.jsonc is the source of
+            // truth for which providers are live, so merge it into the DB catalog.
+            let native = crate::deveco_config::get_providers()?;
+            let mut saved = state.db.get_all_providers("deveco")?;
+            for (id, config) in &native {
+                if !saved.contains_key(id) {
+                    let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
+                    saved.insert(
+                        id.clone(),
+                        Provider::with_id(id.clone(), name.into(), config.clone(), None),
+                    );
+                }
+            }
+            for (id, provider) in &mut saved {
+                if let Some(config) = native.get(id) {
+                    if let Some(name) = config.get("name").and_then(Value::as_str) {
+                        provider.name = name.into();
+                    }
+                    provider.settings_config = config.clone();
+                }
+                Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                state.db.save_provider("deveco", provider)?;
+            }
+            return Ok(saved);
+        }
         state.db.get_all_providers(app_type.as_str())
     }
 
@@ -5553,6 +5579,34 @@ impl ProviderService {
         Ok(true)
     }
 
+    /// Persist a DevEco Code provider: DB first, then the native `deveco.jsonc`.
+    ///
+    /// The native write can fail on a hand-edited config; when it does, the DB row
+    /// is rolled back to its previous state so the catalog never claims a provider
+    /// the native file doesn't have.
+    fn save_deveco_provider(
+        state: &AppState,
+        provider: &Provider,
+        write_live: bool,
+    ) -> Result<bool, AppError> {
+        let previous = state.db.get_provider_by_id(&provider.id, "deveco")?;
+        state.db.save_provider("deveco", provider)?;
+        if write_live {
+            if let Err(error) =
+                crate::deveco_config::set_provider(&provider.id, provider.settings_config.clone())
+            {
+                match previous {
+                    Some(previous) => state.db.save_provider("deveco", &previous)?,
+                    None => state.db.delete_provider("deveco", &provider.id)?,
+                }
+                return Err(error);
+            }
+        }
+        Ok(true)
+    }
+        Ok(true)
+    }
+
     /// Add a new provider
     pub fn add(
         state: &AppState,
@@ -5596,6 +5650,10 @@ impl ProviderService {
 
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+
+        if app_type == AppType::DevEco {
+            return Self::save_deveco_provider(state, &provider, add_to_live);
+        }
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
@@ -6251,6 +6309,10 @@ impl ProviderService {
                 return Self::save_mcode_provider(state, &provider, live_config_managed, false);
             }
 
+            if app_type == AppType::DevEco {
+                return Self::save_deveco_provider(state, &provider, live_config_managed);
+            }
+
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
             state.db.save_provider(app_type.as_str(), &provider)?;
@@ -6419,6 +6481,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::DevEco => crate::deveco_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6495,6 +6558,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::DevEco => crate::deveco_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6719,6 +6783,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
+                    AppType::DevEco => crate::deveco_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -6964,7 +7029,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::DevEco => Ok(String::new()),
         }
     }
 
@@ -6982,7 +7047,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::DevEco => Ok(String::new()),
         }
     }
 
@@ -7747,6 +7812,9 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::DevEco => {
+                crate::deveco_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -7914,8 +7982,9 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenCode => {
-                // OpenCode uses options.apiKey and options.baseURL
+            // OpenCode and DevEco Code share the SDK-options shape: credentials
+            // live under `options.{apiKey,baseURL}`.
+            AppType::OpenCode | AppType::DevEco => {
                 let options = provider
                     .settings_config
                     .get("options")
