@@ -2530,6 +2530,7 @@
       "downloadTimeoutHint": "Please check network connection or retry later",
       "skillPathNotFound": "Skill path '{{path}}' not found in repository {{owner}}/{{name}}",
       "skillDirNotFound": "Skill directory not found: {{path}}",
+      "ambiguousSkillName": "Multiple SKILL.md files in this repository declare the name '{{name}}', so the skill cannot be selected unambiguously. Select a specific directory from the repository's skill list and try again.",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
       "invalidRepoRef": "Invalid repository reference: {{owner}}/{{name}}",

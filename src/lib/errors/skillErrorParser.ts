@@ -35,6 +35,7 @@ function getErrorI18nKey(code: string): string {
     DOWNLOAD_TIMEOUT: "skills.error.downloadTimeout",
     DOWNLOAD_FAILED: "skills.error.downloadFailed",
     SKILL_DIR_NOT_FOUND: "skills.error.skillDirNotFound",
+    AMBIGUOUS_SKILL_NAME: "skills.error.ambiguousSkillName",
     SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
     INVALID_REPO_REF: "skills.error.invalidRepoRef",

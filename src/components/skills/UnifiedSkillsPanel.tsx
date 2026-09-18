@@ -31,6 +31,7 @@ import {
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { formatSkillError } from "@/lib/errors/skillErrorParser";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -463,7 +464,12 @@ const UnifiedSkillsPanel = React.forwardRef<
         closeButton: true,
       });
     } catch (error) {
-      toast.error(t("skills.updateFailed"), { description: String(error) });
+      const { title, description } = formatSkillError(
+        error instanceof Error ? error.message : String(error),
+        t,
+        "skills.updateFailed",
+      );
+      toast.error(title, { description });
     } finally {
       endWrite();
     }
@@ -481,8 +487,13 @@ const UnifiedSkillsPanel = React.forwardRef<
           await updateSkillMutation.mutateAsync(update.id);
           successCount++;
         } catch (error) {
-          toast.error(t("skills.updateFailed"), {
-            description: `${update.name}: ${String(error)}`,
+          const { title, description } = formatSkillError(
+            error instanceof Error ? error.message : String(error),
+            t,
+            "skills.updateFailed",
+          );
+          toast.error(title, {
+            description: `${update.name}: ${description}`,
           });
         }
       }

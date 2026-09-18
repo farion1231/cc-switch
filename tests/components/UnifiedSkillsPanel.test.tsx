@@ -653,6 +653,40 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 
+  it.each([
+    ["single", "string"],
+    ["single", "Error"],
+    ["all", "string"],
+    ["all", "Error"],
+  ])("formats a %s update conflict received as %s", async (mode, errorType) => {
+    const skill = makeInstalledSkill();
+    installedSkillsMock = [skill];
+    skillUpdatesMock = [{ id: skill.id, name: skill.name, remoteHash: "new" }];
+    const error = JSON.stringify({
+      code: "AMBIGUOUS_SKILL_NAME",
+      context: { name: "browser-skill" },
+    });
+    updateSkillMock.mockRejectedValueOnce(
+      errorType === "Error" ? new Error(error) : error,
+    );
+    renderPanel();
+
+    await userEvent
+      .setup()
+      .click(
+        mode === "single"
+          ? screen.getByTitle("skills.update")
+          : screen.getByRole("button", { name: "skills.updateAll" }),
+      );
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith("skills.updateFailed", {
+        description: `${mode === "all" ? `${skill.name}: ` : ""}skills.error.ambiguousSkillName`,
+      });
+    });
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
   it("ignores stale update entries for uninstalled Skills", async () => {
     installedSkillsMock = [makeInstalledSkill({ id: "installed-id" })];
     skillUpdatesMock = [

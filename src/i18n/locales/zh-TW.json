@@ -2531,6 +2531,7 @@
       "downloadTimeoutHint": "請檢查網路連線或稍後重試",
       "skillPathNotFound": "儲存庫 {{owner}}/{{name}} 中未找到技能路徑 '{{path}}'",
       "skillDirNotFound": "技能目錄不存在：{{path}}",
+      "ambiguousSkillName": "儲存庫中有多個 SKILL.md 宣告名稱 '{{name}}'，無法確定要使用哪一個。請從該儲存庫的技能清單中選擇明確的目錄後重試。",
       "directoryConflict": "技能目錄 '{{directory}}' 已被 {{existing_repo}} 佔用，無法從 {{new_repo}} 安裝",
       "emptyArchive": "下載的壓縮檔為空",
       "invalidRepoRef": "倉庫位址不合法：{{owner}}/{{name}}",
