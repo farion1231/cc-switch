@@ -160,6 +160,40 @@ fn write_config_to_path_with_contents(path: &Path, config: &Value) -> Result<Vec
     Ok(contents)
 }
 
+/// 先写原生文件、再提交数据库，提交失败时回滚原生文件。
+///
+/// 与 `mcode_config::write_and_commit` 同一范式：调用方负责持有特性锁，
+/// 使「原生写入」与「数据库提交」对其他线程表现为一个原子步骤。
+/// 提示词启用/编辑走这条路径，避免出现「数据库已改、文件没写」的半状态。
+pub(crate) fn write_and_commit<T>(
+    path: &Path,
+    write: impl FnOnce() -> Result<(), AppError>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let previous = match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    write()?;
+    match commit() {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            let rollback = match previous {
+                Some(bytes) => crate::config::atomic_write_private(path, &bytes),
+                None => std::fs::remove_file(path).map_err(|error| AppError::io(path, error)),
+            };
+            if let Err(rollback_error) = rollback {
+                return Err(AppError::Message(format!(
+                    "DevEco Code update failed ({error}); restoring {} also failed: {rollback_error}",
+                    path.display()
+                )));
+            }
+            Err(error)
+        }
+    }
+}
+
 // ============================================================================
 // Provider 段
 // ============================================================================

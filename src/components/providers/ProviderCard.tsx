@@ -231,7 +231,10 @@ export function ProviderCard({
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   const isAdditiveMode =
-    (appId === "opencode" && !isAnyOmo) || appId === "pi" || appId === "mcode";
+    (appId === "opencode" && !isAnyOmo) ||
+    appId === "pi" ||
+    appId === "mcode" ||
+    appId === "deveco";
 
   const { data: health } = useProviderHealth(
     provider.id,
@@ -352,7 +355,10 @@ export function ProviderCard({
     ? isCurrent
     : appId === "openclaw"
       ? Boolean(isDefaultModel)
-      : appId === "opencode" || appId === "pi" || appId === "mcode"
+      : appId === "opencode" ||
+          appId === "pi" ||
+          appId === "mcode" ||
+          appId === "deveco"
         ? false
         : isAutoFailoverEnabled
           ? activeProviderId === provider.id

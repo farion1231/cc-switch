@@ -72,8 +72,8 @@ impl PromptService {
             return upsert_pi_prompt(state, id, prompt);
         }
 
-        if app == AppType::Mcode {
-            return upsert_mcode_prompt(state, id, prompt, &prompt_file_path(&app)?);
+        if matches!(app, AppType::Mcode | AppType::DevEco) {
+            return upsert_locked_prompt(state, &app, id, prompt, &prompt_file_path(&app)?);
         }
 
         // 检查是否为已启用的提示词
@@ -107,7 +107,7 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return delete_pi_prompt(state, id);
         }
-        let _guard = if app == AppType::Mcode {
+        let _guard = if matches!(app, AppType::Mcode | AppType::DevEco) {
             Some(
                 MCODE_PROMPT_LOCK
                     .lock()
@@ -132,8 +132,8 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return enable_pi_prompt(state, id);
         }
-        if app == AppType::Mcode {
-            return enable_mcode_prompt(state, id, &prompt_file_path(&app)?);
+        if matches!(app, AppType::Mcode | AppType::DevEco) {
+            return enable_locked_prompt(state, &app, id, &prompt_file_path(&app)?);
         }
 
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
@@ -266,7 +266,7 @@ impl PromptService {
             return Ok(());
         }
 
-        let _guard = if app == AppType::Mcode {
+        let _guard = if matches!(app, AppType::Mcode | AppType::DevEco) {
             Some(
                 MCODE_PROMPT_LOCK
                     .lock()
@@ -382,19 +382,42 @@ impl PromptService {
     }
 }
 
+/// Serializes native-file writes for the apps whose prompt file is not
+/// projections-only (MCode's YAML-backed `AGENTS.md`, DevEco Code's JSON5
+/// sibling). Held across the native write and the database commit so the pair
+/// behaves atomically.
 static MCODE_PROMPT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn upsert_mcode_prompt(
+/// Roll back the native file if the database commit fails.
+fn prompt_write_and_commit<T>(
+    app: &AppType,
+    path: &Path,
+    write: impl FnOnce() -> Result<(), AppError>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    match app {
+        AppType::DevEco => crate::deveco_config::write_and_commit(path, write, commit),
+        AppType::Mcode => crate::mcode_config::write_and_commit(path, write, commit),
+        _ => {
+            write()?;
+            commit()
+        }
+    }
+}
+
+fn upsert_locked_prompt(
     state: &AppState,
+    app: &AppType,
     id: &str,
     prompt: Prompt,
     target_path: &Path,
 ) -> Result<(), AppError> {
+    let app_key = app.as_str();
     let _guard = MCODE_PROMPT_LOCK
         .lock()
         .map_err(|error| AppError::Message(error.to_string()))?;
-    validate_prompt_content(&AppType::Mcode, &prompt.content)?;
-    let prompts = state.db.get_prompts("mcode")?;
+    validate_prompt_content(app, &prompt.content)?;
+    let prompts = state.db.get_prompts(app_key)?;
     let clear_live = !prompt.enabled
         && prompts.get(id).is_some_and(|previous| previous.enabled)
         && !prompts
@@ -402,24 +425,31 @@ fn upsert_mcode_prompt(
             .any(|(key, prompt)| key != id && prompt.enabled)
         && target_path.exists();
     if !prompt.enabled && !clear_live {
-        return state.db.save_prompt("mcode", &prompt);
+        return state.db.save_prompt(app_key, &prompt);
     }
-    crate::mcode_config::write_and_commit(
+    prompt_write_and_commit(
+        app,
         target_path,
         || write_text_file(target_path, if clear_live { "" } else { &prompt.content }),
-        || state.db.save_prompt("mcode", &prompt),
+        || state.db.save_prompt(app_key, &prompt),
     )
 }
 
-fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result<(), AppError> {
+fn enable_locked_prompt(
+    state: &AppState,
+    app: &AppType,
+    id: &str,
+    target_path: &Path,
+) -> Result<(), AppError> {
+    let app_key = app.as_str();
     let _guard = MCODE_PROMPT_LOCK
         .lock()
         .map_err(|error| AppError::Message(error.to_string()))?;
-    let mut prompts = state.db.get_prompts("mcode")?;
+    let mut prompts = state.db.get_prompts(app_key)?;
     let target = prompts
         .get(id)
         .ok_or_else(|| AppError::InvalidInput(format!("提示词 {id} 不存在")))?;
-    validate_prompt_content(&AppType::Mcode, &target.content)?;
+    validate_prompt_content(app, &target.content)?;
 
     let live_content = match std::fs::read_to_string(target_path) {
         Ok(content) => content,
@@ -457,11 +487,16 @@ fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result
         prompt.enabled = key == id;
     }
     let content = &prompts[id].content;
-    validate_prompt_content(&AppType::Mcode, content)?;
-    crate::mcode_config::write_and_commit(
+    validate_prompt_content(app, content)?;
+    let prompts_snapshot = prompts.clone();
+    prompt_write_and_commit(
+        app,
         target_path,
         || write_text_file(target_path, content),
-        || state.db.save_mcode_prompts(&prompts),
+        || match app {
+            AppType::DevEco => state.db.save_deveco_prompts(&prompts_snapshot),
+            _ => state.db.save_mcode_prompts(&prompts_snapshot),
+        },
     )
 }
 
@@ -623,8 +658,8 @@ mod tests {
 
     #[test]
     fn mcode_prompt_database_failure_restores_edits_disables_and_new_files() {
-        use super::upsert_mcode_prompt;
-        use crate::{database::Database, store::AppState};
+        use super::upsert_locked_prompt;
+        use crate::{app_config::AppType, database::Database, store::AppState};
         use std::sync::Arc;
 
         let temp = tempdir().unwrap();
@@ -646,16 +681,23 @@ mod tests {
             prompt("active", "edited", true),
             prompt("active", "original", false),
         ] {
-            assert!(upsert_mcode_prompt(&state, "active", changed, &path).is_err());
+            assert!(
+                upsert_locked_prompt(&state, &AppType::Mcode, "active", changed, &path).is_err()
+            );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "native original");
             let saved = state.db.get_prompts("mcode").unwrap();
             assert!(saved["active"].enabled);
             assert_eq!(saved["active"].content, "original");
         }
         std::fs::remove_file(&path).unwrap();
-        assert!(
-            upsert_mcode_prompt(&state, "new", prompt("new", "new content", true), &path).is_err()
-        );
+        assert!(upsert_locked_prompt(
+            &state,
+            &AppType::Mcode,
+            "new",
+            prompt("new", "new content", true),
+            &path
+        )
+        .is_err());
         assert!(!path.exists());
         assert!(!state.db.get_prompts("mcode").unwrap().contains_key("new"));
         state
@@ -665,17 +707,31 @@ mod tests {
             .unwrap()
             .execute_batch("PRAGMA query_only = OFF")
             .unwrap();
-        upsert_mcode_prompt(&state, "active", prompt("active", "edited", true), &path).unwrap();
+        upsert_locked_prompt(
+            &state,
+            &AppType::Mcode,
+            "active",
+            prompt("active", "edited", true),
+            &path,
+        )
+        .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
-        upsert_mcode_prompt(&state, "active", prompt("active", "edited", false), &path).unwrap();
+        upsert_locked_prompt(
+            &state,
+            &AppType::Mcode,
+            "active",
+            prompt("active", "edited", false),
+            &path,
+        )
+        .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
         assert!(!state.db.get_prompts("mcode").unwrap()["active"].enabled);
     }
 
     #[test]
     fn mcode_prompt_activation_rolls_back_partial_database_writes_and_retries() {
-        use super::enable_mcode_prompt;
-        use crate::{database::Database, store::AppState};
+        use super::enable_locked_prompt;
+        use crate::{app_config::AppType, database::Database, store::AppState};
         use std::sync::Arc;
 
         let temp = tempdir().unwrap();
@@ -701,7 +757,7 @@ mod tests {
              BEGIN SELECT RAISE(ABORT, 'test write failure'); END;",
             )
             .unwrap();
-        assert!(enable_mcode_prompt(&state, "z-target", &path).is_err());
+        assert!(enable_locked_prompt(&state, &AppType::Mcode, "z-target", &path).is_err());
         let saved = state.db.get_prompts("mcode").unwrap();
         assert_eq!(saved["a-current"].content, "stored");
         assert!(saved["a-current"].enabled);
@@ -714,7 +770,7 @@ mod tests {
             .unwrap()
             .execute_batch("DROP TRIGGER reject_target;")
             .unwrap();
-        enable_mcode_prompt(&state, "z-target", &path).unwrap();
+        enable_locked_prompt(&state, &AppType::Mcode, "z-target", &path).unwrap();
         let saved = state.db.get_prompts("mcode").unwrap();
         assert_eq!(saved["a-current"].content, "native edit");
         assert!(!saved["a-current"].enabled);
@@ -724,8 +780,8 @@ mod tests {
 
     #[test]
     fn mcode_prompt_activation_preserves_unmanaged_file_when_database_is_read_only() {
-        use super::enable_mcode_prompt;
-        use crate::{database::Database, store::AppState};
+        use super::enable_locked_prompt;
+        use crate::{app_config::AppType, database::Database, store::AppState};
         use std::sync::Arc;
 
         let temp = tempdir().unwrap();
@@ -743,7 +799,7 @@ mod tests {
             .unwrap()
             .execute_batch("PRAGMA query_only = ON")
             .unwrap();
-        assert!(enable_mcode_prompt(&state, "target", &path).is_err());
+        assert!(enable_locked_prompt(&state, &AppType::Mcode, "target", &path).is_err());
         assert_eq!(state.db.get_prompts("mcode").unwrap().len(), 1);
         assert!(!state.db.get_prompts("mcode").unwrap()["target"].enabled);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "unmanaged");
@@ -754,7 +810,7 @@ mod tests {
             .unwrap()
             .execute_batch("PRAGMA query_only = OFF")
             .unwrap();
-        enable_mcode_prompt(&state, "target", &path).unwrap();
+        enable_locked_prompt(&state, &AppType::Mcode, "target", &path).unwrap();
         let saved = state.db.get_prompts("mcode").unwrap();
         assert_eq!(saved.len(), 2);
         assert!(saved

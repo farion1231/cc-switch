@@ -126,6 +126,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
       piConfigDir: sanitizeDir(data.piConfigDir),
+      devecoConfigDir: sanitizeDir(data.devecoConfigDir),
       language: normalizedLanguage,
     };
 

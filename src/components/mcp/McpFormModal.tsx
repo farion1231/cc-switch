@@ -70,12 +70,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     openclaw: boolean;
     hermes: boolean;
     mcode: boolean;
+    deveco: boolean;
   }>(() => {
     if (initialData?.apps) {
       return {
         ...initialData.apps,
         grokbuild: initialData.apps.grokbuild ?? false,
         mcode: initialData.apps.mcode ?? false,
+        deveco: initialData.apps.deveco ?? false,
       };
     }
     return {
@@ -87,6 +89,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
       mcode: defaultEnabledApps.includes("mcode"),
+      deveco: defaultEnabledApps.includes("deveco"),
     };
   });
 
@@ -641,6 +644,21 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.mcode")}
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-deveco"
+                    checked={enabledApps.deveco}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, deveco: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-deveco"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.deveco")}
                   </label>
                 </div>
               </div>
