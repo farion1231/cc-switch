@@ -1918,6 +1918,82 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
 }
 
 #[test]
+fn provider_service_switch_codex_preserves_history_aliases_and_rejects_invalid_ones() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    enable_codex_official_auth_preservation();
+    let official = r#"model_provider = "OpenAI"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+requires_openai_auth = true
+wire_api = "responses"
+"#;
+    let relay = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+"#;
+    let login = json!({"tokens": {"access_token": "test-official-login"}});
+    write_codex_live_atomic(&login, Some(official)).expect("seed official config");
+    let mut initial_config = MultiAppConfig::default();
+    let manager = initial_config.get_manager_mut(&AppType::Codex).unwrap();
+    manager.current = "official".to_string();
+    let mut official_provider = Provider::with_id(
+        "official".to_string(),
+        "Official".to_string(),
+        json!({"auth": {}, "config": official}),
+        None,
+    );
+    official_provider.category = Some("official".to_string());
+    manager
+        .providers
+        .insert("official".to_string(), official_provider);
+    manager.providers.insert(
+        "relay".to_string(),
+        Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({"auth": {"OPENAI_API_KEY": "test-relay-key"}, "config": relay}),
+            None,
+        ),
+    );
+    let state = create_test_state_with_config(&initial_config).unwrap();
+    let config_path = home.join(".codex/config.toml");
+    for id in ["relay", "official", "relay"] {
+        ProviderService::switch(&state, AppType::Codex, id).expect("switch provider");
+        let live = std::fs::read_to_string(&config_path).unwrap();
+        let doc: toml::Value = toml::from_str(&live).unwrap();
+        assert_eq!(
+            doc["model_providers"]["OpenAI"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(doc["model_providers"]["OpenAI"].get("base_url").is_none());
+        assert!(doc["model_providers"]["OpenAI"]
+            .get("experimental_bearer_token")
+            .is_none());
+        let expected_id = if id == "relay" { "custom" } else { "OpenAI" };
+        assert_eq!(doc["model_provider"].as_str(), Some(expected_id));
+    }
+    let mut live = std::fs::read_to_string(&config_path).unwrap();
+    live.push_str("\n[model_providers.invalid]\nname = \"Invalid\"\nauth = { command = \"test-auth\" }\nexperimental_bearer_token = \"test-key\"\n");
+    std::fs::write(&config_path, &live).unwrap();
+    let auth_path = home.join(".codex/auth.json");
+    let auth_before = std::fs::read(&auth_path).unwrap();
+    ProviderService::switch(&state, AppType::Codex, "official")
+        .expect_err("invalid preserved alias must fail preflight");
+    assert_eq!(
+        state.db.get_current_provider("codex").unwrap().as_deref(),
+        Some("relay")
+    );
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), live);
+    assert_eq!(std::fs::read(&auth_path).unwrap(), auth_before);
+}
+
+#[test]
 fn provider_service_switch_codex_backfill_keeps_provider_specific_model_provider_id() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

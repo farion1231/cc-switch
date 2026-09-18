@@ -2394,6 +2394,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    #[serial_test::serial]
     fn proxy_oauth_codex_snapshot_neutralizes_official_auth_fallback() {
         let poisoned_config = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"xai\"\nbase_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
         let settings = json!({

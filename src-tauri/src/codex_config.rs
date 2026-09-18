@@ -3953,6 +3953,87 @@ fn plan_codex_live_write(
     })
 }
 
+/// Retain inactive provider definitions referenced by saved threads (#5398).
+/// Merge only after preparing the target, so an old `custom` route cannot
+/// suppress official unified-history injection or supply the new card's key.
+/// Validate the result before either preflight or the real write succeeds.
+/// Raw backup/restore writers deliberately do not merge the current live file.
+fn preserve_codex_history_provider_definitions(
+    config_text: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    let live_text = read_codex_config_text()?;
+    let live = live_text.parse::<DocumentMut>().map_err(|_| {
+        AppError::Message(
+            "Cannot preserve Codex history providers: live config.toml is invalid TOML".to_string(),
+        )
+    })?;
+    let Some(live_item) = live.get("model_providers") else {
+        return Ok(config_text.map(str::to_string));
+    };
+    let live_providers = live_item.as_table_like().ok_or_else(|| {
+        AppError::Message(
+            "Cannot preserve Codex history providers: live model_providers must be a table"
+                .to_string(),
+        )
+    })?;
+    let mut target = config_text
+        .unwrap_or("")
+        .parse::<DocumentMut>()
+        .map_err(|_| {
+            AppError::Message(
+                "Cannot preserve Codex history providers: target config.toml is invalid TOML"
+                    .to_string(),
+            )
+        })?;
+    let mut changed = false;
+    for (id, item) in live_providers.iter() {
+        // Built-in overrides cannot be carried into modern Codex configs.
+        // Takeover routes are temporary, not independent history aliases.
+        if CODEX_STALE_RESERVED_TABLE_IDS.contains(&id)
+            || id == CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID
+        {
+            continue;
+        }
+        if target
+            .get("model_providers")
+            .and_then(toml_edit::Item::as_table_like)
+            .is_some_and(|providers| providers.contains_key(id))
+        {
+            continue;
+        }
+        let table = item.as_table_like().ok_or_else(|| {
+            AppError::Message("Cannot preserve Codex history providers: a live provider definition is not a table".to_string())
+        })?;
+        if table
+            .get("experimental_bearer_token")
+            .and_then(toml_edit::Item::as_str)
+            == Some(CODEX_PROXY_AUTH_PLACEHOLDER)
+        {
+            continue;
+        }
+        if target.get("model_providers").is_none() {
+            let mut parent = toml_edit::Table::new();
+            parent.set_implicit(true);
+            target["model_providers"] = toml_edit::Item::Table(parent);
+        }
+        let providers = target["model_providers"].as_table_like_mut().ok_or_else(|| {
+            AppError::Message("Cannot preserve Codex history providers: target model_providers must be a table".to_string())
+        })?;
+        providers.insert(id, item.clone());
+        changed = true;
+    }
+    if !changed {
+        return Ok(config_text.map(str::to_string));
+    }
+    let merged = target.to_string();
+    // Includes preserved idle tables: incompatible auth fields must fail
+    // before auth.json/config.toml or the selected provider are committed.
+    preflight_codex_provider_table_conflicts(&merged)?;
+    let normalized = backfill_codex_custom_provider_names(&merged)?.unwrap_or(merged);
+    validate_config_toml(&normalized)?;
+    Ok(Some(normalized))
+}
+
 /// Validate a Codex live write without touching the filesystem. Callers use
 /// this to fail a provider switch BEFORE committing `current`: a write-layer
 /// refusal after `current` moved would let the next switch backfill the old
@@ -3968,6 +4049,7 @@ pub fn preflight_codex_live_write(
         config_text,
         crate::settings::preserve_codex_official_auth_on_switch(),
     )
+    .and_then(|plan| preserve_codex_history_provider_definitions(plan.config_text.as_deref()))
     .map(|_| ())
 }
 
@@ -3982,10 +4064,11 @@ pub fn write_codex_live_for_provider(
         config_text,
         crate::settings::preserve_codex_official_auth_on_switch(),
     )?;
+    let config_text = preserve_codex_history_provider_definitions(plan.config_text.as_deref())?;
     if plan.write_full_auth {
-        return write_codex_live_atomic(auth, plan.config_text.as_deref());
+        return write_codex_live_atomic(auth, config_text.as_deref());
     }
-    write_codex_live_config_atomic(plan.config_text.as_deref())?;
+    write_codex_live_config_atomic(config_text.as_deref())?;
     // Config is already committed at this point, so a cleanup failure
     // degrades to a warning instead of reporting an unswitched state.
     if plan.remove_auth_file {
@@ -4291,6 +4374,193 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    #[test]
+    #[serial]
+    fn provider_switch_preserves_official_alias_for_saved_threads() {
+        let _home = CodexLiveTestHome::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            unify_codex_session_history: true,
+            ..Default::default()
+        })
+        .expect("enable login preservation and unified history");
+        let official = r#"model_provider = "OpenAI"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let login = json!({"tokens": {"access_token": "test-official-token"}});
+        write_codex_live_atomic(&login, Some(official)).expect("seed official alias");
+        let original: toml::Value = toml::from_str(official).expect("parse official config");
+        let relay = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        for (category, auth, target) in [
+            (None, json!({"OPENAI_API_KEY": "test-relay-key"}), relay),
+            (Some("official"), json!({}), ""),
+            (None, json!({"OPENAI_API_KEY": "test-relay-key"}), relay),
+        ] {
+            write_codex_live_for_provider(category, &auth, Some(target)).expect("switch provider");
+            let written: toml::Value =
+                toml::from_str(&read_codex_config_text().expect("read live config"))
+                    .expect("parse live config");
+            assert_eq!(
+                written.get("model_providers").and_then(|v| v.get("OpenAI")),
+                original
+                    .get("model_providers")
+                    .and_then(|v| v.get("OpenAI")),
+                "saved OpenAI threads must keep their original official definition"
+            );
+            assert_eq!(written["model_provider"].as_str(), Some("custom"));
+            let live_login: Value = read_json_file(&get_codex_auth_path()).expect("read login");
+            assert_eq!(
+                live_login, login,
+                "switching must preserve the official login"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn history_alias_merge_normalizes_names_and_excludes_reserved_and_proxy_tables() {
+        let _home = CodexLiveTestHome::new();
+        let live = r#"[model_providers.legacy]
+base_url = "https://legacy.example/v1"
+experimental_bearer_token = "legacy-key"
+
+[model_providers.amazon-bedrock]
+aws = { region = "us-east-1" }
+
+[model_providers.openai]
+base_url = "https://stale.example/v1"
+
+[model_providers.cc-switch-official]
+name = "OpenAI"
+base_url = "http://127.0.0.1:15721/v1"
+requires_openai_auth = true
+
+[model_providers.temporary]
+name = "Proxy"
+experimental_bearer_token = "PROXY_MANAGED"
+"#;
+        for target in ["", "model_providers = {}\n"] {
+            write_codex_live_atomic(&json!({}), Some(live)).expect("seed legacy config");
+            write_codex_live_for_provider(Some("official"), &json!({}), Some(target))
+                .expect("switch to official");
+            let written: toml::Value = toml::from_str(&read_codex_config_text().unwrap()).unwrap();
+            let providers = written["model_providers"].as_table().expect("providers");
+            assert_eq!(providers["legacy"]["name"].as_str(), Some("legacy"));
+            assert_eq!(
+                providers["legacy"]["experimental_bearer_token"].as_str(),
+                Some("legacy-key")
+            );
+            assert!(providers["amazon-bedrock"].get("name").is_none());
+            assert_eq!(
+                providers["amazon-bedrock"]["aws"]["region"].as_str(),
+                Some("us-east-1")
+            );
+            assert!(!providers.contains_key("openai"));
+            assert!(!providers.contains_key("cc-switch-official"));
+            assert!(!providers.contains_key("temporary"));
+            assert!(
+                written.get("model_provider").is_none(),
+                "preserved tables must not change the active route"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn history_alias_merge_rejects_conflicts_before_writing_auth_or_config() {
+        let _home = CodexLiveTestHome::new();
+        for fields in [
+            "auth = { command = \"test-auth\" }\nexperimental_bearer_token = \"test-key\"",
+            "auth = { command = \"test-auth\" }\nrequires_openai_auth = true",
+            "auth = { command = \"test-auth\" }\nenv_key = \"TEST_KEY\"",
+            "aws = { region = \"us-east-1\" }",
+        ] {
+            let live = format!("[model_providers.legacy]\nname = \"Legacy\"\n{fields}\n");
+            let old_auth = json!({"tokens": {"access_token": "old-test-login"}});
+            let new_auth = json!({"tokens": {"access_token": "new-test-login"}});
+            write_codex_live_atomic(&old_auth, Some(&live)).expect("seed conflicting alias");
+            let auth_before = fs::read(get_codex_auth_path()).unwrap();
+            assert!(preflight_codex_live_write(Some("official"), &new_auth, Some("")).is_err());
+            assert!(write_codex_live_for_provider(Some("official"), &new_auth, Some("")).is_err());
+            assert_eq!(fs::read(get_codex_auth_path()).unwrap(), auth_before);
+            assert_eq!(read_codex_config_text().unwrap(), live);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn history_alias_merge_rejects_malformed_live_config_without_overwriting_it() {
+        let _home = CodexLiveTestHome::new();
+        for live in [
+            "[model_providers.broken",
+            "model_providers = 42\n",
+            "[model_providers]\nlegacy = 42\n",
+        ] {
+            fs::create_dir_all(get_codex_config_dir()).unwrap();
+            fs::write(get_codex_config_path(), live).unwrap();
+            assert!(preflight_codex_live_write(Some("official"), &json!({}), Some("")).is_err());
+            assert!(write_codex_live_for_provider(Some("official"), &json!({}), Some("")).is_err());
+            assert_eq!(read_codex_config_text().unwrap(), live);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn history_alias_merge_keeps_target_definitions_and_supports_inline_tables() {
+        let _home = CodexLiveTestHome::new();
+        let live = r#"[model_providers.relay]
+name = "Old"
+base_url = "https://old.example/v1"
+experimental_bearer_token = "old-key"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+requires_openai_auth = true
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "relay"
+model_providers = { relay = { name = "New", base_url = "https://new.example/v1", wire_api = "responses" } }
+"#;
+        write_codex_live_atomic(&json!({}), Some(live)).unwrap();
+        write_codex_live_for_provider(None, &json!({"OPENAI_API_KEY": "new-key"}), Some(target))
+            .unwrap();
+        let written = read_codex_config_text().unwrap();
+        let doc: toml::Value = toml::from_str(&written).expect("inline result must parse");
+        assert_eq!(
+            doc["model_providers"]["relay"]["base_url"].as_str(),
+            Some("https://new.example/v1")
+        );
+        assert_eq!(
+            doc["model_providers"]["relay"]["experimental_bearer_token"].as_str(),
+            Some("new-key")
+        );
+        assert!(doc["model_providers"]["OpenAI"]
+            .get("experimental_bearer_token")
+            .is_none());
+        assert_eq!(
+            doc["model_providers"]["OpenAI"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        write_codex_live_for_provider(None, &json!({"OPENAI_API_KEY": "new-key"}), Some(target))
+            .unwrap();
+        assert_eq!(
+            read_codex_config_text().unwrap(),
+            written,
+            "repeated writes are idempotent"
+        );
+    }
 
     #[test]
     fn codex_id_token_user_identity_requires_a_nonempty_subject() {
@@ -6084,7 +6354,9 @@ base_url = "https://bedrock.example/v1"
     }
 
     #[test]
+    #[serial]
     fn preflight_rejects_provider_table_conflicts_codex_refuses_to_load() {
+        let _home = CodexLiveTestHome::new();
         // 0.149 validates EVERY provider table (idle ones included) and
         // rejects: aws outside the Bedrock built-ins, and auth combined with
         // requires_openai_auth / env_key / experimental_bearer_token. These
