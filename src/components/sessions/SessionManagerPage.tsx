@@ -317,12 +317,13 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [filteredSessions, selectedKey]);
 
   const selectedSession = useMemo(() => {
-    if (!selectedKey) return null;
-    return (
-      filteredSessions.find(
-        (session) => getSessionKey(session) === selectedKey,
-      ) || null
-    );
+    const found = selectedKey
+      ? filteredSessions.find(
+          (session) => getSessionKey(session) === selectedKey,
+        ) || null
+      : null;
+    // 首帧就回退到第一个会话，避免「空面板 -> 详情」的二次提交闪烁
+    return found ?? filteredSessions[0] ?? null;
   }, [filteredSessions, selectedKey]);
 
   const listViewModeLabel =
