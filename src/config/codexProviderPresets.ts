@@ -2780,7 +2780,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
-   {
+  {
     name: "LaonongAPI",
     websiteUrl: "https://www.laonongapi.com",
     apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
