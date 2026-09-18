@@ -879,6 +879,17 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             [],
         )
         .expect("restore oldest MiniMax M2.5 price");
+        // 2026-07-31 之前的 V4 Flash 形态（cache_read 尚未修正为 0.0028）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.14',
+                 output_cost_per_million = '0.28',
+                 cache_read_cost_per_million = '0.028',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'deepseek-v4-flash'",
+            [],
+        )
+        .expect("restore oldest DeepSeek V4 Flash price");
     }
 
     db.ensure_model_pricing_seeded()
@@ -893,14 +904,15 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query DeepSeek price");
-    // 从远古价 1.68/3.36/0.14 出发要连跳两级才能到位：
+    // 从远古价 1.68/3.36/0.14 出发要连跳三级才能到位：
     //   1.68/3.36/0.14 →(2026-07 条目)→ 0.435/0.87/0.003625
     //                  →(2026-08-16 峰谷调价条目)→ 1.32/3.96/0.044
+    //                  →(2026-09-14 起 V4 Pro 路由到 V4.1 Flash)→ 0.3/1.2/0.006
     // 这同时锁住了 repair 条目的顺序：新条目必须排在旧条目之后，
     // 否则老库会停在中间价位，本断言即会失败。
     assert_eq!(
         deepseek,
-        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
+        ("0.3".to_string(), "1.2".to_string(), "0.006".to_string())
     );
 
     let glm: (String, String, String) = conn
@@ -952,6 +964,66 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             "0.375".to_string()
         )
     );
+
+    // 2026-09-11 条目是 DeepSeek V4 Flash 链条的第三级，从最老形态出发要连跳三级：
+    //   0.14/0.28/0.028 →(2026-07 修 cache_read)→ 0.14/0.28/0.0028
+    //                   →(2026-08-16 峰谷调价)→ 0.44/1.32/0.014
+    //                   →(2026-09-11 V4.1 Flash 承接)→ 0.3/1.2/0.006
+    // 任一条目被挪到前面，老库都会停在中间价位，本断言即失败。
+    let flash: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'deepseek-v4-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query DeepSeek V4 Flash price");
+    assert_eq!(
+        flash,
+        (
+            "0.3".to_string(),
+            "1.2".to_string(),
+            "0.006".to_string(),
+            "0".to_string()
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    // 官方定价页（2026-09-11）：deepseek-flash 是唯一推荐名，两个 legacy 名仍被接受
+    // 但均由 V4.1-Flash 承接并按 Flash 价计费 → 四行同价（本表统一录高峰档）。
+    // 查价前缀兜底是 LIKE '{id}-%'，只命中更长的行，任一行缺失都会静默按 0 计费。
+    for model_id in [
+        "deepseek-flash",
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-0731",
+        "deepseek-v4-flash-vision-exp",
+    ] {
+        let price: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query DeepSeek V4.1 Flash family price");
+        assert_eq!(
+            price,
+            (
+                "0.3".to_string(),
+                "1.2".to_string(),
+                "0.006".to_string(),
+                "0".to_string()
+            ),
+            "{model_id}"
+        );
+    }
 }
 
 #[test]
