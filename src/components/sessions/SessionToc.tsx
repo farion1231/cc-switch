@@ -1,4 +1,5 @@
 import { List, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -81,14 +82,19 @@ export function SessionTocDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          size="icon"
-          className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
-        >
-          <List className="size-4" />
-        </Button>
-      </DialogTrigger>
+      {/* Keep the fixed trigger outside the transformed page transition. */}
+      {createPortal(
+        <DialogTrigger asChild>
+          <Button
+            size="icon"
+            aria-label={t("sessionManager.tocTitle")}
+            className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
+          >
+            <List className="size-4" />
+          </Button>
+        </DialogTrigger>,
+        document.body,
+      )}
       <DialogContent
         className="max-w-md max-h-[70vh] flex flex-col p-0 gap-0"
         zIndex="alert"
