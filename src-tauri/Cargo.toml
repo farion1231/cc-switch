@@ -73,6 +73,7 @@ url = "2.5"
 auto-launch = "0.5"
 once_cell = "1.21.3"
 base64 = "0.22"
+subtle = "2.6"
 rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
 indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
