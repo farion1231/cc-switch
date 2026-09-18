@@ -206,7 +206,7 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     label: "DevEco Code",
     icon: (
       <ProviderIcon
-        icon="huawei"
+        icon="deveco"
         name="DevEco Code"
         size={14}
         showFallback={false}

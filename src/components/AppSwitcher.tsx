@@ -38,7 +38,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "minimax",
-  deveco: "huawei",
+  deveco: "deveco",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {

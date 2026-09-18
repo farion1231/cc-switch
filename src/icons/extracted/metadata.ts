@@ -259,6 +259,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["claudecn", "claude", "enterprise"],
   },
+  deveco: {
+    name: "deveco",
+    displayName: "DevEco Code",
+    category: "tool",
+    keywords: ["deveco", "deveco code", "harmonyos", "huawei", "opencode"],
+    defaultColor: "#2C89E8",
+  },
   cloudflare: {
     name: "cloudflare",
     displayName: "Cloudflare",

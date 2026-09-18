@@ -1206,7 +1206,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             <SelectItem value="deveco">
                               <div className="flex items-center gap-2">
                                 <ProviderIcon
-                                  icon="huawei"
+                                  icon="deveco"
                                   name="DevEco Code"
                                   size={14}
                                 />

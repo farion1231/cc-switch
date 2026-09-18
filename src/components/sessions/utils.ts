@@ -125,7 +125,7 @@ export const getProviderIconName = (providerId: string) => {
   if (providerId === "claude") return "claude";
   if (providerId === "mcode") return "minimax";
   if (providerId === "opencode") return "opencode";
-  if (providerId === "deveco") return "huawei";
+  if (providerId === "deveco") return "deveco";
   if (providerId === "openclaw") return "openclaw";
   return providerId;
 };
