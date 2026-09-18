@@ -16,7 +16,7 @@ import {
   type AppId,
   type ManagedAuthProvider,
 } from "@/lib/api";
-import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
+import { asRecord, reconcileCodexLiveAuth } from "@/utils/providerConfigUtils";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -29,64 +29,6 @@ interface EditProviderDialogProps {
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
-
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-
-const hasAuthMaterial = (value: unknown): boolean => {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return true;
-};
-
-/**
- * Rebuild the provider auth only for a current Codex provider's live snapshot.
- *
- * In official-auth-preservation mode, live config.toml owns the active
- * provider bearer while the shared auth.json may belong to another provider or
- * contain the user's ChatGPT login. Stored provider auth remains the template:
- * this mirrors the backend switch-away backfill and avoids copying shared auth
- * material into the provider row. DB snapshots and presets must keep their
- * normal auth-first precedence.
- */
-const reconcileCodexLiveAuth = (
-  liveSettings: Record<string, unknown>,
-  storedSettings: Record<string, unknown> | null,
-  category: string | undefined,
-): Record<string, unknown> => {
-  if (category === "official") return liveSettings;
-
-  const configText =
-    typeof liveSettings.config === "string" ? liveSettings.config : "";
-  const bearer = extractCodexExperimentalBearerToken(configText);
-  if (!bearer) return liveSettings;
-
-  const storedAuth = asRecord(storedSettings?.auth);
-  const authTemplate = storedAuth ?? asRecord(liveSettings.auth) ?? {};
-  const hasProviderApiKey =
-    typeof authTemplate.OPENAI_API_KEY === "string" &&
-    authTemplate.OPENAI_API_KEY.trim().length > 0;
-  const hasOauthLogin = Object.entries(authTemplate).some(
-    ([key, value]) =>
-      key !== "auth_mode" && key !== "OPENAI_API_KEY" && hasAuthMaterial(value),
-  );
-
-  // Match should_restore_codex_provider_token_for_backfill: an OAuth-only
-  // provider must not be silently converted into an API-key provider.
-  if (hasOauthLogin && !hasProviderApiKey) return liveSettings;
-
-  return {
-    ...liveSettings,
-    auth: {
-      ...authTemplate,
-      OPENAI_API_KEY: bearer,
-    },
-  };
-};
 
 export function EditProviderDialog({
   open,

@@ -6,6 +6,7 @@ import {
   extractCodexModelName,
   hasCommonConfigSnippet,
   isCodexRemoteCompactionEnabled,
+  reconcileCodexLiveAuth,
   setCodexModelName,
   setCodexRemoteCompaction,
   updateCommonConfigSnippet,
@@ -261,5 +262,73 @@ describe("common config snippet prototype-pollution guards", () => {
 
     expect(result.error).toBeUndefined();
     expect(({} as Record<string, unknown>).polluted).toBe("YES");
+  });
+});
+
+describe("reconcileCodexLiveAuth", () => {
+  const storedWithApiKey = {
+    auth: { OPENAI_API_KEY: "sk-stored-key" },
+    config: 'model = "gpt-5.4"\n',
+  };
+
+  it("keeps the stored auth when live has no credentials at all", () => {
+    // auth.json 缺失/为空（自定义供应商走 config.toml Authorization 头）：
+    // 打开编辑→直接保存不得清空数据库里保存的 key
+    const live = { auth: {}, config: 'model_provider = "custom"\n' };
+    const result = reconcileCodexLiveAuth(live, storedWithApiKey, "custom");
+    expect(result.auth).toEqual({ OPENAI_API_KEY: "sk-stored-key" });
+  });
+
+  it("keeps the stored auth when live omits the auth key entirely", () => {
+    const live = { config: 'model_provider = "custom"\n' };
+    const result = reconcileCodexLiveAuth(live, storedWithApiKey, "custom");
+    expect(result.auth).toEqual({ OPENAI_API_KEY: "sk-stored-key" });
+  });
+
+  it("keeps the stored OAuth material when live has no credentials", () => {
+    const stored = {
+      auth: {
+        auth_mode: "preferred",
+        tokens: { id_token: "jwt", refresh_token: "rt" },
+      },
+    };
+    const live = { auth: {}, config: "" };
+    const result = reconcileCodexLiveAuth(live, stored, "custom");
+    expect(result.auth).toEqual(stored.auth);
+  });
+
+  it("still prefers live when live carries credentials", () => {
+    const live = {
+      auth: { OPENAI_API_KEY: "sk-live-key" },
+      config: 'model_provider = "custom"\n',
+    };
+    const result = reconcileCodexLiveAuth(live, storedWithApiKey, "custom");
+    expect(result.auth).toEqual({ OPENAI_API_KEY: "sk-live-key" });
+  });
+
+  it("returns live unchanged when both sides are empty", () => {
+    const live = { auth: {}, config: "" };
+    const result = reconcileCodexLiveAuth(live, { auth: {} }, "custom");
+    expect(result).toBe(live);
+  });
+
+  it("still stamps the live bearer over the stored template", () => {
+    const live = {
+      auth: {},
+      config: [
+        'model_provider = "custom"',
+        "",
+        "[model_providers.custom]",
+        'experimental_bearer_token = "sk-bearer-live"',
+      ].join("\n"),
+    };
+    const result = reconcileCodexLiveAuth(live, storedWithApiKey, "custom");
+    expect(result.auth).toEqual({ OPENAI_API_KEY: "sk-bearer-live" });
+  });
+
+  it("returns live as-is for the official category", () => {
+    const live = { auth: {}, config: "" };
+    const result = reconcileCodexLiveAuth(live, storedWithApiKey, "official");
+    expect(result).toBe(live);
   });
 });
