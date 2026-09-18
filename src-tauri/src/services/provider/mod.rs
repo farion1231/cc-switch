@@ -2569,6 +2569,116 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
+    fn managed_codex_switch_away_with_malformed_marker_skips_unproven_tokens() {
+        for target_kind in ["unbound", "managed", "api-key"] {
+            with_test_home(|state, home| {
+                crate::settings::reload_settings().expect("reload isolated settings");
+                let auth_path = crate::codex_config::get_codex_auth_path();
+                let marker_path =
+                    crate::config::get_app_config_dir().join("codex_managed_oauth_live_auth.json");
+                assert!(auth_path.starts_with(home));
+                assert!(marker_path.starts_with(home));
+                tauri::async_runtime::block_on(async {
+                    for (account, user) in [("acct-a", "user-a"), ("acct-b", "user-b")] {
+                        state
+                            .codex_oauth_manager
+                            .add_test_account_with_user_identity(account, "test-access", user)
+                            .await
+                            .expect("seed synthetic managed account");
+                    }
+                });
+
+                let source = managed_codex_provider("source", "acct-a");
+                let target = match target_kind {
+                    "managed" => managed_codex_provider("target", "acct-b"),
+                    "api-key" => Provider::with_id(
+                        "target".to_string(),
+                        "API key".to_string(),
+                        codex_settings("https://example.test/v1", "test-api-key"),
+                        None,
+                    ),
+                    _ => {
+                        let mut provider = Provider::with_id(
+                            "target".to_string(),
+                            "Unbound Official".to_string(),
+                            json!({ "auth": {}, "config": "" }),
+                            None,
+                        );
+                        provider.category = Some("official".to_string());
+                        provider
+                    }
+                };
+                for provider in [&source, &target] {
+                    state
+                        .db
+                        .save_provider(AppType::Codex.as_str(), provider)
+                        .unwrap();
+                }
+                ProviderService::switch(state, AppType::Codex, &source.id)
+                    .expect("activate source account");
+                let id_token = crate::codex_config::test_codex_id_token("user-a");
+                let live_auth = crate::codex_config::codex_managed_oauth_auth_value(
+                    "acct-a",
+                    "unproven-access",
+                    Some(&id_token),
+                    "unproven-refresh",
+                    "2099-01-02T00:00:00Z",
+                );
+                write_json_file(&auth_path, &live_auth).unwrap();
+                let auth_before = fs::read(&auth_path).unwrap();
+                fs::write(&marker_path, "not json").unwrap();
+
+                ProviderService::switch(state, AppType::Codex, &target.id)
+                    .unwrap_or_else(|error| panic!("switch to {target_kind} failed: {error}"));
+                assert_eq!(
+                    state
+                        .db
+                        .get_current_provider(AppType::Codex.as_str())
+                        .unwrap()
+                        .as_deref(),
+                    Some(target.id.as_str())
+                );
+                assert_eq!(
+                    tauri::async_runtime::block_on(
+                        state
+                            .codex_oauth_manager
+                            .test_refresh_token_for_account("acct-a")
+                    )
+                    .as_deref(),
+                    Some("test-refresh-token"),
+                    "unproven live tokens must not overwrite the stored account"
+                );
+                let saved_source = state
+                    .db
+                    .get_provider_by_id(&source.id, AppType::Codex.as_str())
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(saved_source.settings_config.get("auth"), Some(&json!({})));
+                match target_kind {
+                    "unbound" => assert_eq!(fs::read(&auth_path).unwrap(), auth_before),
+                    "managed" => {
+                        let auth: Value = read_json_file(&auth_path).unwrap();
+                        assert_eq!(auth.pointer("/tokens/account_id"), Some(&json!("acct-b")));
+                        assert!(
+                            crate::codex_config::codex_live_auth_is_managed_chatgpt_login(
+                                &auth, "acct-b"
+                            )
+                        );
+                    }
+                    _ => {
+                        assert!(!auth_path.exists());
+                        let config =
+                            fs::read_to_string(crate::codex_config::get_codex_config_path())
+                                .unwrap();
+                        assert!(config.contains("test-api-key"));
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
     fn managed_codex_switch_adopts_outgoing_cli_rotation_before_account_or_key_overwrite() {
         with_test_home(|state, _| {
             crate::settings::reload_settings().expect("reload settings");
