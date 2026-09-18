@@ -5082,6 +5082,51 @@ impl ProviderService {
         Ok(true)
     }
 
+    /// Reject an edit that removes a model DevEco Code still refers to.
+    ///
+    /// DevEco Code stores the selected model as `<provider-id>/<model-id>` in its
+    /// top-level `model` / `small_model` and in `agent.*.model`. Dropping such a model
+    /// (or the whole provider) leaves a dangling reference that breaks startup, so the
+    /// edit is refused rather than silently persisted.
+    fn guard_deveco_referenced_models(
+        existing: Option<&Provider>,
+        updated: &Provider,
+    ) -> Result<(), AppError> {
+        let Some(existing) = existing else {
+            return Ok(());
+        };
+
+        let models_of = |provider: &Provider| -> Vec<String> {
+            provider
+                .settings_config
+                .get("models")
+                .and_then(Value::as_object)
+                .map(|models| models.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+
+        let remaining = models_of(updated);
+        for model_id in models_of(existing) {
+            if remaining.contains(&model_id) {
+                continue;
+            }
+            if crate::deveco_config::referenced_by_config(&updated.id, Some(&model_id))? {
+                return Err(AppError::localized(
+                    "provider.deveco.model_referenced",
+                    format!(
+                        "DevEco Code 仍在使用 {}/{}。请先在 DevEco Code 中改用其它模型，再移除它。",
+                        updated.id, model_id
+                    ),
+                    format!(
+                        "DevEco Code still uses {}/{}. Switch that reference in DevEco Code before removing it.",
+                        updated.id, model_id
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Persist a DevEco Code provider: DB first, then the native `deveco.jsonc`.
     ///
     /// The native write can fail on a hand-edited config; when it does, the DB row
@@ -5399,6 +5444,7 @@ impl ProviderService {
             }
 
             if app_type == AppType::DevEco {
+                Self::guard_deveco_referenced_models(existing_provider.as_ref(), &provider)?;
                 return Self::save_deveco_provider(state, &provider, live_config_managed);
             }
 
@@ -5608,6 +5654,23 @@ impl ProviderService {
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
             let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
+
+            // DevEco Code refers to models as `<provider-id>/<model-id>` from its top-level
+            // `model` / `small_model` and from `agent.*.model`. Deleting a referenced
+            // provider would leave those dangling and break startup, so refuse and let the
+            // user repoint the reference in DevEco Code first.
+            if app_type == AppType::DevEco && crate::deveco_config::referenced_by_config(id, None)?
+            {
+                return Err(AppError::localized(
+                    "provider.deveco.referenced",
+                    format!(
+                        "DevEco Code 仍在使用供应商 '{id}'（model / agent 配置引用了它）。请先在 DevEco Code 中改用其它模型，再删除。"
+                    ),
+                    format!(
+                        "DevEco Code still uses provider '{id}' (referenced by its model or agent config). Switch that reference in DevEco Code before deleting."
+                    ),
+                ));
+            }
 
             if matches!(app_type, AppType::OpenCode) {
                 let provider_category = existing.as_ref().and_then(|p| p.category.clone());

@@ -4,7 +4,7 @@ pub mod terminal;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
+use providers::{claude, codex, deveco, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +87,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r7);
     sessions.extend(r8);
     sessions.extend(mcode::scan_sessions());
+    sessions.extend(deveco::scan_sessions());
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -100,6 +101,9 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
     if provider_id == "mcode" {
         return mcode::load_messages(source_path);
+    }
+    if provider_id == "deveco" {
+        return deveco::load_messages(source_path);
     }
     // SQLite sessions use a "sqlite:" prefixed source_path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
@@ -131,6 +135,15 @@ pub fn delete_session(
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
+                .into(),
+        );
+    }
+    if provider_id == "deveco" {
+        // DevEco Code keeps sessions in a shared SQLite database alongside the event
+        // log, todos and message projections. Deleting rows out from under it would
+        // leave dangling runtime state, so hand deletion back to DevEco Code itself.
+        return Err(
+            "Delete this session in DevEco Code so its runtime state and history are removed together"
                 .into(),
         );
     }

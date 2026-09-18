@@ -44,78 +44,88 @@ pub fn remove_server_from_deveco(id: &str) -> Result<(), AppError> {
     crate::deveco_config::remove_mcp_server(id)
 }
 
-/// 从 DevEco Code 配置导入 MCP 服务器到统一结构
+/// 从 DevEco Code 配置导入 MCP 服务器到数据库。
 ///
-/// 已存在的服务器只把 DevEco Code 应用位打开，不覆盖其它字段。
-pub fn import_from_deveco(
-    config: &mut crate::app_config::MultiAppConfig,
-) -> Result<usize, AppError> {
+/// 与 OpenCode 那条「覆盖式」导入路径不同，这里采纳 MCode 的冲突语义：原生条目与
+/// 库中已有同名服务器传输配置不一致时**跳过并上报**，而不是静默覆盖用户已有的
+/// 定义。导入只打开 DevEco Code 应用位，其余应用位保持不变。
+pub fn import(state: &crate::store::AppState) -> Result<usize, AppError> {
     let mcp_map = crate::deveco_config::get_mcp_servers()?;
     if mcp_map.is_empty() {
         return Ok(0);
     }
 
-    let servers = config
-        .mcp
-        .servers
-        .get_or_insert_with(std::collections::HashMap::new);
+    let mut existing = state.db.get_all_mcp_servers()?;
+    let mut count = 0;
+    let mut skipped = Vec::new();
 
-    let mut changed = 0;
-    let mut errors = Vec::new();
-
-    for (id, spec) in mcp_map {
-        let unified_spec = match convert_from_opencode_format(&spec) {
+    for (id, native) in mcp_map {
+        let mut spec = match convert_from_opencode_format(&native) {
             Ok(spec) => spec,
             Err(e) => {
-                log::warn!("Skip invalid DevEco Code MCP server '{id}': {e}");
-                errors.push(format!("{id}: {e}"));
+                skipped.push(format!("'{id}': {e}"));
                 continue;
             }
         };
-
-        if let Err(e) = super::validation::validate_server_spec(&unified_spec) {
-            log::warn!("Skip invalid MCP server '{id}' after conversion: {e}");
-            errors.push(format!("{id}: {e}"));
+        if super::validation::validate_server_spec(&spec).is_err() {
+            skipped.push(format!("'{id}': invalid transport configuration"));
             continue;
         }
 
-        if let Some(existing) = servers.get_mut(&id) {
-            if !existing.apps.deveco {
-                existing.apps.deveco = true;
-                changed += 1;
-                log::info!("MCP server '{id}' enabled for DevEco Code");
-            }
-        } else {
-            servers.insert(
-                id.clone(),
-                McpServer {
-                    id: id.clone(),
-                    name: id.clone(),
-                    server: unified_spec,
-                    apps: McpApps {
-                        deveco: true,
-                        ..Default::default()
-                    },
-                    description: None,
-                    homepage: None,
-                    docs: None,
-                    tags: Vec::new(),
-                },
-            );
-            changed += 1;
-            log::info!("Imported new MCP server '{id}' from DevEco Code");
+        // `enabled` 是 DevEco 原生的开关字段，不属于统一传输定义。
+        let enabled = native
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if let Some(object) = spec.as_object_mut() {
+            object.remove("enabled");
         }
+
+        let server = if let Some(mut server) = existing.shift_remove(&id) {
+            if transport_spec(&server.server) != transport_spec(&spec) {
+                skipped.push(format!("'{id}': conflicts with an existing server"));
+                continue;
+            }
+            server.apps.deveco = enabled;
+            server
+        } else {
+            count += 1;
+            McpServer {
+                id: id.clone(),
+                name: id.clone(),
+                server: spec,
+                apps: McpApps {
+                    deveco: enabled,
+                    ..Default::default()
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            }
+        };
+        state.db.save_mcp_server(&server)?;
     }
 
-    if !errors.is_empty() {
-        log::warn!(
-            "DevEco Code import completed with {} failures: {:?}",
-            errors.len(),
-            errors
-        );
+    if skipped.is_empty() {
+        Ok(count)
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "Imported {count} DevEco Code MCP servers; skipped {}. Native configurations were preserved.",
+            skipped.join("; ")
+        )))
     }
+}
 
-    Ok(changed)
+/// 只保留传输相关字段，用于判断同名服务器是否真的冲突。
+fn transport_spec(spec: &Value) -> Value {
+    const TRANSPORT_FIELDS: [&str; 6] = ["type", "command", "args", "env", "url", "headers"];
+
+    let mut spec = spec.clone();
+    if let Some(object) = spec.as_object_mut() {
+        object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
+    }
+    spec
 }
 
 #[cfg(test)]

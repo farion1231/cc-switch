@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod codex;
+pub mod deveco;
 pub mod gemini;
 pub mod grokbuild;
 pub mod hermes;
