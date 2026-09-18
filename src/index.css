@@ -296,3 +296,21 @@ input[type="password"]::-ms-clear {
     flex: 1 1 0%;
   }
 }
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 视图入场动画。参数与设置页、统计页的 motion.div 一致（0.3s 淡入 + 上移 10px）。
+   用 CSS 而非 framer-motion 是因为覆盖层关闭时需要「原地重放」：key 不变、
+   组件不重挂载，只需切换这个 class 并强制重排即可重新播放，滚动位置等状态得以保留。 */
+.view-enter {
+  animation: view-enter 0.3s ease-out;
+}

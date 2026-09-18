@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { motion } from "framer-motion";
+import { subscribeToFullScreenPanelDismiss } from "@/components/common/FullScreenPanel";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
@@ -1007,6 +1007,22 @@ function App() {
     setCurrentView("skillsDiscovery");
   };
 
+  // 覆盖层全部关闭时，在原地重放视图入场动画。不重挂载，所以滚动位置和视图内部
+  // 状态都保留。强制读一次 offsetWidth 触发重排，否则连续切换 class 时浏览器会
+  // 把两次样式变更合并、动画不会重新开始。
+  const viewRef = useRef<HTMLDivElement>(null);
+  useEffect(
+    () =>
+      subscribeToFullScreenPanelDismiss(() => {
+        const el = viewRef.current;
+        if (!el) return;
+        el.classList.remove("view-enter");
+        void el.offsetWidth;
+        el.classList.add("view-enter");
+      }),
+    [],
+  );
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -1157,15 +1173,13 @@ function App() {
     })();
 
     return (
-      <motion.div
+      <div
         key={currentView}
-        className="flex-1 min-h-0"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
+        ref={viewRef}
+        className="view-enter flex-1 min-h-0"
       >
         {content}
-      </motion.div>
+      </div>
     );
   };
 

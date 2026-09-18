@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -1087,90 +1088,98 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-background rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl max-h-[80vh] flex flex-col">
-          <h2 className="text-lg font-semibold mb-2">{t("skills.import")}</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            {t("skills.importDescription")}
-          </p>
+      {/* 同上：portal 到 body，避免被视图容器的 transform 改变定位基准。 */}
+      {createPortal(
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl max-h-[80vh] flex flex-col">
+            <h2 className="text-lg font-semibold mb-2">{t("skills.import")}</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              {t("skills.importDescription")}
+            </p>
 
-          <div className="flex-1 overflow-y-auto space-y-2 mb-4">
-            {skills.map((skill) => (
-              <div
-                key={skill.directory}
-                className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(skill.directory)}
-                  onChange={() => toggleSelect(skill.directory)}
-                  aria-label={skill.name}
-                  className="mt-1"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">{skill.name}</div>
-                  {skill.description && (
-                    <div className="text-sm text-muted-foreground line-clamp-1">
-                      {skill.description}
-                    </div>
-                  )}
-                  <div className="mt-2">
-                    <AppToggleGroup
-                      apps={
-                        selectedApps[skill.directory] ?? {
-                          claude: false,
-                          codex: false,
-                          gemini: false,
-                          grokbuild: false,
-                          opencode: false,
-                          openclaw: false,
-                          hermes: false,
+            <div className="flex-1 overflow-y-auto space-y-2 mb-4">
+              {skills.map((skill) => (
+                <div
+                  key={skill.directory}
+                  className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(skill.directory)}
+                    onChange={() => toggleSelect(skill.directory)}
+                    aria-label={skill.name}
+                    className="mt-1"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium">{skill.name}</div>
+                    {skill.description && (
+                      <div className="text-sm text-muted-foreground line-clamp-1">
+                        {skill.description}
+                      </div>
+                    )}
+                    <div className="mt-2">
+                      <AppToggleGroup
+                        apps={
+                          selectedApps[skill.directory] ?? {
+                            claude: false,
+                            codex: false,
+                            gemini: false,
+                            grokbuild: false,
+                            opencode: false,
+                            openclaw: false,
+                            hermes: false,
+                          }
                         }
-                      }
-                      onToggle={(app, enabled) => {
-                        setSelectedApps((prev) => ({
-                          ...prev,
-                          [skill.directory]: {
-                            ...(prev[skill.directory] ?? {
-                              claude: false,
-                              codex: false,
-                              gemini: false,
-                              grokbuild: false,
-                              opencode: false,
-                              openclaw: false,
-                              hermes: false,
-                            }),
-                            [app]: enabled,
-                          },
-                        }));
-                      }}
-                      appIds={IMPORT_SKILLS_APP_IDS}
-                    />
-                  </div>
-                  <div
-                    className="text-xs text-muted-foreground/50 mt-1 truncate"
-                    title={skill.path}
-                  >
-                    {skill.path}
+                        onToggle={(app, enabled) => {
+                          setSelectedApps((prev) => ({
+                            ...prev,
+                            [skill.directory]: {
+                              ...(prev[skill.directory] ?? {
+                                claude: false,
+                                codex: false,
+                                gemini: false,
+                                grokbuild: false,
+                                opencode: false,
+                                openclaw: false,
+                                hermes: false,
+                              }),
+                              [app]: enabled,
+                            },
+                          }));
+                        }}
+                        appIds={IMPORT_SKILLS_APP_IDS}
+                      />
+                    </div>
+                    <div
+                      className="text-xs text-muted-foreground/50 mt-1 truncate"
+                      title={skill.path}
+                    >
+                      {skill.path}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
 
-          <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={onClose} disabled={isImporting}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              onClick={handleImport}
-              disabled={selected.size === 0 || isImporting}
-            >
-              {t("skills.importSelected", { count: selected.size })}
-            </Button>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isImporting}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                onClick={handleImport}
+                disabled={selected.size === 0 || isImporting}
+              >
+                {t("skills.importSelected", { count: selected.size })}
+              </Button>
+            </div>
           </div>
-        </div>
-      </div>
+        </div>,
+        document.body,
+      )}
     </TooltipProvider>
   );
 };
