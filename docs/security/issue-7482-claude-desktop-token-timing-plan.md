@@ -239,8 +239,13 @@ if token_bytes.ct_eq(expected_bytes).unwrap_u8() != 1 {
 | 2026-09-18 | Windows / Git checkout | `rg -n ...` 静态源码核验 | 已确认 | 已核对函数、路由、监听配置、威胁模型 |
 | 2026-09-18 | Windows / Rust 1.95.0 | `cargo test --manifest-path src-tauri/Cargo.toml --lib claude_desktop_gateway_auth -- --nocapture` | 通过 | 5 个认证专项测试通过 |
 | 2026-09-18 | Windows / Rust 1.95.0 | `cargo test --manifest-path src-tauri/Cargo.toml --lib proxy::handlers::tests -- --nocapture` | 通过 | 55 个 handler 测试通过 |
+| 2026-09-18 | Windows / Rust 1.95.0 | `cargo test --manifest-path src-tauri/Cargo.toml --lib` | 部分通过 | 2861 通过、10 忽略；2 个既有符号链接测试因 Windows 1314 无权限失败 |
+| 2026-09-18 | Windows / baseline `06082e1` | 两个符号链接测试的基线复现 | 已确认 | detached worktree 中同样以 Windows 1314 失败，与本次改动无关 |
 | 2026-09-18 | Windows / Rust 1.95.0 | `cargo fmt --check --manifest-path src-tauri/Cargo.toml` | 通过 | 无格式差异 |
 | 2026-09-18 | Windows / Rust 1.95.0 | `cargo clippy --manifest-path src-tauri/Cargo.toml --lib -- -D warnings` | 通过 | 无 Clippy 警告 |
+| 2026-09-18 | Windows / Rust 1.95.0 | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | 既有失败 | `transform_codex_chat.rs:4328` 的 `clippy::op_ref` 与本次改动无关 |
+| 2026-09-18 | Windows / Rust 1.95.0 | `cargo test --manifest-path src-tauri/Cargo.toml` | 环境失败 | 集成测试目标缺少 `cc_switch_lib`/Tauri rlib；仓库 CI 与本地可用入口为 `--lib` |
+| 2026-09-18 | 本次改动范围 | 前端检查 | 不适用 | 未修改 `src/**` 或前端依赖 |
 
 ## 变更记录
 
