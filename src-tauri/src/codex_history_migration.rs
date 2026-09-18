@@ -5,6 +5,7 @@
 
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
 };
 use crate::codex_state_db::codex_state_db_paths;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
@@ -44,6 +45,13 @@ fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
 const OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID: &str = "openai";
+/// Official history can also be written under this dedicated id while proxy
+/// takeover is active. Both ids represent the same official ChatGPT account
+/// history and must be migrated/restored together.
+const OFFICIAL_HISTORY_SOURCE_PROVIDER_IDS: &[&str] = &[
+    OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
+    CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+];
 const LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
 // If a Codex preset ever used a temporary routing key, keep that old key here
 // so local history can be bucketed under the current custom provider id.
@@ -187,7 +195,8 @@ pub fn maybe_migrate_codex_provider_template_bucket(
     Ok(outcome)
 }
 
-/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入共享 "custom" 桶。
+/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶或代理接管时的
+/// "cc-switch-official" 桶）迁入共享 "custom" 桶。
 ///
 /// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）
 /// 且本轮未完成时执行；开关关闭时标记与勾选意愿都会被清除（见 `save_settings`），
@@ -233,8 +242,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         });
     }
 
-    let source_provider_ids: BTreeSet<String> =
-        std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
+    let source_provider_ids = official_history_source_provider_ids();
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
     let migrated_jsonl_files =
         migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
@@ -426,8 +434,8 @@ fn restore_codex_official_history_inner(
     })
 }
 
-/// 从备份代际收集官方会话账本：jsonl 备份里 session_meta 为 "openai" 的
-/// 会话 id + state DB 备份里 model_provider 为 "openai" 的 thread id。
+/// 从备份代际收集官方会话账本：jsonl 备份里 session_meta 属于官方源桶的
+/// 会话 id + state DB 备份里 model_provider 属于官方源桶的 thread id。
 /// 只采纳 meta.json 目录与当前 Codex 目录一致的代际，避免切换
 /// codex_config_dir 后拿旧目录的账本作用到新目录。
 /// 还原操作自身的备份（restore 目录）天然不会混入：那些副本里的 id 都是
@@ -500,8 +508,10 @@ fn collect_official_session_ids_from_backup(path: &Path, session_ids: &mut HashS
         let Some(payload) = value.get("payload") else {
             continue;
         };
-        if payload.get("model_provider").and_then(Value::as_str)
-            != Some(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID)
+        if !payload
+            .get("model_provider")
+            .and_then(Value::as_str)
+            .is_some_and(is_official_history_source_provider_id)
         {
             continue;
         }
@@ -528,10 +538,15 @@ fn collect_official_thread_ids_from_backup(db_path: &Path, thread_ids: &mut BTre
     if !has_threads {
         return;
     }
-    let Ok(mut stmt) = conn.prepare("SELECT id FROM threads WHERE model_provider = ?1") else {
+    let source_provider_ids = official_history_source_provider_ids();
+    let placeholders = placeholders(source_provider_ids.len());
+    let query = format!(
+        "SELECT id FROM threads WHERE model_provider IN ({placeholders})"
+    );
+    let Ok(mut stmt) = conn.prepare(&query) else {
         return;
     };
-    let Ok(rows) = stmt.query_map([OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID], |row| {
+    let Ok(rows) = stmt.query_map(params_from_iter(source_provider_ids.iter()), |row| {
         row.get::<_, String>(0)
     }) else {
         return;
@@ -539,6 +554,17 @@ fn collect_official_thread_ids_from_backup(db_path: &Path, thread_ids: &mut BTre
     for thread_id in rows.flatten() {
         thread_ids.insert(thread_id);
     }
+}
+
+fn official_history_source_provider_ids() -> BTreeSet<String> {
+    OFFICIAL_HISTORY_SOURCE_PROVIDER_IDS
+        .iter()
+        .map(|provider_id| (*provider_id).to_string())
+        .collect()
+}
+
+fn is_official_history_source_provider_id(provider_id: &str) -> bool {
+    OFFICIAL_HISTORY_SOURCE_PROVIDER_IDS.contains(&provider_id)
 }
 
 fn collect_files_with_extension(
@@ -1625,7 +1651,7 @@ base_url = "https://proxy.example/v1"
         let backup_root = dir.path().join("backup");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
 
-        let source_provider_ids = source_ids(&[OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID]);
+        let source_provider_ids = source_ids(OFFICIAL_HISTORY_SOURCE_PROVIDER_IDS);
 
         let session_dir = codex_dir.join("sessions/2026/06/12");
         fs::create_dir_all(&session_dir).expect("create session dir");
@@ -1636,6 +1662,7 @@ base_url = "https://proxy.example/v1"
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"my-private-relay\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s4\",\"model_provider\":\"cc-switch-official\"}}\n",
                 "{\"type\":\"response_item\",\"payload\":{\"text\":\"openai\"}}\n",
             ),
         )
@@ -1650,9 +1677,10 @@ base_url = "https://proxy.example/v1"
             session_text
                 .matches("\"model_provider\":\"custom\"")
                 .count(),
-            2
+            3
         );
         assert!(!session_text.contains("\"model_provider\":\"openai\""));
+        assert!(!session_text.contains("\"model_provider\":\"cc-switch-official\""));
         assert!(session_text.contains("\"model_provider\":\"my-private-relay\""));
         assert!(
             session_text.contains("{\"type\":\"response_item\",\"payload\":{\"text\":\"openai\"}}")
@@ -1676,7 +1704,8 @@ base_url = "https://proxy.example/v1"
             INSERT INTO threads (id, model_provider) VALUES
                 ('openai-thread', 'openai'),
                 ('custom-thread', 'custom'),
-                ('manual-thread', 'my-private-relay');",
+                ('manual-thread', 'my-private-relay'),
+                ('official-takeover-thread', 'cc-switch-official');",
         )
         .expect("seed state db");
         drop(conn);
@@ -1688,7 +1717,7 @@ base_url = "https://proxy.example/v1"
             &backup_root,
         )
         .expect("migrate state db");
-        assert_eq!(migrated_state_rows, 1);
+        assert_eq!(migrated_state_rows, 2);
 
         let conn = Connection::open(&state_db_path).expect("reopen state db");
         let count_provider = |provider_id: &str| -> i64 {
@@ -1699,8 +1728,9 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count provider")
         };
-        assert_eq!(count_provider("custom"), 2);
+        assert_eq!(count_provider("custom"), 3);
         assert_eq!(count_provider("openai"), 0);
+        assert_eq!(count_provider("cc-switch-official"), 0);
         assert_eq!(count_provider("my-private-relay"), 1);
     }
 
@@ -1711,13 +1741,17 @@ base_url = "https://proxy.example/v1"
         let ledger_parent = dir.path().join("ledger");
         let restore_backup_root = dir.path().join("restore-backup");
 
-        // 备份账本：一个代际，jsonl 备份里 s1 是 openai；state 备份里 t1 是 openai
+        // 备份账本：一个代际，jsonl/state 里各有一个 openai 和一个
+        // cc-switch-official 官方会话。
         let generation = ledger_parent.join("20260612_010101");
         let backup_session_dir = generation.join("jsonl/sessions/2026/06/01");
         fs::create_dir_all(&backup_session_dir).expect("create backup session dir");
         fs::write(
             backup_session_dir.join("official.jsonl"),
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s4\",\"model_provider\":\"cc-switch-official\"}}\n",
+            ),
         )
         .expect("write backup session");
         let backup_state_dir = generation.join("state");
@@ -1727,19 +1761,24 @@ base_url = "https://proxy.example/v1"
         backup_db
             .execute_batch(
                 "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL);
-                INSERT INTO threads (id, model_provider) VALUES ('t1', 'openai');",
+                INSERT INTO threads (id, model_provider) VALUES
+                    ('t1', 'openai'),
+                    ('t4', 'cc-switch-official');",
             )
             .expect("seed backup db");
         drop(backup_db);
 
-        // 当前数据：s1（账本内，custom）应还原；s2（开启期间新会话，不在账本）
+        // 当前数据：s1/s4（账本内，custom）应还原；s2（开启期间新会话，不在账本）
         // 与 s3（手工 relay）必须原样保留
         let session_dir = codex_dir.join("sessions/2026/06/01");
         fs::create_dir_all(&session_dir).expect("create session dir");
         let official_path = session_dir.join("official.jsonl");
         fs::write(
             &official_path,
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s4\",\"model_provider\":\"custom\"}}\n",
+            ),
         )
         .expect("write official session");
         let on_period_dir = codex_dir.join("sessions/2026/06/12");
@@ -1761,7 +1800,8 @@ base_url = "https://proxy.example/v1"
             INSERT INTO threads (id, model_provider) VALUES
                 ('t1', 'custom'),
                 ('t2', 'custom'),
-                ('t3', 'openai');",
+                ('t3', 'openai'),
+                ('t4', 'custom');",
         )
         .expect("seed state db");
         drop(conn);
@@ -1784,11 +1824,12 @@ base_url = "https://proxy.example/v1"
         )
         .expect("restore");
         assert_eq!(outcome.restored_jsonl_files, 1);
-        assert_eq!(outcome.restored_state_rows, 1);
+        assert_eq!(outcome.restored_state_rows, 2);
         assert!(outcome.skipped_reason.is_none());
 
         let official_text = fs::read_to_string(&official_path).expect("read official");
         assert!(official_text.contains("\"model_provider\":\"openai\""));
+        assert!(official_text.contains("\"id\":\"s4\",\"model_provider\":\"openai\""));
         let on_period_text = fs::read_to_string(&on_period_path).expect("read on-period");
         assert!(on_period_text.contains("\"id\":\"s2\",\"model_provider\":\"custom\""));
         assert!(on_period_text.contains("\"model_provider\":\"my-private-relay\""));
@@ -1805,6 +1846,7 @@ base_url = "https://proxy.example/v1"
         assert_eq!(provider_of("t1"), "openai");
         assert_eq!(provider_of("t2"), "custom");
         assert_eq!(provider_of("t3"), "openai");
+        assert_eq!(provider_of("t4"), "openai");
         drop(conn);
 
         // 还原前的现场已备份到独立目录
