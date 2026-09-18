@@ -387,6 +387,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
+         WHEN '_deveco_session' THEN 'DevEco Code (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
@@ -747,7 +748,8 @@ pub(crate) fn has_matching_proxy_usage_log(
     key: &DedupKey,
 ) -> Result<bool, AppError> {
     let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+        matches!(key.app_type, "codex" | "gemini" | "opencode" | "deveco")
+            && key.cache_creation_tokens == 0;
     let allow_legacy_proxy_cache_creation = key.app_type == "codex";
 
     conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)

@@ -129,7 +129,8 @@ fn scan_sessions_json() -> Vec<SessionMeta> {
 ///
 /// Uses `rfind(":ses_")` to split the path from the session ID because the
 /// db path itself may contain colons (e.g. `C:\Users\...` on Windows).
-/// This relies on the OpenCode convention that session IDs start with `ses_`.
+/// This relies on the convention that session IDs start with `ses_`, which
+/// DevEco Code inherited from OpenCode.
 pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let sep = rest.rfind(":ses_")?;
@@ -797,7 +798,7 @@ fn get_first_user_summary(storage: &Path, session_id: &str) -> Option<String> {
 }
 
 /// Collect text content from all parts in a part directory.
-fn extract_part_text(part_value: &Value) -> Option<String> {
+pub(crate) fn extract_part_text(part_value: &Value) -> Option<String> {
     match part_value.get("type").and_then(Value::as_str) {
         Some("text") => part_value
             .get("text")
