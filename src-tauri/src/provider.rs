@@ -223,7 +223,7 @@ impl Provider {
                 str_at(settings.get("apiKey")),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
-            AppType::OpenCode | AppType::Mcode => {
+            AppType::OpenCode | AppType::Mcode | AppType::DevEco => {
                 let options = settings.get("options");
                 (
                     str_at(options.and_then(|o| o.get("baseURL"))),
@@ -1011,6 +1011,91 @@ pub struct OpenCodeModelLimit {
     /// 输出 token 限制
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
+}
+
+// ============================================================================
+// DevEco Code 供应商配置结构
+// ============================================================================
+
+/// DevEco Code 供应商的 settings_config 结构
+///
+/// DevEco Code 是 OpenCode 的二次开发分支，provider 段与 OpenCode 同构，但有两处
+/// 关键差异，因此不能直接复用 [`OpenCodeProviderConfig`]：
+///
+/// 1. `npm` 可省略——缺省即为 openai-compatible（OpenCode 侧是必填的 `String`）；
+/// 2. 模型的 `name` 常省略——原生配置通常只写 `tool_call` / `limit`。
+///
+/// 若复用 OpenCode 的类型，上述两类条目会反序列化失败并掉进 raw JSON 兜底路径，
+/// 导致类型化表单与导入都失效。
+///
+/// 配置示例（本机 deveco.jsonc 实态）：
+/// ```json
+/// {
+///   "npm": "@ai-sdk/openai-compatible",
+///   "name": "xai01",
+///   "models": {
+///     "glm-5.3-flash": {
+///       "tool_call": true,
+///       "limit": { "context": 1000000, "output": 128000 }
+///     }
+///   },
+///   "options": { "baseURL": "https://example.com/v1", "apiKey": "sk-xxx" }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevEcoProviderConfig {
+    /// AI SDK 包名；DevEco 缺省为 openai-compatible
+    #[serde(default = "default_deveco_npm")]
+    pub npm: String,
+
+    /// 供应商名称（可选，用于显示）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// 供应商选项（复用 OpenCode 的 options 形状）
+    #[serde(default)]
+    pub options: OpenCodeProviderOptions,
+
+    /// 模型定义映射
+    #[serde(default)]
+    pub models: IndexMap<String, DevEcoModel>,
+}
+
+fn default_deveco_npm() -> String {
+    "@ai-sdk/openai-compatible".to_string()
+}
+
+impl Default for DevEcoProviderConfig {
+    fn default() -> Self {
+        Self {
+            npm: default_deveco_npm(),
+            name: None,
+            options: OpenCodeProviderOptions::default(),
+            models: IndexMap::new(),
+        }
+    }
+}
+
+/// DevEco Code 模型定义
+///
+/// 与 [`OpenCodeModel`] 的唯一区别是 `name` 可选——原生配置常只写限流与工具能力。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DevEcoModel {
+    /// 模型显示名称（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// 模型限流（上下文 / 输出 token）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<OpenCodeModelLimit>,
+
+    /// 模型级别额外选项（provider 路由等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<HashMap<String, Value>>,
+
+    /// 其余字段（tool_call、modalities、reasoning 等）原样保留
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
 }
 
 #[cfg(test)]

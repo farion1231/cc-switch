@@ -191,6 +191,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::DevEco => crate::deveco_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -534,6 +536,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::DevEco
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -610,6 +613,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::DevEco
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -671,6 +675,7 @@ fn apply_common_config_to_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::DevEco
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1442,6 +1447,51 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::DevEco => {
+            // DevEco Code uses additive mode - write provider to deveco.jsonc.
+            // Typed conversion is preferred (it normalizes an omitted `npm`), but a
+            // failure must not lose the write: fall back to raw JSON as OpenCode does.
+            use crate::deveco_config;
+            use crate::provider::DevEcoProviderConfig;
+
+            let typed =
+                serde_json::from_value::<DevEcoProviderConfig>(provider.settings_config.clone());
+
+            match typed {
+                Ok(config) => {
+                    deveco_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!(
+                        "DevEco Code provider '{}' written to live config",
+                        provider.id
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse DevEco Code provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    if provider.settings_config.get("npm").is_some()
+                        || provider.settings_config.get("options").is_some()
+                        || provider.settings_config.get("models").is_some()
+                    {
+                        deveco_config::set_provider(
+                            &provider.id,
+                            provider.settings_config.clone(),
+                        )?;
+                        log::info!(
+                            "DevEco Code provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    } else {
+                        return Err(AppError::Message(format!(
+                            "DevEco Code provider '{}' has invalid config structure for live config (must contain 'npm', 'options', or 'models')",
+                            provider.id
+                        )));
+                    }
+                }
+            }
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -1672,6 +1722,9 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
+        // DevEco Code shares the additive-mode loop below, so it must NOT be skipped
+        // here — only Pi and Mcode own their provider documents through a dedicated
+        // service that this generic sync must not rewrite.
         if matches!(app_type, AppType::Pi | AppType::Mcode) {
             continue;
         }
@@ -1828,6 +1881,18 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::DevEco => {
+            let config_path = crate::deveco_config::resolve_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "deveco.config.missing",
+                    "DevEco Code 配置文件不存在",
+                    "DevEco Code configuration file not found",
+                ));
+            }
+
+            Ok(crate::deveco_config::read_deveco_config()?)
+        }
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1939,8 +2004,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+        // OpenCode, OpenClaw, Hermes, DevEco use additive mode and are handled by early return above
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::Mcode
+        | AppType::DevEco => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -2188,6 +2258,78 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 
         imported += 1;
         log::info!("Imported OpenCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Import all providers from DevEco Code config to database
+///
+/// DevEco Code is additive mode: its native `deveco.jsonc` is the source of truth
+/// for which providers are live, so this runs on every startup to keep the DB
+/// catalog aligned with hand edits made in DevEco Code itself.
+pub fn import_deveco_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::deveco_config;
+
+    let providers = deveco_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("deveco")?;
+
+    for (id, config) in providers {
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize DevEco Code provider '{id}': {e}");
+                continue;
+            }
+        };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "deveco") {
+                Ok(Some(existing)) => {
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
+                    if existing.settings_config != settings_config || existing.name != display_name
+                    {
+                        let mut provider = existing;
+                        provider.name = display_name;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("deveco", &provider) {
+                            log::warn!(
+                                "Failed to update DevEco Code provider '{id}' from native config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated DevEco Code provider '{id}' from native config");
+                        }
+                    }
+                }
+                Ok(None) => log::warn!(
+                    "DevEco Code provider '{id}' disappeared while importing native config"
+                ),
+                Err(e) => log::warn!("Failed to look up DevEco Code provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("deveco", &provider) {
+            log::warn!("Failed to import DevEco Code provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported DevEco Code provider '{id}' from native config");
     }
 
     Ok(imported + updated)

@@ -171,6 +171,13 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::DevEco => {
+                mcp::deveco::sync_single_server_to_deveco(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
             AppType::Pi => {}
         }
         Ok(())
@@ -212,6 +219,7 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::DevEco => mcp::deveco::remove_server_from_deveco(id)?,
             AppType::Pi => {}
         }
         Ok(())
