@@ -59,38 +59,6 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
-fn reproject_codex_official_config_only(
-    state: &AppState,
-    provider: &Provider,
-) -> Result<(), AppError> {
-    let mut effective_provider = provider.clone();
-    effective_provider.settings_config = live::build_effective_settings_with_common_config(
-        state.db.as_ref(),
-        &AppType::Codex,
-        provider,
-    )?;
-    let config_text = effective_provider
-        .settings_config
-        .get("config")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&effective_provider);
-    let projected_config = crate::codex_config::prepare_codex_config_text_with_model_catalog(
-        &effective_provider.settings_config,
-        config_text,
-        profile,
-    )?;
-    let projected_config = if crate::settings::unify_codex_session_history() {
-        crate::codex_config::inject_codex_unified_session_bucket(&projected_config)?
-    } else {
-        projected_config
-    };
-
-    // A history toggle changes routing only. Never rewrite auth.json here:
-    // Codex may rotate OAuth tokens concurrently with this projection.
-    crate::codex_config::write_codex_live_config_atomic(Some(&projected_config))
-}
-
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
@@ -118,7 +86,11 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
     let outcome =
-        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, provider)?;
+        live::sync_live_for_provider_respecting_takeover(
+            state,
+            &AppType::Codex,
+            stored_provider,
+        )?;
     if outcome == LiveSyncOutcome::BackupOnly {
         return Ok(true);
     }
