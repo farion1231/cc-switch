@@ -191,6 +191,8 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           piDir,
+          codebuddyDir,
+          workbuddyDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -212,6 +214,8 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("pi"),
+          settingsApi.getConfigDir("codebuddy"),
+          settingsApi.getWorkbuddyConfigDir(),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -256,8 +260,8 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
-          codebuddy: defaultsRef.current.codebuddy,
-          workbuddy: defaultsRef.current.workbuddy,
+          codebuddy: codebuddyDir || defaultsRef.current.codebuddy,
+          workbuddy: workbuddyDir || defaultsRef.current.workbuddy,
         });
       } catch (error) {
         console.error(

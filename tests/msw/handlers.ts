@@ -259,8 +259,15 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_config_dir`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
-    return success(app === "claude" ? "/default/claude" : "/default/codex");
+    if (app === "claude") return success("/default/claude");
+    if (app === "codebuddy") return success("/default/codebuddy");
+    return success("/default/codex");
   }),
+
+  // WorkBuddy 没有 AppType 变体，走后端单独的解析命令
+  http.post(`${TAURI_ENDPOINT}/get_workbuddy_config_dir`, () =>
+    success("/default/workbuddy"),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/is_portable_mode`, () => success(false)),
 

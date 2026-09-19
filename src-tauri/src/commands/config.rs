@@ -182,6 +182,15 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
     Ok(dir.to_string_lossy().to_string())
 }
 
+/// WorkBuddy 只做用量/会话托管，没有 `AppType` 变体，因此单独暴露解析后的目录。
+/// 与 `get_config_dir` 一样由后端统一应用「设置覆盖 > 环境变量 > 默认」优先级。
+#[tauri::command]
+pub async fn get_workbuddy_config_dir() -> Result<String, String> {
+    Ok(crate::config::get_workbuddy_config_dir()
+        .to_string_lossy()
+        .to_string())
+}
+
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
     let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {

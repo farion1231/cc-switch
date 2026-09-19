@@ -5,6 +5,7 @@ import type { SettingsFormState } from "@/hooks/useSettingsForm";
 
 const getAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
 const getConfigDirMock = vi.hoisted(() => vi.fn());
+const getWorkbuddyConfigDirMock = vi.hoisted(() => vi.fn());
 const selectConfigDirectoryMock = vi.hoisted(() => vi.fn());
 const setAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
 const homeDirMock = vi.hoisted(() => vi.fn<() => Promise<string>>());
@@ -17,6 +18,7 @@ vi.mock("@/lib/api", () => ({
   settingsApi: {
     getAppConfigDirOverride: getAppConfigDirOverrideMock,
     getConfigDir: getConfigDirMock,
+    getWorkbuddyConfigDir: getWorkbuddyConfigDirMock,
     selectConfigDirectory: selectConfigDirectoryMock,
     setAppConfigDirOverride: setAppConfigDirOverrideMock,
   },
@@ -65,6 +67,7 @@ describe("useDirectorySettings", () => {
     );
 
     getAppConfigDirOverrideMock.mockResolvedValue(null);
+    getWorkbuddyConfigDirMock.mockResolvedValue("/remote/workbuddy");
     getConfigDirMock.mockImplementation(async (app: string) => {
       if (app === "claude") return "/remote/claude";
       if (app === "codex") return "/remote/codex";
@@ -72,6 +75,7 @@ describe("useDirectorySettings", () => {
       if (app === "grokbuild") return "/remote/grok";
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
+      if (app === "codebuddy") return "/remote/codebuddy";
       if (app === "pi") return "/remote/pi";
       return "/remote/hermes";
     });
@@ -98,9 +102,27 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       pi: "/remote/pi",
-      codebuddy: "/home/mock/.codebuddy",
-      workbuddy: "/home/mock/.workbuddy",
+      codebuddy: "/remote/codebuddy",
+      workbuddy: "/remote/workbuddy",
     });
+  });
+
+  it("resolves CodeBuddy and WorkBuddy dirs through the backend so env vars are honored", async () => {
+    // 后端已应用 CODEBUDDY_HOME / WORKBUDDY_HOME 优先级，
+    // 前端若自行拼 ~/.codebuddy，界面显示的路径会与实际读写的目录不一致
+    getConfigDirMock.mockImplementation(async (app: string) =>
+      app === "codebuddy" ? "/env/codebuddy" : `/remote/${app}`,
+    );
+    getWorkbuddyConfigDirMock.mockResolvedValue("/env/workbuddy");
+
+    const { result } = renderHook(() =>
+      useDirectorySettings({ settings: createSettings(), onUpdateSettings }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.resolvedDirs.codebuddy).toBe("/env/codebuddy");
+    expect(result.current.resolvedDirs.workbuddy).toBe("/env/workbuddy");
   });
 
   it("updates claude directory when browsing succeeds", async () => {

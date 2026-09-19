@@ -69,6 +69,14 @@ export const settingsApi = {
     return await invoke("get_config_dir", { app: appId });
   },
 
+  /**
+   * WorkBuddy 只做用量/会话托管，没有 AppType 变体，因此单独取解析后的目录。
+   * 由后端统一应用「设置覆盖 > $WORKBUDDY_HOME > ~/.workbuddy」优先级。
+   */
+  async getWorkbuddyConfigDir(): Promise<string> {
+    return await invoke("get_workbuddy_config_dir");
+  },
+
   async openConfigFolder(appId: AppId): Promise<void> {
     await invoke("open_config_folder", { app: appId });
   },
