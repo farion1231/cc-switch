@@ -1634,6 +1634,26 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Strict native Responses gateways require all parallel tool outputs to
+        // follow their calls contiguously. Codex may insert a developer notice
+        // (notably `<image_resize_notice>`) between two image tool outputs;
+        // normalize only that malformed ordering before any provider-specific
+        // request rewrites.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let moved = super::providers::transform_codex_responses_tool_history::normalize_responses_tool_history(
+                &mut request_body,
+            );
+            if moved > 0 {
+                log::debug!(
+                    "[Codex] Reordered {moved} interleaved tool-history item(s) for native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
