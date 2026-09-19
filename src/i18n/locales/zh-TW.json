@@ -2583,6 +2583,14 @@
     "installedSearchPlaceholder": "搜尋已安裝技能的名稱、描述或儲存庫...",
     "installedSearchAriaLabel": "搜尋已安裝技能",
     "noInstalledSearchResults": "未找到相符的已安裝技能",
+    "bulkToggleEnable": "啟用",
+    "bulkToggleDisable": "停用",
+    "bulkToggleConfirmTitle": "要為 {{app}} {{action}} {{count}} 個技能嗎？",
+    "bulkToggleConfirmEnableMessage": "{{app}} 目前已啟用技能：{{before}} → {{after}} 個。\n將新增啟用 {{count}} 個，操作後全部 {{total}} 個已安裝技能均會啟用。\n此操作不受目前搜尋結果限制。",
+    "bulkToggleConfirmDisableMessage": "{{app}} 目前已啟用技能：{{before}} → {{after}} 個。\n將停用 {{count}} 個，操作後全部 {{total}} 個已安裝技能均會停用。\n此操作不受目前搜尋結果限制。",
+    "bulkToggleConfirmHidden": "其中 {{count}} 個待變更技能被目前搜尋隱藏。",
+    "bulkToggleConfirmEnable": "啟用 {{count}} 個",
+    "bulkToggleConfirmDisable": "停用 {{count}} 個",
     "searchSource": {
       "repos": "儲存庫",
       "skillssh": "skills.sh"

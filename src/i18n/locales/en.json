@@ -2582,6 +2582,14 @@
     "installedSearchPlaceholder": "Search installed skill name, description, or repo...",
     "installedSearchAriaLabel": "Search installed skills",
     "noInstalledSearchResults": "No installed skills match your search",
+    "bulkToggleEnable": "Enable",
+    "bulkToggleDisable": "Disable",
+    "bulkToggleConfirmTitle": "{{action}} {{count}} skill(s) for {{app}}?",
+    "bulkToggleConfirmEnableMessage": "{{app}} currently has {{before}} enabled skill(s) → {{after}}.\nThis will enable {{count}} skill(s), so all {{total}} installed skill(s) will be enabled afterward.\nThis action is not limited by the current search results.",
+    "bulkToggleConfirmDisableMessage": "{{app}} currently has {{before}} enabled skill(s) → {{after}}.\nThis will disable {{count}} skill(s), so all {{total}} installed skill(s) will be disabled afterward.\nThis action is not limited by the current search results.",
+    "bulkToggleConfirmHidden": "{{count}} affected skill(s) are hidden by the current search.",
+    "bulkToggleConfirmEnable": "Enable {{count}}",
+    "bulkToggleConfirmDisable": "Disable {{count}}",
     "searchSource": {
       "repos": "Repos",
       "skillssh": "skills.sh"

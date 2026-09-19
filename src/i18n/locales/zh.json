@@ -2582,6 +2582,14 @@
     "installedSearchPlaceholder": "搜索已安装技能的名称、描述或仓库...",
     "installedSearchAriaLabel": "搜索已安装技能",
     "noInstalledSearchResults": "未找到匹配的已安装技能",
+    "bulkToggleEnable": "启用",
+    "bulkToggleDisable": "停用",
+    "bulkToggleConfirmTitle": "为 {{app}} {{action}} {{count}} 个技能？",
+    "bulkToggleConfirmEnableMessage": "{{app}} 已启用技能：{{before}} → {{after}} 个。\n将新增启用 {{count}} 个，操作后全部 {{total}} 个已安装技能均会启用。\n此操作不受当前搜索结果限制。",
+    "bulkToggleConfirmDisableMessage": "{{app}} 已启用技能：{{before}} → {{after}} 个。\n将停用 {{count}} 个，操作后全部 {{total}} 个已安装技能均会停用。\n此操作不受当前搜索结果限制。",
+    "bulkToggleConfirmHidden": "其中 {{count}} 个待更改技能被当前搜索隐藏。",
+    "bulkToggleConfirmEnable": "启用 {{count}} 个",
+    "bulkToggleConfirmDisable": "停用 {{count}} 个",
     "searchSource": {
       "repos": "仓库",
       "skillssh": "skills.sh"
