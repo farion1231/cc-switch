@@ -39,4 +39,13 @@ impl SwitchLockManager {
         };
         lock.lock_owned().await
     }
+
+    /// 该应用当前是否正有切换 / 接管操作在进行中。
+    pub async fn is_locked_for_app(&self, app_type: &str) -> bool {
+        let locks = self.locks.read().await;
+        match locks.get(app_type) {
+            Some(lock) => lock.try_lock().is_err(),
+            None => false,
+        }
+    }
 }

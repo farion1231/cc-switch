@@ -924,6 +924,10 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
+    pub(crate) async fn is_switch_in_progress_for_app(&self, app_type: &str) -> bool {
+        self.switch_locks.is_locked_for_app(app_type).await
+    }
+
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
         // 1. 启动时自动设置 proxy_enabled = true
