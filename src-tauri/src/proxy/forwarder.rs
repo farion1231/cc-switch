@@ -1528,6 +1528,23 @@ impl RequestForwarder {
         let mut codex_anthropic_one_m = false;
 
         // 转换请求体（如果需要）
+        // Replayed-history hygiene for Codex/GrokBuild /responses requests: an
+        // interrupted turn can leave an orphan tool call (a call input item
+        // whose `*_output` never landed). Strict gateways reject the whole
+        // thread on the missing output (Kimi: "tool_call_ids did not have
+        // response messages"), permanently locking the conversation (#7504).
+        // One gate in front of the dispatch covers the native passthrough and
+        // both conversions; healthy histories stay byte-identical.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && super::providers::transform_codex_responses_history_hygiene::synthesize_missing_tool_call_outputs(
+                &mut mapped_body,
+            )
+        {
+            log::debug!(
+                "[Codex] Synthesized outputs for orphan tool calls in the replayed history (provider={})",
+                provider.id
+            );
+        }
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
             let explicit_prompt_cache_key = mapped_body
