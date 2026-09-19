@@ -49,7 +49,8 @@ pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+    RequestLogDetail, UsageHeatmapPoint, UsageHeatmapResult, UsageHeatmapStatus, UsageSummary,
+    UsageSummaryByApp,
 };
 
 pub mod session_usage_mcode;

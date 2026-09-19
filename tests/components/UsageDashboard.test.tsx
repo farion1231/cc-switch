@@ -122,6 +122,8 @@ describe("UsageDashboard", () => {
     renderDashboard({ refreshIntervalMs: 5000 });
 
     expect(screen.getByTestId("select-5000")).toBeInTheDocument();
+    expect(screen.getByTestId("usage-hero")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-heatmap")).not.toBeInTheDocument();
   });
 
   it("filters usage queries to Pi", async () => {
