@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import {
+  invalidateCodebuddyDirectoryCaches,
   invalidatePiDirectoryCaches,
   useSettingsQuery,
   useSaveSettingsMutation,
@@ -360,6 +361,8 @@ export function useSettings(): UseSettingsResult {
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
+        const previousCodebuddyDir = sanitizeDir(data?.codebuddyConfigDir);
+        const previousWorkbuddyDir = sanitizeDir(data?.workbuddyConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -465,6 +468,10 @@ export function useSettings(): UseSettingsResult {
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
+        const codebuddyDirChanged =
+          sanitizedCodebuddyDir !== previousCodebuddyDir;
+        const workbuddyDirChanged =
+          sanitizedWorkbuddyDir !== previousWorkbuddyDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -484,6 +491,12 @@ export function useSettings(): UseSettingsResult {
         }
         if (piDirChanged) {
           await invalidatePiDirectoryCaches(queryClient);
+        }
+        if (codebuddyDirChanged) {
+          await invalidateCodebuddyDirectoryCaches(queryClient, "codebuddy");
+        }
+        if (workbuddyDirChanged) {
+          await invalidateCodebuddyDirectoryCaches(queryClient, "workbuddy");
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

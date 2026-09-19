@@ -15,6 +15,7 @@ const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
 const getQueryDataMock = vi.fn();
 const invalidatePiDirectoryCachesMock = vi.fn();
+const invalidateCodebuddyDirectoryCachesMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
 
@@ -45,6 +46,8 @@ vi.mock("@/hooks/useSettingsMetadata", () => ({
 vi.mock("@/lib/query", () => ({
   invalidatePiDirectoryCaches: (...args: unknown[]) =>
     invalidatePiDirectoryCachesMock(...args),
+  invalidateCodebuddyDirectoryCaches: (...args: unknown[]) =>
+    invalidateCodebuddyDirectoryCachesMock(...args),
   useSettingsQuery: (...args: unknown[]) => useSettingsQueryMock(...args),
   useSaveSettingsMutation: () => ({
     mutateAsync: mutateAsyncMock,
@@ -152,6 +155,7 @@ describe("useSettings hook", () => {
     clearClaudeOnboardingSkipMock.mockReset();
     syncCurrentProvidersLiveMock.mockReset();
     invalidatePiDirectoryCachesMock.mockReset();
+    invalidateCodebuddyDirectoryCachesMock.mockReset();
     getCurrentMock.mockReset();
     getAllMock.mockReset();
     getQueryDataMock.mockReset();
@@ -376,6 +380,55 @@ describe("useSettings hook", () => {
     expect(payload.piConfigDir).toBe("/custom/pi");
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
     expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates the CodeBuddy provider cache when its directory changes", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        codebuddyConfigDir: "  /custom/codebuddy  ",
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+
+    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+    expect(payload.codebuddyConfigDir).toBe("/custom/codebuddy");
+    // CodeBuddy 没有轮询：目录变了若不失效，供应商页会继续展示旧目录的卡片，
+    // 点“启用”就会把陈旧 provider 写进新目录的 models.json
+    expect(invalidateCodebuddyDirectoryCachesMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "codebuddy",
+    );
+  });
+
+  it("leaves CodeBuddy caches alone when its directory is unchanged", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        codebuddyConfigDir: "/same/codebuddy",
+      },
+    });
+    serverSettings = {
+      ...serverSettings,
+      codebuddyConfigDir: "/same/codebuddy",
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+
+    expect(invalidateCodebuddyDirectoryCachesMock).not.toHaveBeenCalled();
   });
 
   it("shows toast when Claude plugin sync fails but continues flow", async () => {
