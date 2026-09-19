@@ -120,6 +120,9 @@ pub struct CodexProviderTemplateBucketMigrationOutcome {
     pub skipped_reason: Option<String>,
 }
 
+type OfficialSessionProviderLedger = HashMap<String, String>;
+type OfficialThreadProviderLedger = BTreeMap<String, String>;
+
 pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     db: &Database,
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
@@ -443,9 +446,9 @@ fn restore_codex_official_history_inner(
 fn collect_official_ledger(
     ledger_parent: &Path,
     codex_dir_key: &str,
-) -> Result<(HashMap<String, String>, BTreeMap<String, String>), AppError> {
-    let mut session_providers = HashMap::new();
-    let mut thread_providers = BTreeMap::new();
+) -> Result<(OfficialSessionProviderLedger, OfficialThreadProviderLedger), AppError> {
+    let mut session_providers = OfficialSessionProviderLedger::new();
+    let mut thread_providers = OfficialThreadProviderLedger::new();
     let entries = match fs::read_dir(ledger_parent) {
         Ok(entries) => entries,
         Err(_) => return Ok((session_providers, thread_providers)),
@@ -492,7 +495,7 @@ fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool
 
 fn collect_official_session_providers_from_backup(
     path: &Path,
-    session_providers: &mut HashMap<String, String>,
+    session_providers: &mut OfficialSessionProviderLedger,
 ) {
     let Ok(content) = fs::read_to_string(path) else {
         log::debug!("Failed to read unify backup file {}", path.display());
@@ -529,7 +532,7 @@ fn collect_official_session_providers_from_backup(
 
 fn collect_official_thread_providers_from_backup(
     db_path: &Path,
-    thread_providers: &mut BTreeMap<String, String>,
+    thread_providers: &mut OfficialThreadProviderLedger,
 ) {
     let conn =
         match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
@@ -600,7 +603,7 @@ fn collect_files_with_extension(
 
 fn rewrite_codex_session_meta_line_for_restore(
     line: &str,
-    official_session_providers: &HashMap<String, String>,
+    official_session_providers: &OfficialSessionProviderLedger,
 ) -> Option<String> {
     if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
         return None;
@@ -625,7 +628,7 @@ fn rewrite_codex_session_meta_line_for_restore(
 fn restore_codex_state_db_official_threads(
     db_path: &Path,
     codex_dir: &Path,
-    official_thread_providers: &BTreeMap<String, String>,
+    official_thread_providers: &OfficialThreadProviderLedger,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
     if !db_path.exists() || official_thread_providers.is_empty() {
