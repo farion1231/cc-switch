@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -334,14 +335,20 @@ pub fn write_json_file_with_contents<T: Serialize>(
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
 
-    let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
-    let sorted_value = sort_json_keys(&value);
-    let json = serde_json::to_string_pretty(&sorted_value)
-        .map_err(|e| AppError::JsonSerialize { source: e })?;
-
-    let contents = json.into_bytes();
+    let contents = serialize_json_sorted(data)?;
     atomic_write(path, &contents)?;
     Ok(contents)
+}
+
+/// 序列化为确定性 JSON 字节（键按字母排序 + pretty 缩进）。
+///
+/// 供需要自行选择写入策略（如私有权限）的调用方复用，保证写出格式一致。
+pub fn serialize_json_sorted<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
+    let value = serde_json::to_value(data).map_err(|source| AppError::JsonSerialize { source })?;
+    let sorted_value = sort_json_keys(&value);
+    let json = serde_json::to_string_pretty(&sorted_value)
+        .map_err(|source| AppError::JsonSerialize { source })?;
+    Ok(json.into_bytes())
 }
 
 /// 写入 JSON 配置文件（键按字母排序，确保确定性输出）
@@ -529,6 +536,75 @@ fn atomic_write_with_unix_mode(
             });
         }
     }
+    Ok(())
+}
+
+// ===== 凭据类配置的受保护读写 =====
+//
+// 这些原语服务于「文件里含明文 API Key」的配置（Pi / CodeBuddy 等）：
+// 落盘必须只有属主可读，且写回前必须确认文件没有被外部程序改过。
+
+/// 文件不存在时使用的修订号。
+pub const MISSING_FILE_REVISION: &str = "missing";
+
+/// 文件内容的修订号（sha256 十六进制）。
+pub fn file_revision(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// 读取文件原始字节；文件不存在返回 `Ok(None)`。
+pub fn read_file_if_exists(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(AppError::io(path, source)),
+    }
+}
+
+/// 校验文件当前内容仍与 `expected_revision` 一致。
+///
+/// 不一致说明「读取之后」文件被 CC Switch 之外的程序改写过（例如 CLI 自身
+/// 记录了受信目录）。此时必须中止，否则会用陈旧快照覆盖掉对方的改动。
+pub fn ensure_file_revision(
+    path: &Path,
+    expected_revision: &str,
+    label: &str,
+) -> Result<(), AppError> {
+    let actual = match read_file_if_exists(path)? {
+        Some(bytes) => file_revision(&bytes),
+        None => MISSING_FILE_REVISION.to_string(),
+    };
+    if actual == expected_revision {
+        Ok(())
+    } else {
+        Err(AppError::Conflict(format!(
+            "{label} 配置在 CC Switch 之外被修改: {}",
+            path.display()
+        )))
+    }
+}
+
+/// 确保凭据类文件的父目录存在；目录由本函数新建时在 Unix 上收紧为 0700。
+///
+/// 已存在的目录不改动权限：那是用户自己的选择，收紧它可能影响同目录下的
+/// 其它工具。文件本身的 0600（见 `atomic_write_private`）才是关键防线。
+pub fn ensure_private_parent(path: &Path, label: &str) -> Result<(), AppError> {
+    let parent = path.parent().ok_or_else(|| {
+        AppError::Config(format!("{label} 配置路径没有父目录: {}", path.display()))
+    })?;
+    let created = !parent.exists();
+    fs::create_dir_all(parent).map_err(|source| AppError::io(parent, source))?;
+
+    #[cfg(not(unix))]
+    let _ = created;
+
+    #[cfg(unix)]
+    if created {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+            .map_err(|source| AppError::io(parent, source))?;
+    }
+
     Ok(())
 }
 
@@ -784,6 +860,99 @@ mod tests {
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
         );
+    }
+
+    // ===== 安全写入辅助：修订号与私有权限 =====
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn file_revision_is_content_addressed() {
+        assert_eq!(file_revision(b"{}"), file_revision(b"{}"));
+        assert_ne!(file_revision(b"{}"), file_revision(br#"{"a":1}"#));
+    }
+
+    #[test]
+    fn ensure_file_revision_accepts_unchanged_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("a.json");
+        fs::write(&path, br#"{"a":1}"#).unwrap();
+        let revision = file_revision(&fs::read(&path).unwrap());
+
+        assert!(ensure_file_revision(&path, &revision, "测试").is_ok());
+    }
+
+    #[test]
+    fn ensure_file_revision_rejects_externally_changed_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("a.json");
+        fs::write(&path, br#"{"a":1}"#).unwrap();
+        let revision = file_revision(&fs::read(&path).unwrap());
+
+        // 模拟外部程序（如 CLI 自身）在读取之后改写了同一个文件
+        fs::write(&path, br#"{"a":1,"b":2}"#).unwrap();
+
+        let error = ensure_file_revision(&path, &revision, "测试").unwrap_err();
+        assert!(
+            matches!(error, AppError::Conflict(_)),
+            "外部改动必须报冲突，不能用陈旧快照覆盖，实际: {error:?}"
+        );
+    }
+
+    #[test]
+    fn ensure_file_revision_accepts_still_absent_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("absent.json");
+
+        assert!(ensure_file_revision(&path, MISSING_FILE_REVISION, "测试").is_ok());
+    }
+
+    #[test]
+    fn ensure_file_revision_rejects_file_created_since_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("a.json");
+
+        // 读取时文件不存在，写入前却被别人创建了
+        fs::write(&path, b"{}").unwrap();
+
+        let error = ensure_file_revision(&path, MISSING_FILE_REVISION, "测试").unwrap_err();
+        assert!(matches!(error, AppError::Conflict(_)), "实际: {error:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_parent_creates_owner_only_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp
+            .path()
+            .join("nested")
+            .join("codebuddy")
+            .join("models.json");
+
+        ensure_private_parent(&path, "测试").unwrap();
+
+        assert_eq!(
+            mode_of(path.parent().unwrap()),
+            0o700,
+            "新建的凭据目录必须只有属主可访问"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_parent_leaves_existing_directory_mode_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("existing");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        ensure_private_parent(&dir.join("models.json"), "测试").unwrap();
+
+        assert_eq!(mode_of(&dir), 0o755, "已存在的目录不应被改动权限");
     }
 }
 
