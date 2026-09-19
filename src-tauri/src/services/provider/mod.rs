@@ -85,13 +85,30 @@ pub async fn reapply_current_codex_official_live_async(state: &AppState) -> Resu
     {
         return Ok(false);
     }
+    // 统一会话开关重投影本身不是一次“切换账号”。对于未绑定托管账号的
+    // 官方卡，preserve 开关要求继续沿用 Codex 当前 auth.json 中可能已被
+    // 官方客户端刷新过的 OAuth 凭据；把数据库里保存的旧快照再次写回去
+    // 会覆盖 refresh token。传空 auth 让 Codex 写层只改 config.toml，
+    // 保留 live auth.json。托管官方卡的凭据由 manager 负责，不能走这条路。
+    let mut live_provider = stored_provider.clone();
+    let managed_account_id = live_provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .filter(|id| !id.trim().is_empty());
+    if crate::settings::preserve_codex_official_auth_on_switch() && managed_account_id.is_none() {
+        if let Some(settings) = live_provider.settings_config.as_object_mut() {
+            settings.insert("auth".to_string(), Value::Object(Default::default()));
+        }
+    }
+
     // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
     let outcome = live::sync_live_for_provider_respecting_takeover_async_locked(
         state,
         &AppType::Codex,
-        stored_provider,
+        &live_provider,
     )
     .await?;
     if outcome == LiveSyncOutcome::BackupOnly {
