@@ -549,9 +549,8 @@ fn collect_official_thread_providers_from_backup(
     }
     let source_provider_ids = official_history_source_provider_ids();
     let placeholders = placeholders(source_provider_ids.len());
-    let query = format!(
-        "SELECT id, model_provider FROM threads WHERE model_provider IN ({placeholders})"
-    );
+    let query =
+        format!("SELECT id, model_provider FROM threads WHERE model_provider IN ({placeholders})");
     let Ok(mut stmt) = conn.prepare(&query) else {
         return;
     };
@@ -616,7 +615,10 @@ fn rewrite_codex_session_meta_line_for_restore(
     }
     let session_id = payload.get("id")?.as_str()?;
     let provider_id = official_session_providers.get(session_id)?;
-    payload.insert("model_provider".to_string(), Value::String(provider_id.clone()));
+    payload.insert(
+        "model_provider".to_string(),
+        Value::String(provider_id.clone()),
+    );
     serde_json::to_string(&value).ok()
 }
 
@@ -662,7 +664,9 @@ fn restore_codex_state_db_official_threads(
                 .query_row(&count_sql, params_from_iter(values.iter()), |row| {
                     row.get(0)
                 })
-                .map_err(|e| AppError::Database(format!("统计 Codex state DB 待还原行失败: {e}")))?;
+                .map_err(|e| {
+                    AppError::Database(format!("统计 Codex state DB 待还原行失败: {e}"))
+                })?;
             matching_rows += count;
         }
     }
@@ -688,7 +692,9 @@ fn restore_codex_state_db_official_threads(
             values.extend(chunk.iter().map(|id| (*id).clone()));
             changed += tx
                 .execute(&update_sql, params_from_iter(values.iter()))
-                .map_err(|e| AppError::Database(format!("还原 Codex state DB provider 失败: {e}")))?;
+                .map_err(|e| {
+                    AppError::Database(format!("还原 Codex state DB provider 失败: {e}"))
+                })?;
         }
     }
     tx.commit()
@@ -1843,9 +1849,7 @@ base_url = "https://proxy.example/v1"
 
         let official_text = fs::read_to_string(&official_path).expect("read official");
         assert!(official_text.contains("\"model_provider\":\"openai\""));
-        assert!(official_text.contains(
-            "\"id\":\"s4\",\"model_provider\":\"cc-switch-official\""
-        ));
+        assert!(official_text.contains("\"id\":\"s4\",\"model_provider\":\"cc-switch-official\""));
         let on_period_text = fs::read_to_string(&on_period_path).expect("read on-period");
         assert!(on_period_text.contains("\"id\":\"s2\",\"model_provider\":\"custom\""));
         assert!(on_period_text.contains("\"model_provider\":\"my-private-relay\""));

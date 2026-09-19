@@ -86,11 +86,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
     let outcome =
-        live::sync_live_for_provider_respecting_takeover(
-            state,
-            &AppType::Codex,
-            stored_provider,
-        )?;
+        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, stored_provider)?;
     if outcome == LiveSyncOutcome::BackupOnly {
         return Ok(true);
     }
