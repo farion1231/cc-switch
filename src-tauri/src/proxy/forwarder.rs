@@ -1634,21 +1634,22 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Strict native Responses gateways require all parallel tool outputs to
-        // follow their calls contiguously. Codex may insert a developer notice
-        // (notably `<image_resize_notice>`) between two image tool outputs;
-        // normalize only that malformed ordering before any provider-specific
-        // request rewrites.
+        // Strict native Responses gateways require every tool output to carry
+        // its call id and all parallel tool outputs to follow their calls
+        // contiguously. Codex may insert a developer notice (notably
+        // `<image_resize_notice>`) between two image outputs, or replay a
+        // Codex-generated delegation output without a call id. Normalize only
+        // those malformed shapes before any provider-specific request rewrites.
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
         {
-            let moved = super::providers::transform_codex_responses_tool_history::normalize_responses_tool_history(
+            let changed = super::providers::transform_codex_responses_tool_history::normalize_responses_tool_history(
                 &mut request_body,
             );
-            if moved > 0 {
+            if changed > 0 {
                 log::debug!(
-                    "[Codex] Reordered {moved} interleaved tool-history item(s) for native Responses upstream (provider={})",
+                    "[Codex] Normalized {changed} malformed tool-history item(s) for native Responses upstream (provider={})",
                     provider.id
                 );
             }

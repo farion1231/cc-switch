@@ -1,4 +1,4 @@
-//! Native Responses tool-history ordering compatibility.
+//! Native Responses tool-history compatibility.
 //!
 //! Strict third-party `/responses` endpoints (DeepSeek in particular) require
 //! every group of parallel tool calls to be followed immediately by the
@@ -17,6 +17,12 @@
 //! and DeepSeek rejects the request with `No tool output found for tool call
 //! call_1`. The Chat/Anthropic transforms have their own tool-history
 //! normalization; native Responses passthrough previously had none.
+//!
+//! A small number of Codex-generated Items (notably
+//! `send_message_to_thread`) can also be replayed as a tool output without a
+//! `call_id`. There is no valid call to attach to such an output, so this
+//! module converts only that malformed item into an equivalent user message.
+//! The output text is preserved and no synthetic call id is invented.
 //!
 //! [`normalize_responses_tool_history`] only rewrites a request when it finds
 //! such an interleaving. Calls and outputs that are already contiguous remain
@@ -72,6 +78,58 @@ fn classify_item_type(item_type: &str) -> Option<ToolHistoryItemKind> {
     } else {
         None
     }
+}
+
+fn output_text(item: &Value) -> String {
+    let output = item
+        .get("output")
+        .or_else(|| item.get("tools"))
+        .or_else(|| item.get("result"));
+
+    match output {
+        Some(Value::String(text)) => text.clone(),
+        Some(value) => serde_json::to_string(value).unwrap_or_else(|_| value.to_string()),
+        None => "Tool output call_id was missing.".to_string(),
+    }
+}
+
+fn is_output_item_without_call_id(item: &Value) -> bool {
+    let Some(item_type) = item.get("type").and_then(Value::as_str) else {
+        return false;
+    };
+    if !(item_type.ends_with("_call_output") || item_type == "tool_search_output") {
+        return false;
+    }
+
+    item.get("call_id")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+}
+
+/// Repair malformed tool outputs that have no call id. Such an item cannot be
+/// represented as a Responses tool output, but its content can still be kept in
+/// the conversation. Returns the number of repaired items.
+fn repair_outputs_without_call_id(input: &mut [Value]) -> usize {
+    let mut repaired = 0;
+
+    for item in input {
+        if !is_output_item_without_call_id(item) {
+            continue;
+        }
+
+        let text = output_text(item);
+        *item = serde_json::json!({
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": text
+            }]
+        });
+        repaired += 1;
+    }
+
+    repaired
 }
 
 /// Return `(normalized_index_order, moved_item_count)` when a safe rewrite can
@@ -154,20 +212,21 @@ fn plan_normalization(items: &[Value]) -> Option<(Vec<usize>, usize)> {
     Some((order, moved))
 }
 
-/// Normalize tool-call/tool-output ordering in a native Responses request body.
+/// Normalize malformed tool history in a native Responses request body.
 ///
 /// Only the top-level `body.input` array is considered. Returns the number of
-/// input items moved; zero means the body was not modified. The function is
+/// input items changed; zero means the body was not modified. The function is
 /// idempotent.
 pub(crate) fn normalize_responses_tool_history(body: &mut Value) -> usize {
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return 0;
     };
+    let repaired = repair_outputs_without_call_id(input);
     let Some((order, moved)) = plan_normalization(input) else {
-        return 0;
+        return repaired;
     };
     if moved == 0 {
-        return 0;
+        return repaired;
     }
 
     let mut slots: Vec<Option<Value>> = std::mem::take(input).into_iter().map(Some).collect();
@@ -178,7 +237,7 @@ pub(crate) fn normalize_responses_tool_history(body: &mut Value) -> usize {
         }
     }
     *input = normalized;
-    moved
+    repaired + moved
 }
 
 #[cfg(test)]
@@ -475,5 +534,90 @@ mod tests {
         assert_eq!(normalize_responses_tool_history(&mut body), 1);
         assert_eq!(body["input"][2]["call_id"], "call_1");
         assert_eq!(body["input"][3]["call_id"], "call_0");
+    }
+
+    #[test]
+    fn converts_output_without_call_id_to_message() {
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "id": "fco_missing_call_id",
+                "name": "send_message_to_thread",
+                "namespace": "codex_app",
+                "output": "<codex_delegation>continued</codex_delegation>",
+                "internal_chat_message_metadata_passthrough": {
+                    "turn_id": "turn_1"
+                }
+            }]
+        });
+
+        assert_eq!(normalize_responses_tool_history(&mut body), 1);
+        assert_eq!(
+            body["input"][0],
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "<codex_delegation>continued</codex_delegation>"
+                }]
+            })
+        );
+        assert_eq!(normalize_responses_tool_history(&mut body), 0);
+    }
+
+    #[test]
+    fn repairs_empty_call_id_and_serializes_structured_output() {
+        let output = json!([
+            {"type": "input_text", "text": "first"},
+            {"type": "input_text", "text": "second"}
+        ]);
+        let mut body = json!({
+            "input": [{
+                "type": "custom_tool_call_output",
+                "call_id": "",
+                "output": output.clone()
+            }]
+        });
+
+        assert_eq!(normalize_responses_tool_history(&mut body), 1);
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["content"][0]["text"], output.to_string());
+    }
+
+    #[test]
+    fn converts_tool_search_output_without_call_id() {
+        let tools = json!([{"type": "function", "name": "view_image"}]);
+        let mut body = json!({
+            "input": [{
+                "type": "tool_search_output",
+                "tools": tools.clone()
+            }]
+        });
+
+        assert_eq!(normalize_responses_tool_history(&mut body), 1);
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["content"][0]["text"], tools.to_string());
+    }
+
+    #[test]
+    fn leaves_output_with_call_id_unchanged() {
+        let mut body = json!({
+            "input": [
+                text_output("call_valid"),
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_valid_2",
+                    "output": "done",
+                    "internal_chat_message_metadata_passthrough": {
+                        "turn_id": "turn_1"
+                    }
+                }
+            ]
+        });
+        let original = body.clone();
+
+        assert_eq!(normalize_responses_tool_history(&mut body), 0);
+        assert_eq!(body, original);
     }
 }
