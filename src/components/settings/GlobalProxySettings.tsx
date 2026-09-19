@@ -8,10 +8,19 @@ import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
 import {
-  useGlobalProxyUrl,
-  useSetGlobalProxyUrl,
+  Loader2,
+  TestTube2,
+  Search,
+  Eye,
+  EyeOff,
+  X,
+  Globe,
+} from "lucide-react";
+import { ToggleRow } from "@/components/ui/toggle-row";
+import {
+  useGlobalProxySettings,
+  useSetGlobalProxySettings,
   useTestProxy,
   useScanProxies,
   type DetectedProxy,
@@ -71,14 +80,15 @@ function mergeAuth(
 
 export function GlobalProxySettings() {
   const { t } = useTranslation();
-  const { data: savedUrl, isLoading } = useGlobalProxyUrl();
-  const setMutation = useSetGlobalProxyUrl();
+  const { data: savedSettings, isLoading } = useGlobalProxySettings();
+  const setMutation = useSetGlobalProxySettings();
   const testMutation = useTestProxy();
   const scanMutation = useScanProxies();
 
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [followSystemProxy, setFollowSystemProxy] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [detected, setDetected] = useState<DetectedProxy[]>([]);
@@ -91,17 +101,25 @@ export function GlobalProxySettings() {
 
   // 同步远程配置
   useEffect(() => {
-    if (savedUrl !== undefined) {
-      const { baseUrl, username: u, password: p } = extractAuth(savedUrl || "");
+    if (savedSettings !== undefined) {
+      const {
+        baseUrl,
+        username: u,
+        password: p,
+      } = extractAuth(savedSettings.url || "");
       setUrl(baseUrl);
       setUsername(u);
       setPassword(p);
+      setFollowSystemProxy(savedSettings.followSystemProxy);
       setDirty(false);
     }
-  }, [savedUrl]);
+  }, [savedSettings]);
 
   const handleSave = async () => {
-    await setMutation.mutateAsync(fullUrl);
+    await setMutation.mutateAsync({
+      url: fullUrl || null,
+      followSystemProxy,
+    });
     setDirty(false);
   };
 
@@ -139,7 +157,7 @@ export function GlobalProxySettings() {
   };
 
   // 只在首次加载且无数据时显示加载状态
-  if (isLoading && savedUrl === undefined) {
+  if (isLoading && savedSettings === undefined) {
     return (
       <div className="flex items-center justify-center p-4">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -153,6 +171,17 @@ export function GlobalProxySettings() {
       <p className="text-sm text-muted-foreground">
         {t("settings.globalProxy.hint")}
       </p>
+
+      <ToggleRow
+        icon={<Globe className="h-4 w-4" />}
+        title={t("settings.globalProxy.followSystemProxy")}
+        description={t("settings.globalProxy.followSystemProxyHint")}
+        checked={followSystemProxy}
+        onCheckedChange={(checked) => {
+          setFollowSystemProxy(checked);
+          setDirty(true);
+        }}
+      />
 
       {/* 代理地址输入框和按钮 */}
       <div className="flex gap-2">
