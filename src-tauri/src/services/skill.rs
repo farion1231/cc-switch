@@ -545,15 +545,20 @@ impl SkillService {
 
     // ========== 路径管理 ==========
 
-    /// 获取 SSOT 目录（根据设置返回 ~/.cc-switch/skills/ 或 ~/.agents/skills/）
-    pub fn get_ssot_dir() -> Result<PathBuf> {
-        let location = crate::settings::get_skill_storage_location();
-        let dir = match location {
+    /// 解析指定存储位置的 SSOT 目录（不读设置、不建目录），供迁移与
+    /// 设置页路径展示共用，避免各处内联拼路径后漂移。
+    pub fn ssot_dir_for(location: SkillStorageLocation) -> PathBuf {
+        match location {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
             SkillStorageLocation::Unified => {
                 crate::config::get_home_dir().join(".agents").join("skills")
             }
-        };
+        }
+    }
+
+    /// 获取 SSOT 目录（根据设置返回 ~/.cc-switch/skills/ 或 ~/.agents/skills/）
+    pub fn get_ssot_dir() -> Result<PathBuf> {
+        let dir = Self::ssot_dir_for(crate::settings::get_skill_storage_location());
         fs::create_dir_all(&dir)?;
         Ok(dir)
     }
@@ -1705,12 +1710,7 @@ impl SkillService {
 
         // 1. 解析旧目录和新目录（不改设置）
         let old_dir = Self::get_ssot_dir()?;
-        let new_dir = match target {
-            SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
-            SkillStorageLocation::Unified => {
-                crate::config::get_home_dir().join(".agents").join("skills")
-            }
-        };
+        let new_dir = Self::ssot_dir_for(target);
         fs::create_dir_all(&new_dir)?;
         Self::validate_skill_storage_destination(&new_dir)?;
 
@@ -4418,6 +4418,27 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    #[serial_test::serial]
+    fn ssot_dir_for_resolves_each_location_suffix() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+
+        let cc_switch = SkillService::ssot_dir_for(SkillStorageLocation::CcSwitch);
+        assert_eq!(
+            cc_switch,
+            temp.path().join(".cc-switch").join("skills"),
+            "CcSwitch storage lives under the app config dir"
+        );
+
+        let unified = SkillService::ssot_dir_for(SkillStorageLocation::Unified);
+        assert_eq!(
+            unified,
+            temp.path().join(".agents").join("skills"),
+            "Unified storage lives under ~/.agents/skills"
+        );
+    }
 
     #[test]
     fn skill_state_lock_allows_snapshots_but_excludes_writers() {

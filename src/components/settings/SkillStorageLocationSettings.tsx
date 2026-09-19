@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { skillsApi, type MigrationResult } from "@/lib/api/skills";
+import { useSkillStorageDir } from "@/hooks/useSkills";
 import type { SkillStorageLocation } from "@/types";
 
 export interface SkillStorageLocationSettingsProps {
@@ -27,6 +28,7 @@ export function SkillStorageLocationSettings({
   onMigrated,
 }: SkillStorageLocationSettingsProps) {
   const { t } = useTranslation();
+  const { data: storageDir } = useSkillStorageDir(value);
   const [pendingTarget, setPendingTarget] =
     useState<SkillStorageLocation | null>(null);
   const [isMigrating, setIsMigrating] = useState(false);
@@ -99,7 +101,10 @@ export function SkillStorageLocationSettings({
       <p className="text-xs text-muted-foreground">
         {value === "unified"
           ? t("settings.skillStorage.unifiedHint")
-          : t("settings.skillStorage.ccSwitchHint")}
+          : t("settings.skillStorage.ccSwitchHint", {
+              // 后端解析的真实路径（遵循配置目录覆盖）；加载完成前先按默认位置展示
+              path: storageDir ?? "~/.cc-switch/skills",
+            })}
       </p>
 
       {/* 迁移确认对话框 */}
