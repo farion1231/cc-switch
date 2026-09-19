@@ -791,8 +791,11 @@ async fn codex_official_takeover_reprojects_live_when_unified_history_toggles() 
         ..Default::default()
     })
     .expect("enable unified history setting");
-    assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
-        .expect("reproject active official takeover into shared bucket"));
+    assert!(
+        cc_switch_lib::reapply_current_codex_official_live_async(&state)
+            .await
+            .expect("reproject active official takeover into shared bucket")
+    );
 
     let unified_live =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");
@@ -824,8 +827,11 @@ async fn codex_official_takeover_reprojects_live_when_unified_history_toggles() 
         ..Default::default()
     })
     .expect("disable unified history setting");
-    assert!(cc_switch_lib::reapply_current_codex_official_live(&state)
-        .expect("reproject active official takeover into dedicated bucket"));
+    assert!(
+        cc_switch_lib::reapply_current_codex_official_live_async(&state)
+            .await
+            .expect("reproject active official takeover into dedicated bucket")
+    );
 
     let dedicated_live_after_toggle =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live");

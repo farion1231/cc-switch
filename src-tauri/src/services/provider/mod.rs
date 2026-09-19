@@ -64,11 +64,14 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
 /// 第三方 live 配置不受开关影响。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
-    let _guard = futures::executor::block_on(
-        state
-            .proxy_service
-            .lock_switch_for_app(AppType::Codex.as_str()),
-    );
+    futures::executor::block_on(reapply_current_codex_official_live_async(state))
+}
+
+pub async fn reapply_current_codex_official_live_async(state: &AppState) -> Result<bool, AppError> {
+    let _guard = state
+        .proxy_service
+        .lock_switch_for_app(AppType::Codex.as_str())
+        .await;
     let current_id = ProviderService::current(state, AppType::Codex)?;
     if current_id.is_empty() {
         return Ok(false);
@@ -85,8 +88,12 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
-    let outcome =
-        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, stored_provider)?;
+    let outcome = live::sync_live_for_provider_respecting_takeover_async_locked(
+        state,
+        &AppType::Codex,
+        stored_provider,
+    )
+    .await?;
     if outcome == LiveSyncOutcome::BackupOnly {
         return Ok(true);
     }

@@ -1522,7 +1522,7 @@ pub(crate) enum LiveSyncOutcome {
 /// A backup row by itself is not evidence: stale rows survive crashes and failed
 /// restores. Likewise, an enabled flag left behind by an interrupted teardown
 /// must not suppress a real live write unless there is corroborating evidence.
-fn proxy_owns_live_config(
+async fn proxy_owns_live_config(
     state: &AppState,
     app_type: &AppType,
     has_live_backup: bool,
@@ -1532,37 +1532,28 @@ fn proxy_owns_live_config(
         return true;
     }
 
-    let takeover_enabled =
-        match futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str())) {
-            Ok(config) => config.enabled,
-            Err(err) => {
-                log::warn!(
-                    "读取 {} 代理接管标志失败，按未接管处理并继续写入 live 配置；\
+    let takeover_enabled = match state.db.get_proxy_config_for_app(app_type.as_str()).await {
+        Ok(config) => config.enabled,
+        Err(err) => {
+            log::warn!(
+                "读取 {} 代理接管标志失败，按未接管处理并继续写入 live 配置；\
                      若该应用此刻确实处于接管状态，本次写入会覆盖接管的 live: {err}",
-                    app_type.as_str()
-                );
-                false
-            }
-        };
+                app_type.as_str()
+            );
+            false
+        }
+    };
 
     // The enabled flag is only trusted when the proxy is actually running and
     // the app still has a backup. This avoids treating an interrupted teardown
     // (enabled=true, ordinary live file, no backup) as proxy ownership. The
-    // per-app lock covers the short activation window before the flag/placeholder
-    // is committed and avoids using a global proxy-running bit for another app.
-    if takeover_enabled
-        && has_live_backup
-        && futures::executor::block_on(state.proxy_service.is_running())
-    {
+    // caller holds the per-app switch lock, so a concurrent activation or
+    // teardown completes before this snapshot is evaluated.
+    if takeover_enabled && has_live_backup && state.proxy_service.is_running().await {
         return true;
     }
 
-    has_live_backup
-        && futures::executor::block_on(
-            state
-                .proxy_service
-                .is_switch_in_progress_for_app(app_type.as_str()),
-        )
+    false
 }
 
 /// Sync a provider to live while respecting proxy takeover ownership.
@@ -1571,30 +1562,51 @@ pub(crate) fn sync_live_for_provider_respecting_takeover(
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<LiveSyncOutcome, AppError> {
-    let has_live_backup =
-        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
-            Ok(backup) => backup.is_some(),
-            Err(err) => {
-                log::warn!(
-                    "读取 {} Live 备份失败，按无备份处理并继续写入 live 配置: {err}",
-                    app_type.as_str()
-                );
-                false
-            }
-        };
+    futures::executor::block_on(sync_live_for_provider_respecting_takeover_async(
+        state, app_type, provider,
+    ))
+}
+
+pub(crate) async fn sync_live_for_provider_respecting_takeover_async(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<LiveSyncOutcome, AppError> {
+    let _guard = state
+        .proxy_service
+        .lock_switch_for_app(app_type.as_str())
+        .await;
+    sync_live_for_provider_respecting_takeover_async_locked(state, app_type, provider).await
+}
+
+pub(crate) async fn sync_live_for_provider_respecting_takeover_async_locked(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<LiveSyncOutcome, AppError> {
+    let has_live_backup = match state.db.get_live_backup(app_type.as_str()).await {
+        Ok(backup) => backup.is_some(),
+        Err(err) => {
+            log::warn!(
+                "读取 {} Live 备份失败，按无备份处理并继续写入 live 配置: {err}",
+                app_type.as_str()
+            );
+            false
+        }
+    };
     let live_taken_over = state
         .proxy_service
         .detect_takeover_in_live_config_for_app(app_type);
 
-    if !proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over) {
+    if !proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over).await {
         // A stale backup must follow the provider too, otherwise a later restore
         // can resurrect the old URL and undo the live write we are making now.
         if has_live_backup {
-            if let Err(err) = futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            ) {
+            if let Err(err) = state
+                .proxy_service
+                .update_live_backup_from_provider_inner(app_type.as_str(), provider, None)
+                .await
+            {
                 log::warn!(
                     "刷新 {} 残留 Live 备份失败（不影响本次 live 写入）: {err}",
                     app_type.as_str()
@@ -1607,36 +1619,32 @@ pub(crate) fn sync_live_for_provider_respecting_takeover(
 
     // Takeover owns live: update the restore source, and refresh proxy-safe
     // projections while the proxy is running.
-    futures::executor::block_on(
-        state
-            .proxy_service
-            .update_live_backup_from_provider(app_type.as_str(), provider),
-    )
-    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+    state
+        .proxy_service
+        .update_live_backup_from_provider_inner(app_type.as_str(), provider, None)
+        .await
+        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
 
-    if !futures::executor::block_on(state.proxy_service.is_running()) {
+    if !state.proxy_service.is_running().await {
         return Ok(LiveSyncOutcome::BackupOnly);
     }
 
     match app_type {
-        AppType::Claude => futures::executor::block_on(
-            state
-                .proxy_service
-                .sync_claude_live_from_provider_while_proxy_active(provider),
-        )
-        .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?,
-        AppType::Codex if live_taken_over => futures::executor::block_on(
-            state
-                .proxy_service
-                .sync_codex_live_from_provider_while_proxy_active(provider),
-        )
-        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?,
-        AppType::GrokBuild if live_taken_over => futures::executor::block_on(
-            state
-                .proxy_service
-                .sync_grok_live_from_provider_while_proxy_active(provider),
-        )
-        .map_err(|e| AppError::Message(format!("同步 Grok Build Live 配置失败: {e}")))?,
+        AppType::Claude => state
+            .proxy_service
+            .sync_claude_live_from_provider_while_proxy_active(provider)
+            .await
+            .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?,
+        AppType::Codex if live_taken_over => state
+            .proxy_service
+            .sync_codex_live_from_provider_while_proxy_active(provider)
+            .await
+            .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?,
+        AppType::GrokBuild if live_taken_over => state
+            .proxy_service
+            .sync_grok_live_from_provider_while_proxy_active(provider)
+            .await
+            .map_err(|e| AppError::Message(format!("同步 Grok Build Live 配置失败: {e}")))?,
         _ => {}
     }
 
