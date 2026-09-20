@@ -18,9 +18,6 @@ use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
-use crate::proxy::tool_media::{
-    strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
-};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -542,11 +539,20 @@ fn convert_input_to_messages(
                 let input: Value = if args_str.trim().is_empty() {
                     json!({})
                 } else {
-                    serde_json::from_str(args_str).map_err(|error| {
-                        ProxyError::InvalidRequest(format!(
-                            "Invalid function_call arguments for '{name}': {error}"
-                        ))
-                    })?
+                    match serde_json::from_str(args_str) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            // Tolerate unparseable historical arguments (e.g. invalid
+                            // `\x` escapes produced by third-party models) instead of
+                            // 400-ing the whole request, which would otherwise
+                            // dead-loop the session every turn. Degrade to an empty
+                            // object; the response path already repairs common cases.
+                            log::warn!(
+                                "[Codex/Anthropic] Replacing unparseable function_call '{name}' arguments with an empty object: {error}"
+                            );
+                            json!({})
+                        }
+                    }
                 };
                 if !input.is_object() {
                     return Err(ProxyError::InvalidRequest(format!(
@@ -728,12 +734,10 @@ struct ToolResultContent {
 
 fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
     match item.get("output") {
-        Some(text @ Value::String(_)) => {
-            alternate_image_tool_result_content(text).unwrap_or_else(|| ToolResultContent {
-                content: text.clone(),
-                is_error: false,
-            })
-        }
+        Some(Value::String(text)) => ToolResultContent {
+            content: json!(text),
+            is_error: false,
+        },
         Some(Value::Array(parts)) => {
             let mut content = Vec::new();
             let mut is_error = false;
@@ -768,26 +772,10 @@ fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
                             }));
                         }
                     }
-                    _ => {
-                        if let Some(alternate) = alternate_image_tool_result_content(part) {
-                            is_error |= alternate.is_error;
-                            match alternate.content {
-                                Value::Array(mut blocks) => content.append(&mut blocks),
-                                Value::String(text) => {
-                                    content.push(json!({"type":"text","text":text}))
-                                }
-                                other => content.push(json!({
-                                    "type":"text",
-                                    "text":canonical_json_string(&other)
-                                })),
-                            }
-                        } else {
-                            content.push(json!({
-                                "type":"text",
-                                "text":canonical_json_string(part)
-                            }));
-                        }
-                    }
+                    _ => content.push(json!({
+                        "type":"text",
+                        "text":canonical_json_string(part)
+                    })),
                 }
             }
             ToolResultContent {
@@ -795,106 +783,14 @@ fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
                 is_error,
             }
         }
-        Some(value) => {
-            alternate_image_tool_result_content(value).unwrap_or_else(|| ToolResultContent {
-                content: json!(canonical_json_string(value)),
-                is_error: false,
-            })
-        }
+        Some(value) => ToolResultContent {
+            content: json!(canonical_json_string(value)),
+            is_error: false,
+        },
         None => ToolResultContent {
             content: json!(canonical_json_string(item)),
             is_error: false,
         },
-    }
-}
-
-/// Convert image-bearing tool-output variants that are not native Responses
-/// content blocks. The shared traversal recognizes JSON strings, MCP image
-/// blocks, Anthropic image blocks, Chat image_url blocks, nested `content`
-/// wrappers, and whole image data URLs.
-fn alternate_image_tool_result_content(value: &Value) -> Option<ToolResultContent> {
-    let mut cleaned = value.clone();
-    let replacement_block = json!({
-        "type":"input_text",
-        "text":TOOL_RESULT_MEDIA_ATTACHED_MARKER
-    });
-    let mut chat_media_parts = Vec::new();
-    let replaced = strip_and_clamp_media_from_tool_value(
-        &mut cleaned,
-        &mut chat_media_parts,
-        ToolMediaScope::ImagesOnly,
-        &replacement_block,
-        TOOL_RESULT_MEDIA_ATTACHED_MARKER,
-    );
-    if replaced == 0 {
-        return None;
-    }
-
-    let mut content = Vec::new();
-    let mut is_error = false;
-    append_sanitized_tool_result_value(&cleaned, &mut content, &mut is_error);
-    content.extend(
-        chat_media_parts
-            .iter()
-            .filter_map(image_block_from_input_image),
-    );
-
-    Some(ToolResultContent {
-        content: Value::Array(content),
-        is_error,
-    })
-}
-
-fn append_sanitized_tool_result_value(
-    value: &Value,
-    content: &mut Vec<Value>,
-    is_error: &mut bool,
-) {
-    match value {
-        Value::String(text) => {
-            if text == TOOL_RESULT_ERROR_MARKER {
-                *is_error = true;
-            } else if !text.is_empty() {
-                content.push(json!({"type":"text","text":text}));
-            }
-        }
-        Value::Array(parts) => {
-            for part in parts {
-                match part.get("type").and_then(Value::as_str) {
-                    Some("input_text" | "output_text" | "text") => {
-                        if let Some(text) = part.get("text").and_then(Value::as_str) {
-                            if text == TOOL_RESULT_ERROR_MARKER {
-                                *is_error = true;
-                            } else {
-                                content.push(json!({"type":"text","text":text}));
-                            }
-                        }
-                    }
-                    _ => content.push(json!({
-                        "type":"text",
-                        "text":canonical_json_string(part)
-                    })),
-                }
-            }
-        }
-        Value::Object(object)
-            if matches!(
-                object.get("type").and_then(Value::as_str),
-                Some("input_text" | "output_text" | "text")
-            ) =>
-        {
-            if let Some(text) = object.get("text").and_then(Value::as_str) {
-                if text == TOOL_RESULT_ERROR_MARKER {
-                    *is_error = true;
-                } else {
-                    content.push(json!({"type":"text","text":text}));
-                }
-            }
-        }
-        other => content.push(json!({
-            "type":"text",
-            "text":canonical_json_string(other)
-        })),
     }
 }
 
@@ -1186,12 +1082,8 @@ fn image_block_from_input_image(part: &Value) -> Option<Value> {
             .or_else(|| v.get("url").and_then(|u| u.as_str()).map(str::to_string))
     })?;
 
-    if url
-        .get(..5)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
-    {
+    if let Some(rest) = url.strip_prefix("data:") {
         // data:<media_type>;base64,<data>
-        let rest = &url[5..];
         let (meta, data) = rest.split_once(',')?;
         let media_type = meta.split(';').next().unwrap_or("image/png");
         Some(json!({
@@ -1202,13 +1094,7 @@ fn image_block_from_input_image(part: &Value) -> Option<Value> {
                 "data": data
             }
         }))
-    } else if url
-        .get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || url
-            .get(..8)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
-    {
+    } else if url.starts_with("http://") || url.starts_with("https://") {
         Some(json!({
             "type": "image",
             "source": { "type": "url", "url": url }
@@ -2002,20 +1888,34 @@ mod tests {
     }
 
     #[test]
-    fn test_request_invalid_or_non_object_arguments_error() {
-        for arguments in ["{broken", "[1,2]"] {
-            let input = json!({
-                "model":"c",
-                "input":[
-                    {"type":"function_call","call_id":"c1","name":"t","arguments":arguments},
-                    {"type":"function_call_output","call_id":"c1","output":"ok"}
-                ]
-            });
-            assert!(matches!(
-                responses_request_to_anthropic(input, 4096),
-                Err(ProxyError::InvalidRequest(_))
-            ));
-        }
+    fn test_request_unparseable_arguments_degrade_and_non_object_arguments_error() {
+        // Unparseable arguments (truncated JSON, or third-party models' invalid
+        // `\x` escapes such as `\d` / `\'`) are tolerated and degraded to an
+        // empty object instead of 400-ing the whole request, which would
+        // otherwise dead-loop the session every turn once the poisoned
+        // function_call enters the history.
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"type":"function_call","call_id":"c1","name":"t","arguments":"{broken"},
+                {"type":"function_call_output","call_id":"c1","output":"ok"}
+            ]
+        });
+        assert!(responses_request_to_anthropic(input, 4096).is_ok());
+
+        // A parseable but non-object value (e.g. a JSON array) is still
+        // rejected: tool_use input must be an object.
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"type":"function_call","call_id":"c1","name":"t","arguments":"[1,2]"},
+                {"type":"function_call_output","call_id":"c1","output":"ok"}
+            ]
+        });
+        assert!(matches!(
+            responses_request_to_anthropic(input, 4096),
+            Err(ProxyError::InvalidRequest(_))
+        ));
     }
 
     #[test]
@@ -2739,80 +2639,6 @@ mod tests {
     }
 
     #[test]
-    fn test_alternate_mcp_tool_image_is_not_stringified_for_anthropic() {
-        let response = responses_request_to_anthropic(
-            json!({
-                "model": "c",
-                "input": [
-                    {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
-                    {"type": "function_call_output", "call_id": "c1", "output": [{
-                        "type": "image",
-                        "mimeType": "image/webp",
-                        "data": "MCP_ANTHROPIC_IMAGE_SENTINEL"
-                    }]}
-                ]
-            }),
-            4096,
-        )
-        .unwrap();
-        let content = &response["messages"][2]["content"][0]["content"];
-
-        assert_eq!(content[0]["type"], "text");
-        assert!(!content[0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("MCP_ANTHROPIC_IMAGE_SENTINEL"));
-        assert_eq!(content[1]["type"], "image");
-        assert_eq!(content[1]["source"]["media_type"], "image/webp");
-        assert_eq!(content[1]["source"]["data"], "MCP_ANTHROPIC_IMAGE_SENTINEL");
-    }
-
-    #[test]
-    fn test_json_string_nested_tool_image_is_not_text_for_anthropic() {
-        let residual_base64 = "A".repeat(20_000);
-        let encoded_output = json!({
-            "content": [
-                {"type": "input_text", "text": "caption"},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/png;base64,STRING_IMAGE_SENTINEL"
-                    }
-                },
-                {"type": "video", "data": residual_base64}
-            ]
-        })
-        .to_string();
-        let response = responses_request_to_anthropic(
-            json!({
-                "model": "c",
-                "input": [
-                    {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
-                    {"type": "function_call_output", "call_id": "c1", "output": encoded_output}
-                ]
-            }),
-            4096,
-        )
-        .unwrap();
-        let content = response["messages"][2]["content"][0]["content"]
-            .as_array()
-            .unwrap();
-        let image = content
-            .iter()
-            .find(|block| block["type"] == "image")
-            .expect("stringified tool image should become an Anthropic image block");
-
-        assert_eq!(image["source"]["data"], "STRING_IMAGE_SENTINEL");
-        assert!(content
-            .iter()
-            .filter_map(|block| block.get("text").and_then(Value::as_str))
-            .all(|text| !text.contains("STRING_IMAGE_SENTINEL")));
-        let serialized = response.to_string();
-        assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
-        assert!(!serialized.contains(&"A".repeat(64)));
-    }
-
-    #[test]
     fn test_structured_tool_output_restores_error_file_and_unknown_parts() {
         let response = responses_request_to_anthropic(
             json!({
@@ -2905,6 +2731,35 @@ mod tests {
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         assert_eq!(result["tool_choice"], json!({ "type": "auto" }));
+    }
+
+    #[test]
+    fn test_request_function_call_with_invalid_escape_arguments_does_not_error() {
+        // Historical function_call whose arguments contain an invalid `\x`
+        // escape (e.g. GLM emitting `\'`). The request path must tolerate it
+        // (degrade to an empty object) instead of 400-ing the whole request,
+        // which would otherwise dead-loop the session every turn.
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"type":"function_call","call_id":"c1","name":"update_plan",
+                 "arguments":r#"{"plan":[{"step":"a\'b"}]}"#},
+                {"type":"function_call_output","call_id":"c1","output":"ok"}
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096)
+            .expect("invalid escape in historical arguments must not fail the request");
+        let has_tool_use = result["messages"].as_array().map_or(false, |msgs| {
+            msgs.iter().any(|m| {
+                m["content"]
+                    .as_array()
+                    .map_or(false, |arr| arr.iter().any(|b| b["type"] == "tool_use"))
+            })
+        });
+        assert!(
+            has_tool_use,
+            "tool_use block should remain after degrading arguments"
+        );
     }
 
     // ==================== SSE aggregation fallback ====================
