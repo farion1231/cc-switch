@@ -264,6 +264,24 @@ priority = override.priority 优先，否则 default_priority。
 - 退出码非 0 / 超时 / stdout 非法 JSON → 记 warn 跳过；oneshot 超时 kill 进程
   （Windows 上至少 kill 直接子进程）。
 
+**声明式配置界面（`config_schema`，可选）**：
+
+plugin.json 可声明 `config_schema: [...]`——面板据此渲染"设置"表单；读写经插件协议
+`stage=config` 的 get/set 完成，**由插件自行校验并落盘**（核心不代写插件文件）：
+
+- 字段项：`{type, key, file, path?, label, description?, options?, columns?}`；
+  `type ∈ toggle|text|number|select|textarea|table`；`file` 为插件目录内相对
+  `.json` 路径（允许子目录如 `json/config.json`，禁 `..` 逃逸）；`path` 为文档内
+  点路径（缺省 = key）；`table` 需 `columns: [{key, type, label, options?}]`
+  （列 type 另支持 select）。
+- 协议：`{"stage":"config","op":"get"}` → `{"config": {文件名: 文档}}`；
+  `{"stage":"config","op":"set","config": {文件名: 文档}}` → `{}` 成功 /
+  `{"error":"原因"}` 校验拒绝（原样透传给面板展示）。
+- 插件落盘后按既有 mtime 热重载机制生效，无需重启；oneshot 插件同样支持
+  （每次 get/set 拉起进程）。
+- Tauri 命令：`plugin_config_schema(id)` / `plugin_config_read(id)` /
+  `plugin_config_write(id, docs)`；`PluginInfo.has_config` 供前端显示"设置"按钮。
+
 **加载**：`load_user_plugins(dir) -> (Vec<Arc<dyn ProxyPlugin>>, Vec<LoadError>)`，
 遍历子目录读取 `plugin.json`，失败条目收集错误不 panic。重载 = clear_user_plugins + load +
 re-apply overrides + 重新排序。

@@ -32,6 +32,18 @@
     "refresh": "重新整理",
     "refreshing": "重新整理中...",
     "import": "匯入",
+        "config": {
+          "open": "設定",
+          "title": "{{name}} 設定",
+          "description": "儲存後由外掛驗證並寫入，熱重載生效",
+          "save": "儲存設定",
+          "saved": "設定已儲存（外掛熱重載生效）",
+          "failed": "儲存失敗：{{error}}",
+          "cancel": "取消",
+          "loading": "讀取設定中…",
+          "addRow": "＋ 新增一列",
+          "noSchema": "該外掛未回傳設定定義"
+        },
     "all": "全部",
     "search": "搜尋",
     "enableAllForApp": "為 {{app}} 全部啟用",

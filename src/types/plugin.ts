@@ -18,6 +18,8 @@ export interface PluginInfo {
   version: string | null;
   /** 用户插件 manifest 路径；内置为 null */
   source: string | null;
+  /** 插件声明了配置界面（config_schema 非空）→ 面板显示"设置"按钮 */
+  hasConfig: boolean;
   /** 非空 = 加载失败的占位条目，只读展示错误 */
   error: string | null;
 }
@@ -32,3 +34,41 @@ export interface PluginListResult {
   plugins: PluginInfo[];
   globalEnabled: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// 声明式配置界面（plugin.json 的 config_schema；字段名与 Rust serde 序列化一致，
+// ConfigSchemaItem/ConfigColumn 未加 camelCase 重命名 → snake_case）
+// ---------------------------------------------------------------------------
+
+export type ConfigFieldType =
+  | "toggle"
+  | "text"
+  | "number"
+  | "select"
+  | "textarea"
+  | "table";
+
+export type ConfigColumnType = "text" | "number" | "toggle" | "textarea" | "select";
+
+export interface ConfigColumn {
+  key: string;
+  type: ConfigColumnType;
+  label: string;
+  options?: string[];
+}
+
+export interface ConfigSchemaItem {
+  type: ConfigFieldType;
+  key: string;
+  /** 插件目录内的目标配置文件名（单段 .json） */
+  file: string;
+  /** 文档内的点路径（缺省 = key） */
+  path?: string;
+  label: string;
+  description?: string;
+  options?: string[];
+  columns?: ConfigColumn[];
+}
+
+/** plugin_config_read 返回：{ 配置文件名: 文档 } */
+export type PluginConfigDocs = Record<string, unknown>;

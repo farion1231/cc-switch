@@ -14,7 +14,9 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PluginConfigDialog } from "./PluginConfigDialog";
 import type {
+  ConfigSchemaItem,
   PluginInfo,
   PluginListResult,
   PluginReloadResult,
@@ -157,6 +159,27 @@ export function PluginSettingsPanel() {
       await invoke("plugin_open_dir");
     } catch (e) {
       console.error("Failed to open plugin dir:", e);
+      toast.error(String(e));
+    }
+  };
+
+  const [configTarget, setConfigTarget] = useState<{
+    plugin: PluginInfo;
+    schema: ConfigSchemaItem[];
+  } | null>(null);
+
+  const handleOpenConfig = async (plugin: PluginInfo) => {
+    try {
+      const schema = await invoke<ConfigSchemaItem[]>("plugin_config_schema", {
+        id: plugin.id,
+      });
+      if (!schema.length) {
+        toast.error(t(`${I18N_PREFIX}.config.noSchema`));
+        return;
+      }
+      setConfigTarget({ plugin, schema });
+    } catch (e) {
+      console.error("Failed to load plugin config schema:", e);
       toast.error(String(e));
     }
   };
@@ -358,11 +381,32 @@ export function PluginSettingsPanel() {
                       }
                     />
                   </div>
+                  {plugin.hasConfig && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      disabled={!globalEnabled}
+                      onClick={() => void handleOpenConfig(plugin)}
+                    >
+                      {t(`${I18N_PREFIX}.config.open`)}
+                    </Button>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
+      )}
+
+      {configTarget && (
+        <PluginConfigDialog
+          pluginId={configTarget.plugin.id}
+          displayName={configTarget.plugin.displayName}
+          schema={configTarget.schema}
+          open={configTarget !== null}
+          onClose={() => setConfigTarget(null)}
+        />
       )}
     </div>
   );
