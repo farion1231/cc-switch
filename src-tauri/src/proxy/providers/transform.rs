@@ -233,7 +233,10 @@ pub fn anthropic_to_openai_with_reasoning_content(
                 // 仅省略字段不够——部分严格聚合端点（如 opencode Zen Go）要求
                 // 该字段存在且为非空字符串，缺失或省略都会拒绝整个请求
                 // （400 "function.description is required"）。
-                let description = t.get("description").and_then(|d| d.as_str()).map(str::trim)
+                let description = t
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(str::trim)
                     .filter(|d| !d.is_empty());
                 function["description"] = json!(match description {
                     Some(d) => d,

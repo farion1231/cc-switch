@@ -1910,8 +1910,11 @@ pub fn anthropic_to_responses(
                 // 同 transform.rs：description 归一化，空值（缺失/null/空白）
                 // 回退为工具名。仅省略字段不够——严格聚合端点要求该字段
                 // 存在且为非空字符串。
-                let description = tool.get("description").and_then(|d| d.as_str())
-                    .map(str::trim).filter(|d| !d.is_empty());
+                let description = tool
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(str::trim)
+                    .filter(|d| !d.is_empty());
                 response_tool["description"] = json!(match description {
                     Some(d) => d,
                     None => tool.get("name").and_then(|n| n.as_str()).unwrap_or(""),
