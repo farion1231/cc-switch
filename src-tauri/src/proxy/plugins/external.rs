@@ -1646,20 +1646,25 @@ mod tests {
         assert_eq!(docs["rules.json"]["enabled"], json!(true));
 
         // get 请求协议
-        let (input, _) = &transport.calls.lock().unwrap()[0];
-        let parsed: Value = serde_json::from_str(input).unwrap();
-        assert_eq!(parsed["stage"], json!("config"));
-        assert_eq!(parsed["op"], json!("get"));
+        {
+            // 锁守卫限定作用域（let 引用绑定会延长临时守卫生命周期，导致死锁）
+            let calls = transport.calls.lock().unwrap();
+            let parsed: Value = serde_json::from_str(&calls[0].0).unwrap();
+            assert_eq!(parsed["stage"], json!("config"));
+            assert_eq!(parsed["op"], json!("get"));
+        }
 
         // set 成功
         plugin
             .config_write(&json!({"config.json": {"enable_regex": false}}))
             .unwrap();
-        let (input, _) = &transport.calls.lock().unwrap()[1];
-        let parsed: Value = serde_json::from_str(input).unwrap();
-        assert_eq!(parsed["stage"], json!("config"));
-        assert_eq!(parsed["op"], json!("set"));
-        assert_eq!(parsed["config"]["config.json"]["enable_regex"], json!(false));
+        {
+            let calls = transport.calls.lock().unwrap();
+            let parsed: Value = serde_json::from_str(&calls[1].0).unwrap();
+            assert_eq!(parsed["stage"], json!("config"));
+            assert_eq!(parsed["op"], json!("set"));
+            assert_eq!(parsed["config"]["config.json"]["enable_regex"], json!(false));
+        }
 
         // set 被插件拒绝：错误透传
         let err = plugin
@@ -1670,9 +1675,13 @@ mod tests {
 
     #[test]
     fn test_oneshot_plugin_config_via_runner() {
+        // oneshot 清单（mode 缺省）：config 读写同样走 runner（每次拉起进程）
+        let mut value = manifest_json("my-plugin");
+        value["config_schema"] = config_schema_json();
+        let oneshot_manifest: PluginManifest = serde_json::from_value(value).unwrap();
         let runner = Arc::new(MockRunner::ok(r#"{"config": {"config.json": {}}}"#));
         let plugin =
-            ExternalPlugin::new(config_manifest(), Path::new("/tmp/plugins/demo"), runner).unwrap();
+            ExternalPlugin::new(oneshot_manifest, Path::new("/tmp/plugins/demo"), runner).unwrap();
         let docs = plugin.config_read().unwrap();
         assert!(docs.get("config.json").is_some());
     }
