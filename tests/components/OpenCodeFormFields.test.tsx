@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
@@ -142,6 +143,49 @@ describe("OpenCodeFormFields", () => {
       "model-a": { name: "model-a" },
       "model-b": { name: "model-b" },
     });
+  });
+
+  it("does not submit the provider form when Enter is pressed in the model search", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "model-a", ownedBy: "vendor" },
+    ]);
+    const onSubmit = vi.fn((event: { preventDefault: () => void }) =>
+      event.preventDefault(),
+    );
+    const { props, rerender } = renderOpenCodeForm();
+    // user-event only finds submit buttons inside the form when simulating
+    // implicit submission, so keep the save button inside this test form.
+    rerender(
+      <FormShell>
+        <form onSubmit={onSubmit}>
+          <OpenCodeFormFields {...props} />
+          <button type="submit">save</button>
+        </form>
+      </FormShell>,
+    );
+    const user = userEvent.setup();
+
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(await screen.findByRole("checkbox", { name: "model-a" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Search models..." }),
+      "model{Enter}",
+    );
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("checkbox", { name: "model-a" })).toBeChecked();
+    expect(props.onModelsChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Base URL" }),
+      "{Enter}",
+    );
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
   it.each(["baseUrl", "apiKey"] as const)(

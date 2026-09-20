@@ -42,6 +42,11 @@ export function FetchedModelPicker({
       <ImeSafeInput
         value={search}
         onValueChange={setSearch}
+        onKeyDown={(event) => {
+          // The picker lives inside the provider <form>; Enter here must not
+          // trigger implicit submission.
+          if (event.key === "Enter") event.preventDefault();
+        }}
         aria-label={t("providerForm.searchModelPlaceholder", {
           defaultValue: "Search models...",
         })}

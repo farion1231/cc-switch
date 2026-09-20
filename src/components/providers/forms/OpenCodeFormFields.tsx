@@ -213,7 +213,7 @@ export function OpenCodeFormFields({
   const modelFetchGeneration = useRef(0);
 
   useEffect(() => {
-    setFetchedModels([]);
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
     setIsFetchingModels(false);
     return () => {
       // Ignore responses for a previous endpoint/key or an unmounted form.
