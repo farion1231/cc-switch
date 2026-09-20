@@ -3172,13 +3172,13 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     websiteUrl: "https://aicodewith.ai",
     apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     auth: generateThirdPartyAuth(""),
-    // 官方 Codex 专用端点，不能用通用 /v1（协议不同）
+    // 端点经站长确认为 /v1；官方博客写的 /chatgpt/v1 是文档笔误
     config: generateThirdPartyConfig(
       "aicodewith",
-      "https://api.aicodewith.ai/chatgpt/v1",
+      "https://api.aicodewith.ai/v1",
       "gpt-5.6-sol",
     ),
-    endpointCandidates: ["https://api.aicodewith.ai/chatgpt/v1"],
+    endpointCandidates: ["https://api.aicodewith.ai/v1"],
     category: "aggregator",
     icon: "aicodewith",
     iconColor: "#3A3B40",

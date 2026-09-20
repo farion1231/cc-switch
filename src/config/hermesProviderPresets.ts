@@ -2089,7 +2089,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     settingsConfig: {
       name: "aicodewith",
-      base_url: "https://api.aicodewith.ai/chatgpt/v1",
+      base_url: "https://api.aicodewith.ai/v1",
       api_key: "",
       api_mode: "codex_responses",
       models: [

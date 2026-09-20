@@ -1684,7 +1684,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     settingsConfig: {
       name: "AICodeWith",
-      baseUrl: "https://api.aicodewith.ai/chatgpt/v1",
+      baseUrl: "https://api.aicodewith.ai/v1",
       api: "openai-responses",
       apiKey: "",
       models: [
