@@ -17,6 +17,7 @@ import {
   type ManagedAuthProvider,
 } from "@/lib/api";
 import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
+import { useInitialDataCommonConfig } from "@/components/providers/forms/hooks/useInitialDataCommonConfig";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -271,6 +272,16 @@ export function EditProviderDialog({
     return base;
   }, [liveSettings, provider?.settingsConfig, provider?.category, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
 
+  // 存储快照按设计不含通用配置片段（`meta.commonConfigEnabled` 是单一真相），
+  // 在这里补回，使表单拿到的就是"合并后"的最终配置。
+  const mergedSettingsConfig = useInitialDataCommonConfig({
+    appId,
+    commonConfigEnabled: provider?.meta?.commonConfigEnabled,
+    settingsConfig: initialSettingsConfig,
+    // 等 live 读取有结论后再合并，避免 DB 快照与 live 快照各合并一次
+    enabled: open && hasLoadedLive,
+  });
+
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
     if (!provider) return null;
@@ -278,7 +289,7 @@ export function EditProviderDialog({
       name: provider.name,
       notes: provider.notes,
       websiteUrl: provider.websiteUrl,
-      settingsConfig: initialSettingsConfig,
+      settingsConfig: mergedSettingsConfig,
       category: provider.category,
       meta: provider.meta,
       icon: provider.icon,
@@ -288,7 +299,7 @@ export function EditProviderDialog({
     open, // 修复：编辑保存后再次打开显示旧数据，依赖 open 确保每次打开时重新读取最新 provider 数据
     provider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
     provider?.meta, // 供应商元数据变化时重新初始化表单
-    initialSettingsConfig,
+    mergedSettingsConfig,
   ]);
 
   const handleSubmit = useCallback(
