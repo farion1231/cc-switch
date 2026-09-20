@@ -1938,6 +1938,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           contextWindow: 128000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          contextWindow: 1000000,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
+        },
       ],
     },
     category: "cn_official",
@@ -1958,7 +1964,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: { primary: "zhipu/glm-5.1" },
-      modelCatalog: { "zhipu/glm-5.1": { alias: "GLM" } },
+      modelCatalog: {
+        "zhipu/glm-5.1": { alias: "GLM" },
+        "zhipu/glm-5.3": { alias: "GLM-5.3" },
+      },
     },
   },
   {
@@ -1974,6 +1983,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           id: "glm-5.1",
           name: "GLM-5.1",
           contextWindow: 128000,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
+        },
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          contextWindow: 1000000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
       ],
@@ -1996,7 +2011,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: { primary: "zhipu-en/glm-5.1" },
-      modelCatalog: { "zhipu-en/glm-5.1": { alias: "GLM" } },
+      modelCatalog: {
+        "zhipu-en/glm-5.1": { alias: "GLM" },
+        "zhipu-en/glm-5.3": { alias: "GLM-5.3" },
+      },
     },
   },
   {
