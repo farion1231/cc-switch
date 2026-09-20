@@ -1,5 +1,8 @@
 # cc-switch 插件系统设计契约（内部）
 
+> 教程式入门（面向插件使用者/开发者）见
+> [docs/plugins/plugin-dev-guide-zh.md](../plugins/plugin-dev-guide-zh.md)；本文是规范本体。
+
 ## 0. 背景与目标
 
 cc-switch 的本地代理（`src-tauri/src/proxy/`，基于 axum）在转发 Claude/Codex/Gemini CLI

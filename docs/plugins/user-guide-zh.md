@@ -201,6 +201,9 @@ stderr**，stderr 内容不会被解析，仅用于调试。
 - 超过 `timeout_ms`（进程会被终止）；
 - stdout 为空 / 不是合法 JSON / 不是 JSON 对象 / 含多余输出 / 非 `{}` 却缺 `body` 字段。
 
+想自己写插件？[plugin-dev-guide-zh.md](./plugin-dev-guide-zh.md)
+是面向开发者的完整指南（清单字段、两种进程协议、配置界面声明、调试与示例）。
+
 ## 8. 示例插件
 
 两个示例功能相同：在请求的 `metadata` 中打一个 `via-plugin` 标记。复制即可运行。
