@@ -116,6 +116,34 @@ const generatePresetTemplates = (
   },
 })`,
 
+  // 网页账户接口模板：用网页登录 Token（非模型 API Key）查询中转站账户余额，
+  // 适配 /api/v1/auth/me 这类账户信息接口，余额字段位于响应顶层。
+  [TEMPLATE_TYPES.AUTH_ME]: `({
+  request: {
+    url: "{{baseUrl}}/api/v1/auth/me",
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer {{accessToken}}",
+      "User-Agent": "cc-switch/1.0"
+    }
+  },
+  extractor: function(response) {
+    if (response && typeof response.balance !== "undefined") {
+      return {
+        isValid: true,
+        planName: response.email || "${t("usageScript.defaultPlan")}",
+        remaining: Number(response.balance),
+        unit: "USD"
+      };
+    }
+
+    return {
+      isValid: false,
+      invalidMessage: response.message || "${t("usageScript.queryFailedMessage")}"
+    };
+  }
+})`,
+
   // GitHub Copilot 模板不需要脚本，使用专用 API
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "",
 
@@ -134,6 +162,7 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
   [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
+  [TEMPLATE_TYPES.AUTH_ME]: "usageScript.templateAuthMe",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
@@ -515,6 +544,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "custom"
         | "general"
         | "newapi"
+        | "auth_me"
         | "github_copilot"
         | "token_plan"
         | "balance"
@@ -686,7 +716,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.baseUrl,
         script.accessToken,
         script.userId,
-        selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        selectedTemplate as
+          | "custom"
+          | "general"
+          | "newapi"
+          | "auth_me"
+          | undefined,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
@@ -780,6 +815,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           code: preset,
           apiKey: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.AUTH_ME) {
+        // 网页账户接口模板：保留手填 baseUrl/accessToken（网页登录 Token），
+        // 清空 API Key 与 userId（该模板不使用）
+        setScript({
+          ...script,
+          code: preset,
+          apiKey: undefined,
+          userId: undefined,
+        });
       } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {
         // Copilot 模板不需要脚本和凭证，使用专用 API
         setScript({
@@ -843,6 +887,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
+    selectedTemplate === TEMPLATE_TYPES.AUTH_ME ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
 
@@ -1031,6 +1076,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-muted-foreground">
                   {t("usageScript.copilotAutoAuth")}
+                </p>
+              </div>
+            )}
+
+            {/* 网页账户接口模式：自动提示 */}
+            {selectedTemplate === TEMPLATE_TYPES.AUTH_ME && (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.authMeHint")}
                 </p>
               </div>
             )}
@@ -1257,6 +1311,71 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           autoComplete="off"
                           className="border-white/10"
                         />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedTemplate === TEMPLATE_TYPES.AUTH_ME && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-authme-base-url">
+                          {t("usageScript.baseUrl")}
+                        </Label>
+                        <Input
+                          id="usage-authme-base-url"
+                          type="text"
+                          value={script.baseUrl || ""}
+                          onChange={(e) =>
+                            setScript({ ...script, baseUrl: e.target.value })
+                          }
+                          placeholder="https://api.example.com"
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-authme-access-token">
+                          {t("usageScript.accessToken")}
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="usage-authme-access-token"
+                            type={showAccessToken ? "text" : "password"}
+                            value={script.accessToken || ""}
+                            onChange={(e) =>
+                              setScript({
+                                ...script,
+                                accessToken: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              "usageScript.accessTokenPlaceholder",
+                            )}
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                          {script.accessToken && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowAccessToken(!showAccessToken)
+                              }
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={
+                                showAccessToken
+                                  ? t("apiKeyInput.hide")
+                                  : t("apiKeyInput.show")
+                              }
+                            >
+                              {showAccessToken ? (
+                                <EyeOff size={16} />
+                              ) : (
+                                <Eye size={16} />
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </>
                   )}
