@@ -542,11 +542,19 @@ fn convert_input_to_messages(
                 let input: Value = if args_str.trim().is_empty() {
                     json!({})
                 } else {
-                    serde_json::from_str(args_str).map_err(|error| {
-                        ProxyError::InvalidRequest(format!(
-                            "Invalid function_call arguments for '{name}': {error}"
-                        ))
-                    })?
+                    // When conversation history carries corrupt function_call arguments
+                    // (e.g. a malformed JSON fragment written by an older version), degrade
+                    // to an empty object so the entire request does not 400 because of a
+                    // single unparseable history entry.  Note: this calls serde::from_str
+                    // directly, not canonicalize_tool_arguments_str — so a hit here means
+                    // the argument was not valid JSON at all, not merely oddly formatted.
+                    serde_json::from_str(args_str).unwrap_or_else(|error| {
+                        log::warn!(
+                            "Invalid function_call arguments for '{}' (round-trip): {}. Falling back to empty object ({} bytes).",
+                            name, error, args_str.len()
+                        );
+                        json!({})
+                    })
                 };
                 if !input.is_object() {
                     return Err(ProxyError::InvalidRequest(format!(
@@ -2003,7 +2011,7 @@ mod tests {
 
     #[test]
     fn test_request_invalid_or_non_object_arguments_error() {
-        for arguments in ["{broken", "[1,2]"] {
+        for arguments in ["[1,2]"] {
             let input = json!({
                 "model":"c",
                 "input":[
@@ -2016,6 +2024,22 @@ mod tests {
                 Err(ProxyError::InvalidRequest(_))
             ));
         }
+    }
+
+    #[test]
+    fn test_request_unparseable_arguments_falls_back_to_empty_object() {
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"type":"function_call","call_id":"c1","name":"exec","arguments":"{broken"},
+                {"type":"function_call_output","call_id":"c1","output":"ok"}
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let tool_use = &messages[messages.len() - 2]["content"][0];
+        assert_eq!(tool_use["type"], "tool_use");
+        assert_eq!(tool_use["input"], json!({}));
     }
 
     #[test]
