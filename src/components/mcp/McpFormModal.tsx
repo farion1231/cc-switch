@@ -496,8 +496,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             {/* ID (标题) */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-foreground">
-                  {t("mcp.form.title")} <span className="text-red-500">*</span>
+                <label
+                  htmlFor="mcp-form-id"
+                  className="block text-sm font-medium text-foreground"
+                >
+                  {t("mcp.form.title")}{" "}
+                  <span aria-hidden="true" className="text-red-500">
+                    *
+                  </span>
                 </label>
                 {!isEditing && idError && (
                   <span className="text-xs text-red-500 dark:text-red-400">
@@ -506,7 +512,9 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 )}
               </div>
               <Input
+                id="mcp-form-id"
                 type="text"
+                aria-required="true"
                 placeholder={t("mcp.form.titlePlaceholder")}
                 value={formId}
                 onChange={(e) => handleIdChange(e.target.value)}
@@ -516,10 +524,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
             {/* Name */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">
+              <label
+                htmlFor="mcp-form-name"
+                className="block text-sm font-medium text-foreground mb-2"
+              >
                 {t("mcp.form.name")}
               </label>
               <Input
+                id="mcp-form-name"
                 type="text"
                 placeholder={t("mcp.form.namePlaceholder")}
                 value={formName}
@@ -529,10 +541,17 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
             {/* 启用到哪些应用 */}
             <div>
-              <label className="block text-sm font-medium text-foreground mb-3">
+              <div
+                id="mcp-enabled-apps-label"
+                className="block text-sm font-medium text-foreground mb-3"
+              >
                 {t("mcp.form.enabledApps")}
-              </label>
-              <div className="flex flex-wrap gap-4">
+              </div>
+              <div
+                className="flex flex-wrap gap-4"
+                role="group"
+                aria-labelledby="mcp-enabled-apps-label"
+              >
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="enable-claude"
@@ -651,6 +670,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowMetadata(!showMetadata)}
+                aria-expanded={showMetadata}
                 className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
                 {showMetadata ? (
@@ -666,10 +686,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             {showMetadata && (
               <>
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
+                  <label
+                    htmlFor="mcp-form-description"
+                    className="block text-sm font-medium text-foreground mb-2"
+                  >
                     {t("mcp.form.description")}
                   </label>
                   <Input
+                    id="mcp-form-description"
                     type="text"
                     placeholder={t("mcp.form.descriptionPlaceholder")}
                     value={formDescription}
@@ -678,10 +702,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
+                  <label
+                    htmlFor="mcp-form-tags"
+                    className="block text-sm font-medium text-foreground mb-2"
+                  >
                     {t("mcp.form.tags")}
                   </label>
                   <Input
+                    id="mcp-form-tags"
                     type="text"
                     placeholder={t("mcp.form.tagsPlaceholder")}
                     value={formTags}
@@ -690,10 +718,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
+                  <label
+                    htmlFor="mcp-form-homepage"
+                    className="block text-sm font-medium text-foreground mb-2"
+                  >
                     {t("mcp.form.homepage")}
                   </label>
                   <Input
+                    id="mcp-form-homepage"
                     type="text"
                     placeholder={t("mcp.form.homepagePlaceholder")}
                     value={formHomepage}
@@ -702,10 +734,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
+                  <label
+                    htmlFor="mcp-form-docs"
+                    className="block text-sm font-medium text-foreground mb-2"
+                  >
                     {t("mcp.form.docs")}
                   </label>
                   <Input
+                    id="mcp-form-docs"
                     type="text"
                     placeholder={t("mcp.form.docsPlaceholder")}
                     value={formDocs}
@@ -735,6 +771,11 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
             <div className="flex-1 min-h-0 flex flex-col">
               <div className="flex-1 min-h-0">
                 <JsonEditor
+                  ariaLabel={
+                    useToml
+                      ? t("mcp.form.tomlConfig")
+                      : t("mcp.form.jsonConfig")
+                  }
                   value={formConfig}
                   onChange={handleConfigChange}
                   placeholder={

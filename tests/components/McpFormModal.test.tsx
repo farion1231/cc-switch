@@ -80,12 +80,12 @@ vi.mock("@/components/ui/textarea", () => ({
 }));
 
 vi.mock("@/components/JsonEditor", () => ({
-  default: ({ value, onChange, placeholder, ...rest }: any) => (
+  default: ({ value, onChange, placeholder, ariaLabel }: any) => (
     <textarea
       value={value}
       placeholder={placeholder}
+      aria-label={ariaLabel}
       onChange={(event) => onChange?.(event.target.value)}
-      {...rest}
     />
   ),
 }));
@@ -168,6 +168,39 @@ describe("McpFormModal", () => {
     );
     return { onSave, onClose };
   };
+
+  it("associates MCP form labels with their controls", () => {
+    renderForm();
+
+    expect(
+      screen.getByRole("textbox", { name: "mcp.form.title" }),
+    ).toHaveAttribute("aria-required", "true");
+    expect(
+      screen.getByRole("textbox", { name: "mcp.form.name" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "mcp.form.enabledApps" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "mcp.form.jsonConfig" }),
+    ).toBeInTheDocument();
+
+    const additionalInfoButton = screen.getByRole("button", {
+      name: "mcp.form.additionalInfo",
+    });
+    expect(additionalInfoButton).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(additionalInfoButton);
+    expect(additionalInfoButton).toHaveAttribute("aria-expanded", "true");
+
+    for (const name of [
+      "mcp.form.description",
+      "mcp.form.tags",
+      "mcp.form.homepage",
+      "mcp.form.docs",
+    ]) {
+      expect(screen.getByRole("textbox", { name })).toBeInTheDocument();
+    }
+  });
 
   it("应用预设后填充 ID 与配置内容", async () => {
     renderForm();
