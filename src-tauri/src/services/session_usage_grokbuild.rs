@@ -1309,7 +1309,10 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&enc, sub.join("cycle")).expect("symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")).expect("symlink");
+        if let Err(e) = std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")) {
+            eprintln!("[SKIP] no symlink privilege on this Windows account: {e}");
+            return;
+        }
 
         // 也放一个真实的目标文件，确认正常遍历仍工作
         std::fs::write(enc.join("updates.jsonl"), b"{}\n").expect("write real file");
