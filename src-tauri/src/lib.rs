@@ -1341,13 +1341,16 @@ pub fn run() {
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
                 if settings.silent_startup {
-                    // 静默启动模式：保持窗口隐藏
-                    let _ = window.hide();
-                    #[cfg(target_os = "windows")]
-                    let _ = window.set_skip_taskbar(true);
-                    #[cfg(target_os = "macos")]
-                    tray::apply_tray_policy(app.handle(), false);
-                    log::info!("静默启动模式：主窗口已隐藏");
+                    if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
+                        log::error!("静默启动进入轻量模式失败，回退到隐藏窗口: {e}");
+                        let _ = window.hide();
+                        #[cfg(target_os = "windows")]
+                        let _ = window.set_skip_taskbar(true);
+                        #[cfg(target_os = "macos")]
+                        tray::apply_tray_policy(app.handle(), false);
+                    } else {
+                        log::info!("静默启动模式：已进入轻量模式");
+                    }
                 } else {
                     // 正常启动模式：显示窗口
                     #[cfg(not(target_os = "windows"))]
