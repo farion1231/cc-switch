@@ -61,6 +61,30 @@ pub fn get_usage_trends(
     )
 }
 
+/// 获取趋势序列（堆叠柱状图：颗粒度 × 堆叠维度）
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn get_usage_trend_series(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    granularity: Option<String>,
+    group_by: Option<String>,
+    app_type: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+) -> Result<UsageTrendSeriesResponse, AppError> {
+    state.db.get_usage_trend_series(
+        start_date,
+        end_date,
+        granularity.as_deref().unwrap_or("auto"),
+        group_by.as_deref().unwrap_or("token_type"),
+        app_type.as_deref(),
+        provider_name.as_deref(),
+        model.as_deref(),
+    )
+}
+
 /// 获取 Provider 统计
 #[tauri::command]
 pub fn get_provider_stats(
