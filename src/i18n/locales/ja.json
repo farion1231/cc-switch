@@ -32,18 +32,6 @@
     "refresh": "更新",
     "refreshing": "更新中...",
     "import": "インポート",
-        "config": {
-          "open": "設定",
-          "title": "{{name}} の設定",
-          "description": "保存時にプラグインが検証・書き込み、ホットリロードで反映",
-          "save": "設定を保存",
-          "saved": "設定を保存しました（プラグインにホットリロード反映）",
-          "failed": "保存失敗：{{error}}",
-          "cancel": "キャンセル",
-          "loading": "設定を読み込み中…",
-          "addRow": "＋ 行を追加",
-          "noSchema": "このプラグインは設定定義を返しませんでした"
-        },
     "all": "すべて",
     "search": "検索",
     "enableAllForApp": "{{app}} ですべて有効化",
@@ -477,7 +465,19 @@
         "priorityHint": "小さいほど先に実行（負数可）",
         "enabledLabel": "有効",
         "stageHint": "プラグインが参加する実行タイミング",
-        "empty": "プラグインはありません"
+        "empty": "プラグインはありません",
+        "config": {
+          "open": "設定",
+          "title": "{{name}} の設定",
+          "description": "保存時にプラグインが検証・書き込み、ホットリロードで反映",
+          "save": "設定を保存",
+          "saved": "設定を保存しました（プラグインにホットリロード反映）",
+          "failed": "保存失敗：{{error}}",
+          "cancel": "キャンセル",
+          "loading": "設定を読み込み中…",
+          "addRow": "＋ 行を追加",
+          "noSchema": "このプラグインは設定定義を返しませんでした"
+        }
       }
     },
     "language": "言語",

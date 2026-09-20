@@ -20,6 +20,8 @@ export interface PluginInfo {
   source: string | null;
   /** 插件声明了配置界面（config_schema 非空）→ 面板显示"设置"按钮 */
   hasConfig: boolean;
+  /** 可选，插件自定义的「设置」对话框标题 */
+  configTitle?: string;
   /** 非空 = 加载失败的占位条目，只读展示错误 */
   error: string | null;
 }
@@ -60,8 +62,10 @@ export interface ConfigColumn {
 export interface ConfigSchemaItem {
   type: ConfigFieldType;
   key: string;
-  /** 插件目录内的目标配置文件名（单段 .json） */
+  /** 插件目录内的目标配置文件（相对路径，允许子目录） */
   file: string;
+  /** 可选，页签分组名（缺省按 file 分组） */
+  tab?: string;
   /** 文档内的点路径（缺省 = key） */
   path?: string;
   label: string;

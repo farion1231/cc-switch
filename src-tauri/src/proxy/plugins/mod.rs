@@ -68,6 +68,11 @@ pub trait ProxyPlugin: Send + Sync {
         &[]
     }
 
+    /// 可选，「设置」对话框自定义标题；缺省 None（前端用 i18n 模板）
+    fn config_title(&self) -> Option<&str> {
+        None
+    }
+
     /// 读取当前配置文档（键 = 配置文件名，值 = 文档 JSON）
     fn config_read(&self) -> Result<serde_json::Value, PluginError> {
         let _ = self;

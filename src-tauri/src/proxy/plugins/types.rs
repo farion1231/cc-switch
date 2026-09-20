@@ -103,6 +103,9 @@ pub struct PluginManifest {
     /// 由插件自行校验与落盘——核心不代写插件文件）
     #[serde(default)]
     pub config_schema: Vec<ConfigSchemaItem>,
+    /// 可选，「设置」对话框自定义标题；缺省由前端 i18n 提供 "{{name}} 配置" 模板
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_title: Option<String>,
 }
 
 /// 配置界面字段类型
@@ -154,8 +157,13 @@ pub struct ConfigSchemaItem {
     pub field_type: ConfigFieldType,
     /// 字段键（展示/排序用；实际读写按 file + path 定位）
     pub key: String,
-    /// 目标配置文件名：插件目录内单段文件名（不允许路径分隔符，必须 .json 结尾）
+    /// 目标配置文件：插件目录内相对路径（允许子目录如 "json/config.json"，
+    /// 禁止 .. 逃逸与绝对路径；校验见 validate）
     pub file: String,
+    /// 可选，页签分组名：同一 tab 的条目渲染进同一页签（缺省按 file 分组，
+    /// 页签名取文件名）；核心不解释其语义，仅透传给前端
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
     /// 文档内的点路径（如 "hash.algorithm"）；缺省 = key
     #[serde(default)]
     pub path: Option<String>,
@@ -323,6 +331,9 @@ pub struct PluginInfo {
     /// 插件是否声明了配置界面（config_schema 非空；前端据此显示"设置"按钮）
     #[serde(default)]
     pub has_config: bool,
+    /// 可选，插件自定义的「设置」对话框标题（manifest.config_title）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_title: Option<String>,
     /// 加载失败的插件（list 也要展示失败条目）
     pub error: Option<String>,
 }
@@ -346,6 +357,7 @@ mod tests {
             enabled: true,
             settings: json!({}),
             config_schema: Vec::new(),
+            config_title: None,
         }
     }
 

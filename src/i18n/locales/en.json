@@ -32,18 +32,6 @@
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "import": "Import",
-        "config": {
-          "open": "Settings",
-          "title": "{{name}} configuration",
-          "description": "On save the plugin validates and persists; hot reload applies",
-          "save": "Save configuration",
-          "saved": "Configuration saved (plugin hot-reloads)",
-          "failed": "Save failed: {{error}}",
-          "cancel": "Cancel",
-          "loading": "Loading configuration…",
-          "addRow": "＋ Add row",
-          "noSchema": "Plugin returned no configuration definition"
-        },
     "all": "All",
     "search": "Search",
     "enableAllForApp": "Enable all for {{app}}",
@@ -477,7 +465,19 @@
         "priorityHint": "Lower runs earlier; may be negative",
         "enabledLabel": "Enabled",
         "stageHint": "Pipeline stages this plugin participates in",
-        "empty": "No plugins"
+        "empty": "No plugins",
+        "config": {
+          "open": "Settings",
+          "title": "{{name}} configuration",
+          "description": "On save the plugin validates and persists; hot reload applies",
+          "save": "Save configuration",
+          "saved": "Configuration saved (plugin hot-reloads)",
+          "failed": "Save failed: {{error}}",
+          "cancel": "Cancel",
+          "loading": "Loading configuration…",
+          "addRow": "＋ Add row",
+          "noSchema": "Plugin returned no configuration definition"
+        }
       }
     },
     "language": "Language",

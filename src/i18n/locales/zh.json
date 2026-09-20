@@ -32,18 +32,6 @@
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "import": "导入",
-        "config": {
-          "open": "设置",
-          "title": "{{name}} 配置",
-          "description": "修改保存后由插件校验并落盘，热重载生效",
-          "save": "保存配置",
-          "saved": "配置已保存（插件热重载生效）",
-          "failed": "保存失败：{{error}}",
-          "cancel": "取消",
-          "loading": "读取配置中…",
-          "addRow": "＋ 添加一行",
-          "noSchema": "该插件未返回配置定义"
-        },
     "all": "全部",
     "search": "查询",
     "enableAllForApp": "为 {{app}} 全部启用",
@@ -477,7 +465,19 @@
         "priorityHint": "数字越小越先执行，可为负数",
         "enabledLabel": "启用",
         "stageHint": "插件参与的执行时机",
-        "empty": "暂无插件"
+        "empty": "暂无插件",
+        "config": {
+          "open": "设置",
+          "title": "{{name}} 配置",
+          "description": "修改保存后由插件校验并落盘，热重载生效",
+          "save": "保存配置",
+          "saved": "配置已保存（插件热重载生效）",
+          "failed": "保存失败：{{error}}",
+          "cancel": "取消",
+          "loading": "读取配置中…",
+          "addRow": "＋ 添加一行",
+          "noSchema": "该插件未返回配置定义"
+        }
       }
     },
     "language": "界面语言",

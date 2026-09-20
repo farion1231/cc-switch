@@ -403,6 +403,7 @@ export function PluginSettingsPanel() {
         <PluginConfigDialog
           pluginId={configTarget.plugin.id}
           displayName={configTarget.plugin.displayName}
+          title={configTarget.plugin.configTitle}
           schema={configTarget.schema}
           open={configTarget !== null}
           onClose={() => setConfigTarget(null)}

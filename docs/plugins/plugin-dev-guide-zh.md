@@ -91,6 +91,7 @@ JSON 交给你改写：
 | `enabled` | | true | 初始启用状态（用户可在面板覆盖） |
 | `settings` | | null | 任意 JSON，随每次调用透传（改它需改清单并重载） |
 | `config_schema` | | `[]` | 声明式配置界面（见 §4） |
+| `config_title` | | — | 可选，「设置」对话框自定义标题（缺省 "{{name}} 配置"） |
 
 工作目录 = 插件目录；`command` 其余参数中的相对路径同样按插件目录解析。
 
@@ -186,6 +187,7 @@ schema 字段项的完整形状（与面板渲染器一一对应）：
   "type": "toggle | text | number | select | textarea | table",
   "key":  "字段键（展示/排序用）",
   "file": "config.json",
+  "tab":  "可选，页签分组名：同一 tab 的条目渲染进同一页签（缺省按 file 分组）",
   "path": "文档内的点路径，如 hash.algorithm；缺省 = key",
   "label": "显示名",
   "description": "说明文字（可省）",

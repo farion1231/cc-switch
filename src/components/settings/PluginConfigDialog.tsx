@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
@@ -9,11 +9,11 @@ import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   ConfigColumn,
   ConfigSchemaItem,
@@ -53,15 +53,43 @@ function setByPath(doc: unknown, path: string, value: unknown): void {
 interface Props {
   pluginId: string;
   displayName: string;
+  /** 可选，插件自定义标题（manifest.configTitle）；缺省 "{{name}} 配置" 模板 */
+  title?: string;
   schema: ConfigSchemaItem[];
   open: boolean;
   onClose: () => void;
 }
 
-export function PluginConfigDialog({ pluginId, displayName, schema, open, onClose }: Props) {
+export function PluginConfigDialog({
+  pluginId,
+  displayName,
+  title,
+  schema,
+  open,
+  onClose,
+}: Props) {
   const { t } = useTranslation();
   const [docs, setDocs] = useState<PluginConfigDocs | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // 按 tab 分组（缺省按 file），页签名取 tab 或文件名；分组只影响渲染，
+  // 编辑与保存始终针对整份文档（未绑定字段原样保留）
+  const groups = useMemo(() => {
+    const map: { key: string; label: string; items: ConfigSchemaItem[] }[] = [];
+    const index = new Map<string, number>();
+    for (const item of schema) {
+      const key = item.tab ?? item.file;
+      const label = item.tab ?? (item.file.split("/").pop() ?? item.file);
+      let i = index.get(key);
+      if (i === undefined) {
+        i = map.length;
+        index.set(key, i);
+        map.push({ key, label, items: [] });
+      }
+      map[i].items.push(item);
+    }
+    return map;
+  }, [schema]);
 
   const load = useCallback(async () => {
     setDocs(null);
@@ -305,33 +333,40 @@ export function PluginConfigDialog({ pluginId, displayName, schema, open, onClos
     );
   };
 
-  // 按目标文件分组渲染
-  const files = Array.from(new Set(schema.map((s) => s.file)));
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {t(`${I18N}.title`, { name: displayName })}
+            {title ?? t(`${I18N}.title`, { name: displayName })}
           </DialogTitle>
-          <DialogDescription>{t(`${I18N}.description`)}</DialogDescription>
         </DialogHeader>
         {docs === null ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
             {t(`${I18N}.loading`)}
           </p>
         ) : (
-          <div className="space-y-5">
-            {files.map((file) => (
-              <div key={file} className="space-y-3 rounded-lg border p-3">
-                <p className="font-mono text-xs text-muted-foreground">{file}</p>
-                {schema
-                  .filter((s) => s.file === file)
-                  .map((item) => renderField(item))}
-              </div>
+          <Tabs defaultValue={groups[0]?.key}>
+            <TabsList className="flex h-auto w-full flex-wrap">
+              {groups.map((g) => (
+                <TabsTrigger key={g.key} value={g.key}>
+                  {g.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {groups.map((g) => (
+              <TabsContent key={g.key} value={g.key} className="mt-3 space-y-4">
+                {Array.from(new Set(g.items.map((it) => it.file))).map((file) => (
+                  <div key={file} className="space-y-3">
+                    <p className="font-mono text-xs text-muted-foreground">{file}</p>
+                    {g.items
+                      .filter((it) => it.file === file)
+                      .map((item) => renderField(item))}
+                  </div>
+                ))}
+              </TabsContent>
             ))}
-          </div>
+          </Tabs>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

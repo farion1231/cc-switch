@@ -99,6 +99,7 @@ impl PluginRegistry {
                 version: plugin.version(),
                 source: plugin.source(),
                 has_config: !plugin.config_schema().is_empty(),
+                config_title: plugin.config_title().map(str::to_string),
                 error: None,
             })
             .collect();
@@ -533,6 +534,7 @@ mod tests {
             version: None,
             source: None,
             has_config: false,
+                config_title: None,
             error: Some("清单无效".to_string()),
         });
 
@@ -556,6 +558,7 @@ mod tests {
             version: None,
             source: Some("/tmp/user/broken/plugin.json".to_string()),
             has_config: false,
+                config_title: None,
             error: Some("JSON 错误".to_string()),
         });
 

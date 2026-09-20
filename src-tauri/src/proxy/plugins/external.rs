@@ -785,6 +785,10 @@ impl ProxyPlugin for ExternalPlugin {
         &self.manifest.config_schema
     }
 
+    fn config_title(&self) -> Option<&str> {
+        self.manifest.config_title.as_deref()
+    }
+
     fn config_read(&self) -> Result<Value, PluginError> {
         let input = json!({"stage": "config", "op": "get"});
         let output = self.dispatch(&input.to_string())?;

@@ -65,6 +65,7 @@ fn load_user_plugins_into(registry: &PluginRegistry, dir: &Path) {
             version: None,
             source: error.manifest_path,
             has_config: false,
+            config_title: None,
             error: Some(error.message),
         });
     }
