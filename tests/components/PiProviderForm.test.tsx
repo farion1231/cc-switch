@@ -80,6 +80,83 @@ describe("PiProviderForm", () => {
     expect(screen.queryByText("pi.form.stepModel")).not.toBeInTheDocument();
   });
 
+  it("normalizes the provider key only after Chinese IME composition commits", () => {
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save IME-safe provider key"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    const providerKeyInput = screen.getByPlaceholderText("my-provider");
+
+    fireEvent.compositionStart(providerKeyInput);
+    fireEvent.change(providerKeyInput, {
+      target: { value: "Pi中文-1" },
+    });
+
+    expect(providerKeyInput).toHaveValue("Pi中文-1");
+
+    fireEvent.compositionEnd(providerKeyInput, {
+      data: "Pi中文-1",
+      target: { value: "Pi中文-1" },
+    });
+
+    expect(providerKeyInput).toHaveValue("pi-1");
+  });
+
+  it("keeps model name composition local until the Chinese IME commits", () => {
+    const initialData = {
+      name: "IME provider",
+      settingsConfig: {
+        name: "IME provider",
+        api: "openai-completions",
+        models: [completeModel("ime-model", "Original model")],
+      },
+    };
+    const renderForm = () => (
+      <PiProviderForm
+        appId="pi"
+        providerId="ime-provider"
+        submitLabel="Save IME-safe model"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={initialData}
+      />
+    );
+    const { rerender } = render(renderForm());
+
+    const modelNameInput = screen.getByLabelText("pi.form.modelName");
+    const configPreview = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+
+    fireEvent.compositionStart(modelNameInput);
+    fireEvent.change(modelNameInput, {
+      target: { value: "中文模型" },
+    });
+
+    expect(modelNameInput).toHaveValue("中文模型");
+    expect(JSON.parse(configPreview.value).models[0].name).toBe(
+      "Original model",
+    );
+
+    rerender(renderForm());
+    expect(modelNameInput).toHaveValue("中文模型");
+
+    fireEvent.compositionEnd(modelNameInput, {
+      data: "中文模型",
+      target: { value: "中文模型" },
+    });
+
+    expect(JSON.parse(configPreview.value).models[0].name).toBe("中文模型");
+  });
+
   it("uses the OpenCode-style provider hierarchy without per-model endpoints", () => {
     render(
       <PiProviderForm
