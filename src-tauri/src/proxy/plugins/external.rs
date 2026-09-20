@@ -1700,6 +1700,43 @@ mod real_process_tests {
     //! `cargo test --lib -- --ignored real_node_plugin`）
     use super::*;
 
+    /// 真实进程验证 persistent 承诺（开发指南 §3.2）：首次拉起即崩溃的插件 →
+    /// 核心自动重启进程、重试一次，调用方无感知拿到正常响应。
+    /// 需 python 在 PATH（手动：cargo test --lib -- --ignored real_python）
+    #[tokio::test]
+    #[ignore = "spawn 真实 Python 进程，需 python 在 PATH；验证崩溃重启语义"]
+    async fn real_python_persistent_crash_restart_retry() {
+        let tmp = tempfile::tempdir().unwrap();
+        // flaky 脚本：首次拉起创建标记后直接退出 1（模拟启动崩溃）；
+        // 重启后的进程按 persistent 协议正常应答
+        std::fs::write(
+            tmp.path().join("flaky.py"),
+            r#"
+import json, os, sys
+marker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "started.flag")
+if not os.path.exists(marker):
+    open(marker, "w").write("crashed")
+    sys.exit(1)
+for line in sys.stdin:
+    req = json.loads(line)
+    print(json.dumps({"body": {"ok": True}}, ensure_ascii=False), flush=True)
+"#,
+        )
+        .unwrap();
+        let transport = PersistentProcessTransport::new(
+            "user:flaky".to_string(),
+            vec!["python".to_string(), "flaky.py".to_string()],
+            tmp.path().to_path_buf(),
+        );
+        let resp = transport
+            .call(
+                r#"{"stage":"pre_request","op":"noop"}"#,
+                std::time::Duration::from_secs(15),
+            )
+            .expect("崩溃重启重试后应拿到正常响应");
+        assert!(resp.contains("\"ok\": true"), "resp: {resp}");
+    }
+
     #[tokio::test]
     #[ignore = "spawn 真实 Node 进程，需 node 在 PATH；仅作手动冒烟"]
     async fn real_node_plugin_roundtrip() {
