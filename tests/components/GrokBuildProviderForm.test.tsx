@@ -89,6 +89,33 @@ describe("GrokBuildProviderForm", () => {
     });
   });
 
+  it("submits PackyCode with its shared endpoint and backend search disabled", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /PackyCode/ }));
+    await user.type(screen.getByLabelText("API Key"), "secret-key");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    const config = parseToml(settings.config) as any;
+    const selected = config.model[config.models.default];
+
+    expect(config.models.web_search).toBe("grok-4.5");
+    expect(config.endpoints.models_base_url).toBe("https://www.packyapi.ai/v1");
+    expect(selected.base_url).toBeUndefined();
+    expect(selected.supports_backend_search).toBe(false);
+  });
+
   it("uses the Codex-style advanced section without redundant Grok fields", () => {
     const { container } = render(
       <GrokBuildProviderForm
@@ -214,6 +241,171 @@ context_window = 250000
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[0][0].meta.custom_endpoints).toBeUndefined();
+  });
+
+  it("migrates an existing PackyCode provider when saving", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const config = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://www.packyapi.ai/v1"
+name = "PackyCode"
+api_key = "existing-key"
+api_backend = "responses"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="existing-packy"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "PackyCode",
+          websiteUrl: "https://www.packyapi.ai",
+          settingsConfig: { config },
+          meta: {
+            isPartner: true,
+            partnerPromotionKey: "packycode",
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    const migrated = parseToml(settings.config) as any;
+    const selected = migrated.model[migrated.models.default];
+
+    expect(migrated.models.web_search).toBe("grok-4.5");
+    expect(migrated.endpoints.models_base_url).toBe(
+      "https://www.packyapi.ai/v1",
+    );
+    expect(selected.base_url).toBeUndefined();
+    expect(selected.supports_backend_search).toBe(false);
+    expect(submitted.meta.partnerPromotionKey).toBe("packycode");
+  });
+
+  it("migrates a keyless legacy PackyCode provider on a known endpoint", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const config = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://www.packyapi.com/v1"
+name = "PackyCode"
+api_key = "existing-key"
+api_backend = "responses"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="legacy-packy"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "PackyCode",
+          websiteUrl: "https://www.packyapi.ai",
+          settingsConfig: { config },
+          meta: {
+            isPartner: true,
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    const migrated = parseToml(settings.config) as any;
+    const selected = migrated.model[migrated.models.default];
+
+    expect(migrated.models.web_search).toBe("grok-4.5");
+    expect(migrated.endpoints.models_base_url).toBe(
+      "https://www.packyapi.com/v1",
+    );
+    expect(selected.base_url).toBeUndefined();
+    expect(selected.supports_backend_search).toBe(false);
+    expect(submitted.meta.partnerPromotionKey).toBe("packycode");
+  });
+
+  it("keeps web_search aligned when the selected profile is renamed", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const config = `[models]
+default = "grok-4.5"
+web_search = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://www.packyapi.ai/v1"
+name = "PackyCode"
+api_key = "existing-key"
+api_backend = "responses"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="rename-packy"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "PackyCode",
+          websiteUrl: "https://www.packyapi.ai",
+          settingsConfig: { config },
+          meta: {
+            isPartner: true,
+            partnerPromotionKey: "packycode",
+          },
+        }}
+      />,
+    );
+
+    // Profile is no longer a dedicated field after the Codex-aligned form.
+    // Rename through raw config.toml so the writer still retargets web_search.
+    fireEvent.change(screen.getByLabelText("raw-config"), {
+      target: {
+        value: `[models]
+default = "custom-profile"
+web_search = "grok-4.5"
+
+[model."custom-profile"]
+model = "grok-4"
+base_url = "https://www.packyapi.ai/v1"
+name = "PackyCode"
+api_key = "existing-key"
+api_backend = "responses"
+context_window = 500000
+`,
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    const settings = JSON.parse(submitted.settingsConfig);
+    const renamed = parseToml(settings.config) as any;
+
+    expect(renamed.models.default).toBe("custom-profile");
+    expect(renamed.models.web_search).toBe("custom-profile");
+    expect(renamed.model["custom-profile"].model).toBe("grok-4");
+    expect(renamed.model["grok-4.5"]).toBeUndefined();
+    expect(renamed.endpoints.models_base_url).toBe(
+      "https://www.packyapi.ai/v1",
+    );
+    expect(renamed.model["custom-profile"].supports_backend_search).toBe(false);
   });
 
   // #6427 复用 Codex 表单时把 Codex 专属文案原样带进了 Grok Build 表单。
