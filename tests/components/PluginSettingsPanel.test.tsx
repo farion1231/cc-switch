@@ -27,6 +27,7 @@ const builtinPlugin: PluginInfo = {
   enabled: true,
   version: null,
   source: null,
+  hasConfig: false,
   error: null,
 };
 
@@ -40,6 +41,7 @@ const userPlugin: PluginInfo = {
   enabled: false,
   version: "0.1.0",
   source: "~/.cc-switch/plugins/my-plugin/plugin.json",
+  hasConfig: false,
   error: null,
 };
 
@@ -53,6 +55,7 @@ const failedPlugin: PluginInfo = {
   enabled: false,
   version: null,
   source: "~/.cc-switch/plugins/broken/plugin.json",
+  hasConfig: false,
   error: "插件清单无效: missing command",
 };
 

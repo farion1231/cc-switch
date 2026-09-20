@@ -218,13 +218,18 @@ impl PluginManifest {
             if item.label.trim().is_empty() {
                 return Err(at("label 不能为空".to_string()));
             }
+            // 允许插件目录内的相对子路径（如 "json/config.json"），
+            // 但拒绝绝对路径与 ".." 逃逸
+            let file_path = std::path::Path::new(&item.file);
             let file_ok = !item.file.is_empty()
-                && !item.file.contains('/')
-                && !item.file.contains('\\')
-                && item.file.ends_with(".json");
+                && item.file.ends_with(".json")
+                && file_path.is_relative()
+                && file_path
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)));
             if !file_ok {
                 return Err(at(format!(
-                    "file 必须是插件目录内的单段 .json 文件名: {:?}",
+                    "file 必须是插件目录内的相对 .json 路径（不允许 .. 逃逸）: {:?}",
                     item.file
                 )));
             }

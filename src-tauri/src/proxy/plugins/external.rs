@@ -1608,6 +1608,13 @@ mod tests {
         let mut broken = config_manifest();
         broken.config_schema = serde_json::from_value(value).unwrap();
         assert!(broken.validate().is_err(), "非 json 文件应拒绝");
+
+        // 插件目录内的相对子路径 → 允许（如 json/ 子目录布局）
+        let mut value = config_schema_json();
+        value[0]["file"] = json!("json/config.json");
+        let mut with_subdir = config_manifest();
+        with_subdir.config_schema = serde_json::from_value(value).unwrap();
+        with_subdir.validate().unwrap();
     }
 
     #[test]
