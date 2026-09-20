@@ -975,10 +975,15 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.deepseek.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // supports1m：两个档位钉的都是 1M 窗口模型（本仓 Codex catalog 记
+    // deepseek-v4-pro / deepseek-flash 均 1048576；haiku 档的
+    // deepseek-v4-flash 被官方端点路由到 V4.1 Flash，窗口同档）。[1m] 只是
+    // Claude Desktop 本地标记，匹配前会被剥掉，不会随请求发往上游
     modelRoutes: brandedRoutes(
       "deepseek-v4-pro",
       "deepseek-v4-pro",
       "deepseek-v4-flash",
+      true,
     ),
     icon: "deepseek",
     iconColor: "#1E88E5",
@@ -994,10 +999,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
     // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
     apiFormat: "anthropic",
+    // supports1m：deepseek-v4-flash 窗口 1M（本仓 Go 网关 Codex catalog
+    // 记 1048576）。[1m] 只是 Claude Desktop 本地标记，匹配前会被剥掉，
+    // 不会随请求发往上游
     modelRoutes: brandedRoutes(
       "deepseek-v4-flash",
       "deepseek-v4-flash",
       "deepseek-v4-flash",
+      true,
     ),
     endpointCandidates: ["https://opencode.ai/zen/go"],
     icon: "opencode",
@@ -1171,10 +1180,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
     mode: "proxy",
     apiFormat: "anthropic",
+    // supports1m：DeepSeek V4 Pro 官方窗口 1M（千帆平台模型列表口径，
+    // 本仓 Codex catalog 同记 1048576）。[1m] 只是 Claude Desktop 本地
+    // 标记，匹配前会被剥掉，不会随请求发往上游
     modelRoutes: brandedRoutes(
       "deepseek-v4-pro",
       "deepseek-v4-pro",
       "deepseek-v4-pro",
+      true,
     ),
     endpointCandidates: [
       "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
