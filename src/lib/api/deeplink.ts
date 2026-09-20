@@ -100,6 +100,13 @@ export const deeplinkApi = {
   },
 
   /**
+   * Take the last deep link request cached before the frontend listener was ready.
+   */
+  takePendingDeeplink: async (): Promise<DeepLinkImportRequest | null> => {
+    return invoke("take_pending_deeplink");
+  },
+
+  /**
    * Import a resource from a deep link request (unified handler)
    * @param request The deep link import request
    * @returns Import result based on resource type

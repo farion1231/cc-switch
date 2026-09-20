@@ -1,8 +1,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { http, HttpResponse } from "msw";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { server } from "../msw/server";
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
@@ -98,5 +100,27 @@ describe("DeepLinkImportDialog", () => {
       ),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("脚本代码")).not.toBeInTheDocument();
+  });
+
+  it("restores a deep link cached before the frontend listener is ready", async () => {
+    server.use(
+      http.post("http://tauri.local/take_pending_deeplink", () =>
+        HttpResponse.json({
+          version: "v1",
+          resource: "provider",
+          app: "claude",
+          name: "Pending Provider",
+          homepage: "https://example.com",
+          endpoint: "https://api.example.com",
+          apiKey: "sk-provider-key",
+        }),
+      ),
+    );
+
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("Pending Provider")).toBeInTheDocument();
+    });
   });
 });
