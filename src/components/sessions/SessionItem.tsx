@@ -96,6 +96,12 @@ export function SessionItem({
           />
         </div>
 
+        {session.accountLabel && (
+          <div className="mt-1 truncate text-[11px] text-muted-foreground">
+            {session.accountLabel}
+          </div>
+        )}
+
         <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <Clock className="size-3" />
           <span>
