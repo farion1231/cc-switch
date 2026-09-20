@@ -18,6 +18,13 @@ body:
             我已搜索过[已有的 Issue](https://github.com/farion1231/cc-switch/issues)，包括已关闭的。
           required: true
 
+  - type: markdown
+    attributes:
+      value: |
+        > **Planning to contribute a fix? / 计划贡献修复？**
+        > Reporting a bug does not require permission. If you plan to implement a fix, read the [Pull Request Guidelines](https://github.com/farion1231/cc-switch/blob/main/CONTRIBUTING.md#pull-request-guidelines) first. First-time code contributors need an ordinary issue marked `help wanted` or `good first issue`, or explicit maintainer confirmation. New managed applications, provider families, protocol bridges, harness integrations, and comparable long-lived integrations always require explicit maintainer confirmation.
+        > 报告 Bug 本身不需要许可。如果计划参与修复，请先阅读 [Pull Request 指南](https://github.com/farion1231/cc-switch/blob/main/CONTRIBUTING.md#pull-request-指南)。首次提交代码的贡献者需要选择标记为 `help wanted` 或 `good first issue` 的普通 Issue，或获得维护者明确确认。新增受管应用、供应商系列、协议桥接、harness 集成及其他同类长期集成始终需要维护者明确确认。
+
   - type: input
     attributes:
       label: CC Switch Version / 版本号
@@ -95,3 +102,13 @@ body:
         其他信息、截图或日志。
     validations:
       required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution / 参与贡献
+      options:
+        - label: |
+            I am interested in contributing a fix. I understand that implementation may require prior maintainer confirmation.
+            我有兴趣参与修复。我了解实现修复可能需要事先获得维护者确认。
+          required: false

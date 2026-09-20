@@ -14,6 +14,8 @@ There are many ways to contribute:
 - **Contribute code** — Fix bugs or implement features via pull requests.
 - **Translate** — Help us improve translations for English, Chinese, and Japanese.
 
+> **Before writing code:** Read the [Pull Request Guidelines](#pull-request-guidelines). New features require an issue discussion before implementation. First-time code contributors may start ordinary work when the issue is marked `help wanted` or `good first issue`, or when a `contribution-approved` label or explicit maintainer comment confirms the direction and scope. New managed applications, provider families, protocol bridges, harness integrations, and comparable long-lived integrations require explicit maintainer confirmation regardless of contributor history; generic task labels such as `help wanted` or `good first issue` are not enough. Reporting an issue does not require permission to do so.
+
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
 ## Development Setup
@@ -78,7 +80,9 @@ cd src-tauri && cargo fmt --check && cargo clippy && cargo test
 
 ## Pull Request Guidelines
 
-1. **Open an issue first** for new features — PRs for features that are not a good fit may be closed.
+1. **Discuss work first when required** — New features must be discussed in an issue before implementation. First-time code contributors may start ordinary, in-scope work when the issue is explicitly marked `help wanted` or `good first issue`, or when a `contribution-approved` label or explicit maintainer comment confirms the direction and scope. New managed applications, provider families, protocol bridges, harness integrations, and comparable long-lived integrations always require explicit confirmation, regardless of contributor history; generic task labels such as `help wanted` or `good first issue` are not enough. For security fixes, use the private reporting channel in the [Security Policy](./SECURITY.md) instead; a private advisory with explicit maintainer confirmation satisfies this rule, and vulnerability details must not be posted in a public issue. This discussion helps contributors avoid spending time on work the project cannot accept; it is not a promise that the eventual PR will be merged.
+   - A `contribution-approved` label or an explicit maintainer comment confirms the direction and scope. `needs-design`, `needs review`, `blocked`, and silence do not count as approval.
+   - If the implementation materially changes the agreed scope or non-goals, pause and request confirmation again. A polite follow-up is welcome; no response is not approval.
 2. **Fork and branch** — Create a feature branch from `main` (e.g., `feat/my-feature` or `fix/issue-123`).
 3. **Keep PRs focused** — One feature or fix per PR. Avoid unrelated changes.
 4. **Follow the PR template** — Fill in the summary, related issue, and checklist.
@@ -150,6 +154,8 @@ CC Switch supports three languages. When modifying user-facing text:
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
 - **翻译** — 帮助改进英文、中文和日文的翻译。
 
+> **开始写代码之前：** 请先阅读 [Pull Request 指南](#pull-request-指南)。新功能必须先在 Issue 中讨论。首次向本项目提交代码的贡献者，在普通、已限定范围的任务满足以下任一条件时才可开始：Issue 标记为 `help wanted` 或 `good first issue`，或已有 `contribution-approved` 标签或维护者明确评论确认方向和范围。新增受管应用、供应商系列、协议桥接、harness 集成或其他同类长期集成，无论贡献者是否首次参与，都必须获得维护者明确确认；`help wanted` 或 `good first issue` 等普通任务标签本身不够。提交 Issue 报告本身不需要许可。
+
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
 ## 开发环境搭建
@@ -212,7 +218,9 @@ cd src-tauri && cargo fmt --check && cargo clippy && cargo test
 
 ## Pull Request 指南
 
-1. **先开 Issue 讨论** — 新功能请先开 Issue，不适合项目方向的 PR 可能会被关闭。
+1. **需要时先讨论** — 新功能必须先在 Issue 中讨论。首次向本项目提交代码的贡献者，在普通、已限定范围的任务满足以下任一条件时才可开始：Issue 明确标记为 `help wanted` 或 `good first issue`，或已有 `contribution-approved` 标签或维护者明确评论确认方向和范围。任何新增受管应用、供应商系列、协议桥接、harness 集成或其他同类长期集成，无论贡献者是否首次参与，都必须获得维护者明确确认；`help wanted` 或 `good first issue` 等普通任务标签本身不够。安全修复应改用[安全策略](./SECURITY.md)中的私下报告渠道；私密安全公告及维护者的明确确认可满足此规则，漏洞细节不得发布到公开 Issue。提前讨论是为了避免贡献者把时间花在项目无法接受的方案上，并不代表最终 PR 一定会合并。
+   - `contribution-approved` 标签或维护者明确评论可确认方向和范围；`needs-design`、`needs review`、`blocked` 和没有回复均不算批准。
+   - 如果实现实质改变了已确认的范围或非目标，请暂停并再次确认。可以礼貌 follow-up，但没有回复不等于批准。
 2. **Fork 并创建分支** — 从 `main` 创建功能分支（如 `feat/my-feature` 或 `fix/issue-123`）。
 3. **保持 PR 专注** — 每个 PR 只做一件事，避免无关改动。
 4. **遵循 PR 模板** — 填写概述、关联 Issue 和检查清单。

@@ -591,7 +591,7 @@ PR を送る前に以下をご確認ください：
 - フォーマットチェック: `pnpm format:check`
 - 単体テスト: `pnpm test:unit`
 
-新機能の場合は、PR を送る前に Issue でディスカッションしてください。プロジェクトに合わない機能の PR はクローズされる場合があります。
+新機能や長期的な統合の実装を始める前に、[Pull Request Guidelines](./CONTRIBUTING.md#pull-request-guidelines) を確認してください。新機能はまず Issue で議論する必要があります。初めてコードをコントリビュートする場合、通常の Issue では `help wanted` または `good first issue` による事前承認、もしくはメンテナーの明示的な確認も必要です。新しい管理対象アプリ、プロバイダーファミリー、プロトコルブリッジ、Harness 統合、および同様の長期保守が必要な統合には、メンテナーの明示的な確認が必要です。Issue の報告自体に許可は必要ありません。
 
 ## Star History
 
