@@ -14,7 +14,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::proxy::plugins::external::MANIFEST_FILE;
 use crate::proxy::plugins::{
-    plugins_dir, PluginInfo, PluginManifest, PluginOverride, PluginsConfig,
+    plugins_dir, ConfigSchemaItem, PluginInfo, PluginManifest, PluginOverride, PluginsConfig,
 };
 use crate::store::AppState;
 
@@ -44,6 +44,56 @@ pub async fn plugin_list(state: tauri::State<'_, AppState>) -> Result<PluginList
         plugins: state.plugins.list(),
         global_enabled: state.plugins.global_enabled(),
     })
+}
+
+/// 取插件的声明式配置 schema（无配置界面的插件返回空数组）
+#[tauri::command]
+pub async fn plugin_config_schema(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Vec<ConfigSchemaItem>, String> {
+    let plugin = state
+        .plugins
+        .plugin_by_id(&id)
+        .ok_or_else(|| format!("插件不存在或未加载: {id}"))?;
+    Ok(plugin.config_schema().to_vec())
+}
+
+/// 读取插件当前配置文档（键 = 配置文件名；经插件协议 stage=config 的 get 完成）
+#[tauri::command]
+pub async fn plugin_config_read(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let plugin = state
+        .plugins
+        .plugin_by_id(&id)
+        .ok_or_else(|| format!("插件不存在或未加载: {id}"))?;
+    if plugin.config_schema().is_empty() {
+        return Err(format!("插件未提供配置界面: {id}"));
+    }
+    plugin.config_read().map_err(|e| e.to_string())
+}
+
+/// 保存插件配置文档（键 = 配置文件名；经插件协议 stage=config 的 set 完成，
+/// 由插件自行校验并写盘——校验错误原样透传给前端）
+#[tauri::command]
+pub async fn plugin_config_write(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    docs: serde_json::Value,
+) -> Result<(), String> {
+    let plugin = state
+        .plugins
+        .plugin_by_id(&id)
+        .ok_or_else(|| format!("插件不存在或未加载: {id}"))?;
+    if plugin.config_schema().is_empty() {
+        return Err(format!("插件未提供配置界面: {id}"));
+    }
+    if !docs.is_object() {
+        return Err("docs 必须是 {配置文件名: 文档} 对象".to_string());
+    }
+    plugin.config_write(&docs).map_err(|e| e.to_string())
 }
 
 /// 设置单个插件启用/禁用（合并已有 override，保留原 priority，然后持久化）。

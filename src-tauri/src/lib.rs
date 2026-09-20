@@ -1418,6 +1418,9 @@ pub fn run() {
             commands::set_log_config,
             // 插件系统（契约 2.8）
             commands::plugin_list,
+            commands::plugin_config_read,
+            commands::plugin_config_schema,
+            commands::plugin_config_write,
             commands::plugin_import,
             commands::plugin_open_dir,
             commands::plugin_reload,

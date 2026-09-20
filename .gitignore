@@ -29,3 +29,6 @@ copilot-api
 .history
 CODEBUDDY.md
 mainWindow.js
+
+# Cargo 隔离测试构建目录（多次误入提交）
+src-tauri/target_v2test/

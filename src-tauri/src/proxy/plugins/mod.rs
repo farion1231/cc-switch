@@ -25,8 +25,8 @@ pub use init::{apply_overrides, init_registry, plugins_dir, reload_user_plugins}
 pub use registry::{run_request_pipeline, run_sse_pipeline, PluginRegistry};
 #[allow(unused_imports)] // 部分重导出仅供外部（commands/services/前端序列化）使用
 pub use types::{
-    PluginError, PluginInfo, PluginManifest, PluginOverride, PluginProviderInfo,
-    PluginRequestContext, PluginStage, PluginsConfig,
+    ConfigSchemaItem, PluginError, PluginInfo, PluginManifest, PluginOverride,
+    PluginProviderInfo, PluginRequestContext, PluginStage, PluginsConfig,
 };
 
 /// 插件 trait：内置插件与外部插件的统一抽象
@@ -59,6 +59,32 @@ pub trait ProxyPlugin: Send + Sync {
     /// 用于释放插件持有的资源——外部常驻插件借此终止子进程；重新启用后
     /// 插件应能按需重新拉起。默认无操作。
     fn on_disabled(&self) {}
+
+    /// 声明式配置界面 schema（空 = 该插件无配置界面）。
+    /// 面板据此渲染表单；读写经 [`Self::config_read`] / [`Self::config_write`]
+    /// 走插件协议（stage=config 的 get/set），由插件自行校验并落盘——
+    /// 核心不代写插件文件。
+    fn config_schema(&self) -> &[ConfigSchemaItem] {
+        &[]
+    }
+
+    /// 读取当前配置文档（键 = 配置文件名，值 = 文档 JSON）
+    fn config_read(&self) -> Result<serde_json::Value, PluginError> {
+        let _ = self;
+        Err(PluginError::Execution {
+            plugin_id: String::new(),
+            message: "插件未实现配置读取".to_string(),
+        })
+    }
+
+    /// 保存配置文档（键 = 配置文件名，值 = 完整文档；插件校验并写盘）
+    fn config_write(&self, docs: &serde_json::Value) -> Result<(), PluginError> {
+        let _ = docs;
+        Err(PluginError::Execution {
+            plugin_id: self.id().to_string(),
+            message: "插件未实现配置保存".to_string(),
+        })
+    }
 
     /// 请求变换（PreRequest / PreSend 阶段调用）
     /// 返回 Ok(true) 表示修改了 body；Ok(false) 表示未修改

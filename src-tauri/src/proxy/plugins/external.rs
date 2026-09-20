@@ -21,7 +21,9 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::types::{PluginError, PluginManifest, PluginMode, PluginRequestContext, PluginStage};
+use super::types::{
+    ConfigSchemaItem, PluginError, PluginManifest, PluginMode, PluginRequestContext, PluginStage,
+};
 use super::ProxyPlugin;
 
 /// 清单文件名
@@ -778,6 +780,49 @@ impl ProxyPlugin for ExternalPlugin {
             transport.shutdown();
         }
     }
+
+    fn config_schema(&self) -> &[ConfigSchemaItem] {
+        &self.manifest.config_schema
+    }
+
+    fn config_read(&self) -> Result<Value, PluginError> {
+        let input = json!({"stage": "config", "op": "get"});
+        let output = self.dispatch(&input.to_string())?;
+        let parsed: Value = serde_json::from_str(output.trim())?;
+        match parsed {
+            Value::Object(map) => match map.get("config") {
+                Some(config) => Ok(config.clone()),
+                // 空 = 插件未返回任何配置文档
+                None => Ok(json!({})),
+            },
+            _ => Err(PluginError::Execution {
+                plugin_id: self.id.clone(),
+                message: "config 响应不是 JSON 对象".to_string(),
+            }),
+        }
+    }
+
+    fn config_write(&self, docs: &Value) -> Result<(), PluginError> {
+        let input = json!({"stage": "config", "op": "set", "config": docs});
+        let output = self.dispatch(&input.to_string())?;
+        let parsed: Value = serde_json::from_str(output.trim())?;
+        match parsed {
+            // 空对象 = 保存成功
+            Value::Object(ref map) if map.is_empty() => Ok(()),
+            Value::Object(map) => Err(PluginError::Execution {
+                plugin_id: self.id.clone(),
+                message: map
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("config 保存被插件拒绝（未返回原因）")
+                    .to_string(),
+            }),
+            _ => Err(PluginError::Execution {
+                plugin_id: self.id.clone(),
+                message: "config 响应不是 JSON 对象".to_string(),
+            }),
+        }
+    }
 }
 
 /// 解析命令：argv[0] 含路径分隔符且为相对路径时，相对于插件目录解析；
@@ -1500,6 +1545,136 @@ mod tests {
         let (plugins, errors) = load_user_plugins(tmp.path());
         assert!(plugins.is_empty());
         assert!(errors.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 声明式配置界面（config_schema + stage=config 协议）
+    // -----------------------------------------------------------------------
+
+    fn config_schema_json() -> Value {
+        json!([{
+            "type": "toggle", "key": "enable_regex", "file": "config.json",
+            "label": "启用正则引擎"
+        }, {
+            "type": "select", "key": "hash.algorithm", "file": "config.json",
+            "label": "散列算法", "options": ["blake2b", "sha256"]
+        }, {
+            "type": "table", "key": "rules", "file": "rules.json", "path": "rules",
+            "label": "正则规则",
+            "columns": [
+                {"key": "enabled", "type": "toggle", "label": "启用"},
+                {"key": "name", "type": "text", "label": "名称"}
+            ]
+        }])
+    }
+
+    fn config_manifest() -> PluginManifest {
+        let mut value = manifest_json("my-plugin");
+        value["mode"] = json!("persistent");
+        value["config_schema"] = config_schema_json();
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn test_manifest_config_schema_validation() {
+        let manifest = config_manifest();
+        assert_eq!(manifest.config_schema.len(), 3);
+        manifest.validate().unwrap();
+
+        // select 缺 options → 拒绝
+        let mut value = config_schema_json();
+        value[1]["options"] = json!([]);
+        let mut broken = config_manifest();
+        broken.config_schema = serde_json::from_value(value).unwrap();
+        assert!(broken.validate().is_err(), "select 缺 options 应拒绝");
+
+        // table 缺 columns → 拒绝
+        let mut value = config_schema_json();
+        value[2]["columns"] = json!([]);
+        let mut broken = config_manifest();
+        broken.config_schema = serde_json::from_value(value).unwrap();
+        assert!(broken.validate().is_err(), "table 缺 columns 应拒绝");
+
+        // file 路径逃逸 → 拒绝
+        let mut value = config_schema_json();
+        value[0]["file"] = json!("../escape.json");
+        let mut broken = config_manifest();
+        broken.config_schema = serde_json::from_value(value).unwrap();
+        assert!(broken.validate().is_err(), "file 路径逃逸应拒绝");
+
+        // 非 .json 文件 → 拒绝
+        let mut value = config_schema_json();
+        value[0]["file"] = json!("config.toml");
+        let mut broken = config_manifest();
+        broken.config_schema = serde_json::from_value(value).unwrap();
+        assert!(broken.validate().is_err(), "非 json 文件应拒绝");
+    }
+
+    #[test]
+    fn test_persistent_plugin_config_get_set_roundtrip() {
+        let transport = Arc::new(MockPersistentTransport {
+            // 注意：mock 按尾部弹出，故按调用逆序排列（get → set ok → set err）
+            responses: Mutex::new(vec![
+                // set 被插件校验拒绝
+                Err(PluginError::Execution {
+                    plugin_id: "persistent".to_string(),
+                    message: "rules[0].pattern 正则无效".to_string(),
+                }),
+                // set 成功
+                Ok("{}".to_string()),
+                // get
+                Ok(r#"{"config": {"config.json": {"enable_regex": true},
+                     "rules.json": {"enabled": true, "rules": []}}}"#.to_string()),
+            ]),
+            calls: Mutex::new(Vec::new()),
+            shutdown_calls: Mutex::new(0),
+        });
+        let plugin = ExternalPlugin::with_persistent_transport(
+            config_manifest(),
+            Path::new("/tmp/plugins/demo"),
+            Arc::new(MockRunner::err("oneshot runner 不应被调用")),
+            transport.clone(),
+        )
+        .unwrap();
+
+        // schema 透出
+        assert_eq!(plugin.config_schema().len(), 3);
+
+        // get：返回插件给的文档 map
+        let docs = plugin.config_read().unwrap();
+        assert_eq!(docs["config.json"]["enable_regex"], json!(true));
+        assert_eq!(docs["rules.json"]["enabled"], json!(true));
+
+        // get 请求协议
+        let (input, _) = &transport.calls.lock().unwrap()[0];
+        let parsed: Value = serde_json::from_str(input).unwrap();
+        assert_eq!(parsed["stage"], json!("config"));
+        assert_eq!(parsed["op"], json!("get"));
+
+        // set 成功
+        plugin
+            .config_write(&json!({"config.json": {"enable_regex": false}}))
+            .unwrap();
+        let (input, _) = &transport.calls.lock().unwrap()[1];
+        let parsed: Value = serde_json::from_str(input).unwrap();
+        assert_eq!(parsed["stage"], json!("config"));
+        assert_eq!(parsed["op"], json!("set"));
+        assert_eq!(parsed["config"]["config.json"]["enable_regex"], json!(false));
+
+        // set 被插件拒绝：错误透传
+        let err = plugin
+            .config_write(&json!({"rules.json": {"enabled": true}}))
+            .unwrap_err();
+        assert!(err.to_string().contains("正则无效"), "{err}");
+    }
+
+    #[test]
+    fn test_oneshot_plugin_config_via_runner() {
+        let runner = Arc::new(MockRunner::ok(r#"{"config": {"config.json": {}}}"#));
+        let plugin =
+            ExternalPlugin::new(config_manifest(), Path::new("/tmp/plugins/demo"), runner).unwrap();
+        let docs = plugin.config_read().unwrap();
+        assert!(docs.get("config.json").is_some());
     }
 }
 

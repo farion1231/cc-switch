@@ -99,6 +99,75 @@ pub struct PluginManifest {
     /// 可选，任意 JSON，随调用透传给插件
     #[serde(default)]
     pub settings: serde_json::Value,
+    /// 可选，声明式配置界面（面板渲染表单，读写经插件协议 stage=config，
+    /// 由插件自行校验与落盘——核心不代写插件文件）
+    #[serde(default)]
+    pub config_schema: Vec<ConfigSchemaItem>,
+}
+
+/// 配置界面字段类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigFieldType {
+    /// 开关（bool）
+    Toggle,
+    /// 单行文本
+    Text,
+    /// 数字
+    Number,
+    /// 下拉（options 必填）
+    Select,
+    /// 多行文本
+    Textarea,
+    /// 表格（columns 必填；value 为对象数组）
+    Table,
+}
+
+/// 配置界面表格列类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigColumnType {
+    Text,
+    Number,
+    Toggle,
+    Textarea,
+    Select,
+}
+
+/// 表格列定义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ConfigColumn {
+    pub key: String,
+    #[serde(rename = "type")]
+    pub column_type: ConfigColumnType,
+    pub label: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+/// 声明式配置界面的一项字段
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ConfigSchemaItem {
+    #[serde(rename = "type")]
+    pub field_type: ConfigFieldType,
+    /// 字段键（展示/排序用；实际读写按 file + path 定位）
+    pub key: String,
+    /// 目标配置文件名：插件目录内单段文件名（不允许路径分隔符，必须 .json 结尾）
+    pub file: String,
+    /// 文档内的点路径（如 "hash.algorithm"）；缺省 = key
+    #[serde(default)]
+    pub path: Option<String>,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// select 的可选项
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// table 的列定义
+    #[serde(default)]
+    pub columns: Vec<ConfigColumn>,
 }
 
 impl PluginManifest {
@@ -137,6 +206,47 @@ impl PluginManifest {
                 "timeout_ms 必须在 1-{MAX_PLUGIN_TIMEOUT_MS} 之间: {}",
                 self.timeout_ms
             )));
+        }
+
+        for (i, item) in self.config_schema.iter().enumerate() {
+            let at = |msg: String| {
+                PluginError::InvalidManifest(format!("config_schema[{}]: {}", i, msg))
+            };
+            if item.key.trim().is_empty() {
+                return Err(at("key 不能为空".to_string()));
+            }
+            if item.label.trim().is_empty() {
+                return Err(at("label 不能为空".to_string()));
+            }
+            let file_ok = !item.file.is_empty()
+                && !item.file.contains('/')
+                && !item.file.contains('\\')
+                && item.file.ends_with(".json");
+            if !file_ok {
+                return Err(at(format!(
+                    "file 必须是插件目录内的单段 .json 文件名: {:?}",
+                    item.file
+                )));
+            }
+            if matches!(item.field_type, ConfigFieldType::Select) && item.options.is_empty() {
+                return Err(at(format!("{}: select 需要 options", item.key)));
+            }
+            if matches!(item.field_type, ConfigFieldType::Table) && item.columns.is_empty() {
+                return Err(at(format!("{}: table 需要 columns", item.key)));
+            }
+            for (j, column) in item.columns.iter().enumerate() {
+                if column.key.trim().is_empty() || column.label.trim().is_empty() {
+                    return Err(at(format!("{}: columns[{}] key/label 不能为空", item.key, j)));
+                }
+                if matches!(column.column_type, ConfigColumnType::Select)
+                    && column.options.is_empty()
+                {
+                    return Err(at(format!(
+                        "{}: columns[{}] select 需要 options",
+                        item.key, j
+                    )));
+                }
+            }
         }
 
         Ok(())
@@ -205,6 +315,9 @@ pub struct PluginInfo {
     pub version: Option<String>,
     /// 用户插件 manifest 路径；内置为 None
     pub source: Option<String>,
+    /// 插件是否声明了配置界面（config_schema 非空；前端据此显示"设置"按钮）
+    #[serde(default)]
+    pub has_config: bool,
     /// 加载失败的插件（list 也要展示失败条目）
     pub error: Option<String>,
 }
@@ -227,6 +340,7 @@ mod tests {
             timeout_ms: 10_000,
             enabled: true,
             settings: json!({}),
+            config_schema: Vec::new(),
         }
     }
 

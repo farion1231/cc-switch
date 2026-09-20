@@ -98,11 +98,23 @@ impl PluginRegistry {
                 enabled: global && is_effectively_enabled(plugin.as_ref(), &inner.overrides),
                 version: plugin.version(),
                 source: plugin.source(),
+                has_config: !plugin.config_schema().is_empty(),
                 error: None,
             })
             .collect();
         result.extend(inner.failed.iter().cloned());
         result
+    }
+
+    /// 按 id 取插件实例（配置读写命令用；失败条目不在此列）
+    pub fn plugin_by_id(&self, id: &str) -> Option<Arc<dyn ProxyPlugin>> {
+        self.inner
+            .read()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id() == id)
+            .cloned()
     }
 
     /// 按 stage 取出启用的插件（只返回启用且声明该 stage 的插件，按生效优先级升序）；
@@ -520,6 +532,7 @@ mod tests {
             enabled: false,
             version: None,
             source: None,
+            has_config: false,
             error: Some("清单无效".to_string()),
         });
 
@@ -542,6 +555,7 @@ mod tests {
             enabled: false,
             version: None,
             source: Some("/tmp/user/broken/plugin.json".to_string()),
+            has_config: false,
             error: Some("JSON 错误".to_string()),
         });
 
