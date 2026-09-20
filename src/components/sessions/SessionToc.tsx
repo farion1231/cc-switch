@@ -107,7 +107,7 @@ export function SessionTocDialog({
             <X className="size-4 text-muted-foreground" />
           </DialogClose>
         </DialogHeader>
-        <div className="overflow-y-auto max-h-[calc(70vh-80px)]">
+        <div className="scrollbar-visible overflow-y-auto max-h-[calc(70vh-80px)] pr-2">
           <div className="p-3 pb-4 space-y-1">
             {items.map((item, tocIndex) => (
               <button
