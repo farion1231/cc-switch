@@ -286,6 +286,24 @@ struct StreamedTextPart {
     discarded: bool,
 }
 
+fn compatible_terminal_suffix<'a>(streamed: &str, terminal: &'a str) -> Option<&'a str> {
+    terminal
+        .strip_prefix(streamed)
+        .or_else(|| streamed.starts_with(terminal).then_some(""))
+}
+
+enum CompatiblePartMatch {
+    None,
+    Unique(usize),
+    Ambiguous,
+}
+
+#[derive(Default)]
+struct TerminalTextClaims {
+    streamed: HashSet<usize>,
+    buffered: HashSet<usize>,
+}
+
 #[derive(Default)]
 struct StreamedTextState {
     parts: Vec<StreamedTextPart>,
@@ -425,6 +443,23 @@ impl StreamedTextState {
         }
     }
 
+    fn terminal_keyed_part_index(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+        claimed: &mut HashSet<usize>,
+    ) -> Option<usize> {
+        let output_index = output_key.and_then(|key| self.output_part_index(key));
+        let item_index = item_key.and_then(|key| self.item_part_index(key));
+        let index = self.existing_keyed_part_index(output_key, item_key)?;
+        let was_claimed = output_index.is_some_and(|part| claimed.remove(&part))
+            | item_index.is_some_and(|part| claimed.remove(&part));
+        if was_claimed {
+            claimed.insert(index);
+        }
+        Some(index)
+    }
+
     fn resolve_keyed_part(
         &mut self,
         output_key: Option<(u64, u64)>,
@@ -440,12 +475,30 @@ impl StreamedTextState {
         Some(index)
     }
 
+    #[cfg(test)]
     fn has_part_matching_terminal(
         &self,
         full_text: &str,
         output_index: Option<u64>,
         item_id: Option<&str>,
         content_index: u64,
+    ) -> bool {
+        self.has_part_matching_terminal_with_claims(
+            full_text,
+            output_index,
+            item_id,
+            content_index,
+            &HashSet::new(),
+        )
+    }
+
+    fn has_part_matching_terminal_with_claims(
+        &self,
+        full_text: &str,
+        output_index: Option<u64>,
+        item_id: Option<&str>,
+        content_index: u64,
+        claimed: &HashSet<usize>,
     ) -> bool {
         output_index.is_some_and(|index| self.output_part_index((index, content_index)).is_some())
             || item_id.is_some_and(|id| {
@@ -454,6 +507,35 @@ impl StreamedTextState {
             })
             || (!self.unkeyed.is_empty()
                 && (self.unkeyed.starts_with(full_text) || full_text.starts_with(&self.unkeyed)))
+            || !matches!(
+                self.compatible_part_match(full_text, claimed),
+                CompatiblePartMatch::None
+            )
+    }
+
+    fn compatible_part_match(
+        &self,
+        full_text: &str,
+        claimed: &HashSet<usize>,
+    ) -> CompatiblePartMatch {
+        let mut candidates = self.parts.iter().enumerate().filter(|(index, part)| {
+            !part.discarded
+                && !part.text.is_empty()
+                && !claimed.contains(index)
+                && compatible_terminal_suffix(&part.text, full_text).is_some()
+        });
+        let Some((index, part)) = candidates.next() else {
+            return CompatiblePartMatch::None;
+        };
+        let suffix = compatible_terminal_suffix(&part.text, full_text)
+            .expect("compatible candidates must have a terminal suffix");
+        if candidates.any(|(_, candidate)| {
+            compatible_terminal_suffix(&candidate.text, full_text) != Some(suffix)
+        }) {
+            CompatiblePartMatch::Ambiguous
+        } else {
+            CompatiblePartMatch::Unique(index)
+        }
     }
 
     fn record_delta(&mut self, data: &Value, delta: &str) {
@@ -505,6 +587,7 @@ impl StreamedTextState {
         }
     }
 
+    #[cfg(test)]
     fn missing_suffix(
         &mut self,
         full_text: &str,
@@ -512,12 +595,45 @@ impl StreamedTextState {
         item_id: Option<&str>,
         content_index: u64,
     ) -> String {
+        self.missing_suffix_with_claims(
+            full_text,
+            output_index,
+            item_id,
+            content_index,
+            &mut HashSet::new(),
+        )
+    }
+
+    fn missing_suffix_with_claims(
+        &mut self,
+        full_text: &str,
+        output_index: Option<u64>,
+        item_id: Option<&str>,
+        content_index: u64,
+        claimed: &mut HashSet<usize>,
+    ) -> String {
         let output_key = output_index.map(|index| (index, content_index));
         let item_key = item_id.map(|id| (id.to_string(), content_index));
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return String::new();
         }
-        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let mut keyed_index =
+            self.terminal_keyed_part_index(output_key, item_key.as_ref(), claimed);
+        if keyed_index.is_none() && self.unkeyed.is_empty() {
+            match self.compatible_part_match(full_text, claimed) {
+                CompatiblePartMatch::Unique(index) => keyed_index = Some(index),
+                CompatiblePartMatch::Ambiguous => {
+                    log::warn!(
+                        "[Claude/Responses] Multiple streamed text parts match terminal text after identity drift; avoiding duplicate replay"
+                    );
+                    return String::new();
+                }
+                CompatiblePartMatch::None => {}
+            }
+        }
+        if let Some(index) = keyed_index {
+            claimed.insert(index);
+        }
         let emitted = keyed_index.map(|index| self.parts[index].text.clone());
 
         let missing = if !self.unkeyed.is_empty() {
@@ -604,6 +720,7 @@ impl StreamedTextState {
             let index = keyed_index.unwrap_or_else(|| self.push_part(output_key, item_key.clone()));
             self.bind_keys(index, output_key, item_key);
             self.parts[index].text = full_text.to_string();
+            claimed.insert(index);
             if self.active_keyed_part == Some(index) {
                 self.active_keyed_part = None;
             }
@@ -921,6 +1038,50 @@ impl BufferedCitationTextState {
 
     fn snapshot_matches(part: &BufferedCitationPart, text: &str) -> bool {
         part.text.is_empty() || part.text.starts_with(text) || text.starts_with(&part.text)
+    }
+
+    fn terminal_keyed_part_index(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+        claimed: &mut HashSet<usize>,
+    ) -> Option<usize> {
+        let output_index = output_key.and_then(|key| self.output_part_index(key));
+        let item_index = item_key.and_then(|key| self.item_part_index(key));
+        let index = self.existing_keyed_part_index(output_key, item_key)?;
+        let was_claimed = output_index.is_some_and(|part| claimed.remove(&part))
+            | item_index.is_some_and(|part| claimed.remove(&part));
+        if was_claimed {
+            claimed.insert(index);
+        }
+        Some(index)
+    }
+
+    fn compatible_streamed_part_match(
+        &self,
+        text: &str,
+        claimed: &HashSet<usize>,
+    ) -> CompatiblePartMatch {
+        let mut candidates = self.parts.iter().enumerate().filter(|(index, part)| {
+            !part.discarded
+                && part.received_delta
+                && !part.originated_unkeyed
+                && !part.text.is_empty()
+                && !claimed.contains(index)
+                && Self::snapshot_matches(part, text)
+        });
+        let Some((index, part)) = candidates.next() else {
+            return CompatiblePartMatch::None;
+        };
+        let suffix = compatible_terminal_suffix(&part.text, text)
+            .expect("compatible candidates must have a terminal suffix");
+        if candidates
+            .any(|(_, candidate)| compatible_terminal_suffix(&candidate.text, text) != Some(suffix))
+        {
+            CompatiblePartMatch::Ambiguous
+        } else {
+            CompatiblePartMatch::Unique(index)
+        }
     }
 
     fn keys_allow_open_part_adoption(
@@ -1272,7 +1433,12 @@ impl BufferedCitationTextState {
             || item_key.is_some_and(|key| self.emitted_item_parts.contains(key))
     }
 
-    fn mark_emitted(&mut self, output_key: Option<(u64, u64)>, item_key: Option<(String, u64)>) {
+    fn mark_emitted(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+        claimed: &mut HashSet<usize>,
+    ) {
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return;
         }
@@ -1282,9 +1448,11 @@ impl BufferedCitationTextState {
         if let Some(key) = item_key.as_ref() {
             self.emitted_item_parts.insert(key.clone());
         }
-        if let Some(index) = self.existing_keyed_part_index(output_key, item_key.as_ref()) {
+        if let Some(index) = self.terminal_keyed_part_index(output_key, item_key.as_ref(), claimed)
+        {
             self.bind_keys(index, output_key, item_key);
             self.mark_part_emitted(index);
+            claimed.insert(index);
         }
     }
 
@@ -1573,6 +1741,7 @@ impl BufferedCitationTextState {
         annotations: &[Value],
         output_key: Option<(u64, u64)>,
         item_key: Option<(String, u64)>,
+        claimed: &mut HashSet<usize>,
     ) {
         if output_key.is_none() && item_key.is_none() {
             return;
@@ -1581,7 +1750,7 @@ impl BufferedCitationTextState {
             return;
         }
         let index = self
-            .existing_keyed_part_index(output_key, item_key.as_ref())
+            .terminal_keyed_part_index(output_key, item_key.as_ref(), claimed)
             .unwrap_or_else(|| self.push_part(output_key, item_key.clone(), false));
         self.bind_keys(index, output_key, item_key);
         Self::merge_snapshot(&mut self.parts[index], text);
@@ -1589,8 +1758,10 @@ impl BufferedCitationTextState {
             Self::append_annotation(&mut self.parts[index], annotation);
         }
         self.mark_part_emitted(index);
+        claimed.insert(index);
     }
 
+    #[cfg(test)]
     fn render_message_part(
         &mut self,
         part: &Value,
@@ -1598,16 +1769,52 @@ impl BufferedCitationTextState {
         item_id: Option<&str>,
         content_index: u64,
     ) -> Option<String> {
+        self.render_message_part_with_claims(
+            part,
+            output_index,
+            item_id,
+            content_index,
+            &mut HashSet::new(),
+        )
+    }
+
+    fn render_message_part_with_claims(
+        &mut self,
+        part: &Value,
+        output_index: Option<u64>,
+        item_id: Option<&str>,
+        content_index: u64,
+        claimed: &mut HashSet<usize>,
+    ) -> Option<String> {
         let output_key = output_index.map(|index| (index, content_index));
         let item_key = item_id.map(|id| (id.to_string(), content_index));
         if self.key_pair_conflicts(output_key, item_key.as_ref()) {
             return None;
         }
-        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let mut keyed_index =
+            self.terminal_keyed_part_index(output_key, item_key.as_ref(), claimed);
         let text = part
             .get("text")
             .and_then(Value::as_str)
             .filter(|text| !text.is_empty())?;
+        if keyed_index.is_none() {
+            match self.compatible_streamed_part_match(text, claimed) {
+                CompatiblePartMatch::Unique(index) => {
+                    self.bind_keys(index, output_key, item_key.clone());
+                    keyed_index = Some(index);
+                }
+                CompatiblePartMatch::Ambiguous => {
+                    log::warn!(
+                        "[Claude/Responses] Multiple buffered text parts match terminal text after identity drift; avoiding duplicate replay"
+                    );
+                    return None;
+                }
+                CompatiblePartMatch::None => {}
+            }
+        }
+        if let Some(index) = keyed_index {
+            claimed.insert(index);
+        }
         if let Some(index) = keyed_index.filter(|index| {
             Self::has_pending_output(&self.parts[*index])
                 && Self::snapshot_matches(&self.parts[*index], text)
@@ -1653,6 +1860,7 @@ impl BufferedCitationTextState {
                     terminal_annotations,
                     output_key,
                     item_key,
+                    claimed,
                 );
                 let sources = text_with_url_citations("", &annotations);
                 return (!sources.is_empty()).then_some(sources);
@@ -1708,6 +1916,7 @@ impl BufferedCitationTextState {
                     &remembered_annotations,
                     output_key,
                     item_key,
+                    claimed,
                 );
                 let sources = text_with_url_citations("", &annotations);
                 return match (suffix.is_empty(), sources.is_empty()) {
@@ -1737,16 +1946,33 @@ impl BufferedCitationTextState {
             }
         }
         let rendered = text_with_url_citations(text, &annotations);
-        self.remember_rendered_terminal_part(text, &annotations, output_key, item_key);
+        self.remember_rendered_terminal_part(text, &annotations, output_key, item_key, claimed);
         Some(rendered)
     }
 }
 
+#[cfg(test)]
 fn missing_message_text_parts(
     item: &Value,
     output_index: Option<u64>,
     streamed_text: &mut StreamedTextState,
+    buffered_citations: Option<&mut BufferedCitationTextState>,
+) -> Vec<String> {
+    missing_message_text_parts_with_claims(
+        item,
+        output_index,
+        streamed_text,
+        buffered_citations,
+        &mut TerminalTextClaims::default(),
+    )
+}
+
+fn missing_message_text_parts_with_claims(
+    item: &Value,
+    output_index: Option<u64>,
+    streamed_text: &mut StreamedTextState,
     mut buffered_citations: Option<&mut BufferedCitationTextState>,
+    claims: &mut TerminalTextClaims,
 ) -> Vec<String> {
     if item.get("type").and_then(Value::as_str) != Some("message") {
         return Vec::new();
@@ -1769,17 +1995,19 @@ fn missing_message_text_parts(
                         .and_then(Value::as_str)
                         .filter(|text| !text.is_empty())
                     {
-                        if streamed_text.has_part_matching_terminal(
+                        if streamed_text.has_part_matching_terminal_with_claims(
                             full_text,
                             output_index,
                             item_id,
                             content_index,
+                            &claims.streamed,
                         ) {
-                            let missing = streamed_text.missing_suffix(
+                            let missing = streamed_text.missing_suffix_with_claims(
                                 full_text,
                                 output_index,
                                 item_id,
                                 content_index,
+                                &mut claims.streamed,
                             );
                             let output_key = output_index.map(|index| (index, content_index));
                             let item_key = item_id.map(|id| (id.to_string(), content_index));
@@ -1788,7 +2016,7 @@ fn missing_message_text_parts(
                                 item_key.as_ref(),
                                 Some(part),
                             );
-                            buffered.mark_emitted(output_key, item_key);
+                            buffered.mark_emitted(output_key, item_key, &mut claims.buffered);
                             let sources = text_with_url_citations("", &annotations);
                             match (missing.is_empty(), sources.is_empty()) {
                                 (false, false) => {
@@ -1798,9 +2026,13 @@ fn missing_message_text_parts(
                                 (true, false) => missing_parts.push(sources),
                                 (true, true) => {}
                             }
-                        } else if let Some(text) =
-                            buffered.render_message_part(part, output_index, item_id, content_index)
-                        {
+                        } else if let Some(text) = buffered.render_message_part_with_claims(
+                            part,
+                            output_index,
+                            item_id,
+                            content_index,
+                            &mut claims.buffered,
+                        ) {
                             missing_parts.push(text);
                         }
                     }
@@ -1809,11 +2041,12 @@ fn missing_message_text_parts(
                     .and_then(Value::as_str)
                     .filter(|text| !text.is_empty())
                 {
-                    let missing = streamed_text.missing_suffix(
+                    let missing = streamed_text.missing_suffix_with_claims(
                         full_text,
                         output_index,
                         item_id,
                         content_index as u64,
+                        &mut claims.streamed,
                     );
                     if !missing.is_empty() {
                         missing_parts.push(missing);
@@ -1826,11 +2059,12 @@ fn missing_message_text_parts(
                     .and_then(Value::as_str)
                     .filter(|text| !text.is_empty())
                 {
-                    let missing = streamed_text.missing_suffix(
+                    let missing = streamed_text.missing_suffix_with_claims(
                         full_text,
                         output_index,
                         item_id,
                         content_index as u64,
+                        &mut claims.streamed,
                     );
                     if !missing.is_empty() {
                         missing_parts.push(missing);
@@ -3810,15 +4044,17 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     }
                                 }
 
+                                let mut terminal_text_claims = TerminalTextClaims::default();
                                 for (output_index, item) in terminal_message_items {
                                     let buffered_citations =
                                         preserve_web_search_citations
                                             .then_some(&mut buffered_citation_text);
-                                    let missing_text = missing_message_text_parts(
+                                    let missing_text = missing_message_text_parts_with_claims(
                                         &item,
                                         Some(output_index),
                                         &mut streamed_text,
                                         buffered_citations,
+                                        &mut terminal_text_claims,
                                     );
                                     if missing_text.is_empty() {
                                         continue;
@@ -4372,11 +4608,14 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         let buffered_citations =
                                             preserve_web_search_citations
                                                 .then_some(&mut buffered_citation_text);
-                                        let missing_text = missing_message_text_parts(
+                                        let mut terminal_text_claims =
+                                            TerminalTextClaims::default();
+                                        let missing_text = missing_message_text_parts_with_claims(
                                             item,
                                             data.get("output_index").and_then(Value::as_u64),
                                             &mut streamed_text,
                                             buffered_citations,
+                                            &mut terminal_text_claims,
                                         );
                                         if !missing_text.is_empty() {
                                             has_substantive_output = true;
@@ -4669,6 +4908,241 @@ mod tests {
                 0
             ),
             ""
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_reconciles_unique_terminal_identity_drift() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed.",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Already streamed.", Some(0), Some("msg_terminal"), 0),
+            ""
+        );
+        assert_eq!(
+            state.missing_suffix("Already streamed.", Some(0), Some("msg_terminal"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_returns_suffix_after_unique_terminal_identity_drift() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed",
+        );
+
+        assert_eq!(
+            state.missing_suffix(
+                "Already streamed and completed.",
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            " and completed."
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_returns_shared_suffix_for_equivalent_drift_candidates() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Same!", Some(0), Some("msg_terminal"), 0),
+            "!"
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_does_not_guess_between_conflicting_drift_candidates() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same!",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Same! tail", Some(0), Some("msg_terminal"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_preserves_distinct_identical_keyed_parts() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 0, "content_index": 0}),
+            "Same.",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 1, "content_index": 0}),
+            "Same.",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Same.", Some(0), Some("msg_first"), 0),
+            ""
+        );
+        assert_eq!(
+            state.missing_suffix("Same.", Some(1), Some("msg_second"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_refusal_reconciles_unique_terminal_identity_drift() {
+        let mut streamed = StreamedTextState::default();
+        streamed.record_delta(
+            &json!({
+                "item_id": "refusal_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Cannot comply.",
+        );
+        let item = json!({
+            "id": "refusal_terminal",
+            "type": "message",
+            "content": [{"type": "refusal", "refusal": "Cannot comply."}]
+        });
+
+        assert!(missing_message_text_parts(&item, Some(0), &mut streamed, None).is_empty());
+    }
+
+    #[test]
+    fn test_terminal_only_refusal_is_emitted_once() {
+        let mut streamed = StreamedTextState::default();
+        let item = json!({
+            "id": "refusal_terminal",
+            "type": "message",
+            "content": [{"type": "refusal", "refusal": "Cannot comply."}]
+        });
+
+        assert_eq!(
+            missing_message_text_parts(&item, Some(0), &mut streamed, None),
+            vec!["Cannot comply."]
+        );
+        assert!(missing_message_text_parts(&item, Some(0), &mut streamed, None).is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_reconcile_unique_terminal_identity_drift() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed.",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Already streamed."]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Already streamed.", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_return_suffix_after_unique_terminal_identity_drift() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_stream",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Already streamed",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Already streamed"]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Already streamed and completed.", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            Some(" and completed.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_return_shared_suffix_for_equivalent_drift_candidates() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Same", "Same"]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Same!", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            Some("!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_guess_between_conflicting_drift_candidates() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 1, "content_index": 0}),
+            "Same",
+        );
+        state.record_delta(
+            &json!({"item_id": "msg_second", "output_index": 2, "content_index": 0}),
+            "Same!",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Same", "Same!"]);
+
+        assert_eq!(
+            state.render_message_part(
+                &json!({"text": "Same! tail", "annotations": []}),
+                Some(0),
+                Some("msg_terminal"),
+                0
+            ),
+            None
         );
     }
 
@@ -6466,6 +6940,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_terminal_identity_drift_does_not_duplicate_streamed_text() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_text_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_stream\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_stream\",\"output_index\":1,\"content_index\":0,\"delta\":\"Already streamed.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_stream\",\"output_index\":1,\"content_index\":0,\"text\":\"Already streamed.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_stream\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_text_drift\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_terminal\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}] }]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Already streamed."]);
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
     async fn test_output_item_done_emits_text_when_deltas_are_missing() {
         let input = concat!(
             "event: response.created\n",
@@ -7062,5 +7571,197 @@ mod tests {
             !merged.contains('\u{FFFD}'),
             "output must not contain U+FFFD replacement characters"
         );
+    }
+
+    #[test]
+    fn terminal_only_item_keeps_its_prefix() {
+        let mut state = StreamedTextState::default();
+        let mut claimed = HashSet::new();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 0, "content_index": 0}),
+            "Hello",
+        );
+        assert_eq!(
+            state.missing_suffix_with_claims("Hello", Some(0), Some("msg_first"), 0, &mut claimed,),
+            ""
+        );
+        // A brand-new terminal-only item; expected: full text.
+        assert_eq!(
+            state.missing_suffix_with_claims(
+                "Hello again",
+                Some(1),
+                Some("msg_second"),
+                0,
+                &mut claimed,
+            ),
+            "Hello again"
+        );
+    }
+
+    #[test]
+    fn terminal_only_item_shorter_than_streamed_text_is_not_swallowed() {
+        let mut state = StreamedTextState::default();
+        let mut claimed = HashSet::new();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 0, "content_index": 0}),
+            "Hello again",
+        );
+        assert_eq!(
+            state.missing_suffix_with_claims(
+                "Hello again",
+                Some(0),
+                Some("msg_first"),
+                0,
+                &mut claimed,
+            ),
+            ""
+        );
+        // Terminal text is a *prefix* of the streamed text → empty suffix → the whole
+        // message is silently dropped. Expected: full text.
+        assert_eq!(
+            state
+                .missing_suffix_with_claims("Hello", Some(1), Some("msg_second"), 0, &mut claimed,),
+            "Hello"
+        );
+    }
+
+    #[test]
+    fn buffered_terminal_only_item_keeps_its_prefix() {
+        let mut state = BufferedCitationTextState::default();
+        let mut claimed = HashSet::new();
+        state.record_delta(
+            &json!({"item_id": "msg_first", "output_index": 0, "content_index": 0}),
+            "Hello",
+        );
+        assert_eq!(state.render_pending_parts(), vec!["Hello"]);
+        assert_eq!(
+            state.render_message_part_with_claims(
+                &json!({"text": "Hello", "annotations": []}),
+                Some(0),
+                Some("msg_first"),
+                0,
+                &mut claimed,
+            ),
+            None
+        );
+        assert_eq!(
+            state.render_message_part_with_claims(
+                &json!({"text": "Hello again", "annotations": []}),
+                Some(1),
+                Some("msg_second"),
+                0,
+                &mut claimed,
+            ),
+            Some("Hello again".to_string())
+        );
+    }
+
+    #[test]
+    fn claims_reset_between_terminal_events() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_stream", "output_index": 1, "content_index": 0}),
+            "Hello",
+        );
+        let mut output_item_done_claims = HashSet::new();
+        assert_eq!(
+            state.missing_suffix_with_claims(
+                "Hello",
+                Some(1),
+                Some("msg_stream"),
+                0,
+                &mut output_item_done_claims,
+            ),
+            ""
+        );
+
+        let mut response_completed_claims = HashSet::new();
+        assert_eq!(
+            state.missing_suffix_with_claims(
+                "Hello!",
+                Some(0),
+                Some("msg_terminal"),
+                0,
+                &mut response_completed_claims,
+            ),
+            "!"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_completed_keeps_terminal_only_item_after_streamed_prefix() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_claims\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_first\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_claims\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_first\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\",\"annotations\":[]}]},{\"id\":\"msg_second\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello again\",\"annotations\":[]}]}]}}\n\n"
+        );
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let merged = create_anthropic_sse_stream_from_responses(upstream)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+        let text_deltas = merged
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(text_deltas, vec!["Hello", "Hello again"]);
+    }
+
+    #[tokio::test]
+    async fn pre_search_streamed_text_reconciles_after_terminal_identity_drift() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_search_drift\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_stream\",\"output_index\":0,\"content_index\":0,\"delta\":\"Before search.\"}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_1\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search_drift\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_1\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust\",\"sources\":[]}},{\"id\":\"msg_terminal\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before search.\",\"annotations\":[]}]}]}}\n\n"
+        );
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let merged = create_anthropic_sse_stream_from_responses_raw(
+            upstream,
+            "web_search".to_string(),
+            None,
+            true,
+        )
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+        .collect::<String>();
+        let text_deltas = merged
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(text_deltas, vec!["Before search."]);
     }
 }
