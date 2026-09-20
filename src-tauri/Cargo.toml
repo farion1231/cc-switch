@@ -94,6 +94,8 @@ libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
+webview2-com = "0.38"
+windows = "0.61"
 windows-sys = { version = "0.61", features = [
     "Win32_Globalization",
     "Win32_Storage_FileSystem",

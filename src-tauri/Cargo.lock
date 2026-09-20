@@ -824,6 +824,8 @@ dependencies = [
  "uuid",
  "webkit2gtk",
  "webpki-roots 0.26.11",
+ "webview2-com",
+ "windows",
  "windows-sys 0.61.2",
  "winreg 0.52.0",
  "zip 2.4.2",
