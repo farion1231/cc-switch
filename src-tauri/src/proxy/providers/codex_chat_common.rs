@@ -234,6 +234,84 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
         .map(|value| value.trim().to_string())
 }
 
+/// Strip all complete `thinking…think` blocks **and** stray tag fragments
+/// from arbitrary text (not just a leading block).
+///
+/// This is used in `InlineThinkMode::Text` to prevent reasoning tags that
+/// arrive after the state machine has already committed to Text mode from
+/// leaking into `output_text.delta`.
+///
+/// It also strips a trailing partial close-tag fragment (e.g. `</t` from a
+/// `think` tag that was split across two SSE chunks) so that the fragment
+/// does not appear verbatim in the visible output.
+pub(crate) fn strip_all_think_tags(text: &str) -> String {
+    strip_all_think_tags_with_pending(text).0
+}
+
+/// Like `strip_all_think_tags`, but also returns any trailing partial
+/// close-tag fragment (e.g. `</t`, `</th`) as the second element.  The
+/// caller should buffer this fragment and prepend it to the next delta
+/// so that a close tag split across SSE chunks is reassembled correctly
+/// instead of being dropped or leaked.
+pub(crate) fn strip_all_think_tags_with_pending(text: &str) -> (String, String) {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+
+    loop {
+        match remaining.find(THINK_OPEN_TAG) {
+            Some(open_start) => {
+                // Emit text before the open tag.
+                result.push_str(&remaining[..open_start]);
+
+                let after_open = &remaining[open_start + THINK_OPEN_TAG.len()..];
+                match after_open.find(THINK_CLOSE_TAG) {
+                    Some(close_pos) => {
+                        // Complete block — skip the reasoning inside.
+                        remaining = &after_open[close_pos + THINK_CLOSE_TAG.len()..];
+                    }
+                    None => {
+                        // Open tag without a close — treat the rest as
+                        // reasoning and discard it.
+                        remaining = "";
+                    }
+                }
+            }
+            None => {
+                // No more open tags.  Remove any standalone close tags
+                // (close tags without a matching open tag that were not
+                // consumed by the main loop).  Then extract a trailing
+                // partial close-tag fragment for buffering.
+                let without_close_tags = remaining.replace(THINK_CLOSE_TAG, "");
+                let (clean, pending) = extract_trailing_close_tag_fragment(&without_close_tags);
+                result.push_str(clean);
+                return (result, pending.to_string());
+            }
+        }
+    }
+}
+
+/// Split `text` into `(clean, pending)` where `pending` is a trailing
+/// prefix of `THINK_CLOSE_TAG` (e.g. `<`, `</`, `</t`, …).  Returns
+/// `(text, "")` if the text does not end with such a fragment.
+fn extract_trailing_close_tag_fragment(text: &str) -> (&str, &str) {
+    // THINK_CLOSE_TAG is pure ASCII (`think`), so any valid fragment
+    // prefix is also ASCII.  We must only cut at char boundaries to
+    // avoid slicing inside a multi-byte UTF-8 sequence.
+    let max_cut = THINK_CLOSE_TAG.len().min(text.len());
+
+    for cut in (1..=max_cut).rev() {
+        let split_point = text.len() - cut;
+        if !text.is_char_boundary(split_point) {
+            continue;
+        }
+        let suffix = &text[split_point..];
+        if THINK_CLOSE_TAG.starts_with(suffix) {
+            return (&text[..split_point], suffix);
+        }
+    }
+    (text, "")
+}
+
 fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }
