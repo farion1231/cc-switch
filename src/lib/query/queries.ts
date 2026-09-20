@@ -144,9 +144,14 @@ export function isTransientUsageError(result: UsageLikeResult): boolean {
   const e = result.error?.toLowerCase() ?? "";
   if (!e) return false;
 
-  // 网络类（send 失败/超时/读取响应失败）
+  // 网络类（send 失败/超时/读取响应失败/OAuth 网络异常）
   if (
-    e.includes("network error") || // 原生路径
+    e.includes("network error") || // 原生路径 (en)
+    e.includes("网络错误") || // 原生路径 (zh)
+    e.includes("token unavailable") || // OAuth token 临时不可用
+    e.includes("timed out") ||
+    e.includes("timeout") ||
+    e.includes("超时") ||
     e.includes("request failed") || // JS 脚本 (en)
     e.includes("请求失败") || // JS 脚本 (zh)
     e.includes("failed to read response") || // JS 脚本 (en)

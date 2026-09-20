@@ -1,6 +1,6 @@
 //! xAI OAuth state and xAI-specific commands.
 
-use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+use crate::proxy::providers::xai_oauth_auth::{XaiOAuthError, XaiOAuthManager};
 use crate::proxy::providers::XAI_API_BASE_URL;
 use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{CredentialStatus, SubscriptionQuota};
@@ -48,6 +48,12 @@ pub(crate) async fn query_xai_oauth_quota_for(
     // 获取（必要时自动刷新）access_token
     let token = match manager.get_valid_token_for_account(&id).await {
         Ok(t) => t,
+        Err(XaiOAuthError::NetworkError(e)) => {
+            return Err(format!("Network error: {e}"));
+        }
+        Err(XaiOAuthError::AccountNotFound(_)) => {
+            return Ok(SubscriptionQuota::not_found("xai_oauth"));
+        }
         Err(e) => {
             return Ok(SubscriptionQuota::error(
                 "xai_oauth",
@@ -57,12 +63,35 @@ pub(crate) async fn query_xai_oauth_quota_for(
         }
     };
 
-    crate::services::subscription_grok::query_grok_quota(
+    let first_attempt = crate::services::subscription_grok::query_grok_quota(
         &token,
         "xai_oauth",
         "Please re-login via cc-switch.",
     )
-    .await
+    .await;
+
+    // 401 Unauthorized 自动失效与重试机制：
+    // 若查询返回凭据失效（HTTP 401/403），可能为本地 access_token 已被服务端注销或休眠时钟失准。
+    // 主动从内存中淘汰该 token，并尝试通过 refresh_token 获取新 token 重试一次，
+    // 避免用户陷入“反复刷新却一直复用失效死 Token”的问题。
+    match first_attempt {
+        Ok(quota) if !quota.success && quota.credential_status == CredentialStatus::Expired => {
+            manager.invalidate_cached_token(&id).await;
+            match manager.get_valid_token_for_account(&id).await {
+                Ok(new_token) => {
+                    crate::services::subscription_grok::query_grok_quota(
+                        &new_token,
+                        "xai_oauth",
+                        "Please re-login via cc-switch.",
+                    )
+                    .await
+                }
+                Err(XaiOAuthError::NetworkError(e)) => Err(format!("Network error: {e}")),
+                Err(_) => Ok(quota),
+            }
+        }
+        other => other,
+    }
 }
 
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度

@@ -626,6 +626,9 @@ export function ProviderCard({
                   meta={provider.meta}
                   inline={true}
                   isCurrent={isCurrent}
+                  autoQueryInterval={
+                    provider.meta?.usage_script?.autoQueryInterval ?? 0
+                  }
                 />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
