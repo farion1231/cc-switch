@@ -330,6 +330,42 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
+  {
+    name: "Kimi Global",
+    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Kimi",
+      options: {
+        baseURL: "https://api.moonshot.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k3": { name: "Kimi K3" },
+      },
+    },
+    category: "cn_official",
+    partnerPromotionKey: "kimi",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.moonshot.ai/v1",
+        defaultValue: "https://api.moonshot.ai/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "Kimi For Coding",
     primePartner: true,
@@ -355,6 +391,40 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         label: "Base URL",
         placeholder: "https://api.kimi.com/coding/v1",
         defaultValue: "https://api.kimi.com/coding/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
+  {
+    name: "Kimi For Coding Global",
+    websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Kimi For Coding",
+      options: {
+        baseURL: "https://api.kimi.ai/coding/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "kimi-for-coding": { name: "Kimi For Coding" },
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.kimi.ai/coding/v1",
+        defaultValue: "https://api.kimi.ai/coding/v1",
         editorValue: "",
       },
       apiKey: {
