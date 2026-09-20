@@ -311,7 +311,12 @@ const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
 /// 归档字节由第三方完全控制（仓库可经 deeplink 添加，且 branch 可把下载落点
 /// 改写到攻击者自传的 release asset），没有上限时一个几 MB 的压缩炸弹就能塞满磁盘。
 /// 取值对齐 `webdav_sync/archive.rs` 里同款保护的量级。
-const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+///
+/// 条目数只是解压前的快速失败：真正兜底磁盘与 inode 消耗的是字节预算——每个
+/// 文件、目录都至少按一个磁盘块计费。上限曾是 10_000，但下载的是整个仓库归档
+/// 而非单个技能目录，真实技能仓库（如 hugohe3/ppt-master，13k+ 条目）会被误拒
+/// （#7475）；30_000 给这类仓库留出余量，同时仍远低于字节预算能物化的条目数。
+const MAX_ARCHIVE_ENTRIES: usize = 30_000;
 const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 /// symlink 目标就是一条路径，几十字节就够；给到 4 KiB 是宽松上限。
 /// 必须有这个上限：zip 2.4.2 的 `make_reader` 不按声明的 uncompressed_size
@@ -321,6 +326,9 @@ const MAX_SYMLINK_TARGET_BYTES: u64 = 4 * 1024;
 /// 物化一个目录按一个目录块计费。空目录不写内容字节，但照样吃 inode 和磁盘块，
 /// 不计费就等于允许无限量地造目录。
 const DIRECTORY_BUDGET_COST: u64 = 4096;
+/// 文件同理：空文件与不足一块的小文件照样占 inode 和一个磁盘块。只按内容字节
+/// 计费时，一个全是空文件的归档能让预算读数一直停在 0，条目上限就成了唯一防线。
+const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
 /// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，而那时整个响应体
 /// 已经在内存里了，所以下载这一步需要自己的上限。技能仓库是 Markdown，
 /// 128 MiB 的压缩包已经远超正常规模。
@@ -3367,6 +3375,25 @@ impl SkillService {
         }
     }
 
+    /// 把单个文件条目写到 `dest` 并计入归档预算，不足一个磁盘块的按一块补齐。
+    ///
+    /// 解压路径（远端归档、本地 ZIP）与 symlink 物化都经这里落盘，保证"一个文件
+    /// 至少一块"的计费只有一处定义。
+    fn write_file_within_budget<R: std::io::Read>(
+        reader: &mut R,
+        dest: &Path,
+        total_bytes: &mut u64,
+    ) -> Result<()> {
+        let mut writer = fs::File::create(dest)?;
+        let before = *total_bytes;
+        Self::copy_entry_within_budget(reader, &mut writer, total_bytes)?;
+        let written = total_bytes.saturating_sub(before);
+        if written < FILE_ENTRY_BUDGET_COST {
+            Self::charge_archive_budget(total_bytes, FILE_ENTRY_BUDGET_COST - written)?;
+        }
+        Ok(())
+    }
+
     /// 读取 symlink 条目声明的目标路径。
     ///
     /// 这条分支曾是唯一一处不经预算的解压：`read_to_string` 直接把整条解压流吞进
@@ -3509,10 +3536,9 @@ impl SkillService {
                 if let Some(parent) = outpath.parent() {
                     Self::create_dir_all_within_budget(parent, &mut total_bytes)?;
                 }
-                let mut outfile = fs::File::create(&outpath)?;
                 // 按实际写入的字节累计，而不是信任归档头里声明的 size——
                 // 压缩炸弹的声明值可以是假的。
-                Self::copy_entry_within_budget(&mut file, &mut outfile, &mut total_bytes)?;
+                Self::write_file_within_budget(&mut file, &outpath, &mut total_bytes)?;
             }
         }
 
@@ -3543,12 +3569,11 @@ impl SkillService {
         Ok(())
     }
 
-    /// 复制单个文件并计入归档总预算，复用 `copy_entry_within_budget` 以保证
-    /// 上限与报错文案只有一处定义。
+    /// 复制单个文件并计入归档总预算，复用 `write_file_within_budget` 以保证
+    /// 上限、最小计费与报错文案只有一处定义。
     fn copy_file_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
         let mut reader = fs::File::open(src)?;
-        let mut writer = fs::File::create(dest)?;
-        Self::copy_entry_within_budget(&mut reader, &mut writer, total_bytes)
+        Self::write_file_within_budget(&mut reader, dest, total_bytes)
     }
 
     /// 递归复制目录
@@ -4051,8 +4076,7 @@ impl SkillService {
                 if let Some(parent) = outpath.parent() {
                     Self::create_dir_all_within_budget(parent, &mut total_bytes)?;
                 }
-                let mut outfile = fs::File::create(&outpath)?;
-                Self::copy_entry_within_budget(&mut file, &mut outfile, &mut total_bytes)?;
+                Self::write_file_within_budget(&mut file, &outpath, &mut total_bytes)?;
             }
         }
 
@@ -4624,6 +4648,93 @@ mod tests {
             .expect_err("entry count over the limit must be rejected");
         assert!(
             err.to_string().contains("ARCHIVE_TOO_MANY_ENTRIES"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_repo_archive_accepts_real_world_sized_skill_repos() {
+        // #7475：hugohe3/ppt-master 整仓归档 13_248 条目，旧上限 10_000 把它当成
+        // 压缩炸弹拒掉。下载的是整个仓库而非单个技能目录，上限必须容得下这种规模。
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        const ENTRIES: usize = 13_248;
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            zip.start_file("ppt-master-main/skills/ppt-master/SKILL.md", opts)
+                .unwrap();
+            zip.write_all(b"---\nname: ppt-master\n---\n").unwrap();
+            for i in 1..ENTRIES {
+                zip.start_file(
+                    format!("ppt-master-main/skills/ppt-master/templates/t{i}.md"),
+                    opts,
+                )
+                .unwrap();
+                zip.write_all(b"x").unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let archive = zip::ZipArchive::new(std::io::Cursor::new(buf)).expect("archive parses");
+        SkillService::extract_repo_archive(archive, temp.path())
+            .expect("a 13k-entry skill repo must extract");
+        assert!(temp.path().join("skills/ppt-master/SKILL.md").is_file());
+        assert!(temp
+            .path()
+            .join(format!("skills/ppt-master/templates/t{}.md", ENTRIES - 1))
+            .is_file());
+    }
+
+    #[test]
+    fn file_entries_are_charged_at_least_one_block() {
+        // 空文件与小文件照样占 inode 和磁盘块。只按内容字节计费时，全是空文件的
+        // 归档预算读数一直是 0，条目上限提高后就没有东西兜底了。
+        let temp = tempdir().expect("tempdir");
+
+        let mut total_bytes = 0u64;
+        let mut empty = std::io::Cursor::new(Vec::<u8>::new());
+        SkillService::write_file_within_budget(
+            &mut empty,
+            &temp.path().join("empty"),
+            &mut total_bytes,
+        )
+        .expect("within budget");
+        assert_eq!(total_bytes, FILE_ENTRY_BUDGET_COST);
+
+        let mut small = std::io::Cursor::new(vec![7u8; 64]);
+        SkillService::write_file_within_budget(
+            &mut small,
+            &temp.path().join("small"),
+            &mut total_bytes,
+        )
+        .expect("within budget");
+        assert_eq!(total_bytes, 2 * FILE_ENTRY_BUDGET_COST);
+
+        // 超过一块的文件按实际字节计，不重复加最小值
+        let mut large = std::io::Cursor::new(vec![7u8; FILE_ENTRY_BUDGET_COST as usize + 1]);
+        SkillService::write_file_within_budget(
+            &mut large,
+            &temp.path().join("large"),
+            &mut total_bytes,
+        )
+        .expect("within budget");
+        assert_eq!(total_bytes, 3 * FILE_ENTRY_BUDGET_COST + 1);
+
+        // 预算只差一个字节就满，再写一个 1 字节文件也必须被拦下
+        let mut total_bytes = MAX_ARCHIVE_TOTAL_BYTES - FILE_ENTRY_BUDGET_COST + 1;
+        let mut tiny = std::io::Cursor::new(vec![7u8; 1]);
+        let err = SkillService::write_file_within_budget(
+            &mut tiny,
+            &temp.path().join("tiny"),
+            &mut total_bytes,
+        )
+        .expect_err("a file that would exceed the block budget must be rejected");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_LARGE"),
             "unexpected error: {err}"
         );
     }
