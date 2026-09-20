@@ -396,6 +396,10 @@ pub struct ClaudeDesktopModelRoute {
     /// Claude Desktop 3P 识别的 1M 上下文能力标记。
     #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
     pub supports_1m: Option<bool>,
+    /// 默认条目（inferenceModels 列表第一条）默认选中 1M 变体。
+    /// 仅在 supports1m 同时为 true 时有效；非首条条目会被忽略。
+    #[serde(rename = "prefer1m", skip_serializing_if = "Option::is_none")]
+    pub prefer_1m: Option<bool>,
 }
 
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
@@ -461,6 +465,13 @@ pub struct ProviderMeta {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
+    /// Claude Desktop 视觉自动路由：请求包含图片时自动改用该上游模型（留空不启用）
+    #[serde(
+        default,
+        rename = "claudeDesktopVisionModel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_desktop_vision_model: Option<String>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,

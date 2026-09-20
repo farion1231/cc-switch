@@ -424,6 +424,7 @@ pub(crate) fn suggested_claude_desktop_routes(
                 model: stripped_model.to_string(),
                 label_override,
                 supports_1m: Some(effective_supports_1m),
+                prefer_1m: None,
             });
     }
 
