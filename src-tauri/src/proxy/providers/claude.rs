@@ -237,7 +237,81 @@ pub fn normalize_anthropic_messages_for_provider(
     let mut changed =
         normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
     changed |= normalize_deepseek_thinking_disabled_strip_effort(body, provider);
+    changed |= normalize_anthropic_empty_text_blocks(body);
     changed
+}
+
+/// Anthropic's Messages API rejects text content blocks whose `text` is empty
+/// or whitespace-only (`messages: text content blocks must be non-empty`).
+/// Claude Code can persist such blocks into a session (e.g. an empty assistant
+/// text emitted alongside a `tool_use`) and replays them verbatim, so every
+/// follow-up request fails with HTTP 400 until the session file is cleaned by
+/// hand. Strip the offending blocks on the anthropic passthrough so history
+/// artifacts never reach the upstream. The normalization is a pure function of
+/// the request: clean bodies are untouched byte-for-byte, keeping prompt-cache
+/// prefixes stable.
+fn normalize_anthropic_empty_text_blocks(body: &mut Value) -> bool {
+    let mut changed = false;
+
+    if let Some(system) = body.get_mut("system").and_then(Value::as_array_mut) {
+        changed |= retain_meaningful_text_blocks(system);
+    }
+
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return changed;
+    };
+
+    messages.retain_mut(|message| {
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            return true;
+        };
+        for block in content.iter_mut() {
+            if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                continue;
+            }
+            if let Some(nested) = block.get_mut("content").and_then(Value::as_array_mut) {
+                if retain_meaningful_text_blocks(nested) {
+                    changed = true;
+                    if nested.is_empty() {
+                        // A `tool_result` with an empty content array is
+                        // invalid too; dropping the optional key entirely is.
+                        block
+                            .as_object_mut()
+                            .expect("tool_result block must be an object")
+                            .remove("content");
+                    }
+                }
+            }
+        }
+        let stripped = retain_meaningful_text_blocks(content);
+        changed |= stripped;
+        // Drop the message only when the strip emptied it; an already-empty
+        // content array is left exactly as the client sent it.
+        !(stripped && content.is_empty())
+    });
+
+    changed
+}
+
+/// Keep only text blocks that carry meaningful text; every other block type
+/// passes through untouched. Same emptiness rule as the Codex → Anthropic
+/// converter's history filter.
+fn retain_meaningful_text_blocks(blocks: &mut Vec<Value>) -> bool {
+    let before = blocks.len();
+    blocks.retain(|block| {
+        if block.get("type").and_then(Value::as_str) != Some("text") {
+            return true;
+        }
+        block
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(is_meaningful_text)
+    });
+    blocks.len() != before
+}
+
+fn is_meaningful_text(text: &str) -> bool {
+    !text.trim().is_empty()
 }
 
 fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
@@ -2274,6 +2348,127 @@ mod tests {
         assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
         assert_eq!(content[1]["type"], "text");
         assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn anthropic_passthrough_strips_empty_text_content_blocks() {
+        // Regression for #7243: Claude Code replays sessions whose jsonl keeps
+        // empty text blocks, and Anthropic-compatible upstreams reject them
+        // with `text content blocks must be non-empty`.
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "claude-sonnet-5",
+            "system": [
+                {"type": "text", "text": "You are concise."},
+                {"type": "text", "text": "   "}
+            ],
+            "messages": [
+                {"role": "user", "content": "List the files."},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {"type": "tool_use", "id": "call_1", "name": "list_files", "input": {}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [{"type": "text", "text": ""}]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 1);
+        assert_eq!(system[0]["text"], "You are concise.");
+        let assistant = body["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(assistant.len(), 1);
+        assert_eq!(assistant[0]["type"], "tool_use");
+        let tool_result = &body["messages"][2]["content"][0];
+        assert!(tool_result.get("content").is_none());
+        assert_eq!(tool_result["tool_use_id"], "call_1");
+    }
+
+    #[test]
+    fn anthropic_passthrough_drops_message_emptied_by_text_strip() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "claude-sonnet-5",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": [{"type": "text", "text": ""}]},
+                {"role": "user", "content": "continue"}
+            ]
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["content"], "hi");
+        assert_eq!(messages[1]["content"], "continue");
+    }
+
+    #[test]
+    fn anthropic_passthrough_empty_text_normalization_is_noop_for_clean_bodies() {
+        // Prompt-cache safety: requests without empty text blocks must stay
+        // byte-identical.
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "claude-sonnet-5",
+            "system": [{"type": "text", "text": "You are concise."}],
+            "messages": [
+                {"role": "user", "content": "List the files."},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Working on it."},
+                        {"type": "tool_use", "id": "call_1", "name": "list_files", "input": {}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [{"type": "text", "text": "a\nb\nc"}]
+                        }
+                    ]
+                }
+            ]
+        });
+        let before = body.clone();
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(!changed);
+        assert_eq!(body, before);
     }
 
     #[test]
