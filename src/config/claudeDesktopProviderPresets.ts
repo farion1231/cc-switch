@@ -391,6 +391,37 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。模型名与 Claude 角色无对应关系，
+    // 故走 proxy + brandedRoutes 全角色映射到 deepseek-v4-pro（与国内
+    // Token Plan 预设同款）
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    category: "aggregator",
+    baseUrl: "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    // supports1m：DeepSeek V4 Pro 官方窗口 1M（千帆平台与 FluxA 产品页
+    // 模型表均标 1M，仓库各 catalog 同记 1048576）。[1m] 只是 Claude
+    // Desktop 本地标记，匹配前会被剥掉，不会随请求发往上游
+    modelRoutes: brandedRoutes(
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
+      true,
+    ),
+    endpointCandidates: [
+      "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",

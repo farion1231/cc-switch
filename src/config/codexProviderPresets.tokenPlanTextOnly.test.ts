@@ -8,6 +8,8 @@ import { codexProviderPresets } from "./codexProviderPresets";
 // 否则会 fail-open 成"可附图"。
 const textOnlyDeepSeekHosts = [
   "Baidu Qianfan Token Plan",
+  // FluxA 转售的是同一套千帆 Token Plan（国际 team 部署），同样纯文本
+  "FluxA Token Plan",
   "Tencent Token Plan Enterprise Pro",
   "Tencent Token Plan Enterprise Pro (Intl)",
 ];
