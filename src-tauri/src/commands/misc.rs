@@ -488,8 +488,8 @@ const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
 #[cfg(target_os = "windows")]
 const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | iex";
 
-#[cfg(target_os = "windows")]
-fn powershell_encoded_command(script: &str) -> String {
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn powershell_encoded_command(script: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     let mut bytes = Vec::with_capacity(script.len() * 2);
@@ -4485,32 +4485,22 @@ fn launch_windows_terminal(
     config_file: &std::path::Path,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
-    let cwd_command = build_windows_cwd_command(cwd);
-
-    let content = format!(
-        "@echo off
-setlocal DisableDelayedExpansion
-set \"CC_SWITCH_INTERNAL_BATCH_PATH=\"
-{cwd_command}
-echo Using provider-specific claude config:
-echo \"{}\"
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
-    );
-
-    let bat_file =
-        write_unique_temp_artifact(temp_dir, "cc_switch_claude_", ".bat", content.as_bytes())?;
+    let bat_file = write_unique_temp_artifact(
+        temp_dir,
+        "cc_switch_claude_",
+        ".bat",
+        WINDOWS_PROVIDER_BATCH.as_bytes(),
+    )?;
 
     let bat_path = bat_file.to_string_lossy();
+    let config_path = config_file.to_string_lossy();
+    let cwd_path = cwd.map(|path| path.to_string_lossy());
+    let mut launch_env = vec![(WINDOWS_CONFIG_PATH_ENV, config_path.as_ref())];
+    if let Some(cwd_path) = cwd_path.as_deref() {
+        launch_env.push((WINDOWS_CWD_ENV, cwd_path));
+    }
 
-    let result = launch_windows_batch_in_preferred_terminal(&bat_path);
+    let result = launch_windows_batch_in_preferred_terminal(&bat_path, &launch_env);
 
     // The batch removes itself after it starts. If every spawn attempt failed,
     // clean it here; the caller similarly removes the provider settings file.
@@ -4525,50 +4515,54 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn is_windows_unc_path(path: &str) -> bool {
-    path.starts_with(r"\\")
-}
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn build_windows_cwd_command_str(path: &str) -> String {
-    let escaped = escape_windows_batch_value(path);
-
-    if is_windows_unc_path(path) {
-        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
-        format!("pushd \"{escaped}\" || exit /b 1\r\n")
-    } else {
-        format!("cd /d \"{escaped}\" || exit /b 1\r\n")
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
-    cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
-        .unwrap_or_default()
-}
-
 #[cfg(any(target_os = "windows", test))]
 pub(super) const WINDOWS_BATCH_PATH_ENV: &str = "CC_SWITCH_INTERNAL_BATCH_PATH";
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_CONFIG_PATH_ENV: &str = "CC_SWITCH_INTERNAL_CONFIG_PATH";
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_CWD_ENV: &str = "CC_SWITCH_INTERNAL_CWD";
 #[cfg(any(target_os = "windows", test))]
 pub(super) const WINDOWS_BATCH_PATH_COMMAND: &str = "%CC_SWITCH_INTERNAL_BATCH_PATH%";
 #[cfg(any(target_os = "windows", test))]
 pub(super) const WINDOWS_POWERSHELL_BATCH_COMMAND: &str =
     "& $env:ComSpec /D /V:OFF /C '%CC_SWITCH_INTERNAL_BATCH_PATH%'";
 
+// Keep path data out of the BAT bytes. cmd.exe decodes a batch file using the
+// active console/OEM code page; embedding a UTF-8 Chinese path can corrupt the
+// rest of the command stream. Environment values stay Unicode inside Windows.
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_PROVIDER_BATCH: &str = "@echo off\r\n\
+setlocal DisableDelayedExpansion\r\n\
+set \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n\
+if not defined CC_SWITCH_INTERNAL_CONFIG_PATH exit /b 1\r\n\
+if not defined CC_SWITCH_INTERNAL_CWD goto cc_switch_cwd_done\r\n\
+if \"%CC_SWITCH_INTERNAL_CWD:~0,2%\"==\"\\\\\" goto cc_switch_cwd_unc\r\n\
+cd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n\
+goto cc_switch_cwd_done\r\n\
+:cc_switch_cwd_unc\r\n\
+pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n\
+:cc_switch_cwd_done\r\n\
+set \"CC_SWITCH_INTERNAL_CWD=\"\r\n\
+echo Using provider-specific claude config:\r\n\
+echo \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\"\r\n\
+claude --settings \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\"\r\n\
+del \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" >nul 2>&1\r\n\
+set \"CC_SWITCH_INTERNAL_CONFIG_PATH=\"\r\n\
+del \"%~f0\" >nul 2>&1\r\n";
+
 #[cfg(any(target_os = "windows", test))]
 pub(super) fn quote_windows_batch_path_for_env(path: &str) -> String {
     format!("\"{path}\"")
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg(test)]
 pub(super) fn escape_windows_batch_value(value: &str) -> String {
     // Every caller places the value inside double quotes. CMD keeps metacharacters
     // literal there; only percent expansion still applies in a batch file.
     value.replace('%', "%%")
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(super) const PARENT_CLAUDE_SESSION_ENV_VARS: &[&str] = &[
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDECODE",
@@ -4589,35 +4583,57 @@ pub(super) const PARENT_CLAUDE_SESSION_ENV_VARS: &[&str] = &[
 /// parent Claude session identity, IPC endpoints, or color-disable flags.
 /// Only runtime metadata is stripped; auth, proxy, PATH, and user Claude config stay.
 #[cfg(target_os = "windows")]
-fn detach_claude_parent_session_env(command: &mut std::process::Command) {
+pub(super) fn detach_claude_parent_session_env(command: &mut std::process::Command) {
     for name in PARENT_CLAUDE_SESSION_ENV_VARS {
         command.env_remove(name);
     }
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn configure_windows_batch_env(command: &mut std::process::Command, bat_path: &str) {
+pub(super) fn configure_windows_batch_env_with(
+    command: &mut std::process::Command,
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) {
     detach_claude_parent_session_env(command);
     command.env(
         WINDOWS_BATCH_PATH_ENV,
         quote_windows_batch_path_for_env(bat_path),
     );
+    command.env_remove(WINDOWS_CONFIG_PATH_ENV);
+    command.env_remove(WINDOWS_CWD_ENV);
+    command.envs(launch_env.iter().copied());
+}
+
+#[cfg(all(target_os = "windows", test))]
+pub(super) fn configure_windows_batch_env(command: &mut std::process::Command, bat_path: &str) {
+    configure_windows_batch_env_with(command, bat_path, &[]);
 }
 
 #[cfg(target_os = "windows")]
+fn configure_windows_cmd_batch_with(
+    command: &mut std::process::Command,
+    action: &str,
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) {
+    configure_windows_batch_env_with(command, bat_path, launch_env);
+    command.args(["/D", "/V:OFF", action, WINDOWS_BATCH_PATH_COMMAND]);
+}
+
+#[cfg(all(target_os = "windows", test))]
 pub(super) fn configure_windows_cmd_batch(
     command: &mut std::process::Command,
     action: &str,
     bat_path: &str,
 ) {
-    configure_windows_batch_env(command, bat_path);
-    command.args(["/D", "/V:OFF", action, WINDOWS_BATCH_PATH_COMMAND]);
+    configure_windows_cmd_batch_with(command, action, bat_path, &[]);
 }
 
 #[cfg(target_os = "windows")]
-fn run_windows_cmd_batch(bat_path: &str) -> Result<(), String> {
+fn run_windows_cmd_batch(bat_path: &str, launch_env: &[(&str, &str)]) -> Result<(), String> {
     let mut command = std::process::Command::new("cmd");
-    configure_windows_cmd_batch(&mut command, "/K", bat_path);
+    configure_windows_cmd_batch_with(&mut command, "/K", bat_path, launch_env);
     command
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
@@ -4626,9 +4642,9 @@ fn run_windows_cmd_batch(bat_path: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_windows_powershell_batch(bat_path: &str) -> Result<(), String> {
+fn run_windows_powershell_batch(bat_path: &str, launch_env: &[(&str, &str)]) -> Result<(), String> {
     let mut command = std::process::Command::new("powershell");
-    configure_windows_batch_env(&mut command, bat_path);
+    configure_windows_batch_env_with(&mut command, bat_path, launch_env);
     command.args(["-NoExit", "-Command", WINDOWS_POWERSHELL_BATCH_COMMAND]);
     command
         .creation_flags(CREATE_NEW_CONSOLE)
@@ -4638,15 +4654,16 @@ fn run_windows_powershell_batch(bat_path: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn launch_windows_batch_in_preferred_terminal(bat_path: &str) -> Result<(), String> {
+fn launch_windows_batch_in_preferred_terminal(
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
     let result = match terminal {
-        "powershell" => run_windows_powershell_batch(bat_path),
-        "wt" => {
-            super::windows_terminal::launch_wt_terminal(bat_path, WINDOWS_POWERSHELL_BATCH_COMMAND)
-        }
-        _ => run_windows_cmd_batch(bat_path),
+        "powershell" => run_windows_powershell_batch(bat_path, launch_env),
+        "wt" => super::windows_terminal::launch_wt_terminal_with_env(bat_path, launch_env),
+        _ => run_windows_cmd_batch(bat_path, launch_env),
     };
 
     if result.is_err() && terminal != "cmd" {
@@ -4655,7 +4672,7 @@ fn launch_windows_batch_in_preferred_terminal(bat_path: &str) -> Result<(), Stri
             terminal,
             result.as_ref().err()
         );
-        run_windows_cmd_batch(bat_path)
+        run_windows_cmd_batch(bat_path, launch_env)
     } else {
         result
     }
@@ -4813,7 +4830,7 @@ read -r _
 
         let bat_path = bat_file.to_string_lossy();
 
-        let result = launch_windows_batch_in_preferred_terminal(&bat_path);
+        let result = launch_windows_batch_in_preferred_terminal(&bat_path, &[]);
 
         // The .bat self-deletes (`del "%~f0"`) after it runs, but that only
         // fires if *some* terminal actually launched it. If every attempt
@@ -4872,6 +4889,107 @@ mod tests {
         );
         assert_eq!(std::fs::read(first).unwrap(), b"first");
         assert_eq!(std::fs::read(second).unwrap(), b"second");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_provider_batch_keeps_unicode_paths_out_of_batch_bytes() {
+        assert!(WINDOWS_PROVIDER_BATCH.is_ascii());
+
+        let temp = tempfile::tempdir().expect("probe directory should be created");
+        let cwd = temp
+            .path()
+            .join("迅雷下载 space & %CC_SWITCH_CMD_EXPAND% ^ ! (test) and O'Brien");
+        let config_dir = temp
+            .path()
+            .join("配置 space & %CC_SWITCH_CMD_EXPAND% ^ ! (test) and O'Brien");
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&cwd).expect("Unicode working directory should be created");
+        std::fs::create_dir_all(&config_dir).expect("Unicode config directory should be created");
+        std::fs::create_dir(&bin_dir).expect("probe bin directory should be created");
+
+        let config = config_dir.join("设置.json");
+        let config_copy = temp.path().join("settings-copy.json");
+        let marker = cwd.join("cc-switch-provider-marker.txt");
+        let batch = temp.path().join("provider.bat");
+        std::fs::write(&config, "{}\n").expect("provider config should be written");
+        std::fs::write(&batch, WINDOWS_PROVIDER_BATCH.as_bytes())
+            .expect("ASCII provider batch should be written");
+        let probe_source = temp.path().join("claude_probe.rs");
+        let probe_executable = bin_dir.join("claude.exe");
+        std::fs::write(
+            &probe_source,
+            r#"fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    assert_eq!(args.first().and_then(|value| value.to_str()), Some("--settings"));
+    let config = args.get(1).expect("missing settings path");
+    let config_copy = std::env::var_os("CC_SWITCH_TEST_CONFIG_COPY").unwrap();
+    std::fs::copy(config, config_copy).unwrap();
+    std::fs::write(
+        std::env::current_dir().unwrap().join("cc-switch-provider-marker.txt"),
+        "ok\n",
+    )
+    .unwrap();
+}
+"#,
+        )
+        .expect("Claude probe source should be written");
+        let compiled =
+            std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+                .arg(&probe_source)
+                .arg("-o")
+                .arg(&probe_executable)
+                .output()
+                .expect("rustc should compile the Claude probe");
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+
+        let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .expect("probe PATH should be valid");
+        let bat_path = batch.to_string_lossy();
+        let config_path = config.to_string_lossy();
+        let cwd_path = cwd.to_string_lossy();
+        let config_copy_path = config_copy.to_string_lossy();
+        let launch_env = [
+            (WINDOWS_CONFIG_PATH_ENV, config_path.as_ref()),
+            (WINDOWS_CWD_ENV, cwd_path.as_ref()),
+        ];
+        let mut command = std::process::Command::new("cmd");
+        configure_windows_cmd_batch_with(&mut command, "/C", &bat_path, &launch_env);
+        let output = command
+            .env("PATH", path)
+            .env("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+            .env("CC_SWITCH_CMD_EXPAND", "wrong")
+            .env("CC_SWITCH_TEST_CONFIG_COPY", config_copy_path.as_ref())
+            .output()
+            .expect("provider batch should start");
+
+        let diagnostics = || {
+            format!(
+                "status: {}\nstdout: {}\nstderr: {}",
+                output.status,
+                decode_command_output(&output.stdout),
+                decode_command_output(&output.stderr)
+            )
+        };
+        assert_eq!(
+            std::fs::read_to_string(marker)
+                .unwrap_or_else(|error| panic!("marker missing: {error}\n{}", diagnostics()))
+                .trim(),
+            "ok"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config_copy)
+                .unwrap_or_else(|error| panic!("config copy missing: {error}\n{}", diagnostics())),
+            "{}\n"
+        );
+        assert!(!config.exists(), "provider config should self-delete");
+        assert!(!batch.exists(), "provider batch should self-delete");
     }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
@@ -7324,44 +7442,6 @@ mod tests {
         assert!(
             build_macos_ghostty_applescript(p).contains(expected),
             "Ghostty did not keep the non-exec launcher"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_uses_cd_for_drive_paths() {
-        let command = build_windows_cwd_command_str(r"C:\work\repo");
-
-        assert_eq!(command, "cd /d \"C:\\work\\repo\" || exit /b 1\r\n");
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_quotes_metacharacters_and_escapes_percent() {
-        let command =
-            build_windows_cwd_command_str(r"C:\space & %CC_SWITCH_CMD_EXPAND% ^ ! (test)\repo");
-
-        assert_eq!(
-            command,
-            "cd /d \"C:\\space & %%CC_SWITCH_CMD_EXPAND%% ^ ! (test)\\repo\" || exit /b 1\r\n"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_uses_pushd_for_unc_paths() {
-        let command = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
-
-        assert_eq!(
-            command,
-            "pushd \"\\\\wsl$\\Ubuntu\\home\\coder\\repo\" || exit /b 1\r\n"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_keeps_quoted_metacharacters_literal() {
-        let command = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
-
-        assert_eq!(
-            command,
-            "pushd \"\\\\server\\share\\100%%&(test)\" || exit /b 1\r\n"
         );
     }
 }

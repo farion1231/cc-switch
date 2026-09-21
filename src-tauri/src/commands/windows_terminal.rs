@@ -1,11 +1,15 @@
 #[cfg(target_os = "windows")]
 use super::misc::{
-    configure_windows_batch_env, decode_windows_where_output, effective_path_os,
+    decode_windows_where_output, detach_claude_parent_session_env, effective_path_os,
     is_windows_app_execution_alias_dir, wait_child_output, windows_path_lookup_command,
     CommandDeadline,
 };
 #[cfg(any(target_os = "windows", test))]
-use super::misc::{push_unique_path, WINDOWS_BATCH_PATH_COMMAND};
+use super::misc::{
+    powershell_encoded_command, push_unique_path, quote_windows_batch_path_for_env,
+    PARENT_CLAUDE_SESSION_ENV_VARS, WINDOWS_BATCH_PATH_ENV, WINDOWS_CONFIG_PATH_ENV,
+    WINDOWS_CWD_ENV,
+};
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "windows")]
@@ -35,7 +39,7 @@ struct WtDefaultProfile {
 
 #[cfg(any(target_os = "windows", test))]
 impl WtDefaultProfile {
-    fn build_wt_args<'a>(&'a self, ps_cmd: &'a str) -> Vec<&'a str> {
+    fn build_wt_args<'a>(&'a self, encoded_command: &'a str) -> Vec<&'a str> {
         let mut args = vec![
             "new-tab",
             "--profile",
@@ -45,28 +49,82 @@ impl WtDefaultProfile {
         ];
         match self.shell {
             WtDefaultShell::Pwsh | WtDefaultShell::PowerShell => {
-                args.extend(["-NoExit", "-Command", ps_cmd]);
+                args.extend(["-NoExit", "-EncodedCommand", encoded_command]);
             }
             WtDefaultShell::Cmd => {
-                args.extend(["/D", "/V:OFF", "/K", WINDOWS_BATCH_PATH_COMMAND]);
+                args.extend(wt_cmd_batch_args(encoded_command));
             }
         }
         args
     }
 }
 
-/// When the default profile cannot be appended to safely, start cmd explicitly
-/// instead of appending `/K` to an unknown shell.
 #[cfg(any(target_os = "windows", test))]
-fn build_wt_cmd_fallback_args() -> Vec<&'static str> {
-    vec![
-        "new-tab",
-        "cmd",
+const WINDOWS_PRIVATE_LAUNCH_ENV_VARS: &[&str] = &[
+    WINDOWS_BATCH_PATH_ENV,
+    WINDOWS_CONFIG_PATH_ENV,
+    WINDOWS_CWD_ENV,
+];
+
+/// Bind per-launch values inside the new shell, not in WT's potentially stale
+/// environment. Encoding the entire script also keeps literal `%VAR%` paths away
+/// from WT's ExpandEnvironmentStringsW pass. The generated BAT stays ASCII-only;
+/// Unicode config and working-directory paths travel in the process environment.
+#[cfg(any(target_os = "windows", test))]
+fn wt_batch_script_with_env(bat_path: &str, launch_env: &[(&str, &str)]) -> String {
+    // Older WT may retain the resident's session, color, or private launch
+    // environment. Clear all of it at the child boundary before binding this run.
+    let clear_env: String = PARENT_CLAUDE_SESSION_ENV_VARS
+        .iter()
+        .chain(WINDOWS_PRIVATE_LAUNCH_ENV_VARS.iter())
+        .map(|name| format!("$env:{name} = $null; "))
+        .collect();
+    let quoted_bat_path = quote_windows_batch_path_for_env(bat_path);
+    let bind_env: String = std::iter::once((WINDOWS_BATCH_PATH_ENV, quoted_bat_path.as_str()))
+        .chain(launch_env.iter().copied())
+        .map(|(name, value)| {
+            let value = value.replace('\'', "''");
+            format!("$env:{name} = '{value}'; ")
+        })
+        .collect();
+    let clear_private_env: String = WINDOWS_PRIVATE_LAUNCH_ENV_VARS
+        .iter()
+        .map(|name| format!("$env:{name} = $null; "))
+        .collect();
+    format!(
+        "{clear_env}{bind_env}try {{ & $env:ComSpec /D /E:ON /V:OFF /C '%{WINDOWS_BATCH_PATH_ENV}%' }} finally {{ {clear_private_env}}}"
+    )
+}
+
+#[cfg(test)]
+fn wt_batch_script(bat_path: &str) -> String {
+    wt_batch_script_with_env(bat_path, &[])
+}
+
+/// CMD cannot decode the payload itself. Use the built-in Windows PowerShell as
+/// a short-lived bootstrap; the selected CMD tab still stays open with /V:OFF.
+#[cfg(any(target_os = "windows", test))]
+fn wt_cmd_batch_args(encoded_command: &str) -> [&str; 9] {
+    [
         "/D",
         "/V:OFF",
         "/K",
-        WINDOWS_BATCH_PATH_COMMAND,
+        "powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        encoded_command,
     ]
+}
+
+/// When the default profile cannot be appended to safely, start cmd explicitly
+/// instead of appending `/K` to an unknown shell.
+#[cfg(any(target_os = "windows", test))]
+fn build_wt_cmd_fallback_args(encoded_command: &str) -> Vec<&str> {
+    let mut args = vec!["new-tab", "cmd"];
+    args.extend(wt_cmd_batch_args(encoded_command));
+    args
 }
 
 /// `--appendCommandLine` exists from WT 1.19. Fall back to explicit cmd before spawn
@@ -75,11 +133,11 @@ fn build_wt_cmd_fallback_args() -> Vec<&'static str> {
 fn select_wt_launch_args<'a>(
     profile: Option<&'a WtDefaultProfile>,
     supports_append: bool,
-    ps_cmd: &'a str,
+    encoded_command: &'a str,
 ) -> Vec<&'a str> {
     match (profile, supports_append) {
-        (Some(profile), true) => profile.build_wt_args(ps_cmd),
-        _ => build_wt_cmd_fallback_args(),
+        (Some(profile), true) => profile.build_wt_args(encoded_command),
+        _ => build_wt_cmd_fallback_args(encoded_command),
     }
 }
 
@@ -1102,9 +1160,14 @@ fn wt_installation_version(installation: &ResolvedWtInstallation) -> Option<(u16
 /// WT may already be a resident GUI process, so report only spawn failure and
 /// return without waiting for the window to close.
 #[cfg(target_os = "windows")]
-fn run_wt_command(launcher: &str, args: &[&str], bat_path: &str) -> Result<(), String> {
+fn run_wt_command(launcher: &str, args: &[&str]) -> Result<(), String> {
     let mut command = std::process::Command::new(launcher);
-    configure_windows_batch_env(&mut command, bat_path);
+    detach_claude_parent_session_env(&mut command);
+    // Per-launch values travel in the encoded command, never in the WT
+    // resident's environment where they could survive into a later launch.
+    for name in WINDOWS_PRIVATE_LAUNCH_ENV_VARS {
+        command.env_remove(name);
+    }
     command
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
@@ -1117,7 +1180,10 @@ fn run_wt_command(launcher: &str, args: &[&str], bat_path: &str) -> Result<(), S
 /// tab when the default profile cannot be recognized safely or WT is too old
 /// for `--appendCommandLine`.
 #[cfg(target_os = "windows")]
-pub(super) fn launch_wt_terminal(bat_path: &str, ps_cmd: &str) -> Result<(), String> {
+pub(super) fn launch_wt_terminal_with_env(
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) -> Result<(), String> {
     let installation = resolve_wt_installation();
     let wt_command = installation
         .as_ref()
@@ -1130,8 +1196,10 @@ pub(super) fn launch_wt_terminal(bat_path: &str, ps_cmd: &str) -> Result<(), Str
     // Keep the previous append policy for unknown versions; configs that depend
     // on ambiguous defaults are refused by the parser.
     let supports_append = profile.is_some() && wt_version.is_none_or(wt_version_supports_append);
-    let args = select_wt_launch_args(profile.as_ref(), supports_append, ps_cmd);
-    run_wt_command(&wt_command, &args, bat_path)
+    let encoded_command =
+        powershell_encoded_command(&wt_batch_script_with_env(bat_path, launch_env));
+    let args = select_wt_launch_args(profile.as_ref(), supports_append, &encoded_command);
+    run_wt_command(&wt_command, &args)
 }
 
 #[cfg(test)]
@@ -1160,8 +1228,18 @@ mod tests {
         }
     }
 
-    fn extend_expected_cmd_batch_args(args: &mut Vec<&str>) {
-        args.extend(["/D", "/V:OFF", "/K", WINDOWS_BATCH_PATH_COMMAND]);
+    fn extend_expected_cmd_batch_args<'a>(args: &mut Vec<&'a str>, encoded_command: &'a str) {
+        args.extend([
+            "/D",
+            "/V:OFF",
+            "/K",
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded_command,
+        ]);
     }
 
     /// Cover JSONC, well-known GUIDs, quoted commandlines, and name matches.
@@ -1279,8 +1357,8 @@ mod tests {
                 "a customization stub from a disabled generator is not an active profile"
             );
             assert_eq!(
-                select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'"),
-                build_wt_cmd_fallback_args()
+                select_wt_launch_args(profile.as_ref(), true, "encoded-probe"),
+                build_wt_cmd_fallback_args("encoded-probe")
             );
         }
 
@@ -1342,9 +1420,9 @@ mod tests {
                     select_wt_launch_args(
                         profile.as_ref(),
                         version.is_some_and(wt_version_supports_append),
-                        "& 'probe.bat'",
+                        "encoded-probe",
                     ),
-                    build_wt_cmd_fallback_args(),
+                    build_wt_cmd_fallback_args("encoded-probe"),
                     "an ambiguous profile must use the explicit cmd fallback"
                 );
             }
@@ -1424,8 +1502,8 @@ mod tests {
             "third-party sources containing PowerShellCore must not be classified as pwsh"
         );
         assert_eq!(
-            select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'"),
-            build_wt_cmd_fallback_args(),
+            select_wt_launch_args(profile.as_ref(), true, "encoded-probe"),
+            build_wt_cmd_fallback_args("encoded-probe"),
             "unknown dynamic profiles must use the explicit cmd fallback"
         );
     }
@@ -1457,8 +1535,8 @@ mod tests {
                 "dynamic profile {name} must not be guessed by name"
             );
             assert_eq!(
-                select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'"),
-                build_wt_cmd_fallback_args(),
+                select_wt_launch_args(profile.as_ref(), true, "encoded-probe"),
+                build_wt_cmd_fallback_args("encoded-probe"),
                 "dynamic profile {name} must use the explicit cmd fallback"
             );
         }
@@ -1600,8 +1678,8 @@ mod tests {
         });
         let profile = parse_wt_default_profile(&settings.to_string(), None);
         assert_eq!(
-            select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'"),
-            build_wt_cmd_fallback_args()
+            select_wt_launch_args(profile.as_ref(), true, "encoded-probe"),
+            build_wt_cmd_fallback_args("encoded-probe")
         );
 
         #[cfg(target_os = "windows")]
@@ -1732,15 +1810,17 @@ mod tests {
                 if let Some(shell) = expected_shell {
                     expected_args.extend(["--profile", guid, "--appendCommandLine", "--"]);
                     match shell {
-                        WtDefaultShell::Cmd => extend_expected_cmd_batch_args(&mut expected_args),
-                        _ => expected_args.extend(["-NoExit", "-Command", "& 'probe.bat'"]),
+                        WtDefaultShell::Cmd => {
+                            extend_expected_cmd_batch_args(&mut expected_args, "encoded-probe")
+                        }
+                        _ => expected_args.extend(["-NoExit", "-EncodedCommand", "encoded-probe"]),
                     }
                 } else {
                     expected_args.push("cmd");
-                    extend_expected_cmd_batch_args(&mut expected_args);
+                    extend_expected_cmd_batch_args(&mut expected_args, "encoded-probe");
                 }
                 assert_eq!(
-                    select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'"),
+                    select_wt_launch_args(profile.as_ref(), true, "encoded-probe"),
                     expected_args,
                     "version={version:?}, listed={listed}"
                 );
@@ -1874,7 +1954,7 @@ mod tests {
                 });
                 let profile =
                     parse_wt_default_profile(&settings.to_string(), Some((1, 23, 20211, 0)));
-                let args = select_wt_launch_args(profile.as_ref(), true, "& 'probe.bat'");
+                let args = select_wt_launch_args(profile.as_ref(), true, "encoded-probe");
                 let actual = args
                     .windows(2)
                     .find(|pair| pair[0] == "--profile")
@@ -2005,15 +2085,13 @@ mod tests {
 
     #[test]
     fn wt_launch_helpers_preserve_the_profile_and_use_explicit_fallback() {
-        let ps = r"& 'C:\Temp\test.bat'";
-        let expected_fallback = vec![
-            "new-tab",
-            "cmd",
-            "/D",
-            "/V:OFF",
-            "/K",
-            "%CC_SWITCH_INTERNAL_BATCH_PATH%",
-        ];
+        let encoded_command = powershell_encoded_command(&wt_batch_script(
+            r"C:\Temp\space & %COMSPEC% ^ ! (test) and O'Brien\启动.bat",
+        ));
+        let encoded = encoded_command.as_str();
+        assert!(!encoded.contains('%'));
+        let mut expected_fallback = vec!["new-tab", "cmd"];
+        extend_expected_cmd_batch_args(&mut expected_fallback, encoded);
 
         for shell in [
             WtDefaultShell::Pwsh,
@@ -2032,19 +2110,22 @@ mod tests {
                 "--",
             ];
             if shell == WtDefaultShell::Cmd {
-                expected.extend(["/D", "/V:OFF", "/K", "%CC_SWITCH_INTERNAL_BATCH_PATH%"]);
+                extend_expected_cmd_batch_args(&mut expected, encoded);
             } else {
-                expected.extend(["-NoExit", "-Command", ps]);
+                expected.extend(["-NoExit", "-EncodedCommand", encoded]);
             }
-            assert_eq!(select_wt_launch_args(Some(&profile), true, ps), expected);
             assert_eq!(
-                select_wt_launch_args(Some(&profile), false, ps),
+                select_wt_launch_args(Some(&profile), true, encoded),
+                expected
+            );
+            assert_eq!(
+                select_wt_launch_args(Some(&profile), false, encoded),
                 expected_fallback
             );
         }
         for supports_append in [false, true] {
             assert_eq!(
-                select_wt_launch_args(None, supports_append, ps),
+                select_wt_launch_args(None, supports_append, encoded),
                 expected_fallback
             );
         }
@@ -2144,6 +2225,172 @@ mod tests {
         );
     }
 
+    // WT expands the commandline with its resident environment BEFORE it applies
+    // the new launch's environment to the child. Exercise that boundary using
+    // the same Win32 API, then run the actual shell against two distinct BATs.
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[serial_test::serial]
+    fn wt_batch_path_is_expanded_only_in_the_new_shell() {
+        fn expand_in_resident_environment(value: &str) -> String {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn ExpandEnvironmentStringsW(
+                    source: *const u16,
+                    target: *mut u16,
+                    size: u32,
+                ) -> u32;
+            }
+            let source: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
+            let size =
+                unsafe { ExpandEnvironmentStringsW(source.as_ptr(), std::ptr::null_mut(), 0) };
+            assert!(size > 0);
+            let mut target = vec![0; size as usize];
+            let written =
+                unsafe { ExpandEnvironmentStringsW(source.as_ptr(), target.as_mut_ptr(), size) };
+            assert!(written > 0 && written <= size);
+            String::from_utf16(&target[..written as usize - 1]).unwrap()
+        }
+
+        let names = [
+            WINDOWS_BATCH_PATH_ENV,
+            WINDOWS_CONFIG_PATH_ENV,
+            WINDOWS_CWD_ENV,
+            "CC_SWITCH_CMD_EXPAND",
+            "CC_SWITCH_BANG",
+        ];
+        let _restore = EnvRestore(
+            names
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect(),
+        );
+        std::env::set_var("CC_SWITCH_CMD_EXPAND", "wrong");
+        std::env::set_var("CC_SWITCH_BANG", "wrong");
+        let temp = tempfile::tempdir().unwrap();
+        let hostile_dir = temp
+            .path()
+            .join("迅雷下载 space & %CC_SWITCH_CMD_EXPAND% ^ !CC_SWITCH_BANG! (test) and O'Brien");
+        std::fs::create_dir(&hostile_dir).unwrap();
+        let marker = hostile_dir.join("配置结果.txt");
+        let marker_path = marker.to_string_lossy();
+        let cwd_path = hostile_dir.to_string_lossy();
+        let launch_env = [
+            (WINDOWS_CONFIG_PATH_ENV, marker_path.as_ref()),
+            (WINDOWS_CWD_ENV, cwd_path.as_ref()),
+        ];
+        let check_env: String = PARENT_CLAUDE_SESSION_ENV_VARS
+            .iter()
+            .map(|name| format!("if defined {name} exit /b 2\r\n"))
+            .collect();
+        let mut batches = Vec::new();
+        for (label, directory) in [("A", temp.path()), ("B", hostile_dir.as_path())] {
+            let batch = tempfile::Builder::new()
+                .prefix(label)
+                .suffix(".bat")
+                .tempfile_in(directory)
+                .unwrap();
+            let content = format!(
+                "@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n{check_env}if not defined CC_SWITCH_INTERNAL_CONFIG_PATH exit /b 3\r\nif not defined CC_SWITCH_INTERNAL_CWD exit /b 4\r\ncd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 5\r\nset \"CC_SWITCH_INTERNAL_CWD=\"\r\n> \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" echo {label}\r\n"
+            );
+            assert!(content.is_ascii());
+            std::fs::write(batch.path(), content).unwrap();
+            batches.push(batch);
+        }
+        assert_ne!(batches[0].path(), batches[1].path());
+        let wt_script = wt_batch_script_with_env(&batches[1].path().to_string_lossy(), &launch_env);
+        let encoded_command =
+            powershell_encoded_command(&format!("{wt_script}; exit $LASTEXITCODE"));
+        let mut failures = Vec::new();
+        for stale_environment in [false, true] {
+            if stale_environment {
+                std::env::set_var(
+                    WINDOWS_BATCH_PATH_ENV,
+                    quote_windows_batch_path_for_env(&batches[0].path().to_string_lossy()),
+                );
+                std::env::set_var(WINDOWS_CONFIG_PATH_ENV, "stale-config");
+                std::env::set_var(WINDOWS_CWD_ENV, "stale-cwd");
+            } else {
+                std::env::remove_var(WINDOWS_BATCH_PATH_ENV);
+                std::env::remove_var(WINDOWS_CONFIG_PATH_ENV);
+                std::env::remove_var(WINDOWS_CWD_ENV);
+            }
+            // Cover fresh forwarded B and older WT retaining the A environment.
+            for forwarded_batch in &batches {
+                for shell in [
+                    None,
+                    Some(WtDefaultShell::Cmd),
+                    Some(WtDefaultShell::PowerShell),
+                    Some(WtDefaultShell::Pwsh),
+                ] {
+                    let profile = shell.map(|shell| WtDefaultProfile {
+                        selector: "probe".to_string(),
+                        shell,
+                    });
+                    let args = select_wt_launch_args(profile.as_ref(), true, &encoded_command);
+                    let command_start = args
+                        .iter()
+                        .position(|arg| *arg == "--")
+                        .map_or(2, |i| i + 1);
+                    // Expand AFTER quoting, just as WT does; quoting an already
+                    // expanded path again would introduce an unrelated CMD error.
+                    let child_args = args[command_start..]
+                        .iter()
+                        .map(|arg| {
+                            let arg = if *arg == "/K" { "/C" } else { arg };
+                            assert!(
+                                !arg.contains('"'),
+                                "fixture arguments have no embedded quotes"
+                            );
+                            if arg.chars().any(char::is_whitespace) {
+                                format!("\"{arg}\"")
+                            } else {
+                                arg.to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let child_args = expand_in_resident_environment(&child_args);
+                    let executable = match shell {
+                        Some(WtDefaultShell::Pwsh) => "pwsh",
+                        Some(WtDefaultShell::PowerShell) => "powershell",
+                        _ => "cmd",
+                    };
+                    let mut command = std::process::Command::new(executable);
+                    configure_windows_batch_env(
+                        &mut command,
+                        &forwarded_batch.path().to_string_lossy(),
+                    );
+                    if stale_environment {
+                        command
+                            .env(WINDOWS_CONFIG_PATH_ENV, "stale-config")
+                            .env(WINDOWS_CWD_ENV, "stale-cwd");
+                    }
+                    let output = command
+                        .envs(
+                            PARENT_CLAUDE_SESSION_ENV_VARS
+                                .iter()
+                                .map(|name| (*name, "stale-parent-session")),
+                        )
+                        .raw_arg(&child_args)
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output()
+                        .unwrap();
+                    let observed = std::fs::read_to_string(&marker).unwrap_or_default();
+                    if !output.status.success() || observed.trim() != "B" {
+                        failures.push(format!(
+                        "{shell:?}, stale={stale_environment}: expected B, got {observed:?}; stdout={}, stderr={}",
+                        decode_command_output(&output.stdout),
+                        decode_command_output(&output.stderr)
+                    ));
+                    }
+                    let _ = std::fs::remove_file(&marker);
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     // Spawn a real argv probe so the launcher path and args are not re-parsed
     // by an extra shell.
     #[cfg(target_os = "windows")]
@@ -2216,10 +2463,10 @@ fn main() {
                     "names must not reach cmd or WT as selectors: {name:?}"
                 );
                 let bat = r"C:\Temp\batch & %COMSPEC% ^ O'Brien\probe.bat";
-                let ps_cmd = format!("& '{}'", bat.replace('\'', "''"));
-                let args = select_wt_launch_args(Some(&profile), true, &ps_cmd);
-                let expected = format!("{args:?}\n{}", quote_windows_batch_path_for_env(bat));
-                run_wt_command(&launcher, &args, bat)
+                let encoded_command = powershell_encoded_command(&wt_batch_script(bat));
+                let args = select_wt_launch_args(Some(&profile), true, &encoded_command);
+                let expected = format!("{args:?}\n");
+                run_wt_command(&launcher, &args)
                     .expect("WT launcher should directly start the probe");
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                 while !capture.is_file() && std::time::Instant::now() < deadline {
@@ -2238,7 +2485,7 @@ fn main() {
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
         let missing_launcher = temp.path().join("missing.exe");
-        assert!(run_wt_command(&missing_launcher.to_string_lossy(), &[], "probe.bat").is_err());
+        assert!(run_wt_command(&missing_launcher.to_string_lossy(), &[]).is_err());
     }
 
     #[cfg(target_os = "windows")]
@@ -2254,13 +2501,18 @@ fn main() {
                 .expect("env probe must write its inherited variable names")
         }
 
+        let private_value_env = [WINDOWS_CONFIG_PATH_ENV, WINDOWS_CWD_ENV];
         let restore = EnvRestore(
             PARENT_CLAUDE_SESSION_ENV_VARS
                 .iter()
+                .chain(private_value_env.iter())
                 .map(|name| (*name, std::env::var_os(name)))
                 .collect(),
         );
-        for name in PARENT_CLAUDE_SESSION_ENV_VARS {
+        for name in PARENT_CLAUDE_SESSION_ENV_VARS
+            .iter()
+            .chain(private_value_env.iter())
+        {
             std::env::set_var(name, "cc-switch-parent-session");
         }
 
@@ -2299,7 +2551,7 @@ fn main() {
             let (launcher, arguments) = args
                 .split_first()
                 .ok_or_else(|| "missing env probe executable".to_string())?;
-            run_wt_command(launcher, arguments, r"C:\Temp\cc-switch-env-probe.bat")
+            run_wt_command(launcher, arguments)
         }
 
         fn run_configured_batch_probe(args: &[&str]) -> Result<(), String> {
@@ -2332,6 +2584,7 @@ fn main() {
             let capture_arg = capture.to_string_lossy();
             let mut args = vec![launcher.as_ref(), capture_arg.as_ref()];
             args.extend(PARENT_CLAUDE_SESSION_ENV_VARS.iter().copied());
+            args.extend(private_value_env);
             launch(&args).unwrap_or_else(|error| panic!("{label} probe should launch: {error}"));
             let inherited = wait_for_probe(&capture);
             assert!(
@@ -2408,13 +2661,14 @@ fn main() {
             )
             .expect("diagnostic batch should be written");
             let bat_path = batch.to_string_lossy();
-            let ps_cmd = format!("{WINDOWS_POWERSHELL_BATCH_COMMAND}; exit");
+            let encoded_command =
+                powershell_encoded_command(&format!("{}; exit", wt_batch_script(&bat_path)));
             if index == 0 {
-                launch_wt_terminal(&bat_path, &ps_cmd).expect("WT launch should succeed");
+                launch_wt_terminal_with_env(&bat_path, &[]).expect("WT launch should succeed");
             } else {
                 let launcher = installation.launcher.to_string_lossy();
-                let args = select_wt_launch_args(Some(profile), *supports_append, &ps_cmd);
-                run_wt_command(&launcher, &args, &bat_path)
+                let args = select_wt_launch_args(Some(profile), *supports_append, &encoded_command);
+                run_wt_command(&launcher, &args)
                     .expect("explicit-profile WT launch should succeed");
             }
 
@@ -2454,6 +2708,164 @@ fn main() {
             }
         }
         drop(restore);
+    }
+
+    // The fixture must be a fresh unpackaged WT copy at a different executable
+    // path (WT keys its resident process by that path), with .portable and the
+    // three built-in shell profiles. Never run this against the user's live WT.
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires CC_SWITCH_WT_TEST_EXE pointing to an isolated portable WT copy in temp"]
+    fn wt_resident_launches_each_unique_batch() {
+        let launcher = PathBuf::from(
+            std::env::var_os("CC_SWITCH_WT_TEST_EXE").expect("set the isolated WT launcher path"),
+        );
+        assert!(launcher.starts_with(std::env::temp_dir()));
+        assert!(launcher.parent().unwrap().join(".portable").is_file());
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("executed.txt");
+        let hostile_dir = temp
+            .path()
+            .join("迅雷下载 space & %CC_SWITCH_CMD_EXPAND% ^ !CC_SWITCH_BANG! (test) and O'Brien");
+        std::fs::create_dir(&hostile_dir).unwrap();
+        let config = hostile_dir.join("供应商设置.json");
+        std::fs::write(&config, "{}\n").unwrap();
+        let config_path = config.to_string_lossy();
+        let cwd_path = hostile_dir.to_string_lossy();
+        let launch_env = [
+            (WINDOWS_CONFIG_PATH_ENV, config_path.as_ref()),
+            (WINDOWS_CWD_ENV, cwd_path.as_ref()),
+        ];
+        let write_batch = |label: &str, directory: &Path| {
+            let batch = tempfile::Builder::new()
+                .prefix(label)
+                .suffix(".bat")
+                .tempfile_in(directory)
+                .unwrap();
+            let marker_path = escape_windows_batch_value(&marker.to_string_lossy());
+            let env_probe: String = PARENT_CLAUDE_SESSION_ENV_VARS
+                .iter()
+                .map(|name| {
+                    format!("if defined {name} >> \"{marker_path}\" echo leaked={name}\r\n")
+                })
+                .collect();
+            let content = format!(
+                "@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n> \"{marker_path}\" echo {label}\r\n>> \"{marker_path}\" echo profile=%WT_PROFILE_ID%\r\n{env_probe}if not defined CC_SWITCH_INTERNAL_CWD goto cc_switch_env_done\r\nif not defined CC_SWITCH_INTERNAL_CONFIG_PATH >> \"{marker_path}\" echo missing=config\r\ncd /d \"%CC_SWITCH_INTERNAL_CWD%\" || >> \"{marker_path}\" echo missing=cwd\r\nif not exist \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" >> \"{marker_path}\" echo missing=config-file\r\n> \"cwd-{label}.txt\" echo ok\r\n:cc_switch_env_done\r\n>> \"{marker_path}\" echo done\r\nexit /b 0\r\n"
+            );
+            assert!(content.is_ascii());
+            std::fs::write(batch.path(), content).unwrap();
+            batch
+        };
+        let wait_for_marker = || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                if let Ok(observed) = std::fs::read_to_string(&marker) {
+                    if observed.lines().last() == Some("done") {
+                        return observed;
+                    }
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "WT must execute the requested batch"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        let batch_a = write_batch("A", temp.path());
+        if std::env::var_os("CC_SWITCH_WT_TEST_SEED_STALE").is_some() {
+            // Reproduce a resident started by the old launcher, including its
+            // stale session/color variables. Do not rely on the current helper
+            // here: it correctly removes the private variables from WT's env.
+            // The GUI process is the resident under test and must outlive this spawn call.
+            #[allow(clippy::zombie_processes)]
+            let _resident = std::process::Command::new(&launcher)
+                .env(
+                    WINDOWS_BATCH_PATH_ENV,
+                    quote_windows_batch_path_for_env(&batch_a.path().to_string_lossy()),
+                )
+                .envs(
+                    PARENT_CLAUDE_SESSION_ENV_VARS
+                        .iter()
+                        .map(|name| (*name, "stale-parent-session")),
+                )
+                .env(WINDOWS_CONFIG_PATH_ENV, "stale-config")
+                .env(WINDOWS_CWD_ENV, "stale-cwd")
+                .env("CC_SWITCH_CMD_EXPAND", "wrong")
+                .env("CC_SWITCH_BANG", "wrong")
+                .args([
+                    "new-tab",
+                    "cmd",
+                    "/D",
+                    "/V:OFF",
+                    "/K",
+                    super::super::misc::WINDOWS_BATCH_PATH_COMMAND,
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .unwrap();
+        } else {
+            let encoded =
+                powershell_encoded_command(&wt_batch_script(&batch_a.path().to_string_lossy()));
+            run_wt_command(
+                &launcher.to_string_lossy(),
+                &build_wt_cmd_fallback_args(&encoded),
+            )
+            .unwrap();
+        }
+        assert_eq!(wait_for_marker().lines().next(), Some("A"));
+        std::fs::remove_file(&marker).unwrap();
+        let mut batch_a = Some(batch_a);
+        for (index, profile) in [
+            Some(WtDefaultProfile {
+                selector: "{574e775e-4f2a-5b96-ac1e-a2962a402336}".to_string(),
+                shell: WtDefaultShell::Pwsh,
+            }),
+            Some(WtDefaultProfile {
+                selector: "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}".to_string(),
+                shell: WtDefaultShell::PowerShell,
+            }),
+            Some(WtDefaultProfile {
+                selector: "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}".to_string(),
+                shell: WtDefaultShell::Cmd,
+            }),
+            None,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let label = format!("B{index}");
+            let batch = write_batch(&label, &hostile_dir);
+            let encoded = powershell_encoded_command(&wt_batch_script_with_env(
+                &batch.path().to_string_lossy(),
+                &launch_env,
+            ));
+            let args = select_wt_launch_args(profile.as_ref(), true, &encoded);
+            run_wt_command(&launcher.to_string_lossy(), &args).unwrap();
+            let observed = wait_for_marker();
+            assert_eq!(
+                observed.lines().next(),
+                Some(label.as_str()),
+                "{profile:?}: {observed}"
+            );
+            assert!(!observed.contains("leaked="), "{observed}");
+            assert!(!observed.contains("missing="), "{observed}");
+            let cwd_marker = hostile_dir.join(format!("cwd-{label}.txt"));
+            assert_eq!(std::fs::read_to_string(&cwd_marker).unwrap().trim(), "ok");
+            std::fs::remove_file(cwd_marker).unwrap();
+            if let Some(profile) = profile {
+                assert!(
+                    observed.contains(&format!("profile={}", profile.selector)),
+                    "{observed}"
+                );
+            }
+            println!("case {index}: executed {label}, profile preserved, no session/color leaks");
+            std::fs::remove_file(&marker).unwrap();
+            // After the first B succeeds, remove A as the production BAT would.
+            // Remaining launches must not depend on that now-missing file.
+            if let Some(batch) = batch_a.take() {
+                batch.close().expect("remove A before the next launch");
+            }
+        }
     }
 
     #[test]
