@@ -2046,13 +2046,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.laonongapi.com/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "openai/gpt-5.6-luna", name: "openai/gpt-5.6-luna" }],
+      models: [{ id: "gpt-5.6-luna", name: "GPT-5.6 Luna" }],
     },
     category: "aggregator",
     icon: "laonongapi",
     iconColor: "#7B61FF",
     suggestedDefaults: {
-      model: { default: "openai/gpt-5.6-luna", provider: "laonongapi" },
+      model: { default: "gpt-5.6-luna", provider: "laonongapi" },
     },
   },
 ];

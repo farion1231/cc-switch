@@ -3762,8 +3762,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "openai/gpt-5.6-luna",
-          name: "openai/gpt-5.6-luna",
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
           contextWindow: 1000000,
           cost: { input: 0.7, output: 4.1, cacheRead: 0.1 },
         },
@@ -3780,9 +3780,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "openai/gpt-5.6-luna" },
+      model: { primary: "laonongapi/gpt-5.6-luna" },
       modelCatalog: {
-        "openai/gpt-5.6-luna": { alias: "GPT-5.6 Luna" },
+        "laonongapi/gpt-5.6-luna": { alias: "GPT-5.6 Luna" },
       },
     },
   },

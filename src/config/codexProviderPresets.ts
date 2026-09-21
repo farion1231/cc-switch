@@ -2788,9 +2788,16 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     config: generateThirdPartyConfig(
       "laonongapi",
       "https://api.laonongapi.com/v1",
-      "anthropic/claude-opus-5",
+      "gpt-5.6-luna",
     ),
     endpointCandidates: ["https://api.laonongapi.com/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+      },
+    ]),
     category: "aggregator",
     icon: "laonongapi",
     iconColor: "#7B61FF",
