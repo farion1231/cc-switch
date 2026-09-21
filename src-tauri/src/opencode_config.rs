@@ -154,7 +154,20 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
         .unwrap_or_default())
 }
 
-pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+pub fn set_provider(id: &str, mut config: Value) -> Result<(), AppError> {
+    // OpenCode treats an explicit blank name as the display name, not as a
+    // request to fall back to the model ID. Normalize both raw and typed writes,
+    // including legacy providers, without changing explicit non-blank names.
+    if let Some(models) = config.get_mut("models").and_then(Value::as_object_mut) {
+        for (model_id, model) in models {
+            if let Some(name) = model.get_mut("name") {
+                if name.as_str().is_some_and(|name| name.trim().is_empty()) {
+                    *name = Value::String(model_id.clone());
+                }
+            }
+        }
+    }
+
     let _guard = opencode_config_lock().lock()?;
     let path = get_opencode_config_path();
     let mut full_config = read_opencode_config_from_path(&path)?;
@@ -358,6 +371,8 @@ mod tests {
         fn set(home: &std::path::Path) -> Self {
             let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            // A cached directory override must never redirect test writes outside the fixture.
+            assert_eq!(get_opencode_dir(), home.join(".config").join("opencode"));
             guard
         }
     }
@@ -420,6 +435,111 @@ mod tests {
             config["model"], "keep-me",
             "unrelated user config must be preserved"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_provider_falls_back_to_model_id_only_for_blank_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+        let mut expected = json!({
+            "model": "custom/vendor/model",
+            "theme": "dark",
+            "provider": {
+                "unmanaged": {"models": {"leave-alone": {"name": ""}}}
+            }
+        });
+        write_config(temp.path(), &expected.to_string());
+        let provider = json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "",
+            "options": {"baseURL": "https://example.com/v1", "setCacheKey": true},
+            "models": {
+                "vendor/model": {
+                    "name": "",
+                    "limit": {"context": 65536, "output": 4096},
+                    "options": {"name": ""},
+                    "variants": {"fast": {"name": ""}}
+                },
+                "whitespace": {"name": " \t\r\n\u{3000}"},
+                "custom-name": {"name": "  自定义 Model  "},
+                "unnamed": {"options": {"name": ""}}
+            }
+        });
+
+        set_provider("custom", provider.clone()).expect("write provider");
+
+        expected["provider"]["custom"] = provider;
+        expected["provider"]["custom"]["models"]["vendor/model"]["name"] = json!("vendor/model");
+        expected["provider"]["custom"]["models"]["whitespace"]["name"] = json!("whitespace");
+        assert_eq!(read_opencode_config().expect("reload"), expected);
+
+        let path = get_opencode_config_path();
+        let contents = std::fs::read(&path).expect("read contents");
+        set_provider("custom", expected["provider"]["custom"].clone()).expect("rewrite provider");
+        assert_eq!(std::fs::read(&path).expect("reread contents"), contents);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_typed_provider_blank_names_remain_importable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+        let provider: OpenCodeProviderConfig = serde_json::from_value(json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "deepseek/deepseek-v4-pro": {"name": ""},
+                "z-ai/glm-5.3-flash": {"name": " \t"},
+                "named": {"name": "Custom display name"}
+            }
+        }))
+        .expect("parse provider");
+
+        set_typed_provider("custom", &provider).expect("write typed provider");
+
+        let providers = get_typed_providers().expect("reload typed providers");
+        let imported = providers
+            .get("custom")
+            .expect("provider remains importable");
+        assert_eq!(
+            imported.models["deepseek/deepseek-v4-pro"].name,
+            "deepseek/deepseek-v4-pro"
+        );
+        assert_eq!(
+            imported.models["z-ai/glm-5.3-flash"].name,
+            "z-ai/glm-5.3-flash"
+        );
+        assert_eq!(imported.models["named"].name, "Custom display name");
+        assert_eq!(provider.models["deepseek/deepseek-v4-pro"].name, "");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_provider_preserves_missing_or_non_string_model_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        for provider in [
+            json!({}),
+            json!({"models": null}),
+            json!({"models": []}),
+            json!({"models": "invalid"}),
+            json!({"models": {
+                "missing": {},
+                "null-name": {"name": null},
+                "number-name": {"name": 42},
+                "object-name": {"name": {"name": ""}},
+                "null-model": null,
+                "array-model": [],
+                "string-model": "invalid"
+            }}),
+        ] {
+            set_provider("custom", provider.clone()).expect("write raw provider");
+            assert_eq!(
+                read_opencode_config().expect("reload")["provider"]["custom"],
+                provider
+            );
+        }
     }
 
     #[test]
