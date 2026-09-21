@@ -54,6 +54,22 @@ function setByPath(doc: unknown, path: string, value: unknown): void {
   cur[segs[segs.length - 1]] = value;
 }
 
+/** 表格列的最小宽度类：长文本列给足宽度，配合容器横向滚动防压扁 */
+function columnMinWidth(type: ConfigColumn["type"]): string {
+  switch (type) {
+    case "toggle":
+      return "w-12";
+    case "textarea":
+      return "min-w-[240px]";
+    case "number":
+      return "w-20";
+    case "select":
+      return "min-w-[90px]";
+    default:
+      return "min-w-[110px]";
+  }
+}
+
 interface Props {
   pluginId: string;
   displayName: string;
@@ -251,105 +267,118 @@ export function PluginConfigDialog({
           : [];
         const cols = item.columns ?? [];
         field.push(
-          <table key={`f-${item.key}`} className="w-full text-xs">
-            <thead>
-              <tr>
-                {cols.map((c) => (
-                  <th
-                    key={c.key}
-                    className="border-b px-2 py-1 text-left font-medium"
-                  >
-                    {c.label}
-                  </th>
-                ))}
-                <th className="w-14 border-b px-2 py-1" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, ri) => (
-                <tr key={ri}>
+          // 列多且含长文本（pattern/values），给表格固定最小宽度 + 横向滚动，
+          // 避免列被压扁到看不见（视觉上"值为空"）
+          <div key={`f-${item.key}`} className="overflow-x-auto pb-1">
+            <table className="w-full min-w-[920px] text-xs">
+              <thead>
+                <tr>
                   {cols.map((c) => (
-                    <td key={c.key} className="px-2 py-1 align-top">
-                      {c.type === "toggle" ? (
-                        <Switch
-                          checked={row[c.key] === true}
-                          onCheckedChange={(checked) =>
-                            updateCell(item, ri, c, checked)
-                          }
-                        />
-                      ) : c.type === "textarea" ? (
-                        <textarea
-                          className="w-full min-w-[220px] rounded-md border border-input bg-transparent px-2 py-1 font-mono text-xs"
-                          rows={2}
-                          value={
-                            typeof row[c.key] === "string"
-                              ? (row[c.key] as string)
-                              : ""
-                          }
-                          onChange={(e) =>
-                            updateCell(item, ri, c, e.target.value)
-                          }
-                        />
-                      ) : c.type === "number" ? (
-                        <Input
-                          type="number"
-                          className="w-24"
-                          value={
-                            typeof row[c.key] === "number"
-                              ? (row[c.key] as number)
-                              : ""
-                          }
-                          onChange={(e) =>
-                            updateCell(item, ri, c, Number(e.target.value))
-                          }
-                        />
-                      ) : c.type === "select" ? (
-                        <select
-                          className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs"
-                          value={
-                            typeof row[c.key] === "string"
-                              ? (row[c.key] as string)
-                              : ""
-                          }
-                          onChange={(e) =>
-                            updateCell(item, ri, c, e.target.value)
-                          }
-                        >
-                          {(c.options ?? []).map((o) => (
-                            <option key={o} value={o}>
-                              {o}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <Input
-                          type="text"
-                          value={
-                            typeof row[c.key] === "string"
-                              ? (row[c.key] as string)
-                              : ""
-                          }
-                          onChange={(e) =>
-                            updateCell(item, ri, c, e.target.value)
-                          }
-                        />
-                      )}
-                    </td>
-                  ))}
-                  <td className="px-2 py-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-destructive"
-                      onClick={() => delRow(item, ri)}
+                    <th
+                      key={c.key}
+                      className={`${columnMinWidth(c.type)} border-b px-2 py-1 text-left font-medium`}
                     >
-                      ✕
-                    </Button>
-                  </td>
+                      {c.label}
+                    </th>
+                  ))}
+                  <th className="w-14 border-b px-2 py-1" />
                 </tr>
-              ))}
-            </tbody>
-          </table>,
+              </thead>
+              <tbody>
+                {rows.map((row, ri) => (
+                  <tr key={ri}>
+                    {cols.map((c) => (
+                      <td
+                        key={c.key}
+                        className={`${columnMinWidth(c.type)} px-2 py-1 align-top`}
+                      >
+                        {c.type === "toggle" ? (
+                          <Switch
+                            checked={row[c.key] === true}
+                            onCheckedChange={(checked) =>
+                              updateCell(item, ri, c, checked)
+                            }
+                          />
+                        ) : c.type === "textarea" ? (
+                          <textarea
+                            className="w-full rounded-md border border-input bg-transparent px-2 py-1 font-mono text-xs"
+                            rows={2}
+                            value={
+                              typeof row[c.key] === "string"
+                                ? (row[c.key] as string)
+                                : Array.isArray(row[c.key])
+                                  ? (row[c.key] as unknown[])
+                                      .filter(
+                                        (v): v is string =>
+                                          typeof v === "string",
+                                      )
+                                      .join(", ")
+                                  : ""
+                            }
+                            onChange={(e) =>
+                              updateCell(item, ri, c, e.target.value)
+                            }
+                          />
+                        ) : c.type === "number" ? (
+                          <Input
+                            type="number"
+                            value={
+                              typeof row[c.key] === "number"
+                                ? (row[c.key] as number)
+                                : ""
+                            }
+                            onChange={(e) =>
+                              updateCell(item, ri, c, Number(e.target.value))
+                            }
+                          />
+                        ) : c.type === "select" ? (
+                          <select
+                            className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs"
+                            value={
+                              typeof row[c.key] === "string"
+                                ? (row[c.key] as string)
+                                : ""
+                            }
+                            onChange={(e) =>
+                              updateCell(item, ri, c, e.target.value)
+                            }
+                          >
+                            {(c.options ?? []).map((o) => (
+                              <option key={o} value={o}>
+                                {o}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <Input
+                            type="text"
+                            value={
+                              typeof row[c.key] === "string"
+                                ? (row[c.key] as string)
+                                : ""
+                            }
+                            onChange={(e) =>
+                              updateCell(item, ri, c, e.target.value)
+                            }
+                          />
+                        )}
+                      </td>
+                    ))}
+                    <td className="px-2 py-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-destructive"
+                        onClick={() => delRow(item, ri)}
+                      >
+                        ✕
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>,
         );
         field.push(
           <Button
@@ -374,7 +403,7 @@ export function PluginConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {title ?? t(`${I18N}.title`, { name: displayName })}

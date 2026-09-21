@@ -13,11 +13,12 @@
 //! - 正则/字面量规则（`rules.json` 文档，支持 capture 捕获组只替换值）；
 //! - 用户自定义特殊值（`custom-values.json` 文档，登记即预注册映射，priority 缺省 1）。
 //!
-//! 配置存储：三份配置文档（`json/config.json` / `json/rules.json` /
-//! `json/custom-values.json`，键为虚拟文件名）持久化在 settings 表
-//! [`CONFIG_STORE_KEY`]；面板「设置」经 [`ProxyPlugin::config_read`] /
-//! [`ProxyPlugin::config_write`] 读写，先整批校验（Rust 版 `_validate_*`）再落库，
-//! 保存即重建内存快照生效。映射表持久化在 SQLite `privacy_mapping` 表（明文存原文，
+//! 配置存储：三份配置文件落地在 `<应用配置目录>/privacy/`（`config.json` /
+//! `rules.json` / `custom-values.json`，即 `C:\Users\<user>\.cc-switch\privacy\`）。
+//! 全新安装时物化默认配置（规则集与 Python 参考实现同源）；面板「设置」经
+//! [`ProxyPlugin::config_read`] / [`ProxyPlugin::config_write`] 读写同一批文件
+//! （先整批校验——Rust 版 `_validate_*`——再原子写盘）；手动编辑文件保存后按
+//! mtime 热重载生效。映射表持久化在 SQLite `privacy_mapping` 表（明文存原文，
 //! 安全边界：数据库文件需要像密码一样妥善保护）。
 //!
 //! 构成：
@@ -70,14 +71,16 @@ const MAX_MAPPING_ROWS: usize = 100_000;
 /// 插件 id
 pub(crate) const PRIVACY_PLUGIN_ID: &str = "builtin:privacy-replace";
 
-/// 配置文档在 settings 表中的存储键（单键存三份文档的映射）
-const CONFIG_STORE_KEY: &str = "builtin_privacy_config";
+/// 旧版 settings 表存储键（配置曾存单键 JSON blob；启动时一次性迁移到配置
+/// 目录文件后以空串标记已完成，不再读取）
+const LEGACY_CONFIG_STORE_KEY: &str = "builtin_privacy_config";
 
-/// 虚拟配置文件名（config 协议的文档键；与外部 Python 参考实现保持同形，
-/// 面板 schema 的 file 字段引用这些键）
-const CONFIG_DOC_FILE: &str = "json/config.json";
-const RULES_DOC_FILE: &str = "json/rules.json";
-const CUSTOM_DOC_FILE: &str = "json/custom-values.json";
+/// 配置文件名（config 协议的文档键 = 磁盘文件名），落地在
+/// `<应用配置目录>/privacy/`（如 `C:\Users\<user>\.cc-switch\privacy\`）；
+/// 面板「设置」读写这些文件，手动编辑保存后按 mtime 热重载生效
+const CONFIG_DOC_FILE: &str = "config.json";
+const RULES_DOC_FILE: &str = "rules.json";
+const CUSTOM_DOC_FILE: &str = "custom-values.json";
 /// config 协议支持的全部文档键
 const CONFIG_DOC_FILES: [&str; 3] = [CONFIG_DOC_FILE, RULES_DOC_FILE, CUSTOM_DOC_FILE];
 
@@ -1491,43 +1494,115 @@ const DEFAULT_RULES_JSON: &str = r#"{
   ]
 }"#;
 
-/// 默认配置文档（无任何存档时物化入库；用户随后在面板上编辑的就是这份）
-fn default_docs() -> Value {
-    json!({
-        CONFIG_DOC_FILE: {
+/// 单份配置文档的缺省内容（全新安装物化用；规则集与 Python 参考实现同源）
+fn default_doc_for(file: &str) -> Value {
+    match file {
+        CONFIG_DOC_FILE => json!({
             "prompt_note": true,
             "enable_regex": true,
             "enable_hexdump_guard": true,
             "cache_capacity": DEFAULT_CACHE_CAPACITY,
             "hash": { "algorithm": "blake2b", "mode": "adaptive", "length": 16 }
-        },
-        RULES_DOC_FILE: serde_json::from_str::<Value>(DEFAULT_RULES_JSON)
+        }),
+        RULES_DOC_FILE => serde_json::from_str::<Value>(DEFAULT_RULES_JSON)
             .expect("内置默认规则集必须是合法 JSON"),
-        CUSTOM_DOC_FILE: { "enabled": true, "values": [] }
-    })
+        _ => json!({ "enabled": true, "values": [] }),
+    }
 }
 
-/// 从 settings 表读取配置文档映射：None = 无存档（首次启动）；Err = 存档损坏
-fn load_docs_from(db: &Database) -> Result<Option<Value>, String> {
+/// 三份缺省文档的映射（旧 blob 迁移兜底用）
+fn default_docs() -> Value {
+    let mut out = Map::new();
+    for file in CONFIG_DOC_FILES {
+        out.insert(file.to_string(), default_doc_for(file));
+    }
+    Value::Object(out)
+}
+
+/// 读取旧版 settings 表的配置 blob（一次性迁移源；空串/缺失 = None）
+fn load_legacy_blob(db: &Database) -> Result<Option<Value>, String> {
     let Some(raw) = db
-        .get_setting(CONFIG_STORE_KEY)
-        .map_err(|e| format!("读取配置存储失败: {e}"))?
+        .get_setting(LEGACY_CONFIG_STORE_KEY)
+        .map_err(|e| format!("读取旧配置存储失败: {e}"))?
     else {
         return Ok(None);
     };
-    let docs: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("配置文档解析失败: {e}（请修复后在面板重新保存）"))?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let docs: Value =
+        serde_json::from_str(raw).map_err(|e| format!("旧配置 blob 解析失败: {e}"))?;
     if !docs.is_object() {
-        return Err("配置文档必须是 JSON 对象".to_string());
+        return Err("旧配置 blob 必须是 JSON 对象".to_string());
     }
     Ok(Some(docs))
 }
 
-/// 把配置文档映射写入 settings 表
-fn store_docs_to(db: &Database, docs: &Value) -> Result<(), String> {
-    let raw = serde_json::to_string(docs).map_err(|e| format!("配置文档序列化失败: {e}"))?;
-    db.set_setting(CONFIG_STORE_KEY, &raw)
-        .map_err(|e| format!("写入配置存储失败: {e}"))
+/// 插件配置目录：`<应用配置目录>/privacy/`
+fn privacy_config_dir() -> std::path::PathBuf {
+    crate::config::get_app_config_dir().join("privacy")
+}
+
+/// 配置文档键 → 磁盘路径（键即文件名，位于配置目录下）
+fn doc_disk_path(dir: &std::path::Path, file: &str) -> std::path::PathBuf {
+    dir.join(file)
+}
+
+/// 读取文件 mtime（纳秒；读取失败返回 None → 按 0 计）
+fn file_mtime_nanos(path: &std::path::Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_nanos() as u64)
+}
+
+/// 原子写 JSON 文档（临时文件 + 替换，避免写一半损坏；pretty + 尾换行便于手工 diff）
+fn atomic_write_json(path: &std::path::Path, doc: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建配置目录 {} 失败: {e}", parent.display()))?;
+    }
+    let mut body =
+        serde_json::to_string_pretty(doc).map_err(|e| format!("配置文档序列化失败: {e}"))?;
+    body.push('\n');
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, body).map_err(|e| format!("写入 {} 失败: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("替换 {} 失败: {e}", path.display()))?;
+    Ok(())
+}
+
+/// 从配置目录读取三份文档：文件缺失时以空缺省文档补位（与参考实现的
+/// `_CONFIG_STAGE_DEFAULTS` 一致——缺失 ≠ 重置为默认规则集）；解析失败返回 Err
+/// （热重载沿用旧快照，面板读取时把原因显示给用户）
+fn load_docs_from_files(dir: &std::path::Path) -> Result<Value, String> {
+    let mut out = Map::new();
+    for file in CONFIG_DOC_FILES {
+        let path = doc_disk_path(dir, file);
+        if !path.exists() {
+            out.insert(
+                file.to_string(),
+                match file {
+                    CONFIG_DOC_FILE => json!({}),
+                    RULES_DOC_FILE => json!({ "enabled": true, "rules": [] }),
+                    _ => json!({ "enabled": true, "values": [] }),
+                },
+            );
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("读取 {} 失败: {e}（请修复该文件）", path.display()))?;
+        let doc: Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("{} 解析失败: {e}（请先修复该文件）", path.display()))?;
+        if !doc.is_object() {
+            return Err(format!("{} 必须是 JSON 对象", path.display()));
+        }
+        out.insert(file.to_string(), doc);
+    }
+    Ok(Value::Object(out))
 }
 
 /// 单份文档的结构防御：非对象时告警并回退默认（fail-open，不阻断启动）。
@@ -1641,10 +1716,14 @@ fn build_snapshot(docs: &Value) -> EngineSnapshot {
 // 插件
 // ---------------------------------------------------------------------------
 
-/// 插件共享状态（配置快照 + 映射 + 缓存）
+/// 插件共享状态（配置目录 + 配置快照 + 映射 + 缓存）
 struct PrivacyState {
-    /// 当前配置快照（config_write 时整体换新；请求路径只取 Arc 克隆）
+    /// 配置文件目录 `<应用配置目录>/privacy/`
+    config_dir: std::path::PathBuf,
+    /// 当前配置快照（mtime 热重载 / config_write 时整体换新；请求路径只取 Arc 克隆）
     snapshot: RwLock<Arc<EngineSnapshot>>,
+    /// 上次加载时三份配置文件的 mtime（与 CONFIG_DOC_FILES 顺序对应）
+    mtimes: Mutex<[u64; 3]>,
     store: Mutex<MappingStore>,
     cache: Mutex<ReplaceCache>,
     /// 替换实际执行次数（观测/测试用：验证缓存命中时检测未重跑）
@@ -1658,34 +1737,88 @@ pub struct BuiltinPrivacyPlugin {
 }
 
 impl BuiltinPrivacyPlugin {
-    /// 构造并初始化：载入映射 → 读取（或物化）配置文档 → 预注册自定义特殊值
+    /// 构造并初始化：准备配置目录（全新安装物化默认配置 / 旧 blob 一次性迁移）→
+    /// 载入映射 → 加载配置快照 → 预注册自定义特殊值
     pub fn new(db: Arc<Database>) -> Self {
+        Self::with_config_dir(db, privacy_config_dir())
+    }
+
+    /// 可注入配置目录的构造（测试用临时目录）
+    pub(crate) fn with_config_dir(db: Arc<Database>, dir: std::path::PathBuf) -> Self {
         let state = Arc::new(PrivacyState {
+            config_dir: dir,
             snapshot: RwLock::new(Arc::new(EngineSnapshot::default())),
+            mtimes: Mutex::new([0; 3]),
             store: Mutex::new(MappingStore::default()),
             cache: Mutex::new(ReplaceCache::default()),
             replace_runs: AtomicU64::new(0),
         });
         let plugin = Self { db, state };
         plugin.load_startup_mappings();
+        plugin.init_config_files();
+        // 首次加载：记录当前 mtime 后整载（此后 refresh 只在文件变化时触发）
+        let mtimes = plugin.read_mtimes();
+        if let Err(e) = plugin.load_and_apply() {
+            log::warn!("[PRIVACY] 初始配置加载失败，以空配置运行(fail-open): {e}");
+        }
+        *plugin.state.mtimes.lock().unwrap() = mtimes;
+        plugin
+    }
 
-        match load_docs_from(&plugin.db) {
-            Ok(Some(docs)) => plugin.apply_docs(&docs),
-            Ok(None) => {
-                // 首次启动：物化默认配置（含默认规则集），面板读到的就是这份
-                let docs = default_docs();
-                if let Err(e) = store_docs_to(&plugin.db, &docs) {
-                    log::warn!("[PRIVACY] 默认配置写入失败（本次以内存默认值运行）: {e}");
-                }
-                plugin.apply_docs(&docs);
-            }
+    /// 配置目录准备：三份配置文件全部缺失（全新安装 / 整目录被删）时物化默认
+    /// 配置文件；若 settings 表存有旧版 blob（短暂测试版遗留），优先迁移其内容
+    /// 并清空标记，避免用户已在面板做过的配置丢失。部分缺失（用户只删了某个
+    /// 文件）不回写，加载时按空缺省文档补位
+    fn init_config_files(&self) {
+        let dir = &self.state.config_dir;
+        let any_exists = CONFIG_DOC_FILES
+            .iter()
+            .any(|file| doc_disk_path(dir, file).exists());
+        if any_exists {
+            return;
+        }
+        let legacy = match load_legacy_blob(&self.db) {
+            Ok(blob) => blob,
             Err(e) => {
-                // 存档损坏：以默认配置启动（fail-open），不覆盖原存档，可在面板重新保存修复
-                log::warn!("[PRIVACY] {e}，本次以默认配置启动");
-                plugin.apply_docs(&default_docs());
+                log::warn!("[PRIVACY] {e}，改用内置默认配置");
+                None
+            }
+        };
+        let source = legacy.clone().unwrap_or_else(default_docs);
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            log::warn!(
+                "[PRIVACY] 创建配置目录 {} 失败（本次以空配置运行）: {e}",
+                dir.display()
+            );
+            return;
+        }
+        for file in CONFIG_DOC_FILES {
+            let doc = source
+                .get(file)
+                .cloned()
+                .filter(|d| d.is_object())
+                .unwrap_or_else(|| default_doc_for(file));
+            let path = doc_disk_path(dir, file);
+            if let Err(e) = atomic_write_json(&path, &doc) {
+                log::warn!("[PRIVACY] 默认配置写入失败（{}）: {e}", path.display());
             }
         }
-        plugin
+        log::info!("[PRIVACY] 配置目录 {} 初始化完成", dir.display());
+        // 迁移完成后清空旧 blob（空串 = 已迁移，不再读取）
+        if legacy.is_some() {
+            if let Err(e) = self.db.set_setting(LEGACY_CONFIG_STORE_KEY, "") {
+                log::warn!("[PRIVACY] 清理旧配置存储标记失败（不影响使用）: {e}");
+            }
+        }
+    }
+
+    /// 读取当前三份配置文件的 mtime 快照
+    fn read_mtimes(&self) -> [u64; 3] {
+        let mut out = [0u64; 3];
+        for (i, file) in CONFIG_DOC_FILES.iter().enumerate() {
+            out[i] = file_mtime_nanos(&doc_disk_path(&self.state.config_dir, file)).unwrap_or(0);
+        }
+        out
     }
 
     /// 启动时全量载入映射（上限 [`MAX_MAPPING_ROWS`]，超出按 created_at 淘汰最旧记录）
@@ -1727,11 +1860,23 @@ impl BuiltinPrivacyPlugin {
         }
     }
 
-    /// 应用新的配置文档：重建快照 → 预注册新增自定义特殊值 → 原子换新
+    /// 从配置目录整载文档并应用：重建快照 → 预注册新增自定义特殊值 → 原子换新
+    fn load_and_apply(&self) -> Result<(), String> {
+        let docs = load_docs_from_files(&self.state.config_dir)?;
+        self.apply_docs(&docs);
+        Ok(())
+    }
+
+    /// 应用配置文档：重建快照 → 预注册新增自定义特殊值 → 原子换新
     fn apply_docs(&self, docs: &Value) {
         let snapshot = Arc::new(build_snapshot(docs));
-        // 用户自定义特殊值：登记即预注册映射（用户"手动记录"的值立刻拥有稳定 id，
-        // 即使尚未在任何请求里出现过，响应侧也已可还原）
+        self.pre_register_custom_values(&snapshot);
+        *self.state.snapshot.write().unwrap() = snapshot;
+    }
+
+    /// 用户自定义特殊值：登记即预注册映射（用户"手动记录"的值立刻拥有稳定 id，
+    /// 即使尚未在任何请求里出现过，响应侧也已可还原）；已有原文复用既有 id
+    fn pre_register_custom_values(&self, snapshot: &EngineSnapshot) {
         let mut pending: Vec<(String, String, String)> = Vec::new();
         {
             let mut store = self.state.store.lock().unwrap();
@@ -1749,10 +1894,27 @@ impl BuiltinPrivacyPlugin {
                 log::warn!("[PRIVACY] 预注册映射写入失败（内存映射仍生效）: {e}");
             }
         }
-        *self.state.snapshot.write().unwrap() = snapshot;
+    }
+
+    /// mtime 热重载：任一配置文件变化时整体重建快照（失败沿用旧快照并告警，
+    /// fail-open）；记录本次 mtime，避免每条请求重复告警
+    fn refresh_snapshot_if_changed(&self) {
+        let now = self.read_mtimes();
+        {
+            let mt = self.state.mtimes.lock().unwrap();
+            if now == *mt {
+                return;
+            }
+        }
+        match self.load_and_apply() {
+            Ok(()) => log::info!("[PRIVACY] 配置文件变更，已热重载"),
+            Err(e) => log::warn!("[PRIVACY] 配置重载失败，沿用旧配置: {e}"),
+        }
+        *self.state.mtimes.lock().unwrap() = now;
     }
 
     fn current_snapshot(&self) -> Arc<EngineSnapshot> {
+        self.refresh_snapshot_if_changed();
         self.state.snapshot.read().unwrap().clone()
     }
 
@@ -1900,34 +2062,16 @@ impl BuiltinPrivacyPlugin {
         out
     }
 
-    // -- 面板配置（config_read / config_write） ------------------------------
+    // -- 面板配置（config_read / config_write，读写 <配置目录>/privacy/ 下文件） --
 
-    /// 面板读取：返回三份完整文档（缺失文件以默认文档补齐）
+    /// 面板读取：返回三份完整文档（缺失文件以空缺省文档补齐；
+    /// 文件损坏返回 Err，原因原样展示在面板弹窗）
     fn handle_config_read(&self) -> Result<Value, String> {
-        let stored = load_docs_from(&self.db)?;
-        let docs = stored.unwrap_or_else(default_docs);
-        let mut out = Map::new();
-        for file in CONFIG_DOC_FILES {
-            match docs.get(file) {
-                Some(doc) if doc.is_object() => {
-                    out.insert(file.to_string(), doc.clone());
-                }
-                Some(_) => return Err(format!("{file} 必须是 JSON 对象")),
-                None => {
-                    let fallback = match file {
-                        CONFIG_DOC_FILE => json!({}),
-                        RULES_DOC_FILE => json!({"enabled": true, "rules": []}),
-                        _ => json!({"enabled": true, "values": []}),
-                    };
-                    out.insert(file.to_string(), fallback);
-                }
-            }
-        }
-        Ok(Value::Object(out))
+        load_docs_from_files(&self.state.config_dir)
     }
 
-    /// 面板保存：先整批校验（校验函数会顺带归一化），任一失败即整批拒绝，不产生半写入；
-    /// 通过后与既有文档合并落库，并重建快照即时生效
+    /// 面板保存：先整批校验（校验函数会顺带归一化），任一失败即整批拒绝，不产生
+    /// 半写入；通过后原子写盘（未提交的文件保持原样），重建快照即时生效
     fn handle_config_write(&self, docs: &Value) -> Result<(), String> {
         let Some(map) = docs.as_object() else {
             return Err("config 缺少文档映射".to_string());
@@ -1958,18 +2102,13 @@ impl BuiltinPrivacyPlugin {
             }
             normalized.push((key.clone(), doc));
         }
-        let mut merged = load_docs_from(&self.db)?.unwrap_or_else(default_docs);
-        if !merged.is_object() {
-            merged = default_docs();
+        for (key, doc) in &normalized {
+            let path = doc_disk_path(&self.state.config_dir, key);
+            atomic_write_json(&path, doc)?;
         }
-        {
-            let merged_obj = merged.as_object_mut().unwrap();
-            for (key, doc) in normalized {
-                merged_obj.insert(key, doc);
-            }
-        }
-        store_docs_to(&self.db, &merged)?;
-        self.apply_docs(&merged);
+        // 从磁盘整载重建快照（同时刷新 mtime 记录，避免下次请求重复热重载）
+        self.load_and_apply()?;
+        *self.state.mtimes.lock().unwrap() = self.read_mtimes();
         Ok(())
     }
 }
@@ -2551,25 +2690,36 @@ mod tests {
         })
     }
 
-    /// 用指定配置文档构造插件（跳过 DB 读取/物化；映射表从 DB 载入 + 预注册）
-    fn plugin_with_docs(db: Arc<Database>, docs: &Value) -> BuiltinPrivacyPlugin {
-        let state = Arc::new(PrivacyState {
-            snapshot: RwLock::new(Arc::new(EngineSnapshot::default())),
-            store: Mutex::new(MappingStore::default()),
-            cache: Mutex::new(ReplaceCache::default()),
-            replace_runs: AtomicU64::new(0),
-        });
-        let plugin = BuiltinPrivacyPlugin { db, state };
-        plugin.load_startup_mappings();
-        plugin.apply_docs(docs);
-        plugin
+    /// 用指定配置文档构造插件：文档写入临时配置目录后走真实加载路径
+    /// （映射表从 DB 载入 + 预注册；返回 TempDir 保持文件存活）
+    fn plugin_with_docs(
+        db: Arc<Database>,
+        docs: &Value,
+    ) -> (BuiltinPrivacyPlugin, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        for file in CONFIG_DOC_FILES {
+            let doc = docs
+                .get(file)
+                .cloned()
+                .unwrap_or_else(|| default_doc_for(file));
+            atomic_write_json(&doc_disk_path(dir.path(), file), &doc).unwrap();
+        }
+        let plugin = BuiltinPrivacyPlugin::with_config_dir(db, dir.path().to_path_buf());
+        (plugin, dir)
     }
 
-    fn plugin_with_rules(rules: Value) -> BuiltinPrivacyPlugin {
+    fn plugin_with_rules(rules: Value) -> (BuiltinPrivacyPlugin, tempfile::TempDir) {
         plugin_with_docs(
             Arc::new(Database::memory().unwrap()),
             &docs_with_rules(rules),
         )
+    }
+
+    /// 新建临时目录插件（空目录 → 物化默认配置文件，等价全新安装）
+    fn plugin_in_temp_dir(db: Arc<Database>) -> (BuiltinPrivacyPlugin, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = BuiltinPrivacyPlugin::with_config_dir(db, dir.path().to_path_buf());
+        (plugin, dir)
     }
 
     fn pre_request_ctx() -> PluginRequestContext {
@@ -2692,7 +2842,7 @@ mod tests {
         // 稳定性红线：散列配置只影响新登记的映射，已有映射 id 永不改变
         let docs_blake2b = docs_with_rules(test_rules());
         let db = Arc::new(Database::memory().unwrap());
-        let plugin = plugin_with_docs(db.clone(), &docs_blake2b);
+        let (plugin, _dir) = plugin_with_docs(db.clone(), &docs_blake2b);
         let (old_id, _) = plugin
             .state
             .store
@@ -2833,7 +2983,7 @@ mod tests {
 
     #[test]
     fn test_replace_text_produces_markers_and_restore_roundtrip() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
 
         let text = "mail a@b.com now";
         let (replaced, changed) = plugin.replace_text(text);
@@ -2861,7 +3011,7 @@ mod tests {
     fn test_capture_group_only_masks_value() {
         // Python 移植能力①：capture 指定时只替换该捕获组命中的部分，
         // 键名/引号/分隔符原样保留（AI 始终知道这一项是什么）
-        let plugin = plugin_with_rules(kv_capture_rules());
+        let (plugin, _dir) = plugin_with_rules(kv_capture_rules());
 
         let text = r#"api_key = "abcd1234efgh5678""#;
         let (replaced, changed) = plugin.replace_text(text);
@@ -2886,7 +3036,7 @@ mod tests {
 
     #[test]
     fn test_transform_request_claude_shape_with_protection() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "model": "claude-sonnet-4",
             "messages": [
@@ -2939,7 +3089,7 @@ mod tests {
 
     #[test]
     fn test_transform_request_codex_shape() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "model": "gpt-5",
             "instructions": "contact admin@example.com for help",
@@ -2964,7 +3114,7 @@ mod tests {
 
     #[test]
     fn test_transform_request_gemini_shape() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "contents": [
                 {"role": "user", "parts": [{"text": "call 13800138000"}]}
@@ -2989,7 +3139,7 @@ mod tests {
 
     #[test]
     fn test_transform_request_tool_result_content_replaced() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "messages": [
                 {"role": "user", "content": [
@@ -3014,7 +3164,7 @@ mod tests {
     #[test]
     fn test_transform_request_no_pii_only_injects_prompt() {
         // 无 PII：不做替换，但仍注入标记协议说明（每轮恒定注入，保持系统提示稳定）
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "model": "claude-sonnet-4",
             "messages": [{"role": "user", "content": [{"type": "text", "text": "hello world"}]}]
@@ -3035,7 +3185,8 @@ mod tests {
     #[test]
     fn test_transform_request_skipped_when_rules_disabled_or_empty() {
         // enabled=false
-        let plugin = plugin_with_rules(json!({"enabled": false, "rules": test_rules()["rules"]}));
+        let (plugin, _dir) =
+            plugin_with_rules(json!({"enabled": false, "rules": test_rules()["rules"]}));
         let mut body = json!({"messages": [{"content": [{"text": "a@b.com"}]}]});
         assert!(!plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3043,7 +3194,7 @@ mod tests {
         assert_eq!(body["messages"][0]["content"][0]["text"], json!("a@b.com"));
 
         // 规则为空
-        let plugin = plugin_with_rules(json!({"enabled": true, "rules": []}));
+        let (plugin, _dir) = plugin_with_rules(json!({"enabled": true, "rules": []}));
         let mut body = json!({"messages": [{"content": [{"text": "a@b.com"}]}]});
         assert!(!plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3055,7 +3206,7 @@ mod tests {
     fn test_transform_request_invalid_regex_skipped_but_others_apply() {
         let mut rules = test_rules();
         rules["rules"][0]["pattern"] = json!("([invalid");
-        let plugin = plugin_with_rules(rules);
+        let (plugin, _dir) = plugin_with_rules(rules);
         let mut body = json!({"messages": [{"content": [{"text": "mail a@b.com"}]}]});
         assert!(plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3084,7 +3235,7 @@ mod tests {
         let docs = docs_with_custom_values(json!([
             { "value": "my-secret-password-01", "label": "PASSWORD", "desc": "主密码", "enabled": true }
         ]));
-        let plugin = plugin_with_docs(db.clone(), &docs);
+        let (plugin, _dir) = plugin_with_docs(db.clone(), &docs);
 
         assert!(
             plugin
@@ -3117,7 +3268,7 @@ mod tests {
         let docs = docs_with_custom_values(json!([
             { "value": "a@b.com", "label": "MYMAIL", "desc": "个人邮箱", "priority": 1, "enabled": true }
         ]));
-        let plugin = plugin_with_docs(db, &docs);
+        let (plugin, _dir) = plugin_with_docs(db, &docs);
         let mut body = json!({"messages": [{"content": [{"text": "mail a@b.com"}]}]});
         assert!(plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3137,7 +3288,7 @@ mod tests {
             { "value": "gone", "label": "X", "enabled": false },
             { "value": "active", "label": "Z", "enabled": true }
         ]));
-        let plugin = plugin_with_docs(Arc::new(Database::memory().unwrap()), &docs);
+        let (plugin, _dir) = plugin_with_docs(Arc::new(Database::memory().unwrap()), &docs);
         let snapshot = plugin.current_snapshot();
         assert_eq!(snapshot.custom_values.len(), 1);
         assert_eq!(snapshot.custom_values[0].value, "active");
@@ -3150,7 +3301,7 @@ mod tests {
         let mut docs = docs_with_rules(test_rules());
         docs[CONFIG_DOC_FILE]["hash"] =
             json!({ "algorithm": "sha256", "mode": "fixed", "length": 8 });
-        let plugin = plugin_with_docs(Arc::new(Database::memory().unwrap()), &docs);
+        let (plugin, _dir) = plugin_with_docs(Arc::new(Database::memory().unwrap()), &docs);
         let (short, _) = plugin.replace_text("mail a@b.com");
         let (long, _) = plugin.replace_text("mail long.local-part+tag@sub.example-domain.com");
         for replaced in [&short, &long] {
@@ -3158,7 +3309,7 @@ mod tests {
             assert_eq!(markers[0].2.len(), 8, "fixed 模式 id 恒定 8 位: {replaced}");
         }
         // 与 adaptive 对比：adaptive 有 12 位下限（7 字节邮箱 → 下限 12 位），fixed 可低至 4
-        let adaptive = plugin_with_rules(test_rules());
+        let (adaptive, _dir_a) = plugin_with_rules(test_rules());
         let (short_a, _) = adaptive.replace_text("mail a@b.com");
         let id_a = scan_markers(&short_a)[0].2.len();
         assert_eq!(id_a, 12, "adaptive 模式下限 12 位");
@@ -3168,7 +3319,7 @@ mod tests {
 
     #[test]
     fn test_transform_response_restores_known_markers_only() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         // 先替换构造映射
         let mut request_body = json!({"messages": [{"content": [{"text": "mail a@b.com"}]}]});
         plugin
@@ -3200,7 +3351,7 @@ mod tests {
 
     #[test]
     fn test_transform_response_noop_when_mapping_empty() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         // 未发生任何替换 → 映射为空 → 直通
         let mut body = json!({"text": "⟦PII|abc123|PATH|X⟧"});
         assert!(!plugin
@@ -3213,7 +3364,7 @@ mod tests {
 
     /// 构造插件并生成 "a@b.com" 的标记（走真实替换路径建立映射），返回标记全文
     fn plugin_with_email_marker() -> (BuiltinPrivacyPlugin, String) {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({"messages": [{"content": [{"text": "mail a@b.com"}]}]});
         plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3490,7 +3641,7 @@ mod tests {
     #[test]
     fn test_sse_empty_mapping_passthrough_and_state_slot_mismatch() {
         // 映射为空：任何事件整体透传（零改动），含含标记的 data
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut state = plugin.new_sse_state().unwrap();
         let original = text_delta_data(0, "mail ⟦PII|abc123|EMAIL|X⟧ end");
         let mut data = original.clone();
@@ -3656,7 +3807,7 @@ mod tests {
 
     #[test]
     fn test_marker_zone_guard_prevents_double_masking() {
-        let plugin = plugin_with_rules(kv_secret_rules());
+        let (plugin, _dir) = plugin_with_rules(kv_secret_rules());
 
         // 残缺 id（末尾 XX）的标记文本：形状仍是标记，必须原样保留，
         // 不得被 kv-secret 规则把 "token = ⟦…⟧" 整段再包一层新标记
@@ -3670,7 +3821,7 @@ mod tests {
 
     #[test]
     fn test_marker_zone_guard_keeps_adjacent_real_value_replacement() {
-        let plugin = plugin_with_rules(kv_secret_rules());
+        let (plugin, _dir) = plugin_with_rules(kv_secret_rules());
 
         // 同串里既有标记又有真实敏感值：只替换真实值，标记原样保留
         let text = "\u{27E6}PII|aa710a41XX|TOKEN|JWT\u{27E7} 联系 a@b.com";
@@ -3685,7 +3836,7 @@ mod tests {
 
     #[test]
     fn test_kv_secret_word_boundary_avoids_mid_key_match() {
-        let plugin = plugin_with_rules(kv_secret_rules());
+        let (plugin, _dir) = plugin_with_rules(kv_secret_rules());
 
         // "my_token" 的 token 前无词边界，不应从键名中间命中（否则替换后残留 "my_"）
         let text = "my_token = 0123456789abcdef";
@@ -3706,7 +3857,7 @@ mod tests {
 
     #[test]
     fn test_marker_prompt_injected_into_claude_string_system() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({"model": "m", "system": "You are a coding agent.", "messages": []});
         assert!(plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3726,7 +3877,7 @@ mod tests {
 
     #[test]
     fn test_marker_prompt_injected_into_claude_blocks_system() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "model": "m",
             "system": [{"type": "text", "text": "base", "cache_control": {"type": "ephemeral"}}],
@@ -3747,7 +3898,7 @@ mod tests {
 
     #[test]
     fn test_marker_prompt_injected_when_system_absent() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({"model": "m", "messages": []});
         assert!(plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3759,7 +3910,7 @@ mod tests {
 
     #[test]
     fn test_marker_prompt_injected_into_codex_instructions() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({"model": "m", "instructions": "base instructions", "input": []});
         assert!(plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3772,7 +3923,7 @@ mod tests {
 
     #[test]
     fn test_marker_prompt_injected_into_gemini_system_instruction() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({
             "contents": [],
             "systemInstruction": {"parts": [{"text": "gemini base"}]}
@@ -3788,7 +3939,7 @@ mod tests {
     #[test]
     fn test_marker_prompt_note_example_marker_not_re_masked() {
         // 注入发生在走查之后：说明文本里的示例标记形状不应被替换或入库
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let mut body = json!({"model": "m", "system": "base", "messages": []});
         plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -3812,7 +3963,7 @@ mod tests {
 
     #[test]
     fn test_cache_hit_skips_rule_evaluation() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let text = "mail a@b.com now";
 
         let (first, changed1) = plugin.replace_text(text);
@@ -3836,7 +3987,7 @@ mod tests {
 
     #[test]
     fn test_config_change_invalidates_cache() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let text = "mail a@b.com now";
         let (replaced_v1, _) = plugin.replace_text(text);
         assert!(replaced_v1.contains("|EMAIL|"));
@@ -3881,7 +4032,7 @@ mod tests {
 
     #[test]
     fn test_hexdump_guard_masks_email_in_dump() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let (replaced, changed) = plugin.replace_text(XXD_LINE);
         assert!(changed, "转储行中的邮箱应被抹除");
         assert!(
@@ -3908,7 +4059,7 @@ mod tests {
         // 防护要堵的泄漏面：hex 列是文本正则不可见的另一编码）
         let mut docs = docs_with_rules(test_rules());
         docs[CONFIG_DOC_FILE]["enable_hexdump_guard"] = json!(false);
-        let plugin = plugin_with_docs(Arc::new(Database::memory().unwrap()), &docs);
+        let (plugin, _dir) = plugin_with_docs(Arc::new(Database::memory().unwrap()), &docs);
         let (replaced, changed) = plugin.replace_text(XXD_LINE);
         assert!(changed, "ASCII 列邮箱走常规规则");
         assert!(
@@ -3922,7 +4073,7 @@ mod tests {
     #[test]
     fn test_hexdump_guard_keeps_normal_text_with_double_space() {
         // 含双空格但非转储的普通文本不受影响
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         let text = "hello  world mail a@b.com";
         let (replaced, changed) = plugin.replace_text(text);
         assert!(changed, "邮箱规则照常");
@@ -3935,7 +4086,7 @@ mod tests {
 
     #[test]
     fn test_hexdump_multiline_block() {
-        let plugin = plugin_with_rules(test_rules());
+        let (plugin, _dir) = plugin_with_rules(test_rules());
         // 两行连续转储，敏感值在第二行（IP 10.0.0.1 → 31 30 2e 30 2e 30 2e 31）
         let line2_payload = "ip 10.0.0.1 xyz";
         let mut hex_part = String::new();
@@ -4068,18 +4219,19 @@ mod tests {
     #[test]
     fn test_first_startup_materializes_default_docs() {
         let db = Arc::new(Database::memory().unwrap());
-        let plugin = BuiltinPrivacyPlugin::new(db.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = BuiltinPrivacyPlugin::with_config_dir(db, dir.path().to_path_buf());
 
-        // 无存档时物化默认配置（含默认规则集）
-        let docs = load_docs_from(&db).unwrap().expect("默认配置应已落库");
-        let rules = &docs[RULES_DOC_FILE]["rules"];
-        assert!(rules.as_array().unwrap().len() >= 10, "默认规则集应存在");
-        let names: Vec<&str> = rules
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|r| r["name"].as_str())
-            .collect();
+        // 全新目录：物化三份默认配置文件（含默认规则集）
+        for file in CONFIG_DOC_FILES {
+            let path = doc_disk_path(dir.path(), file);
+            assert!(path.exists(), "默认配置 {file} 应已落盘");
+        }
+        let rules = std::fs::read_to_string(doc_disk_path(dir.path(), RULES_DOC_FILE)).unwrap();
+        let rules: Value = serde_json::from_str(&rules).unwrap();
+        let rules = rules["rules"].as_array().unwrap();
+        assert!(rules.len() >= 10, "默认规则集应存在");
+        let names: Vec<&str> = rules.iter().filter_map(|r| r["name"].as_str()).collect();
         assert!(names.contains(&"kv-secret"));
         assert!(names.contains(&"email"));
 
@@ -4102,11 +4254,101 @@ mod tests {
     }
 
     #[test]
-    fn test_config_read_write_roundtrip() {
+    fn test_legacy_blob_migrated_to_files_on_fresh_dir() {
+        // 旧版 settings blob（短暂测试版遗留）：全新目录首启时一次性迁移到文件，
+        // 面板已做过的配置不丢失；迁移后 blob 以空串标记完成
         let db = Arc::new(Database::memory().unwrap());
-        let plugin = BuiltinPrivacyPlugin::new(db.clone());
+        db.set_setting(
+            LEGACY_CONFIG_STORE_KEY,
+            &json!({
+                CONFIG_DOC_FILE: { "prompt_note": false, "enable_regex": true, "hash": { "algorithm": "sha1", "mode": "fixed", "length": 10 } },
+                RULES_DOC_FILE: { "enabled": true, "rules": [ { "kind": "literal", "name": "old", "values": ["OLDBLOB"], "label": "OLD", "priority": 5, "enabled": true } ] },
+                CUSTOM_DOC_FILE: { "enabled": true, "values": [ { "value": "legacy-value", "label": "LEGACY", "priority": 1, "enabled": true } ] }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = BuiltinPrivacyPlugin::with_config_dir(db.clone(), dir.path().to_path_buf());
 
-        // read：三份文档齐全
+        // blob 内容已迁移到文件并生效
+        let snapshot = plugin.current_snapshot();
+        assert!(!snapshot.prompt_note, "blob 的 prompt_note=false 应生效");
+        assert_eq!(
+            snapshot.hash,
+            HashConfig {
+                algorithm: HashAlgorithm::Sha1,
+                mode: HashMode::Fixed,
+                length: 10
+            }
+        );
+        assert_eq!(snapshot.custom_values.len(), 1);
+        assert_eq!(snapshot.custom_values[0].value, "legacy-value");
+        assert_eq!(snapshot.custom_values[0].label, "LEGACY");
+        // 旧 blob 值已预注册映射
+        assert!(db
+            .load_all_privacy_mappings()
+            .unwrap()
+            .iter()
+            .any(|r| r.1 == "legacy-value"));
+        // blob 标记已清空
+        assert_eq!(
+            db.get_setting(LEGACY_CONFIG_STORE_KEY).unwrap().as_deref(),
+            Some("")
+        );
+
+        // 旧 blob 值命中替换（literal 规则 OLDBLOB）
+        let (replaced, changed) = plugin.replace_text("secret OLDBLOB here");
+        assert!(changed);
+        assert!(replaced.contains("|OLD|"));
+        assert!(!replaced.contains("OLDBLOB"));
+    }
+
+    #[test]
+    fn test_config_file_hot_reload() {
+        // 手动编辑配置文件保存后，下一次变换按 mtime 热重载（Python 版语义）
+        let (plugin, dir) = plugin_with_rules(test_rules());
+        let text = "mail a@b.com now";
+        let (replaced_v1, _) = plugin.replace_text(text);
+        assert!(replaced_v1.contains("|EMAIL|"));
+
+        // 直接改 rules.json（label 改为 WORK）
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mut new_rules = test_rules();
+        new_rules["rules"][1]["label"] = json!("WORK");
+        atomic_write_json(&doc_disk_path(dir.path(), RULES_DOC_FILE), &new_rules).unwrap();
+
+        let (replaced_v2, _) = plugin.replace_text(text);
+        assert!(
+            replaced_v2.contains("|WORK|"),
+            "文件变更应被热重载: {replaced_v2}"
+        );
+        assert_ne!(replaced_v1, replaced_v2);
+    }
+
+    #[test]
+    fn test_corrupt_config_file_keeps_old_snapshot_and_read_reports() {
+        // 配置文件损坏：热重载沿用旧快照（fail-open），面板读取返回 Err（原因可见）
+        let (plugin, dir) = plugin_with_rules(test_rules());
+        let (replaced_v1, _) = plugin.replace_text("mail a@b.com");
+        assert!(replaced_v1.contains("|EMAIL|"));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(doc_disk_path(dir.path(), RULES_DOC_FILE), "not json").unwrap();
+
+        // 热重载失败沿用旧快照：替换仍按旧规则工作
+        let (replaced_v2, _) = plugin.replace_text("mail other@example.com");
+        assert!(replaced_v2.contains("|EMAIL|"), "沿用旧快照: {replaced_v2}");
+        // 面板读取：Err 且带原因
+        let err = plugin.config_read().unwrap_err().to_string();
+        assert!(err.contains("解析失败"), "{err}");
+    }
+
+    #[test]
+    fn test_config_read_write_roundtrip() {
+        let (plugin, dir) = plugin_in_temp_dir(Arc::new(Database::memory().unwrap()));
+
+        // read：三份文档齐全（空目录 → 空缺省文档）
         let docs = plugin.config_read().unwrap();
         for file in CONFIG_DOC_FILES {
             assert!(
@@ -4117,24 +4359,21 @@ mod tests {
 
         // write：改规则 label + 新增特殊值
         let mut patched = docs.clone();
-        patched[RULES_DOC_FILE]["rules"][0]["label"] = json!("RENAMED");
+        patched[RULES_DOC_FILE]["rules"] = json!([
+            { "kind": "literal", "name": "lit", "values": ["WORDX"], "label": "L", "priority": 5, "enabled": true }
+        ]);
         patched[CUSTOM_DOC_FILE]["values"] = json!([
             { "value": "corp.internal", "label": "DOMAIN", "desc": "内网域名", "priority": 1, "enabled": true }
         ]);
         plugin.config_write(&patched).unwrap();
 
-        // 落库验证
-        let stored = load_docs_from(&db).unwrap().unwrap();
-        assert_eq!(
-            stored[RULES_DOC_FILE]["rules"][0]["label"],
-            json!("RENAMED")
-        );
-        assert_eq!(
-            stored[CUSTOM_DOC_FILE]["values"][0]["value"],
-            json!("corp.internal")
-        );
+        // 落盘验证（原子写、pretty 格式）
+        let rules_on_disk =
+            std::fs::read_to_string(doc_disk_path(dir.path(), RULES_DOC_FILE)).unwrap();
+        let rules_on_disk: Value = serde_json::from_str(&rules_on_disk).unwrap();
+        assert_eq!(rules_on_disk["rules"][0]["label"], json!("L"));
 
-        // 即时生效：特殊值命中 RENAMED 邮箱规则照常
+        // 即时生效：特殊值命中
         let mut body = json!({"messages": [{"content": [{"text": "visit corp.internal"}]}]});
         assert!(plugin
             .transform_request(&pre_request_ctx(), &mut body)
@@ -4143,17 +4382,17 @@ mod tests {
         assert!(text.contains("|DOMAIN|"), "保存即生效: {text}");
         assert!(text.contains("⟦PII|"), "标记已生成");
 
-        // 未列字段原样保留（comment）
-        assert_eq!(
-            stored[RULES_DOC_FILE]["rules"][0]["comment"],
-            patched[RULES_DOC_FILE]["rules"][0]["comment"],
-            "schema 未覆盖的字段保存时原样保留"
-        );
+        // 手动编辑的 comment 等未列字段：写入时原样保留
+        let mut with_comment = patched.clone();
+        with_comment[RULES_DOC_FILE]["rules"][0]["comment"] = json!("手动备注");
+        plugin.config_write(&with_comment).unwrap();
+        let on_disk = std::fs::read_to_string(doc_disk_path(dir.path(), RULES_DOC_FILE)).unwrap();
+        assert!(on_disk.contains("手动备注"), "comment 原样保留");
     }
 
     #[test]
     fn test_config_write_rejects_bad_input() {
-        let plugin = BuiltinPrivacyPlugin::new(Arc::new(Database::memory().unwrap()));
+        let (plugin, dir) = plugin_in_temp_dir(Arc::new(Database::memory().unwrap()));
 
         // 未知文件
         let err = plugin
@@ -4162,15 +4401,18 @@ mod tests {
             .to_string();
         assert!(err.contains("不支持的配置文件"), "{err}");
 
-        // 坏正则整批拒绝
+        // 坏正则整批拒绝：不产生半写入
         let docs = plugin.config_read().unwrap();
         let mut patched = docs.clone();
-        patched[RULES_DOC_FILE]["rules"][0]["pattern"] = json!("([bad");
+        patched[RULES_DOC_FILE]["rules"] = json!([
+            { "kind": "regex", "name": "bad", "pattern": "([bad", "label": "R" }
+        ]);
+        patched[CUSTOM_DOC_FILE]["values"] = json!([ { "value": "ok", "label": "V" } ]);
         let err = plugin.config_write(&patched).unwrap_err().to_string();
         assert!(err.contains("正则无效"), "{err}");
-        // 拒绝后配置未变
-        let after = plugin.config_read().unwrap();
-        assert_ne!(after[RULES_DOC_FILE]["rules"][0]["pattern"], json!("([bad"));
+        // 拒绝后 rules.json 未被改写（无半写入）
+        let on_disk = std::fs::read_to_string(doc_disk_path(dir.path(), RULES_DOC_FILE)).unwrap();
+        assert!(!on_disk.contains("([bad"), "整批拒绝不应产生半写入");
 
         // 非 JSON 对象
         let err = plugin
@@ -4200,7 +4442,7 @@ mod tests {
 
     #[test]
     fn test_plugin_metadata() {
-        let plugin = BuiltinPrivacyPlugin::new(Arc::new(Database::memory().unwrap()));
+        let (plugin, _dir) = plugin_in_temp_dir(Arc::new(Database::memory().unwrap()));
         assert_eq!(plugin.id(), "builtin:privacy-replace");
         assert_eq!(plugin.display_name(), "隐私替换");
         assert!(plugin.is_builtin());
@@ -4235,8 +4477,12 @@ mod tests {
     fn test_registry_pipeline_end_to_end() {
         // 注册表集成：PreRequest 替换 → PostResponse 还原，经 run_request_pipeline 全链路
         let db = Arc::new(Database::memory().unwrap());
+        let dir = tempfile::tempdir().unwrap();
         let registry = super::super::registry::PluginRegistry::new();
-        registry.register(Arc::new(BuiltinPrivacyPlugin::new(db)));
+        registry.register(Arc::new(BuiltinPrivacyPlugin::with_config_dir(
+            db,
+            dir.path().to_path_buf(),
+        )));
         assert_eq!(
             registry
                 .plugins_for_stage(PluginStage::PreRequest)
