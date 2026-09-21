@@ -249,7 +249,10 @@ impl PluginManifest {
             }
             for (j, column) in item.columns.iter().enumerate() {
                 if column.key.trim().is_empty() || column.label.trim().is_empty() {
-                    return Err(at(format!("{}: columns[{}] key/label 不能为空", item.key, j)));
+                    return Err(at(format!(
+                        "{}: columns[{}] key/label 不能为空",
+                        item.key, j
+                    )));
                 }
                 if matches!(column.column_type, ConfigColumnType::Select)
                     && column.options.is_empty()

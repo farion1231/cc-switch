@@ -1635,7 +1635,8 @@ mod tests {
                 Ok("{}".to_string()),
                 // get
                 Ok(r#"{"config": {"config.json": {"enable_regex": true},
-                     "rules.json": {"enabled": true, "rules": []}}}"#.to_string()),
+                     "rules.json": {"enabled": true, "rules": []}}}"#
+                    .to_string()),
             ]),
             calls: Mutex::new(Vec::new()),
             shutdown_calls: Mutex::new(0),
@@ -1674,7 +1675,10 @@ mod tests {
             let parsed: Value = serde_json::from_str(&calls[1].0).unwrap();
             assert_eq!(parsed["stage"], json!("config"));
             assert_eq!(parsed["op"], json!("set"));
-            assert_eq!(parsed["config"]["config.json"]["enable_regex"], json!(false));
+            assert_eq!(
+                parsed["config"]["config.json"]["enable_regex"],
+                json!(false)
+            );
         }
 
         // set 被插件拒绝：错误透传

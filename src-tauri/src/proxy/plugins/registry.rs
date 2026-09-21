@@ -534,7 +534,7 @@ mod tests {
             version: None,
             source: None,
             has_config: false,
-                config_title: None,
+            config_title: None,
             error: Some("清单无效".to_string()),
         });
 
@@ -558,7 +558,7 @@ mod tests {
             version: None,
             source: Some("/tmp/user/broken/plugin.json".to_string()),
             has_config: false,
-                config_title: None,
+            config_title: None,
             error: Some("JSON 错误".to_string()),
         });
 

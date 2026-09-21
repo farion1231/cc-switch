@@ -25,8 +25,8 @@ pub use init::{apply_overrides, init_registry, plugins_dir, reload_user_plugins}
 pub use registry::{run_request_pipeline, run_sse_pipeline, PluginRegistry};
 #[allow(unused_imports)] // 部分重导出仅供外部（commands/services/前端序列化）使用
 pub use types::{
-    ConfigSchemaItem, PluginError, PluginInfo, PluginManifest, PluginOverride,
-    PluginProviderInfo, PluginRequestContext, PluginStage, PluginsConfig,
+    ConfigSchemaItem, PluginError, PluginInfo, PluginManifest, PluginOverride, PluginProviderInfo,
+    PluginRequestContext, PluginStage, PluginsConfig,
 };
 
 /// 插件 trait：内置插件与外部插件的统一抽象
