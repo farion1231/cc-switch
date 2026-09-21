@@ -17,7 +17,8 @@
 //!   把 `above_child` 改回 `false`，让按钮重新接到指针事件。
 //!
 //! 本模块导出 [`nudge_main_window`]。序列是 fire-and-forget，零抽搐：
-//! 1. 显式 `set_focus`（realize 前后各一次，不循环抢焦点）；
+//! 1. 激活时立即 `set_focus`；仅当前 runner 的首轮可在 realize 后重试一次，
+//!    排队请求不会延迟抢焦点；
 //! 2. 装饰对账：仅在与设置不一致时 `set_decorations`；
 //! 3. 修补 Wayland CSD `EventBox.above_child`（最大化窗口也走这条，不改几何）；
 //! 4. 非最大化窗口再用 `LogicalSize` ±1 逻辑像素刷新 WebKit input region。
@@ -124,10 +125,8 @@ fn is_window_visible(window: &WebviewWindow) -> bool {
     window.is_visible().unwrap_or(false)
 }
 
-fn sample_focus(window: &WebviewWindow, ever_focused: &mut bool) {
-    if window.is_focused().unwrap_or(false) {
-        *ever_focused = true;
-    }
+fn should_retry_focus(allow_delayed_focus: bool, currently_focused: bool) -> bool {
+    allow_delayed_focus && !currently_focused
 }
 
 struct NudgeGuard;
@@ -155,11 +154,16 @@ pub(crate) fn nudge_main_window(window: WebviewWindow, reason: &'static str) {
     }
 
     tauri::async_runtime::spawn(async move {
+        // 只有紧随本次激活启动的首轮允许在 realize 后补一次 focus。
+        // 同一 runner 中排队的请求可能已等待上一轮 resize/reconcile 很久，
+        // 此时用户可能已经切到别的应用，不能再延迟抢焦点。
+        let mut allow_delayed_focus = true;
         loop {
             {
                 let _guard = NudgeGuard;
                 while let Some(PendingNudge { window, reason }) = PENDING_NUDGE.take() {
-                    run_nudge_sequence(window, reason).await;
+                    run_nudge_sequence(window, reason, allow_delayed_focus).await;
+                    allow_delayed_focus = false;
                 }
             }
             // Guard 已释放 IS_NUDGING。若释放窗口期内又有请求入队，重新抢执行权；
@@ -174,7 +178,11 @@ pub(crate) fn nudge_main_window(window: WebviewWindow, reason: &'static str) {
     });
 }
 
-async fn run_nudge_sequence(window: WebviewWindow, reason: &'static str) {
+async fn run_nudge_sequence(
+    window: WebviewWindow,
+    reason: &'static str,
+    allow_delayed_focus: bool,
+) {
     if !is_window_alive(&window) {
         log::debug!("Linux: 窗口已销毁，跳过重激活 (reason: {reason})");
         return;
@@ -193,9 +201,9 @@ async fn run_nudge_sequence(window: WebviewWindow, reason: &'static str) {
         return;
     }
 
-    let _ = window.set_focus();
-    let mut ever_focused = false;
-    sample_focus(&window, &mut ever_focused);
+    if should_retry_focus(allow_delayed_focus, window.is_focused().unwrap_or(false)) {
+        let _ = window.set_focus();
+    }
 
     restore_decorations_if_needed(&window);
 
@@ -204,7 +212,6 @@ async fn run_nudge_sequence(window: WebviewWindow, reason: &'static str) {
     // "menu:minimize,maximize,close" 改成 "menu:minimize,close" 再改回来，
     // 最大化按钮会闪一下，也不是重绑 subsurface 的 API。
     patch_wayland_header_event_box(&window);
-    sample_focus(&window, &mut ever_focused);
 
     let is_maximized = window.is_maximized().unwrap_or(false);
 
@@ -213,12 +220,6 @@ async fn run_nudge_sequence(window: WebviewWindow, reason: &'static str) {
     // 一旦 bump 已经发出，后面即使窗口被隐藏也必须 restore。
     if !is_maximized {
         pseudo_resize_logical(&window).await;
-        sample_focus(&window, &mut ever_focused);
-    }
-
-    // 最多再补一次 focus。已经拿到过焦点、或用户已切走，都不再抢。
-    if is_window_visible(&window) && !ever_focused && !window.is_focused().unwrap_or(false) {
-        let _ = window.set_focus();
     }
 
     log::info!(
@@ -397,5 +398,12 @@ mod tests {
         assert!(!decorations_need_restore(false, false));
         assert!(decorations_need_restore(true, false));
         assert!(decorations_need_restore(false, true));
+    }
+
+    #[test]
+    fn queued_nudges_never_retry_focus() {
+        assert!(should_retry_focus(true, false));
+        assert!(!should_retry_focus(false, false));
+        assert!(!should_retry_focus(true, true));
     }
 }
