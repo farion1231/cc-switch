@@ -1207,14 +1207,19 @@ fn resolve_overlaps(mut spans: Vec<MatchSpan>) -> Vec<MatchSpan> {
 }
 
 // ---------------------------------------------------------------------------
-// 十六进制转储防护（xxd / hexdump -C 列视图）
+// 编码载体防护（两种形态，共用规则检测，抹除均不可逆、不走标记映射）
 //
-// 工具输出的 hex 列是原文的另一种编码：文本正则看不见它，敏感值会原样泄漏；
-// 同时 16 字节定宽列把原文切碎，ASCII 列只剩片段（片段仍可能被正则命中，
-// 产生片段映射，甚至前缀 IP 误配成另一个映射值）。这里把连续转储行重建为
-// 连续字节流，在字节流上复用正则/特殊值检测，命中的字节在 hex 列替换为 xx、
-// ASCII 列替换为 . ——两者都是投影上的不可逆清除，不走标记映射（转储片段
-// 不产生映射与标记）。base64/压缩等其它编码形态仍是盲区。
+// 1. xxd / hexdump -C 列视图：工具输出的 hex 列是原文的另一种编码，文本正则
+//    看不见它，敏感值会原样泄漏；同时 16 字节定宽列把原文切碎，ASCII 列只剩
+//    片段（片段仍可能被正则命中，产生片段映射，甚至前缀 IP 误配成另一个映射
+//    值）。把连续转储行重建为连续字节流，在字节流上复用正则/特殊值检测，命中
+//    的字节在 hex 列替换为 xx、ASCII 列替换为 .。
+// 2. 连续 hex 串（bytes.hex() / binascii.hexlify / Buffer.toString("hex") 等
+//    脚本化字节读取形态）：整段连续 hex 无列结构，列视图解析器不可见。把
+//    ≥12 字符的连续 hex 串两两解码为字节流检测，命中字节以其 hex 字符等长
+//    替换为 x。
+// base64 / 压缩 / unicode 转义等其它编码形态仍是盲区（检测无稳定边界，
+// 误报/漏报不可控，见用户指南安全边界章节）。
 // ---------------------------------------------------------------------------
 
 /// 单行 pair 上限（标准工具 16/行，留余量；超宽视为误判）
@@ -1412,6 +1417,78 @@ fn hexdump_mask(text: &str, detect: &mut dyn FnMut(&str) -> Vec<MatchSpan>) -> S
         return text.to_string();
     }
     out.concat()
+}
+
+/// 连续 hex 串的最小长度（字符数）。12 字符 = 6 字节：覆盖 `.hex()` 形态的
+/// 邮箱（14 字符）/手机号（22 字符）/短密钥；低于该长度的 git 短 SHA、UUID
+/// 分段等零星 hex 词不进入检测。误报防线在检测层——随机散列解码出规则目标
+/// （可打印 ASCII 连续成模式）的概率可忽略，未命中即不抹除。
+const CONTINUOUS_HEX_MIN_CHARS: usize = 12;
+
+fn is_hex_char(b: u8) -> bool {
+    b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b)
+}
+
+/// 连续 hex 串防护：`bytes.hex()` / `binascii.hexlify` / `Buffer.toString("hex")`
+/// 形态的整段连续 hex（无列结构，xxd/hexdump 解析器不可见）是文件字节读取的
+/// 另一编码载体。把 ≥[`CONTINUOUS_HEX_MIN_CHARS`] 的连续 hex 串两两解码为
+/// 字节流复用规则检测，命中的字节以其 hex 字符等长替换为 `x`（不可逆抹除、
+/// 不产生标记映射）。随机散列（SHA/MD5）解码出规则目标的概率可忽略。
+fn continuous_hex_mask(text: &str, detect: &mut dyn FnMut(&str) -> Vec<MatchSpan>) -> String {
+    let bytes = text.as_bytes();
+    let mut spans_to_erase: Vec<(usize, usize)> = Vec::new(); // 字符偏移（hex 串内）
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if !is_hex_char(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_hex_char(bytes[i]) {
+            i += 1;
+        }
+        let run_len = i - start;
+        if run_len < CONTINUOUS_HEX_MIN_CHARS || run_len % 2 != 0 {
+            continue;
+        }
+        // 两两解码为字节流（Latin-1 语义，检测下标即字节下标）
+        let hex_run = &text[start..i];
+        let decoded: String = (0..run_len / 2)
+            .filter_map(|k| {
+                u8::from_str_radix(&hex_run[k * 2..k * 2 + 2], 16)
+                    .ok()
+                    .map(|b| b as char)
+            })
+            .collect();
+        if decoded.is_empty() {
+            continue;
+        }
+        for span in detect(&decoded) {
+            let end = span.end.min(decoded.len());
+            if span.start < end {
+                spans_to_erase.push((start + span.start * 2, start + end * 2));
+            }
+        }
+    }
+    if spans_to_erase.is_empty() {
+        return text.to_string();
+    }
+    let mut out = text.to_string();
+    // 等长替换（"x" × 字符数），倒序应用避免偏移失效；区间互不重叠
+    // （连续串互不重叠，span 已消解），同串内多串间也不重叠
+    spans_to_erase.sort_by_key(|span| std::cmp::Reverse(span.0));
+    for (s, e) in spans_to_erase {
+        let replacement = "x".repeat(e - s);
+        out.replace_range(s..e, &replacement);
+    }
+    out
+}
+
+/// 编码载体防护总入口：先连续 hex 串（`.hex()` 形态），再 xxd/hexdump -C 列视图。
+/// 两者覆盖的文本形态互斥（列视图的 hex 段长度 ≤4 且有空格分隔），先后无干扰。
+fn encoded_carrier_mask(text: &str, detect: &mut dyn FnMut(&str) -> Vec<MatchSpan>) -> String {
+    let masked = continuous_hex_mask(text, detect);
+    hexdump_mask(&masked, detect)
 }
 
 // ---------------------------------------------------------------------------
@@ -2133,7 +2210,7 @@ impl BuiltinPrivacyPlugin {
             let masked;
             let work: &str = if snapshot.enable_hexdump_guard {
                 let snapshot_ref = snapshot;
-                masked = hexdump_mask(text, &mut |decoded| {
+                masked = encoded_carrier_mask(text, &mut |decoded| {
                     self.hexguard_detect(decoded, snapshot_ref)
                 });
                 &masked
@@ -4268,6 +4345,51 @@ mod tests {
             replaced.contains("aaaaaaaaaaaaaaaa"),
             "第一行 padding 无规则命中，应原样保留: {replaced}"
         );
+    }
+
+    #[test]
+    fn test_continuous_hex_encoding_masked() {
+        // bytes.hex() / binascii.hexlify 形态：连续 hex 无列结构，
+        // xxd/hexdump 解析器不可见——独立解码检测后等长抹除
+        let (plugin, _dir) = plugin_with_rules(test_rules());
+        let to_hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let email_hex = to_hex("a@b.com");
+        let phone_hex = to_hex("13800138000");
+        assert_eq!(email_hex.len(), 14);
+        assert_eq!(phone_hex.len(), 22);
+        let text = format!("read bytes: {email_hex} and {phone_hex} end");
+        let (replaced, changed) = plugin.replace_text(&text);
+        assert!(changed, "连续 hex 编码的敏感值应被抹除");
+        assert!(!replaced.contains(&email_hex), "{replaced}");
+        assert!(!replaced.contains(&phone_hex), "{replaced}");
+        assert!(replaced.contains('x'), "抹除痕迹为等长 x");
+        assert!(
+            !replaced.contains(&email_hex[..4]),
+            "抹除不可逆: {replaced}"
+        );
+        assert!(plugin.mapping_is_empty(), "抹除不走标记映射");
+        assert!(!replaced.contains(MARKER_PREFIX));
+
+        // 阈值下的零星 hex 词（git 短 SHA）不进入检测
+        let short = "read deadbeef01 end";
+        let (replaced, changed) = plugin.replace_text(short);
+        assert!(!changed);
+        assert_eq!(replaced, short);
+    }
+
+    #[test]
+    fn test_continuous_hex_no_false_positive_on_hashes_and_uuid() {
+        let (plugin, _dir) = plugin_with_rules(test_rules());
+        // SHA-256 十六进制全文：解码为随机字节，不应命中任何规则
+        let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let (replaced, changed) = plugin.replace_text(&format!("sha256 {sha} end"));
+        assert!(!changed, "随机散列不应误伤: {replaced}");
+        assert_eq!(replaced, format!("sha256 {sha} end"));
+        // UUID：连字符分段（最长 12 字符段），解码不命中
+        let uuid_text = "id 550e8400-e29b-41d4-a716-446655440000 ok";
+        let (replaced, changed) = plugin.replace_text(uuid_text);
+        assert!(!changed, "UUID 不应误伤: {replaced}");
+        assert_eq!(replaced, uuid_text);
     }
 
     // --- 配置校验器（Rust 版 _validate_*） ---

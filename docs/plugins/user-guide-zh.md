@@ -75,8 +75,10 @@ cc-switch 本地代理在转发 Claude / Codex / Gemini 请求时，会在固定
 - 默认优先级 100，默认启用；内置 Rust 引擎，**零外部运行时依赖**（无需 Python）；
 - 检测来源：正则/字面量规则（支持 capture 捕获组只遮值、键名保留）+ 用户自定义特殊值
   （逐字面匹配，登记即预注册映射，priority 缺省 1 压过常规规则）；
-- 十六进制转储防护：工具输出（xxd / hexdump -C）的 hex 列是原文的另一编码，命中值在
-  hex 列（`xx`）与 ASCII 列（`.`）同时**不可逆抹除**，不产生标记映射；
+- 编码载体防护（两种形态，命中值**不可逆抹除**、不产生标记映射）：① xxd / hexdump -C
+  列视图——hex 列（`xx`）与 ASCII 列（`.`）同时抹除；② 连续 hex 串（`bytes.hex()` /
+  `binascii.hexlify` 等脚本化字节读取，≥12 字符的连续 hex 段）——等长替换为 `x`。
+  base64 / 压缩 / unicode 转义等其它编码形态仍是盲区；
 - 配置文件落地在 `<配置目录>/privacy/`（即 `C:\Users\<user>\.cc-switch\privacy\` 下的
   `config.json` / `rules.json` / `custom-values.json`）：面板「设置」按钮（页签：
   正则规则 / 特殊值 / 散列与选项）读写同一批文件，保存即生效；也可直接手动编辑文件，
