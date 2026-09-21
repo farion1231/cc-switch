@@ -1049,6 +1049,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "atlascloud",
   },
   {
+    name: "Soshow",
+    providerKey: "cc-switch-soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    settingsConfig: {
+      name: "Soshow",
+      baseUrl: "https://maas.so-show.com",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("anthropic/claude-opus-5", {
+          id: "claude-opus-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "soshow",
+  },
+  {
     name: "DeepSeek",
     providerKey: "cc-switch-deep-seek",
     websiteUrl: "https://platform.deepseek.com",

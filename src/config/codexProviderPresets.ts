@@ -1322,6 +1322,21 @@ requires_openai_auth = true`,
     icon: "atlascloud",
   },
   {
+    // 平台文档只写了 chat/completions 与 messages；/v1/responses 经探测是
+    // 真实路由（未知路径 404、该路径 401 缺鉴权），GPT 系按原生 Responses 直连。
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "soshow",
+      "https://maas.so-show.com/v1",
+      "gpt-5.6-sol",
+    ),
+    icon: "soshow",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
