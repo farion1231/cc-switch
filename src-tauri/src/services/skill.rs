@@ -1323,6 +1323,7 @@ impl SkillService {
             for skill in group_skills {
                 let remote_match = Self::resolve_remote_skill_source_dir(
                     temp_dir,
+                    &repo,
                     &remote_skills,
                     &skill.directory,
                     skill.readme_url.as_deref(),
@@ -1446,6 +1447,7 @@ impl SkillService {
 
         let source = Self::resolve_remote_skill_source_dir(
             temp_dir,
+            &repo,
             &remote_skills,
             &skill.directory,
             skill.readme_url.as_deref(),
@@ -3233,12 +3235,47 @@ impl SkillService {
         )
     }
 
+    fn resolve_skill_doc_source(root: &Path, doc_path: &str) -> Option<PathBuf> {
+        Self::sanitize_skill_source_path(doc_path)?;
+        // Keep literal directory names (including spaces); sanitize only validates.
+        let path = Path::new(doc_path);
+        let relative_source = if path.file_name()? == "SKILL.md" {
+            path.parent()?
+        } else {
+            path // Legacy tree URLs may point to the skill directory itself.
+        };
+        let canonical_root = root.canonicalize().ok()?;
+        let source = root.join(relative_source).canonicalize().ok()?;
+        if !source.starts_with(&canonical_root) || !source.is_dir() {
+            return None;
+        }
+        let document = source.join("SKILL.md").canonicalize().ok()?;
+        (document.starts_with(&canonical_root) && document.is_file()).then_some(source)
+    }
+
     fn resolve_remote_skill_source_dir(
         root: &Path,
+        repo: &SkillRepo,
         remote_skills: &[DiscoverableSkill],
         install_name: &str,
         stored_readme_url: Option<&str>,
     ) -> Result<Option<PathBuf>> {
+        // A root skill stops discovery, but must not hide an installed child.
+        // Strip the known repo/ref, not one path segment: refs may contain '/'.
+        let stored_doc_path = stored_readme_url.and_then(|url| {
+            ["blob", "tree"].into_iter().find_map(|kind| {
+                let prefix = format!(
+                    "https://github.com/{}/{}/{kind}/{}/",
+                    repo.owner, repo.name, repo.branch
+                );
+                url.strip_prefix(&prefix)
+            })
+        });
+        if let Some(source) =
+            stored_doc_path.and_then(|path| Self::resolve_skill_doc_source(root, path))
+        {
+            return Ok(Some(source));
+        }
         let Some(skill) =
             Self::find_remote_skill_for_install(remote_skills, install_name, stored_readme_url)?
         else {
@@ -3246,15 +3283,17 @@ impl SkillService {
         };
         // The scanner stops at a root SKILL.md and uses the repo name as its
         // display directory. Do not reinterpret that alias as a child path.
-        let source = if root.join("SKILL.md").is_file() {
-            root.to_path_buf()
-        } else if Self::sanitize_skill_source_path(&skill.directory).is_some() {
-            // Validate without trimming legitimate scanner-produced directory names.
-            root.join(&skill.directory)
+        let doc_path = if root.join("SKILL.md").is_file() {
+            // A missing saved source can move to the root only by metadata name,
+            // not just because the root's display alias matches the repo name.
+            if stored_doc_path.is_some() && !skill.name.trim().eq_ignore_ascii_case(install_name) {
+                return Ok(None);
+            }
+            "SKILL.md".to_string()
         } else {
-            return Ok(None);
+            format!("{}/SKILL.md", skill.directory)
         };
-        Ok(source.join("SKILL.md").is_file().then_some(source))
+        Ok(Self::resolve_skill_doc_source(root, &doc_path))
     }
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
@@ -6766,91 +6805,264 @@ mod tests {
         );
     }
 
+    #[test]
+    fn update_lookup_resolves_saved_paths_hidden_by_root_skill() {
+        let temp = tempdir().unwrap();
+        write_skill(temp.path(), "unrelated-root");
+        write_skill(&temp.path().join("catalog/ group/skills"), "renamed-child");
+        for branch in ["main", "feature/blob/skills"] {
+            let repo = SkillRepo {
+                owner: "owner".into(),
+                name: "repo".into(),
+                branch: branch.into(),
+                enabled: true,
+            };
+            let mut skills = Vec::new();
+            SkillService::new()
+                .scan_dir_recursive(temp.path(), temp.path(), &repo, &mut skills)
+                .unwrap();
+            assert_eq!(skills.len(), 1, "the scanner only discovers the root");
+            for suffix in [
+                "blob/{branch}/catalog/ group/skills/SKILL.md",
+                "tree/{branch}/catalog/ group/skills/SKILL.md",
+                "tree/{branch}/catalog/ group/skills",
+            ] {
+                let url = format!(
+                    "https://github.com/owner/repo/{}",
+                    suffix.replace("{branch}", branch)
+                );
+                let source = SkillService::resolve_remote_skill_source_dir(
+                    temp.path(),
+                    &repo,
+                    &skills,
+                    "old-child-name",
+                    Some(&url),
+                )
+                .unwrap();
+                assert_eq!(
+                    source,
+                    Some(
+                        temp.path()
+                            .join("catalog/ group/skills")
+                            .canonicalize()
+                            .unwrap()
+                    )
+                );
+            }
+            let missing_url =
+                format!("https://github.com/owner/repo/blob/{branch}/missing/SKILL.md");
+            assert!(
+                SkillService::resolve_remote_skill_source_dir(
+                    temp.path(),
+                    &repo,
+                    &skills,
+                    "repo",
+                    Some(&missing_url),
+                )
+                .unwrap()
+                .is_none(),
+                "a removed child must not turn into the unrelated root alias"
+            );
+            for url in [
+                "https://example.com/owner/repo/blob/main/catalog/ group/skills/SKILL.md",
+                "https://github.com/other/repo/blob/main/catalog/ group/skills/SKILL.md",
+            ] {
+                assert!(SkillService::resolve_remote_skill_source_dir(
+                    temp.path(),
+                    &repo,
+                    &skills,
+                    "old-child-name",
+                    Some(url),
+                )
+                .unwrap()
+                .is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn saved_skill_source_rejects_invalid_or_missing_paths() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        write_skill(&root, "root");
+        write_skill(&temp.path().join("outside"), "outside");
+        fs::create_dir(root.join("empty")).unwrap();
+        fs::write(root.join("README.md"), "not a skill").unwrap();
+        for path in [
+            "",
+            "../outside/SKILL.md",
+            "/SKILL.md",
+            "missing/SKILL.md",
+            "empty/SKILL.md",
+            "README.md",
+            "%2e%2e/outside/SKILL.md",
+        ] {
+            assert!(
+                SkillService::resolve_skill_doc_source(&root, path).is_none(),
+                "{path}"
+            );
+        }
+        assert!(SkillService::resolve_skill_doc_source(
+            &root,
+            &temp.path().join("outside/SKILL.md").to_string_lossy(),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn saved_skill_source_rejects_link_escape() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let outside = temp.path().join("outside");
+        write_skill(&outside, "outside");
+        fs::create_dir_all(root.join("child")).unwrap();
+        #[cfg(unix)]
+        {
+            SkillService::create_symlink(&outside, &root.join("linked"))
+                .expect("create directory symlink");
+            std::os::unix::fs::symlink(outside.join("SKILL.md"), root.join("child/SKILL.md"))
+                .expect("create file symlink");
+            assert!(SkillService::resolve_skill_doc_source(&root, "child/SKILL.md").is_none());
+        }
+        #[cfg(windows)]
+        {
+            // Directory junctions exercise canonical containment without symlink privileges.
+            let output = std::process::Command::new("cmd")
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(root.join("linked"))
+                .arg(&outside)
+                .output()
+                .expect("create directory junction");
+            assert!(output.status.success(), "{output:?}");
+        }
+        assert!(SkillService::resolve_skill_doc_source(&root, "linked/SKILL.md").is_none());
+        let repo = SkillRepo {
+            owner: "owner".into(),
+            name: "repo".into(),
+            branch: "main".into(),
+            enabled: true,
+        };
+        let mut skills = Vec::new();
+        SkillService::new()
+            .scan_dir_recursive(&root, &root, &repo, &mut skills)
+            .unwrap();
+        for url in [
+            None,
+            Some("https://github.com/owner/repo/blob/main/linked/SKILL.md"),
+        ] {
+            assert!(
+                SkillService::resolve_remote_skill_source_dir(&root, &repo, &skills, "linked", url)
+                    .unwrap()
+                    .is_none(),
+                "fallback matching must not bypass containment checks"
+            );
+        }
+    }
+
     #[tokio::test]
     #[serial_test::serial]
-    async fn root_skill_updates_preserve_source_with_repo_named_child() {
+    async fn skill_updates_preserve_source_with_root_and_repo_named_child() {
         for location in [
             SkillStorageLocation::CcSwitch,
             SkillStorageLocation::Unified,
         ] {
-            let home = tempdir().unwrap();
-            let config_dir = home.path().join(".cc-switch");
-            fs::create_dir_all(&config_dir).unwrap();
-            fs::File::create(config_dir.join("cc-switch.db")).unwrap();
-            let _home = TestHomeGuard::set(home.path());
-            assert_eq!(crate::config::get_app_config_dir(), config_dir);
-            let _storage = StorageLocationGuard::set(location);
-            let _pi = crate::pi_config::test_support::TestAgentDir::new();
-            let remote = tempdir().unwrap();
-            write_skill(remote.path(), "root-alias");
-            write_skill(&remote.path().join("repo"), "different-child");
-            let service = SkillService {
-                repo_fixture: Some(remote.path().to_path_buf()),
-            };
-            let db = Arc::new(Database::memory().unwrap());
-            let request = DiscoverableSkill {
-                key: "owner/repo:root-alias".into(),
-                name: "root-alias".into(),
-                description: String::new(),
-                directory: "root-alias".into(),
-                readme_url: None,
-                repo_owner: "owner".into(),
-                repo_name: "repo".into(),
-                repo_branch: "main".into(),
-            };
-            let installed = service
-                .install(&db, &request, &AppType::Claude)
-                .await
-                .unwrap();
-            let expected_url =
-                SkillService::build_skill_doc_url("owner", "repo", "main", "SKILL.md");
-            assert_eq!(installed.readme_url, expected_url);
-            let local = SkillService::get_ssot_dir()
-                .unwrap()
-                .join(&installed.directory);
-            let app = SkillService::get_app_skills_dir(&AppType::Claude)
-                .unwrap()
-                .join(&installed.directory);
-            assert!(local.starts_with(home.path()));
-            assert!(app.starts_with(home.path()));
-            let updates = service.check_updates(&db).await.unwrap();
-            let updated = service.update_skill(&db, &installed.id).await.unwrap();
-            assert_eq!(
-                updated.name, "root-alias",
-                "update must not select the repository-named child"
-            );
-            assert!(
-                updates.is_empty(),
-                "an unchanged repository must not report an update"
-            );
-            assert_eq!(updated.readme_url, expected_url);
-
-            write_skill(remote.path(), "renamed-root");
-            let updates = service.check_updates(&db).await.unwrap();
-            assert_eq!(updates.len(), 1);
-            assert_eq!(updates[0].id, installed.id);
-            let updated = service.update_skill(&db, &installed.id).await.unwrap();
-            assert_eq!(updated.name, "renamed-root");
-            assert_eq!(updated.readme_url, expected_url);
-            assert_eq!(updated.directory, installed.directory);
-            assert_eq!(updated.apps, installed.apps);
-            let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
-            assert_eq!(saved.readme_url, expected_url);
-            assert_eq!(
-                saved.content_hash,
-                Some(SkillService::compute_dir_hash(&local).unwrap())
-            );
-            for directory in [&local, &app] {
+            for (install_name, source_path, original_name, branch) in [
+                ("root-alias", ".", "root-alias", "main"),
+                ("repo", "repo", "different-child", "main"),
+                ("root-alias", ".", "root-alias", "feature/skills"),
+                ("repo", "repo", "different-child", "feature/skills"),
+            ] {
+                let home = tempdir().unwrap();
+                let config_dir = home.path().join(".cc-switch");
+                fs::create_dir_all(&config_dir).unwrap();
+                fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+                let _home = TestHomeGuard::set(home.path());
+                assert_eq!(crate::config::get_app_config_dir(), config_dir);
+                let _storage = StorageLocationGuard::set(location);
+                let _pi = crate::pi_config::test_support::TestAgentDir::new();
+                let remote = tempdir().unwrap();
+                write_skill(remote.path(), "root-alias");
+                write_skill(&remote.path().join("repo"), "different-child");
+                let service = SkillService {
+                    repo_fixture: Some(remote.path().to_path_buf()),
+                };
+                let db = Arc::new(Database::memory().unwrap());
+                let request = DiscoverableSkill {
+                    key: format!("owner/repo:{install_name}"),
+                    name: original_name.into(),
+                    description: String::new(),
+                    directory: install_name.into(),
+                    readme_url: None,
+                    repo_owner: "owner".into(),
+                    repo_name: "repo".into(),
+                    repo_branch: branch.into(),
+                };
+                let installed = service
+                    .install(&db, &request, &AppType::Claude)
+                    .await
+                    .unwrap();
+                let source = remote.path().join(source_path);
+                let doc_path = if source_path == "." {
+                    "SKILL.md"
+                } else {
+                    "repo/SKILL.md"
+                };
+                let expected_url =
+                    SkillService::build_skill_doc_url("owner", "repo", branch, doc_path);
+                assert_eq!(installed.readme_url, expected_url);
+                assert_eq!(installed.name, original_name);
+                let local = SkillService::get_ssot_dir()
+                    .unwrap()
+                    .join(&installed.directory);
+                let app = SkillService::get_app_skills_dir(&AppType::Claude)
+                    .unwrap()
+                    .join(&installed.directory);
+                assert!(local.starts_with(home.path()));
+                assert!(app.starts_with(home.path()));
+                let updates = service.check_updates(&db).await.unwrap();
+                let updated = service.update_skill(&db, &installed.id).await.unwrap();
                 assert_eq!(
-                    fs::read(directory.join("SKILL.md")).unwrap(),
-                    fs::read(remote.path().join("SKILL.md")).unwrap()
+                    updated.name, original_name,
+                    "update must preserve the installed source: {source_path}"
                 );
                 assert!(
-                    directory.join("repo/SKILL.md").is_file(),
-                    "the root skill must retain its nested content"
+                    updates.is_empty(),
+                    "an unchanged repository must not report an update"
                 );
+                assert_eq!(updated.readme_url, expected_url);
+
+                if source_path != "." {
+                    write_skill(remote.path(), "changed-root");
+                    assert!(service.check_updates(&db).await.unwrap().is_empty());
+                }
+                write_skill(&source, "renamed-skill");
+                let updates = service.check_updates(&db).await.unwrap();
+                assert_eq!(updates.len(), 1);
+                assert_eq!(updates[0].id, installed.id);
+                let updated = service.update_skill(&db, &installed.id).await.unwrap();
+                assert_eq!(updated.name, "renamed-skill");
+                assert_eq!(updated.readme_url, expected_url);
+                assert_eq!(updated.directory, installed.directory);
+                assert_eq!(updated.apps, installed.apps);
+                let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+                assert_eq!(saved.readme_url, expected_url);
+                assert_eq!(
+                    saved.content_hash,
+                    Some(SkillService::compute_dir_hash(&local).unwrap())
+                );
+                for directory in [&local, &app] {
+                    assert_eq!(
+                        fs::read(directory.join("SKILL.md")).unwrap(),
+                        fs::read(source.join("SKILL.md")).unwrap()
+                    );
+                    assert_eq!(
+                        directory.join("repo/SKILL.md").is_file(),
+                        source_path == ".",
+                        "only the root skill contains the repository-named child"
+                    );
+                }
+                assert!(service.check_updates(&db).await.unwrap().is_empty());
             }
-            assert!(service.check_updates(&db).await.unwrap().is_empty());
         }
     }
 
