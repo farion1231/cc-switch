@@ -31,6 +31,8 @@ src-tauri/src/proxy/plugins/
 ├── registry.rs   # PluginRegistry（排序/过滤/override/全局开关）
 │                 # + run_request_pipeline / run_sse_pipeline（fail-open 管线，唯一挂点入口）
 ├── builtin.rs    # 内置插件：cache-injector / thinking-optimizer（PreSend，Bedrock 专属）
+├── privacy.rs    # 内置插件：隐私替换（PreRequest 替换 / PostResponse + SseChunk 还原，
+│                 # SQLite 映射表、config_read/write 面板配置，详见模块文档）
 ├── external.rs   # 用户外部脚本插件：oneshot 进程调用（PluginProcessRunner）+
 │                 # 常驻进程（PersistentTransport，专属 worker 线程）+ 加载器
 └── init.rs       # 注册表组装：init_registry / reload_user_plugins / plugins_dir

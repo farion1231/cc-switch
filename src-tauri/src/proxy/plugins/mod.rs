@@ -16,6 +16,7 @@
 pub mod builtin;
 pub mod external;
 pub mod init;
+pub mod privacy;
 pub mod registry;
 pub mod types;
 
