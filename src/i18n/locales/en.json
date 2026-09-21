@@ -822,6 +822,7 @@
     "viewCurrentReleaseNotes": "View current version release notes",
     "officialWebsite": "Official Website",
     "github": "GitHub",
+    "starPrompt": "If CC Switch has helped you, please star us on GitHub — it means a lot to us",
     "manualInstallCommands": "Manual Install Commands",
     "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes / Pi",
     "localEnvCheck": "Local environment check",

@@ -822,6 +822,7 @@
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
     "officialWebsite": "官方网站",
     "github": "GitHub",
+    "starPrompt": "如果 CC Switch 帮到了你，请在 GitHub 点个 Star，这对我们意义重大",
     "manualInstallCommands": "手动安装命令",
     "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes / Pi",
     "localEnvCheck": "本地环境检查",
