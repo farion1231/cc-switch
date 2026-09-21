@@ -9,14 +9,17 @@
 //! - **失效模式 B**：GTK surface 与 WebKitWebView 的 input region 尺寸
 //!   协商在 `visible:false` → `show()` 的路径上失败，整窗永远不响应
 //!   点击，只有重新 `size_allocate` 才能恢复。
-//! - **失效模式 C**（#7405 / #2736 / #7499）：GTK HeaderBar 的 Wayland
-//!   事件子表面未挂上，表现为网页内容仍可点、原生标题栏按钮全死。
+//! - **失效模式 C**（#7405 / #2736 / #7499）：Tao 0.34 的 Wayland `WlHeader`
+//!   把 `HeaderBar` 包进 `EventBox::set_above_child(true)`，EventBox 的
+//!   GdkWindow 叠在按钮上面，点击被吞掉。网页内容仍可点，原生标题栏按钮全死。
+//!   上游修复是 [tao#1218](https://github.com/tauri-apps/tao/pull/1218)
+//!   （去掉自定义 CSD，随 tao 0.36 / Tauri 2.12 发布）。在那之前，本模块
+//!   把 `above_child` 改回 `false`，让按钮重新接到指针事件。
 //!
 //! 本模块导出 [`nudge_main_window`]。序列是 fire-and-forget，零抽搐：
 //! 1. 显式 `set_focus`（realize 前后各一次，不循环抢焦点）；
 //! 2. 装饰对账：仅在与设置不一致时 `set_decorations`；
-//! 3. 短暂翻转 `set_resizable`，触发 Tao `HeaderBar::set_decoration_layout`
-//!    重绑 CSD 按钮（最大化窗口也走这条，不改几何）；
+//! 3. 修补 Wayland CSD `EventBox.above_child`（最大化窗口也走这条，不改几何）；
 //! 4. 非最大化窗口再用 `LogicalSize` ±1 逻辑像素刷新 WebKit input region。
 //!    最大化窗口严禁 `set_size`（合成器硬约束，会 drift / 抖动）。
 //!
@@ -41,9 +44,6 @@ static PENDING_NUDGE: LatestSlot<PendingNudge> = LatestSlot::new();
 
 /// 在 webview realize 之后的延迟，等 GTK 主循环把 realize 事件处理完。
 const REALIZE_WAIT: Duration = Duration::from_millis(200);
-
-/// 翻转 resizable 的间隔（覆盖 1~2 个显示刷新周期）。
-const TOGGLE_GAP: Duration = Duration::from_millis(30);
 
 /// 伪 resize 两步之间的间隔。Tao Linux 的尺寸 API 是异步的
 ///（`gtk_window_resize` → 合成器 configure），太短会被 coalesce。
@@ -199,14 +199,11 @@ async fn run_nudge_sequence(window: WebviewWindow, reason: &'static str) {
 
     restore_decorations_if_needed(&window);
 
-    // 修复 GTK HeaderBar 按钮输入路由（失效模式 C）。
-    // 通过微秒级翻转 set_resizable 触发 Tao connect_resizable_notify →
-    // HeaderBar::set_decoration_layout，就地重挂 CSD 事件子表面。
-    // 不改变窗口尺寸与最大化状态。
-    let is_resizable = window.is_resizable().unwrap_or(true);
-    let _ = window.set_resizable(!is_resizable);
-    tokio::time::sleep(TOGGLE_GAP).await;
-    let _ = window.set_resizable(is_resizable);
+    // 失效模式 C：Tao 0.34 WlHeader 的 EventBox 叠在 HeaderBar 按钮之上。
+    // 不能靠翻转 set_resizable：那只会把 decoration_layout 从
+    // "menu:minimize,maximize,close" 改成 "menu:minimize,close" 再改回来，
+    // 最大化按钮会闪一下，也不是重绑 subsurface 的 API。
+    patch_wayland_header_event_box(&window);
     sample_focus(&window, &mut ever_focused);
 
     let is_maximized = window.is_maximized().unwrap_or(false);
@@ -241,6 +238,50 @@ fn restore_decorations_if_needed(window: &WebviewWindow) {
         }
         Ok(_) => {}
         Err(e) => log::warn!("Linux: 读取窗口装饰状态失败: {e}"),
+    }
+}
+
+/// 关掉 Tao 0.34 Wayland `WlHeader` 里 EventBox 的 `above_child`。
+///
+/// `tao-0.34.6/src/platform_impl/linux/wayland/header.rs` 把 HeaderBar 放进
+/// `EventBox` 并 `set_above_child(true)`。GTK 文档：EventBox 的 GdkWindow
+/// 会叠在子控件之上，子控件收不到指针事件。X11 上按钮自己的 X window 仍可能
+/// 点到；Wayland 子表面堆叠则经常整组按钮假死（tauri#13440 / tao#1218）。
+///
+/// `connect_resizable_notify` 里的 `set_decoration_layout` 只是按是否可缩放
+/// 在 `"menu:minimize,maximize,close"` 和 `"menu:minimize,close"` 之间切换，
+/// 不是重绑输入的 API。
+///
+/// 必须在 GTK 主线程改 widget。`run_on_main_thread` + `gtk_window()` 在主线程
+/// 上会走 wry 的 inline `handle_user_message`，不会自己等自己。
+fn patch_wayland_header_event_box(window: &WebviewWindow) {
+    let window = window.clone();
+    if let Err(e) = window.clone().run_on_main_thread(move || {
+        apply_wayland_header_event_box_patch(&window);
+    }) {
+        log::warn!("Linux: 无法在 GTK 主线程修补 HeaderBar EventBox: {e}");
+    }
+}
+
+fn apply_wayland_header_event_box_patch(window: &WebviewWindow) {
+    use gtk::prelude::{Cast, EventBoxExt, GtkWindowExt};
+
+    let gtk_window = match window.gtk_window() {
+        Ok(gtk_window) => gtk_window,
+        Err(e) => {
+            log::warn!("Linux: 获取 gtk_window 失败: {e}");
+            return;
+        }
+    };
+    let Some(titlebar) = gtk_window.titlebar() else {
+        return;
+    };
+    let Ok(event_box) = titlebar.downcast::<gtk::EventBox>() else {
+        return;
+    };
+    if event_box.is_above_child() {
+        event_box.set_above_child(false);
+        log::info!("Linux: 已关闭 Wayland CSD EventBox above_child，标题栏按钮可接收点击");
     }
 }
 
