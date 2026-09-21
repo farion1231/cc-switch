@@ -488,8 +488,8 @@ const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
 #[cfg(target_os = "windows")]
 const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | iex";
 
-#[cfg(target_os = "windows")]
-fn powershell_encoded_command(script: &str) -> String {
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn powershell_encoded_command(script: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     let mut bytes = Vec::with_capacity(script.len() * 2);
@@ -4568,7 +4568,7 @@ pub(super) fn escape_windows_batch_value(value: &str) -> String {
     value.replace('%', "%%")
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(super) const PARENT_CLAUDE_SESSION_ENV_VARS: &[&str] = &[
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDECODE",
@@ -4589,7 +4589,7 @@ pub(super) const PARENT_CLAUDE_SESSION_ENV_VARS: &[&str] = &[
 /// parent Claude session identity, IPC endpoints, or color-disable flags.
 /// Only runtime metadata is stripped; auth, proxy, PATH, and user Claude config stay.
 #[cfg(target_os = "windows")]
-fn detach_claude_parent_session_env(command: &mut std::process::Command) {
+pub(super) fn detach_claude_parent_session_env(command: &mut std::process::Command) {
     for name in PARENT_CLAUDE_SESSION_ENV_VARS {
         command.env_remove(name);
     }
@@ -4643,9 +4643,7 @@ fn launch_windows_batch_in_preferred_terminal(bat_path: &str) -> Result<(), Stri
     let terminal = preferred.as_deref().unwrap_or("cmd");
     let result = match terminal {
         "powershell" => run_windows_powershell_batch(bat_path),
-        "wt" => {
-            super::windows_terminal::launch_wt_terminal(bat_path, WINDOWS_POWERSHELL_BATCH_COMMAND)
-        }
+        "wt" => super::windows_terminal::launch_wt_terminal(bat_path),
         _ => run_windows_cmd_batch(bat_path),
     };
 
