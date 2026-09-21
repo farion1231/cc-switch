@@ -152,6 +152,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "kimi-k2.7-code", provider: "kimi" },
     },
   },
+  // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
+  {
+    name: "Kimi Global",
+    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    settingsConfig: {
+      name: "kimi",
+      base_url: "https://api.moonshot.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+      ],
+    },
+    category: "cn_official",
+    partnerPromotionKey: "kimi",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    suggestedDefaults: {
+      model: { default: "kimi-k2.7-code", provider: "kimi" },
+    },
+  },
   {
     name: "Kimi For Coding",
     primePartner: true,
@@ -159,6 +181,24 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     settingsConfig: {
       name: "kimi_coding",
       base_url: "https://api.kimi.com/coding/",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [{ id: "kimi-for-coding", name: "Kimi For Coding" }],
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    suggestedDefaults: {
+      model: { default: "kimi-for-coding", provider: "kimi_coding" },
+    },
+  },
+  // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
+  {
+    name: "Kimi For Coding Global",
+    websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    settingsConfig: {
+      name: "kimi_coding",
+      base_url: "https://api.kimi.ai/coding/",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [{ id: "kimi-for-coding", name: "Kimi For Coding" }],
