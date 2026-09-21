@@ -379,7 +379,7 @@
       },
       "classifier": {
         "title": "分类器队列",
-        "description": "为 Auto Mode 的 Bash 安全分类器请求指定专用供应商"
+        "description": "为 Auto Mode 分类器等辅助请求（request-class=auxiliary）指定专用供应商"
       },
       "pricing": {
         "title": "成本定价",
@@ -2934,14 +2934,14 @@
     "classifier": {
       "proxyRequired": "需要先启动路由服务并接管 Claude，才能配置分类器队列",
       "enable": "启用分类器队列",
-      "enableDescription": "开启后，Claude Code Auto Mode 的 Bash 安全分类器请求将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
+      "enableDescription": "开启后，Claude Code 标记为 auxiliary 的辅助请求（Auto Mode 安全分类器、标题生成、记忆抽取等）将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
       "forceThinkingOff": "强制关闭思考",
       "forceThinkingOffDescription": "分类器请求发出前移除 thinking / reasoning_effort / output_config，避免思考往返撞上客户端的超时上限。"
     },
     "classifierQueue": {
       "title": "分类器队列",
-      "description": "管理 Auto Mode 安全分类器请求的供应商顺序",
-      "info": "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。",
+      "description": "管理辅助请求（含 Auto Mode 安全分类器）的供应商顺序",
+      "info": "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。识别按客户端的 x-claude-code-request-class 头走，粒度只到「辅助请求」，标题生成、记忆抽取等会一并分流；该头需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管配置时自动写入，改完需重启 Claude Code 会话）。",
       "selectProvider": "选择供应商添加到队列",
       "noAvailableProviders": "没有可添加的供应商",
       "empty": "分类器队列为空。未配置时分类器请求走常规路由链。",

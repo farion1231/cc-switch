@@ -1,4 +1,4 @@
-//! Auto Mode 安全分类器请求的识别与降配
+//! Claude Code 辅助流量（`x-claude-code-request-class: auxiliary`）的识别与降配
 //!
 //! Claude Code 的 Auto Mode 在执行 Bash 命令前会先发一条「安全分类器」请求，
 //! 客户端对该请求有硬超时，超时即判定分类器不可用、连带拦下工具调用。
@@ -7,49 +7,56 @@
 //!   1) 路由到专用的「分类器队列」（快 / 便宜的供应商）
 //!   2) 强制关闭 thinking
 //!
-//! 识别规则硬编码、不开放配置。代价是 Claude Code 改动提示词文案后会静默失效
-//! （fail-open：请求原样透传，不报错），`[CLS-001]` 日志是用户唯一的自查手段。
+//! 识别只看一个请求头，不再猜提示词文案。代价见 [`ROUTED_REQUEST_CLASSES`]：
+//! 这个头的粒度只到「辅助流量」，分类器和标题生成、记忆抽取等同桶，一起分流。
+//!
+//! 头不出现时 fail-open（请求原样透传，不报错），[`warn_missing_hint_header_once`]
+//! 会打一条 `[CLS-006]` 提醒用户开 `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`。
 
+use axum::http::HeaderMap;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// 计费头前缀 —— 普通会话同样携带，必须与安全监控提示词同时命中
-const BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
-/// 安全分类器系统提示词前缀
-const SECURITY_MONITOR_PREFIX: &str = "You are a security monitor";
-
-/// stage1 请求独有的停止序列（Claude Code 侧 `stop_sequences`）
+/// Claude Code 为 LLM 网关准备的请求分类头（2.1.273 起提供）
 ///
-/// 这是最强的单一信号：普通对话不会带这两个串。
-const CLASSIFIER_STOP_SEQUENCES: [&str; 2] = ["</severity>", "</block>"];
+/// 仅当客户端设了 `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`（或登录方式被识别为
+/// gateway）时才会发出 —— cc-switch 接管 Claude 配置时会写入该变量，
+/// 见 `services::proxy::apply_claude_takeover_fields_with_policy_and_models`。
+pub const REQUEST_CLASS_HEADER: &str = "x-claude-code-request-class";
 
-/// 分类器提示词特征串
+/// 需要分流到分类器队列的 class 取值
 ///
-/// stage2 **不带** stop_sequences，只能靠末条 user 消息里的这些串兜底识别。
-const CLASSIFIER_PROMPT_MARKERS: [&str; 3] = [
-    "Output <severity>N</severity> where N is an integer 0-100",
-    "Your ENTIRE response MUST begin with <block>",
-    "Respond with <severity>N</severity> ONLY",
-];
-
-/// 分类器请求的总时间预算（秒）
+/// 客户端 2.1.278 的映射只产出五个值：
+/// `main` / `subagent` / `auxiliary` / `compaction` / `workflow`
+/// （`querySource` 经 `Xs()`：`repl_main_thread*` 与 `sdk` → main，
+/// `agent:*` 与 `hook_agent` → subagent，其余 → auxiliary；
+/// `compact` → compaction；workflow 里的子代理 → workflow）。
 ///
-/// 客户端硬超时的**确切值未经本仓库验证**，外部说法互相冲突且都没复现过，
-/// 因此这里不按某个具体数字推导，只取一个明显偏保守的上限：既远短于代理默认的
-/// 600 秒（否则我们永远比客户端晚放弃，故障转移到下一家时对方早已断开），
-/// 又宽到不会掐死一个本来能成功的响应。实测该请求通常 1.5~2 秒返回，
-/// 距这个上限有一个数量级的余量。
-const CLASSIFIER_TOTAL_BUDGET_SECS: u32 = 28;
+/// Auto Mode 的权限判定 `querySource` 是 `auto_mode`，落在 `auxiliary`。
+/// **这个桶里不止分类器**：`generate_session_title`、`extract_memories`、
+/// `insights`、`narration`、`side_question`、`tool_use_summary_generation`、
+/// `web_search_tool` 等约 25 种辅助请求同样是 auxiliary。头信号分不出它们，
+/// 因此分流口径就是「全部辅助流量」——这是拿「文案改动即静默失效」换来的确定性。
+const ROUTED_REQUEST_CLASSES: [&str; 1] = ["auxiliary"];
 
-/// 分类器请求最多尝试几家供应商
+/// 分流请求的总时间预算（秒）
+///
+/// 分类器本身通常 1.5~2 秒返回，但同一个桶里还有 insights、web 搜索、摘要生成
+/// 这类慢活儿，预算按最慢的那类给，不按分类器给：掐断一个本来能成功的辅助请求，
+/// 比多等几十秒更糟。同时仍远短于代理默认的 600 秒 —— 否则我们永远比客户端晚
+/// 放弃，故障转移到下一家时对方早已断开。
+const CLASSIFIER_TOTAL_BUDGET_SECS: u32 = 60;
+
+/// 分流请求最多尝试几家供应商
 ///
 /// 队列再长也不额外消耗墙钟时间；多出来的成员仍作为「熔断跳过」的替补有效。
 const CLASSIFIER_MAX_ATTEMPTS: u32 = 2;
 
-/// 分类器请求的单次尝试预算
+/// 分流请求的单次尝试预算
 ///
 /// 按**实际会尝试的家数**均分总预算，而不是给每家发一个固定的小值：
-/// 队列里只有一家时，把 28 秒全给它——否则单供应商场景下 12 秒就掐断，
-/// 会把「20 秒本可成功」变成硬失败，而客户端此时还远没有放弃。
+/// 队列里只有一家时，把整份预算全给它——否则单供应商场景下折半就掐断，
+/// 会把「40 秒本可成功」变成硬失败，而客户端此时还远没有放弃。
 ///
 /// 返回 `(单次超时秒数, max_retries)`。
 pub fn attempt_budget(provider_count: usize) -> (u32, u32) {
@@ -58,94 +65,48 @@ pub fn attempt_budget(provider_count: usize) -> (u32, u32) {
     (per_attempt, attempts - 1)
 }
 
-/// 判断是否为 Claude Code Auto Mode 的 Bash 安全分类器请求
+/// 判断请求是否属于应当分流的辅助流量，命中则返回具体的 class 取值（供日志用）
 ///
-/// 三个**互相独立**的锚点，任一命中即可 —— 单一签名扛不住 Claude Code 改文案，
-/// 也覆盖不了两个 stage：
-/// 1. `stop_sequences` 含 `</severity>` / `</block>`（stage1 最强信号）
-/// 2. 末条 user 消息含分类器提示词特征串（stage2 唯一可用的信号）
-/// 3. `system` 数组里**同时**有计费头前缀和安全监控提示词前缀
+/// 只认请求头，不看请求体。`x-claude-code-request-class` 是官方给网关的信号，
+/// 不随提示词文案漂移；而任何体签名都得押注某一版的措辞，且覆盖不全
+/// （fast stage1 既没有 stop_sequences，指令也不在末条 user 消息里）。
+pub fn routed_request_class(headers: &HeaderMap) -> Option<&'static str> {
+    let value = headers.get(REQUEST_CLASS_HEADER)?.to_str().ok()?.trim();
+    ROUTED_REQUEST_CLASSES
+        .iter()
+        .find(|class| value.eq_ignore_ascii_case(class))
+        .copied()
+}
+
+/// 请求是否带了 `x-claude-code-request-class`
 ///
-/// 第 3 条的两个条件缺一不可 —— 计费头在普通会话里也会出现，只判它必然误伤
-/// 每一次对话。前两条则各自足够特异，普通对话不会出现。
-pub fn is_security_classifier_request(body: &Value) -> bool {
-    has_classifier_stop_sequence(body)
-        || last_user_text_has_marker(body)
-        || has_security_monitor_system(body)
+/// 与 [`routed_request_class`] 的区别：这里只问「客户端到底发没发这个头」，
+/// 用来区分「发了但不是辅助流量」和「压根没开网关提示头」两种情况。
+fn has_request_class_header(headers: &HeaderMap) -> bool {
+    headers.contains_key(REQUEST_CLASS_HEADER)
 }
 
-/// stage1：`stop_sequences` 锚点
-fn has_classifier_stop_sequence(body: &Value) -> bool {
-    body.get("stop_sequences")
-        .and_then(Value::as_array)
-        .is_some_and(|seqs| {
-            seqs.iter().filter_map(Value::as_str).any(|s| {
-                CLASSIFIER_STOP_SEQUENCES
-                    .iter()
-                    .any(|marker| s.eq_ignore_ascii_case(marker))
-            })
-        })
-}
+/// 整个进程只提醒一次：Claude 请求里完全没有网关提示头
+static HINT_HEADER_WARNED: AtomicBool = AtomicBool::new(false);
 
-/// stage2：末条 user 消息的提示词特征串
-fn last_user_text_has_marker(body: &Value) -> bool {
-    let Some(messages) = body.get("messages").and_then(Value::as_array) else {
-        return false;
-    };
-    let Some(last_user) = messages
-        .iter()
-        .rev()
-        .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
-    else {
-        return false;
-    };
-
-    match last_user.get("content") {
-        Some(Value::String(text)) => text_has_marker(text),
-        Some(Value::Array(blocks)) => blocks.iter().any(|block| {
-            block
-                .get("text")
-                .and_then(Value::as_str)
-                .is_some_and(text_has_marker)
-        }),
-        _ => false,
+/// 分类器队列开着、却一个 `x-claude-code-request-class` 都没见到时，提醒一次
+///
+/// 这是这套识别唯一的失效模式 —— 客户端没开 `CLAUDE_CODE_GATEWAY_HINT_HEADERS`，
+/// 或跑的是 2.1.273 之前的版本。静默 fail-open 会让用户以为队列在工作，
+/// 所以必须留一条自查线索；每进程一次，避免刷屏。
+pub fn warn_missing_hint_header_once(headers: &HeaderMap, tag: &str) {
+    if has_request_class_header(headers) {
+        return;
     }
-}
-
-fn text_has_marker(text: &str) -> bool {
-    CLASSIFIER_PROMPT_MARKERS
-        .iter()
-        .any(|marker| text.contains(marker))
-}
-
-/// `system` 数组双前缀锚点（deepseek-claude-proxy 的判定方式）
-fn has_security_monitor_system(body: &Value) -> bool {
-    // `system` 也可能是纯字符串或缺失，这两种形态一律不命中本条
-    let Some(system) = body.get("system").and_then(Value::as_array) else {
-        return false;
-    };
-
-    let mut has_billing_header = false;
-    let mut has_security_monitor = false;
-
-    for block in system {
-        // 只看 text block；image / tool_result 之类没有 text 字段，自然跳过
-        let Some(text) = block.get("text").and_then(Value::as_str) else {
-            continue;
-        };
-        let trimmed = text.trim_start();
-        if trimmed.starts_with(BILLING_HEADER_PREFIX) {
-            has_billing_header = true;
-        }
-        if trimmed.starts_with(SECURITY_MONITOR_PREFIX) {
-            has_security_monitor = true;
-        }
-        if has_billing_header && has_security_monitor {
-            return true;
-        }
+    if HINT_HEADER_WARNED.swap(true, Ordering::Relaxed) {
+        return;
     }
-
-    false
+    log::warn!(
+        "[{tag}] [CLS-006] 请求未携带 {REQUEST_CLASS_HEADER}，分类器队列不会接管。\
+         请确认 Claude Code 侧已设置 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（cc-switch \
+         接管配置时会自动写入，手改过 settings.json 的需重新切换一次供应商），\
+         且客户端版本 >= 2.1.273"
+    );
 }
 
 /// 对分类器请求关闭 thinking，返回是否真正改动了请求体（用于日志）
@@ -198,110 +159,87 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn text_block(text: &str) -> Value {
-        json!({ "type": "text", "text": text })
+    fn headers_with(class: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(REQUEST_CLASS_HEADER, class.parse().unwrap());
+        headers
     }
 
-    fn classifier_body() -> Value {
-        json!({
-            "model": "claude-haiku-4-5",
-            "system": [
-                text_block("x-anthropic-billing-header: abc123"),
-                text_block("You are a security monitor for Bash commands."),
-            ],
-        })
+    // ---- 请求头锚点 ----
+
+    #[test]
+    fn detects_auxiliary_class() {
+        assert_eq!(
+            routed_request_class(&headers_with("auxiliary")),
+            Some("auxiliary")
+        );
     }
 
     #[test]
-    fn detects_when_both_prefixes_present() {
-        assert!(is_security_classifier_request(&classifier_body()));
-    }
-
-    // ---- stage1: stop_sequences 锚点 ----
-
-    #[test]
-    fn detects_stage1_via_stop_sequences() {
-        for marker in ["</severity>", "</block>"] {
-            let body = json!({
-                "model": "claude-sonnet-5",
-                "stop_sequences": [marker],
-                "messages": [{ "role": "user", "content": "ls -la" }],
-            });
-            assert!(
-                is_security_classifier_request(&body),
-                "should detect stop sequence {marker}"
+    fn class_match_is_case_and_whitespace_insensitive() {
+        for value in ["AUXILIARY", " auxiliary ", "Auxiliary"] {
+            assert_eq!(
+                routed_request_class(&headers_with(value)),
+                Some("auxiliary"),
+                "should match {value:?}"
             );
         }
     }
 
     #[test]
-    fn stop_sequence_match_is_case_insensitive() {
-        let body = json!({ "stop_sequences": ["</SEVERITY>"] });
-        assert!(is_security_classifier_request(&body));
+    fn main_conversation_is_never_routed() {
+        // 这是整套分流最要命的误伤面：主对话被拖进分类器队列，
+        // 等于用户的每一轮对话都被换成便宜模型 + 强制关思考。
+        assert!(routed_request_class(&headers_with("main")).is_none());
     }
 
     #[test]
-    fn ordinary_stop_sequences_do_not_match() {
-        let body = json!({ "stop_sequences": ["\n\nHuman:", "</thinking>"] });
-        assert!(!is_security_classifier_request(&body));
-    }
-
-    // ---- stage2: 提示词特征串（stage2 不带 stop_sequences） ----
-
-    #[test]
-    fn detects_stage2_via_prompt_marker_in_string_content() {
-        let body = json!({
-            "messages": [{
-                "role": "user",
-                "content": "Output <severity>N</severity> where N is an integer 0-100",
-            }],
-        });
-        assert!(is_security_classifier_request(&body));
+    fn other_known_classes_are_not_routed() {
+        // 2.1.278 的映射只产出这五个值，除 auxiliary 外都走常规路由：
+        // subagent / workflow 是真干活的子代理，compaction 是压缩上下文，
+        // 都不该被 60 秒预算和模型覆写碰。
+        for class in ["subagent", "compaction", "workflow"] {
+            assert!(
+                routed_request_class(&headers_with(class)).is_none(),
+                "{class} should not be routed"
+            );
+        }
     }
 
     #[test]
-    fn detects_stage2_via_prompt_marker_in_block_content() {
-        let body = json!({
-            "messages": [
-                { "role": "user", "content": "earlier turn" },
-                { "role": "assistant", "content": "ok" },
-                { "role": "user", "content": [
-                    { "type": "text", "text": "Your ENTIRE response MUST begin with <block>" }
-                ]},
-            ],
-        });
-        assert!(is_security_classifier_request(&body));
+    fn unknown_class_is_not_routed() {
+        // 客户端将来新增取值时保持 fail-open：不认识就当普通请求，别乱分流
+        assert!(routed_request_class(&headers_with("something_new")).is_none());
     }
 
     #[test]
-    fn marker_only_checked_on_last_user_message() {
-        // 历史里出现过分类器提示词，但当前这轮是普通对话 —— 不该命中
-        let body = json!({
-            "messages": [
-                { "role": "user", "content": "Respond with <severity>N</severity> ONLY" },
-                { "role": "assistant", "content": "50" },
-                { "role": "user", "content": "现在帮我重构这个函数" },
-            ],
-        });
-        assert!(!is_security_classifier_request(&body));
+    fn missing_header_is_not_routed() {
+        assert!(routed_request_class(&HeaderMap::new()).is_none());
     }
 
     #[test]
-    fn ordinary_conversation_does_not_match_any_signal() {
-        let body = json!({
-            "model": "claude-sonnet-5",
-            "system": [text_block("x-anthropic-billing-header: abc123")],
-            "stop_sequences": ["\n\nHuman:"],
-            "messages": [{ "role": "user", "content": "写个快排" }],
-        });
-        assert!(!is_security_classifier_request(&body));
+    fn non_ascii_header_value_is_not_routed() {
+        // 头值不是合法 UTF-8 时 to_str() 会失败，不能 panic
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            REQUEST_CLASS_HEADER,
+            axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+        assert!(routed_request_class(&headers).is_none());
+    }
+
+    #[test]
+    fn header_presence_is_reported_independently_of_routing() {
+        // 「发了头但不是 auxiliary」不该触发「没开提示头」的提醒
+        assert!(has_request_class_header(&headers_with("main")));
+        assert!(!has_request_class_header(&HeaderMap::new()));
     }
 
     // ---- 时间预算 ----
 
     #[test]
     fn single_provider_gets_the_whole_budget() {
-        // 只有一家时不能掐成小超时：否则 20 秒本可成功的请求会被硬失败，
+        // 只有一家时不能掐成小超时：否则 40 秒本可成功的请求会被硬失败，
         // 而客户端此时还远没有放弃
         let (per_attempt, max_retries) = attempt_budget(1);
         assert_eq!(max_retries, 0);
@@ -334,73 +272,6 @@ mod tests {
         // 0 会被 create_forwarder 解读成「禁用超时」，绝不能算出 0
         let (per_attempt, _) = attempt_budget(0);
         assert!(per_attempt > 0);
-    }
-
-    #[test]
-    fn rejects_billing_header_only() {
-        // 关键守卫：普通会话同样携带计费头，只判它会误伤每一次对话
-        let body = json!({
-            "system": [
-                text_block("x-anthropic-billing-header: abc123"),
-                text_block("You are Claude Code, Anthropic's official CLI."),
-            ],
-        });
-        assert!(!is_security_classifier_request(&body));
-    }
-
-    #[test]
-    fn rejects_security_monitor_only() {
-        let body = json!({
-            "system": [text_block("You are a security monitor for Bash commands.")],
-        });
-        assert!(!is_security_classifier_request(&body));
-    }
-
-    #[test]
-    fn rejects_system_as_plain_string() {
-        let body = json!({ "system": "You are a security monitor" });
-        assert!(!is_security_classifier_request(&body));
-    }
-
-    #[test]
-    fn rejects_missing_system() {
-        assert!(!is_security_classifier_request(&json!({ "model": "x" })));
-        assert!(!is_security_classifier_request(&json!("not an object")));
-    }
-
-    #[test]
-    fn ignores_non_text_blocks() {
-        let body = json!({
-            "system": [
-                json!({ "type": "image", "source": { "data": "..." } }),
-                text_block("x-anthropic-billing-header: abc123"),
-                json!({ "type": "text" }),
-                text_block("You are a security monitor."),
-            ],
-        });
-        assert!(is_security_classifier_request(&body));
-    }
-
-    #[test]
-    fn matches_regardless_of_block_order() {
-        let body = json!({
-            "system": [
-                text_block("You are a security monitor."),
-                text_block("x-anthropic-billing-header: abc123"),
-            ],
-        });
-        assert!(is_security_classifier_request(&body));
-    }
-
-    #[test]
-    fn tolerates_leading_whitespace() {
-        let body = json!({
-            "system": [
-                text_block("\n  x-anthropic-billing-header: abc123"),
-                text_block("  You are a security monitor."),
-            ],
-        });
-        assert!(is_security_classifier_request(&body));
     }
 
     #[test]

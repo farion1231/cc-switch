@@ -24,8 +24,9 @@ use std::time::Instant;
 /// `ANTHROPIC_CUSTOM_HEADERS` 注入即可），值为 provider id 或供应商名称。
 /// 不带、或值为空串时行为不变，仍走默认路由（当前供应商 / 故障转移队列）。
 ///
-/// 钉住只约束对话本体：Auto Mode 安全分类器请求仍按分类器队列分流（分流优先
-/// 于钉住），队列不可用时才回落到被钉的供应商。
+/// 钉住只约束对话本体：Claude Code 的辅助流量（`x-claude-code-request-class:
+/// auxiliary`，含 Auto Mode 权限分类器）仍按分类器队列分流（分流优先于钉住），
+/// 队列不可用时才回落到被钉的供应商。
 ///
 /// 这个头只在代理内部消费，由 forwarder 从出站请求里剔除，不会泄漏给上游。
 pub const PROVIDER_PIN_HEADER: &str = "x-cc-provider";
@@ -208,51 +209,68 @@ impl RequestContext {
         };
         let provider_pinned = pinned_provider.is_some();
 
-        // 分类器判定：只对 Claude 生效。claude-desktop / codex / gemini / grokbuild
-        // 的入站体不是 Anthropic Messages 形态，特征签名永远不会命中，直接短路。
+        // 辅助流量判定：只对 Claude 生效。识别只认 `x-claude-code-request-class`
+        // 这一个官方网关头，其它客户端不会发它，判定天然短路。
+        //
+        // 命中的是 class=auxiliary 这一整桶辅助请求（Auto Mode 权限分类器、标题
+        // 生成、记忆抽取、insights……），不止分类器本身 —— 客户端的映射粒度就到
+        // 这一层，细节见 `classifier::ROUTED_REQUEST_CLASSES`。
         let mut classifier = ClassifierPlan::default();
         let mut classifier_providers: Option<Vec<Provider>> = None;
 
-        if app_type_str == AppType::Claude.as_str()
-            && crate::proxy::classifier::is_security_classifier_request(body)
-        {
-            log::info!(
-                "[{tag}] [CLS-001] 命中 Auto Mode 安全分类器请求, model={request_model}, session={session_id}"
-            );
+        if app_type_str == AppType::Claude.as_str() {
+            let routed_class = crate::proxy::classifier::routed_request_class(headers);
 
-            if app_config.classifier_queue_enabled {
-                // thinking 关闭是**请求形态**的事，与谁来接这一单无关：分类器请求本来
-                // 就不需要 thinking，开着会拖到客户端硬超时、Auto Mode 直接卡住。
-                classifier.thinking_off = app_config.classifier_force_thinking_off;
+            if routed_class.is_none() {
+                // 头没出现 = 客户端没开网关提示头，队列永远不会接管；提醒一次
+                if app_config.classifier_queue_enabled {
+                    crate::proxy::classifier::warn_missing_hint_header_once(headers, tag);
+                }
+            }
 
-                // 会话钉住（x-cc-provider）不拦截这里的选路：分流优先于钉住。
-                match state
-                    .provider_router
-                    .select_classifier_providers(app_type_str)
-                    .await
-                {
-                    // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
-                    // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
-                    // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
-                    Ok(Some(selection)) if !selection.providers.is_empty() => {
-                        log::info!(
-                            "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
-                            selection.providers.len(),
-                            selection
-                                .providers
-                                .first()
-                                .map(|p| p.name.as_str())
-                                .unwrap_or("-")
-                        );
-                        classifier.routed = true;
-                        classifier.models = Arc::new(selection.models);
-                        classifier_providers = Some(selection.providers);
-                    }
-                    Ok(_) => {
-                        log::info!("[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链");
-                    }
-                    Err(e) => {
-                        log::warn!("[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链");
+            if let Some(request_class) = routed_class {
+                log::info!(
+                    "[{tag}] [CLS-001] 命中辅助流量 (request-class={request_class}), model={request_model}, session={session_id}"
+                );
+
+                if app_config.classifier_queue_enabled {
+                    // thinking 关闭是**请求形态**的事，与谁来接这一单无关：分类器请求本来
+                    // 就不需要 thinking，开着会拖到客户端硬超时、Auto Mode 直接卡住。
+                    classifier.thinking_off = app_config.classifier_force_thinking_off;
+
+                    // 会话钉住（x-cc-provider）不拦截这里的选路：分流优先于钉住。
+                    match state
+                        .provider_router
+                        .select_classifier_providers(app_type_str)
+                        .await
+                    {
+                        // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
+                        // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
+                        // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
+                        Ok(Some(selection)) if !selection.providers.is_empty() => {
+                            log::info!(
+                                "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
+                                selection.providers.len(),
+                                selection
+                                    .providers
+                                    .first()
+                                    .map(|p| p.name.as_str())
+                                    .unwrap_or("-")
+                            );
+                            classifier.routed = true;
+                            classifier.models = Arc::new(selection.models);
+                            classifier_providers = Some(selection.providers);
+                        }
+                        Ok(_) => {
+                            log::info!(
+                                "[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链"
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链"
+                            );
+                        }
                     }
                 }
             }

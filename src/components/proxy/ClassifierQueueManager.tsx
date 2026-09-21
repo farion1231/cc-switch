@@ -5,6 +5,9 @@
  * 客户端对它有硬超时。本组件让用户把响应快的供应商放进专用队列，
  * 并可选在发送前强制关闭思考。
  *
+ * 分流口径由客户端的 `x-claude-code-request-class` 头决定，粒度只到
+ * `auxiliary`：分类器与标题生成、记忆抽取等辅助请求同属一桶，会一起进队列。
+ *
  * - 添加/移除供应商
  * - 队列顺序在本面板内独立拖拽（与首页 / 故障转移队列的顺序无关）
  * - 每个条目可指定发往该供应商时使用的模型名
@@ -247,7 +250,7 @@ export function ClassifierQueueManager({
             <p className="text-xs text-muted-foreground">
               {t("proxy.classifier.enableDescription", {
                 defaultValue:
-                  "开启后，Auto Mode 的安全分类器请求将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
+                  "开启后，Claude Code 标记为 auxiliary 的辅助请求（Auto Mode 安全分类器、标题生成、记忆抽取等）将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
               })}
             </p>
           </div>
@@ -292,7 +295,7 @@ export function ClassifierQueueManager({
         <AlertDescription className="text-sm">
           {t(
             "proxy.classifierQueue.info",
-            "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。",
+            "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。识别按客户端的 x-claude-code-request-class 头走，粒度只到「辅助请求」，标题生成、记忆抽取等会一并分流；该头需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管配置时自动写入，改完需重启 Claude Code 会话）。",
           )}
         </AlertDescription>
       </Alert>

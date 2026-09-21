@@ -54,6 +54,8 @@ pub mod cls {
     pub const QUEUE_ROUTED: &str = "CLS-002";
     pub const QUEUE_FALLBACK: &str = "CLS-003";
     pub const THINKING_DISABLED: &str = "CLS-004";
+    pub const MODEL_OVERRIDDEN: &str = "CLS-005";
+    pub const HINT_HEADER_MISSING: &str = "CLS-006";
 }
 
 /// 会话级钉住供应商日志码

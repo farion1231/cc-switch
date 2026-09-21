@@ -116,7 +116,7 @@ export interface FailoverQueueItem {
   sortIndex?: number;
 }
 
-// 分类器队列条目（Auto Mode 安全分类器请求的专用供应商链）
+// 分类器队列条目（辅助请求 request-class=auxiliary 的专用供应商链，含 Auto Mode 安全分类器）
 export interface ClassifierQueueItem {
   providerId: string;
   providerName: string;

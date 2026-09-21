@@ -379,7 +379,7 @@
       },
       "classifier": {
         "title": "分類器キュー",
-        "description": "Auto Mode の Bash 安全分類リクエスト専用のプロバイダーを指定"
+        "description": "Auto Mode の分類器など補助リクエスト（request-class=auxiliary）専用のプロバイダーを指定"
       },
       "pricing": {
         "title": "コスト計算",
@@ -2934,14 +2934,14 @@
     "classifier": {
       "proxyRequired": "分類器キューを設定するには、ルーティングサービスを起動して Claude を引き継ぐ必要があります",
       "enable": "分類器キューを有効化",
-      "enableDescription": "有効にすると、Claude Code Auto Mode の Bash 安全分類リクエストがキュー順に専用プロバイダーへ送られます。キューが空、またはすべてサーキットオープンの場合は通常のルーティングへ自動的にフォールバックし、エラーにはなりません。",
+      "enableDescription": "有効にすると、Claude Code が auxiliary と分類したリクエスト（Auto Mode の安全分類器、タイトル生成、メモリ抽出など）がキュー順に専用プロバイダーへ送られます。キューが空、またはすべてサーキットオープンの場合は通常のルーティングへ自動的にフォールバックし、エラーにはなりません。",
       "forceThinkingOff": "思考を強制的に無効化",
       "forceThinkingOffDescription": "送信前に thinking / reasoning_effort / output_config を削除し、思考の往復がクライアントのタイムアウト上限に達しないようにします。"
     },
     "classifierQueue": {
       "title": "分類器キュー",
-      "description": "Auto Mode 安全分類リクエストのプロバイダー順序を管理",
-      "info": "Claude Code は Bash コマンド実行前に安全分類リクエストを送信します。クライアント側には厳格なタイムアウトがあり、超過すると分類器が利用不可と判定されコマンドが中断されます。応答が速く安価なプロバイダーをこのキューに入れると、思考の往復によるタイムアウトを回避できます。",
+      "description": "補助リクエスト（Auto Mode 安全分類器を含む）のプロバイダー順序を管理",
+      "info": "Claude Code は Bash コマンド実行前に安全分類リクエストを送信します。クライアント側には厳格なタイムアウトがあり、超過すると分類器が利用不可と判定されコマンドが中断されます。応答が速く安価なプロバイダーをこのキューに入れると、思考の往復によるタイムアウトを回避できます。判定はクライアントの x-claude-code-request-class ヘッダーに基づき、粒度は「補助リクエスト」までのため、タイトル生成やメモリ抽出も一緒に振り分けられます。このヘッダーには CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 が必要です（テイクオーバー時に自動設定。変更後は Claude Code セッションの再起動が必要）。",
       "selectProvider": "キューに追加するプロバイダーを選択",
       "noAvailableProviders": "追加できるプロバイダーがありません",
       "empty": "分類器キューは空です。未設定の場合、分類リクエストは通常のルーティングを使用します。",

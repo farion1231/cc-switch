@@ -1410,28 +1410,27 @@ mod tests {
         let endpoint = format!("http://127.0.0.1:{}/v1/messages", proxy_info.port);
         let pin_header = crate::proxy::handler_context::PROVIDER_PIN_HEADER;
 
-        let normal_body = json!({
+        // 分流只看请求头，请求体三条路径完全相同
+        let body = json!({
             "model": "claude-sonnet-4",
             "max_tokens": 16,
-            "messages": [{"role": "user", "content": "hi"}]
-        });
-        // 命中 stage1 锚点（见 classifier::has_classifier_stop_sequence）
-        let classifier_body = json!({
-            "model": "claude-sonnet-4",
-            "max_tokens": 16,
-            "stop_sequences": ["</severity>"],
             "messages": [{"role": "user", "content": "ls -la"}]
         });
+        let class_header = crate::proxy::classifier::REQUEST_CLASS_HEADER;
 
-        let send = |body: Value, pinned: bool| {
+        let send = |pinned: bool, request_class: Option<&'static str>| {
             let client = &client;
             let endpoint = &endpoint;
+            let body = body.clone();
             async move {
                 let mut request = client
                     .post(endpoint)
                     .header(header::AUTHORIZATION, "Bearer client-secret");
                 if pinned {
                     request = request.header(pin_header, "pinned vendor");
+                }
+                if let Some(class) = request_class {
+                    request = request.header(class_header, class);
                 }
                 let response = request.json(&body).send().await.expect("send request");
                 assert_eq!(response.status(), StatusCode::OK);
@@ -1443,19 +1442,21 @@ mod tests {
             }
         };
 
-        // 1) 普通请求 + 钉住 → 对话本体走被钉的供应商
+        // 1) 没有 request-class（客户端没开网关提示头）+ 钉住 → 走被钉的供应商
+        assert_eq!(send(true, None).await, "served-by:Bearer token-pinned");
+        // 2) 主对话 + 钉住 → 走被钉的供应商，队列不得插手
         assert_eq!(
-            send(normal_body.clone(), true).await,
+            send(true, Some("main")).await,
             "served-by:Bearer token-pinned"
         );
-        // 2) 判定请求 + 钉住 → 仍被分类器队列抢走（分流优先于钉住）
+        // 3) 辅助请求 + 钉住 → 仍被分类器队列抢走（分流优先于钉住）
         assert_eq!(
-            send(classifier_body.clone(), true).await,
+            send(true, Some("auxiliary")).await,
             "served-by:Bearer token-queue"
         );
-        // 3) 判定请求、未钉住 → 队列接单（原有行为不变）
+        // 4) 辅助请求、未钉住 → 队列接单（原有行为不变）
         assert_eq!(
-            send(classifier_body, false).await,
+            send(false, Some("auxiliary")).await,
             "served-by:Bearer token-queue"
         );
 
