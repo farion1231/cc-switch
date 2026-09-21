@@ -1057,7 +1057,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
-                    crate::linux_fix::nudge_main_window(window.clone());
+                    crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
                 }
                 #[cfg(target_os = "macos")]
                 {
