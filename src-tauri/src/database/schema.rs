@@ -67,6 +67,7 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -96,6 +97,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -548,6 +550,19 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_mcode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -2236,7 +2251,18 @@ impl Database {
             //   代价=夜间/凌晨用量高估一倍。勿按「阶梯取低档」惯例改成空闲档。
             //
             // input=缓存未命中价，cache_read=缓存命中价；DeepSeek 不单收 cache write → 0。
-            // deepseek-chat / deepseek-reasoner 自 2026-07 起为 V4 Flash 的 legacy 别名（同价）
+            //
+            // ── 2026-09-11：V4 Flash 退役，三个 id 全部由 DeepSeek-V4.1-Flash 承接 ──
+            // 官方价页原文：legacy names `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`
+            // 仍被接受，但「the corresponding models have been retired」，请求由 V4.1-Flash 服务
+            // 并按 Flash 价计费 → 三者同价。V4.1 Flash 高峰档 0.3/1.2/0.006（空闲档 0.15/0.6/0.003
+            // 恰为一半；models.dev 录的正是空闲档，故审计 A 段会长期报这几行，属预期）。
+            // deepseek-flash 是官方当前唯一推荐名，必须单列：查价前缀兜底是 LIKE '{id}-%'，
+            // 只命中更长的行，短 id 匹配不到 deepseek-v4-flash，缺行即静默按 0 计费。
+            //
+            // 🔴 deepseek-chat / deepseek-reasoner 停在 V4 Flash 高峰档不动（2026-09-11 复核）：
+            // 官方文档站已全站搜不到这两个 id、models.dev 第一方条目也已删除 —— 无权威源可证
+            // 「跟随 V4.1 Flash 降价」或「已下线」任一方向，按无源不动原则保留旧值。
             (
                 "deepseek-chat",
                 "DeepSeek Chat",
@@ -2254,11 +2280,19 @@ impl Database {
                 "0",
             ),
             (
+                "deepseek-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",
-                "0.44",
-                "1.32",
-                "0.014",
+                "0.3",
+                "1.2",
+                "0.006",
                 "0",
             ),
             // 部分上游（如阿里百炼）回传 4 位 MMDD 日期变体。查价的
@@ -2267,11 +2301,26 @@ impl Database {
             (
                 "deepseek-v4-flash-0731",
                 "DeepSeek V4 Flash",
-                "0.44",
-                "1.32",
-                "0.014",
+                "0.3",
+                "1.2",
+                "0.006",
                 "0",
             ),
+            // 旧视觉实验名，官方定价页明示「仍被接受、由 V4.1-Flash 承接并按 Flash 价计费」。
+            // 官方安装脚本 ≤1.2.0 写过这个 id，存量供应商仍在用；前缀兜底匹配不到更短的
+            // deepseek-v4-flash，不单列会静默按 0 计费
+            (
+                "deepseek-v4-flash-vision-exp",
+                "DeepSeek V4 Flash Vision Exp",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            // V4 Pro 高峰档 1.32/3.96/0.044（CNY 9/27/0.3）。官方 2026-09-12 撤回了「09-14 起
+            // 路由到 V4.1 Flash」的公告，定价页注(2)：9 月 14 日之后继续提供 V4 Pro API，
+            // 计费方式保持不变（2026-09-15 复核）。
+            // 🔴 勿按未生效的厂商公告提前改价：v3.20.3 曾因此发出 0.3/1.2/0.006 错价。
             (
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
@@ -2323,6 +2372,15 @@ impl Database {
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
+            // Hy4 preview：官方广州地域 CNY 6/18/0.3（1823/130055，2026-09-11 版）按 7.14 折算，无阶梯
+            (
+                "hy4-preview",
+                "Hunyuan Hy4 Preview",
+                "0.84",
+                "2.52",
+                "0.042",
+                "0",
+            ),
             // MiniMax 系列
             // 2026-09-06 审计：官方按量价页（platform.minimax.io/docs/guides/pricing-paygo）
             // M2 / M2.1 / M2.5 均为 0.3/1.2/0.03/0.375，models.dev 一致；旧值 0.27/0.95 与 0.15 为早期误录。
@@ -2424,6 +2482,17 @@ impl Database {
                 "0.016",
                 "0.20",
             ),
+            // 2026-09-15：开放权重两款，取阿里国际站（新加坡）模型页单价，无阶梯；缓存两列为
+            // 隐式缓存命中价与显式缓存创建价，与 qwen3.8-max 同口径
+            (
+                "qwen3.8-2.4t-a95b",
+                "Qwen3.8 2.4T A95B",
+                "2",
+                "6",
+                "0.25",
+                "2.50",
+            ),
+            ("qwen3.8-27b", "Qwen3.8 27B", "0.50", "3", "0.10", "0.625"),
             ("qwen3.7-max", "Qwen3.7 Max", "2.50", "7.50", "0.25", "0"),
             ("qwen3.7-plus", "Qwen3.7 Plus", "0.40", "1.60", "0.08", "0"),
             (
@@ -3285,6 +3354,53 @@ impl Database {
                 "0.15",
                 "0.95",
                 "0.03",
+                "0",
+            ),
+            // 2026-09-11 审计：DeepSeek V4 Flash 退役，打到 deepseek-v4-flash / -0731 的
+            // 请求已由 V4.1-Flash 承接并按 Flash 价计费（官方定价页 quick_start/pricing），
+            // 高峰档 0.44/1.32/0.014 → 0.3/1.2/0.006。
+            //
+            // 🔴 必须排在上方 2026-08-16 峰谷调价五条之后：老库要先被那一组推到
+            // 0.44/1.32/0.014，本组的守卫才能命中；挪到其前老库会停在 0.44 不再前进。
+            // deepseek-chat / deepseek-reasoner 刻意不在本组 —— 官方已全面下架、无权威源
+            // 可证其跟随降价，见 seed_model_pricing 的 DeepSeek V4 段注释。
+            (
+                "deepseek-v4-flash",
+                "DeepSeek V4 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+            ),
+            (
+                "deepseek-v4-flash-0731",
+                "DeepSeek V4 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+            ),
+            // 2026-09-15：撤销 09-11 提前执行的 V4 Pro → Flash 档回调（官方 09-12 撤回迁移公告，
+            // V4 Pro 继续按原价计费）。v3.20.3 已把老库推到 0.3/1.2/0.006，本条修回高峰档。
+            // 🔴 原 1.32→0.3 条目必须删除而非保留：两条并存会让每次启动都来回改写。
+            (
+                "deepseek-v4-pro",
+                "DeepSeek V4 Pro",
+                "1.32",
+                "3.96",
+                "0.044",
+                "0",
+                "0.3",
+                "1.2",
+                "0.006",
                 "0",
             ),
         ];

@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "啟用 Tool Search",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "停用自動升級"
+    "disableAutoUpgrade": "停用自動升級",
+    "disableArtifact": "停用 Artifact 工具"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上檢視",
@@ -914,7 +915,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "mcode": "MiniMax Code"
   },
   "pi": {
     "empty": {
@@ -1238,13 +1240,15 @@
       "ppio": "PPIO 是中國領先的獨立 Agentic Cloud 服務商，一個 API Key 調用全部旗艦開源模型。透過此連結註冊並完成實名認證，即可獲得 ¥10 代金券。",
       "xycai": "XycAi 企業級 Token 工廠：200+ 全球模型一鍵接入，SLA 自動賠付，異常快取 100% 退還！",
       "9527code": "9527 CODE 是企業級滿血 AI 中轉平台，為 Claude Code、Codex 等主流模型提供高速穩定的中轉服務。持續營運一年，服務穩定性達 99.9%，提供 7×24 小時人工技術支援。新人福利聯絡客服贈送體驗額度，推薦返現無上限！",
-      "soleapi": "SoleAPI 是面向開發者與企業的 AI 模型閘道，一個 API Key 直達 Claude、GPT、Gemini 等 30+ 主流模型，原生相容 OpenAI 與 Anthropic 協定，智慧選路毫秒級故障切換，可用性 99.99%，7×24 技術支援。透過專屬連結註冊即送體驗額度，邀請好友儲值持續返現！"
+      "soleapi": "SoleAPI 是面向開發者與企業的 AI 模型閘道，一個 API Key 直達 Claude、GPT、Gemini 等 30+ 主流模型，原生相容 OpenAI 與 Anthropic 協定，智慧選路毫秒級故障切換，可用性 99.99%，7×24 技術支援。透過專屬連結註冊即送體驗額度，邀請好友儲值持續返現！",
+      "fluxa": "FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 能自主購買、管理和使用模型、API 與工具。內含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，並獲贈 FluxA AgentMarket API 呼叫額度，解鎖搜尋、資料抓取、社群媒體、金融、加密、生圖、影片等 1000+ 付費 API。"
     },
     "presets": {
       "ucloud": "優雲智算",
       "ucloudCoding": "優雲智算 Coding Plan",
       "shengsuanyun": "勝算雲",
       "qiniu": "七牛雲",
+      "doubaoseed": "火山 豆包AI",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -1345,6 +1349,9 @@
     "searchModelEmpty": "沒有符合的模型",
     "searchModelAriaLabel": "選擇模型",
     "fetchModelsSuccess": "取得 {{count}} 個模型",
+    "fetchedModelsTitle": "可用模型（{{count}}）",
+    "modelAlreadyAdded": "已新增",
+    "addSelectedModels": "新增所選模型（{{count}}）",
     "fetchModelsFailed": "取得模型清單失敗",
     "fetchModelsEmpty": "未找到可用模型",
     "fetchModelsNeedApiKey": "請先填寫 API Key",
@@ -1721,7 +1728,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2025,7 +2033,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mcode": "MiniMax Code"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -3243,6 +3252,7 @@
     "fiveHour": "5 小時",
     "sevenDay": "7 天",
     "sevenDayOpus": "7 天 (Opus)",
+    "sevenDayFable": "Fable",
     "sevenDaySonnet": "7 天 (Sonnet)",
     "thirtyDay": "30 天",
     "geminiPro": "Pro",

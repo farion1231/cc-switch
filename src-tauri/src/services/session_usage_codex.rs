@@ -217,7 +217,11 @@ struct ParsedCodexFile {
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
-    byte_offset: i64,
+    /// Bytes actually read, including an incomplete final record. Persisted in
+    /// `last_byte_offset` only to detect file changes, never used as a seek
+    /// position: parsing restarts at the beginning and `line_offset` tracks
+    /// consumed records so an incomplete tail can be retried after an append.
+    observed_bytes: i64,
     has_billable_tokens: bool,
 }
 
@@ -812,7 +816,7 @@ fn parse_codex_file(
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
-    let mut byte_offset = 0i64;
+    let mut observed_bytes = 0i64;
     let mut has_billable_tokens = false;
 
     loop {
@@ -820,16 +824,18 @@ fn parse_codex_file(
         let read = reader
             .read_until(b'\n', &mut bytes)
             .map_err(|e| AppError::Config(format!("无法读取 Codex 日志: {e}")))?;
+        // Count the incomplete suffix too, so an unchanged crashed/closed
+        // rollout is skipped rather than fully reparsed on every sync pass.
+        observed_bytes += read as i64;
         // A live writer may have only written part of the final JSON record.
-        // Retry incomplete records, but retain support for a complete final JSON
-        // record without a newline (including already closed historical files).
+        // Leave its line cursor unconsumed for the next file change, but retain
+        // support for a complete final JSON record without a newline.
         if read == 0
             || (bytes.last() != Some(&b'\n')
                 && serde_json::from_slice::<serde_json::Value>(&bytes).is_err())
         {
             break;
         }
-        byte_offset += read as i64;
         line_offset += 1;
         let line = match String::from_utf8(bytes) {
             Ok(line) => line,
@@ -1021,7 +1027,7 @@ fn parse_codex_file(
         parent,
         token_events,
         line_offset,
-        byte_offset,
+        observed_bytes,
         has_billable_tokens,
     })
 }
@@ -1198,7 +1204,7 @@ fn update_codex_sync_state_on_conn(
     update_sync_state_on_conn(conn, file_path, modified, parsed.line_offset)?;
     conn.execute(
         "UPDATE session_log_sync SET last_byte_offset = ?1 WHERE file_path = ?2",
-        rusqlite::params![parsed.byte_offset, file_path],
+        rusqlite::params![parsed.observed_bytes, file_path],
     )?;
     Ok(())
 }
@@ -1750,6 +1756,56 @@ mod tests {
         sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
     }
 
+    fn assert_unchanged_codex_file_is_skipped(db: &Database, file: &Path) -> Result<(), AppError> {
+        let changes_before: i64 = {
+            let conn = lock_conn!(db.conn);
+            conn.query_row("SELECT total_changes()", [], |row| row.get(0))?
+        };
+        // Reload the persisted cursor each time: returning zero imports alone
+        // does not prove that the file was skipped rather than fully reparsed.
+        for _ in 0..3 {
+            assert_eq!(sync_test_file(db, file, &[file])?.imported, 0);
+        }
+        let conn = lock_conn!(db.conn);
+        let changes_after: i64 = conn.query_row("SELECT total_changes()", [], |row| row.get(0))?;
+        assert_eq!(
+            changes_after, changes_before,
+            "unchanged file rewrote its cursor"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_unchanged_incomplete_tail_is_skipped_after_cursor_reload() -> Result<(), AppError> {
+        use std::io::Write;
+        for has_usage in [false, true] {
+            for tail in ["{\"type\":\"event_msg\"", "  "] {
+                let db = Database::memory()?;
+                let dir = tempdir().unwrap();
+                let file = rollout_path(dir.path(), PARENT_ID);
+                let mut records = vec![session_meta(PARENT_ID), turn_context()];
+                if has_usage {
+                    records.push(token_count(100, 50, 10));
+                }
+                write_jsonl(&file, &records);
+                {
+                    let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
+                    writer.write_all(tail.as_bytes()).unwrap();
+                }
+                assert_eq!(
+                    sync_test_file(&db, &file, &[&file])?.imported,
+                    u32::from(has_usage)
+                );
+                assert_eq!(
+                    get_sync_state(&db, &file.to_string_lossy())?.1,
+                    records.len() as i64
+                );
+                assert_unchanged_codex_file_is_skipped(&db, &file)?;
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_append_with_unchanged_mtime_survives_reload_without_duplicates() -> Result<(), AppError>
     {
@@ -1860,8 +1916,12 @@ mod tests {
         let split = next.len() / 2;
         let mut writer = fs::OpenOptions::new().append(true).open(&file).unwrap();
         writer.write_all(&next.as_bytes()[..split]).unwrap();
+        writer
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
         assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
         assert_eq!(get_sync_state(&db, &file.to_string_lossy())?.1, 3);
+        assert_unchanged_codex_file_is_skipped(&db, &file)?;
         writer.write_all(&next.as_bytes()[split..]).unwrap();
         writer
             .set_times(fs::FileTimes::new().set_modified(modified))

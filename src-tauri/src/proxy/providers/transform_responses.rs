@@ -1903,14 +1903,19 @@ pub fn anthropic_to_responses(
                 if forced_hosted_web_search_name.is_some() {
                     continue;
                 }
-                response_tools.push(json!({
+                let mut response_tool = json!({
                     "type": "function",
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
-                    "description": tool.get("description"),
-                    "parameters": super::transform::clean_schema(
-                        tool.get("input_schema").cloned().unwrap_or(json!({}))
-                    )
-                }));
+                });
+                // 同 transform.rs：缺失的 description 省略而非输出 null，
+                // 否则严格上游会拒绝整个请求。
+                if let Some(description) = tool.get("description").filter(|d| !d.is_null()) {
+                    response_tool["description"] = description.clone();
+                }
+                response_tool["parameters"] = super::transform::clean_schema(
+                    tool.get("input_schema").cloned().unwrap_or(json!({})),
+                );
+                response_tools.push(response_tool);
             }
         }
 
@@ -3345,6 +3350,28 @@ mod tests {
         );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_omits_missing_tool_description() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"name": "NoDesc", "input_schema": {"type": "object"}},
+                {"name": "Described", "description": "Has one",
+                 "input_schema": {"type": "object"}}
+            ]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        // 缺 description：省略字段而不是序列化成 null（严格上游会 400）
+        assert!(tools[0].get("description").is_none());
+        assert!(tools[0].get("parameters").is_some());
+        assert_eq!(tools[1]["description"], json!("Has one"));
     }
 
     #[test]
@@ -4829,6 +4856,36 @@ mod tests {
             "model": "gpt-5.4",
             "max_tokens": 1024,
             "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_output_config_xhigh_sets_reasoning_xhigh() {
+        // Claude Code's `/effort xhigh` sends output_config.effort="xhigh";
+        // previously it fell into the unknown-value branch and was dropped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_grok_4_6_reasoning_effort_not_dropped() {
+        // After model mapping, the Responses gate runs on the mapped name;
+        // grok-4.6 / grok-4.6-* were missing from the whitelist (#7314).
+        let input = json!({
+            "model": "grok-4.6-build",
+            "max_tokens": 1024,
+            "output_config": {"effort": "xhigh"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
 

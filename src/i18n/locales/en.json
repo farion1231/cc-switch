@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
-    "disableAutoUpgrade": "Disable Auto-Upgrade"
+    "disableAutoUpgrade": "Disable Auto-Upgrade",
+    "disableArtifact": "Disable Artifact Tool"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -913,7 +914,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "mcode": "MiniMax Code"
   },
   "pi": {
     "empty": {
@@ -1237,13 +1239,15 @@
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!",
       "9527code": "9527 CODE is an enterprise-grade, full-capability AI relay platform delivering fast, stable relay for Claude Code, Codex and other mainstream models. One year of continuous operation, 99.9% service stability, and 7×24 human technical support. New users can contact support for trial credit, with unlimited referral cashback!",
-      "soleapi": "SoleAPI is an AI model gateway for developers and enterprises: one API key reaches 30+ leading models including Claude, GPT and Gemini, natively compatible with the OpenAI and Anthropic protocols, with real-time smart routing, millisecond failover, 99.99% availability and 24/7 support. Sign up via the referral link for free trial credits and ongoing cashback for inviting friends who top up!"
+      "soleapi": "SoleAPI is an AI model gateway for developers and enterprises: one API key reaches 30+ leading models including Claude, GPT and Gemini, natively compatible with the OpenAI and Anthropic protocols, with real-time smart routing, millisecond failover, 99.99% availability and 24/7 support. Sign up via the referral link for free trial credits and ongoing cashback for inviting friends who top up!",
+      "fluxa": "FluxA and Baidu AI Cloud jointly launched AgenticPlan, letting AI agents buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off with flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 1,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation and video."
     },
     "presets": {
       "ucloud": "Compshare",
       "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "qiniu": "Qiniu",
+      "doubaoseed": "Volcengine Doubao",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -1344,6 +1348,9 @@
     "searchModelEmpty": "No matching models.",
     "searchModelAriaLabel": "Select model",
     "fetchModelsSuccess": "Found {{count}} models",
+    "fetchedModelsTitle": "Available models ({{count}})",
+    "modelAlreadyAdded": "Already added",
+    "addSelectedModels": "Add selected ({{count}})",
     "fetchModelsFailed": "Failed to fetch models",
     "fetchModelsEmpty": "No models found",
     "fetchModelsNeedApiKey": "Please fill in API Key first",
@@ -1720,7 +1727,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {
@@ -2024,7 +2032,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mcode": "MiniMax Code"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -3241,6 +3250,7 @@
     "title": "Subscription Quota",
     "fiveHour": "5-Hour",
     "sevenDay": "7-Day",
+    "sevenDayFable": "Fable",
     "sevenDayOpus": "7-Day (Opus)",
     "sevenDaySonnet": "7-Day (Sonnet)",
     "thirtyDay": "30-Day",

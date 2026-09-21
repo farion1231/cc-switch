@@ -239,7 +239,8 @@ function App() {
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
+      sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "mcode"
     ) {
       setCurrentView("providers");
     }
@@ -316,7 +317,8 @@ function App() {
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
-    sharedFeatureApp === "pi";
+    sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "mcode";
   const hasMcpSupport = sharedFeatureApp !== "pi";
 
   const {
@@ -616,6 +618,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
+        if (activeApp === "mcode") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -1125,7 +1128,8 @@ function App() {
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
-                        activeApp === "pi"
+                        activeApp === "pi" ||
+                        activeApp === "mcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1390,6 +1394,7 @@ function App() {
                 </div>
               )}
             {currentView === "providers" &&
+              activeApp !== "mcode" &&
               (settingsData?.showProfileSwitcher ?? true) && (
                 <div
                   className="flex shrink-0 items-center"

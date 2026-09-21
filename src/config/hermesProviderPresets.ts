@@ -152,6 +152,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "kimi-k2.7-code", provider: "kimi" },
     },
   },
+  // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
+  {
+    name: "Kimi Global",
+    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    settingsConfig: {
+      name: "kimi",
+      base_url: "https://api.moonshot.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+      ],
+    },
+    category: "cn_official",
+    partnerPromotionKey: "kimi",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    suggestedDefaults: {
+      model: { default: "kimi-k2.7-code", provider: "kimi" },
+    },
+  },
   {
     name: "Kimi For Coding",
     primePartner: true,
@@ -159,6 +181,24 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     settingsConfig: {
       name: "kimi_coding",
       base_url: "https://api.kimi.com/coding/",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [{ id: "kimi-for-coding", name: "Kimi For Coding" }],
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    suggestedDefaults: {
+      model: { default: "kimi-for-coding", provider: "kimi_coding" },
+    },
+  },
+  // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
+  {
+    name: "Kimi For Coding Global",
+    websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    settingsConfig: {
+      name: "kimi_coding",
+      base_url: "https://api.kimi.ai/coding/",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [{ id: "kimi-for-coding", name: "Kimi For Coding" }],
@@ -424,12 +464,51 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。OpenAI 兼容基址走
+    // chat_completions。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
+    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
+    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      name: "fluxa_tokenplan",
+      base_url: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" },
+        { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+        { id: "deepseek-v3.2", name: "DeepSeek V3.2" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+        { id: "glm-5.1", name: "GLM-5.1" },
+        { id: "glm-5", name: "GLM-5" },
+        { id: "kimi-k2.6", name: "Kimi K2.6" },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
+    suggestedDefaults: {
+      model: { default: "deepseek-v4-pro", provider: "fluxa_tokenplan" },
+    },
+  },
+  {
     name: "APIKEY.FUN",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
     settingsConfig: {
       name: "apikeyfun",
-      base_url: "https://api.apikey.fun",
+      base_url: "https://api.apikey.fan",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -682,7 +761,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -1784,11 +1864,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       name: "minimax",
-      base_url: "https://api.minimaxi.com/v1",
+      base_url: "https://api.minimax.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
@@ -1822,17 +1902,18 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       name: "bailing",
-      base_url: "https://api.tbox.cn/api/anthropic",
+      base_url: "https://api.ant-ling.com/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: [{ id: "Ling-2.5-1T", name: "Ling 2.5 1T" }],
+      models: [{ id: "Ling-2.6-1T", name: "Ling 2.6 1T" }],
     },
     category: "cn_official",
     suggestedDefaults: {
-      model: { default: "Ling-2.5-1T", provider: "bailing" },
+      model: { default: "Ling-2.6-1T", provider: "bailing" },
     },
   },
   {
@@ -2047,7 +2128,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     settingsConfig: {
       name: "aicodewith",
-      base_url: "https://api.aicodewith.ai/chatgpt/v1",
+      base_url: "https://api.aicodewith.ai/v1",
       api_key: "",
       api_mode: "codex_responses",
       models: [

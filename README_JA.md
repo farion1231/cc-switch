@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、MiniMax Code のオールインワン管理ツール
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -27,11 +27,11 @@
 
 [![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)
 
-Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能なモデルであり、世界初のオープンソース 3T クラスモデルです。2.8 兆パラメータ、ネイティブな視覚能力、100 万トークンのコンテキストウィンドウを備え、長期にわたるコーディング、ナレッジワーク、推論タスクにおいてフロンティア級の性能を発揮します。CC Switch を使えば、さまざまなエージェントツールで Kimi を手軽に設定・切り替えできます。**[ここをクリックして Kimi を使い始める](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)**
+Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能なモデルであり、世界初のオープンソース 3T クラスモデルです。2.8 兆パラメータ、ネイティブな視覚能力、100 万トークンのコンテキストウィンドウを備え、長期にわたるコーディング、ナレッジワーク、推論タスクにおいてフロンティア級の性能を発揮します。CC Switch を使えば、さまざまなエージェントツールで Kimi を手軽に設定・切り替えできます。
 
-**新規ユーザー初回チャージ特典**：[こちらのリンク](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)から登録し、初回チャージに成功すると、チャージ金額の 10%（最大 CNY ¥1,000）が API クレジットとして進呈されます。
+コーディング作業がメインですか？**Kimi Code プラン**（[中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)）を試すか、Kimi オープンプラットフォームの **API**（[中文站](https://platform.kimi.com?track_id=track-6840233b42274ab4bcfd283e2bdd2aee&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)）をご利用ください。
 
-コーディング作業がメインですか？**[Kimi Code サブスクリプション](https://www.kimi.com/code/?aff=cc-switch)** をぜひお試しください！
+**新規ユーザー初回チャージ特典**：上記の API リンクから登録し、初回チャージを完了すると、チャージ金額の 10%（最大 CNY ¥1,000）が API クレジットとして進呈されます。
 
 ---
 
@@ -95,8 +95,13 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://apikey.fun/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
-<td>APIKEY.FUN のご支援に感謝します！APIKEY.FUN は、企業および個人開発者向けに安定・高効率・低コストな AI モデル API 接続サービスを提供する、プロフェッショナルなエンタープライズ級 AI リレープラットフォームです。Claude、OpenAI、Gemini などの主要人気モデルに対応し、料金は公式価格の 7% から利用できます。本プロジェクトの<a href="https://apikey.fun/register?aff=CCSwitch">専用リンク</a>から登録すると、最大で<strong>チャージ永久 5% オフ</strong>の特別優待も受けられます。</td>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 1,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://apikey.fan/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
+<td>APIKEY.FUN のご支援に感謝します！APIKEY.FUN は、企業および個人開発者向けに安定・高効率・低コストな AI モデル API 接続サービスを提供する、プロフェッショナルなエンタープライズ級 AI リレープラットフォームです。Claude、OpenAI、Gemini などの主要人気モデルに対応し、料金は公式価格の 7% から利用できます。本プロジェクトの<a href="https://apikey.fan/register?aff=CCSwitch">専用リンク</a>から登録すると、最大で<strong>チャージ永久 5% オフ</strong>の特別優待も受けられます。</td>
 </tr>
 
 <tr>
@@ -207,13 +212,13 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ## CC Switch を選ぶ理由
 
-最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
+最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
 
 **CC Switch** は、対応する AI ツールを 1 つのデスクトップアプリで一元管理できます。設定ファイルを手作業で編集する代わりに、ワンクリックでプロバイダをインポートし、瞬時に切り替えられるビジュアルインターフェースを提供します。50 以上の組み込みプリセット、統一 MCP・Skills 管理、システムトレイからの即時切り替え機能を搭載。すべてはアトミック書き込みによる信頼性の高い SQLite データベースに支えられており、設定の破損を防ぎます。
 
-- **1 つのアプリで 8 つのツール** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes を単一インターフェースで管理
+- **1 つのアプリで 9 つのツール** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code を単一インターフェースで管理
 - **手動編集は不要** -- AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 50 以上のプロバイダプリセットを内蔵。選んで切り替えるだけ
-- **統一 MCP・Skills 管理** -- 1 つのパネルで Claude、Codex、Gemini、Grok Build、OpenCode、Hermes の MCP サーバーと Skills を双方向同期で管理
+- **統一 MCP・Skills 管理** -- 1 つのパネルで Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code の MCP サーバーと Skills を双方向同期で管理
 - **システムトレイでクイック切り替え** -- トレイメニューから即座にプロバイダを切り替え。アプリを開く必要なし
 - **クラウド同期** -- Dropbox、OneDrive、iCloud、または WebDAV サーバー経由でデバイス間のプロバイダデータを同期
 - **クロスプラットフォーム** -- Tauri 2 で構築された Windows、macOS、Linux 対応のネイティブデスクトップアプリ
@@ -231,7 +236,7 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ### プロバイダ管理
 
-- **8 つの対応ツール、50 以上のプリセット** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes。キーをコピーしてワンクリックでインポート
+- **9 つの対応ツール、50 以上のプリセット** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code。キーをコピーしてワンクリックでインポート
 - **ユニバーサルプロバイダ** -- 1 つの設定を Claude Code、Codex、Gemini CLI に同期
 - ワンクリック切り替え、システムトレイクイックアクセス、ドラッグ＆ドロップ並び替え、インポート/エクスポート
 
@@ -242,7 +247,7 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ### MCP、Prompts & Skills
 
-- **統一 MCP パネル** -- Claude、Codex、Gemini、Grok Build、OpenCode、Hermes の MCP サーバーを管理、双方向同期、Deep Link インポート対応
+- **統一 MCP パネル** -- Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code の MCP サーバーを管理、双方向同期、Deep Link インポート対応
 - **Prompts** -- Markdown エディタ、クロスアプリ同期（CLAUDE.md / AGENTS.md / GEMINI.md）、バックフィル保護
 - **Skills** -- GitHub リポジトリまたは ZIP ファイルからワンクリックインストール、カスタムリポジトリ管理、シンボリックリンクとファイルコピーに対応
 
@@ -266,7 +271,7 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes** の 8 つのツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**MiniMax Code** の 9 つのツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。
 
 </details>
 

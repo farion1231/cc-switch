@@ -84,7 +84,8 @@
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "自動アップグレードを無効化"
+    "disableAutoUpgrade": "自動アップグレードを無効化",
+    "disableArtifact": "Artifact ツールを無効化"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -913,7 +914,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "mcode": "MiniMax Code"
   },
   "pi": {
     "empty": {
@@ -1237,13 +1239,15 @@
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
       "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
       "9527code": "9527 CODE はエンタープライズ級のフルスペック AI 中継プラットフォームで、Claude Code や Codex などの主要モデルに高速・安定した中継サービスを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。新規ユーザーはサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なし！",
-      "soleapi": "SoleAPI は開発者と企業向けの AI モデルゲートウェイ。API キー 1 つで Claude・GPT・Gemini など 30 以上の主要モデルを利用でき、OpenAI / Anthropic プロトコルにネイティブ対応。リアルタイムのスマートルーティングとミリ秒単位の自動切替で可用性 99.99%、24 時間 365 日サポート。専用リンクから登録すると無料のお試しクレジット、友人招待で継続的なキャッシュバック！"
+      "soleapi": "SoleAPI は開発者と企業向けの AI モデルゲートウェイ。API キー 1 つで Claude・GPT・Gemini など 30 以上の主要モデルを利用でき、OpenAI / Anthropic プロトコルにネイティブ対応。リアルタイムのスマートルーティングとミリ秒単位の自動切替で可用性 99.99%、24 時間 365 日サポート。専用リンクから登録すると無料のお試しクレジット、友人招待で継続的なキャッシュバック！",
+      "fluxa": "FluxA と Baidu AI Cloud が共同で提供する AgenticPlan は、AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにします。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4・GLM 5.2・Kimi などの主力モデルを利用可能。さらに FluxA AgentMarket の API クレジットが付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 1,000 以上の有料 API を利用できます。"
     },
     "presets": {
       "ucloud": "Compshare",
       "ucloudCoding": "Compshare Coding Plan",
       "shengsuanyun": "Shengsuanyun",
       "qiniu": "Qiniu",
+      "doubaoseed": "Volcengine Doubao",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -1344,6 +1348,9 @@
     "searchModelEmpty": "一致するモデルがありません",
     "searchModelAriaLabel": "モデルを選択",
     "fetchModelsSuccess": "{{count}}件のモデルを取得",
+    "fetchedModelsTitle": "利用可能なモデル（{{count}}件）",
+    "modelAlreadyAdded": "追加済み",
+    "addSelectedModels": "選択したモデルを追加（{{count}}件）",
     "fetchModelsFailed": "モデル一覧の取得に失敗しました",
     "fetchModelsEmpty": "モデルが見つかりません",
     "fetchModelsNeedApiKey": "先に API Key を入力してください",
@@ -1720,7 +1727,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2024,7 +2032,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mcode": "MiniMax Code"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -3242,6 +3251,7 @@
     "fiveHour": "5時間",
     "sevenDay": "7日間",
     "sevenDayOpus": "7日間(Opus)",
+    "sevenDayFable": "Fable",
     "sevenDaySonnet": "7日間(Sonnet)",
     "thirtyDay": "30日間",
     "geminiPro": "Pro",
