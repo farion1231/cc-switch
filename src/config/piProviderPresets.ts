@@ -2126,16 +2126,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         piModel("openai/gpt-5.6-luna", {
-          id: "openai/gpt-5.6-luna",
+          id: "gpt-5.6-luna",
         }),
         piModel("anthropic/claude-sonnet-5", {
-          id: "anthropic/claude-sonnet-5",
+          id: "claude-sonnet-5",
         }),
         piModel("google/gemini-3.1-flash-lite", {
-          id: "google/gemini-3.1-flash-lite",
+          id: "gemini-3.1-flash-lite",
         }),
         piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek/deepseek-v4-flash",
+          id: "deepseek-v4-flash",
         }),
       ],
     },

@@ -557,14 +557,17 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.laonongapi.com",
-        GEMINI_MODEL: "google/gemini-3.1-flash-lite",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-flash-lite",
       },
     },
     baseURL: "https://api.laonongapi.com",
-    model: "google/gemini-3.1-flash-lite",
+    model: "gemini-3.1-flash-lite",
     description: "LaonongAPI",
     category: "aggregator",
     endpointCandidates: ["https://api.laonongapi.com"],
+    icon: "laonongapi",
+    iconColor: "#7B61FF",
   },
   {
     name: "自定义",
