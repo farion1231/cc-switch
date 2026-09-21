@@ -5,7 +5,7 @@
 //! - SRV: Server (服务器)
 //! - FWD: Forwarder (转发器)
 //! - FO: Failover (故障转移)
-//! - CLS: Classifier queue (分类器队列)
+//! - CLS: Auxiliary queue (辅助请求队列)
 //! - PIN: Provider pin (会话级钉住供应商)
 //! - RSP: Response (响应处理)
 //! - USG: Usage (使用量)
@@ -48,14 +48,21 @@ pub mod fo {
     pub const NO_PROVIDERS: &str = "FO-005";
 }
 
-/// 分类器队列日志码
+/// 辅助请求队列日志码
 pub mod cls {
-    pub const REQUEST_DETECTED: &str = "CLS-001";
-    pub const QUEUE_ROUTED: &str = "CLS-002";
-    pub const QUEUE_FALLBACK: &str = "CLS-003";
-    pub const THINKING_DISABLED: &str = "CLS-004";
-    pub const MODEL_OVERRIDDEN: &str = "CLS-005";
-    pub const HINT_HEADER_MISSING: &str = "CLS-006";
+    pub const REQUEST_DETECTED: &str = "AUX-001";
+    pub const QUEUE_ROUTED: &str = "AUX-002";
+    pub const QUEUE_FALLBACK: &str = "AUX-003";
+    // AUX-004 已废弃：代理不再改写 thinking（开关与行为一并移除）。
+    // 号段保留不复用，免得翻旧日志时对不上。
+    pub const MODEL_OVERRIDDEN: &str = "AUX-005";
+    pub const HINT_HEADER_MISSING: &str = "AUX-006";
+    pub const THINKING_DISABLED_UNSUPPORTED: &str = "AUX-007";
+}
+
+/// 上游失败日志码
+pub mod ups {
+    pub const FAILURE: &str = "UPS-001";
 }
 
 /// 会话级钉住供应商日志码

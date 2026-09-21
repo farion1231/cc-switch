@@ -1,8 +1,8 @@
-//! 分类器队列 DAO
+//! 辅助请求队列 DAO
 //!
-//! 管理代理模式下的分类器队列（基于 providers 表的 in_classifier_queue 字段）。
+//! 管理代理模式下的辅助请求队列（基于 providers 表的 in_auxiliary_queue 字段）。
 //!
-//! 分类器队列服务于 Claude Code Auto Mode 在执行 Bash 命令前发出的「安全分类器」
+//! 辅助请求队列服务于 Claude Code Auto Mode 在执行 Bash 命令前发出的「安全分类器」
 //! 请求：该请求有客户端硬超时，把它分流到响应快的供应商可避免超时。
 
 use crate::database::{lock_conn, Database};
@@ -11,42 +11,39 @@ use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// 分类器队列排序的兜底值：`classifier_sort_index` / `sort_index` 为 NULL 时排到最后
+/// 辅助请求队列排序的兜底值：`auxiliary_sort_index` / `sort_index` 为 NULL 时排到最后
 const ORDER_FALLBACK: i64 = 999999;
 
-/// 分类器队列条目（简化版，用于前端展示）
+/// 辅助请求队列条目（简化版，用于前端展示）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClassifierQueueItem {
+pub struct AuxiliaryQueueItem {
     pub provider_id: String,
     pub provider_name: String,
     pub sort_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_notes: Option<String>,
     /// 队列内的独立排序位（NULL = 尚未拖拽过，读取时回落到 `sort_index`）
-    pub classifier_sort_index: Option<i64>,
+    pub auxiliary_sort_index: Option<i64>,
     /// 该条目的出站模型名覆写（None = 透传客户端请求的模型）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
 
 impl Database {
-    /// 获取分类器队列
+    /// 获取辅助请求队列
     ///
-    /// 排序键是队列**自己**的 `classifier_sort_index`；为 NULL（v20 之前入队、
+    /// 排序键是队列**自己**的 `auxiliary_sort_index`；为 NULL（v20 之前入队、
     /// 从未拖拽过）时回落到首页的 `sort_index`，所以升级后顺序保持不变。
-    pub fn get_classifier_queue(
-        &self,
-        app_type: &str,
-    ) -> Result<Vec<ClassifierQueueItem>, AppError> {
+    pub fn get_auxiliary_queue(&self, app_type: &str) -> Result<Vec<AuxiliaryQueueItem>, AppError> {
         let conn = lock_conn!(self.conn);
-        Self::classifier_queue_on_conn(&conn, app_type)
+        Self::auxiliary_queue_on_conn(&conn, app_type)
     }
 
-    fn classifier_queue_on_conn(
+    fn auxiliary_queue_on_conn(
         conn: &rusqlite::Connection,
         app_type: &str,
-    ) -> Result<Vec<ClassifierQueueItem>, AppError> {
+    ) -> Result<Vec<AuxiliaryQueueItem>, AppError> {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, sort_index, notes, classifier_sort_index, classifier_model
@@ -60,12 +57,12 @@ impl Database {
 
         let items = stmt
             .query_map(rusqlite::params![app_type, ORDER_FALLBACK], |row| {
-                Ok(ClassifierQueueItem {
+                Ok(AuxiliaryQueueItem {
                     provider_id: row.get(0)?,
                     provider_name: row.get(1)?,
                     sort_index: row.get(2)?,
                     provider_notes: row.get(3)?,
-                    classifier_sort_index: row.get(4)?,
+                    auxiliary_sort_index: row.get(4)?,
                     model: row.get(5)?,
                 })
             })
@@ -76,13 +73,13 @@ impl Database {
         Ok(items)
     }
 
-    /// 添加供应商到分类器队列（追加到队尾）
+    /// 添加供应商到辅助请求队列（追加到队尾）
     ///
-    /// 入队后把整条队列的 `classifier_sort_index` 重写成稠密的 0..n，而不是只给
+    /// 入队后把整条队列的 `auxiliary_sort_index` 重写成稠密的 0..n，而不是只给
     /// 新成员一个 `max+1`：存量成员的排序位可能全是 NULL，此时 `max` 也是 NULL，
     /// 新成员会拿到 0 并插到队首 —— 与「追加到队尾」正好相反。整条归一化后，
     /// 排序状态在第一次入队时就变得确定，不再依赖 NULL 的回落规则。
-    pub fn add_to_classifier_queue(
+    pub fn add_to_auxiliary_queue(
         &self,
         app_type: &str,
         provider_id: &str,
@@ -100,24 +97,24 @@ impl Database {
 
         // 新成员此刻排序位为 NULL，必然落在已有成员之后（COALESCE 兜底值最大），
         // 天然就是队尾；直接按当前读序写回稠密下标即可。
-        let ordered: Vec<String> = Self::classifier_queue_on_conn(&tx, app_type)?
+        let ordered: Vec<String> = Self::auxiliary_queue_on_conn(&tx, app_type)?
             .into_iter()
             .map(|item| item.provider_id)
             .collect();
-        Self::write_classifier_order(&tx, app_type, &ordered)?;
+        Self::write_auxiliary_order(&tx, app_type, &ordered)?;
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
     }
 
-    /// 按给定顺序重排分类器队列（前端拖拽后调用）
+    /// 按给定顺序重排辅助请求队列（前端拖拽后调用）
     ///
     /// 只更新仍在队列里的成员；`ordered_ids` 里的陌生 id 静默跳过，
     /// 队列里没被点名的成员保留原排序位。这样并发下（另一处刚把某个供应商
     /// 移出队列）不会整体失败，排序仍然确定 —— 未点名者由 ORDER BY 的
     /// `sort_index` / `id` 次级键兜底。
-    pub fn reorder_classifier_queue(
+    pub fn reorder_auxiliary_queue(
         &self,
         app_type: &str,
         ordered_ids: &[String],
@@ -127,14 +124,14 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        Self::write_classifier_order(&tx, app_type, ordered_ids)?;
+        Self::write_auxiliary_order(&tx, app_type, ordered_ids)?;
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
     }
 
-    fn write_classifier_order(
+    fn write_auxiliary_order(
         tx: &rusqlite::Transaction<'_>,
         app_type: &str,
         ordered_ids: &[String],
@@ -152,10 +149,10 @@ impl Database {
 
     /// 设置队列条目的出站模型名覆写
     ///
-    /// 空白字符串等同于清除（`NULL` = 透传客户端模型）。`in_classifier_queue = 1`
+    /// 空白字符串等同于清除（`NULL` = 透传客户端模型）。`in_auxiliary_queue = 1`
     /// 是 WHERE 的一部分：模型覆写只对队列成员有意义，写到非成员身上会变成
     /// 一份看不见、却会在重新入队时突然复活的隐藏配置。
-    pub fn set_classifier_model(
+    pub fn set_auxiliary_model(
         &self,
         app_type: &str,
         provider_id: &str,
@@ -178,22 +175,22 @@ impl Database {
 
         if updated == 0 {
             return Err(AppError::Database(format!(
-                "供应商 {provider_id} 不在 {app_type} 的分类器队列中"
+                "供应商 {provider_id} 不在 {app_type} 的辅助请求队列中"
             )));
         }
 
         Ok(())
     }
 
-    /// 从分类器队列中移除供应商
+    /// 从辅助请求队列中移除供应商
     ///
     /// 与 `remove_from_failover_queue` 刻意不同：这里**不**删除 provider_health 行。
     /// 同一个供应商可能同时在故障转移队列里，那边的健康状态是活数据，
-    /// 退出分类器队列不应该把它清掉。
+    /// 退出辅助请求队列不应该把它清掉。
     ///
     /// 排序位与模型覆写则相反 —— 它们是队列私有的，跟着一起清掉。留着会变成
     /// 界面上看不见的残留配置，在重新入队时带着一个用户早已忘记的模型名复活。
-    pub fn remove_from_classifier_queue(
+    pub fn remove_from_auxiliary_queue(
         &self,
         app_type: &str,
         provider_id: &str,
@@ -208,14 +205,14 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        log::info!("已从分类器队列移除供应商 {provider_id} ({app_type})");
+        log::info!("已从辅助请求队列移除供应商 {provider_id} ({app_type})");
 
         Ok(())
     }
 
-    /// 清空分类器队列
+    /// 清空辅助请求队列
     #[allow(dead_code)]
-    pub fn clear_classifier_queue(&self, app_type: &str) -> Result<(), AppError> {
+    pub fn clear_auxiliary_queue(&self, app_type: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -229,8 +226,8 @@ impl Database {
         Ok(())
     }
 
-    /// 检查供应商是否在分类器队列中
-    pub fn is_in_classifier_queue(
+    /// 检查供应商是否在辅助请求队列中
+    pub fn is_in_auxiliary_queue(
         &self,
         app_type: &str,
         provider_id: &str,
@@ -248,16 +245,16 @@ impl Database {
         Ok(in_queue)
     }
 
-    /// 获取可添加到分类器队列的供应商（不在队列中的）
+    /// 获取可添加到辅助请求队列的供应商（不在队列中的）
     ///
     /// 刻意走「队列 id 集合做差集」而不是 `Provider` 上的布尔字段：后者会逼着
     /// `Provider` 结构体加字段，进而牵动 dao/providers.rs 里多处 SELECT/INSERT 列清单。
-    pub fn get_available_providers_for_classifier(
+    pub fn get_available_providers_for_auxiliary(
         &self,
         app_type: &str,
     ) -> Result<Vec<Provider>, AppError> {
         let queued: HashSet<String> = self
-            .get_classifier_queue(app_type)?
+            .get_auxiliary_queue(app_type)?
             .into_iter()
             .map(|item| item.provider_id)
             .collect();
@@ -291,14 +288,14 @@ mod tests {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
 
-        assert!(!db.is_in_classifier_queue("claude", "a").unwrap());
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        assert!(db.is_in_classifier_queue("claude", "a").unwrap());
-        assert_eq!(db.get_classifier_queue("claude").unwrap().len(), 1);
+        assert!(!db.is_in_auxiliary_queue("claude", "a").unwrap());
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        assert!(db.is_in_auxiliary_queue("claude", "a").unwrap());
+        assert_eq!(db.get_auxiliary_queue("claude").unwrap().len(), 1);
 
-        db.remove_from_classifier_queue("claude", "a").unwrap();
-        assert!(!db.is_in_classifier_queue("claude", "a").unwrap());
-        assert!(db.get_classifier_queue("claude").unwrap().is_empty());
+        db.remove_from_auxiliary_queue("claude", "a").unwrap();
+        assert!(!db.is_in_auxiliary_queue("claude", "a").unwrap());
+        assert!(db.get_auxiliary_queue("claude").unwrap().is_empty());
     }
 
     #[test]
@@ -307,10 +304,10 @@ mod tests {
         seed(&db, "claude", "a");
         seed(&db, "codex", "a");
 
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
 
-        assert_eq!(db.get_classifier_queue("claude").unwrap().len(), 1);
-        assert!(db.get_classifier_queue("codex").unwrap().is_empty());
+        assert_eq!(db.get_auxiliary_queue("claude").unwrap().len(), 1);
+        assert!(db.get_auxiliary_queue("codex").unwrap().is_empty());
     }
 
     #[test]
@@ -318,10 +315,10 @@ mod tests {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
         seed(&db, "claude", "b");
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
 
         let available: Vec<String> = db
-            .get_available_providers_for_classifier("claude")
+            .get_available_providers_for_auxiliary("claude")
             .unwrap()
             .into_iter()
             .map(|p| p.id)
@@ -333,7 +330,7 @@ mod tests {
     async fn remove_does_not_delete_provider_health() {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
         db.update_provider_health("a", "claude", false, Some("boom".to_string()))
             .await
@@ -346,7 +343,7 @@ mod tests {
             1
         );
 
-        db.remove_from_classifier_queue("claude", "a").unwrap();
+        db.remove_from_auxiliary_queue("claude", "a").unwrap();
 
         // 该供应商还在故障转移队列里，健康行必须保留（行被删掉时会回落成 0）
         assert_eq!(
@@ -373,17 +370,17 @@ mod tests {
             db.save_provider("claude", &provider).expect("save");
         }
 
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "b").unwrap();
-        db.add_to_classifier_queue("claude", "c").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "b").unwrap();
+        db.add_to_auxiliary_queue("claude", "c").unwrap();
 
-        let queue = db.get_classifier_queue("claude").unwrap();
+        let queue = db.get_auxiliary_queue("claude").unwrap();
         let ordered: Vec<String> = queue.iter().map(|i| i.provider_id.clone()).collect();
         assert_eq!(ordered, vec!["a", "b", "c"], "先入队的应排在前面");
         assert_eq!(
             queue
                 .iter()
-                .map(|i| i.classifier_sort_index)
+                .map(|i| i.auxiliary_sort_index)
                 .collect::<Vec<_>>(),
             vec![Some(0), Some(1), Some(2)],
             "入队后排序位应归一化为稠密的 0..n"
@@ -395,17 +392,17 @@ mod tests {
         let db = Database::memory().expect("memory db");
         for id in ["a", "b", "c"] {
             seed(&db, "claude", id);
-            db.add_to_classifier_queue("claude", id).unwrap();
+            db.add_to_auxiliary_queue("claude", id).unwrap();
         }
 
-        db.reorder_classifier_queue(
+        db.reorder_auxiliary_queue(
             "claude",
             &["c".to_string(), "a".to_string(), "b".to_string()],
         )
         .unwrap();
 
         let ordered: Vec<String> = db
-            .get_classifier_queue("claude")
+            .get_auxiliary_queue("claude")
             .unwrap()
             .into_iter()
             .map(|item| item.provider_id)
@@ -419,15 +416,15 @@ mod tests {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
         seed(&db, "claude", "outsider");
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
 
-        db.reorder_classifier_queue(
+        db.reorder_auxiliary_queue(
             "claude",
             &["outsider".to_string(), "a".to_string(), "ghost".to_string()],
         )
         .unwrap();
 
-        let queue = db.get_classifier_queue("claude").unwrap();
+        let queue = db.get_auxiliary_queue("claude").unwrap();
         assert_eq!(queue.len(), 1);
         assert_eq!(queue[0].provider_id, "a");
     }
@@ -436,13 +433,13 @@ mod tests {
     fn model_override_roundtrip_and_clearing() {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        assert_eq!(db.get_classifier_queue("claude").unwrap()[0].model, None);
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        assert_eq!(db.get_auxiliary_queue("claude").unwrap()[0].model, None);
 
-        db.set_classifier_model("claude", "a", Some("  glm-4-flash  "))
+        db.set_auxiliary_model("claude", "a", Some("  glm-4-flash  "))
             .unwrap();
         assert_eq!(
-            db.get_classifier_queue("claude").unwrap()[0]
+            db.get_auxiliary_queue("claude").unwrap()[0]
                 .model
                 .as_deref(),
             Some("glm-4-flash"),
@@ -450,8 +447,8 @@ mod tests {
         );
 
         // 空白等同于清除
-        db.set_classifier_model("claude", "a", Some("   ")).unwrap();
-        assert_eq!(db.get_classifier_queue("claude").unwrap()[0].model, None);
+        db.set_auxiliary_model("claude", "a", Some("   ")).unwrap();
+        assert_eq!(db.get_auxiliary_queue("claude").unwrap()[0].model, None);
     }
 
     #[test]
@@ -459,27 +456,27 @@ mod tests {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
 
-        assert!(db.set_classifier_model("claude", "a", Some("m")).is_err());
+        assert!(db.set_auxiliary_model("claude", "a", Some("m")).is_err());
     }
 
     #[test]
     fn remove_clears_queue_private_columns() {
         let db = Database::memory().expect("memory db");
         seed(&db, "claude", "a");
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        db.set_classifier_model("claude", "a", Some("glm-4-flash"))
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        db.set_auxiliary_model("claude", "a", Some("glm-4-flash"))
             .unwrap();
 
-        db.remove_from_classifier_queue("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.remove_from_auxiliary_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
 
-        let item = &db.get_classifier_queue("claude").unwrap()[0];
+        let item = &db.get_auxiliary_queue("claude").unwrap()[0];
         assert_eq!(item.model, None, "重新入队不应带回旧的模型覆写");
     }
 
     #[test]
     fn legacy_rows_without_order_fall_back_to_sort_index() {
-        // v20 之前入队的行 classifier_sort_index 为 NULL，顺序必须仍按首页排序，
+        // v20 之前入队的行 auxiliary_sort_index 为 NULL，顺序必须仍按首页排序，
         // 否则升级当下用户会看到队列莫名重排
         let db = Database::memory().expect("memory db");
         for (id, sort_index) in [("a", 3), ("b", 1), ("c", 2)] {
@@ -502,7 +499,7 @@ mod tests {
             .expect("seed legacy queue rows");
 
         let ordered: Vec<String> = db
-            .get_classifier_queue("claude")
+            .get_auxiliary_queue("claude")
             .unwrap()
             .into_iter()
             .map(|item| item.provider_id)
@@ -516,12 +513,12 @@ mod tests {
         seed(&db, "claude", "a");
 
         db.add_to_failover_queue("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
 
         assert!(db.is_in_failover_queue("claude", "a").unwrap());
-        assert!(db.is_in_classifier_queue("claude", "a").unwrap());
+        assert!(db.is_in_auxiliary_queue("claude", "a").unwrap());
 
-        db.remove_from_classifier_queue("claude", "a").unwrap();
+        db.remove_from_auxiliary_queue("claude", "a").unwrap();
         assert!(db.is_in_failover_queue("claude", "a").unwrap());
     }
 }

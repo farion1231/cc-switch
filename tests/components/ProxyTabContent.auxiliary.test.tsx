@@ -18,9 +18,9 @@ vi.mock("@/hooks/useProxyStatus", () => ({
 }));
 
 // 队列内容不是本用例关心的，替身只为让面板可渲染
-vi.mock("@/components/proxy/ClassifierQueueManager", () => ({
-  ClassifierQueueManager: ({ appType }: { appType: string }) => (
-    <div data-testid="classifier-queue-manager">{appType}</div>
+vi.mock("@/components/proxy/AuxiliaryQueueManager", () => ({
+  AuxiliaryQueueManager: ({ appType }: { appType: string }) => (
+    <div data-testid="auxiliary-queue-manager">{appType}</div>
   ),
 }));
 vi.mock("@/components/proxy/FailoverQueueManager", () => ({
@@ -41,16 +41,16 @@ vi.mock("@/components/proxy", () => ({
 
 const settings = {} as SettingsFormState;
 
-function openClassifierPanel() {
+function openAuxiliaryPanel() {
   render(<ProxyTabContent settings={settings} onAutoSave={vi.fn()} />);
-  fireEvent.click(screen.getByText("settings.advanced.classifier.title"));
+  fireEvent.click(screen.getByText("settings.advanced.auxiliary.title"));
 }
 
-describe("ProxyTabContent classifier panel", () => {
+describe("ProxyTabContent auxiliary panel", () => {
   it("is Claude-only: no per-app tab strip inside the panel", () => {
-    openClassifierPanel();
+    openAuxiliaryPanel();
 
-    const manager = screen.getByTestId("classifier-queue-manager");
+    const manager = screen.getByTestId("auxiliary-queue-manager");
     expect(manager).toHaveTextContent("claude");
 
     // 分类器面板不该出现故障转移那套 4 应用标签页
@@ -58,10 +58,10 @@ describe("ProxyTabContent classifier panel", () => {
     expect(panel?.querySelectorAll('[role="tab"]').length ?? 0).toBe(0);
   });
 
-  it("hands the classifier queue exactly the claude app type", () => {
-    openClassifierPanel();
+  it("hands the auxiliary queue exactly the claude app type", () => {
+    openAuxiliaryPanel();
 
-    expect(screen.getByTestId("classifier-queue-manager")).toHaveTextContent(
+    expect(screen.getByTestId("auxiliary-queue-manager")).toHaveTextContent(
       /^claude$/,
     );
   });

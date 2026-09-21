@@ -1,9 +1,9 @@
 /**
- * 分类器队列管理组件
+ * 辅助请求队列管理组件
  *
  * Claude Code Auto Mode 在执行 Bash 命令前会先发一条「安全分类器」请求，
- * 客户端对它有硬超时。本组件让用户把响应快的供应商放进专用队列，
- * 并可选在发送前强制关闭思考。
+ * 客户端对它有硬超时。本组件让用户把响应快的供应商放进专用队列。
+ * 代理不改写 thinking：开不开思考由 Claude Code 自己的报文决定。
  *
  * 分流口径由客户端的 `x-claude-code-request-class` 头决定，粒度只到
  * `auxiliary`：分类器与标题生成、记忆抽取等辅助请求同属一桶，会一起进队列。
@@ -52,48 +52,47 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { ClassifierQueueItem } from "@/types/proxy";
+import type { AuxiliaryQueueItem } from "@/types/proxy";
 import type { ProxyAppId } from "@/config/appConfig";
 import {
-  useClassifierQueue,
-  useAvailableProvidersForClassifier,
-  useAddToClassifierQueue,
-  useRemoveFromClassifierQueue,
-  useReorderClassifierQueue,
-  useSetClassifierModel,
-  useClassifierConfig,
-  useSetClassifierConfig,
-} from "@/lib/query/classifier";
+  useAuxiliaryQueue,
+  useAvailableProvidersForAuxiliary,
+  useAddToAuxiliaryQueue,
+  useRemoveFromAuxiliaryQueue,
+  useReorderAuxiliaryQueue,
+  useSetAuxiliaryModel,
+  useAuxiliaryConfig,
+  useSetAuxiliaryConfig,
+} from "@/lib/query/auxiliary";
 
-interface ClassifierQueueManagerProps {
+interface AuxiliaryQueueManagerProps {
   appType: ProxyAppId;
   disabled?: boolean;
 }
 
-export function ClassifierQueueManager({
+export function AuxiliaryQueueManager({
   appType,
   disabled = false,
-}: ClassifierQueueManagerProps) {
+}: AuxiliaryQueueManagerProps) {
   const { t } = useTranslation();
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
 
-  const { data: config } = useClassifierConfig(appType);
+  const { data: config } = useAuxiliaryConfig(appType);
   const isEnabled = config?.enabled ?? false;
-  const forceThinkingOff = config?.forceThinkingOff ?? true;
-  const setConfig = useSetClassifierConfig();
+  const setConfig = useSetAuxiliaryConfig();
 
   const {
     data: queue,
     isLoading: isQueueLoading,
     error: queueError,
-  } = useClassifierQueue(appType);
+  } = useAuxiliaryQueue(appType);
   const { data: availableProviders, isLoading: isProvidersLoading } =
-    useAvailableProvidersForClassifier(appType);
+    useAvailableProvidersForAuxiliary(appType);
 
-  const addToQueue = useAddToClassifierQueue();
-  const removeFromQueue = useRemoveFromClassifierQueue();
-  const reorderQueue = useReorderClassifierQueue();
-  const setClassifierModel = useSetClassifierModel();
+  const addToQueue = useAddToAuxiliaryQueue();
+  const removeFromQueue = useRemoveFromAuxiliaryQueue();
+  const reorderQueue = useReorderAuxiliaryQueue();
+  const setAuxiliaryModel = useSetAuxiliaryModel();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -106,30 +105,17 @@ export function ClassifierQueueManager({
     try {
       await setConfig.mutateAsync({
         appType,
-        config: { enabled, forceThinkingOff },
+        config: { enabled },
       });
       toast.success(
         enabled
-          ? t("classifier.enabled", "分类器队列已启用")
-          : t("classifier.disabled", "分类器队列已关闭"),
+          ? t("auxiliary.enabled", "辅助请求队列已启用")
+          : t("auxiliary.disabled", "辅助请求队列已关闭"),
         { closeButton: true },
       );
     } catch (error) {
       toast.error(
-        t("classifier.toggleFailed", "操作失败") + ": " + String(error),
-      );
-    }
-  };
-
-  const handleToggleThinkingOff = async (nextForceThinkingOff: boolean) => {
-    try {
-      await setConfig.mutateAsync({
-        appType,
-        config: { enabled: isEnabled, forceThinkingOff: nextForceThinkingOff },
-      });
-    } catch (error) {
-      toast.error(
-        t("classifier.toggleFailed", "操作失败") + ": " + String(error),
+        t("auxiliary.toggleFailed", "操作失败") + ": " + String(error),
       );
     }
   };
@@ -144,14 +130,14 @@ export function ClassifierQueueManager({
       });
       setSelectedProviderId("");
       toast.success(
-        t("proxy.classifierQueue.addSuccess", "已添加到分类器队列"),
+        t("proxy.auxiliaryQueue.addSuccess", "已添加到辅助请求队列"),
         {
           closeButton: true,
         },
       );
     } catch (error) {
       toast.error(
-        t("proxy.classifierQueue.addFailed", "添加失败") + ": " + String(error),
+        t("proxy.auxiliaryQueue.addFailed", "添加失败") + ": " + String(error),
       );
     }
   };
@@ -160,12 +146,12 @@ export function ClassifierQueueManager({
     try {
       await removeFromQueue.mutateAsync({ appType, providerId });
       toast.success(
-        t("proxy.classifierQueue.removeSuccess", "已从分类器队列移除"),
+        t("proxy.auxiliaryQueue.removeSuccess", "已从辅助请求队列移除"),
         { closeButton: true },
       );
     } catch (error) {
       toast.error(
-        t("proxy.classifierQueue.removeFailed", "移除失败") +
+        t("proxy.auxiliaryQueue.removeFailed", "移除失败") +
           ": " +
           String(error),
       );
@@ -188,7 +174,7 @@ export function ClassifierQueueManager({
       await reorderQueue.mutateAsync({ appType, providerIds });
     } catch (error) {
       toast.error(
-        t("proxy.classifierQueue.reorderFailed", "排序更新失败") +
+        t("proxy.auxiliaryQueue.reorderFailed", "排序更新失败") +
           ": " +
           String(error),
       );
@@ -197,7 +183,7 @@ export function ClassifierQueueManager({
 
   const handleModelChange = async (providerId: string, model: string) => {
     try {
-      await setClassifierModel.mutateAsync({
+      await setAuxiliaryModel.mutateAsync({
         appType,
         providerId,
         // 空输入即清除覆写，回到透传客户端模型
@@ -205,7 +191,7 @@ export function ClassifierQueueManager({
       });
     } catch (error) {
       toast.error(
-        t("proxy.classifierQueue.modelSaveFailed", "模型保存失败") +
+        t("proxy.auxiliaryQueue.modelSaveFailed", "模型保存失败") +
           ": " +
           String(error),
       );
@@ -231,14 +217,14 @@ export function ClassifierQueueManager({
 
   return (
     <div className="space-y-4">
-      {/* 两个开关：主开关 + 其下从属的「强制关闭思考」 */}
+      {/* 队列总开关 */}
       <div className="rounded-lg bg-muted/50 border border-border/50">
         <div className="flex items-center justify-between p-4">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">
-                {t("proxy.classifier.enable", {
-                  defaultValue: "启用分类器队列",
+                {t("proxy.auxiliary.enable", {
+                  defaultValue: "启用辅助请求队列",
                 })}
               </span>
               {isEnabled && (
@@ -248,7 +234,7 @@ export function ClassifierQueueManager({
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {t("proxy.classifier.enableDescription", {
+              {t("proxy.auxiliary.enableDescription", {
                 defaultValue:
                   "开启后，Claude Code 标记为 auxiliary 的辅助请求（Auto Mode 安全分类器、标题生成、记忆抽取等）将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
               })}
@@ -258,32 +244,8 @@ export function ClassifierQueueManager({
             checked={isEnabled}
             onCheckedChange={handleToggleEnabled}
             disabled={disabled || setConfig.isPending}
-            aria-label={t("proxy.classifier.enable", {
-              defaultValue: "启用分类器队列",
-            })}
-          />
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border/50 p-4 pl-10">
-          <div className="space-y-0.5">
-            <span className="text-sm font-medium">
-              {t("proxy.classifier.forceThinkingOff", {
-                defaultValue: "强制关闭思考",
-              })}
-            </span>
-            <p className="text-xs text-muted-foreground">
-              {t("proxy.classifier.forceThinkingOffDescription", {
-                defaultValue:
-                  "分类器请求发出前移除 thinking / reasoning_effort / output_config，避免思考往返撞上客户端的超时上限。",
-              })}
-            </p>
-          </div>
-          <Switch
-            checked={forceThinkingOff}
-            onCheckedChange={handleToggleThinkingOff}
-            disabled={disabled || !isEnabled || setConfig.isPending}
-            aria-label={t("proxy.classifier.forceThinkingOff", {
-              defaultValue: "强制关闭思考",
+            aria-label={t("proxy.auxiliary.enable", {
+              defaultValue: "启用辅助请求队列",
             })}
           />
         </div>
@@ -294,8 +256,8 @@ export function ClassifierQueueManager({
         <Info className="h-4 w-4" />
         <AlertDescription className="text-sm">
           {t(
-            "proxy.classifierQueue.info",
-            "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。识别按客户端的 x-claude-code-request-class 头走，粒度只到「辅助请求」，标题生成、记忆抽取等会一并分流；该头需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管配置时自动写入，改完需重启 Claude Code 会话）。",
+            "proxy.auxiliaryQueue.info",
+            "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列可以避开这个上限。识别按客户端的 x-claude-code-request-class 头走，粒度只到「辅助请求」——权限分类器、标题生成、记忆抽取等会一并分流；该头需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管配置时自动写入，改完需重启 Claude Code 会话）。",
           )}
         </AlertDescription>
       </Alert>
@@ -310,7 +272,7 @@ export function ClassifierQueueManager({
           <SelectTrigger className="flex-1">
             <SelectValue
               placeholder={t(
-                "proxy.classifierQueue.selectProvider",
+                "proxy.auxiliaryQueue.selectProvider",
                 "选择供应商添加到队列",
               )}
             />
@@ -329,7 +291,7 @@ export function ClassifierQueueManager({
             {(!availableProviders || availableProviders.length === 0) && (
               <div className="px-2 py-4 text-center text-sm text-muted-foreground">
                 {t(
-                  "proxy.classifierQueue.noAvailableProviders",
+                  "proxy.auxiliaryQueue.noAvailableProviders",
                   "没有可添加的供应商",
                 )}
               </div>
@@ -355,8 +317,8 @@ export function ClassifierQueueManager({
         <div className="rounded-lg border border-dashed border-muted-foreground/40 p-8 text-center">
           <p className="text-sm text-muted-foreground">
             {t(
-              "proxy.classifierQueue.empty",
-              "分类器队列为空。未配置时分类器请求走常规路由链。",
+              "proxy.auxiliaryQueue.empty",
+              "辅助请求队列为空。未配置时辅助请求走常规路由链。",
             )}
           </p>
         </div>
@@ -392,14 +354,14 @@ export function ClassifierQueueManager({
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">
             {t(
-              "proxy.classifierQueue.orderHint",
-              "拖动左侧手柄可调整尝试顺序；该顺序只作用于分类器队列，与首页列表和故障转移队列无关。",
+              "proxy.auxiliaryQueue.orderHint",
+              "拖动左侧手柄可调整尝试顺序；该顺序只作用于辅助请求队列，与首页列表和故障转移队列无关。",
             )}
           </p>
           <p className="text-xs text-muted-foreground">
             {t(
-              "proxy.classifierQueue.modelHint",
-              "留空则透传客户端请求的模型；填写后分类器请求发往该供应商时改用此模型名。分类器请求为非流式且携带完整会话上下文（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
+              "proxy.auxiliaryQueue.modelHint",
+              "留空则透传客户端请求的模型；填写后辅助请求发往该供应商时改用此模型名。辅助请求为非流式且携带完整会话上下文（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
             )}
           </p>
         </div>
@@ -409,7 +371,7 @@ export function ClassifierQueueManager({
 }
 
 interface QueueItemProps {
-  item: ClassifierQueueItem;
+  item: AuxiliaryQueueItem;
   index: number;
   disabled: boolean;
   onRemove: (providerId: string) => void;
@@ -476,7 +438,7 @@ function QueueItem({
               ? "cursor-not-allowed opacity-40"
               : "cursor-grab hover:bg-muted",
           )}
-          aria-label={t("proxy.classifierQueue.dragHandle", "拖动排序")}
+          aria-label={t("proxy.auxiliaryQueue.dragHandle", "拖动排序")}
           disabled={disabled}
           {...attributes}
           {...listeners}
@@ -521,7 +483,7 @@ function QueueItem({
       {/* 模型覆写 */}
       <div className="mt-2 flex items-center gap-2 pl-9">
         <span className="shrink-0 text-xs text-muted-foreground">
-          {t("proxy.classifierQueue.modelLabel", "模型")}
+          {t("proxy.auxiliaryQueue.modelLabel", "模型")}
         </span>
         <Input
           value={draft}
@@ -536,10 +498,10 @@ function QueueItem({
           }}
           disabled={disabled}
           placeholder={t(
-            "proxy.classifierQueue.modelPlaceholder",
+            "proxy.auxiliaryQueue.modelPlaceholder",
             "留空则透传客户端模型",
           )}
-          aria-label={t("proxy.classifierQueue.modelLabel", "模型")}
+          aria-label={t("proxy.auxiliaryQueue.modelLabel", "模型")}
           className="h-8 text-xs"
         />
       </div>

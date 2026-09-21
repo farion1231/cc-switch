@@ -298,9 +298,9 @@ impl Database {
         let (
             is_current,
             in_failover_queue,
-            in_classifier_queue,
-            classifier_sort_index,
-            classifier_model,
+            in_auxiliary_queue,
+            auxiliary_sort_index,
+            auxiliary_model,
         ) = tx
             .query_row(
                 "SELECT is_current, in_failover_queue, in_classifier_queue,
@@ -369,9 +369,9 @@ impl Database {
                 })?,
                 is_current,
                 in_failover_queue,
-                in_classifier_queue,
-                classifier_sort_index,
-                classifier_model,
+                in_auxiliary_queue,
+                auxiliary_sort_index,
+                auxiliary_model,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

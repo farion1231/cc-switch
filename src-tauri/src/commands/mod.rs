@@ -1,8 +1,8 @@
 #![allow(non_snake_case)]
 
 mod auth;
+mod auxiliary;
 mod balance;
-mod classifier;
 mod codex_oauth;
 mod coding_plan;
 mod config;
@@ -39,8 +39,8 @@ mod webdav_sync;
 mod workspace;
 
 pub use auth::*;
+pub use auxiliary::*;
 pub use balance::*;
-pub use classifier::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;

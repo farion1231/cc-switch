@@ -377,8 +377,8 @@
         "title": "Auto Failover",
         "description": "Configure failover queue and circuit breaker strategy"
       },
-      "classifier": {
-        "title": "Classifier Queue",
+      "auxiliary": {
+        "title": "Auxiliary Queue",
         "description": "Route auxiliary requests (Auto Mode classifier and friends, request-class=auxiliary) to dedicated providers"
       },
       "pricing": {
@@ -2793,9 +2793,9 @@
       "takeoverRequired": "Take over {{app}} first, then enable failover"
     }
   },
-  "classifier": {
-    "enabled": "Classifier queue enabled",
-    "disabled": "Classifier queue disabled",
+  "auxiliary": {
+    "enabled": "Auxiliary queue enabled",
+    "disabled": "Auxiliary queue disabled",
     "toggleFailed": "Operation failed"
   },
   "proxy": {
@@ -2931,25 +2931,23 @@
       "reorderFailed": "Failed to update order",
       "toggleFailed": "Failed to update status"
     },
-    "classifier": {
-      "proxyRequired": "Start the routing service and take over Claude before configuring the classifier queue",
-      "enable": "Enable classifier queue",
-      "enableDescription": "When enabled, requests Claude Code marks as auxiliary (Auto Mode safety classifier, title generation, memory extraction, and so on) are sent to the queued providers in order. If the queue is empty or every provider is circuit-broken, requests fall back to the normal routing chain instead of failing.",
-      "forceThinkingOff": "Force thinking off",
-      "forceThinkingOffDescription": "Strips thinking / reasoning_effort / output_config before sending, so a reasoning round trip cannot run into the client's timeout limit."
+    "auxiliary": {
+      "proxyRequired": "Start the routing service and take over Claude before configuring the auxiliary queue",
+      "enable": "Enable auxiliary queue",
+      "enableDescription": "When enabled, requests Claude Code marks as auxiliary (Auto Mode safety classifier, title generation, memory extraction, and so on) are sent to the queued providers in order. If the queue is empty or every provider is circuit-broken, requests fall back to the normal routing chain instead of failing."
     },
-    "classifierQueue": {
-      "title": "Classifier Queue",
+    "auxiliaryQueue": {
+      "title": "Auxiliary Queue",
       "description": "Manage provider order for auxiliary requests, including the Auto Mode safety classifier",
       "info": "Claude Code sends a safety-classifier request before running a Bash command. The client enforces a hard timeout on it; exceeding that marks the classifier unavailable and blocks the command. Put fast, cheap providers in this queue to avoid timing out on a reasoning round trip. Detection reads the client's x-claude-code-request-class header, whose granularity stops at \"auxiliary\", so title generation and memory extraction ride along. That header requires CLAUDE_CODE_GATEWAY_HINT_HEADERS=1 (written automatically on takeover; restart Claude Code sessions after changing it).",
       "selectProvider": "Select a provider to add to the queue",
       "noAvailableProviders": "No providers available to add",
-      "empty": "Classifier queue is empty. Classifier requests use the normal routing chain until you add one.",
-      "orderHint": "Drag the handle to change the order providers are tried. This order applies to the classifier queue only — the provider list and the failover queue are unaffected.",
-      "modelHint": "Leave empty to pass through the model the client asked for. When set, classifier requests sent to this provider use that model name instead. Classifier requests are non-streaming and carry the full conversation context (tens of thousands of tokens), so a model with a small context window will fail and fall through to the next provider.",
-      "addSuccess": "Added to classifier queue",
+      "empty": "Auxiliary queue is empty. Auxiliary requests use the normal routing chain until you add a provider.",
+      "orderHint": "Drag the handle to change the order providers are tried. This order applies to the auxiliary queue only — the provider list and the failover queue are unaffected.",
+      "modelHint": "Leave empty to pass through the model the client asked for. When set, auxiliary requests sent to this provider use that model name instead. The bucket mixes small requests (title generation, permission checks) with forks that carry the whole conversation (tens of thousands of tokens), so a model with a small context window will fail and fall through to the next provider.",
+      "addSuccess": "Added to auxiliary queue",
       "addFailed": "Failed to add",
-      "removeSuccess": "Removed from classifier queue",
+      "removeSuccess": "Removed from auxiliary queue",
       "removeFailed": "Failed to remove",
       "dragHandle": "Drag to reorder",
       "reorderFailed": "Failed to update order",

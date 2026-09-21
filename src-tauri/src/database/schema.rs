@@ -1668,7 +1668,9 @@ impl Database {
                 "classifier_queue_enabled",
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
-            // 默认开启「强制关闭思考」：这是本特性的核心收益，且对分类器请求没有副作用
+            // 历史列：曾经是「强制关闭思考」开关，现已改为恒定行为，代码不再读写它。
+            // 保留建列逻辑而不写迁移删除：DEFAULT 1 的 NOT NULL 列留着是零成本的，
+            // 而 DROP COLUMN 要动 SCHEMA_VERSION、跨版本回滚时反而会把旧版打挂。
             Self::add_column_if_missing(
                 conn,
                 "proxy_config",
@@ -4010,7 +4012,7 @@ mod tests {
     fn fresh_memory_database_has_classifier_columns() -> Result<(), AppError> {
         // Database::memory() 只跑 create_tables()，不跑迁移 —— 建表语句必须自带新列
         let db = Database::memory()?;
-        assert!(db.get_classifier_queue("claude")?.is_empty());
+        assert!(db.get_auxiliary_queue("claude")?.is_empty());
         Ok(())
     }
 }

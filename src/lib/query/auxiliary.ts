@@ -1,53 +1,52 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { classifierApi } from "@/lib/api/classifier";
-import type { ClassifierConfig, ClassifierQueueItem } from "@/types/proxy";
+import { auxiliaryApi } from "@/lib/api/auxiliary";
+import type { AuxiliaryConfig, AuxiliaryQueueItem } from "@/types/proxy";
 
-const DEFAULT_CONFIG: ClassifierConfig = {
+const DEFAULT_CONFIG: AuxiliaryConfig = {
   enabled: false,
-  forceThinkingOff: true,
 };
 
 /**
- * 获取分类器队列
+ * 获取辅助请求队列
  */
-export function useClassifierQueue(appType: string, enabled = true) {
+export function useAuxiliaryQueue(appType: string, enabled = true) {
   return useQuery({
-    queryKey: ["classifierQueue", appType],
-    queryFn: () => classifierApi.getClassifierQueue(appType),
+    queryKey: ["auxiliaryQueue", appType],
+    queryFn: () => auxiliaryApi.getAuxiliaryQueue(appType),
     enabled: enabled && !!appType,
   });
 }
 
 /**
- * 获取可添加到分类器队列的供应商
+ * 获取可添加到辅助请求队列的供应商
  */
-export function useAvailableProvidersForClassifier(appType: string) {
+export function useAvailableProvidersForAuxiliary(appType: string) {
   return useQuery({
-    queryKey: ["availableProvidersForClassifier", appType],
-    queryFn: () => classifierApi.getAvailableProvidersForClassifier(appType),
+    queryKey: ["availableProvidersForAuxiliary", appType],
+    queryFn: () => auxiliaryApi.getAvailableProvidersForAuxiliary(appType),
     enabled: !!appType,
   });
 }
 
 /**
- * 读取分类器队列的两个开关
+ * 读取辅助请求队列的两个开关
  */
-export function useClassifierConfig(appType: string) {
+export function useAuxiliaryConfig(appType: string) {
   return useQuery({
-    queryKey: ["classifierConfig", appType],
-    queryFn: () => classifierApi.getClassifierConfig(appType),
+    queryKey: ["auxiliaryConfig", appType],
+    queryFn: () => auxiliaryApi.getAuxiliaryConfig(appType),
     enabled: !!appType,
     placeholderData: DEFAULT_CONFIG,
   });
 }
 
 /**
- * 写入分类器队列的两个开关（乐观更新 + 失败回滚）
+ * 写入辅助请求队列的两个开关（乐观更新 + 失败回滚）
  *
- * 不失效 providers / proxyStatus：分类器队列不切换当前供应商，
+ * 不失效 providers / proxyStatus：辅助请求队列不切换当前供应商，
  * 也不改变任何代理运行状态。
  */
-export function useSetClassifierConfig() {
+export function useSetAuxiliaryConfig() {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -56,39 +55,39 @@ export function useSetClassifierConfig() {
       config,
     }: {
       appType: string;
-      config: ClassifierConfig;
-    }) => classifierApi.setClassifierConfig(appType, config),
+      config: AuxiliaryConfig;
+    }) => auxiliaryApi.setAuxiliaryConfig(appType, config),
     onMutate: async ({ appType, config }) => {
       await queryClient.cancelQueries({
-        queryKey: ["classifierConfig", appType],
+        queryKey: ["auxiliaryConfig", appType],
       });
-      const previous = queryClient.getQueryData<ClassifierConfig>([
-        "classifierConfig",
+      const previous = queryClient.getQueryData<AuxiliaryConfig>([
+        "auxiliaryConfig",
         appType,
       ]);
-      queryClient.setQueryData(["classifierConfig", appType], config);
+      queryClient.setQueryData(["auxiliaryConfig", appType], config);
       return { previous };
     },
     onError: (_error, variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(
-          ["classifierConfig", variables.appType],
+          ["auxiliaryConfig", variables.appType],
           context.previous,
         );
       }
     },
     onSettled: (_data, _error, variables) => {
       queryClient.invalidateQueries({
-        queryKey: ["classifierConfig", variables.appType],
+        queryKey: ["auxiliaryConfig", variables.appType],
       });
     },
   });
 }
 
 /**
- * 添加供应商到分类器队列
+ * 添加供应商到辅助请求队列
  */
-export function useAddToClassifierQueue() {
+export function useAddToAuxiliaryQueue() {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -98,22 +97,22 @@ export function useAddToClassifierQueue() {
     }: {
       appType: string;
       providerId: string;
-    }) => classifierApi.addToClassifierQueue(appType, providerId),
+    }) => auxiliaryApi.addToAuxiliaryQueue(appType, providerId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
-        queryKey: ["classifierQueue", variables.appType],
+        queryKey: ["auxiliaryQueue", variables.appType],
       });
       queryClient.invalidateQueries({
-        queryKey: ["availableProvidersForClassifier", variables.appType],
+        queryKey: ["availableProvidersForAuxiliary", variables.appType],
       });
     },
   });
 }
 
 /**
- * 从分类器队列移除供应商
+ * 从辅助请求队列移除供应商
  */
-export function useRemoveFromClassifierQueue() {
+export function useRemoveFromAuxiliaryQueue() {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -123,25 +122,25 @@ export function useRemoveFromClassifierQueue() {
     }: {
       appType: string;
       providerId: string;
-    }) => classifierApi.removeFromClassifierQueue(appType, providerId),
+    }) => auxiliaryApi.removeFromAuxiliaryQueue(appType, providerId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
-        queryKey: ["classifierQueue", variables.appType],
+        queryKey: ["auxiliaryQueue", variables.appType],
       });
       queryClient.invalidateQueries({
-        queryKey: ["availableProvidersForClassifier", variables.appType],
+        queryKey: ["availableProvidersForAuxiliary", variables.appType],
       });
     },
   });
 }
 
 /**
- * 按拖拽结果重排分类器队列（乐观更新 + 失败回滚）
+ * 按拖拽结果重排辅助请求队列（乐观更新 + 失败回滚）
  *
- * 只碰 classifierQueue 这一个 key：分类器队列有自己的排序列，
+ * 只碰 auxiliaryQueue 这一个 key：辅助请求队列有自己的排序列，
  * 与首页 / 托盘 / 故障转移队列的顺序完全无关。
  */
-export function useReorderClassifierQueue() {
+export function useReorderAuxiliaryQueue() {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -151,11 +150,11 @@ export function useReorderClassifierQueue() {
     }: {
       appType: string;
       providerIds: string[];
-    }) => classifierApi.reorderClassifierQueue(appType, providerIds),
+    }) => auxiliaryApi.reorderAuxiliaryQueue(appType, providerIds),
     onMutate: async ({ appType, providerIds }) => {
-      const key = ["classifierQueue", appType];
+      const key = ["auxiliaryQueue", appType];
       await queryClient.cancelQueries({ queryKey: key });
-      const previous = queryClient.getQueryData<ClassifierQueueItem[]>(key);
+      const previous = queryClient.getQueryData<AuxiliaryQueueItem[]>(key);
 
       if (previous) {
         const byId = new Map(previous.map((item) => [item.providerId, item]));
@@ -163,7 +162,7 @@ export function useReorderClassifierQueue() {
         // 与后端 reorder 的宽容语义保持一致
         const reordered = providerIds
           .map((id) => byId.get(id))
-          .filter((item): item is ClassifierQueueItem => item !== undefined);
+          .filter((item): item is AuxiliaryQueueItem => item !== undefined);
         const named = new Set(providerIds);
         queryClient.setQueryData(key, [
           ...reordered,
@@ -176,14 +175,14 @@ export function useReorderClassifierQueue() {
     onError: (_error, variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(
-          ["classifierQueue", variables.appType],
+          ["auxiliaryQueue", variables.appType],
           context.previous,
         );
       }
     },
     onSettled: (_data, _error, variables) => {
       queryClient.invalidateQueries({
-        queryKey: ["classifierQueue", variables.appType],
+        queryKey: ["auxiliaryQueue", variables.appType],
       });
     },
   });
@@ -192,7 +191,7 @@ export function useReorderClassifierQueue() {
 /**
  * 设置队列条目的出站模型名覆写
  */
-export function useSetClassifierModel() {
+export function useSetAuxiliaryModel() {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -204,10 +203,10 @@ export function useSetClassifierModel() {
       appType: string;
       providerId: string;
       model: string | null;
-    }) => classifierApi.setClassifierModel(appType, providerId, model),
+    }) => auxiliaryApi.setAuxiliaryModel(appType, providerId, model),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
-        queryKey: ["classifierQueue", variables.appType],
+        queryKey: ["auxiliaryQueue", variables.appType],
       });
     },
   });

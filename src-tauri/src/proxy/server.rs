@@ -1320,9 +1320,9 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn classifier_queue_routing_wins_over_provider_pin() {
+    async fn auxiliary_queue_routing_wins_over_provider_pin() {
         // 分流优先于钉住：带 x-cc-provider 的会话里，对话本体走被钉的供应商，
-        // 而 Auto Mode 判定请求仍归分类器队列接单。
+        // 而 Auto Mode 判定请求仍归辅助请求队列接单。
         let _home = TempHome::new();
 
         // 用一个 echo 上游区分「谁接的单」：把 Authorization 原样塞回消息文本
@@ -1383,17 +1383,17 @@ mod tests {
         }
         db.set_current_provider("claude", &default_provider.id)
             .expect("select default provider");
-        db.add_to_classifier_queue("claude", &queue_provider.id)
-            .expect("add to classifier queue");
+        db.add_to_auxiliary_queue("claude", &queue_provider.id)
+            .expect("add to auxiliary queue");
 
         let mut config = db
             .get_proxy_config_for_app("claude")
             .await
             .expect("read config");
-        config.classifier_queue_enabled = true;
+        config.auxiliary_queue_enabled = true;
         db.update_proxy_config_for_app(config)
             .await
-            .expect("enable classifier queue");
+            .expect("enable auxiliary queue");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
@@ -1416,7 +1416,7 @@ mod tests {
             "max_tokens": 16,
             "messages": [{"role": "user", "content": "ls -la"}]
         });
-        let class_header = crate::proxy::classifier::REQUEST_CLASS_HEADER;
+        let class_header = crate::proxy::auxiliary::REQUEST_CLASS_HEADER;
 
         let send = |pinned: bool, request_class: Option<&'static str>| {
             let client = &client;
@@ -1449,7 +1449,7 @@ mod tests {
             send(true, Some("main")).await,
             "served-by:Bearer token-pinned"
         );
-        // 3) 辅助请求 + 钉住 → 仍被分类器队列抢走（分流优先于钉住）
+        // 3) 辅助请求 + 钉住 → 仍被辅助请求队列抢走（分流优先于钉住）
         assert_eq!(
             send(true, Some("auxiliary")).await,
             "served-by:Bearer token-queue"
@@ -1459,6 +1459,144 @@ mod tests {
             send(false, Some("auxiliary")).await,
             "served-by:Bearer token-queue"
         );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn auxiliary_model_override_outlives_the_provider_model_mapping() {
+        // 回归锁：队列条目配的模型名必须是**发给上游的最终值**。
+        //
+        // 覆写一度写在模型映射之前，而 model_mapper 对认不出的名字会回落到该供应商
+        // 的 default_model —— 于是日志说「覆写为 X」，上游收到的却是供应商默认模型。
+        // 这个测试从上游视角断言，任何把覆写挪回映射之前的改动都会在这里挂掉。
+        let _home = TempHome::new();
+
+        // echo 上游：把收到的 model 原样塞回消息文本
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post(
+                |axum::extract::Json(body): axum::extract::Json<Value>| async move {
+                    let model = body
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or("none")
+                        .to_string();
+                    (
+                        StatusCode::OK,
+                        axum::Json(json!({
+                            "id": "msg_echo",
+                            "type": "message",
+                            "role": "assistant",
+                            "model": "claude-sonnet-4",
+                            "content": [{"type": "text", "text": format!("model:{model}")}],
+                            "stop_reason": "end_turn",
+                            "usage": {"input_tokens": 1, "output_tokens": 1}
+                        })),
+                    )
+                },
+            ),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        // 队列供应商配了 default_model：map_model 认不出的名字都会落到它
+        let queue_provider = Provider::with_id(
+            "amo-queue".to_string(),
+            "Queue Vendor".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                    "ANTHROPIC_AUTH_TOKEN": "token-queue",
+                    "ANTHROPIC_MODEL": "vendor-default",
+                }
+            }),
+            None,
+        );
+        let default_provider = Provider::with_id(
+            "amo-default".to_string(),
+            "Default Vendor".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                    "ANTHROPIC_AUTH_TOKEN": "token-default",
+                }
+            }),
+            None,
+        );
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        for provider in [&default_provider, &queue_provider] {
+            db.save_provider("claude", provider).expect("save provider");
+        }
+        db.set_current_provider("claude", &default_provider.id)
+            .expect("select default provider");
+        db.add_to_auxiliary_queue("claude", &queue_provider.id)
+            .expect("add to auxiliary queue");
+        db.set_auxiliary_model("claude", &queue_provider.id, Some("queue-only-model"))
+            .expect("set queue model override");
+
+        let mut config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read config");
+        config.auxiliary_queue_enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable auxiliary queue");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let endpoint = format!("http://127.0.0.1:{}/v1/messages", proxy_info.port);
+        let class_header = crate::proxy::auxiliary::REQUEST_CLASS_HEADER;
+
+        let send = || async {
+            let response = client
+                .post(&endpoint)
+                .header(header::AUTHORIZATION, "Bearer client-secret")
+                .header(class_header, "auxiliary")
+                .json(&json!({
+                    "model": "claude-sonnet-4",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "ls -la"}]
+                }))
+                .send()
+                .await
+                .expect("send request");
+            assert_eq!(response.status(), StatusCode::OK);
+            let value: Value = response.json().await.expect("parse response");
+            value["content"][0]["text"]
+                .as_str()
+                .expect("response text")
+                .to_string()
+        };
+
+        // 配了覆写：上游必须收到覆写值，而不是供应商的 default_model
+        assert_eq!(send().await, "model:queue-only-model");
+
+        // 清掉覆写：透传客户端模型，此时才轮到供应商映射兜底
+        db.set_auxiliary_model("claude", &queue_provider.id, None)
+            .expect("clear queue model override");
+        assert_eq!(send().await, "model:vendor-default");
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();

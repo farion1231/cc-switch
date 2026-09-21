@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
-import { ClassifierQueueManager } from "@/components/proxy/ClassifierQueueManager";
+import { AuxiliaryQueueManager } from "@/components/proxy/AuxiliaryQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -230,9 +230,9 @@ export function ProxyTabContent({
           </AccordionContent>
         </AccordionItem>
 
-        {/* Classifier Queue (Claude only) */}
+        {/* Auxiliary Queue (Claude only) */}
         <AccordionItem
-          value="classifier"
+          value="auxiliary"
           className="rounded-xl glass-card overflow-hidden"
         >
           <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
@@ -240,10 +240,10 @@ export function ProxyTabContent({
               <ShieldCheck className="h-5 w-5 text-sky-500" />
               <div className="text-left">
                 <h3 className="text-base font-semibold">
-                  {t("settings.advanced.classifier.title")}
+                  {t("settings.advanced.auxiliary.title")}
                 </h3>
                 <p className="text-sm text-muted-foreground font-normal">
-                  {t("settings.advanced.classifier.description")}
+                  {t("settings.advanced.auxiliary.description")}
                 </p>
               </div>
               {/* 只对 Claude 开放：特征签名是 Anthropic Messages 入站格式独有的 */}
@@ -257,14 +257,14 @@ export function ProxyTabContent({
               {!isRunning && (
                 <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
                   <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                    {t("proxy.classifier.proxyRequired", {
+                    {t("proxy.auxiliary.proxyRequired", {
                       defaultValue:
-                        "需要先启动路由服务并接管 Claude，才能配置分类器队列",
+                        "需要先启动路由服务并接管 Claude，才能配置辅助请求队列",
                     })}
                   </p>
                 </div>
               )}
-              <ClassifierQueueManager
+              <AuxiliaryQueueManager
                 appType="claude"
                 disabled={!isRunning || !(takeoverStatus?.claude ?? false)}
               />

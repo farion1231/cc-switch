@@ -377,8 +377,8 @@
         "title": "自動故障轉移",
         "description": "設定故障轉移佇列和斷路器策略"
       },
-      "classifier": {
-        "title": "分類器佇列",
+      "auxiliary": {
+        "title": "輔助請求佇列",
         "description": "為 Auto Mode 分類器等輔助請求（request-class=auxiliary）指定專用供應商"
       },
       "pricing": {
@@ -2794,9 +2794,9 @@
       "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
   },
-  "classifier": {
-    "enabled": "分類器佇列已啟用",
-    "disabled": "分類器佇列已關閉",
+  "auxiliary": {
+    "enabled": "輔助請求佇列已啟用",
+    "disabled": "輔助請求佇列已關閉",
     "toggleFailed": "操作失敗"
   },
   "proxy": {
@@ -2932,25 +2932,23 @@
       "reorderFailed": "更新順序失敗",
       "toggleFailed": "狀態更新失敗"
     },
-    "classifier": {
-      "proxyRequired": "需要先啟動路由服務並接管 Claude，才能設定分類器佇列",
-      "enable": "啟用分類器佇列",
-      "enableDescription": "開啟後，Claude Code 標記為 auxiliary 的輔助請求（Auto Mode 安全分類器、標題生成、記憶擷取等）將按佇列順序發往專用供應商；佇列為空或全部斷路時自動回退到常規路由鏈，不會報錯。",
-      "forceThinkingOff": "強制關閉思考",
-      "forceThinkingOffDescription": "分類器請求發出前移除 thinking / reasoning_effort / output_config，避免思考往返撞上用戶端的逾時上限。"
+    "auxiliary": {
+      "proxyRequired": "需要先啟動路由服務並接管 Claude，才能設定輔助請求佇列",
+      "enable": "啟用輔助請求佇列",
+      "enableDescription": "開啟後，Claude Code 標記為 auxiliary 的輔助請求（Auto Mode 安全分類器、標題生成、記憶擷取等）將按佇列順序發往專用供應商；佇列為空或全部斷路時自動回退到常規路由鏈，不會報錯。"
     },
-    "classifierQueue": {
-      "title": "分類器佇列",
+    "auxiliaryQueue": {
+      "title": "輔助請求佇列",
       "description": "管理輔助請求（含 Auto Mode 安全分類器）的供應商順序",
-      "info": "Claude Code 在執行 Bash 命令前會先發一條安全分類器請求，用戶端對它有硬逾時，逾時即判定分類器不可用並攔下該命令。把回應快、價格低的供應商放進此佇列，可避免因思考往返而逾時。識別依用戶端的 x-claude-code-request-class 標頭，粒度只到「輔助請求」，標題生成、記憶擷取等會一併分流；該標頭需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管設定時自動寫入，改完需重啟 Claude Code 工作階段）。",
+      "info": "Claude Code 在執行 Bash 命令前會先發一條安全分類器請求，用戶端對它有硬逾時，逾時即判定分類器不可用並攔下該命令。把回應快、價格低的供應商放進此佇列可以避開這個上限。識別依用戶端的 x-claude-code-request-class 標頭，粒度只到「輔助請求」——權限分類器、標題生成、記憶擷取等會一併分流；該標頭需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管設定時自動寫入，改完需重啟 Claude Code 工作階段）。",
       "selectProvider": "選擇供應商加入佇列",
       "noAvailableProviders": "沒有可加入的供應商",
-      "empty": "分類器佇列為空。未設定時分類器請求走常規路由鏈。",
-      "orderHint": "拖曳左側控制點可調整嘗試順序；該順序僅作用於分類器佇列，與首頁清單和故障轉移佇列無關。",
-      "modelHint": "留空則透傳用戶端請求的模型；填寫後分類器請求發往該供應商時改用此模型名稱。分類器請求為非串流且攜帶完整工作階段脈絡（數萬 token 起跳），脈絡視窗過小的模型會失敗並順延到下一家。",
-      "addSuccess": "已加入分類器佇列",
+      "empty": "輔助請求佇列為空。未設定時輔助請求走常規路由鏈。",
+      "orderHint": "拖曳左側控制點可調整嘗試順序；該順序僅作用於輔助請求佇列，與首頁清單和故障轉移佇列無關。",
+      "modelHint": "留空則透傳用戶端請求的模型；填寫後輔助請求發往該供應商時改用此模型名稱。這一桶裡既有小請求（標題生成、權限判定），也有攜帶完整工作階段脈絡的分身請求（數萬 token 起跳），脈絡視窗過小的模型會失敗並順延到下一家。",
+      "addSuccess": "已加入輔助請求佇列",
       "addFailed": "加入失敗",
-      "removeSuccess": "已從分類器佇列移除",
+      "removeSuccess": "已從輔助請求佇列移除",
       "removeFailed": "移除失敗",
       "dragHandle": "拖曳排序",
       "reorderFailed": "排序更新失敗",

@@ -25,7 +25,7 @@ use std::time::Instant;
 /// 不带、或值为空串时行为不变，仍走默认路由（当前供应商 / 故障转移队列）。
 ///
 /// 钉住只约束对话本体：Claude Code 的辅助流量（`x-claude-code-request-class:
-/// auxiliary`，含 Auto Mode 权限分类器）仍按分类器队列分流（分流优先于钉住），
+/// auxiliary`，含 Auto Mode 权限分类器）仍按辅助请求队列分流（分流优先于钉住），
 /// 队列不可用时才回落到被钉的供应商。
 ///
 /// 这个头只在代理内部消费，由 forwarder 从出站请求里剔除，不会泄漏给上游。
@@ -87,19 +87,17 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
-    /// 本次请求的分类器判定结果
-    pub classifier: ClassifierPlan,
+    /// 本次请求的辅助流量判定结果
+    pub auxiliary: AuxiliaryPlan,
     /// 本次请求由 `x-cc-provider` 钉死了供应商
     pub provider_pinned: bool,
 }
 
-/// 本次请求的分类器判定结果
+/// 本次请求的辅助流量判定结果
 #[derive(Debug, Clone, Default)]
-pub struct ClassifierPlan {
-    /// 实际由分类器队列供给 provider 链（false = 未命中，或已回落到常规路由链）
+pub struct AuxiliaryPlan {
+    /// 实际由辅助请求队列供给 provider 链（false = 未命中，或已回落到常规路由链）
     pub routed: bool,
-    /// 发送前强制关闭 thinking
-    pub thinking_off: bool,
     /// provider_id -> 出站模型名覆写（只含队列里真正配了覆写的成员）
     ///
     /// 用 `Arc` 是因为这张表会随 `ForwardPolicy` 一起被克隆到转发器，
@@ -214,42 +212,38 @@ impl RequestContext {
         //
         // 命中的是 class=auxiliary 这一整桶辅助请求（Auto Mode 权限分类器、标题
         // 生成、记忆抽取、insights……），不止分类器本身 —— 客户端的映射粒度就到
-        // 这一层，细节见 `classifier::ROUTED_REQUEST_CLASSES`。
-        let mut classifier = ClassifierPlan::default();
-        let mut classifier_providers: Option<Vec<Provider>> = None;
+        // 这一层，细节见 `auxiliary::ROUTED_REQUEST_CLASSES`。
+        let mut auxiliary = AuxiliaryPlan::default();
+        let mut auxiliary_providers: Option<Vec<Provider>> = None;
 
         if app_type_str == AppType::Claude.as_str() {
-            let routed_class = crate::proxy::classifier::routed_request_class(headers);
+            let routed_class = crate::proxy::auxiliary::routed_request_class(headers);
 
             if routed_class.is_none() {
                 // 头没出现 = 客户端没开网关提示头，队列永远不会接管；提醒一次
-                if app_config.classifier_queue_enabled {
-                    crate::proxy::classifier::warn_missing_hint_header_once(headers, tag);
+                if app_config.auxiliary_queue_enabled {
+                    crate::proxy::auxiliary::warn_missing_hint_header_once(headers, tag);
                 }
             }
 
             if let Some(request_class) = routed_class {
                 log::info!(
-                    "[{tag}] [CLS-001] 命中辅助流量 (request-class={request_class}), model={request_model}, session={session_id}"
+                    "[{tag}] [AUX-001] 命中辅助流量 (request-class={request_class}), model={request_model}, session={session_id}"
                 );
 
-                if app_config.classifier_queue_enabled {
-                    // thinking 关闭是**请求形态**的事，与谁来接这一单无关：分类器请求本来
-                    // 就不需要 thinking，开着会拖到客户端硬超时、Auto Mode 直接卡住。
-                    classifier.thinking_off = app_config.classifier_force_thinking_off;
-
+                if app_config.auxiliary_queue_enabled {
                     // 会话钉住（x-cc-provider）不拦截这里的选路：分流优先于钉住。
                     match state
                         .provider_router
-                        .select_classifier_providers(app_type_str)
+                        .select_auxiliary_providers(app_type_str)
                         .await
                     {
                         // 空 list 走和 None 一样的回落分支：不把「永不报错」这个保证
-                        // 寄托在 select_classifier_providers 的实现细节上 —— 一旦它哪天
-                        // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死分类器请求。
+                        // 寄托在 select_auxiliary_providers 的实现细节上 —— 一旦它哪天
+                        // 返回 Some(vec![])，这里就会以 NoAvailableProvider 打死辅助请求。
                         Ok(Some(selection)) if !selection.providers.is_empty() => {
                             log::info!(
-                                "[{tag}] [CLS-002] 分类器队列接管, {} 个可用供应商, P1={}",
+                                "[{tag}] [AUX-002] 辅助请求队列接管, {} 个可用供应商, P1={}",
                                 selection.providers.len(),
                                 selection
                                     .providers
@@ -257,18 +251,18 @@ impl RequestContext {
                                     .map(|p| p.name.as_str())
                                     .unwrap_or("-")
                             );
-                            classifier.routed = true;
-                            classifier.models = Arc::new(selection.models);
-                            classifier_providers = Some(selection.providers);
+                            auxiliary.routed = true;
+                            auxiliary.models = Arc::new(selection.models);
+                            auxiliary_providers = Some(selection.providers);
                         }
                         Ok(_) => {
                             log::info!(
-                                "[{tag}] [CLS-003] 分类器队列为空或全部熔断, 回落到常规路由链"
+                                "[{tag}] [AUX-003] 辅助请求队列为空或全部熔断, 回落到常规路由链"
                             );
                         }
                         Err(e) => {
                             log::warn!(
-                                "[{tag}] [CLS-003] 读取分类器队列失败: {e}, 回落到常规路由链"
+                                "[{tag}] [AUX-003] 读取辅助请求队列失败: {e}, 回落到常规路由链"
                             );
                         }
                     }
@@ -279,13 +273,13 @@ impl RequestContext {
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
         //
-        // 优先级：分类器队列 > 会话钉住 > 常规路由。
+        // 优先级：辅助请求队列 > 会话钉住 > 常规路由。
         //
         // 分流压过钉住是用户拍板的语义：x-cc-provider 管的是「这个会话的对话本体走
         // 哪家」，而 Auto Mode 判定请求是会话里的后台杂务，仍归队列接单 —— 否则钉住
         // 一家贵渠道后，每条 Bash 命令的判定请求也得按全价走它。队列为空/全熔断时，
         // 判定请求回落到钉住的供应商（没钉住则走常规链）。
-        let providers = match classifier_providers {
+        let providers = match auxiliary_providers {
             Some(list) => list,
             None => match pinned_provider {
                 // 钉住 = 单元素链：转发器据此天然跳过熔断器与故障转移，不会替用户换家
@@ -306,30 +300,30 @@ impl RequestContext {
             },
         };
 
-        if classifier.routed {
+        if auxiliary.routed {
             // app_config 是 create_forwarder / streaming_timeout_config / handlers 里
             // 非流式超时的唯一真源；就地改写这份**内存副本**（不写库）即可让
-            // 「分类器专属重试 + 短超时」在所有 handler 上自动生效。
+            // 「辅助请求专属重试 + 短超时」在所有 handler 上自动生效。
             //
             // 必须解开 auto_failover_enabled 这道闸门：它关着时 create_forwarder 会把
-            // max_retries 和三个超时全部强制为 0，分类器队列只会试第一家，且永远比
+            // max_retries 和三个超时全部强制为 0，辅助请求队列只会试第一家，且永远比
             // 客户端截止晚放弃 —— 特性等于没做。
             //
             // 只在队列真正接管时收紧。回落到常规链路时一个字段都不碰：那条链路是
             // 用户自己配的，把 600 秒超时压到十几秒会把「20 秒能成功」变成「硬失败」，
             // 而客户端本来还愿意等 —— 严格更差。
             let (attempt_timeout, max_retries) =
-                crate::proxy::classifier::attempt_budget(providers.len());
+                crate::proxy::auxiliary::attempt_budget(providers.len());
 
             app_config.auto_failover_enabled = true;
             app_config.non_streaming_timeout = attempt_timeout;
-            // 分类器请求是非流式的，这两项只在上游意外以流式返回时兜底
+            // 辅助请求是非流式的，这两项只在上游意外以流式返回时兜底
             app_config.streaming_first_byte_timeout = attempt_timeout;
             app_config.streaming_idle_timeout = attempt_timeout;
             app_config.max_retries = max_retries;
 
             log::debug!(
-                "[{tag}] [CLS-002] 分类器预算: {} 家可用, 单次 {attempt_timeout}s, max_retries={max_retries}",
+                "[{tag}] [AUX-002] 辅助请求预算: {} 家可用, 单次 {attempt_timeout}s, max_retries={max_retries}",
                 providers.len()
             );
         }
@@ -364,7 +358,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
-            classifier,
+            auxiliary,
             provider_pinned,
         })
     }
@@ -435,9 +429,8 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
             ForwardPolicy {
-                classifier_thinking_off: self.classifier.thinking_off,
-                classifier_routed: self.classifier.routed,
-                classifier_models: self.classifier.models.clone(),
+                auxiliary_routed: self.auxiliary.routed,
+                auxiliary_models: self.auxiliary.models.clone(),
                 provider_pinned: self.provider_pinned,
             },
         )

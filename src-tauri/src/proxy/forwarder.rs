@@ -9,7 +9,7 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
-    log_codes::fwd as log_fwd,
+    log_codes::{fwd as log_fwd, ups as log_ups},
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -199,12 +199,10 @@ pub struct RequestForwarder {
 /// 下一个 per-request 开关的成本从此是一个字段，而不是一个参数。
 #[derive(Debug, Clone, Default)]
 pub struct ForwardPolicy {
-    /// 发送前强制关闭 thinking，并禁用 budget 反向整流
-    pub classifier_thinking_off: bool,
-    /// 本次由分类器队列供给 provider —— 成功后**不得**改写「当前供应商」
-    pub classifier_routed: bool,
-    /// provider_id -> 出站模型名覆写；仅在 `classifier_routed` 时非空
-    pub classifier_models: std::sync::Arc<std::collections::HashMap<String, String>>,
+    /// 本次由辅助请求队列供给 provider —— 成功后**不得**改写「当前供应商」
+    pub auxiliary_routed: bool,
+    /// provider_id -> 出站模型名覆写；仅在 `auxiliary_routed` 时非空
+    pub auxiliary_models: std::sync::Arc<std::collections::HashMap<String, String>>,
     /// 本次由 `x-cc-provider` 钉住供应商 —— 成功后**不得**改写「当前供应商」
     pub provider_pinned: bool,
 }
@@ -304,14 +302,14 @@ impl RequestForwarder {
 
     /// 成功回源后是否应把「当前供应商」同步为实际使用的 provider
     ///
-    /// 分类器请求走的是侧信道队列，绝不能改写用户在首页选定的当前供应商 ——
+    /// 辅助请求走的是侧信道队列，绝不能改写用户在首页选定的当前供应商 ——
     /// 否则每执行一次 Auto Mode 的 Bash 命令，UI / 托盘 / settings 就会被切到
     /// 廉价的分类器供应商，并把 failover_count 污染成噪声。
     ///
     /// `x-cc-provider` 钉住的请求同理：那是「这一个会话走这家」，不是「以后都走
     /// 这家」。让一个后台会话反向改写首页选择，是纯粹的意外。
     fn should_sync_current_provider(&self, provider_id: &str) -> bool {
-        !self.policy.classifier_routed
+        !self.policy.auxiliary_routed
             && !self.policy.provider_pinned
             && self.current_provider_id_at_start.as_str() != provider_id
     }
@@ -321,12 +319,12 @@ impl RequestForwarder {
     /// 与 `should_sync_current_provider` 是两条独立的泄漏路径：那个管的是**持久**切换
     /// （写 settings / 刷托盘 / 发 provider-switched），这个管的是 UI 上的「当前正在用哪家」
     /// 标记 —— `ProxyServer::get_status` 把它暴露为 `active_targets`，前端据此给供应商卡片
-    /// 画绿色边框。分类器请求若写进去，会一直显示到下一次常规请求为止。
+    /// 画绿色边框。辅助请求若写进去，会一直显示到下一次常规请求为止。
     ///
     /// 注意这里**不能**复用 `should_sync_current_provider`：那个在「实际 provider == 起始
     /// provider」时也返回 false，会导致代理刚启动、尚未发生任何切换时 active_targets 永远为空。
     fn should_update_active_target(&self) -> bool {
-        !self.policy.classifier_routed && !self.policy.provider_pinned
+        !self.policy.auxiliary_routed && !self.policy.provider_pinned
     }
 
     async fn record_success_result(
@@ -515,6 +513,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            let mut thinking_off_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -559,34 +558,6 @@ impl RequestForwarder {
                     body.clone()
                 };
 
-            // 分类器请求：在 per-provider body 上强制关闭 thinking。
-            // 放在这里而不是 handler，是因为这是唯一一份「即将发给上游」的可变副本，
-            // 也保证故障转移到下一家时补丁仍然带着。放在 Bedrock 优化块之后，
-            // 确保覆盖 thinking_optimizer 可能刚注入的 thinking 配置。
-            if self.policy.classifier_thinking_off
-                && super::classifier::disable_thinking(&mut provider_body)
-            {
-                log::info!(
-                    "[{app_type_str}] [CLS-004] 分类器请求已强制关闭 thinking (provider={})",
-                    provider.id
-                );
-            }
-
-            // 分类器队列条目的模型覆写。与 thinking-off 同一个落点，理由相同：
-            // 这是唯一一份「即将发给上游」的可变副本，且故障转移到下一家时，
-            // 下一轮会用**那一家**自己的覆写重新改写，不会串味。
-            //
-            // 客户端选的模型未必存在于队列里这些便宜的供应商上，覆写在此写死后，
-            // 下游的映射 / 转换层与 usage 归因都会自然跟着走。
-            if let Some(model) = self.policy.classifier_models.get(&provider.id) {
-                if super::classifier::override_model(&mut provider_body, model) {
-                    log::info!(
-                        "[{app_type_str}] [CLS-005] 分类器请求模型覆写为 {model} (provider={})",
-                        provider.id
-                    );
-                }
-            }
-
             attempted_providers += 1;
 
             // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
@@ -597,7 +568,7 @@ impl RequestForwarder {
             //
             // 与 active_targets 共用同一道闸门：面板在 active_targets 为空时正是
             // 回落到这两个字段显示「当前 Provider」，不挡住的话，侧信道供应商
-            // （分类器队列 / 会话钉住）照样会顶到面板上 —— 尤其是代理刚起、
+            // （辅助请求队列 / 会话钉住）照样会顶到面板上 —— 尤其是代理刚起、
             // 首个请求就是侧信道请求时，active_targets 必然为空。
             if self.should_update_active_target() {
                 let mut status = self.status.write().await;
@@ -671,6 +642,126 @@ impl RequestForwarder {
                     });
                 }
                 Err(e) => {
+                    // thinking 修复：有些 Anthropic 兼容层（火山方舟等）不接受
+                    // `thinking: {"type":"disabled"}`。代理不主动写这个字段 ——
+                    // 它是客户端自己发的；但上游为此把请求打回来时，删掉它重试一次，
+                    // 总好过把一条本可成功的请求原样判死。只修这一条：不记忆、不预判，
+                    // 下一条请求仍按客户端的原样发出。
+                    if !thinking_off_rectifier_retried
+                        && super::auxiliary::has_thinking_disabled(&provider_body)
+                        && super::auxiliary::is_thinking_disabled_rejection(
+                            extract_error_message(&e).as_deref(),
+                        )
+                    {
+                        let mut stripped_body = provider_body.clone();
+                        if super::auxiliary::strip_thinking(&mut stripped_body) {
+                            // 与 media 降级同样的写法：本轮所有分支都会离开这次迭代，
+                            // 标记只为挡住将来新增的「继续往下走」分支
+                            let _ = std::mem::replace(&mut thinking_off_rectifier_retried, true);
+                            log::warn!(
+                                "[{app_type_str}] [AUX-007] provider={} 拒绝客户端发来的 thinking:disabled, 删除该字段后重试本条",
+                                provider.id
+                            );
+
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &stripped_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format, outbound_model)) => {
+                                    log::info!(
+                                        "[{app_type_str}] [AUX-007] 删除 thinking 后重试成功 (provider={})",
+                                        provider.id
+                                    );
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+
+                                    // 与 media 降级、签名/budget 整流的成功路径保持一致：
+                                    // 这一单是**这家**接住的，面板的「当前目标」与粘性切换
+                                    // 都要跟着走。少了这两块，故障转移到下一家后重试成功，
+                                    // 面板仍显示上一家，且每个后续请求都要再撞一次它的失败。
+                                    if self.should_update_active_target() {
+                                        let mut current_providers =
+                                            self.current_providers.write().await;
+                                        current_providers.insert(
+                                            app_type_str.to_string(),
+                                            (provider.id.clone(), provider.name.clone()),
+                                        );
+                                    }
+
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        let should_switch =
+                                            self.should_sync_current_provider(&provider.id);
+                                        if should_switch {
+                                            status.failover_count += 1;
+                                            let fm = self.failover_manager.clone();
+                                            let ah = self.app_handle.clone();
+                                            let pid = provider.id.clone();
+                                            let pname = provider.name.clone();
+                                            let at = app_type_str.to_string();
+
+                                            tokio::spawn(async move {
+                                                let _ = fm
+                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .await;
+                                            });
+                                        }
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(),
+                                        claude_api_format,
+                                        outbound_model,
+                                        connection_guard: None,
+                                    });
+                                }
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [AUX-007] 删除 thinking 后重试仍失败 (provider={}): {}",
+                                        provider.id,
+                                        summarize_proxy_error(&retry_err)
+                                    );
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "thinking 删除",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(err);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -947,10 +1038,12 @@ impl RequestForwarder {
 
                     // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
                     //
-                    // 分类器请求例外：budget 整流器会把 thinking 重设为 enabled +
-                    // budget_tokens=32000，正好抵消我们刚做的关闭。分类器请求本就
-                    // 不该带 thinking，上游若报 budget 错误必然另有原因，重试无意义。
-                    if is_anthropic_provider && !self.policy.classifier_thinking_off {
+                    // 辅助请求豁免：`rectify_thinking_budget` 会把 thinking 改写成
+                    // enabled + budget_tokens=32000 并把 max_tokens 抬到 64000 ——
+                    // 那是**打开**思考，正好撞上这条链路要躲的客户端硬超时，也和
+                    // 「代理不改写 thinking」这条不变量直接冲突。这里宁可让请求带着
+                    // 上游的原始报错回去，也不替客户端做这个决定。
+                    if is_anthropic_provider && !self.policy.auxiliary_routed {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_budget(
                             error_message.as_deref(),
@@ -1168,6 +1261,19 @@ impl RequestForwarder {
                             continue;
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
+                            // 不可重试的上游错误此前一条日志都不打，只写进 DB 的
+                            // error_message —— 用户在终端和日志里都看不到原因（客户端
+                            // 对辅助请求的失败只给自己的兜底文案）。客户端主动断连不算
+                            // 上游故障，不打。
+                            if matches!(category, ErrorCategory::NonRetryable) {
+                                log::warn!(
+                                    "[{app_type_str}] [{code}] provider={} 失败且不重试: {}",
+                                    provider.name,
+                                    summarize_proxy_error(&e),
+                                    code = log_ups::FAILURE,
+                                );
+                            }
+
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
                             self.router
                                 .release_permit_neutral(
@@ -1337,6 +1443,26 @@ impl RequestForwarder {
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+
+        // 辅助请求队列条目的模型覆写。
+        //
+        // 必须放在模型映射**之后**：`model_mapper::map_model` 认不出的名字会落到
+        // 该供应商的 default_model 兜底，放在映射前写进去的覆写会被这条兜底吃掉
+        // ——实测写 `deepseek-v4-pro`、出站变成火山的默认 `glm-5.3-flash`，日志说
+        // 覆写成功而上游收到的是另一个模型。
+        //
+        // 放在这里、而不是更靠后：Copilot 归一化与 [1m] 剥离仍要作用在覆写值上，
+        // 它们处理的是「这家上游怎么称呼这个模型」，与「用哪个模型」是两件事。
+        // 出站模型名（outbound_model）在下方从 mapped_body 读取，自然跟着覆写走。
+        if let Some(model) = self.policy.auxiliary_models.get(&provider.id) {
+            if super::auxiliary::override_model(&mut mapped_body, model) {
+                log::info!(
+                    "[{}] [AUX-005] 辅助请求模型覆写为 {model} (provider={})",
+                    app_type.as_str(),
+                    provider.id
+                );
+            }
+        }
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
@@ -2904,6 +3030,7 @@ impl RequestForwarder {
 }
 
 /// 从 ProxyError 中提取错误消息
+/// 从 ProxyError 中提取错误消息
 fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
@@ -3966,14 +4093,15 @@ mod tests {
 
     #[test]
     fn forward_policy_default_is_inert() {
-        // 默认策略必须两个开关全关，保证所有既有路径逐字节不变
+        // 默认策略必须开关全关，保证所有既有路径逐字节不变
         let policy = ForwardPolicy::default();
-        assert!(!policy.classifier_thinking_off);
-        assert!(!policy.classifier_routed);
+        assert!(!policy.auxiliary_routed);
+        assert!(!policy.provider_pinned);
+        assert!(policy.auxiliary_models.is_empty());
     }
 
     #[test]
-    fn should_sync_current_provider_skips_classifier_routed_requests() {
+    fn should_sync_current_provider_skips_auxiliary_routed_requests() {
         let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
         fwd.current_provider_id_at_start = "main".to_string();
 
@@ -3981,20 +4109,20 @@ mod tests {
         assert!(fwd.should_sync_current_provider("cheap"));
         assert!(!fwd.should_sync_current_provider("main"));
 
-        // 分类器请求：无论如何都不得改写用户选定的当前供应商
-        fwd.policy.classifier_routed = true;
+        // 辅助请求：无论如何都不得改写用户选定的当前供应商
+        fwd.policy.auxiliary_routed = true;
         assert!(!fwd.should_sync_current_provider("cheap"));
         assert!(!fwd.should_sync_current_provider("main"));
 
         // 会话钉住同理：那是「这一个会话走这家」，不是「以后都走这家」
-        fwd.policy.classifier_routed = false;
+        fwd.policy.auxiliary_routed = false;
         fwd.policy.provider_pinned = true;
         assert!(!fwd.should_sync_current_provider("cheap"));
         assert!(!fwd.should_sync_current_provider("main"));
     }
 
     #[test]
-    fn should_update_active_target_skips_only_classifier_routed_requests() {
+    fn should_update_active_target_skips_only_auxiliary_routed_requests() {
         let mut fwd = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
         fwd.current_provider_id_at_start = "main".to_string();
 
@@ -4002,13 +4130,13 @@ mod tests {
         // 否则代理刚启动、还没发生任何切换时前端拿不到任何 active_target。
         assert!(fwd.should_update_active_target());
 
-        // 分类器请求走侧信道，不得污染 UI 上的「当前正在用哪家」标记
-        fwd.policy.classifier_routed = true;
+        // 辅助请求走侧信道，不得污染 UI 上的「当前正在用哪家」标记
+        fwd.policy.auxiliary_routed = true;
         assert!(!fwd.should_update_active_target());
 
         // 钉住的会话同样是侧信道：面板在 active_targets 为空时会回落到
         // status.current_provider，那个字段也归这道闸门管
-        fwd.policy.classifier_routed = false;
+        fwd.policy.auxiliary_routed = false;
         fwd.policy.provider_pinned = true;
         assert!(!fwd.should_update_active_target());
     }

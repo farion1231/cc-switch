@@ -377,8 +377,8 @@
         "title": "自动故障转移",
         "description": "配置故障转移队列和熔断策略"
       },
-      "classifier": {
-        "title": "分类器队列",
+      "auxiliary": {
+        "title": "辅助请求队列",
         "description": "为 Auto Mode 分类器等辅助请求（request-class=auxiliary）指定专用供应商"
       },
       "pricing": {
@@ -2793,9 +2793,9 @@
       "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
   },
-  "classifier": {
-    "enabled": "分类器队列已启用",
-    "disabled": "分类器队列已关闭",
+  "auxiliary": {
+    "enabled": "辅助请求队列已启用",
+    "disabled": "辅助请求队列已关闭",
     "toggleFailed": "操作失败"
   },
   "proxy": {
@@ -2931,25 +2931,23 @@
       "reorderFailed": "更新顺序失败",
       "toggleFailed": "状态更新失败"
     },
-    "classifier": {
-      "proxyRequired": "需要先启动路由服务并接管 Claude，才能配置分类器队列",
-      "enable": "启用分类器队列",
-      "enableDescription": "开启后，Claude Code 标记为 auxiliary 的辅助请求（Auto Mode 安全分类器、标题生成、记忆抽取等）将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。",
-      "forceThinkingOff": "强制关闭思考",
-      "forceThinkingOffDescription": "分类器请求发出前移除 thinking / reasoning_effort / output_config，避免思考往返撞上客户端的超时上限。"
+    "auxiliary": {
+      "proxyRequired": "需要先启动路由服务并接管 Claude，才能配置辅助请求队列",
+      "enable": "启用辅助请求队列",
+      "enableDescription": "开启后，Claude Code 标记为 auxiliary 的辅助请求（Auto Mode 安全分类器、标题生成、记忆抽取等）将按队列顺序发往专用供应商；队列为空或全部熔断时自动回落到常规路由链，不会报错。"
     },
-    "classifierQueue": {
-      "title": "分类器队列",
+    "auxiliaryQueue": {
+      "title": "辅助请求队列",
       "description": "管理辅助请求（含 Auto Mode 安全分类器）的供应商顺序",
-      "info": "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列，可避免因思考往返而超时。识别按客户端的 x-claude-code-request-class 头走，粒度只到「辅助请求」，标题生成、记忆抽取等会一并分流；该头需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管配置时自动写入，改完需重启 Claude Code 会话）。",
+      "info": "Claude Code 在执行 Bash 命令前会先发一条安全分类器请求，客户端对它有硬超时，超时即判定分类器不可用并拦下该命令。把响应快、价格低的供应商放进此队列可以避开这个上限。识别按客户端的 x-claude-code-request-class 头走，粒度只到「辅助请求」——权限分类器、标题生成、记忆抽取等会一并分流；该头需要 CLAUDE_CODE_GATEWAY_HINT_HEADERS=1（接管配置时自动写入，改完需重启 Claude Code 会话）。",
       "selectProvider": "选择供应商添加到队列",
       "noAvailableProviders": "没有可添加的供应商",
-      "empty": "分类器队列为空。未配置时分类器请求走常规路由链。",
-      "orderHint": "拖动左侧手柄可调整尝试顺序；该顺序只作用于分类器队列，与首页列表和故障转移队列无关。",
-      "modelHint": "留空则透传客户端请求的模型；填写后分类器请求发往该供应商时改用此模型名。分类器请求为非流式且携带完整会话上下文（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
-      "addSuccess": "已添加到分类器队列",
+      "empty": "辅助请求队列为空。未配置时辅助请求走常规路由链。",
+      "orderHint": "拖动左侧手柄可调整尝试顺序；该顺序只作用于辅助请求队列，与首页列表和故障转移队列无关。",
+      "modelHint": "留空则透传客户端请求的模型；填写后辅助请求发往该供应商时改用此模型名。这一桶里既有小请求（标题生成、权限判定），也有携带完整会话上下文的分身请求（数万 token 起步），上下文窗口过小的模型会失败并顺延到下一家。",
+      "addSuccess": "已添加到辅助请求队列",
       "addFailed": "添加失败",
-      "removeSuccess": "已从分类器队列移除",
+      "removeSuccess": "已从辅助请求队列移除",
       "removeFailed": "移除失败",
       "dragHandle": "拖动排序",
       "reorderFailed": "排序更新失败",

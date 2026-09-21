@@ -20,13 +20,13 @@ pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) ->
         || !crate::proxy::providers::is_codex_official_provider(provider)
 }
 
-/// 分类器队列的一次选路结果
+/// 辅助请求队列的一次选路结果
 ///
 /// 模型覆写单独成表而不是挂在 `Provider` 上：`Provider` 是全局领域对象，
-/// 给它加一个只在分类器侧信道有意义的字段，会让每一处读写 provider 的代码
+/// 给它加一个只在辅助请求侧信道有意义的字段，会让每一处读写 provider 的代码
 /// 都要面对一个与自己无关的概念。
 #[derive(Debug, Clone, Default)]
-pub struct ClassifierSelection {
+pub struct AuxiliarySelection {
     /// 按队列顺序排列的可用供应商
     pub providers: Vec<Provider>,
     /// provider_id -> 出站模型名覆写（只含真正配了覆写的成员）
@@ -157,7 +157,7 @@ impl ProviderRouter {
         Ok(result)
     }
 
-    /// 选择分类器队列供应商（Auto Mode 安全分类器请求专用的侧信道）
+    /// 选择辅助请求队列供应商（Auto Mode 安全辅助请求专用的侧信道）
     ///
     /// 与 `select_providers` 的关键差异：
     /// - 不读 `auto_failover_enabled`，也不看「当前供应商」
@@ -169,12 +169,12 @@ impl ProviderRouter {
     ///
     /// 返回值里的 `models` 只收录**真正配了覆写**的成员，所以「没配」和
     /// 「配了空串」在下游是同一件事：透传客户端的模型名。
-    pub async fn select_classifier_providers(
+    pub async fn select_auxiliary_providers(
         &self,
         app_type: &str,
-    ) -> Result<Option<ClassifierSelection>, AppError> {
+    ) -> Result<Option<AuxiliarySelection>, AppError> {
         let all_providers = self.db.get_all_providers(app_type)?;
-        let queue = self.db.get_classifier_queue(app_type)?;
+        let queue = self.db.get_auxiliary_queue(app_type)?;
 
         let mut providers = Vec::new();
         let mut models: HashMap<String, String> = HashMap::new();
@@ -186,7 +186,7 @@ impl ProviderRouter {
                 continue;
             };
             // 与故障转移同源的账号边界约束（Codex Official 账号卡不可复用）。
-            // 分类器队列目前只对 Claude 开放，这里保留是为了将来放开时不踩坑。
+            // 辅助请求队列目前只对 Claude 开放，这里保留是为了将来放开时不踩坑。
             if !provider_supports_failover(app_type, &provider) {
                 continue;
             }
@@ -212,12 +212,12 @@ impl ProviderRouter {
 
         if providers.is_empty() {
             if total > 0 && circuit_open == total {
-                log::warn!("[{app_type}] [CLS-003] 分类器队列内供应商已全部熔断");
+                log::warn!("[{app_type}] [AUX-003] 辅助请求队列内供应商已全部熔断");
             }
             return Ok(None);
         }
 
-        Ok(Some(ClassifierSelection { providers, models }))
+        Ok(Some(AuxiliarySelection { providers, models }))
     }
 
     /// 解析请求头钉住的供应商（会话级定向）
@@ -825,7 +825,7 @@ mod tests {
         assert!(third.used_half_open_permit);
     }
 
-    // ---- 分类器队列 ----
+    // ---- 辅助请求队列 ----
 
     /// 建一个带 sort_index 的普通供应商并存库
     fn seed_provider(db: &Database, id: &str, sort_index: usize) {
@@ -837,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_queue_empty_returns_none() {
+    async fn auxiliary_queue_empty_returns_none() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
         seed_provider(&db, "a", 1);
@@ -845,7 +845,7 @@ mod tests {
 
         let router = ProviderRouter::new(db);
         assert!(router
-            .select_classifier_providers("claude")
+            .select_auxiliary_providers("claude")
             .await
             .unwrap()
             .is_none());
@@ -853,28 +853,28 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_queue_follows_its_own_order_not_the_homepage() {
+    async fn auxiliary_queue_follows_its_own_order_not_the_homepage() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
         // 首页顺序是 b 在前，但队列自己的顺序是 a 在前 —— 后者说了算
         seed_provider(&db, "a", 2);
         seed_provider(&db, "b", 1);
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "b").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "b").unwrap();
 
         let router = ProviderRouter::new(db.clone());
         let selection = router
-            .select_classifier_providers("claude")
+            .select_auxiliary_providers("claude")
             .await
             .unwrap()
             .expect("queue should be active");
         let ids: Vec<&str> = selection.providers.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, vec!["a", "b"]);
 
-        db.reorder_classifier_queue("claude", &["b".to_string(), "a".to_string()])
+        db.reorder_auxiliary_queue("claude", &["b".to_string(), "a".to_string()])
             .unwrap();
         let selection = router
-            .select_classifier_providers("claude")
+            .select_auxiliary_providers("claude")
             .await
             .unwrap()
             .expect("queue should be active");
@@ -884,19 +884,19 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_selection_carries_only_configured_model_overrides() {
+    async fn auxiliary_selection_carries_only_configured_model_overrides() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
         seed_provider(&db, "a", 1);
         seed_provider(&db, "b", 2);
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "b").unwrap();
-        db.set_classifier_model("claude", "a", Some("glm-4-flash"))
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "b").unwrap();
+        db.set_auxiliary_model("claude", "a", Some("glm-4-flash"))
             .unwrap();
 
         let router = ProviderRouter::new(db);
         let selection = router
-            .select_classifier_providers("claude")
+            .select_auxiliary_providers("claude")
             .await
             .unwrap()
             .expect("queue should be active");
@@ -913,21 +913,21 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_queue_ignores_current_provider_and_failover_switch() {
+    async fn auxiliary_queue_ignores_current_provider_and_failover_switch() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
         seed_provider(&db, "a", 1);
         seed_provider(&db, "b", 2);
-        // 当前供应商是 a，且自动故障转移是关的 —— 两者都不该影响分类器队列
+        // 当前供应商是 a，且自动故障转移是关的 —— 两者都不该影响辅助请求队列
         db.set_current_provider("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "b").unwrap();
+        db.add_to_auxiliary_queue("claude", "b").unwrap();
 
         let config = db.get_proxy_config_for_app("claude").await.unwrap();
         assert!(!config.auto_failover_enabled);
 
         let router = ProviderRouter::new(db);
         let selection = router
-            .select_classifier_providers("claude")
+            .select_auxiliary_providers("claude")
             .await
             .unwrap()
             .expect("queue should be active");
@@ -938,7 +938,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_queue_skips_open_circuit_providers() {
+    async fn auxiliary_queue_skips_open_circuit_providers() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -952,8 +952,8 @@ mod tests {
 
         seed_provider(&db, "a", 1);
         seed_provider(&db, "b", 2);
-        db.add_to_classifier_queue("claude", "a").unwrap();
-        db.add_to_classifier_queue("claude", "b").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "b").unwrap();
 
         let router = ProviderRouter::new(db);
         router
@@ -962,7 +962,7 @@ mod tests {
             .unwrap();
 
         let selection = router
-            .select_classifier_providers("claude")
+            .select_auxiliary_providers("claude")
             .await
             .unwrap()
             .expect("b should still be available");
@@ -973,8 +973,8 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn classifier_queue_all_open_returns_none_not_error() {
-        // 取舍 #3 的编码：分类器不可用时回落常规链路，绝不冒泡熔断错误
+    async fn auxiliary_queue_all_open_returns_none_not_error() {
+        // 取舍 #3 的编码：辅助请求队列不可用时回落常规链路，绝不冒泡熔断错误
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -987,7 +987,7 @@ mod tests {
         .unwrap();
 
         seed_provider(&db, "a", 1);
-        db.add_to_classifier_queue("claude", "a").unwrap();
+        db.add_to_auxiliary_queue("claude", "a").unwrap();
 
         let router = ProviderRouter::new(db);
         router
@@ -995,7 +995,7 @@ mod tests {
             .await
             .unwrap();
 
-        let selected = router.select_classifier_providers("claude").await;
+        let selected = router.select_auxiliary_providers("claude").await;
         assert!(matches!(selected, Ok(None)));
     }
 }

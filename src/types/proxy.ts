@@ -116,22 +116,21 @@ export interface FailoverQueueItem {
   sortIndex?: number;
 }
 
-// 分类器队列条目（辅助请求 request-class=auxiliary 的专用供应商链，含 Auto Mode 安全分类器）
-export interface ClassifierQueueItem {
+// 辅助请求队列条目（辅助请求 request-class=auxiliary 的专用供应商链，含 Auto Mode 安全分类器）
+export interface AuxiliaryQueueItem {
   providerId: string;
   providerName: string;
   providerNotes?: string;
   sortIndex?: number;
   // 队列内的独立拖拽顺序（null = 尚未拖拽过，后端回落到 sortIndex）
-  classifierSortIndex?: number | null;
+  auxiliarySortIndex?: number | null;
   // 该条目的出站模型名覆写（缺省 = 透传客户端请求的模型）
   model?: string;
 }
 
-// 分类器队列的两个开关（成对读写）
-export interface ClassifierConfig {
+// 辅助请求队列开关
+export interface AuxiliaryConfig {
   enabled: boolean;
-  forceThinkingOff: boolean;
 }
 
 // 全局代理配置（统一字段，三行镜像）
@@ -147,8 +146,7 @@ export interface AppProxyConfig {
   appType: string;
   enabled: boolean;
   autoFailoverEnabled: boolean;
-  classifierQueueEnabled: boolean;
-  classifierForceThinkingOff: boolean;
+  auxiliaryQueueEnabled: boolean;
   maxRetries: number;
   streamingFirstByteTimeout: number;
   streamingIdleTimeout: number;

@@ -372,21 +372,21 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/reorder_failover_queue`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/set_failover_item_enabled`, () => success(true)),
 
-  // Classifier queue defaults (Claude only)
-  http.post(`${TAURI_ENDPOINT}/get_classifier_queue`, () => success([])),
-  http.post(`${TAURI_ENDPOINT}/get_available_providers_for_classifier`, () =>
+  // Auxiliary queue defaults (Claude only)
+  http.post(`${TAURI_ENDPOINT}/get_auxiliary_queue`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_available_providers_for_auxiliary`, () =>
     success([]),
   ),
-  http.post(`${TAURI_ENDPOINT}/add_to_classifier_queue`, () => success(true)),
-  http.post(`${TAURI_ENDPOINT}/reorder_classifier_queue`, () => success(true)),
-  http.post(`${TAURI_ENDPOINT}/set_classifier_model`, () => success(true)),
-  http.post(`${TAURI_ENDPOINT}/remove_from_classifier_queue`, () =>
+  http.post(`${TAURI_ENDPOINT}/add_to_auxiliary_queue`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/reorder_auxiliary_queue`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/set_auxiliary_model`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/remove_from_auxiliary_queue`, () =>
     success(true),
   ),
-  http.post(`${TAURI_ENDPOINT}/get_classifier_config`, () =>
+  http.post(`${TAURI_ENDPOINT}/get_auxiliary_config`, () =>
     success({ enabled: false, forceThinkingOff: true }),
   ),
-  http.post(`${TAURI_ENDPOINT}/set_classifier_config`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/set_auxiliary_config`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_config`, () =>
     success({

@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ClassifierQueueManager } from "@/components/proxy/ClassifierQueueManager";
+import { AuxiliaryQueueManager } from "@/components/proxy/AuxiliaryQueueManager";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -16,97 +16,93 @@ const removeMock = vi.fn().mockResolvedValue(undefined);
 const reorderMock = vi.fn().mockResolvedValue(undefined);
 const setModelMock = vi.fn().mockResolvedValue(undefined);
 
-let classifierConfig = { enabled: false, forceThinkingOff: true };
-let classifierQueue: Array<{
+let auxiliaryConfig = { enabled: false };
+let auxiliaryQueue: Array<{
   providerId: string;
   providerName: string;
   model?: string;
 }> = [];
 
-vi.mock("@/lib/query/classifier", () => ({
-  useClassifierConfig: () => ({ data: classifierConfig }),
-  useSetClassifierConfig: () => ({
+vi.mock("@/lib/query/auxiliary", () => ({
+  useAuxiliaryConfig: () => ({ data: auxiliaryConfig }),
+  useSetAuxiliaryConfig: () => ({
     mutateAsync: setConfigMock,
     isPending: false,
   }),
-  useClassifierQueue: () => ({
-    data: classifierQueue,
+  useAuxiliaryQueue: () => ({
+    data: auxiliaryQueue,
     isLoading: false,
     error: null,
   }),
-  useAvailableProvidersForClassifier: () => ({
+  useAvailableProvidersForAuxiliary: () => ({
     data: [{ id: "fast", name: "Fast Provider" }],
     isLoading: false,
   }),
-  useAddToClassifierQueue: () => ({ mutateAsync: addMock, isPending: false }),
-  useRemoveFromClassifierQueue: () => ({
+  useAddToAuxiliaryQueue: () => ({ mutateAsync: addMock, isPending: false }),
+  useRemoveFromAuxiliaryQueue: () => ({
     mutateAsync: removeMock,
     isPending: false,
   }),
-  useReorderClassifierQueue: () => ({
+  useReorderAuxiliaryQueue: () => ({
     mutateAsync: reorderMock,
     isPending: false,
   }),
-  useSetClassifierModel: () => ({
+  useSetAuxiliaryModel: () => ({
     mutateAsync: setModelMock,
     isPending: false,
   }),
 }));
 
-describe("ClassifierQueueManager", () => {
+describe("AuxiliaryQueueManager", () => {
   beforeEach(() => {
     setConfigMock.mockClear();
     addMock.mockClear();
     removeMock.mockClear();
     reorderMock.mockClear();
     setModelMock.mockClear();
-    classifierConfig = { enabled: false, forceThinkingOff: true };
-    classifierQueue = [];
+    auxiliaryConfig = { enabled: false };
+    auxiliaryQueue = [];
   });
 
   it("explains the fallback behaviour when the queue is empty", () => {
-    render(<ClassifierQueueManager appType="claude" />);
-    expect(screen.getByText("proxy.classifierQueue.empty")).toBeInTheDocument();
+    render(<AuxiliaryQueueManager appType="claude" />);
+    expect(screen.getByText("proxy.auxiliaryQueue.empty")).toBeInTheDocument();
   });
 
-  it("persists both switches when the master switch is toggled on", async () => {
-    render(<ClassifierQueueManager appType="claude" />);
+  it("persists the master switch when it is toggled on", async () => {
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     fireEvent.click(
-      screen.getByRole("switch", { name: "proxy.classifier.enable" }),
+      screen.getByRole("switch", { name: "proxy.auxiliary.enable" }),
     );
 
     await waitFor(() =>
       expect(setConfigMock).toHaveBeenCalledWith({
         appType: "claude",
-        config: { enabled: true, forceThinkingOff: true },
+        config: { enabled: true },
       }),
     );
   });
 
-  it("disables the thinking switch while the classifier queue is off", () => {
-    render(<ClassifierQueueManager appType="claude" />);
+  it("offers no thinking switch — the proxy never rewrites thinking", () => {
+    // 开不开思考由 Claude Code 的报文自己决定，面板上不该再有这个开关
+    auxiliaryConfig = { enabled: true };
+    render(<AuxiliaryQueueManager appType="claude" />);
 
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
     expect(
-      screen.getByRole("switch", { name: "proxy.classifier.forceThinkingOff" }),
-    ).toBeDisabled();
-  });
-
-  it("enables the thinking switch once the classifier queue is on", () => {
-    classifierConfig = { enabled: true, forceThinkingOff: true };
-    render(<ClassifierQueueManager appType="claude" />);
-
-    expect(
-      screen.getByRole("switch", { name: "proxy.classifier.forceThinkingOff" }),
-    ).toBeEnabled();
+      screen.queryByRole("switch", {
+        name: "proxy.auxiliary.forceThinkingOff",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders queued providers in order with a position badge", () => {
-    classifierQueue = [
+    auxiliaryQueue = [
       { providerId: "fast", providerName: "Fast Provider" },
       { providerId: "backup", providerName: "Backup Provider" },
     ];
-    render(<ClassifierQueueManager appType="claude" />);
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     expect(screen.getByText("Fast Provider")).toBeInTheDocument();
     expect(screen.getByText("Backup Provider")).toBeInTheDocument();
@@ -115,8 +111,8 @@ describe("ClassifierQueueManager", () => {
   });
 
   it("removes a provider from the queue", async () => {
-    classifierQueue = [{ providerId: "fast", providerName: "Fast Provider" }];
-    render(<ClassifierQueueManager appType="claude" />);
+    auxiliaryQueue = [{ providerId: "fast", providerName: "Fast Provider" }];
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
 
@@ -129,36 +125,40 @@ describe("ClassifierQueueManager", () => {
   });
 
   it("offers a drag handle per queued provider", () => {
-    classifierQueue = [
+    auxiliaryQueue = [
       { providerId: "fast", providerName: "Fast Provider" },
       { providerId: "backup", providerName: "Backup Provider" },
     ];
-    render(<ClassifierQueueManager appType="claude" />);
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     expect(
       screen.getAllByRole("button", {
-        name: "proxy.classifierQueue.dragHandle",
+        name: "proxy.auxiliaryQueue.dragHandle",
       }),
     ).toHaveLength(2);
   });
 
   it("shows the stored model override in the input", () => {
-    classifierQueue = [
-      { providerId: "fast", providerName: "Fast Provider", model: "glm-4-flash" },
+    auxiliaryQueue = [
+      {
+        providerId: "fast",
+        providerName: "Fast Provider",
+        model: "glm-4-flash",
+      },
     ];
-    render(<ClassifierQueueManager appType="claude" />);
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     expect(
-      screen.getByRole("textbox", { name: "proxy.classifierQueue.modelLabel" }),
+      screen.getByRole("textbox", { name: "proxy.auxiliaryQueue.modelLabel" }),
     ).toHaveValue("glm-4-flash");
   });
 
   it("saves the model override on blur", async () => {
-    classifierQueue = [{ providerId: "fast", providerName: "Fast Provider" }];
-    render(<ClassifierQueueManager appType="claude" />);
+    auxiliaryQueue = [{ providerId: "fast", providerName: "Fast Provider" }];
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     const input = screen.getByRole("textbox", {
-      name: "proxy.classifierQueue.modelLabel",
+      name: "proxy.auxiliaryQueue.modelLabel",
     });
     fireEvent.change(input, { target: { value: "  glm-4-flash  " } });
     fireEvent.blur(input);
@@ -173,13 +173,17 @@ describe("ClassifierQueueManager", () => {
   });
 
   it("clears the override when the input is emptied", async () => {
-    classifierQueue = [
-      { providerId: "fast", providerName: "Fast Provider", model: "glm-4-flash" },
+    auxiliaryQueue = [
+      {
+        providerId: "fast",
+        providerName: "Fast Provider",
+        model: "glm-4-flash",
+      },
     ];
-    render(<ClassifierQueueManager appType="claude" />);
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     const input = screen.getByRole("textbox", {
-      name: "proxy.classifierQueue.modelLabel",
+      name: "proxy.auxiliaryQueue.modelLabel",
     });
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.blur(input);
@@ -194,15 +198,19 @@ describe("ClassifierQueueManager", () => {
   });
 
   it("does not write when the model is unchanged", () => {
-    classifierQueue = [
-      { providerId: "fast", providerName: "Fast Provider", model: "glm-4-flash" },
+    auxiliaryQueue = [
+      {
+        providerId: "fast",
+        providerName: "Fast Provider",
+        model: "glm-4-flash",
+      },
     ];
-    render(<ClassifierQueueManager appType="claude" />);
+    render(<AuxiliaryQueueManager appType="claude" />);
 
     // 单纯聚焦再离开不该产生一次写入
     fireEvent.blur(
       screen.getByRole("textbox", {
-        name: "proxy.classifierQueue.modelLabel",
+        name: "proxy.auxiliaryQueue.modelLabel",
       }),
     );
 

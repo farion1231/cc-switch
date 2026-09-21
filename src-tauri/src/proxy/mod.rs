@@ -2,10 +2,10 @@
 //!
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
+pub mod auxiliary;
 pub mod body_filter;
 pub mod cache_injector;
 pub mod circuit_breaker;
-pub mod classifier;
 pub(crate) mod content_encoding;
 pub mod copilot_optimizer;
 pub mod error;

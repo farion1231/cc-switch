@@ -507,8 +507,8 @@ impl ProxyService {
         env.insert("ANTHROPIC_BASE_URL".to_string(), json!(proxy_url));
 
         // 网关提示头开关：cc-switch 在 Claude Code 眼里就是一台 LLM 网关，开了它
-        // 客户端才会发 `x-claude-code-request-class`，分类器队列才有信号可认
-        // （识别逻辑见 `proxy::classifier`；2.1.273 起支持，更早的版本无视该变量）。
+        // 客户端才会发 `x-claude-code-request-class`，辅助请求队列才有信号可认
+        // （识别逻辑见 `proxy::auxiliary`；2.1.273 起支持，更早的版本无视该变量）。
         //
         // 用 entry 而不是 insert：用户在公共配置里显式写过（含显式关成 "0"）就尊重
         // 他的值，接管只负责「没配过的补上」。
@@ -4199,7 +4199,7 @@ mod tests {
     #[test]
     fn claude_takeover_enables_gateway_hint_headers() {
         // 没有这个变量客户端就不发 x-claude-code-request-class，
-        // 分类器队列的唯一信号源断掉，功能等于没做
+        // 辅助请求队列的唯一信号源断掉，功能等于没做
         let mut config = json!({ "env": { "ANTHROPIC_BASE_URL": "https://upstream.example.com" } });
         ProxyService::apply_claude_takeover_fields(&mut config, "http://127.0.0.1:15721");
 
