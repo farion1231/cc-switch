@@ -312,6 +312,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                     name: id.clone(),
                     server: unified_spec,
                     apps: McpApps {
+                        codex_desktop: false,
                         claude: false,
                         codex: false,
                         gemini: false,

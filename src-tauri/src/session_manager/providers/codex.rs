@@ -10,7 +10,6 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
 use crate::codex_state_db::codex_state_db_paths;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
@@ -35,22 +34,72 @@ struct SessionIndexEntry {
     thread_name: String,
 }
 
+#[allow(dead_code)]
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let roots = session_roots();
-    scan_sessions_in_roots(&roots)
+    scan_sessions_for_app(&crate::app_config::AppType::Codex)
 }
 
+pub fn scan_sessions_for_app(app: &crate::app_config::AppType) -> Vec<SessionMeta> {
+    if *app == crate::AppType::CodexDesktop
+        && crate::codex_config::codex_desktop_directory_conflict()
+    {
+        return Vec::new();
+    }
+    let roots = session_roots_for_app(app);
+    scan_sessions_in_roots_for_app(app, &roots)
+}
+
+#[allow(dead_code)]
 pub fn session_roots() -> Vec<PathBuf> {
-    let config_dir = get_codex_config_dir();
+    session_roots_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn session_roots_for_app(app: &crate::app_config::AppType) -> Vec<PathBuf> {
+    let config_dir = crate::codex_config::get_codex_config_dir_for_app(app);
     vec![
         config_dir.join("sessions"),
         config_dir.join("archived_sessions"),
     ]
 }
 
+#[allow(dead_code)]
 fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
-    let thread_titles = load_thread_titles();
-    scan_sessions_in_roots_with_titles(roots, &thread_titles)
+    scan_sessions_in_roots_for_app(&crate::app_config::AppType::Codex, roots)
+}
+
+fn scan_sessions_in_roots_for_app(
+    app: &crate::app_config::AppType,
+    roots: &[PathBuf],
+) -> Vec<SessionMeta> {
+    let thread_titles = load_thread_titles_for_app(app);
+    {
+        let mut sessions = scan_sessions_in_roots_with_titles(roots, &thread_titles);
+        for session in &mut sessions {
+            session.provider_id = app.as_str().to_string();
+            if *app == crate::AppType::CodexDesktop {
+                #[cfg(not(windows))]
+                let quote = |value: &str| format!("'{}'", value.replace('\'', "'\"'\"'"));
+                #[cfg(windows)]
+                let quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
+                #[cfg(not(windows))]
+                let command = "env CODEX_HOME={root} codex resume {id}";
+                #[cfg(windows)]
+                let command = "$env:CODEX_HOME={root}; codex resume {id}";
+                session.resume_command = Some(
+                    command
+                        .replace(
+                            "{root}",
+                            &quote(
+                                &crate::codex_config::get_codex_config_dir_for_app(app)
+                                    .to_string_lossy(),
+                            ),
+                        )
+                        .replace("{id}", &quote(&session.session_id)),
+                );
+            }
+        }
+        sessions
+    }
 }
 
 fn scan_sessions_in_roots_with_titles(
@@ -72,9 +121,14 @@ fn scan_sessions_in_roots_with_titles(
     sessions
 }
 
+#[allow(dead_code)]
 fn load_thread_titles() -> HashMap<String, String> {
-    let config_dir = get_codex_config_dir();
-    let config_text = read_codex_config_text().unwrap_or_default();
+    load_thread_titles_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn load_thread_titles_for_app(app: &crate::app_config::AppType) -> HashMap<String, String> {
+    let config_dir = crate::codex_config::get_codex_config_dir_for_app(app);
+    let config_text = crate::codex_config::read_codex_config_text_for_app(app).unwrap_or_default();
     let db_paths = codex_state_db_paths(&config_dir, &config_text);
     load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
 }

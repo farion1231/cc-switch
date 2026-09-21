@@ -70,6 +70,7 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const APP_FILTER_ICON: Record<AppType, string> = {
   claude: "claude",
   codex: "openai",
+  "codex-desktop": "openai",
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",
@@ -157,13 +158,19 @@ export function UsageDashboard({
     }
   };
 
+  const rebuildAppName =
+    appType === "codex-desktop" ? "Codex Desktop" : "Codex";
+
   const rebuildCodexUsage = async () => {
     setShowRebuildConfirm(false);
     setRebuildingCodex(true);
     try {
-      const result = await usageApi.rebuildCodexUsage();
+      const result = await usageApi.rebuildCodexUsage(
+        appType === "codex-desktop" ? "codex-desktop" : "codex",
+      );
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
       const message = t("usage.rebuildCodex.completed", {
+        appName: rebuildAppName,
         imported: result.imported,
         errors: result.errors.length,
         suspected: result.suspectedDuplicates,
@@ -177,6 +184,7 @@ export function UsageDashboard({
     } catch (error) {
       toast.error(
         t("usage.rebuildCodex.failed", {
+          appName: rebuildAppName,
           error: String(error),
         }),
       );
@@ -556,10 +564,12 @@ export function UsageDashboard({
                 <DatabaseBackup className="h-5 w-5 text-orange-500" />
                 <div className="text-left">
                   <h3 className="text-base font-semibold">
-                    {t("usage.rebuildCodex.title")}
+                    {t("usage.rebuildCodex.title", { appName: rebuildAppName })}
                   </h3>
                   <p className="text-sm text-muted-foreground font-normal">
-                    {t("usage.rebuildCodex.description")}
+                    {t("usage.rebuildCodex.description", {
+                      appName: rebuildAppName,
+                    })}
                   </p>
                 </div>
               </div>
@@ -567,7 +577,7 @@ export function UsageDashboard({
             <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
               <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
                 <p className="text-sm text-muted-foreground">
-                  {t("usage.rebuildCodex.warning")}
+                  {t("usage.rebuildCodex.warning", { appName: rebuildAppName })}
                 </p>
                 <Button
                   variant="destructive"
@@ -580,7 +590,7 @@ export function UsageDashboard({
                   ) : (
                     <DatabaseBackup className="mr-2 h-4 w-4" />
                   )}
-                  {t("usage.rebuildCodex.action")}
+                  {t("usage.rebuildCodex.action", { appName: rebuildAppName })}
                 </Button>
               </div>
             </AccordionContent>
@@ -590,9 +600,15 @@ export function UsageDashboard({
 
       <ConfirmDialog
         isOpen={showRebuildConfirm}
-        title={t("usage.rebuildCodex.confirmTitle")}
-        message={t("usage.rebuildCodex.confirmMessage")}
-        confirmText={t("usage.rebuildCodex.confirmAction")}
+        title={t("usage.rebuildCodex.confirmTitle", {
+          appName: rebuildAppName,
+        })}
+        message={t("usage.rebuildCodex.confirmMessage", {
+          appName: rebuildAppName,
+        })}
+        confirmText={t("usage.rebuildCodex.confirmAction", {
+          appName: rebuildAppName,
+        })}
         variant="destructive"
         onConfirm={() => void rebuildCodexUsage()}
         onCancel={() => setShowRebuildConfirm(false)}

@@ -203,8 +203,10 @@ export const usageApi = {
     return invoke("sync_session_usage");
   },
 
-  rebuildCodexUsage: async (): Promise<SessionSyncResult> => {
-    return invoke("rebuild_codex_usage");
+  rebuildCodexUsage: async (
+    app: "codex" | "codex-desktop" = "codex",
+  ): Promise<SessionSyncResult> => {
+    return invoke("rebuild_codex_usage", { app });
   },
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {

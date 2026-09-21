@@ -13,10 +13,16 @@ use crate::error::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
+#[allow(dead_code)]
 fn should_sync_codex_mcp() -> bool {
+    should_sync_codex_mcp_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn should_sync_codex_mcp_for_app(app: &crate::app_config::AppType) -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
-    crate::codex_config::get_codex_config_dir().exists()
+    crate::codex_config::get_codex_config_dir_for_app(app).exists()
+        && crate::codex_config::ensure_codex_target_writable(app).is_ok()
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -49,8 +55,16 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 /// - 错误格式：[mcp.servers.*]（容错读取，用于迁移错误写入的配置）
 ///
 /// 已存在的服务器将启用 Codex 应用，不覆盖其他字段和应用状态
+#[allow(dead_code)]
 pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let text = crate::codex_config::read_and_validate_codex_config_text()?;
+    import_from_codex_for_app(&crate::app_config::AppType::Codex, config)
+}
+
+pub fn import_from_codex_for_app(
+    app: &crate::app_config::AppType,
+    config: &mut MultiAppConfig,
+) -> Result<usize, AppError> {
+    let text = crate::codex_config::read_and_validate_codex_config_text_for_app(app)?;
     if text.trim().is_empty() {
         return Ok(0);
     }
@@ -220,8 +234,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
 
             if let Some(existing) = servers.get_mut(id) {
                 // 已存在：仅启用 Codex 应用
-                if !existing.apps.codex {
-                    existing.apps.codex = true;
+                if !existing.apps.is_enabled_for(app) {
+                    existing.apps.set_enabled_for(app, true);
                     changed += 1;
                     log::info!("MCP 服务器 '{id}' 已启用 Codex 应用");
                 }
@@ -234,8 +248,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         name: id.clone(),
                         server: spec_v,
                         apps: McpApps {
+                            codex_desktop: *app == crate::AppType::CodexDesktop,
                             claude: false,
-                            codex: true,
+                            codex: *app == crate::AppType::Codex,
                             gemini: false,
                             grokbuild: false,
                             opencode: false,
@@ -284,17 +299,30 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
 /// - 读取现有 config.toml；若语法无效则报错，不尝试覆盖
 /// - 仅更新 `mcp_servers` 表，保留其它键
 /// - 仅写入启用项；无启用项时清理 mcp_servers 表
+#[allow(dead_code)]
 pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_codex_mcp() {
+    sync_enabled_to_codex_for_app(&crate::app_config::AppType::Codex, config)
+}
+
+pub fn sync_enabled_to_codex_for_app(
+    app: &crate::app_config::AppType,
+    config: &MultiAppConfig,
+) -> Result<(), AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
+    if !should_sync_codex_mcp_for_app(app) {
         return Ok(());
     }
     use toml_edit::{Item, Table};
 
     // 1) 收集启用项（Codex 维度）
-    let enabled = collect_enabled_servers(&config.mcp.codex);
+    let enabled = collect_enabled_servers(if *app == crate::AppType::CodexDesktop {
+        &config.mcp.codex_desktop
+    } else {
+        &config.mcp.codex
+    });
 
     // 2) 读取现有 config.toml 文本；保持无效 TOML 的错误返回（不覆盖文件）
-    let base_text = crate::codex_config::read_and_validate_codex_config_text()?;
+    let base_text = crate::codex_config::read_and_validate_codex_config_text_for_app(app)?;
 
     // 3) 使用 toml_edit 解析（允许空文件）
     let mut doc = if base_text.trim().is_empty() {
@@ -342,7 +370,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
 
     // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
     let new_text = doc.to_string();
-    let path = crate::codex_config::get_codex_config_path();
+    let path = crate::codex_config::get_codex_config_path_for_app(app);
     crate::config::write_text_file(&path, &new_text)?;
     Ok(())
 }
@@ -417,17 +445,33 @@ fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub fn sync_single_server_to_codex(
     _config: &MultiAppConfig,
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
-    if !should_sync_codex_mcp() {
+    sync_single_server_to_codex_for_app(
+        &crate::app_config::AppType::Codex,
+        _config,
+        id,
+        server_spec,
+    )
+}
+
+pub fn sync_single_server_to_codex_for_app(
+    app: &crate::app_config::AppType,
+    _config: &MultiAppConfig,
+    id: &str,
+    server_spec: &Value,
+) -> Result<(), AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
+    if !should_sync_codex_mcp_for_app(app) {
         return Ok(());
     }
 
     // 读取现有的 config.toml
-    let config_path = crate::codex_config::get_codex_config_path();
+    let config_path = crate::codex_config::get_codex_config_path_for_app(app);
 
     let mut doc = if config_path.exists() {
         let content =
@@ -464,11 +508,20 @@ pub fn sync_single_server_to_codex(
 
 /// 从 Codex live 配置中移除单个 MCP 服务器
 /// 从正确的 [mcp_servers] 表中删除，同时清理可能存在于错误位置 [mcp.servers] 的数据
+#[allow(dead_code)]
 pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
-    if !should_sync_codex_mcp() {
+    remove_server_from_codex_for_app(&crate::app_config::AppType::Codex, id)
+}
+
+pub fn remove_server_from_codex_for_app(
+    app: &crate::app_config::AppType,
+    id: &str,
+) -> Result<(), AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
+    if !should_sync_codex_mcp_for_app(app) {
         return Ok(());
     }
-    let config_path = crate::codex_config::get_codex_config_path();
+    let config_path = crate::codex_config::get_codex_config_path_for_app(app);
 
     if !config_path.exists() {
         return Ok(()); // 文件不存在，无需删除

@@ -153,6 +153,7 @@ pub fn import_mcp_from_deeplink(
 /// Parse apps string into McpApps struct
 pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
     let mut apps = McpApps {
+        codex_desktop: false,
         claude: false,
         codex: false,
         gemini: false,

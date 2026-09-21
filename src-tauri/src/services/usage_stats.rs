@@ -212,7 +212,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
         "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
-         WHEN '_codex_session' THEN 'Codex (Session)' \
+         WHEN '_codex_desktop_session' THEN 'Codex Desktop (Session)' WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
@@ -311,7 +311,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'codex_desktop_session', 'gemini_session', 'opencode_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -326,7 +326,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'codex_desktop_session', 'gemini_session', 'opencode_session')
                       )
                   )
                   AND proxy_dedup.created_at BETWEEN
@@ -409,8 +409,10 @@ pub(crate) fn has_matching_proxy_usage_log(
     conn: &Connection,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
-    let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+    let allow_missing_cache_creation = matches!(
+        key.app_type,
+        "codex" | "codex-desktop" | "gemini" | "opencode"
+    ) && key.cache_creation_tokens == 0;
 
     conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)
         .and_then(|mut stmt| {
@@ -472,8 +474,8 @@ static SUSPECTED_CODEX_DUPLICATE_SQL: LazyLock<String> = LazyLock::new(|| {
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
-            WHERE l.app_type = 'codex'
-              AND {data_source} = 'codex_session'
+            WHERE l.app_type = ?8
+              AND {data_source} IN ('codex_session', 'codex_desktop_session')
               AND l.request_id <> ?1
               AND LOWER(l.model) = LOWER(?2)
               AND l.input_tokens = ?3
@@ -500,6 +502,7 @@ pub(crate) fn has_suspected_codex_session_duplicate(
                     key.cache_read_tokens as i64,
                     key.created_at,
                     SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    key.app_type,
                 ],
                 |row| row.get::<_, bool>(0),
             )

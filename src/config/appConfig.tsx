@@ -20,6 +20,7 @@ export const APP_IDS: AppId[] = [
   "claude",
   "claude-desktop",
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
   "opencode",
@@ -33,6 +34,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   claude: true,
   "claude-desktop": true,
   codex: true,
+  "codex-desktop": true,
   gemini: true,
   grokbuild: true,
   opencode: true,
@@ -46,6 +48,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
   "opencode",
@@ -56,13 +59,14 @@ export const SKILLS_APP_IDS: AppId[] = [
 
 export type ProxyAppId = Extract<
   AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
+  "claude" | "codex" | "codex-desktop" | "gemini" | "grokbuild"
 >;
 
 /** Apps with a complete local gateway + failover data plane. */
 export const PROXY_APP_IDS: ProxyAppId[] = [
   "claude",
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
 ];
@@ -93,6 +97,7 @@ export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
   "opencode",
@@ -123,6 +128,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   },
   codex: {
     label: "Codex",
+    icon: <CodexIcon size={14} />,
+    activeClass:
+      "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",
+    badgeClass:
+      "bg-green-500/10 text-green-700 dark:text-green-300 hover:bg-green-500/20 border-0 gap-1.5",
+  },
+  "codex-desktop": {
+    label: "Codex Desktop",
     icon: <CodexIcon size={14} />,
     activeClass:
       "bg-green-500/10 ring-1 ring-green-500/20 hover:bg-green-500/20 text-green-600 dark:text-green-400",
@@ -209,4 +222,10 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
 
 export function getAppLabel(appId: string): string {
   return APP_ICON_MAP[appId as AppId]?.label ?? appId;
+}
+
+export function isCodexApp(
+  appId: string | undefined,
+): appId is "codex" | "codex-desktop" {
+  return appId === "codex" || appId === "codex-desktop";
 }

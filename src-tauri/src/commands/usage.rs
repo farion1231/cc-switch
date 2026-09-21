@@ -275,16 +275,18 @@ fn finish_codex_rebuild(
 /// 整个序列，避免后台同步在清理和重导之间插入数据。
 #[tauri::command]
 pub async fn rebuild_codex_usage(
+    app: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    let target = crate::codex_config::parse_codex_app(app.as_deref())?;
     let db = state.db.clone();
     let _guard = crate::services::session_usage::session_sync_mutex()
         .lock()
         .await;
     tauri::async_runtime::spawn_blocking(move || {
         db.backup_database_file()?;
-        db.reset_codex_usage()?;
-        let result = crate::services::session_usage_codex::sync_codex_usage(&db);
+        db.reset_codex_usage_for_app(&target)?;
+        let result = crate::services::session_usage_codex::sync_codex_usage_for_app(&target, &db);
         finish_codex_rebuild(result)
     })
     .await

@@ -1,10 +1,11 @@
+import { isCodexApp } from "@/config/appConfig";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import type { DeepLinkImportRequest } from "@/lib/api/deeplink";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { isSensitiveConfigKey, maskSensitiveValue } from "@/utils/deeplinkRisk";
 
 export interface ParsedDeepLinkConfig {
-  type: "claude" | "codex" | "gemini" | "grokbuild";
+  type: "claude" | "codex" | "codex-desktop" | "gemini" | "grokbuild";
   env?: Record<string, string>;
   auth?: Record<string, string>;
   tomlConfig?: string;
@@ -63,10 +64,10 @@ export function parseDeepLinkConfigPreview(
         env: (parsed.env as Record<string, string>) || {},
       };
     }
-    if (request.app === "codex") {
+    if (isCodexApp(request.app)) {
       const config = typeof parsed.config === "string" ? parsed.config : "";
       return {
-        type: "codex",
+        type: request.app,
         auth: (parsed.auth as Record<string, string>) || {},
         tomlConfig: config ? sanitizeTomlForPreview(config) : "",
       };

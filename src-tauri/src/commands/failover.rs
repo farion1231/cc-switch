@@ -80,7 +80,7 @@ pub async fn get_failover_queue(
         .db
         .get_failover_queue(&app_type)
         .map_err(|e| e.to_string())?;
-    if app_type != "codex" {
+    if !matches!(app_type.as_str(), "codex" | "codex-desktop") {
         return Ok(queue);
     }
     let providers = state

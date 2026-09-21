@@ -6,6 +6,7 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { vscodeApi } from "@/lib/api/vscode";
 
 const authState = vi.hoisted(() => ({
   codexReauthRequired: false,
@@ -194,6 +195,46 @@ describe("ProviderForm Codex Official managed account", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
     toastMocks.error.mockReset();
+  });
+
+  it("loads Desktop endpoint settings in the Desktop provider namespace", async () => {
+    const endpoints = vi
+      .spyOn(vscodeApi, "getCustomEndpoints")
+      .mockResolvedValue([]);
+    const queryClient = createTestQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderForm
+          appId="codex-desktop"
+          providerId="same-provider-id"
+          submitLabel="save-provider"
+          onSubmit={vi.fn()}
+          onCancel={vi.fn()}
+          initialData={{
+            name: "Desktop provider",
+            category: "custom",
+            settingsConfig: {
+              auth: { OPENAI_API_KEY: "test-key" },
+              config:
+                'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://example.com/v1"\nwire_api = "responses"',
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /管理和测速|providerForm.manageAndTest/,
+      }),
+    );
+    await waitFor(() =>
+      expect(endpoints).toHaveBeenCalledWith(
+        "codex-desktop",
+        "same-provider-id",
+      ),
+    );
+    expect(endpoints).not.toHaveBeenCalledWith("codex", "same-provider-id");
+    endpoints.mockRestore();
   });
 
   it("persists the selected managed account while stripping OAuth secrets", async () => {

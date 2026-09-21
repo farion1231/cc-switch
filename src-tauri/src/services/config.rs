@@ -87,6 +87,9 @@ impl ConfigService {
     pub fn sync_current_providers_to_live(config: &mut MultiAppConfig) -> Result<(), AppError> {
         Self::sync_current_provider_for_app(config, &AppType::Claude)?;
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
+        if !crate::codex_config::codex_desktop_directory_conflict() {
+            Self::sync_current_provider_for_app(config, &AppType::CodexDesktop)?;
+        }
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
         Self::sync_current_provider_for_app(config, &AppType::GrokBuild)?;
         Ok(())
@@ -120,7 +123,9 @@ impl ConfigService {
         };
 
         match app_type {
-            AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
+            AppType::Codex | AppType::CodexDesktop => {
+                Self::sync_codex_live_for_app(app_type, config, &current_id, &provider)?
+            }
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
             AppType::ClaudeDesktop => {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
@@ -147,7 +152,22 @@ impl ConfigService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn sync_codex_live(
+        config: &mut MultiAppConfig,
+        provider_id: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        Self::sync_codex_live_for_app(
+            &crate::app_config::AppType::Codex,
+            config,
+            provider_id,
+            provider,
+        )
+    }
+
+    fn sync_codex_live_for_app(
+        app: &crate::app_config::AppType,
         config: &mut MultiAppConfig,
         provider_id: &str,
         provider: &Provider,
@@ -167,7 +187,8 @@ impl ConfigService {
 
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
-        crate::codex_config::write_codex_provider_live_with_catalog(
+        crate::codex_config::write_codex_provider_live_with_catalog_for_app(
+            app,
             &provider.settings_config,
             provider.category.as_deref(),
             auth,
@@ -178,8 +199,8 @@ impl ConfigService {
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行
 
-        let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text()?;
-        if let Some(manager) = config.get_manager_mut(&AppType::Codex) {
+        let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text_for_app(app)?;
+        if let Some(manager) = config.get_manager_mut(app) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 if let Some(obj) = target.settings_config.as_object_mut() {
                     let mut restored = serde_json::json!({

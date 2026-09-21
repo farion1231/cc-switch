@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useMemo } from "react";
 import type { AppId } from "@/lib/api";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
@@ -105,7 +106,7 @@ export function useSpeedTestEndpoints({
   }, [appId, baseUrl, initialData, selectedPresetId, presetEntries]);
 
   const codexEndpoints = useMemo<EndpointCandidate[]>(() => {
-    if (appId !== "codex") return [];
+    if (!isCodexApp(appId)) return [];
 
     const map = new Map<string, EndpointCandidate>();
     // 候选端点标记为 isCustom: false，表示来自预设或配置
@@ -155,5 +156,5 @@ export function useSpeedTestEndpoints({
     return Array.from(map.values());
   }, [appId, codexBaseUrl, initialData, selectedPresetId, presetEntries]);
 
-  return appId === "codex" ? codexEndpoints : claudeEndpoints;
+  return isCodexApp(appId) ? codexEndpoints : claudeEndpoints;
 }

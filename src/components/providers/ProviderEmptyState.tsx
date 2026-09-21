@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { Download, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ export function ProviderEmptyState({
   const { t } = useTranslation();
   const isPi = appId === "pi";
   const showSnippetHint =
-    appId === "claude" || appId === "codex" || appId === "gemini";
+    appId === "claude" || isCodexApp(appId) || appId === "gemini";
 
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">

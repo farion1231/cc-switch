@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useState, useEffect } from "react";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
@@ -53,7 +54,7 @@ export function useProviderCategory({
     const [, type, indexStr] = match;
     const index = parseInt(indexStr, 10);
 
-    if (type === "codex" && appId === "codex") {
+    if (type === "codex" && isCodexApp(appId)) {
       const preset = codexProviderPresets[index];
       if (preset) {
         setCategory(

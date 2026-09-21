@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
@@ -239,7 +240,7 @@ export const getApiKeyFromConfig = (
     }
 
     // Codex API Key
-    if (appType === "codex") {
+    if (isCodexApp(appType)) {
       const codexKey = env.CODEX_API_KEY;
       return typeof codexKey === "string" ? codexKey : "";
     }
@@ -323,7 +324,7 @@ export const hasApiKeyField = (
       return Object.prototype.hasOwnProperty.call(env, "GEMINI_API_KEY");
     }
 
-    if (appType === "codex") {
+    if (isCodexApp(appType)) {
       return Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY");
     }
 
@@ -375,7 +376,7 @@ export const setApiKeyInConfig = (
     }
 
     // Codex API Key
-    if (appType === "codex") {
+    if (isCodexApp(appType)) {
       if ("CODEX_API_KEY" in env) {
         env.CODEX_API_KEY = apiKey;
       } else if (createIfMissing) {

@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 
 interface CodexAuthSettingsProps {
+  appId?: "codex" | "codex-desktop";
   settings: SettingsFormState;
   /** 返回 false（或 resolve 为 false）表示保存失败；其余返回值视为成功 */
   onChange: (
@@ -16,9 +17,31 @@ interface CodexAuthSettingsProps {
 }
 
 export function CodexAuthSettings({
-  settings,
-  onChange,
+  appId = "codex",
+  settings: rawSettings,
+  onChange: rawOnChange,
 }: CodexAuthSettingsProps) {
+  const desktop = appId === "codex-desktop";
+  const settings = desktop
+    ? {
+        ...rawSettings,
+        preserveCodexOfficialAuthOnSwitch:
+          rawSettings.preserveCodexDesktopOfficialAuthOnSwitch,
+        unifyCodexSessionHistory: rawSettings.unifyCodexDesktopSessionHistory,
+        unifyCodexMigrateExisting: rawSettings.unifyCodexDesktopMigrateExisting,
+      }
+    : rawSettings;
+  const onChange = (updates: Partial<SettingsFormState>) =>
+    rawOnChange(
+      desktop
+        ? Object.fromEntries(
+            Object.entries(updates).map(([key, value]) => [
+              key.replace("Codex", "CodexDesktop"),
+              value,
+            ]),
+          )
+        : updates,
+    );
   const { t } = useTranslation();
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
@@ -31,7 +54,7 @@ export function CodexAuthSettings({
     }
     // 先探测有无迁移备份，决定关闭弹窗是否提供"恢复备份"勾选
     void settingsApi
-      .hasCodexUnifyHistoryBackup()
+      .hasCodexUnifyHistoryBackup(appId)
       .catch(() => false)
       .then((hasBackup) => {
         setHasUnifyBackup(hasBackup);
@@ -66,7 +89,7 @@ export function CodexAuthSettings({
     // 拿到完整账本；确实无账本时由 skippedReason 提示。
     if (!restoreBackup) return;
     try {
-      const result = await settingsApi.restoreCodexUnifiedHistory();
+      const result = await settingsApi.restoreCodexUnifiedHistory(appId);
       if (result.skippedReason) {
         // unify_toggle_on：还原排队期间开关被重新开启，后端拒绝还原
         toast.info(
@@ -92,7 +115,9 @@ export function CodexAuthSettings({
     <section className="space-y-4">
       <div className="flex items-center gap-2 pb-2 border-b border-border/40">
         <KeyRound className="h-4 w-4 text-primary" />
-        <h3 className="text-sm font-medium">{t("settings.codexAuth")}</h3>
+        <h3 className="text-sm font-medium">
+          {t(desktop ? "settings.codexDesktopAuth" : "settings.codexAuth")}
+        </h3>
       </div>
 
       <ToggleRow

@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Save } from "lucide-react";
@@ -242,7 +243,7 @@ export function EditProviderDialog({
   const initialSettingsConfig = useMemo(() => {
     const storedSettings = asRecord(provider?.settingsConfig);
     const base =
-      appId === "codex" && liveSettings
+      isCodexApp(appId) && liveSettings
         ? reconcileCodexLiveAuth(
             liveSettings,
             storedSettings,
@@ -256,7 +257,7 @@ export function EditProviderDialog({
     // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
     // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
     if (
-      appId === "codex" &&
+      isCodexApp(appId) &&
       liveSettings &&
       provider?.settingsConfig &&
       typeof provider.settingsConfig === "object"

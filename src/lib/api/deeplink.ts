@@ -10,6 +10,7 @@ export interface DeepLinkImportRequest {
   app?:
     | "claude"
     | "codex"
+    | "codex-desktop"
     | "gemini"
     | "grokbuild"
     | "opencode"

@@ -17,6 +17,7 @@ const APP_BADGE_ICON: Partial<
 > = {
   claude: { icon: Terminal },
   "claude-desktop": { icon: Monitor, offsetY: 0.5 },
+  "codex-desktop": { icon: Monitor, offsetY: 0.5 },
 };
 
 interface AppSwitcherProps {
@@ -31,6 +32,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   claude: "claude",
   "claude-desktop": "claude",
   codex: "openai",
+  "codex-desktop": "openai",
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",
@@ -44,6 +46,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
   codex: "Codex",
+  "codex-desktop": "Codex Desktop",
   gemini: "Gemini",
   grokbuild: "Grok Build",
   opencode: "OpenCode",

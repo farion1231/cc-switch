@@ -295,10 +295,19 @@ pub fn ensure_claude_desktop_official_provider(state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
-pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+pub fn ensure_codex_official_provider(
+    state: State<'_, AppState>,
+    app: Option<String>,
+) -> Result<bool, String> {
+    let target = crate::codex_config::parse_codex_app(app.as_deref()).map_err(|e| e.to_string())?;
+    let id = if target == AppType::CodexDesktop {
+        "codex-desktop-official"
+    } else {
+        crate::database::CODEX_OFFICIAL_PROVIDER_ID
+    };
     state
         .db
-        .ensure_official_seed_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
+        .ensure_official_seed_by_id(id, target)
         .map_err(|e| e.to_string())
 }
 

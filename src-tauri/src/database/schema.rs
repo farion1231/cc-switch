@@ -14,6 +14,59 @@ struct LegacySkillMigrationRow {
 }
 
 impl Database {
+    /// Add the Desktop namespace without changing the repository's schema version.
+    /// This runs after versioned migrations, including when reopening an existing v19 DB.
+    pub(crate) fn ensure_codex_desktop_schema(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch("SAVEPOINT codex_desktop_schema")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let result = (|| {
+            for table in ["mcp_servers", "skills"] {
+                if Self::table_exists(conn, table)? {
+                    Self::add_column_if_missing(
+                        conn,
+                        table,
+                        "enabled_codex_desktop",
+                        "BOOLEAN NOT NULL DEFAULT 0",
+                    )?;
+                }
+            }
+            if !Self::table_exists(conn, "proxy_config")? {
+                return Ok(());
+            }
+            let sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proxy_config'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if !sql.contains("'codex-desktop'") {
+                let replacement = sql
+                    .replacen("proxy_config", "proxy_config_desktop_extension", 1)
+                    .replace("'codex'", "'codex','codex-desktop'");
+                conn.execute_batch(&replacement)
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                conn.execute_batch(
+                    "INSERT INTO proxy_config_desktop_extension SELECT * FROM proxy_config;
+                     DROP TABLE proxy_config;
+                     ALTER TABLE proxy_config_desktop_extension RENAME TO proxy_config;",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, proxy_enabled, listen_address, listen_port, enable_logging)
+                 SELECT 'codex-desktop', proxy_enabled, listen_address, listen_port, enable_logging FROM proxy_config WHERE app_type = 'codex'",
+                [],
+            ).map_err(|e| AppError::Database(e.to_string()))?;
+            Ok(())
+        })();
+        if result.is_err() {
+            conn.execute_batch("ROLLBACK TO codex_desktop_schema").ok();
+        }
+        conn.execute_batch("RELEASE codex_desktop_schema")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        result
+    }
     /// 创建所有数据库表
     pub(crate) fn create_tables(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -126,7 +179,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','codex-desktop','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -572,6 +625,7 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            Self::ensure_codex_desktop_schema(conn)?;
             Ok(())
         })();
 
@@ -895,7 +949,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','codex-desktop','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1457,7 +1511,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "CREATE TABLE proxy_config_v14 (
-                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','codex-desktop','gemini','grokbuild')),
                 proxy_enabled INTEGER NOT NULL DEFAULT 0,
                 listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
                 listen_port INTEGER NOT NULL DEFAULT 15721,
@@ -3749,7 +3803,8 @@ mod tests {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        assert_eq!(counts, (0, 1, 0, 1));
+        // Cursors outside the current directory may belong to Desktop.
+        assert_eq!(counts, (0, 1, 0, 2));
         Ok(())
     }
 

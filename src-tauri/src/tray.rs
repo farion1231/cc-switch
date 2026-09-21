@@ -160,7 +160,7 @@ pub struct TrayAppSection {
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+pub const TRAY_SECTIONS: [TrayAppSection; 5] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
@@ -174,6 +174,13 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
         empty_id: "codex_empty",
         header_label: "Codex",
         log_name: "Codex",
+    },
+    TrayAppSection {
+        app_type: AppType::CodexDesktop,
+        prefix: "codex-desktop_",
+        empty_id: "codex-desktop_empty",
+        header_label: "Codex Desktop",
+        log_name: "Codex Desktop",
     },
     TrayAppSection {
         app_type: AppType::Gemini,
@@ -349,7 +356,7 @@ fn tray_usage_source(
     app_type: &AppType,
     provider: &crate::provider::Provider,
 ) -> Option<TrayUsageSource> {
-    if *app_type == AppType::Codex {
+    if app_type.is_codex() {
         if let Some(account_id) = managed_codex_account_id(provider) {
             // Match ProviderCard: managed accounts query by default until the
             // user explicitly disables usage, including older saved providers.
@@ -890,6 +897,7 @@ pub fn create_tray_menu(
                 ProfileScope::Claude => "Claude Code",
                 ProfileScope::ClaudeDesktop => "Claude Desktop",
                 ProfileScope::Codex => "Codex",
+                ProfileScope::CodexDesktop => "Codex Desktop",
             };
             let mut scope_builder = SubmenuBuilder::with_id(
                 app,

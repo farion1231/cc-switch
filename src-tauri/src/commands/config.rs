@@ -51,7 +51,7 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
             serde_json::from_str::<serde_json::Value>(snippet)
                 .map_err(invalid_json_format_error)?;
         }
-        "codex" => {
+        "codex" | "codex-desktop" => {
             snippet
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(invalid_toml_format_error)?;
@@ -67,7 +67,8 @@ pub async fn get_config_status(
     state: State<'_, AppState>,
     app: String,
 ) -> Result<ConfigStatus, String> {
-    match AppType::from_str(&app).map_err(|e| e.to_string())? {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    match app_type {
         AppType::Claude => Ok(config::get_claude_config_status()),
         AppType::ClaudeDesktop => {
             let status = crate::claude_desktop_config::get_status(
@@ -80,11 +81,12 @@ pub async fn get_config_status(
                 path: status.config_library_path.unwrap_or_default(),
             })
         }
-        AppType::Codex => {
-            let auth_path = codex_config::get_codex_auth_path();
-            let config_text = codex_config::read_codex_config_text().unwrap_or_default();
+        AppType::Codex | AppType::CodexDesktop => {
+            let auth_path = codex_config::get_codex_auth_path_for_app(&app_type);
+            let config_text =
+                codex_config::read_codex_config_text_for_app(&app_type).unwrap_or_default();
             let exists = auth_path.exists() || !config_text.trim().is_empty();
-            let path = codex_config::get_codex_config_dir()
+            let path = codex_config::get_codex_config_dir_for_app(&app_type)
                 .to_string_lossy()
                 .to_string();
 
@@ -163,12 +165,15 @@ pub async fn get_claude_code_config_path() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
-    let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let dir = match app_type {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
         }
-        AppType::Codex => codex_config::get_codex_config_dir(),
+        AppType::Codex | AppType::CodexDesktop => {
+            codex_config::get_codex_config_dir_for_app(&app_type)
+        }
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
@@ -186,12 +191,15 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
-    let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let config_dir = match app_type {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
         }
-        AppType::Codex => codex_config::get_codex_config_dir(),
+        AppType::Codex | AppType::CodexDesktop => {
+            codex_config::get_codex_config_dir_for_app(&app_type)
+        }
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
@@ -347,7 +355,10 @@ pub async fn set_common_config_snippet(
 
     let value = if is_cleared { None } else { Some(snippet) };
 
-    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
+    if matches!(
+        app_type.as_str(),
+        "claude" | "codex" | "codex-desktop" | "gemini"
+    ) {
         if let Some(legacy_snippet) = old_snippet
             .as_deref()
             .filter(|value| !value.trim().is_empty())
@@ -371,7 +382,10 @@ pub async fn set_common_config_snippet(
         .set_config_snippet_cleared(&app_type, is_cleared)
         .map_err(|e| e.to_string())?;
 
-    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
+    if matches!(
+        app_type.as_str(),
+        "claude" | "codex" | "codex-desktop" | "gemini"
+    ) {
         let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
         crate::services::provider::ProviderService::sync_current_provider_for_app(
             state.inner(),
@@ -451,4 +465,9 @@ pub async fn extract_common_config_snippet(
 
     crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_codex_desktop_directory_conflict() -> bool {
+    crate::codex_config::codex_desktop_directory_conflict()
 }

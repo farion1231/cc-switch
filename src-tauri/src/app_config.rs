@@ -13,6 +13,8 @@ pub struct McpApps {
     pub claude: bool,
     #[serde(default)]
     pub codex: bool,
+    #[serde(default, rename = "codex-desktop")]
+    pub codex_desktop: bool,
     #[serde(default)]
     pub gemini: bool,
     #[serde(default)]
@@ -29,6 +31,7 @@ impl McpApps {
         match app {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
+            AppType::CodexDesktop => self.codex_desktop,
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
@@ -45,6 +48,7 @@ impl McpApps {
         match app {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
+            AppType::CodexDesktop => self.codex_desktop = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
@@ -64,6 +68,9 @@ impl McpApps {
         }
         if self.codex {
             apps.push(AppType::Codex);
+        }
+        if self.codex_desktop {
+            apps.push(AppType::CodexDesktop);
         }
         if self.gemini {
             apps.push(AppType::Gemini);
@@ -87,6 +94,7 @@ impl McpApps {
     pub fn is_empty(&self) -> bool {
         !self.claude
             && !self.codex
+            && !self.codex_desktop
             && !self.gemini
             && !self.grokbuild
             && !self.opencode
@@ -104,6 +112,8 @@ pub struct SkillApps {
     pub claude: bool,
     #[serde(default)]
     pub codex: bool,
+    #[serde(default, rename = "codex-desktop")]
+    pub codex_desktop: bool,
     #[serde(default)]
     pub gemini: bool,
     #[serde(default)]
@@ -122,6 +132,7 @@ impl SkillApps {
         match app {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
+            AppType::CodexDesktop => self.codex_desktop,
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
@@ -138,6 +149,7 @@ impl SkillApps {
         match app {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
+            AppType::CodexDesktop => self.codex_desktop = enabled,
             AppType::Gemini => self.gemini = enabled,
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
@@ -157,6 +169,9 @@ impl SkillApps {
         }
         if self.codex {
             apps.push(AppType::Codex);
+        }
+        if self.codex_desktop {
+            apps.push(AppType::CodexDesktop);
         }
         if self.gemini {
             apps.push(AppType::Gemini);
@@ -183,6 +198,7 @@ impl SkillApps {
     pub fn is_empty(&self) -> bool {
         !self.claude
             && !self.codex
+            && !self.codex_desktop
             && !self.gemini
             && !self.grokbuild
             && !self.opencode
@@ -319,6 +335,8 @@ pub struct McpRoot {
     pub claude_desktop: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub codex: McpConfig,
+    #[serde(default, rename = "codex-desktop")]
+    pub codex_desktop: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub gemini: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
@@ -343,6 +361,7 @@ impl Default for McpRoot {
             claude: McpConfig::default(),
             claude_desktop: McpConfig::default(),
             codex: McpConfig::default(),
+            codex_desktop: McpConfig::default(),
             gemini: McpConfig::default(),
             grokbuild: McpConfig::default(),
             opencode: McpConfig::default(),
@@ -373,6 +392,8 @@ pub struct PromptRoot {
     pub claude_desktop: PromptConfig,
     #[serde(default)]
     pub codex: PromptConfig,
+    #[serde(default, rename = "codex-desktop")]
+    pub codex_desktop: PromptConfig,
     #[serde(default)]
     pub gemini: PromptConfig,
     #[serde(default)]
@@ -402,6 +423,12 @@ pub enum AppType {
     )]
     ClaudeDesktop,
     Codex,
+    #[serde(
+        rename = "codex-desktop",
+        alias = "codex_desktop",
+        alias = "codexDesktop"
+    )]
+    CodexDesktop,
     Gemini,
     GrokBuild,
     OpenCode,
@@ -412,11 +439,16 @@ pub enum AppType {
 }
 
 impl AppType {
-    pub fn as_str(&self) -> &str {
+    pub fn is_codex(&self) -> bool {
+        matches!(self, Self::Codex | Self::CodexDesktop)
+    }
+
+    pub fn as_str(&self) -> &'static str {
         match self {
             AppType::Claude => "claude",
             AppType::ClaudeDesktop => "claude-desktop",
             AppType::Codex => "codex",
+            AppType::CodexDesktop => "codex-desktop",
             AppType::Gemini => "gemini",
             AppType::GrokBuild => "grokbuild",
             AppType::OpenCode => "opencode",
@@ -442,7 +474,11 @@ impl AppType {
     pub fn supports_local_proxy(&self) -> bool {
         matches!(
             self,
-            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
+            AppType::Claude
+                | AppType::Codex
+                | AppType::CodexDesktop
+                | AppType::Gemini
+                | AppType::GrokBuild
         )
     }
 
@@ -452,6 +488,7 @@ impl AppType {
             AppType::Claude,
             AppType::ClaudeDesktop,
             AppType::Codex,
+            AppType::CodexDesktop,
             AppType::Gemini,
             AppType::GrokBuild,
             AppType::OpenCode,
@@ -473,6 +510,7 @@ impl FromStr for AppType {
             "claude" => Ok(AppType::Claude),
             "claude-desktop" | "claude_desktop" | "claudedesktop" => Ok(AppType::ClaudeDesktop),
             "codex" => Ok(AppType::Codex),
+            "codex-desktop" | "codex_desktop" | "codexdesktop" => Ok(AppType::CodexDesktop),
             "gemini" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
             "opencode" => Ok(AppType::OpenCode),
@@ -497,6 +535,8 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<String>,
+    #[serde(default, rename = "codex-desktop")]
+    pub codex_desktop: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini: Option<String>,
@@ -518,6 +558,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude.as_ref(),
             AppType::ClaudeDesktop => None,
             AppType::Codex => self.codex.as_ref(),
+            AppType::CodexDesktop => self.codex_desktop.as_ref(),
             AppType::Gemini => self.gemini.as_ref(),
             AppType::GrokBuild => None,
             AppType::OpenCode => self.opencode.as_ref(),
@@ -533,6 +574,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude = snippet,
             AppType::ClaudeDesktop => {}
             AppType::Codex => self.codex = snippet,
+            AppType::CodexDesktop => self.codex_desktop = snippet,
             AppType::Gemini => self.gemini = snippet,
             AppType::GrokBuild => {}
             AppType::OpenCode => self.opencode = snippet,
@@ -578,6 +620,7 @@ impl Default for MultiAppConfig {
         apps.insert("claude".to_string(), ProviderManager::default());
         apps.insert("claude-desktop".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
+        apps.insert("codex-desktop".to_string(), ProviderManager::default());
         apps.insert("gemini".to_string(), ProviderManager::default());
         apps.insert("grokbuild".to_string(), ProviderManager::default());
         apps.insert("opencode".to_string(), ProviderManager::default());
@@ -768,6 +811,7 @@ impl MultiAppConfig {
         if !self.prompts.claude.prompts.is_empty()
             || !self.prompts.claude_desktop.prompts.is_empty()
             || !self.prompts.codex.prompts.is_empty()
+            || !self.prompts.codex_desktop.prompts.is_empty()
             || !self.prompts.gemini.prompts.is_empty()
             || !self.prompts.grokbuild.prompts.is_empty()
             || !self.prompts.opencode.prompts.is_empty()
@@ -857,6 +901,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut config.prompts.claude.prompts,
             AppType::ClaudeDesktop => &mut config.prompts.claude_desktop.prompts,
             AppType::Codex => &mut config.prompts.codex.prompts,
+            AppType::CodexDesktop => &mut config.prompts.codex_desktop.prompts,
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::GrokBuild => &mut config.prompts.grokbuild.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
@@ -896,6 +941,7 @@ impl MultiAppConfig {
         for app in [
             AppType::Claude,
             AppType::Codex,
+            AppType::CodexDesktop,
             AppType::Gemini,
             AppType::OpenCode,
         ] {
@@ -903,6 +949,7 @@ impl MultiAppConfig {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::ClaudeDesktop => continue, // Claude Desktop 3P profiles don't use MCP here
                 AppType::Codex => &self.mcp.codex.servers,
+                AppType::CodexDesktop => &self.mcp.codex_desktop.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::GrokBuild => continue,
                 AppType::OpenCode => &self.mcp.opencode.servers,

@@ -64,6 +64,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const [enabledApps, setEnabledApps] = useState<{
     claude: boolean;
     codex: boolean;
+    "codex-desktop": boolean;
     gemini: boolean;
     grokbuild: boolean;
     opencode: boolean;
@@ -74,6 +75,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     if (initialData?.apps) {
       return {
         ...initialData.apps,
+        "codex-desktop": initialData.apps["codex-desktop"] ?? false,
         grokbuild: initialData.apps.grokbuild ?? false,
         mcode: initialData.apps.mcode ?? false,
       };
@@ -81,6 +83,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     return {
       claude: defaultEnabledApps.includes("claude"),
       codex: defaultEnabledApps.includes("codex"),
+      "codex-desktop": defaultEnabledApps.includes("codex-desktop"),
       gemini: defaultEnabledApps.includes("gemini"),
       grokbuild: defaultEnabledApps.includes("grokbuild"),
       opencode: defaultEnabledApps.includes("opencode"),
@@ -562,6 +565,25 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.codex")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-codex-desktop"
+                    checked={enabledApps["codex-desktop"]}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({
+                        ...enabledApps,
+                        "codex-desktop": checked,
+                      })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-codex-desktop"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.codex-desktop")}
                   </label>
                 </div>
 

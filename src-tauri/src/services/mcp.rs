@@ -17,6 +17,9 @@ impl McpService {
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        if server.apps.codex_desktop {
+            crate::codex_config::ensure_codex_target_writable(&AppType::CodexDesktop)?;
+        }
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
         let prev_apps = state
             .db
@@ -24,6 +27,10 @@ impl McpService {
             .get(&server.id)
             .map(|s| s.apps.clone())
             .unwrap_or_default();
+
+        if prev_apps.codex_desktop {
+            crate::codex_config::ensure_codex_target_writable(&AppType::CodexDesktop)?;
+        }
 
         if server.apps.mcode || prev_apps.mcode {
             mcp::mcode::sync_and_commit(
@@ -38,6 +45,9 @@ impl McpService {
         // 处理禁用：若旧版本启用但新版本取消，则需要从该应用的 live 配置移除
         if prev_apps.claude && !server.apps.claude {
             Self::remove_server_from_app(state, &server.id, &AppType::Claude)?;
+        }
+        if prev_apps.codex_desktop && !server.apps.codex_desktop {
+            Self::remove_server_from_app(state, &server.id, &AppType::CodexDesktop)?;
         }
         if prev_apps.codex && !server.apps.codex {
             Self::remove_server_from_app(state, &server.id, &AppType::Codex)?;
@@ -66,6 +76,9 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
+            if server.apps.codex_desktop {
+                crate::codex_config::ensure_codex_target_writable(&AppType::CodexDesktop)?;
+            }
             if server.apps.mcode {
                 mcp::mcode::sync_and_commit(id, None, || state.db.delete_mcp_server(id))?;
             } else {
@@ -87,6 +100,7 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
+        crate::codex_config::ensure_codex_target_writable(&app)?;
         if app == AppType::Mcode {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 mcp::mcode::sync_and_commit(server_id, enabled.then_some(&server.server), || {
@@ -134,6 +148,9 @@ impl McpService {
     }
 
     fn sync_server_to_app_no_config(server: &McpServer, app: &AppType) -> Result<(), AppError> {
+        if *app == AppType::CodexDesktop {
+            crate::settings::remember_codex_desktop_resource_dir("mcp")?;
+        }
         match app {
             AppType::Claude => {
                 mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
@@ -141,9 +158,14 @@ impl McpService {
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
-            AppType::Codex => {
+            AppType::Codex | AppType::CodexDesktop => {
                 // Codex uses TOML format, must use the correct function
-                mcp::sync_single_server_to_codex(&Default::default(), &server.id, &server.server)?;
+                mcp::sync_single_server_to_codex_for_app(
+                    app,
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
             }
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(&Default::default(), &server.id, &server.server)?;
@@ -198,7 +220,9 @@ impl McpService {
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
-            AppType::Codex => mcp::remove_server_from_codex(id)?,
+            AppType::Codex | AppType::CodexDesktop => {
+                mcp::remove_server_from_codex_for_app(app, id)?
+            }
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::GrokBuild => mcp::remove_server_from_grokbuild(id)?,
             AppType::OpenCode => {
@@ -228,6 +252,11 @@ impl McpService {
 
         let mut failures: Vec<String> = Vec::new();
         for app in AppType::all() {
+            if app == AppType::CodexDesktop
+                && crate::codex_config::codex_desktop_directory_conflict()
+            {
+                continue;
+            }
             if let Err(err) = Self::project_servers_to_app(state, &servers, &app) {
                 log::warn!("同步 MCP 到 {app:?} 失败: {err}");
                 failures.push(format!("{}: {err}", app.as_str()));
@@ -264,6 +293,12 @@ impl McpService {
             return Ok(());
         }
 
+        if *app == AppType::CodexDesktop
+            && !servers.values().any(|s| s.apps.codex_desktop)
+            && !crate::settings::codex_desktop_resource_is_managed("mcp")
+        {
+            return Ok(());
+        }
         for server in servers.values() {
             if server.apps.is_enabled_for(app) {
                 Self::sync_server_to_app(state, server, app)?;
@@ -364,12 +399,20 @@ impl McpService {
     }
 
     /// 从 Codex 导入 MCP（v3.7.0 已更新为统一结构）
+    #[allow(dead_code)]
     pub fn import_from_codex(state: &AppState) -> Result<usize, AppError> {
+        Self::import_from_codex_for_app(&crate::app_config::AppType::Codex, state)
+    }
+
+    pub fn import_from_codex_for_app(
+        app: &crate::app_config::AppType,
+        state: &AppState,
+    ) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
         // 调用原有的导入逻辑（从 mcp.rs）
-        let count = crate::mcp::import_from_codex(&mut temp_config)?;
+        let count = crate::mcp::import_from_codex_for_app(app, &mut temp_config)?;
 
         let mut new_count = 0;
 
@@ -381,7 +424,7 @@ impl McpService {
                     // 已存在：仅启用 Codex，不覆盖其他字段（与导入模块语义保持一致）
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
                         let mut merged = existing_server.clone();
-                        merged.apps.codex = true;
+                        merged.apps.set_enabled_for(app, true);
                         merged
                     } else {
                         // 真正的新服务器
@@ -551,9 +594,17 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 7] = [
+        let results: [(&str, Result<usize, AppError>); 8] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
+            (
+                "codex-desktop",
+                if crate::codex_config::codex_desktop_directory_conflict() {
+                    Ok(0)
+                } else {
+                    Self::import_from_codex_for_app(&AppType::CodexDesktop, state)
+                },
+            ),
             ("gemini", Self::import_from_gemini(state)),
             ("grokbuild", Self::import_from_grokbuild(state)),
             ("opencode", Self::import_from_opencode(state)),

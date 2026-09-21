@@ -216,6 +216,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       claude: 0,
       "claude-desktop": 0,
       codex: 0,
+      "codex-desktop": 0,
       gemini: 0,
       grokbuild: 0,
       opencode: 0,
@@ -1044,6 +1045,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
         {
           claude: skill.foundIn.includes("claude"),
           codex: skill.foundIn.includes("codex"),
+          "codex-desktop": skill.foundIn.includes("codex-desktop"),
           gemini: skill.foundIn.includes("gemini"),
           grokbuild: skill.foundIn.includes("grokbuild"),
           opencode: skill.foundIn.includes("opencode"),
@@ -1073,6 +1075,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
         apps: selectedApps[directory] ?? {
           claude: false,
           codex: false,
+          "codex-desktop": false,
           gemini: false,
           grokbuild: false,
           opencode: false,
@@ -1120,6 +1123,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                         selectedApps[skill.directory] ?? {
                           claude: false,
                           codex: false,
+                          "codex-desktop": false,
                           gemini: false,
                           grokbuild: false,
                           opencode: false,
@@ -1134,6 +1138,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                             ...(prev[skill.directory] ?? {
                               claude: false,
                               codex: false,
+                              "codex-desktop": false,
                               gemini: false,
                               grokbuild: false,
                               opencode: false,

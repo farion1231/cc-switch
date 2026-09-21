@@ -173,7 +173,7 @@ impl Provider {
         let (base_url, api_key) = match app_type {
             // Codex keeps its key in `auth.OPENAI_API_KEY` and its base URL
             // inside a TOML `config` string, not in an `env` map.
-            AppType::Codex => {
+            AppType::Codex | AppType::CodexDesktop => {
                 let auth = settings.get("auth");
                 let config_text = settings.get("config").and_then(|v| v.as_str());
                 let api_key = crate::codex_config::extract_codex_api_key(auth, config_text)
@@ -640,6 +640,8 @@ pub struct UniversalProviderApps {
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default, rename = "codex-desktop")]
+    pub codex_desktop: bool,
 }
 
 /// Claude 模型配置
@@ -691,6 +693,12 @@ pub struct UniversalProviderModels {
     pub codex: Option<CodexModelConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiModelConfig>,
+    #[serde(
+        default,
+        rename = "codex-desktop",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_desktop: Option<CodexModelConfig>,
 }
 
 /// 统一供应商（跨应用共享配置）
@@ -812,6 +820,19 @@ impl UniversalProvider {
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
+        })
+    }
+
+    pub fn to_codex_desktop_provider(&self) -> Option<Provider> {
+        if !self.apps.codex_desktop {
+            return None;
+        }
+        let mut target = self.clone();
+        target.apps.codex = true;
+        target.models.codex = self.models.codex_desktop.clone();
+        target.to_codex_provider().map(|mut provider| {
+            provider.id = format!("universal-codex-desktop-{}", self.id);
+            provider
         })
     }
 

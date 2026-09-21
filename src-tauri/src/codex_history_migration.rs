@@ -3,9 +3,7 @@
 //! 只迁移本机 `~/.codex` 历史数据；完成标记写入设备级 `settings.json`，
 //! 失败时不写标记，下一次启动自动重试。
 
-use crate::codex_config::{
-    get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
-};
+use crate::codex_config::{get_codex_config_dir, CC_SWITCH_CODEX_MODEL_PROVIDER_ID};
 use crate::codex_state_db::codex_state_db_paths;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
@@ -195,26 +193,39 @@ pub fn maybe_migrate_codex_provider_template_bucket(
 /// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
 /// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
 /// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
+#[allow(dead_code)]
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
-    if !crate::settings::unify_codex_session_history() {
+    maybe_migrate_codex_official_history_to_unified_bucket_for_app(
+        &crate::app_config::AppType::Codex,
+    )
+}
+
+pub fn maybe_migrate_codex_official_history_to_unified_bucket_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
+    if !crate::settings::unify_codex_session_history_for_app(app) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("unify_toggle_off".to_string()),
             ..Default::default()
         });
     }
-    if !crate::settings::unify_codex_migrate_existing_requested() {
+    if !crate::settings::unify_codex_migrate_existing_requested_for_app(app) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("stock_migration_not_requested".to_string()),
             ..Default::default()
         });
     }
     let _op_guard = lock_codex_official_history_op();
-    let codex_dir = get_codex_config_dir();
+    let codex_dir = crate::codex_config::get_codex_config_dir_for_app(app);
     // marker 绑定迁移时的 Codex 目录：切换 codex_config_dir 后旧 marker 不再
     // 挡住新目录的迁移（迁移幂等，重跑无害）。
     let codex_dir_key = canonical_dir_string(&codex_dir);
-    if crate::settings::is_codex_official_history_unify_migrated_for_dir(&codex_dir_key) {
+    if crate::settings::is_codex_official_history_unify_migrated_for_dir_for_app(
+        app,
+        &codex_dir_key,
+    ) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("already_migrated".to_string()),
             ..Default::default()
@@ -226,7 +237,9 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // 路由（注入只进备份）。这些状态下新会话仍落 "openai" 桶，迁移只会把
     // 历史搬进当前 live 看不见的桶里。开关与迁移意愿保持不动，待 live 真正
     // 统一后（下次切换 / 接管释放后的启动重试）再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
+    if !codex_config_text_routes_custom(
+        &crate::codex_config::read_codex_config_text_for_app(app).unwrap_or_default(),
+    ) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
             ..Default::default()
@@ -235,11 +248,11 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 
     let source_provider_ids: BTreeSet<String> =
         std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
-    let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
+    let backup_root = migration_backup_root_for_app(app, OFFICIAL_UNIFY_MIGRATION_NAME);
     let migrated_jsonl_files =
         migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
     let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
+        migrate_codex_state_dbs_for_app(app, &codex_dir, &source_provider_ids, &backup_root)?;
     // 备份代际记录来源目录，restore 据此只取当前目录的账本。
     write_backup_generation_meta(&backup_root, &codex_dir_key)?;
 
@@ -253,15 +266,17 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // 条件写入在 settings 写锁内原子完成："迁移期间开关被关掉"时不写完成标记，
     // 避免下一次开启被标记挡住而漏迁"关闭期间"新产生的 openai 桶会话。
     // 与关闭路径（update_settings + 清标记）共用同一把锁，无检查-写入窗口。
-    let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
-        CodexOfficialHistoryUnifyMigration {
-            completed_at: Utc::now().to_rfc3339(),
-            target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
-            migrated_jsonl_files,
-            migrated_state_rows,
-            codex_config_dir: Some(codex_dir_key),
-        },
-    )?;
+    let marker_written =
+        crate::settings::mark_codex_official_history_unify_migrated_if_enabled_for_app(
+            app,
+            CodexOfficialHistoryUnifyMigration {
+                completed_at: Utc::now().to_rfc3339(),
+                target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+                migrated_jsonl_files,
+                migrated_state_rows,
+                codex_config_dir: Some(codex_dir_key),
+            },
+        )?;
     if !marker_written {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("toggle_disabled_during_migration".to_string()),
@@ -315,20 +330,34 @@ pub struct CodexOfficialHistoryRestoreOutcome {
 }
 
 /// 统一会话开关迁移备份的父目录（其下每次迁移一个时间戳代际目录）。
+#[allow(dead_code)]
 fn official_history_unify_backup_parent() -> PathBuf {
+    official_history_unify_backup_parent_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn official_history_unify_backup_parent_for_app(app: &crate::app_config::AppType) -> PathBuf {
     get_app_config_dir()
         .join("backups")
-        .join(OFFICIAL_UNIFY_MIGRATION_NAME)
+        .join(if *app == crate::AppType::CodexDesktop {
+            "codex-desktop-official-history-unify-v1"
+        } else {
+            OFFICIAL_UNIFY_MIGRATION_NAME
+        })
 }
 
 /// 是否存在可用于还原的迁移备份（给前端决定要不要显示"恢复备份"勾选）。
 /// 与 restore 的账本收集共用同一目录匹配口径：只认属于当前 Codex 目录的
 /// 代际，避免切换 codex_config_dir 后弹出注定空跑的勾选。
 /// 精确账本内容仍在真正还原时才解析。
+#[allow(dead_code)]
 pub fn has_codex_official_history_unify_backup() -> bool {
+    has_codex_official_history_unify_backup_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn has_codex_official_history_unify_backup_for_app(app: &crate::app_config::AppType) -> bool {
     has_official_history_unify_backup_for_dir(
-        &official_history_unify_backup_parent(),
-        &canonical_dir_string(&get_codex_config_dir()),
+        &official_history_unify_backup_parent_for_app(app),
+        &canonical_dir_string(&crate::codex_config::get_codex_config_dir_for_app(app)),
     )
 }
 
@@ -351,28 +380,54 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
 /// 扫描全部备份代际取并集，多次开关循环后仍能还原早期迁入的会话；
 /// 还原前改动目标先备份到独立的 restore 目录（保持迁移账本目录纯净），
 /// 且只改写当前仍为 custom 的目标，重复执行无害。
+#[allow(dead_code)]
 pub fn restore_codex_official_history_from_backups(
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
+    restore_codex_official_history_from_backups_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn restore_codex_official_history_from_backups_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
     let _op_guard = lock_codex_official_history_op();
     // 开关已（重新）开启时拒绝还原：live 正路由 custom，把账本会话翻回
     // openai 桶等于亲手制造分裂。覆盖"关闭保存成功后用户立刻重新开启，
     // 还原排在重开迁移之后才拿到 op lock"的时序。
-    if crate::settings::unify_codex_session_history() {
+    if crate::settings::unify_codex_session_history_for_app(app) {
         return Ok(CodexOfficialHistoryRestoreOutcome {
             skipped_reason: Some("unify_toggle_on".to_string()),
             ..Default::default()
         });
     }
-    let config_text = read_codex_config_text().unwrap_or_default();
-    restore_codex_official_history_inner(
-        &get_codex_config_dir(),
-        &official_history_unify_backup_parent(),
-        &migration_backup_root(OFFICIAL_UNIFY_RESTORE_BACKUP_NAME),
+    let config_text = crate::codex_config::read_codex_config_text_for_app(app).unwrap_or_default();
+    restore_codex_official_history_inner_for_app(
+        app,
+        &crate::codex_config::get_codex_config_dir_for_app(app),
+        &official_history_unify_backup_parent_for_app(app),
+        &migration_backup_root_for_app(app, OFFICIAL_UNIFY_RESTORE_BACKUP_NAME),
         &config_text,
     )
 }
 
+#[allow(dead_code)]
 fn restore_codex_official_history_inner(
+    codex_dir: &Path,
+    ledger_parent: &Path,
+    restore_backup_root: &Path,
+    config_text: &str,
+) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
+    restore_codex_official_history_inner_for_app(
+        &crate::app_config::AppType::Codex,
+        codex_dir,
+        ledger_parent,
+        restore_backup_root,
+        config_text,
+    )
+}
+
+fn restore_codex_official_history_inner_for_app(
+    _app: &crate::app_config::AppType,
     codex_dir: &Path,
     ledger_parent: &Path,
     restore_backup_root: &Path,
@@ -746,10 +801,22 @@ fn insert_known_cc_switch_legacy_source_id(ids: &mut BTreeSet<String>, provider_
     }
 }
 
+#[allow(dead_code)]
 fn migration_backup_root(migration_name: &str) -> PathBuf {
+    migration_backup_root_for_app(&crate::app_config::AppType::Codex, migration_name)
+}
+
+fn migration_backup_root_for_app(
+    app: &crate::app_config::AppType,
+    migration_name: &str,
+) -> PathBuf {
     get_app_config_dir()
         .join("backups")
-        .join(migration_name)
+        .join(if *app == crate::AppType::CodexDesktop {
+            migration_name.replacen("codex-", "codex-desktop-", 1)
+        } else {
+            migration_name.to_string()
+        })
         .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
 }
 
@@ -1098,12 +1165,27 @@ fn rewrite_codex_session_meta_line(
     serde_json::to_string(&value).ok()
 }
 
+#[allow(dead_code)]
 fn migrate_codex_state_dbs(
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
-    let config_text = read_codex_config_text().unwrap_or_default();
+    migrate_codex_state_dbs_for_app(
+        &crate::app_config::AppType::Codex,
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+    )
+}
+
+fn migrate_codex_state_dbs_for_app(
+    app: &crate::app_config::AppType,
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    let config_text = crate::codex_config::read_codex_config_text_for_app(app).unwrap_or_default();
     let mut migrated = 0;
     for db_path in codex_state_db_paths(codex_dir, &config_text) {
         migrated += migrate_codex_state_db_provider_bucket(

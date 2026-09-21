@@ -90,6 +90,7 @@ impl PromptService {
         id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
+        crate::codex_config::ensure_codex_target_writable(&app)?;
         if matches!(app, AppType::Pi) {
             return upsert_pi_prompt(state, id, prompt);
         }
@@ -312,7 +313,10 @@ impl PromptService {
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop)
+                || (app == AppType::CodexDesktop
+                    && crate::codex_config::codex_desktop_directory_conflict())
+            {
                 continue;
             }
             if let Err(error) = Self::sync_to_live(state, app.clone()) {
@@ -337,6 +341,9 @@ impl PromptService {
         state: &AppState,
         app: AppType,
     ) -> Result<usize, AppError> {
+        if app == AppType::CodexDesktop {
+            return Ok(0);
+        }
         // 幂等性保护：该应用已有提示词则跳过
         let existing = state.db.get_prompts(app.as_str())?;
         if !existing.is_empty() {

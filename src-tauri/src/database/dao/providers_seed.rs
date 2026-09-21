@@ -12,6 +12,7 @@
 use crate::app_config::AppType;
 
 pub(crate) const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "claude-desktop-official";
+pub(crate) const CODEX_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "codex-desktop-official";
 pub(crate) const CODEX_OFFICIAL_PROVIDER_ID: &str = "codex-official";
 pub(crate) const GROKBUILD_OFFICIAL_PROVIDER_ID: &str = "grokbuild-official";
 
@@ -59,6 +60,15 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         icon: "openai",
         icon_color: "#00A67E",
         // 空 auth + 空 config 让用户走 ChatGPT Plus/Pro OAuth
+        settings_config_json: r#"{"auth":{},"config":""}"#,
+    },
+    OfficialProviderSeed {
+        id: CODEX_DESKTOP_OFFICIAL_PROVIDER_ID,
+        app_type: AppType::CodexDesktop,
+        name: "OpenAI Official",
+        website_url: "https://chatgpt.com/codex",
+        icon: "openai",
+        icon_color: "#00A67E",
         settings_config_json: r#"{"auth":{},"config":""}"#,
     },
     OfficialProviderSeed {

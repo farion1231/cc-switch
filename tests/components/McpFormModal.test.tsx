@@ -391,6 +391,7 @@ type = "stdio"
     expect(entry.apps).toEqual({
       claude: true,
       codex: false,
+      "codex-desktop": false,
       gemini: false,
       grokbuild: false,
       mcode: false,
@@ -441,6 +442,7 @@ type = "stdio"
     expect(entry.apps).toEqual({
       claude: false,
       codex: false,
+      "codex-desktop": false,
       gemini: false,
       grokbuild: false,
       opencode: false,
@@ -506,5 +508,26 @@ type = "stdio"
 
     resolveUpsert?.();
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+  });
+  it("仅启用 Codex Desktop 时不会启用 Codex", async () => {
+    renderForm({ defaultEnabledApps: ["codex-desktop"] });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "desktop-only" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: { value: '{"command":"echo"}' },
+    });
+    expect(
+      screen.getByLabelText("mcp.unifiedPanel.apps.codex-desktop"),
+    ).toBeChecked();
+    expect(
+      screen.getByLabelText("mcp.unifiedPanel.apps.codex"),
+    ).not.toBeChecked();
+    fireEvent.click(screen.getByText("common.add"));
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+    expect(upsertMock.mock.calls[0][0].apps).toMatchObject({
+      codex: false,
+      "codex-desktop": true,
+    });
   });
 });

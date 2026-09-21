@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Plus } from "lucide-react";
@@ -234,7 +235,7 @@ export function AddProviderDialog({
                 preset.endpointCandidates.forEach(addUrl);
               }
             }
-          } else if (appId === "codex") {
+          } else if (isCodexApp(appId)) {
             const presets = codexProviderPresets;
             const presetIndex = parseInt(values.presetId.replace("codex-", ""));
             if (
@@ -291,7 +292,7 @@ export function AddProviderDialog({
           if (env?.ANTHROPIC_BASE_URL) {
             addUrl(env.ANTHROPIC_BASE_URL);
           }
-        } else if (appId === "codex") {
+        } else if (isCodexApp(appId)) {
           const config = parsedConfig.config as string | undefined;
           if (config) {
             const extractedBaseUrl = extractCodexBaseUrl(config);

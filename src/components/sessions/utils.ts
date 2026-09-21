@@ -120,7 +120,7 @@ export const getProviderLabel = (
 
 // 根据 providerId 获取对应的图标名称
 export const getProviderIconName = (providerId: string) => {
-  if (providerId === "codex") return "openai";
+  if (providerId === "codex" || providerId === "codex-desktop") return "openai";
   if (providerId === "grokbuild") return "grok";
   if (providerId === "claude") return "claude";
   if (providerId === "mcode") return "minimax";

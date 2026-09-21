@@ -257,6 +257,10 @@ export const handlers = [
     success(true),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_codex_desktop_directory_conflict`, () =>
+    success(false),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_config_dir`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(app === "claude" ? "/default/claude" : "/default/codex");
@@ -350,6 +354,7 @@ export const handlers = [
     success({
       claude: false,
       codex: false,
+      codex_desktop: false,
       gemini: false,
       grokbuild: false,
     }),

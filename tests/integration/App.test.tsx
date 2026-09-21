@@ -1,7 +1,7 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
 import {
@@ -138,6 +138,9 @@ vi.mock("@/components/AppSwitcher", () => ({
       <span>{activeApp}</span>
       <button onClick={() => onSwitch("claude")}>switch-claude</button>
       <button onClick={() => onSwitch("codex")}>switch-codex</button>
+      <button onClick={() => onSwitch("codex-desktop")}>
+        switch-codex-desktop
+      </button>
       <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
     </div>
   ),
@@ -198,6 +201,11 @@ const renderApp = (AppComponent: ComponentType) => {
 };
 
 describe("App integration with MSW", () => {
+  let App: ComponentType;
+  beforeAll(async () => {
+    ({ default: App } = await import("@/App"));
+  }, 120_000);
+
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
@@ -208,8 +216,46 @@ describe("App integration with MSW", () => {
     localStorage.removeItem("cc-switch-last-app");
   });
 
+  it("restores Desktop selection and shows its directory conflict without selecting a provider", async () => {
+    localStorage.setItem("cc-switch-last-app", "codex-desktop");
+    setProviders("codex-desktop", {
+      "codex-desktop-official": {
+        id: "codex-desktop-official",
+        name: "OpenAI Official",
+        settingsConfig: { auth: {}, config: "" },
+        category: "official",
+      },
+    });
+    server.use(
+      http.post("http://tauri.local/get_codex_desktop_directory_conflict", () =>
+        HttpResponse.json(true),
+      ),
+    );
+    renderApp(App);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "firstRunNotice.confirm" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-desktop-official",
+      ),
+    );
+    expect(screen.getByTestId("provider-list").textContent).not.toContain(
+      "codex-1",
+    );
+    expect(screen.getByTestId("current-provider")).toHaveTextContent("");
+    expect(
+      await screen.findByText("codexDesktop.directoryConflict"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "codexDesktop.openDirectorySettings",
+      }),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem("cc-switch-last-app")).toBe("codex-desktop");
+  });
+
   it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -266,7 +312,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -326,7 +371,6 @@ describe("App integration with MSW", () => {
     setCurrentProviderId("openclaw", "deepseek");
     setLiveProviderIds("openclaw", ["deepseek-copy"]);
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(screen.getByText("switch-openclaw"));
@@ -376,7 +420,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -417,7 +460,6 @@ describe("App integration with MSW", () => {
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
       .mockRejectedValueOnce(new Error("broken config"));
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(screen.getByText("switch-openclaw"));
@@ -445,7 +487,6 @@ describe("App integration with MSW", () => {
 
   it("hosts the Skills check-update action in the App toolbar", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(
@@ -462,7 +503,6 @@ describe("App integration with MSW", () => {
 
   it("routes the Skills discover toolbar action through the panel guard", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(

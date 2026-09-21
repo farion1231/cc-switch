@@ -31,6 +31,7 @@ const DEFAULT_CODEX_COMMON_CONFIG_SNIPPET = `# Common Codex config
 # Add your common TOML configuration here`;
 
 interface UseCodexCommonConfigProps {
+  appId?: "codex" | "codex-desktop";
   codexConfig: string;
   onConfigChange: (config: string) => void;
   initialData?: {
@@ -45,6 +46,7 @@ interface UseCodexCommonConfigProps {
  * 从 config.json 读取和保存，支持从 localStorage 平滑迁移
  */
 export function useCodexCommonConfig({
+  appId = "codex",
   codexConfig,
   onConfigChange,
   initialData,
@@ -91,7 +93,7 @@ export function useCodexCommonConfig({
   useEffect(() => {
     hasInitializedNewMode.current = false;
     hasInitializedEditMode.current = false;
-  }, [selectedPresetId, initialEnabled]);
+  }, [appId, selectedPresetId, initialEnabled]);
 
   const parseCommonConfigSnippet = useCallback((snippetString: string) => {
     const trimmed = snippetString.trim();
@@ -120,11 +122,14 @@ export function useCodexCommonConfig({
   // 初始化：从 config.json 加载，支持从 localStorage 迁移
   useEffect(() => {
     let mounted = true;
+    setIsLoading(true);
+    setCommonConfigSnippetState(DEFAULT_CODEX_COMMON_CONFIG_SNIPPET);
+    tomlOpSeqRef.current += 1;
 
     const loadSnippet = async () => {
       try {
         // 使用统一 API 加载
-        const snippet = await configApi.getCommonConfigSnippet("codex");
+        const snippet = await configApi.getCommonConfigSnippet(appId);
 
         if (snippet && snippet.trim()) {
           if (mounted) {
@@ -132,13 +137,13 @@ export function useCodexCommonConfig({
           }
         } else {
           // 如果 config.json 中没有，尝试从 localStorage 迁移
-          if (typeof window !== "undefined") {
+          if (appId === "codex" && typeof window !== "undefined") {
             try {
               const legacySnippet =
                 window.localStorage.getItem(LEGACY_STORAGE_KEY);
               if (legacySnippet && legacySnippet.trim()) {
                 // 迁移到 config.json
-                await configApi.setCommonConfigSnippet("codex", legacySnippet);
+                await configApi.setCommonConfigSnippet(appId, legacySnippet);
                 if (mounted) {
                   setCommonConfigSnippetState(legacySnippet);
                 }
@@ -166,8 +171,9 @@ export function useCodexCommonConfig({
 
     return () => {
       mounted = false;
+      tomlOpSeqRef.current += 1;
     };
-  }, []);
+  }, [appId]);
 
   // 初始化时检查通用配置片段（编辑模式）
   useEffect(() => {
@@ -400,14 +406,12 @@ export function useCodexCommonConfig({
         }
 
         setCommonConfigSnippetState("");
-        configApi
-          .setCommonConfigSnippet("codex", "")
-          .catch((error: unknown) => {
-            console.error("保存 Codex 通用配置失败:", error);
-            setCommonConfigError(
-              t("codexConfig.saveFailed", { error: String(error) }),
-            );
-          });
+        configApi.setCommonConfigSnippet(appId, "").catch((error: unknown) => {
+          console.error("保存 Codex 通用配置失败:", error);
+          setCommonConfigError(
+            t("codexConfig.saveFailed", { error: String(error) }),
+          );
+        });
         return true;
       }
 
@@ -460,18 +464,17 @@ export function useCodexCommonConfig({
 
       setCommonConfigError("");
       setCommonConfigSnippetState(value);
-      configApi
-        .setCommonConfigSnippet("codex", value)
-        .catch((error: unknown) => {
-          console.error("保存 Codex 通用配置失败:", error);
-          setCommonConfigError(
-            t("codexConfig.saveFailed", { error: String(error) }),
-          );
-        });
+      configApi.setCommonConfigSnippet(appId, value).catch((error: unknown) => {
+        console.error("保存 Codex 通用配置失败:", error);
+        setCommonConfigError(
+          t("codexConfig.saveFailed", { error: String(error) }),
+        );
+      });
 
       return true;
     },
     [
+      appId,
       commonConfigSnippet,
       codexConfig,
       isTomlOpStale,
@@ -505,7 +508,7 @@ export function useCodexCommonConfig({
     setCommonConfigError("");
 
     try {
-      const extracted = await configApi.extractCommonConfigSnippet("codex", {
+      const extracted = await configApi.extractCommonConfigSnippet(appId, {
         settingsConfig: JSON.stringify({
           config: codexConfig ?? "",
         }),
@@ -520,7 +523,7 @@ export function useCodexCommonConfig({
       setCommonConfigSnippetState(extracted);
 
       // 保存到后端
-      await configApi.setCommonConfigSnippet("codex", extracted);
+      await configApi.setCommonConfigSnippet(appId, extracted);
     } catch (error) {
       console.error("提取 Codex 通用配置失败:", error);
       setCommonConfigError(
@@ -529,7 +532,7 @@ export function useCodexCommonConfig({
     } finally {
       setIsExtracting(false);
     }
-  }, [codexConfig, t]);
+  }, [appId, codexConfig, t]);
 
   const clearCommonConfigError = useCallback(() => {
     setCommonConfigError("");

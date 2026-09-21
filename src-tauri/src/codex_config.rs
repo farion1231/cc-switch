@@ -15,6 +15,65 @@ use std::fs;
 use std::process::{Command, Stdio};
 use toml_edit::DocumentMut;
 
+/// Compare the actual directories, including junctions/symlinks and Windows path aliases.
+pub(crate) fn normalized_target_path(path: &Path) -> String {
+    let resolved = path.canonicalize().unwrap_or_else(|_| {
+        let mut missing = Vec::new();
+        let mut parent = path;
+        while !parent.exists() {
+            if let Some(name) = parent.file_name() {
+                missing.push(name.to_owned());
+            }
+            let Some(next) = parent.parent() else { break };
+            parent = next;
+        }
+        let mut result = parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf());
+        for component in missing.iter().rev() {
+            result.push(component);
+        }
+        result
+    });
+    let value = resolved.to_string_lossy().replace('\\', "/");
+    let value = value
+        .trim_start_matches("//?/")
+        .trim_end_matches('/')
+        .to_string();
+    if cfg!(windows) {
+        value.to_lowercase()
+    } else {
+        value
+    }
+}
+
+pub fn codex_desktop_directory_conflict() -> bool {
+    use crate::app_config::AppType;
+    normalized_target_path(&get_codex_config_dir_for_app(&AppType::Codex))
+        == normalized_target_path(&get_codex_config_dir_for_app(&AppType::CodexDesktop))
+}
+
+pub fn parse_codex_app(app: Option<&str>) -> Result<crate::AppType, AppError> {
+    let app: crate::AppType = app.unwrap_or("codex").parse()?;
+    if !app.is_codex() {
+        return Err(AppError::InvalidInput(
+            "Expected codex or codex-desktop".into(),
+        ));
+    }
+    Ok(app)
+}
+
+pub fn ensure_codex_target_writable(app: &crate::app_config::AppType) -> Result<(), AppError> {
+    if *app == crate::app_config::AppType::CodexDesktop && codex_desktop_directory_conflict() {
+        return Err(AppError::localized(
+            "codex_desktop.directory_conflict",
+            "Codex Desktop 与 Codex 使用同一配置目录，请先在设置中为它们选择不同的目录",
+            "Codex Desktop and Codex use the same configuration directory. Choose separate directories in Settings first.",
+        ));
+    }
+    Ok(())
+}
+
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// Temporary model-provider id used while the built-in `codex-official`
 /// provider is routed through CC Switch.  A dedicated id is an ownership
@@ -33,7 +92,12 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 // on Windows. Tests deliberately bypass the global cache because they isolate
 // CODEX_HOME and seed different model templates.
 #[cfg(not(test))]
-static CODEX_MODEL_CATALOG_TEMPLATE_CACHE: OnceCell<Value> = OnceCell::new();
+type CodexModelTemplateCache =
+    std::collections::HashMap<(crate::AppType, PathBuf), OnceCell<Value>>;
+#[cfg(not(test))]
+static CODEX_MODEL_CATALOG_TEMPLATE_CACHE: once_cell::sync::Lazy<
+    std::sync::Mutex<CodexModelTemplateCache>,
+> = once_cell::sync::Lazy::new(Default::default);
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
@@ -237,8 +301,13 @@ impl CodexLiveFileState {
 pub(crate) struct CodexModelCatalogFileSnapshot(CodexLiveFileState);
 
 impl CodexModelCatalogFileSnapshot {
+    #[allow(dead_code)]
     pub(crate) fn capture() -> Result<Self, AppError> {
-        CodexLiveFileState::capture(get_codex_model_catalog_path()).map(Self)
+        Self::capture_for_app(&crate::app_config::AppType::Codex)
+    }
+
+    pub(crate) fn capture_for_app(app: &crate::app_config::AppType) -> Result<Self, AppError> {
+        CodexLiveFileState::capture(get_codex_model_catalog_path_for_app(app)).map(Self)
     }
 
     pub(crate) fn restore(&self) -> Result<(), AppError> {
@@ -257,13 +326,18 @@ pub(crate) struct CodexLiveStateSnapshot {
 }
 
 impl CodexLiveStateSnapshot {
+    #[allow(dead_code)]
     pub(crate) fn capture() -> Result<Self, AppError> {
+        Self::capture_for_app(&crate::app_config::AppType::Codex)
+    }
+
+    pub(crate) fn capture_for_app(app: &crate::app_config::AppType) -> Result<Self, AppError> {
         Ok(Self {
-            auth: CodexLiveFileState::capture(get_codex_auth_path())?,
-            config: CodexLiveFileState::capture(get_codex_config_path())?,
-            catalog: CodexLiveFileState::capture(get_codex_model_catalog_path())?,
+            auth: CodexLiveFileState::capture(get_codex_auth_path_for_app(app))?,
+            config: CodexLiveFileState::capture(get_codex_config_path_for_app(app))?,
+            catalog: CodexLiveFileState::capture(get_codex_model_catalog_path_for_app(app))?,
             managed_marker: CodexLiveFileState::capture(
-                get_codex_managed_oauth_live_auth_marker_path(),
+                get_codex_managed_oauth_live_auth_marker_path_for_app(app),
             )?,
         })
     }
@@ -278,7 +352,7 @@ impl CodexLiveStateSnapshot {
     /// The marker follows auth as one generation bundle.
     pub(crate) fn restore_preserving_newer_same_account_auth(&self) -> Result<(), AppError> {
         let mut failures = Vec::new();
-        let current_auth = match CodexLiveFileState::capture(get_codex_auth_path()) {
+        let current_auth = match CodexLiveFileState::capture(self.auth.path.clone()) {
             Ok(state) => Some(state),
             Err(error) => {
                 // Inspection failure must not prevent config/catalog and the
@@ -287,14 +361,13 @@ impl CodexLiveStateSnapshot {
                 None
             }
         };
-        let current_marker =
-            match CodexLiveFileState::capture(get_codex_managed_oauth_live_auth_marker_path()) {
-                Ok(state) => Some(state),
-                Err(error) => {
-                    failures.push(format!("inspect current managed marker: {error}"));
-                    None
-                }
-            };
+        let current_marker = match CodexLiveFileState::capture(self.managed_marker.path.clone()) {
+            Ok(state) => Some(state),
+            Err(error) => {
+                failures.push(format!("inspect current managed marker: {error}"));
+                None
+            }
+        };
         let snapshot_generation = Self::chatgpt_auth_generation(&self.auth, &self.managed_marker);
         let current_generation = current_auth
             .as_ref()
@@ -445,26 +518,56 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
 ];
 
 /// 获取 Codex 配置目录路径
+#[allow(dead_code)]
 pub fn get_codex_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_codex_override_dir() {
-        return custom;
-    }
+    get_codex_config_dir_for_app(&crate::app_config::AppType::Codex)
+}
 
-    get_home_dir().join(".codex")
+pub fn get_codex_config_dir_for_app(app: &crate::app_config::AppType) -> PathBuf {
+    let custom = if *app == crate::AppType::CodexDesktop {
+        crate::settings::get_codex_desktop_override_dir()
+    } else {
+        crate::settings::get_codex_override_dir()
+    };
+    custom.unwrap_or_else(|| get_home_dir().join(".codex"))
 }
 
 /// 获取 Codex auth.json 路径
+#[allow(dead_code)]
 pub fn get_codex_auth_path() -> PathBuf {
-    get_codex_config_dir().join("auth.json")
+    get_codex_auth_path_for_app(&crate::app_config::AppType::Codex)
 }
 
+pub fn get_codex_auth_path_for_app(app: &crate::app_config::AppType) -> PathBuf {
+    get_codex_config_dir_for_app(app).join("auth.json")
+}
+
+#[allow(dead_code)]
 fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
-    crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
+    get_codex_managed_oauth_live_auth_marker_path_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn get_codex_managed_oauth_live_auth_marker_path_for_app(
+    app: &crate::app_config::AppType,
+) -> PathBuf {
+    crate::config::get_app_config_dir().join(if *app == crate::app_config::AppType::CodexDesktop {
+        "codex_desktop_managed_oauth_live_auth.json"
+    } else {
+        CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME
+    })
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
-    get_codex_managed_oauth_live_auth_marker_path().exists()
+    codex_managed_oauth_live_auth_marker_exists_for_app(&crate::app_config::AppType::Codex)
+}
+
+#[cfg(test)]
+pub(crate) fn codex_managed_oauth_live_auth_marker_exists_for_app(
+    app: &crate::app_config::AppType,
+) -> bool {
+    get_codex_managed_oauth_live_auth_marker_path_for_app(app).exists()
 }
 
 /// 从 live/备份的 Codex `auth` 中提取上游 ChatGPT workspace ID。
@@ -601,10 +704,24 @@ pub fn codex_managed_oauth_auth_value(
     })
 }
 
+#[allow(dead_code)]
 pub fn record_codex_managed_oauth_live_auth(
     auth: &Value,
     managed_account_id: &str,
 ) -> Result<(), AppError> {
+    record_codex_managed_oauth_live_auth_for_app(
+        &crate::app_config::AppType::Codex,
+        auth,
+        managed_account_id,
+    )
+}
+
+pub fn record_codex_managed_oauth_live_auth_for_app(
+    app: &crate::app_config::AppType,
+    auth: &Value,
+    managed_account_id: &str,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
     let managed_account_id = managed_account_id.trim();
     let Some(chatgpt_account_id) = extract_codex_managed_oauth_account_id(auth) else {
         return Ok(());
@@ -625,15 +742,34 @@ pub fn record_codex_managed_oauth_live_auth(
         chatgpt_account_id: Some(chatgpt_account_id),
         user_identity: Some(user_identity),
     };
-    crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
+    crate::config::write_json_file(
+        &get_codex_managed_oauth_live_auth_marker_path_for_app(app),
+        &marker,
+    )
 }
 
+#[allow(dead_code)]
 fn migrate_legacy_codex_managed_oauth_live_auth_marker(
     auth: &Value,
     managed_account_id: &str,
     managed_id_token: Option<&str>,
 ) -> Result<(), AppError> {
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    migrate_legacy_codex_managed_oauth_live_auth_marker_for_app(
+        &crate::app_config::AppType::Codex,
+        auth,
+        managed_account_id,
+        managed_id_token,
+    )
+}
+
+fn migrate_legacy_codex_managed_oauth_live_auth_marker_for_app(
+    app: &crate::app_config::AppType,
+    auth: &Value,
+    managed_account_id: &str,
+    managed_id_token: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path_for_app(app);
     if !marker_path.exists() {
         return Ok(());
     }
@@ -654,25 +790,57 @@ fn migrate_legacy_codex_managed_oauth_live_auth_marker(
         )));
     }
 
-    record_codex_managed_oauth_live_auth(auth, managed_account_id)
+    record_codex_managed_oauth_live_auth_for_app(app, auth, managed_account_id)
 }
 
 /// Before removing a manager record, make any legacy live-auth ownership
 /// provable with the manager's persisted user identity. Failure is surfaced so
 /// callers keep the manager record and marker instead of orphaning auth.json.
+#[allow(dead_code)]
 pub(crate) fn prepare_codex_live_auth_for_managed_account_removal(
     managed_account_id: &str,
     managed_id_token: Option<&str>,
 ) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
+    prepare_codex_live_auth_for_managed_account_removal_for_app(
+        &crate::app_config::AppType::Codex,
+        managed_account_id,
+        managed_id_token,
+    )
+}
+
+pub(crate) fn prepare_codex_live_auth_for_managed_account_removal_for_app(
+    app: &crate::app_config::AppType,
+    managed_account_id: &str,
+    managed_id_token: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return Ok(());
     }
     let auth: Value = read_json_file(&auth_path)?;
-    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, managed_account_id, managed_id_token)
+    migrate_legacy_codex_managed_oauth_live_auth_marker_for_app(
+        app,
+        &auth,
+        managed_account_id,
+        managed_id_token,
+    )
 }
 
+#[allow(dead_code)]
 pub fn codex_auth_matches_recorded_managed_oauth(
+    auth: &Value,
+    account_id: &str,
+) -> Result<bool, AppError> {
+    codex_auth_matches_recorded_managed_oauth_for_app(
+        &crate::app_config::AppType::Codex,
+        auth,
+        account_id,
+    )
+}
+
+pub fn codex_auth_matches_recorded_managed_oauth_for_app(
+    app: &crate::app_config::AppType,
     auth: &Value,
     account_id: &str,
 ) -> Result<bool, AppError> {
@@ -685,7 +853,7 @@ pub fn codex_auth_matches_recorded_managed_oauth(
         return Ok(false);
     };
     let auth_user_identity = extract_codex_auth_user_identity(auth);
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path_for_app(app);
     let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
         Ok(marker) => marker,
         Err(err) => {
@@ -717,16 +885,29 @@ pub fn codex_auth_matches_recorded_managed_oauth(
 /// Verify that a proxied Codex request still uses the exact live access token
 /// owned by the selected local account. Workspace IDs alone are not sufficient:
 /// different Team users can share one value.
+#[allow(dead_code)]
 pub(crate) fn codex_live_auth_matches_managed_request(
     account_id: &str,
     request_access_token: &str,
 ) -> Result<bool, AppError> {
-    let auth_path = get_codex_auth_path();
+    codex_live_auth_matches_managed_request_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+        request_access_token,
+    )
+}
+
+pub(crate) fn codex_live_auth_matches_managed_request_for_app(
+    app: &crate::app_config::AppType,
+    account_id: &str,
+    request_access_token: &str,
+) -> Result<bool, AppError> {
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return Ok(false);
     }
     let auth: Value = read_json_file(&auth_path)?;
-    if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
+    if !codex_auth_matches_recorded_managed_oauth_for_app(app, &auth, account_id)? {
         return Ok(false);
     }
     let live_access_token = auth
@@ -737,10 +918,21 @@ pub(crate) fn codex_live_auth_matches_managed_request(
     Ok(live_access_token == Some(request_access_token.trim()))
 }
 
+#[allow(dead_code)]
 pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
     account_id: &str,
 ) -> Result<(), AppError> {
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    clear_codex_managed_oauth_live_auth_marker_for_account_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+    )
+}
+
+pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account_for_app(
+    app: &crate::app_config::AppType,
+    account_id: &str,
+) -> Result<(), AppError> {
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path_for_app(app);
     if !marker_path.exists() {
         return Ok(());
     }
@@ -770,17 +962,42 @@ pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
 /// 删除谓词同时校验 cc-switch marker 中的本地账号 ID 与原生 auth.json 中的
 /// workspace ID，不依赖会被 Codex CLI 自刷新破坏的 access-token 指纹。切换路径必须
 /// 先把盘上轮换后的 refresh token 采纳回 manager，再调用本函数。
+#[allow(dead_code)]
 pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
-    clear_codex_live_auth_for_managed_account_if_unchanged(account_id, None)
+    clear_codex_live_auth_for_managed_account_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+    )
+}
+
+pub fn clear_codex_live_auth_for_managed_account_for_app(
+    app: &crate::app_config::AppType,
+    account_id: &str,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    clear_codex_live_auth_for_managed_account_if_unchanged_for_app(app, account_id, None)
 }
 
 /// Verify that the outgoing account's live refresh generation has not changed
 /// since it was adopted into the OAuth manager.
+#[allow(dead_code)]
 pub fn ensure_codex_live_auth_unchanged_for_managed_account(
     account_id: &str,
     expected_refresh_token: &str,
 ) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
+    ensure_codex_live_auth_unchanged_for_managed_account_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+        expected_refresh_token,
+    )
+}
+
+pub fn ensure_codex_live_auth_unchanged_for_managed_account_for_app(
+    app: &crate::app_config::AppType,
+    account_id: &str,
+    expected_refresh_token: &str,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return Err(AppError::Message(format!(
             "Codex CLI 账号 {account_id} 的 live auth 已在切换期间被移除，请重试"
@@ -791,7 +1008,7 @@ pub fn ensure_codex_live_auth_unchanged_for_managed_account(
         .pointer("/tokens/refresh_token")
         .and_then(Value::as_str)
         .map(str::trim);
-    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id)
+    if !codex_live_auth_is_managed_chatgpt_login_for_app(app, &auth, account_id)
         || current_refresh_token != Some(expected_refresh_token.trim())
     {
         return Err(AppError::Message(format!(
@@ -802,15 +1019,30 @@ pub fn ensure_codex_live_auth_unchanged_for_managed_account(
 }
 
 /// Content-based cleanup with an optional compare-before-delete guard.
+#[allow(dead_code)]
 pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
     account_id: &str,
     expected_refresh_token: Option<&str>,
 ) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
+    clear_codex_live_auth_for_managed_account_if_unchanged_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+        expected_refresh_token,
+    )
+}
+
+pub fn clear_codex_live_auth_for_managed_account_if_unchanged_for_app(
+    app: &crate::app_config::AppType,
+    account_id: &str,
+    expected_refresh_token: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    ensure_codex_target_writable(app)?;
+    let auth_path = get_codex_auth_path_for_app(app);
     let mut removed_matching_auth = false;
     if auth_path.exists() {
         let auth: Value = read_json_file(&auth_path)?;
-        if codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+        if codex_live_auth_is_managed_chatgpt_login_for_app(app, &auth, account_id) {
             if let Some(expected_refresh_token) = expected_refresh_token {
                 let current_refresh_token = auth
                     .pointer("/tokens/refresh_token")
@@ -830,9 +1062,9 @@ pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
     if removed_matching_auth {
         // Once the matching live file is gone, any marker is stale regardless
         // of version or parseability.
-        delete_file(&get_codex_managed_oauth_live_auth_marker_path())?;
+        delete_file(&get_codex_managed_oauth_live_auth_marker_path_for_app(app))?;
     } else {
-        clear_codex_managed_oauth_live_auth_marker_for_account(account_id)?;
+        clear_codex_managed_oauth_live_auth_marker_for_account_for_app(app, account_id)?;
     }
     Ok(())
 }
@@ -843,8 +1075,21 @@ pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
 /// 命中 cc-switch marker 中的本地账号 ID，不能只按 auth.json 内容判断。
 ///
 /// 用于 Live 备份剥离：避免把托管账号的可刷新 token 持久化进备份配置。
+#[allow(dead_code)]
 pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) -> bool {
-    codex_auth_matches_recorded_managed_oauth(auth, account_id).unwrap_or(false)
+    codex_live_auth_is_managed_chatgpt_login_for_app(
+        &crate::app_config::AppType::Codex,
+        auth,
+        account_id,
+    )
+}
+
+pub fn codex_live_auth_is_managed_chatgpt_login_for_app(
+    app: &crate::app_config::AppType,
+    auth: &Value,
+    account_id: &str,
+) -> bool {
+    codex_auth_matches_recorded_managed_oauth_for_app(app, auth, account_id).unwrap_or(false)
 }
 
 /// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /
@@ -852,21 +1097,29 @@ pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) 
 ///
 /// 用于切换回托管 provider 前，采纳 CLI 自行刷新时轮换出的最新 refresh_token，避免
 /// 用陈腐 token 覆盖 CLI 的有效登录（“裸跑 codex” 反复切换场景）。
+#[allow(dead_code)]
 pub fn read_codex_live_auth_refresh_for_account(
+    account_id: &str,
+) -> Option<(String, Option<String>, Option<i64>)> {
+    read_codex_live_auth_refresh_for_account_for_app(&crate::app_config::AppType::Codex, account_id)
+}
+
+pub fn read_codex_live_auth_refresh_for_account_for_app(
+    app: &crate::app_config::AppType,
     account_id: &str,
 ) -> Option<(String, Option<String>, Option<i64>)> {
     let account_id = account_id.trim();
     if account_id.is_empty() {
         return None;
     }
-    let auth_path = get_codex_auth_path();
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return None;
     }
     let auth: Value = read_json_file(&auth_path).ok()?;
     // 仅在磁盘上确是「该 account_id 的 ChatGPT 登录」时才采纳其 refresh_token，
     // 避免从非 chatgpt/异常 auth 里误取 token。
-    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+    if !codex_live_auth_is_managed_chatgpt_login_for_app(app, &auth, account_id) {
         return None;
     }
     let tokens = auth.get("tokens")?.as_object()?;
@@ -890,7 +1143,20 @@ pub fn read_codex_live_auth_refresh_for_account(
 /// v1/v2 markers only identify a workspace, so the manager's persisted
 /// id_token must prove the live user's identity before the marker can become
 /// authoritative again.
+#[allow(dead_code)]
 pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
+    account_id: &str,
+    managed_id_token: Option<&str>,
+) -> Result<Option<CodexManagedLiveRefresh>, AppError> {
+    read_codex_live_auth_refresh_for_managed_account_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+        managed_id_token,
+    )
+}
+
+pub(crate) fn read_codex_live_auth_refresh_for_managed_account_for_app(
+    app: &crate::app_config::AppType,
     account_id: &str,
     managed_id_token: Option<&str>,
 ) -> Result<Option<CodexManagedLiveRefresh>, AppError> {
@@ -898,17 +1164,22 @@ pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
     if account_id.is_empty() {
         return Ok(None);
     }
-    let auth_path = get_codex_auth_path();
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return Ok(None);
     }
     let auth: Value = read_json_file(&auth_path)?;
-    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, account_id, managed_id_token)?;
-    if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
+    migrate_legacy_codex_managed_oauth_live_auth_marker_for_app(
+        app,
+        &auth,
+        account_id,
+        managed_id_token,
+    )?;
+    if !codex_auth_matches_recorded_managed_oauth_for_app(app, &auth, account_id)? {
         return Ok(None);
     }
     let Some((refresh_token, id_token, last_refresh_ms)) =
-        read_codex_live_auth_refresh_for_account(account_id)
+        read_codex_live_auth_refresh_for_account_for_app(app, account_id)
     else {
         return Ok(None);
     };
@@ -932,23 +1203,39 @@ pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
 /// check-to-replace window.
 /// Ownership is local-account scoped through the marker, while auth.json keeps
 /// the upstream workspace ID required by Codex.
+#[allow(dead_code)]
 pub fn sync_codex_managed_oauth_live_auth_after_refresh(
     account_id: &str,
     expected_refresh_token: &str,
     refreshed_auth: &Value,
 ) -> Result<bool, AppError> {
+    sync_codex_managed_oauth_live_auth_after_refresh_for_app(
+        &crate::app_config::AppType::Codex,
+        account_id,
+        expected_refresh_token,
+        refreshed_auth,
+    )
+}
+
+pub fn sync_codex_managed_oauth_live_auth_after_refresh_for_app(
+    app: &crate::app_config::AppType,
+    account_id: &str,
+    expected_refresh_token: &str,
+    refreshed_auth: &Value,
+) -> Result<bool, AppError> {
+    ensure_codex_target_writable(app)?;
     let account_id = account_id.trim();
     let expected_refresh_token = expected_refresh_token.trim();
     if account_id.is_empty() || expected_refresh_token.is_empty() {
         return Ok(false);
     }
 
-    let auth_path = get_codex_auth_path();
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return Ok(false);
     }
     let current_auth: Value = read_json_file(&auth_path)?;
-    if !codex_live_auth_is_managed_chatgpt_login(&current_auth, account_id) {
+    if !codex_live_auth_is_managed_chatgpt_login_for_app(app, &current_auth, account_id) {
         return Ok(false);
     }
     let current_refresh_token = current_auth
@@ -959,24 +1246,34 @@ pub fn sync_codex_managed_oauth_live_auth_after_refresh(
         return Ok(false);
     }
 
-    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path_for_app(app);
     let was_recorded_managed = marker_path.exists()
-        && codex_auth_matches_recorded_managed_oauth(&current_auth, account_id)?;
+        && codex_auth_matches_recorded_managed_oauth_for_app(app, &current_auth, account_id)?;
 
     write_json_file(&auth_path, refreshed_auth)?;
     if was_recorded_managed {
-        record_codex_managed_oauth_live_auth(refreshed_auth, account_id)?;
+        record_codex_managed_oauth_live_auth_for_app(app, refreshed_auth, account_id)?;
     }
     Ok(true)
 }
 
 /// 获取 Codex config.toml 路径
+#[allow(dead_code)]
 pub fn get_codex_config_path() -> PathBuf {
-    get_codex_config_dir().join("config.toml")
+    get_codex_config_path_for_app(&crate::app_config::AppType::Codex)
 }
 
+pub fn get_codex_config_path_for_app(app: &crate::app_config::AppType) -> PathBuf {
+    get_codex_config_dir_for_app(app).join("config.toml")
+}
+
+#[allow(dead_code)]
 pub fn get_codex_model_catalog_path() -> PathBuf {
-    get_codex_config_dir().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+    get_codex_model_catalog_path_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn get_codex_model_catalog_path_for_app(app: &crate::app_config::AppType) -> PathBuf {
+    get_codex_config_dir_for_app(app).join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
 }
 
 /// 获取 Codex 供应商配置文件路径
@@ -985,12 +1282,24 @@ pub fn get_codex_provider_paths(
     provider_id: &str,
     provider_name: Option<&str>,
 ) -> (PathBuf, PathBuf) {
+    get_codex_provider_paths_for_app(
+        &crate::app_config::AppType::Codex,
+        provider_id,
+        provider_name,
+    )
+}
+
+pub fn get_codex_provider_paths_for_app(
+    app: &crate::app_config::AppType,
+    provider_id: &str,
+    provider_name: Option<&str>,
+) -> (PathBuf, PathBuf) {
     let base_name = provider_name
         .map(sanitize_provider_name)
         .unwrap_or_else(|| sanitize_provider_name(provider_id));
 
-    let auth_path = get_codex_config_dir().join(format!("auth-{base_name}.json"));
-    let config_path = get_codex_config_dir().join(format!("config-{base_name}.toml"));
+    let auth_path = get_codex_config_dir_for_app(app).join(format!("auth-{base_name}.json"));
+    let config_path = get_codex_config_dir_for_app(app).join(format!("config-{base_name}.toml"));
 
     (auth_path, config_path)
 }
@@ -1001,7 +1310,21 @@ pub fn delete_codex_provider_config(
     provider_id: &str,
     provider_name: &str,
 ) -> Result<(), AppError> {
-    let (auth_path, config_path) = get_codex_provider_paths(provider_id, Some(provider_name));
+    delete_codex_provider_config_for_app(
+        &crate::app_config::AppType::Codex,
+        provider_id,
+        provider_name,
+    )
+}
+
+pub fn delete_codex_provider_config_for_app(
+    app: &crate::app_config::AppType,
+    provider_id: &str,
+    provider_name: &str,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    let (auth_path, config_path) =
+        get_codex_provider_paths_for_app(app, provider_id, Some(provider_name));
 
     delete_file(&auth_path).ok();
     delete_file(&config_path).ok();
@@ -1010,12 +1333,22 @@ pub fn delete_codex_provider_config(
 }
 
 /// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
+#[allow(dead_code)]
 pub fn write_codex_live_atomic(
     auth: &Value,
     config_text_opt: Option<&str>,
 ) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
-    let config_path = get_codex_config_path();
+    write_codex_live_atomic_for_app(&crate::app_config::AppType::Codex, auth, config_text_opt)
+}
+
+pub fn write_codex_live_atomic_for_app(
+    app: &crate::app_config::AppType,
+    auth: &Value,
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    let auth_path = get_codex_auth_path_for_app(app);
+    let config_path = get_codex_config_path_for_app(app);
 
     if let Some(parent) = auth_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -1060,8 +1393,15 @@ pub fn write_codex_live_atomic(
 }
 
 /// 读取 `~/.codex/config.toml`，若不存在返回空字符串
+#[allow(dead_code)]
 pub fn read_codex_config_text() -> Result<String, AppError> {
-    let path = get_codex_config_path();
+    read_codex_config_text_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn read_codex_config_text_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<String, AppError> {
+    let path = get_codex_config_path_for_app(app);
     if path.exists() {
         std::fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))
     } else {
@@ -1080,8 +1420,15 @@ pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
 }
 
 /// 读取并校验 `~/.codex/config.toml`，返回文本（可能为空）
+#[allow(dead_code)]
 pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
-    let s = read_codex_config_text()?;
+    read_and_validate_codex_config_text_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn read_and_validate_codex_config_text_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<String, AppError> {
+    let s = read_codex_config_text_for_app(app)?;
     validate_config_toml(&s)?;
     Ok(s)
 }
@@ -1108,8 +1455,17 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 /// Codex login state lives in `auth.json`; provider routing, endpoint, model,
 /// and provider-scoped bearer tokens live in `config.toml`. Provider switches
 /// should not overwrite the user's ChatGPT login cache.
+#[allow(dead_code)]
 pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
-    let config_path = get_codex_config_path();
+    write_codex_live_config_atomic_for_app(&crate::app_config::AppType::Codex, config_text_opt)
+}
+
+pub fn write_codex_live_config_atomic_for_app(
+    app: &crate::app_config::AppType,
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    let config_path = get_codex_config_path_for_app(app);
     let cfg_text = match config_text_opt {
         Some(config_text) => config_text.to_string(),
         None => String::new(),
@@ -1410,15 +1766,27 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
 /// safety depends on it — do not align the two guards.
 ///
 /// Returns Ok(true) when the file was deleted.
+#[allow(dead_code)]
 pub fn clear_stale_codex_live_auth_after_official_switch(
     db_auth: &Value,
 ) -> Result<bool, AppError> {
+    clear_stale_codex_live_auth_after_official_switch_for_app(
+        &crate::app_config::AppType::Codex,
+        db_auth,
+    )
+}
+
+pub fn clear_stale_codex_live_auth_after_official_switch_for_app(
+    app: &crate::app_config::AppType,
+    db_auth: &Value,
+) -> Result<bool, AppError> {
+    ensure_codex_target_writable(app)?;
     if codex_auth_has_login_material(db_auth) {
         // A material-carrying official provider gets a full auth write;
         // nothing stale can remain.
         return Ok(false);
     }
-    let auth_path = get_codex_auth_path();
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return Ok(false);
     }
@@ -1790,8 +2158,15 @@ fn find_codex_model_template(catalog: &Value) -> Option<Value> {
         .cloned()
 }
 
+#[allow(dead_code)]
 fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
-    let path = get_codex_config_dir().join("models_cache.json");
+    load_codex_model_template_from_cache_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn load_codex_model_template_from_cache_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<Option<Value>, AppError> {
+    let path = get_codex_config_dir_for_app(app).join("models_cache.json");
     if !path.exists() {
         return Ok(None);
     }
@@ -2213,9 +2588,16 @@ fn fill_template_fields_from_static(template: &mut Value) {
     }
 }
 
+#[allow(dead_code)]
 fn load_codex_model_catalog_template_uncached() -> Result<Value, AppError> {
+    load_codex_model_catalog_template_uncached_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn load_codex_model_catalog_template_uncached_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<Value, AppError> {
     // ① models_cache.json (created by Codex when it connects to OpenAI)
-    if let Some(mut template) = load_codex_model_template_from_cache()? {
+    if let Some(mut template) = load_codex_model_template_from_cache_for_app(app)? {
         fill_template_fields_from_static(&mut template);
         return Ok(template);
     }
@@ -2245,16 +2627,37 @@ where
 }
 
 #[cfg(not(test))]
+#[allow(dead_code)]
 fn load_codex_model_catalog_template() -> Result<Value, AppError> {
-    get_or_load_codex_model_catalog_template(
-        &CODEX_MODEL_CATALOG_TEMPLATE_CACHE,
-        load_codex_model_catalog_template_uncached,
-    )
+    load_codex_model_catalog_template_for_app(&crate::app_config::AppType::Codex)
+}
+
+#[cfg(not(test))]
+fn load_codex_model_catalog_template_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<Value, AppError> {
+    let mut caches = CODEX_MODEL_CATALOG_TEMPLATE_CACHE
+        .lock()
+        .map_err(|e| AppError::Lock(e.to_string()))?;
+    let cache = caches
+        .entry((app.clone(), get_codex_config_dir_for_app(app)))
+        .or_default();
+    get_or_load_codex_model_catalog_template(cache, || {
+        load_codex_model_catalog_template_uncached_for_app(app)
+    })
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn load_codex_model_catalog_template() -> Result<Value, AppError> {
-    load_codex_model_catalog_template_uncached()
+    load_codex_model_catalog_template_for_app(&crate::app_config::AppType::Codex)
+}
+
+#[cfg(test)]
+fn load_codex_model_catalog_template_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<Value, AppError> {
+    load_codex_model_catalog_template_uncached_for_app(app)
 }
 
 fn codex_model_catalog_from_specs(
@@ -2274,7 +2677,22 @@ fn codex_model_catalog_from_specs(
     json!({ "models": entries })
 }
 
+#[allow(dead_code)]
 fn codex_model_catalog_from_settings(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<Option<Value>, AppError> {
+    codex_model_catalog_from_settings_for_app(
+        &crate::app_config::AppType::Codex,
+        settings,
+        config_text,
+        profile,
+    )
+}
+
+fn codex_model_catalog_from_settings_for_app(
+    app: &crate::app_config::AppType,
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
@@ -2308,7 +2726,7 @@ fn codex_model_catalog_from_settings(
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
-        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
+        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template_for_app(app)?,
     };
     Ok(Some(codex_model_catalog_from_specs(
         &specs,
@@ -2396,14 +2814,32 @@ fn set_codex_native_web_search_field(config_text: &str, disable: bool) -> Result
 
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
+#[allow(dead_code)]
 pub fn prepare_codex_config_text_with_model_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
-    let catalog_path = get_codex_model_catalog_path();
+    prepare_codex_config_text_with_model_catalog_for_app(
+        &crate::app_config::AppType::Codex,
+        settings,
+        config_text,
+        profile,
+    )
+}
 
-    if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
+pub fn prepare_codex_config_text_with_model_catalog_for_app(
+    app: &crate::app_config::AppType,
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<String, AppError> {
+    ensure_codex_target_writable(app)?;
+    let catalog_path = get_codex_model_catalog_path_for_app(app);
+
+    if let Some(catalog) =
+        codex_model_catalog_from_settings_for_app(app, settings, config_text, profile)?
+    {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
@@ -2458,9 +2894,16 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// 避免指向外部大文件时耗尽内存。
 const MAX_CODEX_CATALOG_BYTES: u64 = 32 * 1024 * 1024;
 
+#[allow(dead_code)]
 pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, AppError> {
-    let config_text = read_codex_config_text()?;
-    let config_dir = get_codex_config_dir();
+    read_codex_model_catalog_simplified_from_live_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn read_codex_model_catalog_simplified_from_live_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<Option<Value>, AppError> {
+    let config_text = read_codex_config_text_for_app(app)?;
+    let config_dir = get_codex_config_dir_for_app(app);
     let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &config_dir) else {
         return Ok(None);
     };
@@ -2676,18 +3119,34 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
 /// `modelCatalog` with empty `auth.json` (the API key living in the config's
 /// `experimental_bearer_token`), so the caller must decide config projection
 /// independently of whether it writes or deletes `auth.json`.
+#[allow(dead_code)]
 pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
+    prepare_codex_live_config_text_with_optional_catalog_for_app(
+        &crate::app_config::AppType::Codex,
+        settings,
+        config_text,
+        profile,
+    )
+}
+
+pub fn prepare_codex_live_config_text_with_optional_catalog_for_app(
+    app: &crate::app_config::AppType,
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<String, AppError> {
     if settings.get("modelCatalog").is_some() {
-        prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
+        prepare_codex_config_text_with_model_catalog_for_app(app, settings, config_text, profile)
     } else {
         Ok(config_text.to_string())
     }
 }
 
+#[allow(dead_code)]
 pub fn write_codex_provider_live_with_catalog(
     settings: &Value,
     category: Option<&str>,
@@ -2695,11 +3154,31 @@ pub fn write_codex_provider_live_with_catalog(
     config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
 ) -> Result<(), AppError> {
+    write_codex_provider_live_with_catalog_for_app(
+        &crate::app_config::AppType::Codex,
+        settings,
+        category,
+        auth,
+        config_text,
+        profile,
+    )
+}
+
+pub fn write_codex_provider_live_with_catalog_for_app(
+    app: &crate::app_config::AppType,
+    settings: &Value,
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    profile: CodexCatalogToolProfile,
+) -> Result<(), AppError> {
     let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
+        .map(|text| {
+            prepare_codex_config_text_with_model_catalog_for_app(app, settings, text, profile)
+        })
         .transpose()?;
 
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+    write_codex_live_for_provider_for_app(app, category, auth, prepared_config.as_deref())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -3443,16 +3922,23 @@ fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, A
 /// is still importable; both files missing is treated as "no live install".
 /// A `config.toml` that exists but is empty is a valid state — e.g. the
 /// official seed after stale-auth cleanup — and must stay readable.
+#[allow(dead_code)]
 pub fn read_codex_live_settings() -> Result<Value, AppError> {
-    let auth_path = get_codex_auth_path();
+    read_codex_live_settings_for_app(&crate::app_config::AppType::Codex)
+}
+
+pub fn read_codex_live_settings_for_app(
+    app: &crate::app_config::AppType,
+) -> Result<Value, AppError> {
+    let auth_path = get_codex_auth_path_for_app(app);
     let auth_present = auth_path.exists();
     let auth: Value = if auth_present {
         read_json_file(&auth_path)?
     } else {
         json!({})
     };
-    let cfg_text = read_and_validate_codex_config_text()?;
-    if !auth_present && !get_codex_config_path().exists() {
+    let cfg_text = read_and_validate_codex_config_text_for_app(app)?;
+    if !auth_present && !get_codex_config_path_for_app(app).exists() {
         return Err(AppError::localized(
             "codex.live.missing",
             "Codex 配置文件不存在",
@@ -3712,11 +4198,24 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
 /// 普通 live 写入（`write_codex_live_for_provider`）与代理接管备份
 /// （`update_live_backup_from_provider`）两条落盘路径共用：接管期间
 /// live 归代理所有，注入必须进备份，接管释放恢复的 live 才带统一路由。
+#[allow(dead_code)]
 pub fn apply_codex_unified_session_bucket_to_settings(
     category: Option<&str>,
     settings: &mut Value,
 ) -> Result<(), AppError> {
-    if category != Some("official") || !crate::settings::unify_codex_session_history() {
+    apply_codex_unified_session_bucket_to_settings_for_app(
+        &crate::app_config::AppType::Codex,
+        category,
+        settings,
+    )
+}
+
+pub fn apply_codex_unified_session_bucket_to_settings_for_app(
+    app: &crate::app_config::AppType,
+    category: Option<&str>,
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    if category != Some("official") || !crate::settings::unify_codex_session_history_for_app(app) {
         return Ok(());
     }
     let config_text = settings
@@ -3813,7 +4312,24 @@ struct CodexLiveWritePlan {
     remove_auth_file: bool,
 }
 
+#[allow(dead_code)]
 fn plan_codex_live_write(
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    preserve_official_login: bool,
+) -> Result<CodexLiveWritePlan, AppError> {
+    plan_codex_live_write_for_app(
+        &crate::app_config::AppType::Codex,
+        category,
+        auth,
+        config_text,
+        preserve_official_login,
+    )
+}
+
+fn plan_codex_live_write_for_app(
+    app: &crate::app_config::AppType,
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
@@ -3847,7 +4363,7 @@ fn plan_codex_live_write(
             None => None,
         };
         let config_text = named.as_deref().or(config_text);
-        let unified_official_config = if crate::settings::unify_codex_session_history() {
+        let unified_official_config = if crate::settings::unify_codex_session_history_for_app(app) {
             Some(inject_codex_unified_session_bucket(
                 config_text.unwrap_or(""),
             )?)
@@ -3957,45 +4473,84 @@ fn plan_codex_live_write(
 /// this to fail a provider switch BEFORE committing `current`: a write-layer
 /// refusal after `current` moved would let the next switch backfill the old
 /// live config into the new provider's DB row.
+#[allow(dead_code)]
 pub fn preflight_codex_live_write(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    plan_codex_live_write(
+    preflight_codex_live_write_for_app(
+        &crate::app_config::AppType::Codex,
         category,
         auth,
         config_text,
-        crate::settings::preserve_codex_official_auth_on_switch(),
+    )
+}
+
+pub fn preflight_codex_live_write_for_app(
+    app: &crate::app_config::AppType,
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    plan_codex_live_write_for_app(
+        app,
+        category,
+        auth,
+        config_text,
+        crate::settings::preserve_codex_official_auth_on_switch_for_app(app),
     )
     .map(|_| ())
 }
 
+#[allow(dead_code)]
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let plan = plan_codex_live_write(
+    write_codex_live_for_provider_for_app(
+        &crate::app_config::AppType::Codex,
         category,
         auth,
         config_text,
-        crate::settings::preserve_codex_official_auth_on_switch(),
+    )
+}
+
+pub fn write_codex_live_for_provider_for_app(
+    app: &crate::app_config::AppType,
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_codex_target_writable(app)?;
+    let plan = plan_codex_live_write_for_app(
+        app,
+        category,
+        auth,
+        config_text,
+        crate::settings::preserve_codex_official_auth_on_switch_for_app(app),
     )?;
     if plan.write_full_auth {
-        return write_codex_live_atomic(auth, plan.config_text.as_deref());
+        return write_codex_live_atomic_for_app(app, auth, plan.config_text.as_deref());
     }
-    write_codex_live_config_atomic(plan.config_text.as_deref())?;
+    write_codex_live_config_atomic_for_app(app, plan.config_text.as_deref())?;
     // Config is already committed at this point, so a cleanup failure
     // degrades to a warning instead of reporting an unswitched state.
     if plan.remove_auth_file {
-        remove_codex_live_auth_after_third_party_switch();
+        remove_codex_live_auth_after_third_party_switch_for_app(app);
     }
     Ok(())
 }
 
+#[allow(dead_code)]
 fn remove_codex_live_auth_after_third_party_switch() {
-    let auth_path = get_codex_auth_path();
+    remove_codex_live_auth_after_third_party_switch_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn remove_codex_live_auth_after_third_party_switch_for_app(app: &crate::app_config::AppType) {
+    let auth_path = get_codex_auth_path_for_app(app);
     if !auth_path.exists() {
         return;
     }

@@ -103,6 +103,7 @@ export function extractBaseUrlForUsageDetection(
       raw = settingsConfig.env?.ANTHROPIC_BASE_URL;
       break;
     case "codex":
+    case "codex-desktop":
       raw = extractCodexBaseUrl(
         typeof settingsConfig.config === "string"
           ? settingsConfig.config

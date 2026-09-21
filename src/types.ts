@@ -292,6 +292,7 @@ export interface VisibleApps {
   claude: boolean;
   "claude-desktop": boolean;
   codex: boolean;
+  "codex-desktop": boolean;
   gemini: boolean;
   grokbuild: boolean;
   opencode: boolean;
@@ -386,11 +387,14 @@ export interface Settings {
   showProfileSwitcher?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  preserveCodexDesktopOfficialAuthOnSwitch?: boolean;
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
+  unifyCodexDesktopSessionHistory?: boolean;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
+  unifyCodexDesktopMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -410,6 +414,7 @@ export interface Settings {
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;
+  codexDesktopConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）
   geminiConfigDir?: string;
   // 覆盖 Grok Build 配置目录（可选）
@@ -510,6 +515,7 @@ export interface McpApps {
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
+  "codex-desktop"?: boolean;
   gemini: boolean;
   grokbuild?: boolean;
   opencode: boolean;
@@ -557,6 +563,7 @@ export interface McpConfigResponse {
 export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
+  "codex-desktop"?: boolean;
   gemini: boolean;
 }
 
@@ -584,6 +591,7 @@ export interface UniversalProviderModels {
   claude?: ClaudeModelConfig;
   codex?: CodexModelConfig;
   gemini?: GeminiModelConfig;
+  "codex-desktop"?: CodexModelConfig;
 }
 
 // 统一供应商（跨应用共享配置）

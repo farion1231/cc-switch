@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
@@ -85,6 +86,7 @@ const SESSION_GROUP_EXPANSION_STORAGE_KEY =
 type ProviderFilter =
   | "all"
   | "codex"
+  | "codex-desktop"
   | "grokbuild"
   | "claude"
   | "opencode"
@@ -374,7 +376,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   }, [sessions]);
 
-  const isCodexSession = selectedSession?.providerId === "codex";
+  const isCodexSession = isCodexApp(selectedSession?.providerId);
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -1131,6 +1133,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Codex</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="codex-desktop">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="openai"
+                                  name="codex"
+                                  size={14}
+                                />
+                                <span>Codex Desktop</span>
                               </div>
                             </SelectItem>
                             <SelectItem value="grokbuild">

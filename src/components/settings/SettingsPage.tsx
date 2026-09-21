@@ -113,7 +113,7 @@ export function SettingsPage({
 
   useEffect(() => {
     if (open) {
-      setActiveTab(defaultTab);
+      setActiveTab(defaultTab === "directories" ? "advanced" : defaultTab);
       resetStatus();
     }
   }, [open, resetStatus, defaultTab]);
@@ -278,6 +278,11 @@ export function SettingsPage({
                       settings={settings}
                       onChange={handleAutoSave}
                     />
+                    <CodexAuthSettings
+                      appId="codex-desktop"
+                      settings={settings}
+                      onChange={handleAutoSave}
+                    />
                     <WindowSettings
                       settings={settings}
                       onChange={handleAutoSave}
@@ -322,7 +327,9 @@ export function SettingsPage({
                   >
                     <Accordion
                       type="multiple"
-                      defaultValue={[]}
+                      defaultValue={
+                        defaultTab === "directories" ? ["directory"] : []
+                      }
                       className="w-full space-y-4"
                     >
                       <AccordionItem
@@ -351,6 +358,7 @@ export function SettingsPage({
                             onResetAppConfig={resetAppConfigDir}
                             claudeDir={settings.claudeConfigDir}
                             codexDir={settings.codexConfigDir}
+                            codexDesktopDir={settings.codexDesktopConfigDir}
                             geminiDir={settings.geminiConfigDir}
                             grokDir={settings.grokConfigDir}
                             opencodeDir={settings.opencodeConfigDir}
