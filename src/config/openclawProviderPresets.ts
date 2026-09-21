@@ -146,6 +146,52 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
     },
   },
+  // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
+  {
+    name: "Kimi Global",
+    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.moonshot.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          contextWindow: 262144,
+          cost: { input: 0.95, output: 4, cacheRead: 0.19 },
+        },
+        {
+          id: "kimi-k3",
+          name: "Kimi K3",
+          contextWindow: 1048576,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    partnerPromotionKey: "kimi",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.moonshot.ai/v1",
+        defaultValue: "https://api.moonshot.ai/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "kimi/kimi-k2.7-code" },
+      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
+    },
+  },
   {
     name: "Kimi For Coding",
     primePartner: true,
@@ -172,6 +218,45 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         label: "Base URL",
         placeholder: "https://api.kimi.com/coding/v1",
         defaultValue: "https://api.kimi.com/coding/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "kimi-coding/kimi-for-coding" },
+      modelCatalog: { "kimi-coding/kimi-for-coding": { alias: "Kimi" } },
+    },
+  },
+  // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
+  {
+    name: "Kimi For Coding Global",
+    websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.kimi.ai/coding/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "kimi-for-coding",
+          name: "Kimi For Coding",
+          contextWindow: 131072,
+          cost: { input: 0.95, output: 4, cacheRead: 0.19 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.kimi.ai/coding/v1",
+        defaultValue: "https://api.kimi.ai/coding/v1",
         editorValue: "",
       },
       apiKey: {

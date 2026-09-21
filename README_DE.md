@@ -27,11 +27,11 @@
 
 [![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)
 
-Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten. **[Hier klicken, um Kimi zu nutzen](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)**
+Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten.
 
-**Bonus für die erste Aufladung neuer Nutzer**: Registrieren Sie sich über [diesen Link](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch) und schließen Sie Ihre erste Aufladung ab, um 10 % des Betrags als Bonus-API-Guthaben zu erhalten – bis zu CNY ¥1.000.
+Arbeiten Sie hauptsächlich mit Programmierung? Probieren Sie einen **Kimi Code Tarif** ([中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)) aus, oder nutzen Sie die **API** über die Kimi Open Platform ([中文站](https://platform.kimi.com?track_id=track-6840233b42274ab4bcfd283e2bdd2aee&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-20d65732f0aa45dcb1df9691a15610af&aff=cc-switch)).
 
-Hauptsächlich mit Programmierung beschäftigt? Probieren Sie das **[Kimi-Code-Abo](https://www.kimi.com/code/?aff=cc-switch)** aus!
+**Bonus für die erste Aufladung neuer Nutzer**: Registrieren Sie sich über die obigen API-Links und schließen Sie Ihre erste Aufladung ab, um 10 % des Betrags als Bonus-API-Guthaben zu erhalten – bis zu CNY ¥1.000.
 
 ---
 
