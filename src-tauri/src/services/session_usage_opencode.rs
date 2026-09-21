@@ -252,19 +252,24 @@ fn query_sessions(
     Ok(sessions)
 }
 
-/// 查询某会话的已完成 assistant 消息，并标记是否还有未完成 usage 消息。
+/// 查询某会话的已完成计费消息（V1: assistant，V2: assistant + compaction），
+/// 并标记是否还有未完成 usage 消息。
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
     schema: OpenCodeSchema,
     session_id: &str,
 ) -> Result<OpenCodeMessageQueryResult, AppError> {
-    // V2 的 assistant 类型记录在 `type` 列上；V1 需要按 data.role 过滤。
+    // V2 的消息类型记录在 `type` 列上，上下文压缩请求的用量写在
+    // type='compaction' 行（V1 中压缩摘要是 assistant 消息，无需特判）；
+    // V1 需要按 data.role 过滤。
     let sql = match schema {
         OpenCodeSchema::V1 => {
-            "SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created"
+            "SELECT id, data, NULL FROM message WHERE session_id = ?1 ORDER BY time_created"
         }
         OpenCodeSchema::V2 => {
-            "SELECT id, data FROM session_message WHERE session_id = ?1 AND type = 'assistant' ORDER BY time_created"
+            "SELECT id, data, type FROM session_message \
+             WHERE session_id = ?1 AND type IN ('assistant', 'compaction') \
+             ORDER BY time_created"
         }
     };
     let mut stmt = conn
@@ -273,18 +278,22 @@ fn query_assistant_messages(
 
     let rows = stmt
         .query_map([session_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })
         .map_err(|e| AppError::Database(format!("查询消息失败: {e}")))?;
 
     let mut messages = Vec::new();
     let mut has_incomplete_usage = false;
     for row in rows {
-        let (message_id, data_json) =
+        let (message_id, data_json, message_type) =
             row.map_err(|e| AppError::Database(format!("读取消息行失败: {e}")))?;
 
-        // 只处理 assistant 消息。V2 的 assistant 消息没有 role 字段
-        // （由 `type` 列标识），V1 消息仍按 data.role 过滤。
+        // V2 的 assistant 消息没有 role 字段（由 `type` 列标识），
+        // V1 消息仍按 data.role 过滤。
         let value: serde_json::Value = match serde_json::from_str(&data_json) {
             Ok(v) => v,
             Err(_) => continue,
@@ -301,8 +310,18 @@ fn query_assistant_messages(
             continue;
         }
 
-        // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填
-        if value.get("time").and_then(|t| t.get("completed")).is_none() {
+        // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填。
+        // assistant 用 time.completed 判终态；V2 compaction 用 status 终态
+        // （completed/failed），没有 time.completed 字段。
+        let is_completed = if message_type.as_deref() == Some("compaction") {
+            matches!(
+                value.get("status").and_then(|s| s.as_str()),
+                Some("completed") | Some("failed")
+            )
+        } else {
+            value.get("time").and_then(|t| t.get("completed")).is_some()
+        };
+        if !is_completed {
             has_incomplete_usage = true;
             continue;
         }
@@ -762,6 +781,76 @@ mod tests {
         // 只返回已完成（带 time.completed）的 assistant 消息；user 行被 type 过滤
         assert_eq!(result.messages.len(), 1);
         assert_eq!(result.messages[0].0, "done");
+        assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_query_assistant_messages_v2_includes_completed_compaction() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_message (
+                 id TEXT,
+                 session_id TEXT,
+                 type TEXT,
+                 time_created INTEGER,
+                 data TEXT
+             );",
+        )
+        .unwrap();
+
+        // V2 compaction：终态由 status 表示，没有 time.completed
+        let compaction_done = serde_json::json!({
+            "status": "completed",
+            "tokens": { "input": 741, "output": 2604 },
+            "cost": 0.004736382,
+            "model": { "id": "deepseek-v4.1-flash" },
+            "time": { "created": 10 }
+        })
+        .to_string();
+        let compaction_wip = serde_json::json!({
+            "status": "pending",
+            "tokens": { "input": 100, "output": 0 },
+            "model": { "id": "deepseek-v4.1-flash" },
+            "time": { "created": 11 }
+        })
+        .to_string();
+        // 失败的压缩请求同样产生了计费用量，也要导入
+        let compaction_failed = serde_json::json!({
+            "status": "failed",
+            "tokens": { "input": 300, "output": 0 },
+            "cost": 0.001,
+            "model": { "id": "deepseek-v4.1-flash" },
+            "time": { "created": 12 }
+        })
+        .to_string();
+        let assistant = serde_json::json!({
+            "tokens": { "input": 1000, "output": 200 },
+            "model": { "id": "m" },
+            "time": { "created": 13, "completed": 14 }
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO session_message VALUES ('c1', 's1', 'compaction', 1, ?1),
+                                                ('c2', 's1', 'compaction', 2, ?2),
+                                                ('c3', 's1', 'compaction', 3, ?3),
+                                                ('a1', 's1', 'assistant', 4, ?4)",
+            rusqlite::params![
+                compaction_done,
+                compaction_wip,
+                compaction_failed,
+                assistant
+            ],
+        )
+        .unwrap();
+
+        let result = query_assistant_messages(&conn, OpenCodeSchema::V2, "s1").unwrap();
+        // compaction(completed/failed) 与 assistant 都要采到；pending 的压缩被跳过
+        let ids: Vec<&str> = result.messages.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["c1", "c3", "a1"]);
+        assert_eq!(result.messages[0].1.input_tokens, 741);
+        assert_eq!(result.messages[0].1.model_id, "deepseek-v4.1-flash");
+        assert_eq!(result.messages[1].1.input_tokens, 300);
         assert!(result.has_incomplete_usage);
     }
 }
