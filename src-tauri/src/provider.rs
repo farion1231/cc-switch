@@ -848,7 +848,6 @@ impl UniversalProvider {
             r#"model_provider = "custom"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "NewAPI"
@@ -1021,6 +1020,46 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn universal_codex_provider_omits_removed_disable_response_storage() {
+        // openai/codex#3212 移除了该配置项：统一供应商生成的新配置不得再写入。
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "U".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "sk-test".to_string(),
+        );
+        universal.apps.codex = true;
+
+        let provider = universal.to_codex_provider().expect("codex provider");
+        let config_text = provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+
+        assert!(
+            parsed.get("disable_response_storage").is_none(),
+            "generated Codex config must not contain the removed disable_response_storage option"
+        );
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://api.example.com/v1")
+        );
+    }
 
     #[test]
     fn proxy_injected_oauth_excludes_codex_oauth() {
