@@ -129,6 +129,13 @@ fn should_retry_focus(allow_delayed_focus: bool, currently_focused: bool) -> boo
     allow_delayed_focus && !currently_focused
 }
 
+fn next_delayed_focus_eligibility(
+    allow_delayed_focus: bool,
+    completed_on_live_window: bool,
+) -> bool {
+    allow_delayed_focus && !completed_on_live_window
+}
+
 struct NudgeGuard;
 
 impl Drop for NudgeGuard {
@@ -154,16 +161,21 @@ pub(crate) fn nudge_main_window(window: WebviewWindow, reason: &'static str) {
     }
 
     tauri::async_runtime::spawn(async move {
-        // 只有紧随本次激活启动的首轮允许在 realize 后补一次 focus。
-        // 同一 runner 中排队的请求可能已等待上一轮 resize/reconcile 很久，
-        // 此时用户可能已经切到别的应用，不能再延迟抢焦点。
+        // 只有紧随本次激活启动的首个存活窗口允许在 realize 后补一次 focus。
+        // 同窗排队请求可能已等待上一轮 resize/reconcile 很久，此时用户可能已经
+        // 切到别的应用，不能再延迟抢焦点。若旧窗口被 lightweight 模式销毁，
+        // 则保留资格给排队的替代窗口，因为它的立即 focus 可能发生在 realize 前。
         let mut allow_delayed_focus = true;
         loop {
             {
                 let _guard = NudgeGuard;
                 while let Some(PendingNudge { window, reason }) = PENDING_NUDGE.take() {
-                    run_nudge_sequence(window, reason, allow_delayed_focus).await;
-                    allow_delayed_focus = false;
+                    let completed_on_live_window =
+                        run_nudge_sequence(window, reason, allow_delayed_focus).await;
+                    allow_delayed_focus = next_delayed_focus_eligibility(
+                        allow_delayed_focus,
+                        completed_on_live_window,
+                    );
                 }
             }
             // Guard 已释放 IS_NUDGING。若释放窗口期内又有请求入队，重新抢执行权；
@@ -182,23 +194,23 @@ async fn run_nudge_sequence(
     window: WebviewWindow,
     reason: &'static str,
     allow_delayed_focus: bool,
-) {
+) -> bool {
     if !is_window_alive(&window) {
         log::debug!("Linux: 窗口已销毁，跳过重激活 (reason: {reason})");
-        return;
+        return false;
     }
 
     tokio::time::sleep(REALIZE_WAIT).await;
 
     if !is_window_alive(&window) {
         log::debug!("Linux: 窗口在等待 realize 期间被销毁，跳过重激活 (reason: {reason})");
-        return;
+        return false;
     }
 
     // 用户已再次藏进托盘：不要 set_focus / 改装饰把窗口 map 回来。
     if !is_window_visible(&window) {
         log::debug!("Linux: 窗口已隐藏，跳过重激活 (reason: {reason})");
-        return;
+        return false;
     }
 
     if should_retry_focus(allow_delayed_focus, window.is_focused().unwrap_or(false)) {
@@ -222,9 +234,15 @@ async fn run_nudge_sequence(
         pseudo_resize_logical(&window).await;
     }
 
-    log::info!(
-        "Linux: 已对主窗口执行 focus + HeaderBar 控制按钮与 surface 重激活 (reason: {reason}, maximized={is_maximized})"
-    );
+    if is_window_alive(&window) {
+        log::info!(
+            "Linux: 已对主窗口执行 focus + HeaderBar 控制按钮与 surface 重激活 (reason: {reason}, maximized={is_maximized})"
+        );
+        true
+    } else {
+        log::debug!("Linux: 窗口在重激活期间被销毁 (reason: {reason})");
+        false
+    }
 }
 
 fn restore_decorations_if_needed(window: &WebviewWindow) {
@@ -405,5 +423,12 @@ mod tests {
         assert!(should_retry_focus(true, false));
         assert!(!should_retry_focus(false, false));
         assert!(!should_retry_focus(true, true));
+    }
+
+    #[test]
+    fn destroyed_window_preserves_retry_for_replacement() {
+        assert!(!next_delayed_focus_eligibility(true, true));
+        assert!(next_delayed_focus_eligibility(true, false));
+        assert!(!next_delayed_focus_eligibility(false, false));
     }
 }
