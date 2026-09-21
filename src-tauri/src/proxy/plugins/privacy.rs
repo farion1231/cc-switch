@@ -38,7 +38,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use blake2::Blake2b512;
-use fancy_regex::Regex;
 use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use sha2::Digest;
@@ -274,7 +273,9 @@ fn validate_rules_doc(doc: &mut Value) -> Result<(), String> {
             if pattern.is_empty() {
                 return Err(format!("rules[{i}].pattern 不能为空"));
             }
-            if let Err(e) = Regex::new(&adapt_python_pattern(pattern)) {
+            if let Err(e) =
+                compile_regex_matcher(&format!("rules[{i}]"), &adapt_python_pattern(pattern))
+            {
                 return Err(format!("rules[{i}].pattern 正则无效: {e}"));
             }
             // regex 规则不使用 values（面板误填时静默丢弃，与参考实现一致）
@@ -587,11 +588,26 @@ fn parse_capture(v: &Value) -> Option<CaptureSpec> {
 }
 
 /// 编译后的规则匹配器
+///
+/// 双引擎（性能红线）：能用纯 regex 语法表达的 pattern 一律用 `regex` crate
+/// 编译（线性自动机，任意文本 O(n)）；只有含反引用/前后查找等 fancy 语法的
+/// pattern（仅用户自写规则）才落到 fancy-regex 的回溯引擎。回溯引擎在
+/// 歧义 pattern × 大文本上代价爆炸（585KB 实测挂起）——内置默认规则因此
+/// 全部避免反引用（见 [`strip_legacy_kv_backreference`] 的升级逻辑）。
 #[derive(Debug)]
 enum RuleMatcher {
-    Regex(Regex),
+    Fast(regex::Regex),
+    Fancy(fancy_regex::Regex),
     Literal(Vec<String>),
 }
+
+/// fancy 回溯引擎的单次尝试预算（默认 1M 过大：病态位置 × 每位置一次重试
+/// 仍是天文数字；200K 足够覆盖合法回溯需求）
+const FANCY_BACKTRACK_LIMIT: usize = 200_000;
+
+/// 配置目录初始化互斥（进程级）：物化/升级期间其它并发构造等待，
+/// 避免读到写到一半的配置文件（测试并行构造同一临时目录时的真实竞态）
+static CONFIG_INIT_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// 编译后的规则（内存快照）
 #[derive(Debug)]
@@ -601,6 +617,24 @@ struct CompiledRule {
     label: String,
     desc: String,
     priority: i32,
+}
+
+/// 默认 kv-secret 规则的注释（与 DEFAULT_RULES_JSON 内保持一致，测试守护同步）
+const DEFAULT_KV_SECRET_COMMENT: &str = "键值对密钥兜底（键名清单源自 Khan 安全团队《使用一个正则表达式搜索所有泄露的密钥》，本插件改写：命名组 capture=v 只遮值、键名/引号/分隔符原样保留；容忍键值间空白（含换行，≤32 字符）与 =/:/=>/:=/->/:: 等分隔符、可选单双反引号（未闭合引号的值同样遮蔽；env/JSON/YAML/log 通吃）。不含反引用——pattern 保持纯 regex 语义，由线性引擎执行";
+
+/// 旧默认 kv 规则的共用尾部（引号组 + 值组；secret 为 {8,128}，generic 为 {6,128}）
+const LEGACY_KV_TAIL_PREFIX: &str = r#"(?P<q>["'`]?)(?P<v>[0-9a-zA-Z\-_/+=]"#;
+
+/// 识别旧默认 kv pattern（以 `<尾部>{N,128})(?P=q)` 结尾）并返回去反引用版本；
+/// 其它任何 pattern（含用户自改的反引用规则）返回 None 不动
+fn strip_legacy_kv_backreference(pattern: &str) -> Option<String> {
+    for value_len in ["{8,128}", "{6,128}"] {
+        let old = format!("{LEGACY_KV_TAIL_PREFIX}{value_len})(?P=q)");
+        if pattern.ends_with(&old) {
+            return Some(pattern[..pattern.len() - "(?P=q)".len()].to_string());
+        }
+    }
+    None
 }
 
 /// 把 Python 风格 pattern 适配为 fancy-regex 语法：
@@ -631,11 +665,40 @@ fn adapt_python_pattern(pattern: &str) -> String {
 }
 
 /// capture 组在 pattern 中是否存在（编译期校验；无效 capture 整条规则跳过）
-fn capture_exists(re: &Regex, capture: &CaptureSpec) -> bool {
+fn capture_exists_fast(re: &regex::Regex, capture: &CaptureSpec) -> bool {
     match capture {
         CaptureSpec::None => true,
         CaptureSpec::Index(i) => *i < re.captures_len(),
         CaptureSpec::Name(name) => re.capture_names().flatten().any(|n| n == name),
+    }
+}
+
+fn capture_exists_fancy(re: &fancy_regex::Regex, capture: &CaptureSpec) -> bool {
+    match capture {
+        CaptureSpec::None => true,
+        CaptureSpec::Index(i) => *i < re.captures_len(),
+        CaptureSpec::Name(name) => re.capture_names().flatten().any(|n| n == name),
+    }
+}
+
+/// 编译单个 regex 规则：优先 `regex` crate（纯语法 → 线性引擎），
+/// 仅当 pattern 含 fancy 语法（反引用/前后查找等，plain 编译会报错）时
+/// 回退 fancy-regex 回溯引擎（收紧回溯预算，见 [`FANCY_BACKTRACK_LIMIT`]）
+fn compile_regex_matcher(name: &str, adapted: &str) -> Result<RuleMatcher, String> {
+    match regex::Regex::new(adapted) {
+        Ok(re) => return Ok(RuleMatcher::Fast(re)),
+        Err(fast_err) => {
+            log::debug!(
+                "[PRIVACY] 规则 {name} 含扩展语法，转用回溯引擎（plain 编译失败: {fast_err}）"
+            );
+        }
+    }
+    match fancy_regex::RegexBuilder::new(adapted)
+        .backtrack_limit(FANCY_BACKTRACK_LIMIT)
+        .build()
+    {
+        Ok(re) => Ok(RuleMatcher::Fancy(re)),
+        Err(e) => Err(format!("{e}")),
     }
 }
 
@@ -680,14 +743,19 @@ fn compile_rules(rules_doc: &Value) -> Vec<CompiledRule> {
                     log::warn!("[PRIVACY] 规则 {name} 缺少 pattern，已跳过");
                     continue;
                 };
-                match Regex::new(&adapt_python_pattern(pattern)) {
-                    Ok(re) => {
-                        if capture != CaptureSpec::None && !capture_exists(&re, &capture) {
+                match compile_regex_matcher(name, &adapt_python_pattern(pattern)) {
+                    Ok(matcher) => {
+                        let capture_ok = match &matcher {
+                            RuleMatcher::Fast(re) => capture_exists_fast(re, &capture),
+                            RuleMatcher::Fancy(re) => capture_exists_fancy(re, &capture),
+                            RuleMatcher::Literal(_) => true,
+                        };
+                        if capture != CaptureSpec::None && !capture_ok {
                             log::warn!("[PRIVACY] 规则 {name} 的 capture 无效，已跳过整条规则");
                             continue;
                         }
                         rules.push(CompiledRule {
-                            matcher: RuleMatcher::Regex(re),
+                            matcher,
                             capture,
                             label,
                             desc,
@@ -985,52 +1053,83 @@ fn collect_regex_spans(text: &str, rules: &[CompiledRule]) -> Vec<MatchSpan> {
     let mut spans = Vec::new();
     let mut order = 0usize;
     for rule in rules {
+        macro_rules! push_span {
+            ($start:expr, $end:expr) => {
+                let (start, end) = ($start, $end);
+                if end > start {
+                    spans.push(MatchSpan {
+                        start,
+                        end,
+                        priority: rule.priority,
+                        order,
+                        label: rule.label.clone(),
+                        desc: rule.desc.clone(),
+                    });
+                    order += 1;
+                }
+            };
+        }
         match &rule.matcher {
-            RuleMatcher::Regex(re) => {
+            RuleMatcher::Fast(re) => {
+                // 线性引擎：无 Err 包装，任意文本 O(n)
+                match &rule.capture {
+                    CaptureSpec::None => {
+                        for m in re.find_iter(text) {
+                            push_span!(m.start(), m.end());
+                        }
+                    }
+                    CaptureSpec::Index(idx) => {
+                        for caps in re.captures_iter(text) {
+                            if let Some(g) = caps.get(*idx) {
+                                push_span!(g.start(), g.end());
+                            }
+                        }
+                    }
+                    CaptureSpec::Name(name) => {
+                        for caps in re.captures_iter(text) {
+                            if let Some(g) = caps.name(name) {
+                                push_span!(g.start(), g.end());
+                            }
+                        }
+                    }
+                }
+            }
+            RuleMatcher::Fancy(re) => {
+                // 回溯引擎（仅用户自写 fancy pattern）：Err（回溯预算打满等）
+                // 即中断该规则在本串的扫描——fail-open 损失该规则剩余匹配，
+                // 绝不在病态位置上反复重试（否则大文本挂起，见模块文档）
                 macro_rules! push_group_span {
                     ($group:expr) => {
                         if let Some(g) = $group {
-                            let (start, end) = (g.start(), g.end());
-                            if end > start {
-                                spans.push(MatchSpan {
-                                    start,
-                                    end,
-                                    priority: rule.priority,
-                                    order,
-                                    label: rule.label.clone(),
-                                    desc: rule.desc.clone(),
-                                });
-                                order += 1;
-                            }
+                            push_span!(g.start(), g.end());
                         }
                     };
                 }
                 match &rule.capture {
                     CaptureSpec::None => {
                         for m in re.find_iter(text) {
-                            let Ok(m) = m else { continue };
-                            if m.end() > m.start() {
-                                spans.push(MatchSpan {
-                                    start: m.start(),
-                                    end: m.end(),
-                                    priority: rule.priority,
-                                    order,
-                                    label: rule.label.clone(),
-                                    desc: rule.desc.clone(),
-                                });
-                                order += 1;
-                            }
+                            let Ok(m) = m else {
+                                log::debug!("[PRIVACY] 回溯引擎预算打满，跳过该规则本串剩余扫描");
+                                break;
+                            };
+                            push_span!(m.start(), m.end());
                         }
                     }
                     CaptureSpec::Index(idx) => {
                         for caps in re.captures_iter(text) {
-                            let Ok(caps) = caps else { continue };
+                            let Ok(caps) = caps else {
+                                log::debug!("[PRIVACY] 回溯引擎预算打满，跳过该规则本串剩余扫描");
+                                break;
+                            };
                             push_group_span!(caps.get(*idx));
                         }
                     }
                     CaptureSpec::Name(name) => {
                         for caps in re.captures_iter(text) {
-                            let Ok(caps) = caps else { continue };
+                            let Ok(caps) = caps else {
+                                log::debug!("[PRIVACY] 回溯引擎预算打满，跳过该规则本串剩余扫描");
+                                break;
+                            };
                             push_group_span!(caps.name(name));
                         }
                     }
@@ -1375,8 +1474,8 @@ const DEFAULT_RULES_JSON: &str = r#"{
     {
       "kind": "regex",
       "name": "kv-secret",
-      "comment": "键值对密钥兜底（键名清单源自 Khan 安全团队《使用一个正则表达式搜索所有泄露的密钥》，本插件改写：命名组 capture=v 只遮值、键名/引号/分隔符原样保留；容忍键值间空白（含换行，≤32 字符）与 =/:/=>/:=/->/:: 等分隔符、成对单双反引号（env/JSON/YAML/log 通吃）",
-      "pattern": "(?i)(?P<k>(?:access_key|access_token|admin_pass|admin_user|algolia_admin_key|algolia_api_key|alias_pass|alicloud_access_key|amazon_secret_access_key|amazonaws|ansible_vault_password|aos_key|api_key|api_key_secret|api_key_sid|api_secret|api.googlemaps|apikey|apiSecret|app_debug|app_id|app_key|app_log_level|app_secret|appkey|appkeysecret|application_key|appsecret|appspot|auth_token|authorizationToken|authsecret|aws_access|aws_access_key_id|aws_bucket|aws_key|aws_secret|aws_secret_key|aws_token|AWSSecretKey|b2_app_key|bashrc password|bintray_apikey|bintray_gpg_password|bintray_key|bintraykey|bluemix_api_key|bluemix_pass|browserstack_access_key|bucket_password|bucketeer_aws_access_key_id|bucketeer_aws_secret_access_key|built_branch_deploy_key|bx_password|cache_driver|cache_s3_secret_key|cattle_access_key|cattle_secret_key|certificate_password|ci_deploy_password|client_secret|client_zpk_secret_key|clojars_password|cloud_api_key|cloud_watch_aws_access_key|cloudant_password|cloudflare_api_key|cloudflare_auth_key|cloudinary_api_secret|cloudinary_name|codecov_token|config|conn.login|connectionstring|consumer_key|consumer_secret|credentials|cypress_record_key|database_password|database_schema_test|datadog_api_key|datadog_app_key|db_password|db_server|db_username|dbpasswd|dbpassword|dbuser|deploy_password|digitalocean_ssh_key_body|digitalocean_ssh_key_ids|docker_hub_password|docker_key|docker_pass|docker_passwd|docker_password|dockerhub_password|dockerhubpassword|dot-files|dotfiles|droplet_travis_password|dynamoaccesskeyid|dynamosecretaccesskey|elastica_host|elastica_port|elasticsearch_password|encryption_key|encryption_password|env.heroku_api_key|env.sonatype_password|eureka.awssecretkey)[a-z0-9_.\\-, ]{0,25})[\"']?[\\s]{0,32}(?:=>|:=|->|\\|=|<=|::|[:=])[\\s]{0,32}(?P<q>[\"'`]?)(?P<v>[0-9a-zA-Z\\-_/+=]{8,128})(?P=q)",
+      "comment": "键值对密钥兜底（键名清单源自 Khan 安全团队《使用一个正则表达式搜索所有泄露的密钥》，本插件改写：命名组 capture=v 只遮值、键名/引号/分隔符原样保留；容忍键值间空白（含换行，≤32 字符）与 =/:/=>/:=/->/:: 等分隔符、可选单双反引号（未闭合引号的值同样遮蔽；env/JSON/YAML/log 通吃）。不含反引用——pattern 保持纯 regex 语义，由线性引擎执行",
+      "pattern": "(?i)(?P<k>(?:access_key|access_token|admin_pass|admin_user|algolia_admin_key|algolia_api_key|alias_pass|alicloud_access_key|amazon_secret_access_key|amazonaws|ansible_vault_password|aos_key|api_key|api_key_secret|api_key_sid|api_secret|api.googlemaps|apikey|apiSecret|app_debug|app_id|app_key|app_log_level|app_secret|appkey|appkeysecret|application_key|appsecret|appspot|auth_token|authorizationToken|authsecret|aws_access|aws_access_key_id|aws_bucket|aws_key|aws_secret|aws_secret_key|aws_token|AWSSecretKey|b2_app_key|bashrc password|bintray_apikey|bintray_gpg_password|bintray_key|bintraykey|bluemix_api_key|bluemix_pass|browserstack_access_key|bucket_password|bucketeer_aws_access_key_id|bucketeer_aws_secret_access_key|built_branch_deploy_key|bx_password|cache_driver|cache_s3_secret_key|cattle_access_key|cattle_secret_key|certificate_password|ci_deploy_password|client_secret|client_zpk_secret_key|clojars_password|cloud_api_key|cloud_watch_aws_access_key|cloudant_password|cloudflare_api_key|cloudflare_auth_key|cloudinary_api_secret|cloudinary_name|codecov_token|config|conn.login|connectionstring|consumer_key|consumer_secret|credentials|cypress_record_key|database_password|database_schema_test|datadog_api_key|datadog_app_key|db_password|db_server|db_username|dbpasswd|dbpassword|dbuser|deploy_password|digitalocean_ssh_key_body|digitalocean_ssh_key_ids|docker_hub_password|docker_key|docker_pass|docker_passwd|docker_password|dockerhub_password|dockerhubpassword|dot-files|dotfiles|droplet_travis_password|dynamoaccesskeyid|dynamosecretaccesskey|elastica_host|elastica_port|elasticsearch_password|encryption_key|encryption_password|env.heroku_api_key|env.sonatype_password|eureka.awssecretkey)[a-z0-9_.\\-, ]{0,25})[\"']?[\\s]{0,32}(?:=>|:=|->|\\|=|<=|::|[:=])[\\s]{0,32}(?P<q>[\"'`]?)(?P<v>[0-9a-zA-Z\\-_/+=]{8,128})",
       "capture": "v",
       "label": "SECRET",
       "desc": "kv密钥值",
@@ -1387,7 +1486,7 @@ const DEFAULT_RULES_JSON: &str = r#"{
       "kind": "regex",
       "name": "kv-generic",
       "comment": "裸通用键名兜底（原 Khan 清单不含裸 password/secret/token/key——最常见的形态反而漏）；值下限放宽到 6，键名保留、只遮值",
-      "pattern": "(?i)(?P<k>(?:password|passwd|pwd|passphrase|secret|token|apikey|api_key|credential|key|secret_key|access_key|secret_id|auth_key|session_key|signing_key|private_key)[a-z0-9_.\\-, ]{0,25})[\"']?[\\s]{0,32}(?:=>|:=|->|\\|=|<=|::|[:=])[\\s]{0,32}(?P<q>[\"'`]?)(?P<v>[0-9a-zA-Z\\-_/+=]{6,128})(?P=q)",
+      "pattern": "(?i)(?P<k>(?:password|passwd|pwd|passphrase|secret|token|apikey|api_key|credential|key|secret_key|access_key|secret_id|auth_key|session_key|signing_key|private_key)[a-z0-9_.\\-, ]{0,25})[\"']?[\\s]{0,32}(?:=>|:=|->|\\|=|<=|::|[:=])[\\s]{0,32}(?P<q>[\"'`]?)(?P<v>[0-9a-zA-Z\\-_/+=]{6,128})",
       "capture": "v",
       "label": "SECRET",
       "desc": "kv密钥值",
@@ -1768,13 +1867,17 @@ impl BuiltinPrivacyPlugin {
     /// 配置目录准备：三份配置文件全部缺失（全新安装 / 整目录被删）时物化默认
     /// 配置文件；若 settings 表存有旧版 blob（短暂测试版遗留），优先迁移其内容
     /// 并清空标记，避免用户已在面板做过的配置丢失。部分缺失（用户只删了某个
-    /// 文件）不回写，加载时按空缺省文档补位
+    /// 文件）不回写，加载时按空缺省文档补位。已有 rules.json 时做旧默认 kv
+    /// 规则的一次性升级（见 [`Self::upgrade_legacy_kv_patterns`]）。
+    /// 进程级互斥：并发构造（测试并行 / 多窗口）时避免读写到彼此写到一半的文件
     fn init_config_files(&self) {
+        let _init_guard = CONFIG_INIT_LOCK.lock().unwrap();
         let dir = &self.state.config_dir;
         let any_exists = CONFIG_DOC_FILES
             .iter()
             .any(|file| doc_disk_path(dir, file).exists());
         if any_exists {
+            self.upgrade_legacy_kv_patterns();
             return;
         }
         let legacy = match load_legacy_blob(&self.db) {
@@ -1808,6 +1911,63 @@ impl BuiltinPrivacyPlugin {
         if legacy.is_some() {
             if let Err(e) = self.db.set_setting(LEGACY_CONFIG_STORE_KEY, "") {
                 log::warn!("[PRIVACY] 清理旧配置存储标记失败（不影响使用）: {e}");
+            }
+        }
+    }
+
+    /// 一次性升级：把已落盘 rules.json 中的旧默认 kv 规则（含 `(?P=q)` 反引用）
+    /// 改写为无反引用版本。反引用会把整个 pattern 打入 fancy-regex 的回溯引擎，
+    /// 键名尾部与空白量词的歧义重叠在大文本上代价爆炸（58KB 实测 1.8s——agent
+    /// 请求因此挂起）；值字符类本就不含引号，去除闭引号约束后遮蔽语义不变
+    /// （未闭合引号的值同样被遮蔽，更安全），pattern 变纯后委托线性引擎执行。
+    /// 仅精确匹配旧默认 pattern 的规则才改写，用户自改的规则不受影响。
+    fn upgrade_legacy_kv_patterns(&self) {
+        let path = doc_disk_path(&self.state.config_dir, RULES_DOC_FILE);
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(mut doc) = serde_json::from_str::<Value>(&raw) else {
+            return;
+        };
+        let Some(rules) = doc.get_mut("rules").and_then(Value::as_array_mut) else {
+            return;
+        };
+        let mut changed = false;
+        for rule in rules {
+            let Some(obj) = rule.as_object_mut() else {
+                continue;
+            };
+            let Some(pattern) = obj
+                .get("pattern")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(new_pattern) = strip_legacy_kv_backreference(&pattern) else {
+                continue;
+            };
+            obj.insert("pattern".to_string(), Value::String(new_pattern));
+            // 旧默认注释里的"成对单双反引号"描述随语义一并更新
+            if obj
+                .get("comment")
+                .and_then(Value::as_str)
+                .map(|c| c.starts_with("键值对密钥兜底（键名清单源自 Khan"))
+                .unwrap_or(false)
+            {
+                obj.insert(
+                    "comment".to_string(),
+                    Value::String(DEFAULT_KV_SECRET_COMMENT.to_string()),
+                );
+            }
+            changed = true;
+        }
+        if changed {
+            match atomic_write_json(&path, &doc) {
+                Ok(()) => log::info!(
+                    "[PRIVACY] rules.json 内置 kv 规则已升级：去除 (?P=q) 反引用（回溯引擎在大文本上代价过高，改用线性引擎）"
+                ),
+                Err(e) => log::warn!("[PRIVACY] kv 规则升级写盘失败（本次沿用文件原样）: {e}"),
             }
         }
     }
@@ -4235,9 +4395,35 @@ mod tests {
         assert!(names.contains(&"kv-secret"));
         assert!(names.contains(&"email"));
 
-        // 默认规则全部可编译（含 (?P=q) 反引用与前后查找断言）
+        // 默认规则全部可编译；纯 regex 语法走线性引擎（Fast），含前后查找断言的
+        // （cn-mobile / private-ipv4）走回溯引擎（Fancy）；任何默认规则不得含反引用
         let snapshot = plugin.current_snapshot();
         assert!(!snapshot.rules.is_empty());
+        let mut fast = 0;
+        let mut fancy = 0;
+        for rule in &snapshot.rules {
+            match &rule.matcher {
+                RuleMatcher::Fast(re) => {
+                    fast += 1;
+                    let source = re.as_str();
+                    assert!(!source.contains("(?P=q)"), "默认规则不得含反引用: {source}");
+                }
+                RuleMatcher::Fancy(re) => {
+                    fancy += 1;
+                    assert!(
+                        !re.as_str().contains("(?P=q)"),
+                        "默认规则不得含反引用: {}",
+                        re.as_str()
+                    );
+                }
+                RuleMatcher::Literal(_) => {}
+            }
+        }
+        assert!(fast >= 8, "大部分默认规则应走线性引擎: fast={fast}");
+        assert_eq!(
+            fancy, 2,
+            "cn-mobile/private-ipv4 应走回溯引擎: fancy={fancy}"
+        );
         assert!(snapshot.enable_regex);
         assert!(snapshot.prompt_note);
         assert!(snapshot.enable_hexdump_guard);
@@ -4342,6 +4528,68 @@ mod tests {
         // 面板读取：Err 且带原因
         let err = plugin.config_read().unwrap_err().to_string();
         assert!(err.contains("解析失败"), "{err}");
+    }
+
+    #[test]
+    fn test_legacy_kv_patterns_upgraded_on_startup() {
+        // 上一版构建物化的 rules.json 含旧默认 kv pattern（(?P=q) 反引用，回溯
+        // 引擎在大文本上代价爆炸）：启动时一次性升级为无反引用版本；
+        // 用户自改过的 pattern（非精确旧默认）不动
+        let dir = tempfile::tempdir().unwrap();
+        let rules_path = doc_disk_path(dir.path(), RULES_DOC_FILE);
+        let old_secret = format!(
+            r#"(?i)(?P<k>(?:access_key|api_key)[a-z0-9_.,\- ]{{0,25}})["']?[\s]{{0,32}}(?:=>|:=|->|\|=|<=|::|[:=])[\s]{{0,32}}{LEGACY_KV_TAIL_PREFIX}{{8,128}})(?P=q)"#
+        );
+        let user_pattern = r"(?P<v>SECRET_[a-z]+)"; // 用户自改：保留
+        let rules = json!({
+            "enabled": true,
+            "rules": [
+                { "kind": "regex", "name": "kv-secret", "pattern": old_secret,
+                  "capture": "v", "label": "SECRET", "priority": 10, "enabled": true },
+                { "kind": "regex", "name": "mine", "pattern": user_pattern,
+                  "capture": "v", "label": "MINE", "priority": 30, "enabled": true }
+            ]
+        });
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(&rules_path, serde_json::to_string_pretty(&rules).unwrap()).unwrap();
+
+        let plugin = BuiltinPrivacyPlugin::with_config_dir(
+            Arc::new(Database::memory().unwrap()),
+            dir.path().to_path_buf(),
+        );
+
+        // 升级已写盘：旧 pattern 去除反引用，用户 pattern 原样
+        let on_disk: Value =
+            serde_json::from_str(&std::fs::read_to_string(&rules_path).unwrap()).unwrap();
+        let patched = &on_disk["rules"][0]["pattern"].as_str().unwrap();
+        assert!(patched.ends_with("{8,128})"), "应去除 (?P=q): {patched}");
+        assert!(!patched.contains("(?P=q)"));
+        assert_eq!(
+            on_disk["rules"][1]["pattern"],
+            json!(user_pattern),
+            "用户自改规则不动"
+        );
+
+        // 升级后语义保持：kv 只遮值（含未闭合引号形态——去反引用后更安全）
+        let (replaced, changed) = plugin.replace_text(r#"api_key = "abcd1234efgh5678""#);
+        assert!(changed);
+        assert!(replaced.contains(r#"api_key = "⟦PII|"#), "{replaced}");
+        assert!(!replaced.contains("abcd1234"));
+        let (replaced, changed) = plugin.replace_text("api_key = \"unterminated-value-12345");
+        assert!(changed, "未闭合引号的值也应遮蔽");
+        assert!(!replaced.contains("unterminated-value-12345"), "{replaced}");
+        // 用户自改规则照常工作
+        let (replaced, changed) = plugin.replace_text("token SECRET_abc here");
+        assert!(changed);
+        assert!(replaced.contains("|MINE|"), "{replaced}");
+    }
+
+    #[test]
+    fn test_default_rules_comment_const_in_sync() {
+        // DEFAULT_KV_SECRET_COMMENT 与内置默认规则集的 comment 字段保持一致
+        let rules: Value = serde_json::from_str(DEFAULT_RULES_JSON).unwrap();
+        let comment = rules["rules"][0]["comment"].as_str().unwrap();
+        assert_eq!(comment, DEFAULT_KV_SECRET_COMMENT);
     }
 
     #[test]
@@ -4531,5 +4779,222 @@ mod tests {
             let changed = replaced != text;
             (replaced, changed)
         }
+    }
+
+    // --- 性能复现（默认规则 × 大体积 agent 请求体；cargo test --release -- --ignored 跑） ---
+
+    /// 构造一段贴近 Claude Code 真实流量的大文本：代码 / 配置 / 日志 / base64 /
+    /// 中文注释混杂，含大量 kv 键值对形态与规则目标（邮箱、IP、路径）
+    fn big_agent_text(seed: usize) -> String {
+        let keys = [
+            "config",
+            "app_id",
+            "token",
+            "api_key",
+            "aws_bucket",
+            "secret",
+            "password",
+            "db_host",
+            "timeout",
+            "retries",
+            "cache_driver",
+        ];
+        let mut chunks = Vec::with_capacity(2200);
+        let mut i = seed;
+        let mut size = 0usize;
+        while size < 600_000 {
+            let k = keys[i % keys.len()];
+            let chunk = match i % 7 {
+                0 => format!(
+                    "    {k} = \"value-{i}-abcdefghijklmnop-{k}\"\n    timeout_ms = {i}000\n"
+                ),
+                1 => format!(
+                    "2026-09-21 10:{:02}:{:02} INFO request to 192.168.{}.{} served by user-{}@example.com in {i}ms\n",
+                    i % 60,
+                    i % 60,
+                    i % 255,
+                    i % 255,
+                    i % 97
+                ),
+                2 => format!(
+                    "fn process_{i}(input: &str) -> Result<(), Error> {{ // 处理第 {i} 批数据\n    let cfg = Config {{ name: \"svc-{i}\", {k}: true }};\n    input.chars().filter(|c| !c.is_whitespace()).count()\n}}\n"
+                ),
+                3 => {
+                    let b64: String = (0..48).map(|j| {
+                        char::from(b'A' + ((i + j) % 26) as u8)
+                    }).collect();
+                    format!("Authorization: Bearer {b64}{i}\ndata: eyJhbGciOiJIUzI1NiJ9.{b64}.sig{i}\n")
+                }
+                4 => format!(
+                    "  \"file_path\": \"C:\\\\Users\\\\dev{i}\\\\project\\\\src\\\\module_{i}\\\\handler.rs\",\n  \"app_key\": \"sk-abcdefghijklmnopqrstuvwx{i}\",\n"
+                ),
+                5 => format!(
+                    "# 中文说明第 {i} 段：这一段包含中文标点、英文单词 config 与内网地址 10.0.{0}.{1}，用于检验多字节文本下的匹配性能。\n",
+                    i % 255,
+                    (i * 7) % 255
+                ),
+                _ => {
+                    let hex: String = (0..32).map(|j| format!("{:02x}", (i + j) % 256)).collect::<Vec<_>>().join(" ");
+                    format!("0000{i:04x}: {hex}  ....payload....\n")
+                }
+            };
+            size += chunk.len();
+            chunks.push(chunk);
+            i += 1;
+        }
+        chunks.join("")
+    }
+
+    #[test]
+    #[ignore = "性能复现：cargo test --release -p cc-switch perf_large -- --ignored --nocapture"]
+    fn perf_large_agent_request_transform() {
+        let (plugin, _dir) = plugin_with_default_rules();
+        let text = big_agent_text(0);
+        eprintln!("文本大小: {} KB", text.len() / 1024);
+
+        let t0 = std::time::Instant::now();
+        let snapshot = plugin.current_snapshot();
+        eprintln!("快照构建: {:?}", t0.elapsed());
+
+        // 逐规则计时（全量文本，定位规模性爆炸点）
+        let docs = load_docs_from_files(&plugin.state.config_dir).unwrap();
+        let rules = compile_rules(&docs.get(RULES_DOC_FILE).unwrap());
+        let named: Vec<&str> = docs[RULES_DOC_FILE]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["name"].as_str())
+            .collect();
+        for (spec, rule) in named.iter().zip(rules.iter()) {
+            eprintln!(">>> 开始规则 {spec} (len {})", text.len());
+            let t = std::time::Instant::now();
+            let spans = collect_regex_spans(&text, std::slice::from_ref(rule));
+            eprintln!("规则 {spec}: {:?} ({} spans)", t.elapsed(), spans.len());
+        }
+        let spans_t = std::time::Instant::now();
+        let spans = collect_regex_spans(&text, &snapshot.rules);
+        eprintln!(
+            "collect_regex_spans: {:?} ({} spans)",
+            spans_t.elapsed(),
+            spans.len()
+        );
+
+        let hex_t = std::time::Instant::now();
+        let masked = hexdump_mask(&text, &mut |d| plugin.hexguard_detect(d, &snapshot));
+        eprintln!("hexdump_mask: {:?} (len {})", hex_t.elapsed(), masked.len());
+
+        let full_t = std::time::Instant::now();
+        let (replaced, changed) = plugin.replace_text(&text);
+        eprintln!(
+            "完整 replace_text: {:?} (changed {changed}, len {})",
+            full_t.elapsed(),
+            replaced.len()
+        );
+
+        // 二次调用走缓存
+        let cached_t = std::time::Instant::now();
+        plugin.replace_text(&text);
+        eprintln!("缓存命中: {:?}", cached_t.elapsed());
+    }
+
+    #[test]
+    #[ignore = "性能定位：cargo test --lib perf_rule_isolate -- --ignored --nocapture"]
+    fn perf_rule_isolate() {
+        // 逐规则计时（60KB 样本，debug 模式即可分辨超线性爆炸）
+        let (plugin, _dir) = plugin_with_default_rules();
+        let snapshot = plugin.current_snapshot();
+        let text = big_agent_text(0)[..60_000].to_string();
+        eprintln!("样本: {} KB", text.len() / 1024);
+        let docs = load_docs_from_files(&plugin.state.config_dir).unwrap();
+        let rules = compile_rules(&docs.get(RULES_DOC_FILE).unwrap());
+        assert!(!rules.is_empty());
+        let named: Vec<&str> = docs[RULES_DOC_FILE]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["name"].as_str())
+            .collect();
+        for (spec, rule) in named.iter().zip(rules.iter()) {
+            let t = std::time::Instant::now();
+            let spans = collect_regex_spans(&text, std::slice::from_ref(rule));
+            eprintln!("规则 {spec}: {:?} ({} spans)", t.elapsed(), spans.len());
+        }
+        // 自定义特殊值路径
+        let t = std::time::Instant::now();
+        let custom = collect_custom_spans(&text, &snapshot.custom_values);
+        eprintln!("custom_values: {:?} ({} spans)", t.elapsed(), custom.len());
+        // hexdump 路径
+        let t = std::time::Instant::now();
+        let masked = hexdump_mask(&text, &mut |d| plugin.hexguard_detect(d, &snapshot));
+        eprintln!("hexdump_mask: {:?} (len {})", t.elapsed(), masked.len());
+    }
+
+    #[test]
+    #[ignore = "增长曲线：cargo test --lib perf_growth -- --ignored --nocapture"]
+    fn perf_growth() {
+        // token-prefix/bearer 在 58KB 线性、585KB 爆炸——用增长曲线定位复杂度
+        let (plugin, _dir) = plugin_with_default_rules();
+        let snapshot = plugin.current_snapshot();
+        let full = big_agent_text(0);
+        let by_name: HashMap<&str, &CompiledRule> = snapshot
+            .rules
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| docs_by_name(&plugin).get(i).map(|n| (*n, r)))
+            .collect();
+        for size in [100_000usize, 200_000, 300_000, 400_000, 500_000, 585_000] {
+            let text = &full[..size.min(full.len())];
+            for name in ["token-prefix", "bearer-token"] {
+                let Some(rule) = by_name.get(name) else {
+                    continue;
+                };
+                let t = std::time::Instant::now();
+                let spans = collect_regex_spans(text, std::slice::from_ref(*rule));
+                eprintln!(
+                    "{name} @ {}KB: {:?} ({} spans)",
+                    size / 1024,
+                    t.elapsed(),
+                    spans.len()
+                );
+            }
+        }
+    }
+
+    /// 规则名 → 下标对齐（快照 rules 与文档 rules 声明顺序一致）
+    fn docs_by_name(plugin: &BuiltinPrivacyPlugin) -> Vec<&'static str> {
+        let docs = load_docs_from_files(&plugin.state.config_dir).unwrap();
+        let rules = docs[RULES_DOC_FILE]["rules"].as_array().unwrap();
+        rules
+            .iter()
+            .filter_map(|r| {
+                r["name"].as_str().map(|n| -> &'static str {
+                    match n {
+                        "kv-secret" => "kv-secret",
+                        "kv-generic" => "kv-generic",
+                        "email" => "email",
+                        "cn-mobile" => "cn-mobile",
+                        "private-ipv4" => "private-ipv4",
+                        "win-user-profile" => "win-user-profile",
+                        "api-token-sk" => "api-token-sk",
+                        "jwt" => "jwt",
+                        "token-prefix" => "token-prefix",
+                        "bearer-token" => "bearer-token",
+                        "pem-private-key" => "pem-private-key",
+                        "real-name" => "real-name",
+                        other => Box::leak(other.to_string().into_boxed_str()),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// 默认规则集插件（独立临时目录）
+    fn plugin_with_default_rules() -> (BuiltinPrivacyPlugin, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = BuiltinPrivacyPlugin::with_config_dir(
+            Arc::new(Database::memory().unwrap()),
+            dir.path().to_path_buf(),
+        );
+        (plugin, dir)
     }
 }
