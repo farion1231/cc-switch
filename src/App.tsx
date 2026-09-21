@@ -1193,16 +1193,6 @@ function App() {
           {...(useAppWindowControls || DRAG_REGION_ENABLED
             ? { "data-tauri-drag-region": true }
             : {})}
-          onMouseDown={(e) => {
-            // Linux 应用自绘标题栏：空白处辅助触发拖拽；按钮容器用 no-drag 排除。
-            if (
-              useAppWindowControls &&
-              e.buttons === 1 &&
-              !(e.target as HTMLElement).closest(".no-drag")
-            ) {
-              void getCurrentWindow().startDragging();
-            }
-          }}
           style={
             {
               ...(useAppWindowControls || DRAG_REGION_ENABLED
