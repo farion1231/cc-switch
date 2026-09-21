@@ -268,8 +268,12 @@ export function PluginConfigDialog({
         const cols = item.columns ?? [];
         field.push(
           // 列多且含长文本（pattern/values），给表格固定最小宽度 + 横向滚动，
-          // 避免列被压扁到看不见（视觉上"值为空"）
-          <div key={`f-${item.key}`} className="overflow-x-auto pb-1">
+          // 避免列被压扁到看不见（视觉上"值为空"）；全局隐藏滚动条，此处
+          // scrollbar-visible 显式恢复以保证滚动可发现
+          <div
+            key={`f-${item.key}`}
+            className="scrollbar-visible overflow-x-auto pb-1"
+          >
             <table className="w-full min-w-[920px] text-xs">
               <thead>
                 <tr>
@@ -403,7 +407,7 @@ export function PluginConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+      <DialogContent className="max-h-[85vh] max-w-4xl overflow-x-hidden overflow-y-auto scrollbar-visible">
         <DialogHeader>
           <DialogTitle>
             {title ?? t(`${I18N}.title`, { name: displayName })}
@@ -414,7 +418,9 @@ export function PluginConfigDialog({
             {t(`${I18N}.loading`)}
           </p>
         ) : (
-          <Tabs defaultValue={groups[0]?.key}>
+          // min-w-0：DialogContent 是 flex 容器，子项默认 min-width:auto 会被
+          // 宽表格撑开——必须约束这条链，让横向滚动发生在下方包裹层内
+          <Tabs defaultValue={groups[0]?.key} className="min-w-0">
             <TabsList className="flex h-auto w-full flex-wrap">
               {groups.map((g) => (
                 <TabsTrigger key={g.key} value={g.key}>
@@ -423,7 +429,11 @@ export function PluginConfigDialog({
               ))}
             </TabsList>
             {groups.map((g) => (
-              <TabsContent key={g.key} value={g.key} className="mt-3 space-y-4">
+              <TabsContent
+                key={g.key}
+                value={g.key}
+                className="mt-3 min-w-0 space-y-4"
+              >
                 {Array.from(new Set(g.items.map((it) => it.file))).map(
                   (file) => (
                     <div key={file} className="space-y-3">
