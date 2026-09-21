@@ -68,6 +68,9 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
 /// - xAI Grok Build models. `grok-4.5`/`grok-4.6` are the documented Grok
 ///   Build models; retain the previous `grok-build-*` family for saved providers.
+/// - Meta Muse Spark models (`muse-spark-*`, incl. `-contributor` tiers).
+///   Effort passes through verbatim, including `"max"`; if a Contributor
+///   tier rejects `"max"`, the upstream error surfaces instead of a silent clamp.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
     is_openai_o_series(&normalized)
@@ -80,6 +83,14 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
         || normalized == "grok-4.6"
         || normalized.starts_with("grok-4.6-")
         || normalized.starts_with("grok-build-")
+        || is_muse_spark(model)
+}
+
+/// Muse Spark model names (`muse-spark-1.3`, `muse-spark-1.3-contributor`, …).
+/// Matching is case-insensitive and prefix-based so version or `[1M]`-style
+/// suffixes keep working.
+fn is_muse_spark(model: &str) -> bool {
+    model.to_lowercase().starts_with("muse-spark")
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -87,14 +98,16 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
 /// Priority:
 /// 1. Explicit `output_config.effort` — preserves the user's intent directly.
 ///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
-///    `/effort xhigh` sends); `max` maps to `xhigh`
-///    (supported by mainstream GPT models). Unknown values are ignored.
+///    `/effort xhigh` sends); `max` maps to `xhigh`, except on Muse Spark
+///    where it passes through verbatim (Standard tier defines `max` above
+///    `xhigh`; Contributor tiers may reject it upstream). Unknown values
+///    are ignored.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
 ///    - `disabled` / absent → `None`
-pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
+pub fn resolve_reasoning_effort(body: &Value, model: &str) -> Option<&'static str> {
     // --- Priority 1: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
@@ -105,8 +118,11 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "medium" => Some("medium"),
             "high" => Some("high"),
             "xhigh" => Some("xhigh"),
-            "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
-            _ => None,              // unknown value — do not inject
+            // Muse Spark defines "max" as its own level: pass through verbatim
+            // and let the upstream accept or reject it. Other families have no
+            // "max", so keep the xhigh clamp for them.
+            "max" => Some(if is_muse_spark(model) { "max" } else { "xhigh" }),
+            _ => None, // unknown value — do not inject
         };
     }
 
@@ -215,7 +231,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
 
     // Map Anthropic thinking → OpenAI reasoning_effort
     if supports_reasoning_effort(model) {
-        if let Some(effort) = resolve_reasoning_effort(&body) {
+        if let Some(effort) = resolve_reasoning_effort(&body, model) {
             result["reasoning_effort"] = json!(effort);
         }
     }
@@ -1776,6 +1792,8 @@ mod tests {
         assert!(supports_reasoning_effort("grok-4.6"));
         assert!(supports_reasoning_effort("grok-4.6-build"));
         assert!(supports_reasoning_effort("grok-build-0.1"));
+        assert!(supports_reasoning_effort("muse-spark-1.3"));
+        assert!(supports_reasoning_effort("muse-spark-1.3-contributor"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
         assert!(!supports_reasoning_effort("grok-4"));
@@ -1786,32 +1804,53 @@ mod tests {
     #[test]
     fn test_output_config_low_maps_to_reasoning_effort_low() {
         let body = json!({"output_config": {"effort": "low"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("low"));
     }
 
     #[test]
     fn test_output_config_medium_maps_to_reasoning_effort_medium() {
         let body = json!({"output_config": {"effort": "medium"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("medium"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("medium"));
     }
 
     #[test]
     fn test_output_config_high_maps_to_reasoning_effort_high() {
         let body = json!({"output_config": {"effort": "high"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("high"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("high"));
     }
 
     #[test]
     fn test_output_config_max_maps_to_reasoning_effort_xhigh() {
         let body = json!({"output_config": {"effort": "max"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("xhigh"));
+    }
+
+    #[test]
+    fn test_output_config_max_verbatim_for_muse_spark() {
+        // Standard-tier Muse Spark defines "max" above "xhigh": pass through.
+        let body = json!({"output_config": {"effort": "max"}});
+        assert_eq!(
+            resolve_reasoning_effort(&body, "muse-spark-1.3"),
+            Some("max")
+        );
+    }
+
+    #[test]
+    fn test_output_config_max_verbatim_for_muse_spark_contributor() {
+        // Contributor tier may reject "max" upstream (HTTP 400); that is the
+        // upstream's decision to surface, not the proxy's to silently clamp.
+        let body = json!({"output_config": {"effort": "max"}});
+        assert_eq!(
+            resolve_reasoning_effort(&body, "muse-spark-1.3-contributor"),
+            Some("max")
+        );
     }
 
     #[test]
     fn test_output_config_xhigh_maps_verbatim() {
         // Claude Code's `/effort xhigh` sends output_config.effort="xhigh"
         let body = json!({"output_config": {"effort": "xhigh"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("xhigh"));
     }
 
     #[test]
@@ -1821,55 +1860,55 @@ mod tests {
             "output_config": {"effort": "low"},
             "thinking": {"type": "adaptive"}
         });
-        assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("low"));
     }
 
     #[test]
     fn test_output_config_unknown_value_no_reasoning_effort() {
         let body = json!({"output_config": {"effort": "turbo"}});
-        assert_eq!(resolve_reasoning_effort(&body), None);
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), None);
     }
 
     #[test]
     fn test_thinking_enabled_small_budget_maps_low() {
         let body = json!({"thinking": {"type": "enabled", "budget_tokens": 1024}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("low"));
     }
 
     #[test]
     fn test_thinking_enabled_medium_budget_maps_medium() {
         let body = json!({"thinking": {"type": "enabled", "budget_tokens": 8000}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("medium"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("medium"));
     }
 
     #[test]
     fn test_thinking_enabled_large_budget_maps_high() {
         let body = json!({"thinking": {"type": "enabled", "budget_tokens": 32000}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("high"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("high"));
     }
 
     #[test]
     fn test_thinking_enabled_without_budget_maps_high() {
         let body = json!({"thinking": {"type": "enabled"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("high"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("high"));
     }
 
     #[test]
     fn test_thinking_adaptive_maps_xhigh() {
         let body = json!({"thinking": {"type": "adaptive"}});
-        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), Some("xhigh"));
     }
 
     #[test]
     fn test_thinking_disabled_no_reasoning_effort() {
         let body = json!({"thinking": {"type": "disabled"}});
-        assert_eq!(resolve_reasoning_effort(&body), None);
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), None);
     }
 
     #[test]
     fn test_no_thinking_field_no_reasoning_effort() {
         let body = json!({"messages": [{"role": "user", "content": "Hello"}]});
-        assert_eq!(resolve_reasoning_effort(&body), None);
+        assert_eq!(resolve_reasoning_effort(&body, "gpt-5.4"), None);
     }
 
     // ── Integration: anthropic_to_openai with resolve_reasoning_effort ──

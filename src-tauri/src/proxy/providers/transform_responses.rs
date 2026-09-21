@@ -1840,7 +1840,7 @@ pub fn anthropic_to_responses(
     // Map Anthropic thinking → OpenAI Responses reasoning.effort
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
-            if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
+            if let Some(effort) = super::transform::resolve_reasoning_effort(&body, model_name) {
                 result["reasoning"] = json!({ "effort": effort });
             }
         }
@@ -4891,6 +4891,51 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_muse_spark_contributor_effort_not_dropped() {
+        // muse-spark-1.3-contributor was missing from the reasoning-effort
+        // whitelist, so output_config.effort was silently dropped and the
+        // upstream ran at its default level regardless of /effort.
+        let input = json!({
+            "model": "muse-spark-1.3-contributor",
+            "max_tokens": 1024,
+            "output_config": {"effort": "low"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_responses_muse_spark_contributor_max_verbatim() {
+        // effort passes through verbatim; if the Contributor tier rejects
+        // "max", the upstream 400 surfaces instead of a silent clamp.
+        let input = json!({
+            "model": "muse-spark-1.3-contributor",
+            "max_tokens": 1024,
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "max");
+    }
+
+    #[test]
+    fn test_responses_muse_spark_standard_max_verbatim() {
+        // Standard tier defines "max" above "xhigh": must reach upstream.
+        let input = json!({
+            "model": "muse-spark-1.3",
+            "max_tokens": 1024,
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "max");
     }
 
     #[test]
