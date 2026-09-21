@@ -77,7 +77,11 @@ cc-switch 本地代理在转发 Claude / Codex / Gemini 请求时，会在固定
   （逐字面匹配，登记即预注册映射，priority 缺省 1 压过常规规则）；
 - 十六进制转储防护：工具输出（xxd / hexdump -C）的 hex 列是原文的另一编码，命中值在
   hex 列（`xx`）与 ASCII 列（`.`）同时**不可逆抹除**，不产生标记映射；
-- 配置：插件面板「设置」按钮（页签：正则规则 / 特殊值 / 散列与选项），保存即生效；
+- 配置文件落地在 `<配置目录>/privacy/`（即 `C:\Users\<user>\.cc-switch\privacy\` 下的
+  `config.json` / `rules.json` / `custom-values.json`）：面板「设置」按钮（页签：
+  正则规则 / 特殊值 / 散列与选项）读写同一批文件，保存即生效；也可直接手动编辑文件，
+  保存后按 mtime 热重载，无需重启（全新安装时自动生成默认配置，规则集与 Python
+  参考实现同源）；
 - 标记 id 散列可选 blake2b / sha256 / sha512 / sha1、adaptive / fixed 长度——只影响
   新登记的映射，已有映射的 id 永不改变；
 - 映射表持久化在 SQLite `privacy_mapping` 表：**明文存储原文**，请像保管密码一样
