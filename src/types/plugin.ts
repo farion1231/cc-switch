@@ -50,7 +50,12 @@ export type ConfigFieldType =
   | "textarea"
   | "table";
 
-export type ConfigColumnType = "text" | "number" | "toggle" | "textarea" | "select";
+export type ConfigColumnType =
+  | "text"
+  | "number"
+  | "toggle"
+  | "textarea"
+  | "select";
 
 export interface ConfigColumn {
   key: string;

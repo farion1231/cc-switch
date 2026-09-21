@@ -12,6 +12,10 @@ import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
 
+// 表单交互链路较长，全量并行跑时多个用例会贴近默认 5s 超时（单跑 3s 内通过），
+// 统一放宽到 15s 消除并行负载抖动
+vi.setConfig({ testTimeout: 15000 });
+
 const TAURI_ENDPOINT = "http://tauri.local";
 
 function completeModel(id: string, name = id.trim() || "Model") {

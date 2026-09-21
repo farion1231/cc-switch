@@ -29,7 +29,11 @@ const I18N = "settings.advanced.plugins.config";
 function getByPath(doc: unknown, path: string): unknown {
   let cur: unknown = doc;
   for (const seg of path.split(".")) {
-    if (cur && typeof cur === "object" && seg in (cur as Record<string, unknown>)) {
+    if (
+      cur &&
+      typeof cur === "object" &&
+      seg in (cur as Record<string, unknown>)
+    ) {
       cur = (cur as Record<string, unknown>)[seg];
     } else {
       return undefined;
@@ -79,7 +83,7 @@ export function PluginConfigDialog({
     const index = new Map<string, number>();
     for (const item of schema) {
       const key = item.tab ?? item.file;
-      const label = item.tab ?? (item.file.split("/").pop() ?? item.file);
+      const label = item.tab ?? item.file.split("/").pop() ?? item.file;
       let i = index.get(key);
       if (i === undefined) {
         i = map.length;
@@ -94,7 +98,9 @@ export function PluginConfigDialog({
   const load = useCallback(async () => {
     setDocs(null);
     try {
-      setDocs(await invoke<PluginConfigDocs>("plugin_config_read", { id: pluginId }));
+      setDocs(
+        await invoke<PluginConfigDocs>("plugin_config_read", { id: pluginId }),
+      );
     } catch (e) {
       toast.error(String(e));
       onClose();
@@ -112,8 +118,7 @@ export function PluginConfigDialog({
   const updateValue = (item: ConfigSchemaItem, value: unknown) => {
     if (!docs) return;
     const doc = docs[item.file];
-    const next =
-      doc instanceof Object ? structuredClone(doc) : {};
+    const next = doc instanceof Object ? structuredClone(doc) : {};
     setByPath(next, item.path ?? item.key, value);
     setDoc(item.file, next);
   };
@@ -128,7 +133,10 @@ export function PluginConfigDialog({
     const doc = structuredClone(docs[item.file] ?? {});
     const rows = getByPath(doc, item.path ?? item.key);
     if (!Array.isArray(rows)) return;
-    rows[rowIndex] = { ...(rows[rowIndex] as Record<string, unknown>), [column.key]: value };
+    rows[rowIndex] = {
+      ...(rows[rowIndex] as Record<string, unknown>),
+      [column.key]: value,
+    };
     setDoc(item.file, doc);
   };
 
@@ -238,14 +246,19 @@ export function PluginConfigDialog({
         );
         break;
       case "table": {
-        const rows = Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+        const rows = Array.isArray(value)
+          ? (value as Record<string, unknown>[])
+          : [];
         const cols = item.columns ?? [];
         field.push(
           <table key={`f-${item.key}`} className="w-full text-xs">
             <thead>
               <tr>
                 {cols.map((c) => (
-                  <th key={c.key} className="border-b px-2 py-1 text-left font-medium">
+                  <th
+                    key={c.key}
+                    className="border-b px-2 py-1 text-left font-medium"
+                  >
                     {c.label}
                   </th>
                 ))}
@@ -260,27 +273,47 @@ export function PluginConfigDialog({
                       {c.type === "toggle" ? (
                         <Switch
                           checked={row[c.key] === true}
-                          onCheckedChange={(checked) => updateCell(item, ri, c, checked)}
+                          onCheckedChange={(checked) =>
+                            updateCell(item, ri, c, checked)
+                          }
                         />
                       ) : c.type === "textarea" ? (
                         <textarea
                           className="w-full min-w-[220px] rounded-md border border-input bg-transparent px-2 py-1 font-mono text-xs"
                           rows={2}
-                          value={typeof row[c.key] === "string" ? (row[c.key] as string) : ""}
-                          onChange={(e) => updateCell(item, ri, c, e.target.value)}
+                          value={
+                            typeof row[c.key] === "string"
+                              ? (row[c.key] as string)
+                              : ""
+                          }
+                          onChange={(e) =>
+                            updateCell(item, ri, c, e.target.value)
+                          }
                         />
                       ) : c.type === "number" ? (
                         <Input
                           type="number"
                           className="w-24"
-                          value={typeof row[c.key] === "number" ? (row[c.key] as number) : ""}
-                          onChange={(e) => updateCell(item, ri, c, Number(e.target.value))}
+                          value={
+                            typeof row[c.key] === "number"
+                              ? (row[c.key] as number)
+                              : ""
+                          }
+                          onChange={(e) =>
+                            updateCell(item, ri, c, Number(e.target.value))
+                          }
                         />
                       ) : c.type === "select" ? (
                         <select
                           className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs"
-                          value={typeof row[c.key] === "string" ? (row[c.key] as string) : ""}
-                          onChange={(e) => updateCell(item, ri, c, e.target.value)}
+                          value={
+                            typeof row[c.key] === "string"
+                              ? (row[c.key] as string)
+                              : ""
+                          }
+                          onChange={(e) =>
+                            updateCell(item, ri, c, e.target.value)
+                          }
                         >
                           {(c.options ?? []).map((o) => (
                             <option key={o} value={o}>
@@ -291,8 +324,14 @@ export function PluginConfigDialog({
                       ) : (
                         <Input
                           type="text"
-                          value={typeof row[c.key] === "string" ? (row[c.key] as string) : ""}
-                          onChange={(e) => updateCell(item, ri, c, e.target.value)}
+                          value={
+                            typeof row[c.key] === "string"
+                              ? (row[c.key] as string)
+                              : ""
+                          }
+                          onChange={(e) =>
+                            updateCell(item, ri, c, e.target.value)
+                          }
                         />
                       )}
                     </td>
@@ -356,14 +395,18 @@ export function PluginConfigDialog({
             </TabsList>
             {groups.map((g) => (
               <TabsContent key={g.key} value={g.key} className="mt-3 space-y-4">
-                {Array.from(new Set(g.items.map((it) => it.file))).map((file) => (
-                  <div key={file} className="space-y-3">
-                    <p className="font-mono text-xs text-muted-foreground">{file}</p>
-                    {g.items
-                      .filter((it) => it.file === file)
-                      .map((item) => renderField(item))}
-                  </div>
-                ))}
+                {Array.from(new Set(g.items.map((it) => it.file))).map(
+                  (file) => (
+                    <div key={file} className="space-y-3">
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {file}
+                      </p>
+                      {g.items
+                        .filter((it) => it.file === file)
+                        .map((item) => renderField(item))}
+                    </div>
+                  ),
+                )}
               </TabsContent>
             ))}
           </Tabs>
@@ -372,7 +415,10 @@ export function PluginConfigDialog({
           <Button variant="outline" onClick={onClose}>
             {t(`${I18N}.cancel`)}
           </Button>
-          <Button onClick={() => void save()} disabled={saving || docs === null}>
+          <Button
+            onClick={() => void save()}
+            disabled={saving || docs === null}
+          >
             {t(`${I18N}.save`)}
           </Button>
         </DialogFooter>
