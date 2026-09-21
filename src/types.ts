@@ -66,6 +66,7 @@ export interface UsageScript {
   secretAccessKey?: string; // 火山方舟 SecretAccessKey
   teamOrganizationId?: string; // 智谱团队套餐组织 ID（请求头 bigmodel-organization）
   teamProjectId?: string; // 智谱团队套餐项目 ID（请求头 bigmodel-project）
+  akskAccountId?: string; // 火山账号池：本条目使用的账号 id（缺省用默认账号）
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段

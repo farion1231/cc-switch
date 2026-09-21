@@ -48,8 +48,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
         // 入口；DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐
-        // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
-        // GetCodingPlanUsage），无需在此区分两种订阅。
+        // 额度，不在此命中。用量探测按 base_url 分流（见 query_volcengine）：
+        // `/api/plan` 只查 GetAFPUsage，`/api/coding` 只查 GetCodingPlanUsage。
         Some(CodingPlanProvider::Volcengine)
     } else {
         None
@@ -1242,46 +1242,66 @@ async fn query_volcengine(
         format!("{action}={raw}")
     };
 
-    // 1) Agent Plan：GetAFPUsage
-    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage").await {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
-        VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
-        VolcCall::Body(body) => {
-            let result = body.get("Result").unwrap_or(&body);
-            let tiers = parse_afp_tiers(result);
-            if !tiers.is_empty() {
-                let plan = result
-                    .get("PlanType")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| format!("Agent Plan {s}"));
-                return Ok(volcengine_success(tiers, plan));
+    // 按 base_url 分流：数据面入口不同 → 对应套餐不同，两个供应商条目各查各的。
+    // - `/api/plan[/v3]`（Agent Plan 条目）只查 GetAFPUsage；
+    // - `/api/coding[/v3]`（Coding Plan 条目）只查 GetCodingPlanUsage；
+    // - 无法识别（自定义反代等）保持原有双探测兜底。
+    // 两个 plan 共用同一份 AK/SK，故鉴权类错误任一步命中即停。
+    let url_lc = base_url.to_lowercase();
+    let (probe_agent, probe_coding) = if url_lc.contains("volces.com/api/coding") {
+        (false, true)
+    } else if url_lc.contains("volces.com/api/plan") {
+        (true, false)
+    } else {
+        (true, true)
+    };
+
+    if probe_agent {
+        // 1) Agent Plan：GetAFPUsage
+        match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage")
+            .await
+        {
+            VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+            VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
+            VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
+            VolcCall::Body(body) => {
+                let result = body.get("Result").unwrap_or(&body);
+                let tiers = parse_afp_tiers(result);
+                if !tiers.is_empty() {
+                    let plan = result
+                        .get("PlanType")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("Agent Plan {s}"));
+                    return Ok(volcengine_success(tiers, plan));
+                }
+                empty_responses.push(summarize("GetAFPUsage", &body));
             }
-            empty_responses.push(summarize("GetAFPUsage", &body));
         }
     }
 
-    // 2) Coding Plan：GetCodingPlanUsage
-    match volcengine_openapi_call(
-        &region,
-        access_key_id,
-        secret_access_key,
-        "GetCodingPlanUsage",
-    )
-    .await
-    {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GetCodingPlanUsage: {detail}")),
-        VolcCall::Soft(detail) => soft_errors.push(format!("GetCodingPlanUsage: {detail}")),
-        VolcCall::Body(body) => {
-            let result = body.get("Result").unwrap_or(&body);
-            let tiers = parse_coding_plan_tiers(result);
-            if !tiers.is_empty() {
-                return Ok(volcengine_success(tiers, Some("Coding Plan".to_string())));
+    if probe_coding {
+        // 2) Coding Plan：GetCodingPlanUsage
+        match volcengine_openapi_call(
+            &region,
+            access_key_id,
+            secret_access_key,
+            "GetCodingPlanUsage",
+        )
+        .await
+        {
+            VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+            VolcCall::Transient(detail) => return Err(format!("GetCodingPlanUsage: {detail}")),
+            VolcCall::Soft(detail) => soft_errors.push(format!("GetCodingPlanUsage: {detail}")),
+            VolcCall::Body(body) => {
+                let result = body.get("Result").unwrap_or(&body);
+                let tiers = parse_coding_plan_tiers(result);
+                if !tiers.is_empty() {
+                    return Ok(volcengine_success(tiers, Some("Coding Plan".to_string())));
+                }
+                empty_responses.push(summarize("GetCodingPlanUsage", &body));
             }
-            empty_responses.push(summarize("GetCodingPlanUsage", &body));
         }
     }
 
@@ -1294,12 +1314,272 @@ async fn query_volcengine(
             "No active subscription found (signature OK). Raw: {}",
             empty_responses.join(" || ")
         )))
+    } else if !probe_agent {
+        Ok(make_error(
+            "No active Coding Plan subscription found for this credential".to_string(),
+        ))
+    } else if !probe_coding {
+        Ok(make_error(
+            "No active Agent Plan subscription found for this credential".to_string(),
+        ))
     } else {
         Ok(make_error(
             "No active Agent Plan or Coding Plan subscription found for this credential"
                 .to_string(),
         ))
     }
+}
+
+// ── 火山方舟账号池 ─────────────────────────
+//
+// AK/SK 是账号级凭据（控制面签名），与具体条目解耦：统一存全局账号池
+// （DB settings 表，key = volcengine_accounts，随库 S3 同步）。条目
+// usage_script 只存 aksk_account_id 引用；老版本的内联 AK/SK 首次使用时
+// 惰性迁移入池（池空自动入池；池非空保持内联不迁移，由状态行提示）。
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolcengineAccount {
+    pub id: String,
+    pub label: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+}
+
+pub(crate) const VOLCENGINE_ACCOUNTS_KEY: &str = "volcengine_accounts";
+
+fn load_volcengine_accounts(db: &crate::database::Database) -> Vec<VolcengineAccount> {
+    db.get_setting(VOLCENGINE_ACCOUNTS_KEY)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_volcengine_accounts(
+    db: &crate::database::Database,
+    accounts: &[VolcengineAccount],
+) -> Result<(), String> {
+    let json = serde_json::to_string(accounts).map_err(|e| e.to_string())?;
+    db.set_setting(VOLCENGINE_ACCOUNTS_KEY, &json)
+        .map_err(|e| e.to_string())
+}
+
+/// 新增（id 为空）或更新账号。更新时 label 留空表示不修改名称。
+pub(crate) fn save_volcengine_account(
+    db: &crate::database::Database,
+    id: Option<&str>,
+    label: Option<&str>,
+    ak: &str,
+    sk: &str,
+) -> Result<VolcengineAccount, String> {
+    let ak = ak.trim();
+    let sk = sk.trim();
+    if ak.is_empty() || sk.is_empty() {
+        return Err("AccessKey ID / Secret 不能为空".to_string());
+    }
+    let mut accounts = load_volcengine_accounts(db);
+    match id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => {
+            let account = accounts
+                .iter_mut()
+                .find(|a| a.id == id)
+                .ok_or_else(|| "账号不存在".to_string())?;
+            account.access_key_id = ak.to_string();
+            account.secret_access_key = sk.to_string();
+            if let Some(l) = label.map(str::trim).filter(|s| !s.is_empty()) {
+                account.label = l.to_string();
+            }
+            let cloned = account.clone();
+            save_volcengine_accounts(db, &accounts)?;
+            Ok(cloned)
+        }
+        None => {
+            let label = label
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("账号 {}", accounts.len() + 1));
+            let account = VolcengineAccount {
+                id: uuid::Uuid::new_v4().to_string(),
+                label,
+                access_key_id: ak.to_string(),
+                secret_access_key: sk.to_string(),
+            };
+            accounts.push(account.clone());
+            save_volcengine_accounts(db, &accounts)?;
+            Ok(account)
+        }
+    }
+}
+
+pub(crate) fn delete_volcengine_account(
+    db: &crate::database::Database,
+    id: &str,
+) -> Result<(), String> {
+    let mut accounts = load_volcengine_accounts(db);
+    let before = accounts.len();
+    accounts.retain(|a| a.id != id);
+    if accounts.len() == before {
+        return Err("账号不存在".to_string());
+    }
+    save_volcengine_accounts(db, &accounts)
+}
+
+pub(crate) fn rename_volcengine_account(
+    db: &crate::database::Database,
+    id: &str,
+    label: &str,
+) -> Result<(), String> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Err("账号名称不能为空".to_string());
+    }
+    let mut accounts = load_volcengine_accounts(db);
+    let Some(account) = accounts.iter_mut().find(|a| a.id == id) else {
+        return Err("账号不存在".to_string());
+    };
+    account.label = label.to_string();
+    save_volcengine_accounts(db, &accounts)
+}
+
+/// 解析出的生效凭据（含来源标注，供状态行展示）。
+#[derive(Debug, Clone)]
+pub struct VolcengineCred {
+    pub ak: String,
+    pub sk: String,
+    pub account_label: String,
+    /// referenced（条目引用） | default（默认账号） | legacy（条目旧凭据，未入池） | migrated（惰性迁移）
+    pub source: &'static str,
+}
+
+/// 解析生效凭据。优先级：条目引用的账号 > 条目内联旧凭据（池空时惰性入池）>
+/// 默认账号（池中第一个）。池空且无任何凭据 → Err 引导添加。
+pub(crate) fn resolve_volcengine_aksk(
+    db: &crate::database::Database,
+    aksk_account_id: Option<&str>,
+    inline_ak: Option<&str>,
+    inline_sk: Option<&str>,
+    provider_name: Option<&str>,
+) -> Result<VolcengineCred, String> {
+    let accounts = load_volcengine_accounts(db);
+
+    // 1) 条目引用的账号
+    if let Some(id) = aksk_account_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(account) = accounts.iter().find(|a| a.id == id) {
+            return Ok(VolcengineCred {
+                ak: account.access_key_id.clone(),
+                sk: account.secret_access_key.clone(),
+                account_label: account.label.clone(),
+                source: "referenced",
+            });
+        }
+        // 引用失效（账号被删）→ 回落默认账号
+    }
+
+    // 2) 条目内联旧凭据（历史兼容）：池空 → 惰性入池后使用；池非空 → 直接使用不迁移
+    let inline_complete = matches!(
+        (
+            inline_ak.map(str::trim).filter(|s| !s.is_empty()),
+            inline_sk.map(str::trim).filter(|s| !s.is_empty()),
+        ),
+        (Some(_), Some(_))
+    );
+    if inline_complete {
+        if accounts.is_empty() {
+            let account = save_volcengine_account(
+                db,
+                None,
+                provider_name,
+                inline_ak.unwrap_or_default(),
+                inline_sk.unwrap_or_default(),
+            )?;
+            return Ok(VolcengineCred {
+                ak: account.access_key_id.clone(),
+                sk: account.secret_access_key.clone(),
+                account_label: account.label.clone(),
+                source: "migrated",
+            });
+        }
+        return Ok(VolcengineCred {
+            ak: inline_ak.unwrap_or_default().trim().to_string(),
+            sk: inline_sk.unwrap_or_default().trim().to_string(),
+            account_label: String::new(),
+            source: "legacy",
+        });
+    }
+
+    // 3) 默认账号（池中第一个）
+    if let Some(account) = accounts.first() {
+        return Ok(VolcengineCred {
+            ak: account.access_key_id.clone(),
+            sk: account.secret_access_key.clone(),
+            account_label: account.label.clone(),
+            source: "default",
+        });
+    }
+
+    Err("尚未配置火山方舟 AK/SK。请在任一火山条目的用量查询中添加账号。".to_string())
+}
+
+/// 弹窗状态行用的生效凭据（脱敏后返回，SK 明文不出后端）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolcengineAkSkStatus {
+    pub configured: bool,
+    /// referenced | default | legacy | migrated | none
+    pub kind: &'static str,
+    pub account_label: Option<String>,
+    pub ak_masked: Option<String>,
+    pub sk_masked: Option<String>,
+}
+
+pub(crate) fn get_volcengine_aksk_status(
+    db: &crate::database::Database,
+    aksk_account_id: Option<&str>,
+    inline_ak: Option<&str>,
+    inline_sk: Option<&str>,
+    provider_name: Option<&str>,
+) -> VolcengineAkSkStatus {
+    match resolve_volcengine_aksk(db, aksk_account_id, inline_ak, inline_sk, provider_name) {
+        Ok(cred) => VolcengineAkSkStatus {
+            configured: true,
+            kind: cred.source,
+            account_label: (!cred.account_label.is_empty()).then_some(cred.account_label),
+            ak_masked: Some(mask_ak(&cred.ak)),
+            sk_masked: Some(mask_sk(&cred.sk)),
+        },
+        Err(_) => VolcengineAkSkStatus {
+            configured: false,
+            kind: "none",
+            account_label: None,
+            ak_masked: None,
+            sk_masked: None,
+        },
+    }
+}
+
+fn mask_ak(v: &str) -> String {
+    let chars: Vec<char> = v.chars().collect();
+    if chars.len() <= 10 {
+        return "••••••".to_string();
+    }
+    format!(
+        "{}…{}",
+        chars[..6].iter().collect::<String>(),
+        chars[chars.len() - 4..].iter().collect::<String>()
+    )
+}
+
+fn mask_sk(v: &str) -> String {
+    let chars: Vec<char> = v.chars().collect();
+    if chars.len() <= 8 {
+        return "••••••••".to_string();
+    }
+    format!(
+        "••••••••{}",
+        chars[chars.len() - 4..].iter().collect::<String>()
+    )
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -1471,13 +1751,80 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
-        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_zhipu_team_at,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        detect_provider, load_volcengine_accounts, parse_afp_tiers, parse_coding_plan_tiers,
+        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers, query_zhipu_team_at,
+        resolve_volcengine_aksk, save_volcengine_account, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_quota_base, CodingPlanProvider, TIER_FIVE_HOUR, TIER_MONTHLY,
+        TIER_WEEKLY_LIMIT,
     };
+    use crate::database::Database;
     use serde_json::json;
+
+    #[test]
+    fn pool_resolve_prefers_referenced_account() {
+        let db = Database::memory().expect("db");
+        let a = save_volcengine_account(&db, None, Some("主账号"), "AK-A", "SK-A").expect("save");
+        let b = save_volcengine_account(&db, None, Some("备用号"), "AK-B", "SK-B").expect("save");
+        let cred = resolve_volcengine_aksk(&db, Some(&b.id), None, None, None).expect("resolve");
+        assert_eq!(cred.ak, "AK-B");
+        assert_eq!(cred.account_label, "备用号");
+        let _ = a;
+    }
+
+    #[test]
+    fn pool_resolve_missing_reference_falls_back_to_default() {
+        let db = Database::memory().expect("db");
+        save_volcengine_account(&db, None, Some("主账号"), "AK-A", "SK-A").expect("save");
+        let cred =
+            resolve_volcengine_aksk(&db, Some("acc-deleted"), None, None, None).expect("resolve");
+        assert_eq!(cred.ak, "AK-A");
+        assert_eq!(cred.source, "default");
+    }
+
+    #[test]
+    fn pool_empty_with_inline_legacy_migrates_automatically() {
+        let db = Database::memory().expect("db");
+        let cred = resolve_volcengine_aksk(
+            &db,
+            None,
+            Some("AK-OLD"),
+            Some("SK-OLD"),
+            Some("火山 Coding Plan"),
+        )
+        .expect("resolve");
+        assert_eq!(cred.source, "migrated");
+        assert_eq!(cred.account_label, "火山 Coding Plan");
+        // 已入池：再查一次，走引用路径（source 为 referenced）
+        let accounts = load_volcengine_accounts(&db);
+        assert_eq!(accounts.len(), 1);
+        let cred2 = resolve_volcengine_aksk(
+            &db,
+            Some(&accounts[0].id),
+            Some("AK-OLD"),
+            Some("SK-OLD"),
+            None,
+        )
+        .expect("resolve");
+        assert_eq!(cred2.source, "referenced");
+    }
+
+    #[test]
+    fn pool_resolve_uses_default_when_no_reference() {
+        let db = Database::memory().expect("db");
+        save_volcengine_account(&db, None, Some("主账号"), "AK-A", "SK-A").expect("save");
+        save_volcengine_account(&db, None, Some("备用号"), "AK-B", "SK-B").expect("save");
+        let cred = resolve_volcengine_aksk(&db, None, None, None, None).expect("resolve");
+        assert_eq!(cred.ak, "AK-A");
+        assert_eq!(cred.source, "default");
+    }
+
+    #[test]
+    fn pool_empty_without_any_credentials_errors() {
+        let db = Database::memory().expect("db");
+        let err = resolve_volcengine_aksk(&db, None, None, None, None).expect_err("should err");
+        assert!(err.contains("尚未配置"));
+    }
 
     #[test]
     fn opencode_go_detects_both_base_variants_but_not_zen() {
