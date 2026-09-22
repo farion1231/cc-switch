@@ -463,6 +463,45 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
   },
+  // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+  // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+  // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+  // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+  // .../personal 是两套部署，勿合并。阵容与 claude/codex/opencode/openclaw/
+  // hermes 五 app 的 FluxA 预设同源：七款取 FluxA 产品页模型表（排除标
+  // Coming soon 的 deepseek-v4-pro-0813 / glm-5.3），kimi-k2.6 是定稿赞助
+  // 文案点名补的。deepseek-v4-flash-0731 无独立目录键，按 v4-flash 同款
+  // 能力取用、id 写真实 wire 名。思考档位（thinkingProfile）不填：国内版
+  // 有、国际 team 部署未实测，与 Codex 侧不声明 codexChatReasoning 同理
+  {
+    name: "FluxA Token Plan",
+    providerKey: "cc-switch-fluxa-token-plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      name: "FluxA Token Plan",
+      baseUrl: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("deepseek/deepseek-v4-pro", { id: "deepseek-v4-pro" }),
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+        }),
+        piModel("deepseek/deepseek-v4-flash", { id: "deepseek-v4-flash" }),
+        piModel("deepseek/deepseek-v3.2", { id: "deepseek-v3.2" }),
+        piModel("zai/glm-5.2", { id: "glm-5.2" }),
+        piModel("zai/glm-5.1", { id: "glm-5.1" }),
+        piModel("zai/glm-5", { id: "glm-5" }),
+        piModel("moonshotai/kimi-k2.6", { id: "kimi-k2.6" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
+  },
   {
     name: "APIKEY.FUN",
     providerKey: "cc-switch-apikey-fun",
@@ -1342,11 +1381,11 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "MiniMax",
     providerKey: "cc-switch-mini-max",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       name: "MiniMax",
-      baseUrl: "https://api.minimaxi.com/v1",
+      baseUrl: "https://api.minimax.cn/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1392,15 +1431,16 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "BaiLing",
     providerKey: "cc-switch-bai-ling",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       name: "BaiLing",
-      baseUrl: "https://api.tbox.cn/v1",
+      baseUrl: "https://api.ant-ling.com/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("inclusionai/ling-2.5-1t", {
-          id: "Ling-2.5-1T",
+        piModel("inclusionai/ling-2.6-1t", {
+          id: "Ling-2.6-1T",
         }),
       ],
     },
@@ -1683,7 +1723,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     settingsConfig: {
       name: "AICodeWith",
-      baseUrl: "https://api.aicodewith.ai/chatgpt/v1",
+      baseUrl: "https://api.aicodewith.ai/v1",
       api: "openai-responses",
       apiKey: "",
       models: [

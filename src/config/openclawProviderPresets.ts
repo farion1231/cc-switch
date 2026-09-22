@@ -727,6 +727,106 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
+    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
+    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造；
+    // maxTokens 取同一张表的 Max output 列。cost 不填：FluxA 按 credits 计费、
+    // 未公布每百万 token 单价，不造数
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      baseUrl: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+        },
+        {
+          id: "deepseek-v3.2",
+          name: "DeepSeek V3.2",
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 32768,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          input: ["text"],
+          contextWindow: 500000,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          input: ["text"],
+          contextWindow: 198000,
+          maxTokens: 131072,
+        },
+        {
+          id: "glm-5",
+          name: "GLM-5",
+          input: ["text"],
+          contextWindow: 198000,
+          maxTokens: 131072,
+        },
+        {
+          // FluxA 产品页模型表无 Kimi 行 → maxTokens 照仓库内既有 kimi-k2.6
+          // 条目（262144），勿按 GLM 行的 131072 推
+          id: "kimi-k2.6",
+          name: "Kimi K2.6",
+          input: ["text"],
+          contextWindow: 262144,
+          maxTokens: 262144,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "fluxa-tokenplan/deepseek-v4-pro" },
+      modelCatalog: {
+        "fluxa-tokenplan/deepseek-v4-pro": { alias: "DeepSeek V4 Pro" },
+        "fluxa-tokenplan/glm-5.2": { alias: "GLM-5.2" },
+      },
+    },
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
@@ -3086,10 +3186,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
-      baseUrl: "https://api.minimaxi.com/v1",
+      baseUrl: "https://api.minimax.cn/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -3250,17 +3350,18 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
-      baseUrl: "https://api.tbox.cn/v1",
+      baseUrl: "https://api.ant-ling.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "Ling-2.5-1T",
-          name: "Ling 2.5 1T",
-          contextWindow: 128000,
-          cost: { input: 0.56, output: 2.24 },
+          id: "Ling-2.6-1T",
+          name: "Ling 2.6 1T",
+          contextWindow: 262144,
+          cost: { input: 0.63, output: 2.52 },
         },
       ],
     },
@@ -3273,8 +3374,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "bailing/Ling-2.5-1T" },
-      modelCatalog: { "bailing/Ling-2.5-1T": { alias: "BaiLing" } },
+      model: { primary: "bailing/Ling-2.6-1T" },
+      modelCatalog: { "bailing/Ling-2.6-1T": { alias: "BaiLing" } },
     },
   },
   {
@@ -3848,7 +3949,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://aicodewith.ai",
     apiKeyUrl: "https://aicodewith.ai/login?tab=register",
     settingsConfig: {
-      baseUrl: "https://api.aicodewith.ai/chatgpt/v1",
+      baseUrl: "https://api.aicodewith.ai/v1",
       apiKey: "",
       api: "openai-responses",
       models: [

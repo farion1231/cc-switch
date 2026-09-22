@@ -247,7 +247,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     }
 
     if let Some(input) = body.get("input") {
-        collect_tool_search_output_tools(input, &mut context);
+        collect_input_declared_tools(input, &mut context);
     }
 
     context
@@ -771,6 +771,13 @@ fn append_responses_item_as_chat_message(
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
+        // An `additional_tools` carrier declares tools for this request; its
+        // nested tools are lifted via `build_codex_tool_context_from_request`
+        // and the carrier itself is not a message. It carries a `role` but no
+        // `content`, so letting it fall through the generic message arm used
+        // to fabricate a `content: null` system message that strict chat
+        // gateways reject with `messages[N]: missing field "content"`.
+        Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
                 messages,
@@ -1288,15 +1295,25 @@ fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
 }
 
-fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
+/// Collect tools declared inline in the request `input` instead of top-level
+/// `tools`: `tool_search_output` items (dynamically loaded tool groups) and
+/// `additional_tools` carriers (Codex 0.154+ ships extra tools — the
+/// `functions`/`collaboration` exec sandbox, plugins — in this Responses
+/// private-extension carrier). The xAI Responses passthrough already promotes
+/// the same carriers (`promote_additional_tools`); the Chat and Anthropic
+/// converters go through this registry so they keep the carried tools too.
+fn collect_input_declared_tools(value: &Value, context: &mut CodexToolContext) {
     match value {
         Value::Array(items) => {
             for item in items {
-                collect_tool_search_output_tools(item, context);
+                collect_input_declared_tools(item, context);
             }
         }
         Value::Object(obj) => {
-            if obj.get("type").and_then(|v| v.as_str()) == Some("tool_search_output") {
+            if matches!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("tool_search_output" | "additional_tools")
+            ) {
                 if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
                     for tool in tools {
                         context.add_response_tool(tool);
@@ -1304,7 +1321,7 @@ fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContex
                 }
             }
             for value in obj.values() {
-                collect_tool_search_output_tools(value, context);
+                collect_input_declared_tools(value, context);
             }
         }
         _ => {}
@@ -3082,6 +3099,127 @@ mod tests {
         assert!(head_content.contains("You are Codex."));
         assert!(head_content.contains("Permissions block"));
         assert!(head_content.contains("Collaboration Mode: Default"));
+    }
+
+    #[test]
+    fn additional_tools_carrier_is_lifted_not_converted_to_a_message() {
+        // Shape from #7451: Codex 0.154+ ships extra tools in an
+        // `additional_tools` input carrier (role `developer`, no `content`).
+        let input = json!({
+            "model": "agnes-3.0-flash",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "id": "at_a8d5b9f5",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "description": "",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "exec_command",
+                                    "description": "Run a shell command.",
+                                    "strict": false,
+                                    "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function",
+                            "name": "wait",
+                            "description": "Waits on a yielded exec cell.",
+                            "strict": false,
+                            "parameters": {"type": "object", "properties": {"cell_id": {"type": "string"}}, "required": ["cell_id"]}
+                        }
+                    ]
+                },
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "You are Codex, a coding agent."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "你好"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // The carrier is not a message: every emitted message must carry
+        // real content, and the developer instruction must remain the only
+        // system head.
+        for (idx, message) in messages.iter().enumerate() {
+            assert!(
+                !matches!(message.get("content"), None | Some(Value::Null)),
+                "messages[{idx}] lost its content: {message}"
+            );
+        }
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are Codex, a coding agent.");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "你好");
+
+        // The carried tools survive as flattened chat tools.
+        let tool_names: Vec<&str> = result["tools"]
+            .as_array()
+            .expect("carried tools must be lifted into top-level tools")
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(
+            tool_names.contains(&"functions__exec_command"),
+            "{tool_names:?}"
+        );
+        assert!(tool_names.contains(&"wait"), "{tool_names:?}");
+    }
+
+    #[test]
+    fn additional_tools_carrier_tools_dedup_against_top_level_tools() {
+        let input = json!({
+            "model": "m",
+            "tools": [
+                {"type": "function", "name": "wait", "description": "Top-level wait.", "parameters": {"type": "object", "properties": {}}}
+            ],
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {"type": "function", "name": "wait", "description": "Carried wait.", "parameters": {"type": "object", "properties": {}}}
+                    ]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1, "duplicate carried tool must be dropped");
+        assert_eq!(tools[0]["function"]["name"], "wait");
+        assert_eq!(tools[0]["function"]["description"], "Top-level wait.");
+    }
+
+    #[test]
+    fn plain_developer_messages_convert_without_additional_tools_carrier() {
+        // No carrier present: developer messages keep mapping to system and
+        // no tools array is fabricated.
+        let input = json!({
+            "model": "m",
+            "input": [
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Instructions."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "Instructions.");
+        assert_eq!(messages[1]["role"], "user");
+        assert!(result.get("tools").is_none());
     }
 
     #[test]

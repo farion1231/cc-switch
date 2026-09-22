@@ -379,6 +379,36 @@ export const providerPresets: ProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
+      },
+    },
+    endpointCandidates: [
+      "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
+  },
+  {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fan",
     apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
@@ -1470,11 +1500,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.minimaxi.com/anthropic",
+        ANTHROPIC_BASE_URL: "https://api.minimax.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
@@ -1520,15 +1550,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.tbox.cn/api/anthropic",
+        ANTHROPIC_BASE_URL: "https://api.ant-ling.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "Ling-2.5-1T",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Ling-2.5-1T",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "Ling-2.5-1T",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "Ling-2.5-1T",
+        ANTHROPIC_MODEL: "Ling-2.6-1T",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Ling-2.6-1T",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Ling-2.6-1T",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Ling-2.6-1T",
       },
     },
     category: "cn_official",

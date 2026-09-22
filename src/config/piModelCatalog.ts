@@ -198,13 +198,13 @@ export const piModelCatalog = {
       maxTokens: 65_536,
     },
   },
-  "inclusionai/ling-2.5-1t": {
+  "inclusionai/ling-2.6-1t": {
     capabilities: {
-      name: "Ling 2.5-1T",
+      name: "Ling 2.6-1T",
       reasoning: false,
       input: ["text"],
-      contextWindow: 1_000_000,
-      maxTokens: 16_384,
+      contextWindow: 262_144,
+      maxTokens: 32_768,
     },
   },
   "longcat/longcat-2.0": {

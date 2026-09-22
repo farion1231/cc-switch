@@ -832,6 +832,46 @@ fn schema_model_pricing_is_seeded_on_init() {
 }
 
 #[test]
+fn model_pricing_repair_restores_deepseek_v4_pro_after_retracted_cutover() {
+    let db = Database::memory().expect("create memory db");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        // v3.20.3 已发货形态：09-11 条目提前把 V4 Pro 推到了 V4.1 Flash 高峰档
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.3',
+                 output_cost_per_million = '1.2',
+                 cache_read_cost_per_million = '0.006',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'deepseek-v4-pro'",
+            [],
+        )
+        .expect("restore v3.20.3 DeepSeek V4 Pro price");
+    }
+
+    // 连跑两次：锁住修回后价格稳定，不会在两档之间来回改写
+    for _ in 0..2 {
+        db.ensure_model_pricing_seeded()
+            .expect("ensure pricing seeded");
+    }
+
+    let conn = db.conn.lock().expect("lock conn");
+    let price: (String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million, cache_read_cost_per_million
+             FROM model_pricing WHERE model_id = 'deepseek-v4-pro'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("query DeepSeek V4 Pro price");
+    assert_eq!(
+        price,
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
+    );
+}
+
+#[test]
 fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
     let db = Database::memory().expect("create memory db");
 
@@ -904,15 +944,15 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query DeepSeek price");
-    // 从远古价 1.68/3.36/0.14 出发要连跳三级才能到位：
+    // 从远古价 1.68/3.36/0.14 出发要连跳两级才能到位：
     //   1.68/3.36/0.14 →(2026-07 条目)→ 0.435/0.87/0.003625
     //                  →(2026-08-16 峰谷调价条目)→ 1.32/3.96/0.044
-    //                  →(2026-09-14 起 V4 Pro 路由到 V4.1 Flash)→ 0.3/1.2/0.006
     // 这同时锁住了 repair 条目的顺序：新条目必须排在旧条目之后，
-    // 否则老库会停在中间价位，本断言即会失败。
+    // 否则老库会停在中间价位，本断言即会失败。v3.20.3 错价的修回另见
+    // model_pricing_repair_restores_deepseek_v4_pro_after_retracted_cutover。
     assert_eq!(
         deepseek,
-        ("0.3".to_string(), "1.2".to_string(), "0.006".to_string())
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
     );
 
     let glm: (String, String, String) = conn
