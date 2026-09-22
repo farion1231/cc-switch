@@ -3,6 +3,8 @@
 //! 提供支持全局代理配置的 HTTP 客户端。
 //! 所有需要发送 HTTP 请求的模块都应使用此模块提供的客户端。
 
+#[cfg(windows)]
+use super::windows_proxy;
 use once_cell::sync::OnceCell;
 use reqwest::Client;
 use std::env;
@@ -254,13 +256,112 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
                 "[GlobalProxy] System proxy points to localhost, bypassing to avoid recursion"
             );
         } else {
-            log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+            #[cfg(windows)]
+            {
+                match windows_proxy::load_manual_system_proxy_config() {
+                    Ok(Some(config)) => {
+                        let masked_http = config.http_proxy().map(mask_url);
+                        let masked_https = config.https_proxy().map(mask_url);
+
+                        if masked_http
+                            .as_deref()
+                            .is_some_and(proxy_points_to_loopback)
+                            || masked_https
+                                .as_deref()
+                                .is_some_and(proxy_points_to_loopback)
+                        {
+                            builder = builder.no_proxy();
+                            log::warn!(
+                                "[GlobalProxy] Windows system proxy points to the cc-switch loopback port, bypassing to avoid recursion"
+                            );
+                        } else {
+                            let bypass = config.bypass().clone();
+                            let bypass_rule_count = config.bypass_rule_count();
+                            let bypasses_local = config.bypasses_local();
+                            let mut applied = false;
+                            builder = builder.no_proxy();
+
+                            if let Some(proxy_url) = config.http_proxy() {
+                                builder =
+                                    builder.proxy(custom_windows_proxy("http", proxy_url, bypass.clone()));
+                                applied = true;
+                            }
+                            if let Some(proxy_url) = config.https_proxy() {
+                                builder =
+                                    builder.proxy(custom_windows_proxy("https", proxy_url, bypass.clone()));
+                                applied = true;
+                            }
+
+                            if applied {
+                                log::info!(
+                                    "[GlobalProxy] Following Windows system proxy with manual bypass rules: http={}, https={}, bypass_rules={}, bypass_local={}",
+                                    masked_http.unwrap_or_else(|| "none".to_string()),
+                                    masked_https.unwrap_or_else(|| "none".to_string()),
+                                    bypass_rule_count,
+                                    bypasses_local
+                                );
+                            } else {
+                                log::debug!(
+                                    "[GlobalProxy] Following system proxy (no explicit proxy configured)"
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "[GlobalProxy] Failed to load Windows manual proxy bypass rules, falling back to reqwest system proxy detection: {error}"
+                        );
+                        log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+                    }
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+            }
         }
     }
 
     builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
+}
+
+#[cfg(windows)]
+fn custom_windows_proxy(
+    scheme: &'static str,
+    proxy_url: &str,
+    bypass: windows_proxy::ProxyBypassMatcher,
+) -> reqwest::Proxy {
+    let proxy_url = proxy_url.to_string();
+    let masked_proxy = mask_url(proxy_url.as_str());
+    reqwest::Proxy::custom(move |url| {
+        if url.scheme() != scheme {
+            return None;
+        }
+
+        let host = url.host_str().unwrap_or_default();
+        if bypass.matches_url(url) {
+            log::debug!(
+                "[GlobalProxy] Windows system proxy bypass matched for {}://{}",
+                scheme,
+                host
+            );
+            None
+        } else {
+            log::debug!(
+                "[GlobalProxy] Windows system proxy routing {}://{} via {}",
+                scheme,
+                host,
+                masked_proxy
+            );
+            Some(proxy_url.clone())
+        }
+    })
 }
 
 fn system_proxy_points_to_loopback() -> bool {
