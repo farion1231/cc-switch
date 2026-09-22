@@ -1612,6 +1612,7 @@
   },
   "opencode": {
     "npmPackage": "API フォーマット",
+    "nativeConfigHint": "OpenCode V2 ネイティブ設定は下の JSON で編集します。保存時にプロバイダーとモデルのフィールドを保持します。",
     "selectPackage": "API フォーマットを選択",
     "npmPackageHint": "AI サービスの API フォーマットを選択",
     "baseUrl": "Base URL",

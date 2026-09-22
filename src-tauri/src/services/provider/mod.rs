@@ -4140,6 +4140,103 @@ wire_api = "responses"
     }
 
     #[test]
+    fn native_opencode_common_config_excludes_provider_credentials() {
+        let config = json!({
+            "settings": {"baseURL": "https://native.example", "apiKey": "test", "timeout": 1000},
+            "body": {"metadata": {"keep": true}}
+        });
+        let common: Value = serde_json::from_str(
+            &ProviderService::extract_opencode_common_config(&config).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            common,
+            json!({"settings": {"timeout": 1000}, "body": {"metadata": {"keep": true}}})
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn native_opencode_provider_keeps_source_format_through_database_and_sync() {
+        use crate::provider::OpenCodeConfigFormat;
+        for native in [
+            json!({}),
+            json!({"models": {"alias": {"modelID": "upstream", "limit": {"input": 10000}}}}),
+            json!({
+                "package": "@opencode/ai/providers/anthropic",
+                "settings": {"baseURL": "https://native.example", "apiKey": "test"},
+                "headers": {"X-Tenant": "example"},
+                "body": {"metadata": {"keep": true}},
+                "models": {"model": {"capabilities": {"tools": true}, "variants": [
+                    {"id": "low", "settings": {"reasoningEffort": "low"}},
+                    {"id": "high", "settings": {"reasoningEffort": "high"}}
+                ]}}
+            }),
+        ] {
+            with_test_home(|state, _| {
+                // Also exercise upgrading an existing DB entry with no source metadata.
+                let existing = Provider::with_id(
+                    "anthropic".into(),
+                    "Existing name".into(),
+                    native.clone(),
+                    None,
+                );
+                state.db.save_provider("opencode", &existing).unwrap();
+                crate::opencode_config::set_provider_with_format(
+                    "anthropic",
+                    native.clone(),
+                    OpenCodeConfigFormat::V2,
+                )
+                .unwrap();
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+                let mut saved = state
+                    .db
+                    .get_provider_by_id("anthropic", "opencode")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(saved.name, "Existing name");
+                assert_eq!(saved.settings_config, native);
+                assert_eq!(
+                    saved.meta.as_ref().unwrap().opencode_config_format,
+                    Some(OpenCodeConfigFormat::V2)
+                );
+
+                // Source metadata must survive removal and re-enabling even for {}.
+                crate::opencode_config::remove_provider("anthropic").unwrap();
+                live::write_live_snapshot(&AppType::OpenCode, &saved).unwrap();
+                assert_eq!(
+                    crate::opencode_config::read_opencode_config().unwrap()["providers"]
+                        ["anthropic"],
+                    native
+                );
+                saved.settings_config["name"] = json!("Edited native provider");
+                let expected = saved.settings_config.clone();
+                ProviderService::update(state, AppType::OpenCode, None, saved).unwrap();
+                let config = crate::opencode_config::read_opencode_config().unwrap();
+                assert_eq!(config["providers"]["anthropic"], expected);
+                assert!(config.get("provider").is_none());
+
+                let mut full = Provider::with_id(
+                    "anthropic".into(),
+                    "Full config".into(),
+                    json!({"providers": {"anthropic": expected}}),
+                    None,
+                );
+                live::write_live_snapshot(&AppType::OpenCode, &full).unwrap();
+                let before =
+                    std::fs::read(crate::opencode_config::get_opencode_config_path()).unwrap();
+                full.settings_config = json!({"providers": {"other": {}}});
+                assert!(live::write_live_snapshot(&AppType::OpenCode, &full).is_err());
+                assert_eq!(
+                    std::fs::read(crate::opencode_config::get_opencode_config_path()).unwrap(),
+                    before
+                );
+            });
+        }
+    }
+
+    #[test]
     #[serial]
     fn opencode_provider_roundtrip_preserves_fields_on_import_and_update() {
         with_test_home(|state, _| {
@@ -6888,9 +6985,11 @@ impl ProviderService {
 
         // Remove provider-specific fields
         if let Some(obj) = config.as_object_mut() {
-            if let Some(options) = obj.get_mut("options").and_then(|v| v.as_object_mut()) {
-                options.remove("apiKey");
-                options.remove("baseURL");
+            for key in ["options", "settings"] {
+                if let Some(options) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
+                    options.remove("apiKey");
+                    options.remove("baseURL");
+                }
             }
             // Keep npm and models as they might be common
         }

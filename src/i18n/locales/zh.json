@@ -1612,6 +1612,7 @@
   },
   "opencode": {
     "npmPackage": "接口格式",
+    "nativeConfigHint": "请在下方以 JSON 编辑 OpenCode V2 原生配置。保存时保留供应商和模型字段。",
     "selectPackage": "选择接口格式",
     "npmPackageHint": "选择 AI 服务的 API 接口格式",
     "baseUrl": "Base URL",

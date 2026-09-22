@@ -554,6 +554,13 @@ pub struct ProviderMeta {
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
     pub live_config_managed: Option<bool>,
+    /// Source format for OpenCode entries whose fields alone are ambiguous
+    /// (for example, a native V2 built-in provider containing only models).
+    #[serde(
+        rename = "opencodeConfigFormat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_config_format: Option<OpenCodeConfigFormat>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
@@ -919,6 +926,14 @@ requires_openai_auth = true"#
 // ============================================================================
 // OpenCode 供应商配置结构
 // ============================================================================
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenCodeConfigFormat {
+    #[default]
+    V1,
+    V2,
+}
 
 /// OpenCode 供应商的 settings_config 结构
 ///

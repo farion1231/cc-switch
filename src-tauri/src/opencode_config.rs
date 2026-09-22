@@ -1,6 +1,8 @@
 use crate::config::write_json_file_with_contents;
 use crate::error::AppError;
+use crate::provider::OpenCodeConfigFormat;
 use crate::settings::get_opencode_override_dir;
+use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -144,33 +146,147 @@ fn write_opencode_config_to_path_with_contents(
 }
 
 pub fn get_providers() -> Result<Map<String, Value>, AppError> {
+    Ok(get_providers_with_format()?
+        .into_iter()
+        .map(|(id, (value, _))| (id, value))
+        .collect())
+}
+
+/// Preserve the declaration's format alongside its JSON, including package-less
+/// built-in overrides. Do not recursively mix legacy and native entries.
+pub fn get_providers_with_format(
+) -> Result<IndexMap<String, (Value, OpenCodeConfigFormat)>, AppError> {
     let config = read_opencode_config()?;
-    Ok(config
+    let mut providers: IndexMap<_, _> = config
         .get("provider")
         .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default())
+        .into_iter()
+        .flatten()
+        .map(|(id, value)| (id.clone(), (value.clone(), OpenCodeConfigFormat::V1)))
+        .collect();
+    if let Some(native) = config.get("providers").and_then(Value::as_object) {
+        for (id, value) in native {
+            if is_native_provider(value) {
+                providers.insert(id.clone(), (value.clone(), OpenCodeConfigFormat::V2));
+            } else {
+                log::warn!("Invalid native OpenCode provider '{id}', leaving its source untouched");
+            }
+        }
+    }
+    Ok(providers)
+}
+
+/// Check the native provider boundary without projecting away package-specific
+/// or future JSON fields. OpenCode remains responsible for runtime validation.
+pub fn is_native_provider(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    if ["npm", "options", "api"]
+        .iter()
+        .any(|key| obj.contains_key(*key))
+    {
+        return false;
+    }
+    for key in ["name", "package", "canonical"] {
+        if obj.get(key).is_some_and(|v| !v.is_string()) {
+            return false;
+        }
+    }
+    for key in ["settings", "body", "headers", "models"] {
+        if obj.get(key).is_some_and(|v| !v.is_object()) {
+            return false;
+        }
+    }
+    if let Some(env) = obj.get("env") {
+        if !env
+            .as_array()
+            .is_some_and(|values| values.iter().all(Value::is_string))
+        {
+            return false;
+        }
+    }
+    if let Some(headers) = obj.get("headers").and_then(Value::as_object) {
+        if !headers.values().all(Value::is_string) {
+            return false;
+        }
+    }
+    obj.get("models")
+        .and_then(Value::as_object)
+        .is_none_or(|models| models.values().all(Value::is_object))
+}
+
+pub fn provider_format(
+    value: &Value,
+    source: Option<OpenCodeConfigFormat>,
+) -> OpenCodeConfigFormat {
+    if let Some(format) = source {
+        return format;
+    }
+    if value.get("npm").is_some() || value.get("options").is_some() || value.get("api").is_some() {
+        return OpenCodeConfigFormat::V1;
+    }
+    if ["package", "settings", "headers", "body", "canonical"]
+        .iter()
+        .any(|key| value.get(*key).is_some())
+    {
+        OpenCodeConfigFormat::V2
+    } else {
+        OpenCodeConfigFormat::V1
+    }
 }
 
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+    let format = provider_format(&config, None);
+    set_provider_with_format(id, config, format)
+}
+
+pub fn set_provider_with_format(
+    id: &str,
+    config: Value,
+    format: OpenCodeConfigFormat,
+) -> Result<(), AppError> {
     let _guard = opencode_config_lock().lock()?;
     let path = get_opencode_config_path();
     let mut full_config = read_opencode_config_from_path(&path)?;
+    if format == OpenCodeConfigFormat::V1
+        && full_config
+            .get("providers")
+            .and_then(|providers| providers.get(id))
+            .is_some()
+    {
+        return Err(AppError::Config(format!(
+            "OpenCode provider '{id}' has a native V2 declaration. Reload providers before editing it."
+        )));
+    }
+    let key = match format {
+        OpenCodeConfigFormat::V1 => "provider",
+        OpenCodeConfigFormat::V2 => {
+            if !is_native_provider(&config) {
+                return Err(AppError::Config(format!(
+                    "Invalid native OpenCode provider '{id}'"
+                )));
+            }
+            "providers"
+        }
+    };
 
     // 判空要连「存在但不是对象」一起算：否则下面 as_object_mut 拿不到，
     // 写入会静默失效——界面显示添加成功而文件里没有。provider 段是 cc-switch
     // 的投影区，归一化不会碰用户自有的 model / theme 等顶层配置。
-    if !full_config.get("provider").is_some_and(Value::is_object) {
-        if full_config.get("provider").is_some() {
-            log::warn!("opencode.json 的 provider 不是对象，已重置为空对象");
+    if !full_config.get(key).is_some_and(Value::is_object) {
+        if key == "providers" && full_config.get(key).is_some() {
+            return Err(AppError::Config(format!(
+                "OpenCode {key} must be an object"
+            )));
         }
-        full_config["provider"] = json!({});
+        if full_config.get(key).is_some() {
+            log::warn!("opencode.json 的 {key} 不是对象，已重置为空对象");
+        }
+        full_config[key] = json!({});
     }
 
-    if let Some(providers) = full_config
-        .get_mut("provider")
-        .and_then(|v| v.as_object_mut())
-    {
+    if let Some(providers) = full_config.get_mut(key).and_then(|v| v.as_object_mut()) {
         providers.insert(id.to_string(), config);
     }
 
@@ -182,10 +298,12 @@ pub fn remove_provider(id: &str) -> Result<(), AppError> {
     let path = get_opencode_config_path();
     let mut config = read_opencode_config_from_path(&path)?;
 
-    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
-        providers.remove(id);
-    } else if config.get("provider").is_some() {
-        log::warn!("opencode.json 的 provider 不是对象，无法删除供应商 '{id}'");
+    for key in ["provider", "providers"] {
+        if let Some(providers) = config.get_mut(key).and_then(|v| v.as_object_mut()) {
+            providers.remove(id);
+        } else if config.get(key).is_some() {
+            log::warn!("opencode.json 的 {key} 不是对象，无法删除供应商 '{id}'");
+        }
     }
 
     write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
@@ -349,6 +467,93 @@ mod tests {
         let dir = home.join(".config").join("opencode");
         std::fs::create_dir_all(&dir).expect("create config dir");
         std::fs::write(dir.join("opencode.json"), content).expect("write config");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_providers_take_precedence_independently_of_key_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let legacy = r#""provider":{"shared":{"npm":"@ai-sdk/anthropic"},"legacy":{"npm":"@ai-sdk/openai"}}"#;
+        let native = r#""providers":{"shared":{"settings":{"baseURL":"https://native.example"}},"builtin":{"models":{"alias":{"modelID":"upstream"}}}}"#;
+        for text in [
+            format!("{{{legacy},{native}}}"),
+            format!("{{{native},{legacy}}}"),
+        ] {
+            write_config(temp.path(), &text);
+            let providers = get_providers_with_format().unwrap();
+            assert_eq!(providers.len(), 3);
+            assert_eq!(providers["legacy"].1, OpenCodeConfigFormat::V1);
+            assert_eq!(providers["builtin"].1, OpenCodeConfigFormat::V2);
+            assert_eq!(
+                providers["shared"].0,
+                json!({"settings":{"baseURL":"https://native.example"}})
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_provider_write_and_remove_preserve_other_declarations() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let original = json!({
+            "model": "shared/model",
+            "provider": {"shared": {"npm": "@ai-sdk/anthropic"}, "legacy": {"npm": "@ai-sdk/openai"}},
+            "providers": {"shared": {}, "builtin": {"body": {"metadata": {"keep": true}}}},
+            "mcp": {"servers": {"example": {"type": "remote", "url": "https://mcp.example"}}},
+            "plugins": [{"package": "example", "options": {"keep": true}}]
+        });
+        write_config(temp.path(), &original.to_string());
+        let native = json!({"models": {"model": {"variants": [
+            {"id": "low", "settings": {"reasoningEffort": "low"}},
+            {"id": "high", "body": {"reasoning": {"effort": "high"}}}
+        ]}}});
+        set_provider_with_format("shared", native.clone(), OpenCodeConfigFormat::V2).unwrap();
+        let mut expected = original;
+        expected["providers"]["shared"] = native;
+        assert_eq!(read_opencode_config().unwrap(), expected);
+
+        let before = std::fs::read(get_opencode_config_path()).unwrap();
+        assert!(set_provider("shared", json!({"npm": "@ai-sdk/anthropic"})).is_err());
+        assert!(set_provider_with_format(
+            "shared",
+            json!({"settings": []}),
+            OpenCodeConfigFormat::V2
+        )
+        .is_err());
+        assert_eq!(std::fs::read(get_opencode_config_path()).unwrap(), before);
+
+        remove_provider("shared").unwrap();
+        expected["providers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shared");
+        expected["provider"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shared");
+        assert_eq!(read_opencode_config().unwrap(), expected);
+        assert!(!get_providers().unwrap().contains_key("shared"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn malformed_native_provider_does_not_hide_legacy_or_rewrite_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let original = r#"{
+            "provider": {"shared": {"npm": "@ai-sdk/openai"}},
+            "providers": {"shared": {"package": false}, "valid": {}}
+        }"#;
+        write_config(temp.path(), original);
+        let providers = get_providers_with_format().unwrap();
+        assert_eq!(providers["shared"].1, OpenCodeConfigFormat::V1);
+        assert_eq!(providers["valid"].1, OpenCodeConfigFormat::V2);
+        assert_eq!(
+            std::fs::read_to_string(get_opencode_config_path()).unwrap(),
+            original
+        );
     }
 
     #[test]

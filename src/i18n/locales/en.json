@@ -1612,6 +1612,7 @@
   },
   "opencode": {
     "npmPackage": "API Format",
+    "nativeConfigHint": "Edit native OpenCode V2 configuration as JSON below. Provider and model fields are preserved when saving.",
     "selectPackage": "Select API format",
     "npmPackageHint": "Select the API format for the AI service",
     "baseUrl": "Base URL",
