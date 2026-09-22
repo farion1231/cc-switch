@@ -311,6 +311,59 @@ describe("App integration with MSW", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
 
+  it.each(["codex", "codex-desktop"] as const)(
+    "resets provider view scroll when switching to %s",
+    async (targetApp) => {
+      setProviders("codex-desktop", {
+        "codex-desktop-1": {
+          id: "codex-desktop-1",
+          name: "Desktop Provider",
+          settingsConfig: { auth: {}, config: "" },
+        },
+      });
+      const { container } = renderApp(App);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
+      );
+
+      const mainScrollContainer = container.querySelector(
+        "main",
+      ) as HTMLElement;
+      const providerScrollContainer = Array.from(
+        container.querySelectorAll<HTMLElement>(".overflow-y-auto"),
+      ).find(
+        (element) =>
+          element !== mainScrollContainer &&
+          element.className.includes("pb-12"),
+      );
+
+      expect(mainScrollContainer).not.toBeNull();
+      expect(providerScrollContainer).toBeDefined();
+
+      mainScrollContainer.scrollTop = 320;
+      mainScrollContainer.scrollLeft = 12;
+      providerScrollContainer!.scrollTop = 640;
+      providerScrollContainer!.scrollLeft = 24;
+
+      fireEvent.click(screen.getByText(`switch-${targetApp}`));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          `${targetApp}-1`,
+        ),
+      );
+
+      expect(mainScrollContainer.scrollTop).toBe(0);
+      expect(mainScrollContainer.scrollLeft).toBe(0);
+      expect(providerScrollContainer!.scrollTop).toBe(0);
+      expect(providerScrollContainer!.scrollLeft).toBe(0);
+    },
+    10_000,
+  );
+
   it("shows toast when auto sync fails in background", async () => {
     renderApp(App);
 
