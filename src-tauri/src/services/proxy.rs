@@ -3073,7 +3073,13 @@ impl ProxyService {
 
         let prepare_result: Result<(), String> = async {
             if should_sync_backup {
-                if live_taken_over && matches!(app_type_enum, AppType::Claude) {
+                // An offline takeover Live file can lag behind a just-saved
+                // common-config snippet. Only a running proxy has a current
+                // projection that is safe to ingest before rebuilding backups.
+                if live_taken_over
+                    && matches!(app_type_enum, AppType::Claude)
+                    && self.is_running().await
+                {
                     self.sync_claude_common_config_from_taken_over_live(previous_provider.as_ref());
                 }
 
@@ -7828,7 +7834,7 @@ model = "gpt-5.1-codex"
 
     #[tokio::test]
     #[serial]
-    async fn hot_switch_provider_syncs_claude_common_preferences_from_taken_over_live() {
+    async fn hot_switch_provider_syncs_claude_common_preferences_from_running_proxy_live() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -7843,6 +7849,7 @@ model = "gpt-5.1-codex"
             ),
         )
         .expect("seed stale common config");
+        use_ephemeral_proxy_port(&db).await;
         let service = ProxyService::new(db.clone());
 
         let mut provider_a = Provider::with_id(
@@ -7899,6 +7906,7 @@ model = "gpt-5.1-codex"
                 }
             }))
             .expect("seed taken-over live file");
+        service.start().await.expect("start proxy");
 
         service
             .hot_switch_provider("claude", "b")
@@ -7931,6 +7939,95 @@ model = "gpt-5.1-codex"
             backup.get("includeCoAuthoredBy").and_then(Value::as_bool),
             Some(false),
             "the new provider's restore backup should carry the refreshed common preference"
+        );
+        service.stop().await.expect("stop proxy");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_provider_keeps_newer_claude_common_preferences_when_proxy_is_offline() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.set_config_snippet(
+            "claude",
+            Some(json!({ "includeCoAuthoredBy": false }).to_string()),
+        )
+        .expect("seed newly saved common config");
+        let service = ProxyService::new(db.clone());
+
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "includeCoAuthoredBy": true,
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                }
+            }))
+            .expect("seed stale taken-over live file");
+
+        service
+            .hot_switch_provider("claude", "b")
+            .await
+            .expect("hot switch provider");
+
+        let snippet: Value = serde_json::from_str(
+            &db.get_config_snippet("claude")
+                .expect("read common config")
+                .expect("common config exists"),
+        )
+        .expect("common config is valid JSON");
+        assert_eq!(
+            snippet.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "stale offline Live config must not overwrite a newer saved common preference"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read live backup")
+            .expect("live backup exists");
+        let backup: Value = serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(
+            backup.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "the target restore backup must preserve the newer saved common preference"
         );
     }
 
