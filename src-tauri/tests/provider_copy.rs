@@ -372,6 +372,59 @@ fn pi_target_skips_when_native_models_json_holds_same_key() {
 }
 
 #[test]
+fn mcode_copy_lands_in_database_with_native_shape() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    seed(&mut config, claude_relay("relay-src"));
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let outcomes = copy_provider_to_apps_test_hook(
+        &state,
+        AppType::Claude,
+        "relay-src",
+        &["mcode".to_string()],
+    )
+    .expect("mcode copy");
+    assert_eq!(outcome_of(&outcomes, "mcode").status, CopyStatus::Copied);
+
+    let row = state
+        .db
+        .get_provider_by_id("relay-src", "mcode")
+        .expect("query mcode row")
+        .expect("mcode row exists");
+    assert_eq!(
+        row.settings_config.get("api").and_then(Value::as_str),
+        Some("anthropic-messages")
+    );
+    assert_eq!(
+        row.settings_config
+            .pointer("/options/baseURL")
+            .and_then(Value::as_str),
+        Some("https://relay.example.com")
+    );
+    assert_eq!(
+        row.settings_config
+            .pointer("/options/apiKey")
+            .and_then(Value::as_str),
+        Some("sk-relay")
+    );
+    assert!(row
+        .settings_config
+        .pointer("/models/claude-sonnet-4-5")
+        .is_some());
+    assert_eq!(
+        row.meta.as_ref().and_then(|meta| meta.live_config_managed),
+        Some(false)
+    );
+
+    // add_to_live=false：MCode 目标只落库，不写原生 config.yaml。
+    assert!(!home.join(".minimax").join("config.yaml").exists());
+}
+
+#[test]
 fn openclaw_copy_lands_in_database_only() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

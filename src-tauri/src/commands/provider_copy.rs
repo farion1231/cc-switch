@@ -190,7 +190,7 @@ fn extract_source_model_names(
                 }
             }
         }
-        AppType::OpenCode => {
+        AppType::OpenCode | AppType::Mcode => {
             if let Some(entries) = settings_config.get("models").and_then(Value::as_object) {
                 for name in entries.keys() {
                     push(Some(name));
@@ -229,6 +229,18 @@ fn derive_hermes_api_mode(api_format: &str) -> &'static str {
 /// Pi 目标：直连非代理，api 走 openclaw 同款语义。
 fn derive_pi_api(api_format: &str) -> &'static str {
     derive_openclaw_api(api_format)
+}
+
+/// MiniMax Code 的 custom_provider api 枚举。
+fn derive_mcode_api(api_format: &str) -> Result<&'static str, AppError> {
+    match api_format {
+        "anthropic" => Ok("anthropic-messages"),
+        "openai_responses" => Ok("openai-responses"),
+        "openai_chat" => Ok("openai-completions"),
+        _ => Err(AppError::InvalidInput(format!(
+            "MiniMax Code does not support source API format '{api_format}'"
+        ))),
+    }
 }
 
 /// openai_chat 等格式复制到 Claude / Codex 时不能丢，否则发错协议格式。
@@ -336,6 +348,18 @@ fn derive_source_api_format(source: &Provider, source_app: &AppType) -> String {
                 _ => "openai_chat".to_string(),
             }
         }
+        AppType::Mcode => {
+            let api = source
+                .settings_config
+                .get("api")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match api {
+                "openai-responses" => "openai_responses".to_string(),
+                "anthropic-messages" => "anthropic".to_string(),
+                _ => "openai_chat".to_string(),
+            }
+        }
         // xAI API 为 OpenAI 兼容；best-effort，复制后可在目标卡调整。
         AppType::GrokBuild => "openai_chat".to_string(),
     }
@@ -396,7 +420,7 @@ fn opencode_responses_base_url(base_url: &str, is_full_url: bool) -> String {
     }
 }
 
-/// 按目标应用的原生配置形状重建 settings_config（8 个 builder 派发，
+/// 按目标应用的原生配置形状重建 settings_config（9 个 builder 派发，
 /// ClaudeDesktop 走 resolve_claude_desktop_copy 的整份 clone 路径）。
 /// api_format 由源应用推导（derive_source_api_format），仅进入副本 meta
 /// 供本地代理层转换；写入目标的 wire_api / api 枚举不依赖它。
@@ -564,6 +588,28 @@ requires_openai_auth = true
             config.insert("models".to_string(), Value::Array(models));
             Value::Object(config)
         }
+        AppType::Mcode => {
+            if models.is_empty() {
+                return Err(AppError::InvalidInput(
+                    "MiniMax Code requires at least one model".to_string(),
+                ));
+            }
+            let mut model_map = Map::new();
+            for model in models {
+                model_map.insert(model.clone(), json!({ "name": model }));
+            }
+            json!({
+                "name": source_name,
+                "kind": "custom",
+                "enabled": true,
+                "api": derive_mcode_api(&api_format)?,
+                "options": {
+                    "baseURL": base_url_value,
+                    "apiKey": api_key_value,
+                },
+                "models": model_map,
+            })
+        }
         // ClaudeDesktop 目标在外层走整克隆分支，不会进入此 builder。
         AppType::ClaudeDesktop => {
             return Err(AppError::InvalidInput(
@@ -714,6 +760,17 @@ fn copy_to_single_target(
         match crate::pi_config::pi_provider_exists(&source.id) {
             Ok(true) => return skipped_already_exists(target_app, &source.name),
             Ok(false) => {}
+            Err(error) => return failed(target_app, error.to_string()),
+        }
+    }
+    if target == AppType::Mcode {
+        // MCode 的原生 config.yaml 可能已有未导入数据库的 custom_provider。
+        // 在 add 前检测，避免静默覆盖相同 key。
+        match crate::mcode_config::get_providers() {
+            Ok(providers) if providers.contains_key(&source.id) => {
+                return skipped_already_exists(target_app, &source.name)
+            }
+            Ok(_) => {}
             Err(error) => return failed(target_app, error.to_string()),
         }
     }
@@ -1124,6 +1181,28 @@ mod copy_to_apps_tests {
             Some("anthropic-messages")
         );
         assert!(pi.get("models").and_then(Value::as_array).is_some());
+        let mcode = build_target_settings(
+            AppType::Mcode,
+            &AppType::OpenClaw,
+            "https://relay.example.com",
+            "sk-relay",
+            "Relay",
+            &["m1".to_string()],
+            &anthropic_source,
+        )
+        .expect("build mcode target");
+        assert_eq!(
+            mcode.get("api").and_then(Value::as_str),
+            Some("anthropic-messages")
+        );
+        assert_eq!(
+            mcode.pointer("/options/baseURL").and_then(Value::as_str),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            mcode.pointer("/models/m1/name").and_then(Value::as_str),
+            Some("m1")
+        );
 
         let responses_source = provider_with_settings(json!({
             "base_url": "https://relay.example.com",
@@ -1175,6 +1254,20 @@ mod copy_to_apps_tests {
             pi_responses.get("api").and_then(Value::as_str),
             Some("openai-responses")
         );
+        let mcode_responses = build_target_settings(
+            AppType::Mcode,
+            &AppType::Hermes,
+            "https://relay.example.com/v1",
+            "sk-relay",
+            "Relay",
+            &["m1".to_string()],
+            &responses_source,
+        )
+        .expect("build mcode target from responses source");
+        assert_eq!(
+            mcode_responses.get("api").and_then(Value::as_str),
+            Some("openai-responses")
+        );
 
         let gemini_source = provider_with_settings(json!({
             "baseUrl": "https://relay.example.com",
@@ -1210,6 +1303,16 @@ mod copy_to_apps_tests {
             pi_gemini.get("api").and_then(Value::as_str),
             Some("google-generative-ai")
         );
+        assert!(build_target_settings(
+            AppType::Mcode,
+            &AppType::OpenClaw,
+            "https://relay.example.com",
+            "sk-relay",
+            "Relay",
+            &["m1".to_string()],
+            &gemini_source,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1434,12 +1537,16 @@ mod copy_to_apps_tests {
             vec!["m1".to_string(), "m2".to_string()]
         );
 
-        // OpenCode：models map 键
+        // OpenCode / MCode：models map 键
         let opencode = provider_with_settings(json!({
             "models": { "m1": { "name": "m1" } }
         }));
         assert_eq!(
             extract_source_model_names(&AppType::OpenCode, &opencode.settings_config, None),
+            vec!["m1".to_string()]
+        );
+        assert_eq!(
+            extract_source_model_names(&AppType::Mcode, &opencode.settings_config, None),
             vec!["m1".to_string()]
         );
 
@@ -1586,6 +1693,17 @@ mod copy_to_apps_tests {
         assert_eq!(
             derive_source_api_format(&opencode_compatible, &AppType::OpenCode),
             "openai_chat"
+        );
+        // MCode api 映射
+        let mcode_responses = provider_with_settings(json!({ "api": "openai-responses" }));
+        assert_eq!(
+            derive_source_api_format(&mcode_responses, &AppType::Mcode),
+            "openai_responses"
+        );
+        let mcode_anthropic = provider_with_settings(json!({ "api": "anthropic-messages" }));
+        assert_eq!(
+            derive_source_api_format(&mcode_anthropic, &AppType::Mcode),
+            "anthropic"
         );
         // GrokBuild best-effort
         assert_eq!(

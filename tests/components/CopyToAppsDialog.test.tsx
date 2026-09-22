@@ -102,7 +102,7 @@ describe("CopyToAppsDialog", () => {
   it("lists every other app for a Claude source, excluding the source itself", () => {
     renderDialog();
 
-    // 源应用 Claude 自身不出现；其余 8 个应用按 APP_IDS 顺序全部出现。
+    // 源应用 Claude 自身不出现；其余 9 个应用按 APP_IDS 顺序全部出现。
     expect(
       screen.queryByRole("checkbox", { name: "Claude" }),
     ).not.toBeInTheDocument();
@@ -115,17 +115,18 @@ describe("CopyToAppsDialog", () => {
       "OpenClaw",
       "Hermes",
       "Pi",
+      "MiniMax Code",
     ]) {
       expect(checkbox(name)).toBeInTheDocument();
     }
-    expect(screen.getByText("已选 0 / 8")).toBeInTheDocument();
+    expect(screen.getByText("已选 0 / 9")).toBeInTheDocument();
   });
 
   it("offers Claude Desktop only when copying from Claude", () => {
     renderDialog({ sourceApp: "codex" });
 
     // Claude Desktop 只接受 Claude 形状的配置，非 Claude 源不可见；
-    // 目标为其余 7 个应用（源 Codex 与 Claude Desktop 均排除）。
+    // 目标为其余 8 个应用（源 Codex 与 Claude Desktop 均排除）。
     expect(
       screen.queryByRole("checkbox", { name: "Codex" }),
     ).not.toBeInTheDocument();
@@ -133,7 +134,7 @@ describe("CopyToAppsDialog", () => {
     expect(
       screen.queryByRole("checkbox", { name: "Claude Desktop" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("已选 0 / 7")).toBeInTheDocument();
+    expect(screen.getByText("已选 0 / 8")).toBeInTheDocument();
   });
 
   it("renders nothing while closed", () => {
@@ -170,13 +171,13 @@ describe("CopyToAppsDialog", () => {
     await user.click(checkbox("Gemini"));
     await user.click(checkbox("Pi"));
 
-    expect(screen.getByText("已选 2 / 8")).toBeInTheDocument();
+    expect(screen.getByText("已选 2 / 9")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "复制到 2 个应用" }),
     ).toBeInTheDocument();
 
     await user.click(checkbox("Pi"));
-    expect(screen.getByText("已选 1 / 8")).toBeInTheDocument();
+    expect(screen.getByText("已选 1 / 9")).toBeInTheDocument();
   });
 
   it("selects every target via select-all and clears on the second click", async () => {
@@ -184,13 +185,19 @@ describe("CopyToAppsDialog", () => {
     renderDialog();
 
     await user.click(checkbox("全选"));
-    expect(screen.getByText("已选 8 / 8")).toBeInTheDocument();
-    for (const name of ["Claude Desktop", "Codex", "Gemini", "Pi"]) {
+    expect(screen.getByText("已选 9 / 9")).toBeInTheDocument();
+    for (const name of [
+      "Claude Desktop",
+      "Codex",
+      "Gemini",
+      "Pi",
+      "MiniMax Code",
+    ]) {
       expect(checkbox(name).checked).toBe(true);
     }
 
     await user.click(checkbox("全选"));
-    expect(screen.getByText("已选 0 / 8")).toBeInTheDocument();
+    expect(screen.getByText("已选 0 / 9")).toBeInTheDocument();
     expect(checkbox("Codex").checked).toBe(false);
   });
 
@@ -271,7 +278,7 @@ describe("CopyToAppsDialog", () => {
     );
 
     await user.click(checkbox("Hermes"));
-    expect(screen.getByText("已选 1 / 8")).toBeInTheDocument();
+    expect(screen.getByText("已选 1 / 9")).toBeInTheDocument();
 
     rerender(
       <CopyToAppsDialog
@@ -290,7 +297,7 @@ describe("CopyToAppsDialog", () => {
       />,
     );
 
-    expect(screen.getByText("已选 0 / 8")).toBeInTheDocument();
+    expect(screen.getByText("已选 0 / 9")).toBeInTheDocument();
     expect(checkbox("Hermes").checked).toBe(false);
   });
 });
