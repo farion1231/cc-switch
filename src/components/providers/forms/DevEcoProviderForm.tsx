@@ -9,7 +9,11 @@ import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
-import { devecoProviderPresets } from "@/config/devEcoProviderPresets";
+import {
+  devecoProviderPresets,
+  normalizeDevecoConfig as normalizeDevecoStoredConfig,
+  DEVECO_NPM_PACKAGES,
+} from "@/config/devEcoProviderPresets";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
@@ -21,18 +25,33 @@ import {
 } from "./helpers/opencodeFormUtils";
 import type { ProviderFormProps } from "./ProviderForm";
 
-const API_FORMATS = [
-  { value: "anthropic-messages", label: "Anthropic Messages" },
-  { value: "openai-completions", label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
-];
+// DevEco 由 `npm` 决定 SDK，协议选择必须写 npm（Mcode 的 `api` 枚举在此无意义）。
+const NPM_PACKAGES = DEVECO_NPM_PACKAGES.map(({ value, label }) => ({
+  value,
+  label,
+}));
+const DEFAULT_NPM = NPM_PACKAGES[0].value;
+
+/**
+ * 把历史上存成 Mcode `api` 枚举的配置迁移到 DevEco 的 `npm`。
+ *
+ * 旧数据没有 `npm`，有的是 `api: "anthropic-messages"` 之类。不迁移的话协议选择器
+ * 读不到既有选择，编辑时也写不进 DevEco 真正用的字段。
+ */
+function normalizeDevecoConfig(
+  stored: Record<string, unknown> | undefined,
+): DevEcoConfig | undefined {
+  return normalizeDevecoStoredConfig(stored) as DevEcoConfig | undefined;
+}
+
 const PRESET_ENTRIES = devecoProviderPresets.map((preset, index) => ({
   id: String(index),
   preset,
 }));
 const configSchema = z
   .object({
-    api: z.string().optional(),
+    // `npm` 决定 DevEco 加载哪个 AI SDK，是协议选择的落点。
+    npm: z.string().optional(),
     options: z
       .object({
         baseURL: z.string().optional(),
@@ -76,13 +95,14 @@ export function DevEcoProviderForm({
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
   const [config, setConfig] = useState<DevEcoConfig>(
-    initialData?.settingsConfig ?? {
-      kind: "custom",
-      enabled: true,
-      api: "anthropic-messages",
-      options: {},
-      models: {},
-    },
+    () =>
+      // 编辑既有供应商时，旧配置存的是 Mcode 的 `api` 枚举；把它迁移到 npm，
+      // 否则协议选择器显示的仍是旧值，改动也不会落到 DevEco 真正读取的字段上。
+      normalizeDevecoConfig(initialData?.settingsConfig) ?? {
+        npm: DEFAULT_NPM,
+        options: {},
+        models: {},
+      },
   );
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);
@@ -128,9 +148,7 @@ export function DevEcoProviderForm({
     const selected =
       id === "custom" ? undefined : devecoProviderPresets[Number(id)];
     const next = selected?.settingsConfig ?? {
-      kind: "custom",
-      enabled: true,
-      api: "anthropic-messages",
+      npm: DEFAULT_NPM,
       options: {},
       models: {},
     };
@@ -162,6 +180,8 @@ export function DevEcoProviderForm({
             const options = { ...config.options };
             if (Object.keys(headers).length) options.headers = headers;
             else delete options.headers;
+            // 归一化已在初始状态做过：遗留的 `api` 枚举被迁到 npm，真实的
+            // `api` URL（DevEco 原生字段）原样保留。这里只补上 name/kind。
             await onSubmit({
               ...identity,
               name: identity.name.trim(),
@@ -170,6 +190,7 @@ export function DevEcoProviderForm({
               presetCategory: category,
               settingsConfig: JSON.stringify({
                 ...config,
+                npm: config.npm ?? DEFAULT_NPM,
                 name: identity.name.trim(),
                 kind: "custom",
                 options,
@@ -208,9 +229,9 @@ export function DevEcoProviderForm({
         >
           <BasicFormFields form={form} />
           <OpenCodeFormFields
-            apiFormats={API_FORMATS}
-            npm={config.api ?? "anthropic-messages"}
-            onNpmChange={(api) => update({ ...config, api })}
+            apiFormats={NPM_PACKAGES}
+            npm={config.npm ?? DEFAULT_NPM}
+            onNpmChange={(npm) => update({ ...config, npm })}
             apiKey={config.options?.apiKey ?? ""}
             onApiKeyChange={(apiKey) => updateOptions({ apiKey })}
             category={category}
@@ -263,7 +284,11 @@ export function DevEcoProviderForm({
             onChange={(text) => {
               setJsonText(text);
               try {
-                const next = configSchema.parse(JSON.parse(text));
+                // 与初始状态走同一条归一化：手改 JSON 里粘进来的 Mcode `api`
+                // 枚举也要迁到 npm，否则下拉框显示 npm、保存却写回 api。
+                const next = normalizeDevecoConfig(
+                  configSchema.parse(JSON.parse(text)),
+                )!;
                 setConfig(next);
                 setExtraOptions(toOpencodeExtraOptions(next.options ?? {}));
                 setJsonValid(true);

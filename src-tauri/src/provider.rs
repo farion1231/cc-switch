@@ -1011,6 +1011,13 @@ pub struct OpenCodeModelLimit {
     /// 输出 token 限制
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
+
+    /// 输入 token 限制等未明确建模的字段
+    ///
+    /// 原生配置会写 `input`，此前它会被静默丢弃（未知字段不会让 Serde 报错，
+    /// 因此 raw JSON 兜底也不会触发），写回 live 后用户配置不可逆丢失。
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
 }
 
 // ============================================================================
@@ -1027,6 +1034,11 @@ pub struct OpenCodeModelLimit {
 ///
 /// 若复用 OpenCode 的类型，上述两类条目会反序列化失败并掉进 raw JSON 兜底路径，
 /// 导致类型化表单与导入都失效。
+///
+/// `extra` 承载 cc-switch 自己写入的 `api` / `kind` / `enabled` 以及 DevEco 原生但
+/// 此处未建模的字段（`env`、`whitelist`、`blacklist`、`provider.*` 等）。没有它，
+/// 反序列化成的 typed 结构再序列化写回 live 会把这些字段静默删掉——未知字段不
+/// 会让 Serde 报错，raw JSON 兜底因此也不会触发。
 ///
 /// 配置示例（本机 deveco.jsonc 实态）：
 /// ```json
@@ -1059,6 +1071,14 @@ pub struct DevEcoProviderConfig {
     /// 模型定义映射
     #[serde(default)]
     pub models: IndexMap<String, DevEcoModel>,
+
+    /// 其余字段原样保留（`api`、`kind`、`enabled`、`env`、`whitelist`、`blacklist`…）
+    ///
+    /// `kind` / `enabled` / `api` 是前端表单写进 settings_config 的；`env`、
+    /// `whitelist`、`blacklist` 是 DevEco 原生的合法 provider 字段。三者都必须
+    /// 往返保留，否则写回 live 会静默丢配置。
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
 }
 
 fn default_deveco_npm() -> String {
@@ -1072,6 +1092,7 @@ impl Default for DevEcoProviderConfig {
             name: None,
             options: OpenCodeProviderOptions::default(),
             models: IndexMap::new(),
+            extra: HashMap::new(),
         }
     }
 }
@@ -1737,6 +1758,51 @@ mod tests {
         assert_eq!(
             p.resolve_usage_credentials(&AppType::Claude),
             (String::new(), String::new())
+        );
+    }
+
+    /// 类型化写回必须是无损的：`DevEcoProviderConfig` 只建模了 npm/name/options/
+    /// models，其余字段靠 `extra` 保留。没有它，写回 live 会静默删掉 provider.api、
+    /// env、whitelist 和 limit.input——而未知字段不会让 Serde 报错，raw JSON 兜底
+    /// 因此也不会触发。
+    #[test]
+    fn deveco_config_roundtrip_preserves_unmodeled_fields() {
+        let raw = json!({
+            "npm": "@ai-sdk/anthropic",
+            "name": "acme",
+            // 前端表单自己保存的字段
+            "api": "anthropic-messages",
+            "kind": "custom",
+            "enabled": true,
+            // DevEco 原生的合法 provider 字段
+            "env": { "FOO": "bar" },
+            "whitelist": ["m1"],
+            "blacklist": ["m2"],
+            "provider": { "type": "anthropic" },
+            "options": { "baseURL": "https://example.com/v1", "apiKey": "sk-x", "timeout": 30 },
+            "models": {
+                "m1": {
+                    "name": "M1",
+                    "tool_call": true,
+                    "limit": { "context": 1000000, "output": 128000, "input": 64000 }
+                }
+            }
+        });
+
+        let typed: super::DevEcoProviderConfig =
+            serde_json::from_value(raw.clone()).expect("typed parse");
+        let back = serde_json::to_value(&typed).expect("serialize back");
+
+        assert_eq!(back, raw, "往返必须保留全部未建模字段");
+
+        let model = typed.models.get("m1").expect("m1");
+        let limit = model.limit.as_ref().expect("limit");
+        assert_eq!(limit.context, Some(1_000_000));
+        assert_eq!(limit.output, Some(128_000));
+        assert_eq!(
+            limit.extra.get("input").and_then(|v| v.as_u64()),
+            Some(64_000),
+            "limit.input 必须保留"
         );
     }
 }

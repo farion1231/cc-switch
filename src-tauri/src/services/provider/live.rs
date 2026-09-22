@@ -1449,8 +1449,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::DevEco => {
             // DevEco Code uses additive mode - write provider to deveco.jsonc.
-            // Typed conversion is preferred (it normalizes an omitted `npm`), but a
-            // failure must not lose the write: fall back to raw JSON as OpenCode does.
+            //
+            // Typed conversion is preferred (it normalizes an omitted `npm`), with a
+            // raw JSON fallback so a structural mismatch can never lose the write.
             use crate::deveco_config;
             use crate::provider::DevEcoProviderConfig;
 
