@@ -97,9 +97,16 @@ fn test_parse_claude_desktop_provider_aliases() {
         assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "haiku-test");
         assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "sonnet-test");
         assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "opus-test");
+        let routes = crate::claude_desktop_config::proxy_model_routes(&provider).unwrap();
+        let mut models = routes
+            .iter()
+            .map(|route| route.upstream_model.as_str())
+            .collect::<Vec<_>>();
+        models.sort();
+        assert_eq!(models, ["haiku-test", "opus-test", "sonnet-test"]);
         assert_eq!(
-            provider.meta.unwrap().claude_desktop_mode,
-            Some(crate::provider::ClaudeDesktopMode::Direct)
+            provider.meta.as_ref().unwrap().claude_desktop_mode,
+            Some(crate::provider::ClaudeDesktopMode::Proxy)
         );
     }
 }
@@ -141,6 +148,54 @@ fn test_merge_claude_desktop_inline_config() {
             provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
             "sk-url"
         );
+    }
+}
+
+#[test]
+fn test_claude_desktop_models_become_direct_or_proxy_routes() {
+    use crate::claude_desktop_config::{is_claude_safe_model_id, proxy_model_routes};
+    use crate::provider::ClaudeDesktopMode;
+
+    for (model, expected_mode, upstream) in [
+        (
+            "claude-sonnet-4-6",
+            ClaudeDesktopMode::Direct,
+            "claude-sonnet-4-6",
+        ),
+        (
+            "claude-sonnet-4-6[1M]",
+            ClaudeDesktopMode::Direct,
+            "claude-sonnet-4-6",
+        ),
+        ("deepseek-v4", ClaudeDesktopMode::Proxy, "deepseek-v4"),
+    ] {
+        let request = DeepLinkImportRequest {
+            model: Some(model.to_string()),
+            endpoint: Some("https://api.example.com".to_string()),
+            api_key: Some("sk-test".to_string()),
+            ..Default::default()
+        };
+        let provider =
+            super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &request)
+                .unwrap();
+        let meta = provider.meta.as_ref().unwrap();
+        assert_eq!(meta.claude_desktop_mode, Some(expected_mode.clone()));
+        assert_eq!(meta.claude_desktop_model_routes.len(), 1);
+        let (route_id, route) = meta.claude_desktop_model_routes.iter().next().unwrap();
+        assert!(is_claude_safe_model_id(route_id));
+        assert_eq!(route.model, upstream);
+        if expected_mode == ClaudeDesktopMode::Direct {
+            assert_eq!(route_id, upstream);
+        } else {
+            assert_eq!(
+                proxy_model_routes(&provider).unwrap()[0].upstream_model,
+                upstream
+            );
+        }
+        if model.ends_with("[1M]") {
+            assert_eq!(route.supports_1m, Some(true));
+        }
+        crate::claude_desktop_config::validate_provider(&provider).unwrap();
     }
 }
 

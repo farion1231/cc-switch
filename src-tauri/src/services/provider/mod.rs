@@ -5189,6 +5189,11 @@ impl ProviderService {
             return Ok(true);
         }
 
+        // Desktop links may add a provider without selecting it or writing a 3P profile.
+        if matches!(app_type, AppType::ClaudeDesktop) && !add_to_live {
+            return Ok(true);
+        }
+
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
