@@ -24,8 +24,8 @@ vi.mock("@/components/JsonEditor", () => ({
 
 const original = {
   kind: "custom",
-  api: "anthropic-messages",
   enabled: true,
+  npm: "@ai-sdk/anthropic",
   options: {
     baseURL: "https://api.example.com/anthropic",
     apiKey: "local-test-key",
@@ -91,7 +91,7 @@ describe("DevEcoProviderForm", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
-  it("uses the shared preset and model editors and saves native API fields", async () => {
+  it("writes the SDK package as npm rather than reusing Mcode's api enum", async () => {
     const submit = vi.fn();
     render(
       <DevEcoProviderForm
@@ -112,10 +112,95 @@ describe("DevEcoProviderForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
-    expect(saved.api).toBe("openai-completions");
+    // DevEco 由 npm 选 SDK；把 Mcode 的协议枚举写进 `api` 不会改变 SDK 选择。
+    expect(saved.npm).toBe("@ai-sdk/openai-compatible");
+    expect(saved).not.toHaveProperty("api");
     expect(saved.options.apiKey).toBe("test-key");
-    expect(saved).not.toHaveProperty("npm");
     expect(saved.models).toHaveProperty("MiniMax-M3");
+  });
+
+  it.each([
+    ["anthropic-messages", "@ai-sdk/anthropic"],
+    ["openai-completions", "@ai-sdk/openai-compatible"],
+    ["openai-responses", "@ai-sdk/openai"],
+  ])("migrates a stored legacy api enum %s to npm %s", async (api, npm) => {
+    const submit = vi.fn();
+    render(
+      <DevEcoProviderForm
+        appId="deveco"
+        providerId="existing"
+        initialData={{
+          name: "Existing",
+          settingsConfig: { ...original, api, npm: undefined },
+        }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.npm).toBe(npm);
+    expect(saved).not.toHaveProperty("api");
+  });
+
+  it("keeps a real DevEco api endpoint URL instead of treating it as a protocol", async () => {
+    const submit = vi.fn();
+    const settings = {
+      ...original,
+      npm: undefined,
+      api: "https://gateway.example.com/v1",
+    };
+    render(
+      <DevEcoProviderForm
+        appId="deveco"
+        providerId="existing"
+        initialData={{ name: "Existing", settingsConfig: settings }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.api).toBe("https://gateway.example.com/v1");
+    expect(saved.npm).toBe("@ai-sdk/openai-compatible");
+  });
+
+  it("migrates a legacy api enum pasted into the config JSON editor", async () => {
+    const submit = vi.fn();
+    const settings = {
+      ...original,
+      npm: undefined,
+      api: "anthropic-messages",
+    };
+    render(
+      <DevEcoProviderForm
+        appId="deveco"
+        providerId="existing"
+        initialData={{ name: "Existing", settingsConfig: settings }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    // JSON 编辑器是另一条输入路径，必须与结构化字段走同一条归一化。
+    fireEvent.change(screen.getByLabelText("provider.configJson"), {
+      target: {
+        value: JSON.stringify({
+          ...original,
+          npm: undefined,
+          api: "openai-responses",
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.npm).toBe("@ai-sdk/openai");
+    expect(saved).not.toHaveProperty("api");
   });
 
   it("keeps invalid JSON drafts from breaking the structured fields", () => {
@@ -138,16 +223,16 @@ describe("DevEcoProviderForm", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
-  it("derives DevEco presets from Mcode presets (same OpenCode schema)", () => {
+  it("derives DevEco presets from Mcode presets with a real DevEco schema", () => {
     expect(devecoProviderPresets.length).toBe(mcodeProviderPresets.length);
-    expect(
-      devecoProviderPresets.every((preset) => preset.settingsConfig.api),
-    ).toBe(true);
     devecoProviderPresets.forEach((preset, index) => {
       expect(preset.name).toBe(mcodeProviderPresets[index].name);
       expect(preset.settingsConfig.models).toEqual(
         mcodeProviderPresets[index].settingsConfig.models,
       );
+      // Mcode 的 api 枚举必须被翻译成 npm 包名，而不是照抄进 DevEco 配置。
+      expect(preset.settingsConfig.npm).toMatch(/^@ai-sdk\//);
+      expect(preset.settingsConfig).not.toHaveProperty("api");
     });
   });
 });
