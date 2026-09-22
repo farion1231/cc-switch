@@ -3976,4 +3976,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      baseUrl: "https://api.moark.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-flash-0731",
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+          contextWindow: 1_000_000,
+          maxTokens: 384_000,
+        },
+        {
+          id: "DeepSeek-V4-Pro",
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          contextWindow: 1_000_000,
+          maxTokens: 384_000,
+        },
+        {
+          id: "GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          contextWindow: 1_048_576,
+          maxTokens: 131_072,
+        },
+        {
+          id: "Kimi-K2.7-Code",
+          name: "Kimi K2.7 Code",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 262_144,
+          maxTokens: 262_144,
+        },
+        {
+          id: "qwen3-coder-plus",
+          name: "Qwen3 Coder Plus",
+          contextWindow: 1_000_000,
+          maxTokens: 65_536,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "moark",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "moark/deepseek-v4-flash-0731" },
+      modelCatalog: {
+        "moark/deepseek-v4-flash-0731": { alias: "DeepSeek V4 Flash" },
+      },
+    },
+  },
 ];

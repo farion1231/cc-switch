@@ -3266,4 +3266,19 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    auth: generateThirdPartyAuth(""),
+    // 官方文档（CC Switch 快速配置）：Codex 走 /v1 的 Responses 原生协议
+    config: generateThirdPartyConfig(
+      "moark",
+      "https://moark.com/v1",
+      "deepseek-v4-flash-0731",
+    ),
+    endpointCandidates: ["https://moark.com/v1"],
+    category: "aggregator",
+    icon: "moark",
+  },
 ];

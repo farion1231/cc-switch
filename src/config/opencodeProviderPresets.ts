@@ -2912,4 +2912,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "模力方舟",
+      options: {
+        baseURL: "https://api.moark.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash" },
+        "DeepSeek-V4-Pro": { name: "DeepSeek V4 Pro" },
+        "GLM-5.3": { name: "GLM-5.3" },
+        "Kimi-K2.7-Code": { name: "Kimi K2.7 Code" },
+        "qwen3-coder-plus": { name: "Qwen3 Coder Plus" },
+      },
+    },
+    category: "aggregator",
+    icon: "moark",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 ];
