@@ -424,10 +424,24 @@ pub fn transform_claude_request_for_api_format(
         "openai_chat" => {
             let preserve_reasoning_content =
                 should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            // 能力声明（meta.claudeChatReasoning）时捕获客户端 reasoning 意图；
+            // body 随后被 move 进转换函数，故必须先解析（#7546 / #7397 同类：
+            // 本地模型名通不过名称启发式，thinking/effort 否则被静默丢弃）。
+            let claude_chat_intent = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.claude_chat_reasoning.as_ref())
+                .map(|_| super::transform::claude_chat_reasoning_intent(&body));
             let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
                 body,
                 preserve_reasoning_content,
             )?;
+            if let (Some(intent), Some(config)) = (
+                claude_chat_intent,
+                provider.meta.as_ref().and_then(|m| m.claude_chat_reasoning.as_ref()),
+            ) {
+                super::transform::apply_claude_chat_reasoning(&mut result, intent, config);
+            }
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
                 .meta
@@ -2783,5 +2797,110 @@ mod tests {
         assert!(changed);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("output_config").is_none());
+    }
+
+    // ---------- claudeChatReasoning：openai_chat 转换的 thinking/effort 透传 (#7546) ----------
+
+    fn desktop_body(effort: Option<&str>) -> Value {
+        let mut body = json!({
+            "model": "freedom",
+            "max_tokens": 2048,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+        if let Some(e) = effort {
+            body["thinking"] = json!({"type": "effort", "effort": e});
+        }
+        body
+    }
+
+    fn reasoning_meta() -> ProviderMeta {
+        ProviderMeta {
+            claude_chat_reasoning: Some(crate::provider::ClaudeChatReasoningConfig {
+                supports_thinking: Some(true),
+                supports_effort: Some(true),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn openai_chat_desktop_effort_high_reaches_upstream() {
+        // 完整管线：Desktop 3P 的 effort 形态 → openai_chat 转换 → 上游参数
+        let provider = create_provider_with_meta(json!({}), reasoning_meta());
+        let out = transform_claude_request_for_api_format(
+            desktop_body(Some("high")),
+            &provider,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            out["chat_template_kwargs"]["enable_thinking"],
+            json!(true)
+        );
+        // high 必须钳到 xhigh（Qwen 系 vLLM 模板枚举无 high，发送即 400）
+        assert_eq!(out["reasoning_effort"], json!("xhigh"));
+        // 消息转换保持正常
+        assert_eq!(out["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn openai_chat_desktop_none_switches_off() {
+        let provider = create_provider_with_meta(json!({}), reasoning_meta());
+        let mut body = desktop_body(None);
+        body["thinking"] = json!({"type": "none"});
+        let out = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            out["chat_template_kwargs"]["enable_thinking"],
+            json!(false)
+        );
+        assert!(out.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn openai_chat_without_capability_keeps_legacy_behavior() {
+        // 未声明能力的 provider：thinking 块被转换层丢弃、不注入任何 reasoning 参数
+        // （历史行为不变，旧 provider 数据零影响）
+        let provider = create_provider(json!({}));
+        let out = transform_claude_request_for_api_format(
+            desktop_body(Some("high")),
+            &provider,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(out.get("reasoning_effort").is_none());
+        assert!(out.get("chat_template_kwargs").is_none());
+    }
+
+    #[test]
+    fn openai_chat_effort_only_meta_injects_effort_only() {
+        let meta = ProviderMeta {
+            claude_chat_reasoning: Some(crate::provider::ClaudeChatReasoningConfig {
+                supports_thinking: None,
+                supports_effort: Some(true),
+            }),
+            ..Default::default()
+        };
+        let provider = create_provider_with_meta(json!({}), meta);
+        let out = transform_claude_request_for_api_format(
+            desktop_body(Some("medium")),
+            &provider,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out["reasoning_effort"], json!("medium"));
+        assert!(out.get("chat_template_kwargs").is_none());
     }
 }

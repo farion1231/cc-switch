@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use crate::provider::ClaudeChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::canonical_json_string,
@@ -124,6 +125,149 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             }
         }
         _ => None, // disabled or missing
+    }
+}
+
+/// 从 Anthropic Messages 请求体解析客户端的 reasoning 意图。
+///
+/// 与 [`resolve_reasoning_effort`]（仅 `output_config.effort` + 旧式
+/// `thinking.budget_tokens` 预算档）互补：Claude Desktop 3P 不发送
+/// `output_config`，而是把思考开关/档位编码在 `thinking` 块里——
+/// `{type:"effort", effort:"low"|"medium"|"high"|"xhigh"}`（思考开）或
+/// `{type:"none"}`（思考关）。Claude Code 侧 `output_config.effort` /
+/// `/effort` 仍走原路径。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudeChatReasoningIntent {
+    /// 客户端未表达 reasoning 意图（字段缺省）——不注入任何 reasoning 参数，
+    /// 保持上游/供应商默认。
+    Absent,
+    /// 显式关闭思考。
+    Off,
+    /// 显式档位（小写，已规范化）：low / medium / high / xhigh。
+    Level(&'static str),
+}
+
+pub fn claude_chat_reasoning_intent(body: &Value) -> ClaudeChatReasoningIntent {
+    // 1) 显式 output_config.effort（Claude Code /effort 路径）
+    if let Some(effort) = body.pointer("/output_config/effort").and_then(|v| v.as_str()) {
+        return match effort.trim().to_ascii_lowercase().as_str() {
+            "low" => ClaudeChatReasoningIntent::Level("low"),
+            "medium" => ClaudeChatReasoningIntent::Level("medium"),
+            "high" => ClaudeChatReasoningIntent::Level("high"),
+            "xhigh" => ClaudeChatReasoningIntent::Level("xhigh"),
+            "none" | "off" | "disabled" => ClaudeChatReasoningIntent::Off,
+            _ => ClaudeChatReasoningIntent::Absent, // 未知值不注入
+        };
+    }
+
+    let Some(thinking) = body.get("thinking") else {
+        return ClaudeChatReasoningIntent::Absent;
+    };
+
+    match thinking.get("type").and_then(|t| t.as_str()) {
+        // 2) Claude Desktop 的 effort 形态（SDK 的 effort 状态序列化）
+        Some("effort") => {
+            match thinking.get("effort").and_then(|e| e.as_str()) {
+                Some(effort) => match effort.trim().to_ascii_lowercase().as_str() {
+                    "low" => ClaudeChatReasoningIntent::Level("low"),
+                    "medium" => ClaudeChatReasoningIntent::Level("medium"),
+                    "high" => ClaudeChatReasoningIntent::Level("high"),
+                    "xhigh" => ClaudeChatReasoningIntent::Level("xhigh"),
+                    "none" | "off" | "disabled" => ClaudeChatReasoningIntent::Off,
+                    _ => ClaudeChatReasoningIntent::Absent,
+                },
+                None => ClaudeChatReasoningIntent::Absent,
+            }
+        }
+        // 3) 旧式预算形态（Claude Code adaptive/enabled）
+        Some("adaptive") => ClaudeChatReasoningIntent::Level("xhigh"),
+        Some("enabled") => {
+            let budget = thinking.get("budget_tokens").and_then(|b| b.as_u64());
+            match budget {
+                Some(b) if b < 4_000 => ClaudeChatReasoningIntent::Level("low"),
+                Some(b) if b < 16_000 => ClaudeChatReasoningIntent::Level("medium"),
+                Some(_) => ClaudeChatReasoningIntent::Level("high"),
+                None => ClaudeChatReasoningIntent::Level("high"),
+            }
+        }
+        Some("disabled") | Some("none") | Some("off") => ClaudeChatReasoningIntent::Off,
+        _ => ClaudeChatReasoningIntent::Absent,
+    }
+}
+
+/// 把档位映射到目标上游接受的 OpenAI `reasoning_effort` 值。
+///
+/// 返回 `None` = 不注入字段（保持上游默认）。
+/// - `low` / `medium` / `xhigh` 原样透传；
+/// - `high` / `max` 钳到 `xhigh`：Qwen 系 vLLM 的 effort 枚举是
+///   `low|medium|xhigh`（无 `high`），发送 `high` 会直接 400；OpenAI 系上游的
+///   `high` 是合法值但语义弱于 `max`，统一取最高档更符合客户端「最高 effort」
+///   的意图（同 `resolve_reasoning_effort` 的 max→xhigh 先例）；
+/// - 客户端未表达档位（如 `thinking:{type:"enabled"}` 旧式无预算、或供应商仅
+///   声明思考开关而未选档）：不注入，避免默认打到部分模板的最高档（Qwen
+///   系模板默认即 xhigh，会把「只是开关思考」放大成最重推理）。
+pub fn map_claude_chat_effort(effort: &str) -> Option<&'static str> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" | "max" => Some("xhigh"),
+        "xhigh" => Some("xhigh"),
+        _ => None,
+    }
+}
+
+/// 按供应商能力声明（`meta.claudeChatReasoning`）把客户端 reasoning 意图
+/// 注入已转换的 OpenAI Chat Completions 请求体。
+///
+/// 该转换服务 Claude Code / Claude Desktop 的 `apiFormat: openai_chat` 路由
+/// （本地模型名永远通不过 `supports_reasoning_effort` 的名称启发式，见
+/// #7546 / #7397 同类）。注入形态面向 vLLM/Qwen 系上游：
+/// - 思考开关 → `chat_template_kwargs.enable_thinking`（bool）：该字段默认不在
+///   OpenAI 白名单里，只能经此处显式携带；
+/// - effort 档位 → 顶层 `reasoning_effort`（OpenAI 原生参数，上游按自身
+///   词表接受/丢弃）。
+/// 声明了能力时本函数接管 `reasoning_effort`（先移除名称启发式可能注入的值，
+/// 声明优先于猜测）。未声明能力 → 完全不动请求体（与历史行为一致）。
+pub fn apply_claude_chat_reasoning(
+    result: &mut Value,
+    intent: ClaudeChatReasoningIntent,
+    config: &ClaudeChatReasoningConfig,
+) {
+    let supports_thinking = config.supports_thinking.unwrap_or(false);
+    let supports_effort = config.supports_effort.unwrap_or(false);
+    if !supports_thinking && !supports_effort {
+        return;
+    }
+
+    let result_obj = match result {
+        Value::Object(map) => map,
+        _ => return,
+    };
+
+    let thinking_on = match intent {
+        ClaudeChatReasoningIntent::Level(_) => true,
+        ClaudeChatReasoningIntent::Off => false,
+        ClaudeChatReasoningIntent::Absent => return,
+    };
+
+    if supports_thinking {
+        let ctk = result_obj
+            .entry("chat_template_kwargs")
+            .or_insert_with(|| json!({}));
+        if ctk.is_object() {
+            ctk["enable_thinking"] = json!(thinking_on);
+        } else {
+            result_obj["chat_template_kwargs"] = json!({"enable_thinking": thinking_on});
+        }
+    }
+
+    if supports_effort {
+        result_obj.remove("reasoning_effort");
+        if let ClaudeChatReasoningIntent::Level(level) = intent {
+            if let Some(mapped) = map_claude_chat_effort(level) {
+                result_obj.insert("reasoning_effort".to_owned(), json!(mapped));
+            }
+        }
     }
 }
 
@@ -2030,5 +2174,226 @@ mod tests {
             run_tool_choice(json!({"type": "tool", "name": "search"})),
             json!({"type": "function", "function": {"name": "search"}}),
         );
+    }
+
+    // ==================== Claude chat reasoning capability (#7546 / #7397) ====================
+
+    fn full_capability() -> ClaudeChatReasoningConfig {
+        ClaudeChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+        }
+    }
+
+    #[test]
+    fn intent_output_config_effort_wins() {
+        let body = json!({
+            "output_config": {"effort": "medium"},
+            "thinking": {"type": "effort", "effort": "xhigh"}
+        });
+        assert!(matches!(
+            claude_chat_reasoning_intent(&body),
+            ClaudeChatReasoningIntent::Level("medium")
+        ));
+    }
+
+    #[test]
+    fn intent_output_config_unknown_value_is_absent() {
+        let body = json!({"output_config": {"effort": "supreme"}});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&body),
+            ClaudeChatReasoningIntent::Absent
+        ));
+    }
+
+    #[test]
+    fn intent_desktop_effort_levels() {
+        for level in ["low", "medium", "high", "xhigh"] {
+            let body = json!({"thinking": {"type": "effort", "effort": level}});
+            assert!(
+                matches!(
+                    claude_chat_reasoning_intent(&body),
+                    ClaudeChatReasoningIntent::Level(l) if l == level
+                ),
+                "expected Level({level})"
+            );
+        }
+    }
+
+    #[test]
+    fn intent_desktop_none_is_off() {
+        let body = json!({"thinking": {"type": "none"}});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&body),
+            ClaudeChatReasoningIntent::Off
+        ));
+    }
+
+    #[test]
+    fn intent_effort_type_without_level_is_absent() {
+        let body = json!({"thinking": {"type": "effort"}});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&body),
+            ClaudeChatReasoningIntent::Absent
+        ));
+    }
+
+    #[test]
+    fn intent_legacy_budget_shapes() {
+        let small = json!({"thinking": {"type": "enabled", "budget_tokens": 1024}});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&small),
+            ClaudeChatReasoningIntent::Level("low")
+        ));
+        let adaptive = json!({"thinking": {"type": "adaptive"}});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&adaptive),
+            ClaudeChatReasoningIntent::Level("xhigh")
+        ));
+        let disabled = json!({"thinking": {"type": "disabled"}});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&disabled),
+            ClaudeChatReasoningIntent::Off
+        ));
+        let empty = json!({"messages": []});
+        assert!(matches!(
+            claude_chat_reasoning_intent(&empty),
+            ClaudeChatReasoningIntent::Absent
+        ));
+    }
+
+    #[test]
+    fn map_effort_clamps_high_and_max_to_xhigh() {
+        assert_eq!(map_claude_chat_effort("low"), Some("low"));
+        assert_eq!(map_claude_chat_effort("medium"), Some("medium"));
+        assert_eq!(map_claude_chat_effort("high"), Some("xhigh"));
+        assert_eq!(map_claude_chat_effort("max"), Some("xhigh"));
+        assert_eq!(map_claude_chat_effort("xhigh"), Some("xhigh"));
+        assert_eq!(map_claude_chat_effort("bogus"), None);
+    }
+
+    #[test]
+    fn apply_no_capability_is_noop() {
+        let mut result = json!({"model": "freedom", "max_tokens": 100});
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Level("high"),
+            &ClaudeChatReasoningConfig::default(),
+        );
+        assert!(result.get("reasoning_effort").is_none());
+        assert!(result.get("chat_template_kwargs").is_none());
+    }
+
+    #[test]
+    fn apply_desktop_effort_high_injects_switch_and_xhigh() {
+        let mut result = json!({"model": "freedom", "max_tokens": 100});
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Level("high"),
+            &full_capability(),
+        );
+        assert_eq!(
+            result["chat_template_kwargs"]["enable_thinking"],
+            json!(true)
+        );
+        // Qwen 系 vLLM 枚举无 high：必须钳到 xhigh，否则上游 400
+        assert_eq!(result["reasoning_effort"], json!("xhigh"));
+    }
+
+    #[test]
+    fn apply_desktop_none_injects_explicit_off() {
+        let mut result = json!({"model": "freedom", "max_tokens": 100});
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Off,
+            &full_capability(),
+        );
+        assert_eq!(
+            result["chat_template_kwargs"]["enable_thinking"],
+            json!(false)
+        );
+        assert!(result.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn apply_absent_intent_touches_nothing() {
+        // 客户端没表达意图 → 不注入任何字段（供应商默认行为不变）
+        let mut result = json!({"model": "freedom", "max_tokens": 100});
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Absent,
+            &full_capability(),
+        );
+        assert!(result.get("reasoning_effort").is_none());
+        assert!(result.get("chat_template_kwargs").is_none());
+    }
+
+    #[test]
+    fn apply_effort_only_provider_keeps_ctk_absent() {
+        let mut result = json!({"model": "freedom", "max_tokens": 100});
+        let config = ClaudeChatReasoningConfig {
+            supports_thinking: None,
+            supports_effort: Some(true),
+        };
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Level("medium"),
+            &config,
+        );
+        assert_eq!(result["reasoning_effort"], json!("medium"));
+        assert!(result.get("chat_template_kwargs").is_none());
+    }
+
+    #[test]
+    fn apply_overrides_name_heuristic_reasoning_effort() {
+        // 名称启发式（o/gpt-5/grok）先注入了 reasoning_effort="high"，
+        // 能力声明必须接管：Qwen 上游收到 high 会 400。
+        let mut result = json!({
+            "model": "freedom",
+            "max_tokens": 100,
+            "reasoning_effort": "high"
+        });
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Level("low"),
+            &full_capability(),
+        );
+        assert_eq!(result["reasoning_effort"], json!("low"));
+    }
+
+    #[test]
+    fn apply_preserves_client_chat_template_kwargs() {
+        // 客户端显式携带的 chat_template_kwargs 键必须保留（深度合并语义）
+        let mut result = json!({
+            "model": "freedom",
+            "chat_template_kwargs": {"do_sample": false}
+        });
+        apply_claude_chat_reasoning(
+            &mut result,
+            ClaudeChatReasoningIntent::Level("low"),
+            &full_capability(),
+        );
+        assert_eq!(result["chat_template_kwargs"]["do_sample"], json!(false));
+        assert_eq!(
+            result["chat_template_kwargs"]["enable_thinking"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn meta_camel_case_roundtrip() {
+        let meta: serde_json::Value = serde_json::from_str(
+            r#"{"claudeChatReasoning":{"supportsThinking":true,"supportsEffort":true}}"#,
+        )
+        .unwrap();
+        let provider_meta: crate::provider::ProviderMeta =
+            serde_json::from_value(meta).unwrap();
+        let config = provider_meta.claude_chat_reasoning.expect("meta missing");
+        assert_eq!(config.supports_thinking, Some(true));
+        assert_eq!(config.supports_effort, Some(true));
+        // 未声明的字段反序列化为 None（旧 provider meta 向后兼容）
+        let legacy: crate::provider::ProviderMeta =
+            serde_json::from_str(r#"{"claudeDesktopMode":"proxy"}"#).unwrap();
+        assert!(legacy.claude_chat_reasoning.is_none());
     }
 }

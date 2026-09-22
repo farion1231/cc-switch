@@ -424,6 +424,32 @@ pub struct CodexChatReasoningConfig {
     pub effort_levels: Option<Vec<String>>,
 }
 
+/// Claude Code / Claude Desktop 的 Anthropic Messages -> OpenAI Chat Completions
+/// 转换的 reasoning 能力描述。
+///
+/// 与 [`CodexChatReasoningConfig`]（Codex Responses -> Chat 路径）对应：代理此前
+/// 只在 `supports_reasoning_effort(model)` 名称启发式通过时（OpenAI o 系 /
+/// GPT-5+ / Grok Build）才把客户端的 thinking/effort 意图翻译成 OpenAI
+/// `reasoning_effort`，本地模型名（如 `freedom`）与 vLLM/Qwen 系上游永远被静默
+/// 丢弃（#7546、#7397 同类）。供应商在此声明能力后，转换层对任意模型名注入
+/// 该上游接受的参数与档位。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ClaudeChatReasoningConfig {
+    /// 客户端「思考」开关（Anthropic `thinking.type` / Claude Desktop 的 effort
+    /// 状态）能否到达上游。true 时：enabled 意图注入
+    /// `chat_template_kwargs.enable_thinking=true`（vLLM Qwen 方言；该字段默认
+    /// 不在 OpenAI 白名单里，必须经由此处显式携带），disabled 意图注入 `false`。
+    #[serde(rename = "supportsThinking", skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+    /// 客户端 effort 档位（Claude Code `output_config.effort` / Claude Desktop
+    /// `thinking:{type:"effort",effort}` 的 low/medium/high/xhigh）能否到达上游。
+    /// true 时：档位映射为 OpenAI `reasoning_effort`（vLLM 系枚举缺 high，
+    /// high/max 钳到 xhigh；none/off/disabled 与「不选 effort」不注入字段，
+    /// 保持上游默认）。
+    #[serde(rename = "supportsEffort", skip_serializing_if = "Option::is_none")]
+    pub supports_effort: Option<bool>,
+}
+
 /// Local proxy request overrides applied after route/protocol transforms.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalProxyRequestOverrides {
@@ -521,6 +547,13 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Claude Code / Claude Desktop `openai_chat` 转换的 reasoning 能力声明
+    /// （meta 键 `claudeChatReasoning`）。
+    #[serde(
+        rename = "claudeChatReasoning",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_chat_reasoning: Option<ClaudeChatReasoningConfig>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.
