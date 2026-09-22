@@ -11,6 +11,13 @@ export interface ImeSafeInputProps
 /**
  * Keeps IME marked text local until composition finishes so parent renders
  * cannot overwrite the browser-managed composition range mid-input.
+ *
+ * The local draft is authoritative while the field is being edited, so the
+ * parent must store what it receives verbatim. Anything that rewrites the
+ * value belongs in `normalize`, which runs inside the commit. A transform
+ * applied in `onValueChange` instead leaves the draft showing text the parent
+ * never accepted, because an unchanged `value` prop cannot trigger the effect
+ * below; only the blur reconciliation would correct it.
  */
 const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
   (
