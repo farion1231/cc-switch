@@ -1,12 +1,46 @@
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 use crate::error::AppError;
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthError;
 use crate::services::{model_pricing, PromptService, ProviderService};
 use crate::settings;
 use crate::store::AppState;
 
 pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError> {
     let mut failures = Vec::new();
+
+    match app_state.db.codex_oauth_bound_account_ids() {
+        Ok(bound_account_ids) => {
+            let mut unavailable_account_ids = HashSet::new();
+            for account_id in bound_account_ids {
+                match tauri::async_runtime::block_on(
+                    app_state
+                        .codex_oauth_manager
+                        .ensure_account_exists(&account_id),
+                ) {
+                    Ok(()) => {}
+                    Err(CodexOAuthError::AccountUnavailable(_)) => {
+                        unavailable_account_ids.insert(account_id);
+                    }
+                    Err(error) => {
+                        failures.push(format!("Codex OAuth binding {account_id}: {error}"))
+                    }
+                }
+            }
+            match app_state
+                .db
+                .clear_codex_oauth_bindings_for_accounts(&unavailable_account_ids)
+            {
+                Ok(0) => {}
+                Ok(count) => log::warn!(
+                    "[Sync] Cleared {count} restored Codex OAuth binding(s) unavailable on this device"
+                ),
+                Err(error) => failures.push(format!("Codex OAuth bindings: {error}")),
+            }
+        }
+        Err(error) => failures.push(format!("Codex OAuth bindings: {error}")),
+    }
 
     if let Err(error) = ProviderService::sync_current_to_live(app_state) {
         failures.push(format!("live configuration: {error}"));
