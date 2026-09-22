@@ -191,6 +191,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::StepCode => crate::stepcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -534,7 +536,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::StepCode => false,
     }
 }
 
@@ -610,7 +613,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::StepCode => Ok(settings.clone()),
     }
 }
 
@@ -671,7 +675,8 @@ fn apply_common_config_to_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::StepCode => Ok(settings.clone()),
     }
 }
 
@@ -1468,6 +1473,43 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::StepCode => {
+            use crate::stepcode_config;
+            use crate::stepcode_config::StepCodeProviderConfig;
+
+            match serde_json::from_value::<StepCodeProviderConfig>(provider.settings_config.clone())
+            {
+                Ok(config) => {
+                    stepcode_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("StepCode provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse StepCode provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    if provider.settings_config.get("baseUrl").is_some()
+                        || provider.settings_config.get("api").is_some()
+                        || provider.settings_config.get("models").is_some()
+                    {
+                        stepcode_config::set_provider(
+                            &provider.id,
+                            provider.settings_config.clone(),
+                        )?;
+                        log::info!(
+                            "StepCode provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    } else {
+                        return Err(AppError::Message(format!(
+                            "StepCode provider '{}' has invalid config structure for live config (must contain 'baseUrl', 'api', or 'models')",
+                            provider.id
+                        )));
+                    }
+                }
+            }
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -1840,6 +1882,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
+        AppType::StepCode => Ok(crate::stepcode_config::read_stepcode_config()?),
         AppType::Hermes => {
             let config_path = crate::hermes_config::get_hermes_config_path();
             if !config_path.exists() {
@@ -1966,7 +2009,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::Mcode
+        | AppType::StepCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -2224,6 +2272,94 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// This imports existing providers from ~/.openclaw/openclaw.json
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
+/// Import all providers from StepCode live config (`~/.stepcode/models.json`) to database.
+///
+/// This imports existing providers into the CC Switch database. Each provider
+/// found is added with `is_current` set to false.
+pub fn import_stepcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::stepcode_config;
+
+    let providers = stepcode_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("stepcode")?;
+
+    for (id, config) in providers {
+        if id.trim().is_empty() {
+            log::warn!("Skipping StepCode provider with empty id");
+            continue;
+        }
+
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize StepCode provider '{id}': {e}");
+                continue;
+            }
+        };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "stepcode") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != settings_config {
+                        let mut provider = existing;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("stepcode", &provider) {
+                            log::warn!(
+                                "Failed to update StepCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated StepCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("StepCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up StepCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(id.clone(), id.clone(), settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("stepcode", &provider) {
+            log::warn!("Failed to import StepCode provider '{id}' from live config: {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported StepCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Remove a StepCode provider from the live config (`~/.stepcode/models.json`).
+///
+/// Removes a specific provider without affecting other providers in the file.
+pub fn remove_stepcode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::stepcode_config;
+
+    if !stepcode_config::get_stepcode_dir().exists() {
+        log::debug!("StepCode config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    stepcode_config::remove_provider(provider_id)?;
+    log::info!("StepCode provider '{provider_id}' removed from live config");
+    Ok(())
+}
+
 pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::openclaw_config;
 

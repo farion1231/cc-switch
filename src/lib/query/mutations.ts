@@ -11,6 +11,7 @@ import {
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
+import { stepcodeKeys } from "@/hooks/useStepcode";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
@@ -64,7 +65,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "opencode" ||
         appId === "openclaw" ||
         appId === "hermes" ||
-        appId === "pi"
+        appId === "pi" ||
+        appId === "stepcode"
       ) {
         if (
           providerInput.category === "omo" ||
@@ -113,6 +115,12 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "openclaw") {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
+        });
+      }
+
+      if (appId === "stepcode") {
+        await queryClient.invalidateQueries({
+          queryKey: stepcodeKeys.liveProviderIds,
         });
       }
 
@@ -190,6 +198,12 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           queryKey: openclawKeys.health,
         });
       }
+
+      if (appId === "stepcode") {
+        await queryClient.invalidateQueries({
+          queryKey: stepcodeKeys.liveProviderIds,
+        });
+      }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
@@ -254,6 +268,12 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "openclaw") {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
+        });
+      }
+
+      if (appId === "stepcode") {
+        await queryClient.invalidateQueries({
+          queryKey: stepcodeKeys.liveProviderIds,
         });
       }
 
@@ -342,6 +362,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
+        });
+      }
+      if (appId === "stepcode") {
+        await queryClient.invalidateQueries({
+          queryKey: stepcodeKeys.liveProviderIds,
         });
       }
       if (appId === "hermes") {

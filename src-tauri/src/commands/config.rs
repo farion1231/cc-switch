@@ -153,6 +153,14 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::StepCode => {
+            let config_path = crate::stepcode_config::get_stepcode_config_path();
+            let exists = config_path.exists();
+            let path = crate::stepcode_config::get_stepcode_dir()
+                .to_string_lossy()
+                .to_string();
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -179,6 +187,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::StepCode => crate::stepcode_config::get_stepcode_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -202,6 +211,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::StepCode => crate::stepcode_config::get_stepcode_dir(),
     };
 
     if !config_dir.exists() {

@@ -299,6 +299,7 @@ export interface VisibleApps {
   hermes: boolean;
   pi: boolean;
   mcode: boolean;
+  stepcode: boolean;
 }
 
 // WebDAV 同步状态
@@ -732,6 +733,37 @@ export interface OpenClawToolsConfig {
   allow?: string[];
   deny?: string[];
   [key: string]: unknown; // preserve unknown fields
+}
+
+// ============================================================================
+// StepCode 专属配置
+// ============================================================================
+// StepCode（StepFun "StepCode" CLI）的供应商配置结构与 OpenClaw 完全一致：
+// camelCase、累加式管理，写入 ~/.stepcode/models.json 的 providers 节点。
+// 形状：{ baseUrl, apiKey, api, models: [{ id, name?, reasoning?, contextWindow?, maxTokens?, cost? }] }
+
+// StepCode 模型配置
+export interface StepCodeModel {
+  id: string;
+  name?: string;
+  reasoning?: boolean; // 是否支持推理模式（如 o1、DeepSeek R1）
+  contextWindow?: number;
+  maxTokens?: number; // 最大输出 token 数
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead?: number; // 缓存读取价格
+    cacheWrite?: number; // 缓存写入价格
+  };
+}
+
+// StepCode 供应商配置（settings_config 结构）
+// 对应 StepCode models.json 中 providers.<provider-id> 配置
+export interface StepCodeProviderConfig {
+  baseUrl?: string; // API 端点
+  apiKey?: string; // API 密钥
+  api?: string; // API 协议类型（如 "openai-responses"、"openai-completions"）
+  models?: StepCodeModel[]; // 可用模型列表
 }
 
 // ============================================================================

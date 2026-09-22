@@ -39,6 +39,7 @@ pub fn reset_test_fs() {
         ".grok",
         ".config",
         ".openclaw",
+        ".stepcode",
         "profiles",
     ] {
         let path = home.join(sub);

@@ -151,6 +151,7 @@ pub(crate) fn build_provider_from_request(
         AppType::GrokBuild => build_grokbuild_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
+        AppType::StepCode => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
         AppType::Mcode => {
             return Err(AppError::InvalidInput(

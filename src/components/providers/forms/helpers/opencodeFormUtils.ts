@@ -67,6 +67,19 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   2,
 );
 
+// StepCode shares OpenClaw's additive, camelCase provider shape
+// ({ baseUrl, apiKey, api, models }), written to ~/.stepcode/models.json.
+export const STEPCODE_DEFAULT_CONFIG = JSON.stringify(
+  {
+    baseUrl: "",
+    apiKey: "",
+    api: "openai-responses",
+    models: [],
+  },
+  null,
+  2,
+);
+
 // ── Pure functions ───────────────────────────────────────────────────
 
 export function isKnownOpencodeOptionKey(key: string): boolean {

@@ -915,7 +915,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "stepcode": "StepCode"
   },
   "pi": {
     "empty": {
@@ -2388,6 +2389,32 @@
       "stringifiedShellEnv": "env.shellEnv はオブジェクトである必要がありますが、現在の値は文字列化または破損しているようです。",
       "parseFailed": "openclaw.json を有効な JSON5 として解析できませんでした。ここで編集する前にファイルを修正してください。"
     }
+  },
+  "stepcode": {
+    "providerKey": "プロバイダーキー",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "設定ファイル内のユニーク識別子。小文字、数字、ハイフンのみ使用可能。",
+    "providerKeyLockedHint": "このプロバイダーは既にアプリ設定へ追加されているため、キーは変更できません。",
+    "providerKeyRequired": "プロバイダーキーを入力してください",
+    "providerKeyDuplicate": "このキーは既に使用されています",
+    "providerKeyInvalid": "無効な形式です。小文字、数字、ハイフンのみ使用可能。",
+    "apiProtocol": "API プロトコル",
+    "selectProtocol": "API プロトコルを選択",
+    "apiProtocolHint": "プロバイダーの API と互換性のあるプロトコルタイプを選択してください。ほとんどのプロバイダーは OpenAI Completions 形式を使用します。",
+    "baseUrl": "API エンドポイント",
+    "baseUrlHint": "プロバイダーの API エンドポイントアドレス。",
+    "models": "モデル設定",
+    "addModel": "モデルを追加",
+    "noModels": "モデルが設定されていません",
+    "modelId": "モデル ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "表示名",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "toggleModelDetails": "モデル詳細を展開または折りたたむ",
+    "removeModel": "モデルを削除",
+    "contextWindow": "コンテキスト長",
+    "maxTokens": "最大出力トークン数",
+    "reasoning": "拡張思考に対応"
   },
   "hermes": {
     "form": {

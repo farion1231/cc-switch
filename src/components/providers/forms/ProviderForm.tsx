@@ -52,11 +52,16 @@ import {
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
 import {
+  stepcodeProviderPresets,
+  type StepcodeProviderPreset,
+} from "@/config/stepcodeProviderPresets";
+import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
+import { StepcodeFormFields } from "./StepcodeFormFields";
 import { HermesFormFields } from "./HermesFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
@@ -111,6 +116,7 @@ import {
   useOpencodeFormState,
   useOmoDraftState,
   useOpenclawFormState,
+  useStepcodeFormState,
   useHermesFormState,
   useCopilotAuth,
   useCodexOauth,
@@ -124,11 +130,13 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
+  STEPCODE_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
+import { useStepcodeLiveProviderIds } from "@/hooks/useStepcode";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 
@@ -140,6 +148,7 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
+    | StepcodeProviderPreset
     | HermesProviderPreset;
 };
 
@@ -451,9 +460,11 @@ function ProviderFormFull({
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
                 ? OPENCLAW_DEFAULT_CONFIG
-                : appId === "hermes"
-                  ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                : appId === "stepcode"
+                  ? STEPCODE_DEFAULT_CONFIG
+                  : appId === "hermes"
+                    ? HERMES_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -771,6 +782,11 @@ function ProviderFormFull({
         id: `openclaw-${index}`,
         preset,
       }));
+    } else if (appId === "stepcode") {
+      return stepcodeProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `stepcode-${index}`,
+        preset,
+      }));
     } else if (appId === "hermes") {
       return hermesProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `hermes-${index}`,
@@ -1008,6 +1024,18 @@ function ProviderFormFull({
     isLoading: isOpenclawLiveProviderIdsLoading,
   } = useOpenClawLiveProviderIds(appId === "openclaw");
 
+  const stepcodeForm = useStepcodeFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+  const {
+    data: stepcodeLiveProviderIds = [],
+    isLoading: isStepcodeLiveProviderIdsLoading,
+  } = useStepcodeLiveProviderIds(appId === "stepcode");
+
   const hermesForm = useHermesFormState({
     initialData,
     appId,
@@ -1042,6 +1070,17 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "stepcode") {
+      return Array.from(
+        new Set(
+          [
+            ...stepcodeForm.existingStepcodeKeys,
+            ...stepcodeLiveProviderIds,
+          ].filter((key) => key !== providerId),
+        ),
+      );
+    }
+
     if (appId === "hermes") {
       return Array.from(
         new Set(
@@ -1063,6 +1102,8 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
+    stepcodeForm.existingStepcodeKeys,
+    stepcodeLiveProviderIds,
   ]);
 
   const isProviderKeyLockStateLoading = useMemo(() => {
@@ -1072,6 +1113,9 @@ function ProviderFormFull({
     }
     if (appId === "openclaw") {
       return isOpenclawLiveProviderIdsLoading;
+    }
+    if (appId === "stepcode") {
+      return isStepcodeLiveProviderIdsLoading;
     }
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
@@ -1084,6 +1128,7 @@ function ProviderFormFull({
     isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
+    isStepcodeLiveProviderIdsLoading,
   ]);
 
   const isProviderKeyLocked = useMemo(() => {
@@ -1093,6 +1138,9 @@ function ProviderFormFull({
     }
     if (appId === "openclaw") {
       return openclawLiveProviderIds.includes(providerId);
+    }
+    if (appId === "stepcode") {
+      return stepcodeLiveProviderIds.includes(providerId);
     }
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
@@ -1106,6 +1154,7 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
+    stepcodeLiveProviderIds,
   ]);
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
@@ -1226,6 +1275,32 @@ function ProviderFormFull({
         additiveExistingProviderKeys.includes(openclawForm.openclawProviderKey)
       ) {
         toast.error(t("openclaw.providerKeyDuplicate"));
+        return;
+      }
+    }
+
+    if (appId === "stepcode") {
+      if (!stepcodeForm.stepcodeProviderKey.trim()) {
+        toast.error(t("stepcode.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(stepcodeForm.stepcodeProviderKey)) {
+        toast.error(t("stepcode.providerKeyInvalid"));
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(stepcodeForm.stepcodeProviderKey)
+      ) {
+        toast.error(t("stepcode.providerKeyDuplicate"));
         return;
       }
     }
@@ -1609,6 +1684,8 @@ function ProviderFormFull({
       }
     } else if (appId === "openclaw") {
       payload.providerKey = openclawForm.openclawProviderKey;
+    } else if (appId === "stepcode") {
+      payload.providerKey = stepcodeForm.stepcodeProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
     }
@@ -1919,6 +1996,20 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (StepCode)
+  const {
+    shouldShowApiKeyLink: shouldShowStepcodeApiKeyLink,
+    websiteUrl: stepcodeWebsiteUrl,
+    isPartner: isStepcodePartner,
+    partnerPromotionKey: stepcodePartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "stepcode",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用 API Key 链接 hook (Hermes)
   const {
     shouldShowApiKeyLink: shouldShowHermesApiKeyLink,
@@ -1969,6 +2060,10 @@ function ProviderFormFull({
       // OpenClaw 自定义模式：重置为空配置
       if (appId === "openclaw") {
         openclawForm.resetOpenclawState();
+      }
+      // StepCode 自定义模式：重置为空配置
+      if (appId === "stepcode") {
+        stepcodeForm.resetStepcodeState();
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
@@ -2074,6 +2169,30 @@ function ProviderFormFull({
       openclawForm.resetOpenclawState(config);
 
       // Update form fields
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // StepCode preset handling (mirrors OpenClaw, no suggestedDefaults)
+    if (appId === "stepcode") {
+      const preset = entry.preset as StepcodeProviderPreset;
+      const config = preset.settingsConfig;
+
+      setActivePreset({
+        id: value,
+        category: preset.category,
+        isPartner: preset.isPartner,
+        partnerPromotionKey: preset.partnerPromotionKey,
+      });
+
+      stepcodeForm.resetStepcodeState(config);
+
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
         websiteUrl: preset.websiteUrl ?? "",
@@ -2283,6 +2402,69 @@ function ProviderFormFull({
                                 "该供应商已添加到应用配置中，供应商标识不可修改",
                             })
                           : t("openclaw.providerKeyHint")}
+                      </p>
+                    )}
+                </div>
+              ) : appId === "stepcode" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="stepcode-key">
+                    {t("stepcode.providerKey")}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <ImeSafeInput
+                    id="stepcode-key"
+                    value={stepcodeForm.stepcodeProviderKey}
+                    onValueChange={stepcodeForm.setStepcodeProviderKey}
+                    normalize={normalizeProviderKey}
+                    placeholder={t("stepcode.providerKeyPlaceholder")}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        stepcodeForm.stepcodeProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (stepcodeForm.stepcodeProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          stepcodeForm.stepcodeProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    stepcodeForm.stepcodeProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("stepcode.providerKeyDuplicate")}
+                      </p>
+                    )}
+                  {stepcodeForm.stepcodeProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      stepcodeForm.stepcodeProviderKey,
+                    ) && (
+                      <p className="text-xs text-destructive">
+                        {t("stepcode.providerKeyInvalid")}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      stepcodeForm.stepcodeProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (stepcodeForm.stepcodeProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        stepcodeForm.stepcodeProviderKey,
+                      )) && (
+                      <p className="text-xs text-muted-foreground">
+                        {isProviderKeyLocked
+                          ? t("stepcode.providerKeyLockedHint", {
+                              defaultValue:
+                                "该供应商已添加到应用配置中，供应商标识不可修改",
+                            })
+                          : t("stepcode.providerKeyHint")}
                       </p>
                     )}
                 </div>
@@ -2608,6 +2790,25 @@ function ProviderFormFull({
             />
           )}
 
+          {/* StepCode 专属字段 */}
+          {appId === "stepcode" && (
+            <StepcodeFormFields
+              baseUrl={stepcodeForm.stepcodeBaseUrl}
+              onBaseUrlChange={stepcodeForm.handleStepcodeBaseUrlChange}
+              apiKey={stepcodeForm.stepcodeApiKey}
+              onApiKeyChange={stepcodeForm.handleStepcodeApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowStepcodeApiKeyLink}
+              websiteUrl={stepcodeWebsiteUrl}
+              isPartner={isStepcodePartner}
+              partnerPromotionKey={stepcodePartnerPromotionKey}
+              api={stepcodeForm.stepcodeApi}
+              onApiChange={stepcodeForm.handleStepcodeApiChange}
+              models={stepcodeForm.stepcodeModels}
+              onModelsChange={stepcodeForm.handleStepcodeModelsChange}
+            />
+          )}
+
           {/* Hermes 专属字段 */}
           {appId === "hermes" && (
             <HermesFormFields
@@ -2719,7 +2920,9 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" ||
+            appId === "hermes" ||
+            appId === "stepcode" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2781,7 +2984,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "stepcode" && (
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}
