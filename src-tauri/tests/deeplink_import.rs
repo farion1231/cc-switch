@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base64::prelude::*;
 use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
 
 #[path = "support.rs"]
@@ -40,6 +41,55 @@ fn deeplink_import_claude_provider_persists_to_db() {
         .and_then(|v| v.as_str());
     assert_eq!(auth_token, request.api_key.as_deref());
     assert_eq!(base_url, request.endpoint.as_deref());
+}
+
+#[test]
+fn deeplink_import_claude_desktop_provider_persists_to_correct_app() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let config = BASE64_URL_SAFE_NO_PAD.encode(
+        serde_json::json!({"env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk-config",
+            "ANTHROPIC_BASE_URL": "https://api.example.com",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-test"
+        }})
+        .to_string(),
+    );
+
+    for app in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        for params in [
+            "endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-url&sonnetModel=sonnet-test"
+                .to_string(),
+            format!("config={config}&apiKey=sk-url"),
+        ] {
+            let url = format!(
+                "ccswitch://v1/import?resource=provider&app={app}&name=Desktop&enabled=false&{params}"
+            );
+            let request = parse_deeplink_url(&url).expect("parse desktop deeplink");
+            assert_eq!(request.app.as_deref(), Some("claude-desktop"));
+
+            let db = Arc::new(Database::memory().expect("create memory db"));
+            let state = AppState::new(db.clone());
+            let id =
+                import_provider_from_deeplink(&state, request).expect("import desktop provider");
+            let providers = db.get_all_providers("claude-desktop").unwrap();
+            let provider = providers.get(&id).expect("desktop provider persisted");
+            assert_eq!(
+                provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                "sk-url"
+            );
+            assert_eq!(
+                provider.settings_config["env"]["ANTHROPIC_BASE_URL"],
+                "https://api.example.com"
+            );
+            assert_eq!(
+                provider.settings_config["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+                "sonnet-test"
+            );
+            assert!(db.get_all_providers("claude").unwrap().is_empty());
+        }
+    }
 }
 
 #[test]

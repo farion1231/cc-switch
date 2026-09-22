@@ -79,6 +79,72 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_claude_desktop_provider_aliases() {
+    for app in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={app}&name=Desktop&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&haikuModel=haiku-test&sonnetModel=sonnet-test&opusModel=opus-test&enabled=false"
+        );
+        let request = parse_deeplink_url(&url).unwrap();
+
+        assert_eq!(request.app.as_deref(), Some("claude-desktop"));
+        assert_eq!(request.enabled, Some(false));
+        let provider =
+            super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &request)
+                .unwrap();
+        let env = &provider.settings_config["env"];
+        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-test");
+        assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
+        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "haiku-test");
+        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "sonnet-test");
+        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "opus-test");
+        assert_eq!(
+            provider.meta.unwrap().claude_desktop_mode,
+            Some(crate::provider::ClaudeDesktopMode::Direct)
+        );
+    }
+}
+
+#[test]
+fn test_merge_claude_desktop_inline_config() {
+    let config = BASE64_STANDARD.encode(
+        serde_json::json!({"env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk-config",
+            "ANTHROPIC_BASE_URL": "https://config.example.com",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-config",
+            "CUSTOM_ENV": "preserved"
+        }})
+        .to_string(),
+    );
+
+    for app in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let request = DeepLinkImportRequest {
+            version: "v1".to_string(),
+            resource: "provider".to_string(),
+            app: Some(app.to_string()),
+            name: Some("Desktop".to_string()),
+            api_key: Some("sk-url".to_string()),
+            config: Some(config.clone()),
+            ..Default::default()
+        };
+        let merged = parse_and_merge_config(&request).unwrap();
+        assert_eq!(merged.api_key.as_deref(), Some("sk-url"));
+        assert_eq!(
+            merged.endpoint.as_deref(),
+            Some("https://config.example.com")
+        );
+        assert_eq!(merged.sonnet_model.as_deref(), Some("sonnet-config"));
+
+        let provider =
+            super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &merged).unwrap();
+        assert_eq!(provider.settings_config["env"]["CUSTOM_ENV"], "preserved");
+        assert_eq!(
+            provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-url"
+        );
+    }
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 

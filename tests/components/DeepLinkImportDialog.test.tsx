@@ -32,6 +32,28 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 );
 
 describe("DeepLinkImportDialog", () => {
+  it("shows Claude Desktop model mappings before import", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      emitTauriEvent("deeplink-import", {
+        version: "v1",
+        resource: "provider",
+        app: "claude-desktop",
+        name: "Desktop Provider",
+        endpoint: "https://api.example.com",
+        apiKey: "sk-test",
+        haikuModel: "haiku-test",
+        sonnetModel: "sonnet-test",
+        opusModel: "opus-test",
+      });
+    });
+
+    expect(await screen.findByText("haiku-test")).toBeInTheDocument();
+    expect(screen.getByText("sonnet-test")).toBeInTheDocument();
+    expect(screen.getByText("opus-test")).toBeInTheDocument();
+  });
+
   it("renders masked usage access token and user id for provider imports", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 

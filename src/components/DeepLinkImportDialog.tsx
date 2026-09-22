@@ -405,7 +405,8 @@ export function DeepLinkImportDialog() {
                   </div>
 
                   {/* Model Fields - 根据应用类型显示不同的模型字段 */}
-                  {request.app === "claude" ? (
+                  {request.app === "claude" ||
+                  request.app === "claude-desktop" ? (
                     <>
                       {/* Claude 四种模型字段 */}
                       {request.haikuModel && (
