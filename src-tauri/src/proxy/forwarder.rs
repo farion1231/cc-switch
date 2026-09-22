@@ -1634,6 +1634,25 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Third-party native Responses APIs do not recognize Codex's
+        // client-executed tool-search history items. Unlike the Chat and
+        // Anthropic bridges, passthrough would otherwise replay them verbatim
+        // and permanently fail a resumed thread before model execution.
+        if matches!(app_type, AppType::Codex)
+            && !codex_official_auth_passthrough
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let removed = super::providers::transform_codex_responses_history_sanitize::
+                strip_private_tool_search_history_items(&mut request_body);
+            if removed > 0 {
+                log::warn!(
+                    "[Codex] Removed {removed} unsupported tool-search history item(s) for native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
