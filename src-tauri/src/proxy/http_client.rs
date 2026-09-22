@@ -325,9 +325,14 @@ pub fn mask_url(url: &str) -> String {
             None => format!("{}://{}", parsed.scheme(), host),
         }
     } else {
-        // URL 解析失败，返回部分内容
+        // URL 解析失败，返回部分内容。截断点回退到最近的字符边界，
+        // 避免在多字节 UTF-8 字符中间切割导致 panic。
         if url.len() > 20 {
-            format!("{}...", &url[..20])
+            let cut = (0..=20)
+                .rev()
+                .find(|&i| url.is_char_boundary(i))
+                .unwrap_or(0);
+            format!("{}...", &url[..cut])
         } else {
             url.to_string()
         }
@@ -364,6 +369,16 @@ mod tests {
             mask_url("https://user:pass@proxy.example.com"),
             "https://proxy.example.com"
         );
+    }
+
+    #[test]
+    fn test_mask_url_does_not_panic_on_multibyte_boundary() {
+        // 一个无法被 Url::parse 解析、且在字节 20 处正好切在多字节字符中间的字符串。
+        // 回归 https://github.com/farion1231/cc-switch 的 mask_url 越界 panic。
+        let bad = "这是一个无效的代理地址不能解析";
+        assert!(bad.len() > 20 && !bad.is_char_boundary(20));
+        let masked = mask_url(bad);
+        assert!(masked.ends_with("..."));
     }
 
     #[test]
