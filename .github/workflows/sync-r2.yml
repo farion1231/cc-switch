@@ -120,7 +120,7 @@ jobs:
 
       - name: Checkout scripts
         if: steps.r2.outputs.configured == 'true' && steps.latest.outputs.is_latest == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           sparse-checkout: scripts
 
