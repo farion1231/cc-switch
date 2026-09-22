@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
+  ScrollText,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -75,6 +76,7 @@ import { ProxyToggle } from "@/components/proxy/ProxyToggle";
 import { ClaudeDesktopRouteToggle } from "@/components/proxy/ClaudeDesktopRouteToggle";
 import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import { RoutingActivationBrand } from "@/components/proxy/RoutingActivationBrand";
+import { RequestLogViewer } from "@/components/proxy/RequestLogViewer";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel, {
@@ -123,6 +125,7 @@ type View =
   | "agents"
   | "universal"
   | "sessions"
+  | "requestLogs"
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
@@ -158,6 +161,7 @@ const VALID_VIEWS: View[] = [
   "agents",
   "universal",
   "sessions",
+  "requestLogs",
   "workspace",
   "openclawEnv",
   "openclawTools",
@@ -1102,6 +1106,8 @@ function App() {
               appId={sharedFeatureApp}
             />
           );
+        case "requestLogs":
+          return <RequestLogViewer />;
         case "workspace":
           return <WorkspaceFilesPanel />;
         case "openclawEnv":
@@ -1340,6 +1346,8 @@ function App() {
                       defaultValue: "统一供应商",
                     })}
                   {currentView === "sessions" && t("sessionManager.title")}
+                  {currentView === "requestLogs" &&
+                    t("proxy.requestLogViewer.title")}
                   {currentView === "workspace" && t("workspace.title")}
                   {currentView === "openclawEnv" && t("openclaw.env.title")}
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
@@ -1357,6 +1365,15 @@ function App() {
                     proxyStatus !== undefined && takeoverStatus !== undefined
                   }
                 />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentView("requestLogs")}
+                  title={t("proxy.requestLogViewer.viewLogs")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <ScrollText className="w-5 h-5" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

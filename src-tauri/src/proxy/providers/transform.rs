@@ -5,7 +5,7 @@
 
 use crate::proxy::{
     error::ProxyError,
-    json_canonical::canonical_json_string,
+    json_canonical::{canonical_json_string, short_value_hash},
     tool_media::{
         chat_media_part_from_tool_part, flush_pending_chat_tool_media, plan_chat_tool_output_media,
         queue_chat_tool_output_media, ToolMediaScope,
@@ -160,6 +160,11 @@ pub fn anthropic_to_openai_with_reasoning_content(
     body: Value,
     preserve_reasoning_content: bool,
 ) -> Result<Value, ProxyError> {
+    log::debug!(
+        "[A2O] Anthropic→OpenAI 转换开始 (preserve_reasoning_content={preserve_reasoning_content}), 请求体 hash={}",
+        short_value_hash(Some(&body))
+    );
+
     let mut result = json!({});
 
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
@@ -264,6 +269,11 @@ pub fn anthropic_to_openai_with_reasoning_content(
     if let Some(v) = body.get("tool_choice") {
         result["tool_choice"] = map_tool_choice_to_chat(v);
     }
+
+    log::debug!(
+        "[A2O] Anthropic→OpenAI 转换完成, 请求体 hash={}",
+        short_value_hash(Some(&result))
+    );
 
     Ok(result)
 }
@@ -526,6 +536,11 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
 
 /// OpenAI 响应 → Anthropic 响应
 pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
+    log::debug!(
+        "[O2A] OpenAI→Anthropic 响应转换开始, 响应体 hash={}",
+        short_value_hash(Some(&body))
+    );
+
     let choices = body
         .get("choices")
         .and_then(|c| c.as_array())
@@ -718,6 +733,11 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         "stop_sequence": null,
         "usage": usage_json
     });
+
+    log::debug!(
+        "[O2A] OpenAI→Anthropic 响应转换完成, 响应体 hash={}",
+        short_value_hash(Some(&result))
+    );
 
     Ok(result)
 }

@@ -7,6 +7,7 @@ use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
 use std::str::FromStr;
+use tauri_plugin_opener::OpenerExt;
 
 fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
@@ -116,9 +117,514 @@ pub async fn update_global_proxy_config(
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
-    db.update_global_proxy_config(config)
+    db.update_global_proxy_config(config.clone())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    state
+        .proxy_service
+        .apply_logging_runtime(config.enable_logging)
+        .await;
+    // 同步 request_log_max_sessions 到运行中的代理 state（如果服务已在跑）
+    state
+        .proxy_service
+        .apply_request_log_max_sessions_runtime(config.request_log_max_sessions)
+        .await;
+
+    Ok(())
+}
+
+// ==================== Request-Log 查看器 ====================
+
+/// request-log 会话文件元信息
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyRequestLogFileMeta {
+    pub app_type: String,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub modified_at_ms: i64,
+    /// 复用 session_manager 解析出的会话标题（custom-title / 首条用户消息 /
+    /// 项目目录名），匹配不到为 None
+    pub session_title: Option<String>,
+}
+
+const REQUEST_LOG_MAX_LIMIT: u32 = 200;
+const REQUEST_LOG_DEFAULT_LIMIT: u32 = 50;
+
+/// 列表行的轻量字段（不含请求/响应体）。列表页只需这些 + 展示用 token 数
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyRequestLogListRow {
+    pub line_no: u64,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub method: Option<String>,
+    pub endpoint: Option<String>,
+    pub model: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub is_streaming: bool,
+    pub status_code: Option<u16>,
+    pub error: Option<String>,
+    /// prompt/completion token 数（从 responseBody.usage 提取，展示列用）
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+}
+
+/// request-log 记录分页结果（轻量行；详情展开时按 lineNo 单独取整条）
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyRequestLogRecordsPage {
+    pub records: Vec<ProxyRequestLogListRow>,
+    pub total: u64,
+}
+
+/// 从响应体提取 token 用量（Anthropic / OpenAI / Gemini 三种形态）
+fn extract_usage_tokens(body: &serde_json::Value) -> (Option<u64>, Option<u64>) {
+    let read = |paths: &[(&str, &str)]| -> Option<u64> {
+        for (a, b) in paths {
+            if let Some(v) = body
+                .get(*a)
+                .and_then(|u| u.get(*b))
+                .and_then(|n| n.as_u64())
+            {
+                return Some(v);
+            }
+        }
+        None
+    };
+    let prompt = read(&[
+        ("usage", "input_tokens"),
+        ("usage", "prompt_tokens"),
+        ("usageMetadata", "promptTokenCount"),
+    ]);
+    let completion = read(&[
+        ("usage", "output_tokens"),
+        ("usage", "completion_tokens"),
+        ("usageMetadata", "candidatesTokenCount"),
+    ]);
+    (prompt, completion)
+}
+
+/// 单个 JSONL 文件的解析缓存：轻量行 + 每行的字节偏移（取详情时 seek 读）。
+/// 以 (mtime, size) 为有效性凭据——文件被追加/轮换后自动失效重扫。
+struct RequestLogFileIndex {
+    rows: Vec<ProxyRequestLogListRow>,
+    /// 与 rows 同长：每行在文件中的起始字节偏移
+    offsets: Vec<u64>,
+}
+
+/// 进程内缓存。key 为 (app_type, file_name)。
+/// 单个 1GB 文件的行索引（几十万条 × ~150B）约几十 MB，
+/// 上限 8 个文件防止极端多文件场景内存失控，超出按插入序逐出最旧的。
+/// 缓存值：(mtime, size, 行索引)——前两项是有效性凭据
+type RequestLogCacheValue = (std::time::SystemTime, u64, RequestLogFileIndex);
+type RequestLogCache =
+    std::sync::Mutex<std::collections::HashMap<(String, String), RequestLogCacheValue>>;
+
+/// 进程内缓存。key 为 (app_type, file_name)。
+/// 单个 1GB 文件的行索引（几十万条 × ~150B）约几十 MB，
+/// 上限 8 个文件防止极端多文件场景内存失控，超出逐出任意一项。
+static REQUEST_LOG_INDEX_CACHE: std::sync::OnceLock<RequestLogCache> = std::sync::OnceLock::new();
+
+fn index_cache() -> &'static RequestLogCache {
+    REQUEST_LOG_INDEX_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+const REQUEST_LOG_INDEX_CACHE_MAX_FILES: usize = 8;
+
+fn take_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|s| s.as_str()).map(|s| s.to_string())
+}
+
+/// 解析单条记录为轻量行（失败返回 None，与旧版「跳过坏行」语义一致）
+fn parse_list_row(line_no: u64, value: &serde_json::Value) -> Option<ProxyRequestLogListRow> {
+    let body = value.get("responseBody");
+    let (prompt_tokens, completion_tokens) = match body {
+        Some(b) => extract_usage_tokens(b),
+        None => (None, None),
+    };
+    Some(ProxyRequestLogListRow {
+        line_no,
+        start_time: take_str(value, "startTime"),
+        end_time: take_str(value, "endTime"),
+        method: take_str(value, "method"),
+        endpoint: take_str(value, "endpoint"),
+        model: take_str(value, "model"),
+        duration_ms: value.get("durationMs").and_then(|n| n.as_u64()),
+        is_streaming: value
+            .get("isStreaming")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false),
+        status_code: value
+            .get("statusCode")
+            .and_then(|n| n.as_u64())
+            .and_then(|n| u16::try_from(n).ok()),
+        error: take_str(value, "error"),
+        prompt_tokens,
+        completion_tokens,
+    })
+}
+
+/// 取（或构建）指定文件的行索引。文件 mtime/size 变化时重扫。
+fn get_file_index(
+    app_type: &str,
+    file_name: &str,
+) -> Result<(std::time::SystemTime, u64, RequestLogFileIndex), String> {
+    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
+    let app_dir = dir.join(crate::proxy::request_logger::sanitize_path_component(
+        app_type,
+    ));
+    let path = app_dir.join(file_name);
+
+    let meta = std::fs::metadata(&path).map_err(|e| format!("打开日志文件失败: {e}"))?;
+    let mtime = meta
+        .modified()
+        .map_err(|e| format!("读取文件时间失败: {e}"))?;
+    let size = meta.len();
+
+    let cache_key = (app_type.to_string(), file_name.to_string());
+    {
+        let cache = index_cache().lock().unwrap();
+        if let Some((c_mtime, c_size, index)) = cache.get(&cache_key) {
+            if *c_mtime == mtime && *c_size == size {
+                return Ok((*c_mtime, *c_size, clone_index(index)));
+            }
+        }
+    }
+
+    // 全量扫描一遍（只在文件变化后的首次查询发生）
+    let file = std::fs::File::open(&path).map_err(|e| format!("打开日志文件失败: {e}"))?;
+    let reader = std::io::BufReader::new(file);
+    let mut rows = Vec::new();
+    let mut offsets = Vec::new();
+    let mut line_no: u64 = 0;
+    let mut offset: u64 = 0;
+    for line in std::io::BufRead::lines(reader) {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        let line_start = offset;
+        offset += line.len() as u64 + 1; // +1 为换行符
+        if line.trim().is_empty() {
+            continue;
+        }
+        line_no += 1;
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+            if let Some(row) = parse_list_row(line_no, &value) {
+                rows.push(row);
+                offsets.push(line_start);
+            }
+        }
+    }
+
+    let index = RequestLogFileIndex { rows, offsets };
+    let mut cache = index_cache().lock().unwrap();
+    // 上限逐出：HashMap 无序，插入序近似用「先移除任一超额项」——遍历移除第一个即可
+    if !cache.contains_key(&cache_key) && cache.len() >= REQUEST_LOG_INDEX_CACHE_MAX_FILES {
+        if let Some(k) = cache.keys().next().cloned() {
+            cache.remove(&k);
+        }
+    }
+    cache.insert(cache_key, (mtime, size, clone_index(&index)));
+    Ok((mtime, size, index))
+}
+
+/// 行索引会从缓存中 clone 出来（几万条 × 小结构，微秒级），
+/// 避免在持锁状态下做分页/搜索的长计算
+fn clone_index(index: &RequestLogFileIndex) -> RequestLogFileIndex {
+    RequestLogFileIndex {
+        rows: index.rows.clone(),
+        offsets: index.offsets.clone(),
+    }
+}
+
+/// 列出所有应用的 request-log 会话文件（按修改时间降序）
+///
+/// 会话标题复用 `session_manager::scan_sessions()` 的解析结果
+/// （读各 CLI 的会话文件头尾行提取 custom-title 等），按
+/// `(app_type, session_id)` 匹配；request-log 文件名中的 session-id
+/// 与 CLI 会话 UUID 一致（Codex 的 `codex_` 前缀在落盘时已剥离）。
+#[tauri::command]
+pub async fn list_proxy_request_log_files() -> Result<Vec<ProxyRequestLogFileMeta>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let titles = crate::session_manager::scan_sessions()
+            .into_iter()
+            .filter_map(|s| {
+                let title = s.title?;
+                Some(((s.provider_id, s.session_id), title))
+            })
+            .collect::<std::collections::HashMap<(String, String), String>>();
+        scan_request_log_files(&titles)
+    })
+    .await
+    .map_err(|e| format!("扫描日志文件失败: {e}"))?
+}
+
+fn scan_request_log_files(
+    titles: &std::collections::HashMap<(String, String), String>,
+) -> Result<Vec<ProxyRequestLogFileMeta>, String> {
+    let dir = match crate::config::get_proxy_request_log_dir() {
+        Ok(d) => d,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut files = Vec::new();
+    let app_dirs = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    for app_dir in app_dirs.flatten() {
+        let app_path = app_dir.path();
+        if !app_path.is_dir() {
+            continue;
+        }
+        let Some(app_type) = app_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+        else {
+            continue;
+        };
+        let entries = match std::fs::read_dir(&app_path) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().to_string()) else {
+                continue;
+            };
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let modified_at_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            files.push(ProxyRequestLogFileMeta {
+                app_type: app_type.clone(),
+                session_title: file_session_title(&app_type, &file_name, titles),
+                file_name,
+                size_bytes: meta.len(),
+                modified_at_ms,
+            });
+        }
+    }
+
+    files.sort_by_key(|f| std::cmp::Reverse(f.modified_at_ms));
+    Ok(files)
+}
+
+/// 从 request-log 文件名 `<session-id>.jsonl` 提取 session-id 并查标题映射。
+fn file_session_title(
+    app_type: &str,
+    file_name: &str,
+    titles: &std::collections::HashMap<(String, String), String>,
+) -> Option<String> {
+    if file_name == "unknown-session.jsonl" {
+        return None;
+    }
+    let session_id = file_name.strip_suffix(".jsonl")?;
+    titles
+        .get(&(app_type.to_string(), session_id.to_string()))
+        .cloned()
+}
+
+/// 读取指定会话文件的 request-log 记录（分页，轻量行）
+///
+/// - `offset`：分页偏移。`order="desc"`（默认）跳过最新的 N 条；`order="asc"` 跳过最旧的 N 条
+/// - `limit`：本页条数（默认 50，上限 200）
+/// - `search`：可选关键词，对列表轻量字段（时间/方法/端点/模型/错误）做小写子串匹配
+/// - `before_line_no` / `after_line_no`：可选行号游标，用于滚动加载时避免文件追加造成 offset 漂移
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn get_proxy_request_log_records(
+    app_type: String,
+    file_name: String,
+    offset: u32,
+    limit: Option<u32>,
+    order: Option<String>,
+    search: Option<String>,
+    before_line_no: Option<u64>,
+    after_line_no: Option<u64>,
+) -> Result<ProxyRequestLogRecordsPage, String> {
+    require_proxy_app(&app_type)?;
+    let mut offset = offset.min(100_000);
+    let limit = limit
+        .unwrap_or(REQUEST_LOG_DEFAULT_LIMIT)
+        .clamp(1, REQUEST_LOG_MAX_LIMIT);
+    let order = order.unwrap_or_else(|| "desc".to_string());
+    if order != "desc" && order != "asc" {
+        return Err(format!("无效的排序方向: {order}"));
+    }
+    let search = search
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if before_line_no.is_some() || after_line_no.is_some() {
+        offset = 0;
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        read_request_log_records(
+            &app_type,
+            &file_name,
+            offset,
+            limit,
+            &order,
+            search.as_deref(),
+            before_line_no,
+            after_line_no,
+        )
+    })
+    .await
+    .map_err(|e| format!("读取日志失败: {e}"))?
+}
+
+/// 路径安全：file_name 必须经 get_file_index 校验（metadata 打不开即报错），
+/// 不接受任意路径。行索引有进程内缓存（mtime/size 失效），翻页/搜索在缓存上行进。
+#[allow(clippy::too_many_arguments)]
+fn read_request_log_records(
+    app_type: &str,
+    file_name: &str,
+    offset: u32,
+    limit: u32,
+    order: &str,
+    search: Option<&str>,
+    before_line_no: Option<u64>,
+    after_line_no: Option<u64>,
+) -> Result<ProxyRequestLogRecordsPage, String> {
+    let (_, _, index) = get_file_index(app_type, file_name)?;
+
+    // 搜索匹配轻量字段（时间/方法/端点/模型/错误/状态码）；
+    // body 内容级搜索不再支持——列表行不携带 body，这是轻量化换来的取舍
+    let search_lower = search.map(|s| s.to_lowercase());
+    let matches = |row: &ProxyRequestLogListRow| -> bool {
+        let Some(kw) = &search_lower else {
+            return true;
+        };
+        let hay = format!(
+            "{} {} {} {} {} {} {}",
+            row.start_time.as_deref().unwrap_or(""),
+            row.end_time.as_deref().unwrap_or(""),
+            row.method.as_deref().unwrap_or(""),
+            row.endpoint.as_deref().unwrap_or(""),
+            row.model.as_deref().unwrap_or(""),
+            row.error.as_deref().unwrap_or(""),
+            row.status_code.map(|c| c.to_string()).unwrap_or_default(),
+        )
+        .to_lowercase();
+        hay.contains(kw)
+    };
+
+    // 行号游标（rows 按文件序构建，数组下标 i 的行号 = i+1）：
+    // desc 模式 before_line_no 取「该行号之前（更旧）」；asc 模式 after_line_no 取「该行号之后（更新）」
+    let in_range = |i: usize| -> bool {
+        let line_no = (i + 1) as u64;
+        if let Some(b) = before_line_no {
+            if line_no >= b {
+                return false;
+            }
+        }
+        if let Some(a) = after_line_no {
+            if line_no <= a {
+                return false;
+            }
+        }
+        true
+    };
+
+    let total = index
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(i, row)| in_range(*i) && matches(row))
+        .count() as u64;
+
+    let iter = (0..index.rows.len()).filter(|&i| in_range(i) && matches(&index.rows[i]));
+    let selected: Vec<ProxyRequestLogListRow> = if order == "desc" {
+        iter.rev()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .map(|i| index.rows[i].clone())
+            .collect()
+    } else {
+        iter.skip(offset as usize)
+            .take(limit as usize)
+            .map(|i| index.rows[i].clone())
+            .collect()
+    };
+
+    Ok(ProxyRequestLogRecordsPage {
+        records: selected,
+        total,
+    })
+}
+
+/// 读取单条完整记录（展开详情时按 lineNo 定位，seek + 读一行，不进缓存）
+#[tauri::command]
+pub async fn get_proxy_request_log_record(
+    app_type: String,
+    file_name: String,
+    line_no: u64,
+) -> Result<serde_json::Value, String> {
+    require_proxy_app(&app_type)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        read_request_log_record(&app_type, &file_name, line_no)
+    })
+    .await
+    .map_err(|e| format!("读取日志失败: {e}"))?
+}
+
+fn read_request_log_record(
+    app_type: &str,
+    file_name: &str,
+    line_no: u64,
+) -> Result<serde_json::Value, String> {
+    let (_, _, index) = get_file_index(app_type, file_name)?;
+    let pos = (line_no as usize)
+        .checked_sub(1)
+        .filter(|&p| p < index.rows.len() && index.rows[p].line_no == line_no)
+        .ok_or_else(|| format!("记录不存在: {line_no}"))?;
+
+    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
+    let app_dir = dir.join(crate::proxy::request_logger::sanitize_path_component(
+        app_type,
+    ));
+    let mut file = std::fs::File::open(app_dir.join(file_name))
+        .map_err(|e| format!("打开日志文件失败: {e}"))?;
+
+    use std::io::{BufRead, BufReader, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(index.offsets[pos]))
+        .map_err(|e| format!("定位日志记录失败: {e}"))?;
+    let mut line = String::new();
+    BufReader::new(file)
+        .read_line(&mut line)
+        .map_err(|e| format!("读取日志记录失败: {e}"))?;
+
+    let mut value = serde_json::from_str::<serde_json::Value>(&line)
+        .map_err(|e| format!("解析日志记录失败: {e}"))?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("lineNo".to_string(), serde_json::json!(line_no));
+    }
+    Ok(value)
+}
+
+/// 在系统文件管理器中打开 request-log 日志目录
+#[tauri::command]
+pub async fn open_proxy_request_log_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
+    app_handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开日志目录失败: {e}"))
 }
 
 /// 获取指定应用的代理配置

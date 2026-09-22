@@ -8,6 +8,7 @@ use super::{
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
+    request_logger::{SseRequestLogCollector, SseRequestLogFinishGuard},
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -172,6 +173,8 @@ pub async fn handle_streaming(
     }
 
     let mut response_headers = response.headers().clone();
+    let request_log_response_headers =
+        super::request_logger::sanitize_response_headers(&response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     let mut builder = axum::response::Response::builder().status(status);
@@ -186,6 +189,14 @@ pub async fn handle_streaming(
 
     // 创建使用量收集器；关闭 usage logging 时不要在流式热路径上解析每个 SSE event。
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), parser_config);
+    // 创建 request-log 收集器
+    let request_log_collector = create_request_log_collector_for_stream(
+        ctx,
+        state,
+        true,
+        status.as_u16(),
+        request_log_response_headers,
+    );
 
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
@@ -195,6 +206,7 @@ pub async fn handle_streaming(
         stream,
         ctx.tag,
         usage_collector,
+        request_log_collector,
         timeout_config,
         connection_guard,
     );
@@ -227,6 +239,8 @@ pub async fn handle_non_streaming(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let request_log_response_headers =
+        super::request_logger::sanitize_response_headers(&response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(
@@ -234,6 +248,25 @@ pub async fn handle_non_streaming(
         ctx.tag,
         body_bytes.len()
     );
+
+    if request_log_enabled(state) {
+        let response_value = serde_json::from_slice::<Value>(&body_bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body_bytes).to_string()));
+        let error = if status.is_success() {
+            None
+        } else {
+            Some(format!("upstream status {}", status.as_u16()))
+        };
+        spawn_request_log_record(
+            ctx,
+            state,
+            false,
+            response_value,
+            status.as_u16(),
+            error,
+            request_log_response_headers,
+        );
+    }
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
     if usage_logging_enabled(state) {
@@ -615,6 +648,207 @@ pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
         .unwrap_or(true)
 }
 
+/// Request-log 开关：`request_log_max_sessions > 0` 即开启。读锁拿不到时按"未开启"处理，
+/// 这样运行时偶发竞争不会让关闭 request-log 的用户突然出现日志。
+pub(crate) fn request_log_enabled(state: &ProxyState) -> bool {
+    request_log_max_sessions(state) > 0
+}
+
+/// 每个应用目录保留的最大 request-log 会话文件数。读锁拿不到时按默认 20 处理。
+pub(crate) fn request_log_max_sessions(state: &ProxyState) -> u64 {
+    state
+        .config
+        .try_read()
+        .map(|config| config.request_log_max_sessions)
+        .unwrap_or(20)
+}
+
+/// 构造 SSE 流式 request-log 收集器（仅在开关开启时返回 Some）。
+///
+/// 非转换路径（纯透传）落盘。
+///
+/// `on_complete` 在流结束时拿到聚合后的完整 response JSON，并以 `tokio::spawn`
+/// 异步追加到当日 JSONL 文件，确保不阻塞转发链路。
+pub(crate) fn create_request_log_collector_for_stream(
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_streaming: bool,
+    status_code: u16,
+    response_headers: Value,
+) -> Option<SseRequestLogCollector> {
+    if !request_log_enabled(state) {
+        return None;
+    }
+
+    let max_sessions = request_log_max_sessions(state);
+    Some(build_request_log_collector(
+        ctx,
+        super::request_logger::select_aggregator(ctx.app_type_str, &ctx.endpoint),
+        is_streaming,
+        status_code,
+        response_headers,
+        max_sessions,
+    ))
+}
+
+/// 用调用方指定的聚合器构造 request-log 收集器（仅在开关开启时返回 Some）。
+///
+/// Claude transform 路径专用：上游真实协议（OpenAI / Responses）与客户端
+/// endpoint（`/v1/messages`）不一致，不能用 `select_aggregator` 按 endpoint 选，
+/// 需由调用方按 `api_format` 显式给出聚合器，以记录转换前的上游原始报文。
+///
+/// 开关判断由调用方负责（见 handlers 的独立 if 分支）。
+pub(crate) fn create_request_log_collector_with_aggregator(
+    ctx: &RequestContext,
+    state: &ProxyState,
+    aggregator: Box<dyn super::request_logger::SseAggregator + Send>,
+    is_streaming: bool,
+    status_code: u16,
+    response_headers: Value,
+) -> Option<SseRequestLogCollector> {
+    if !request_log_enabled(state) {
+        return None;
+    }
+    Some(build_request_log_collector(
+        ctx,
+        aggregator,
+        is_streaming,
+        status_code,
+        response_headers,
+        request_log_max_sessions(state),
+    ))
+}
+
+/// 公共构造逻辑：捕获 ctx 字段，返回一个在流结束时落盘的收集器。
+///
+/// request / endpoint / model 用代理发往上游的值（转换后，回退客户端原始快照）。
+#[allow(clippy::too_many_arguments)]
+fn build_request_log_collector(
+    ctx: &RequestContext,
+    aggregator: Box<dyn super::request_logger::SseAggregator + Send>,
+    is_streaming: bool,
+    status_code: u16,
+    response_headers: Value,
+    max_sessions: u64,
+) -> SseRequestLogCollector {
+    let request_id = ctx.request_id.clone();
+    let provider_id = ctx.provider.id.clone();
+    let app_type = ctx.app_type_str.to_string();
+    let method = ctx.method.clone();
+    let endpoint = ctx
+        .outbound_endpoint
+        .clone()
+        .unwrap_or_else(|| ctx.endpoint.clone());
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
+    let request_headers = ctx
+        .outbound_headers
+        .clone()
+        .unwrap_or_else(|| ctx.request_headers_snapshot.clone());
+    let request_body = ctx
+        .outbound_request
+        .clone()
+        .unwrap_or_else(|| ctx.request_snapshot.clone());
+    let session_id = ctx.session_id.clone();
+    let session_client_provided = ctx.session_client_provided;
+    let start_time = ctx.start_time;
+    let start_time_utc = ctx.start_time_utc.to_rfc3339();
+    SseRequestLogCollector::new(aggregator, move |response_body| {
+        let request_id = request_id.clone();
+        let provider_id = provider_id.clone();
+        let app_type = app_type.clone();
+        let model = model.clone();
+        let method = method.clone();
+        let endpoint = endpoint.clone();
+        let request_headers = request_headers.clone();
+        let request_body = request_body.clone();
+        let response_headers = response_headers.clone();
+        let session_id = session_id.clone();
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        let record = super::request_logger::RequestLogRecord::new(
+            start_time_utc.clone(),
+            request_id,
+            session_id,
+            session_client_provided,
+            provider_id,
+            app_type,
+            method,
+            endpoint,
+            model,
+            duration_ms,
+            is_streaming,
+            request_headers,
+            request_body,
+            response_headers,
+            response_body,
+            status_code,
+            None,
+        );
+        tokio::spawn(async move {
+            super::request_logger::append_record(record, max_sessions).await;
+        });
+    })
+}
+
+/// 非流式 / 转换后路径的 request-log 落盘（直接喂 response JSON）。
+///
+/// 调用方负责在 `request_log_enabled(state) == true` 时调用；
+/// 该函数自身只负责拼装记录并异步写入。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_request_log_record(
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_streaming: bool,
+    response_body: Value,
+    status_code: u16,
+    error: Option<String>,
+    response_headers: Value,
+) {
+    let request_id = ctx.request_id.clone();
+    let method = ctx.method.clone();
+    let endpoint = ctx
+        .outbound_endpoint
+        .clone()
+        .unwrap_or_else(|| ctx.endpoint.clone());
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
+    let request_headers = ctx
+        .outbound_headers
+        .clone()
+        .unwrap_or_else(|| ctx.request_headers_snapshot.clone());
+    let request_body = ctx
+        .outbound_request
+        .clone()
+        .unwrap_or_else(|| ctx.request_snapshot.clone());
+    let max_sessions = request_log_max_sessions(state);
+    let record = super::request_logger::RequestLogRecord::new(
+        ctx.start_time_utc.to_rfc3339(),
+        request_id,
+        ctx.session_id.clone(),
+        ctx.session_client_provided,
+        ctx.provider.id.clone(),
+        ctx.app_type_str.to_string(),
+        method,
+        endpoint,
+        model,
+        ctx.latency_ms(),
+        is_streaming,
+        request_headers,
+        request_body,
+        response_headers,
+        response_body,
+        status_code,
+        error,
+    );
+    tokio::spawn(async move {
+        super::request_logger::append_record(record, max_sessions).await;
+    });
+}
+
 /// 内部使用量记录函数
 ///
 /// `outbound_model` 是「按请求计价」模式的锚点：实际发往上游的模型
@@ -684,6 +918,7 @@ pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
+    request_log_collector: Option<SseRequestLogCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
@@ -693,8 +928,11 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
-        let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let mut request_log = request_log_collector;
+        let mut request_log_guard = request_log.clone().map(SseRequestLogFinishGuard::new);
+        let inspect_sse_events = collector.is_some()
+            || request_log.is_some()
+            || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -751,18 +989,36 @@ pub fn create_logged_passthrough_stream(
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
+                                // 提取 data 部分；需要收集时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if data.trim() != "[DONE]" {
+                                            // request-log collector 需要解析 JSON 出聚合器
+                                            let parsed_for_request_log: Option<Value> =
+                                                if request_log.is_some() {
+                                                    serde_json::from_str::<Value>(data).ok()
+                                                } else {
+                                                    None
+                                                };
+                                            if let Some(v) = parsed_for_request_log.as_ref() {
+                                                if let Some(c) = request_log.as_ref() {
+                                                    c.push(v.clone()).await;
+                                                }
+                                            }
                                             let collected = match &collector {
                                                 Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
+                                                    // 已经为 request-log 解析过则复用，避免双解析
+                                                    let parsed = parsed_for_request_log
+                                                        .clone()
+                                                        .or_else(|| {
+                                                            serde_json::from_str::<Value>(data).ok()
+                                                        });
+                                                    match parsed {
+                                                        Some(json_value) => {
                                                             c.push(json_value).await;
                                                             true
                                                         }
-                                                        Err(_) => false,
+                                                        None => false,
                                                     }
                                                 }
                                                 _ => false,
@@ -798,6 +1054,12 @@ pub fn create_logged_passthrough_stream(
             c.finish().await;
         }
         if let Some(guard) = &mut finish_guard {
+            guard.disarm();
+        }
+        if let Some(c) = request_log.take() {
+            c.finish().await;
+        }
+        if let Some(guard) = &mut request_log_guard {
             guard.disarm();
         }
     }

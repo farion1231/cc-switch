@@ -4048,6 +4048,23 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
+    pub async fn apply_logging_runtime(&self, enable_logging: bool) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.apply_logging(enable_logging).await;
+        }
+    }
+
+    /// 把 request-log 会话保留数实时同步到运行中的代理服务器的 `ProxyState.config`。
+    ///
+    /// `update_proxy_config` 路径不携带该字段（兼容旧接口），因此从前端
+    /// "全局配置"修改时需要单独同步一次，否则改完要重启代理才生效。
+    /// 未运行时静默返回。
+    pub async fn apply_request_log_max_sessions_runtime(&self, max_sessions: u64) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.apply_request_log_max_sessions(max_sessions).await;
+        }
+    }
+
     /// 热更新熔断器配置
     ///
     /// 如果代理服务器正在运行，将新配置应用到所有已创建的熔断器实例

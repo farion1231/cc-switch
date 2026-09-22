@@ -408,6 +408,17 @@ impl ProxyServer {
         *self.state.config.write().await = config.clone();
     }
 
+    pub async fn apply_logging(&self, enable_logging: bool) {
+        let mut cfg = self.state.config.write().await;
+        cfg.enable_logging = enable_logging;
+    }
+
+    /// 热更新 request-log 会话保留数（0 = 关闭记录）。
+    pub async fn apply_request_log_max_sessions(&self, max_sessions: u64) {
+        let mut cfg = self.state.config.write().await;
+        cfg.request_log_max_sessions = max_sessions;
+    }
+
     /// 热更新熔断器配置
     ///
     /// 将新配置应用到所有已创建的熔断器实例

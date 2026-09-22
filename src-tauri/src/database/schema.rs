@@ -129,6 +129,7 @@ impl Database {
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+            request_log_max_sessions INTEGER NOT NULL DEFAULT 20,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
@@ -390,6 +391,10 @@ impl Database {
             "ALTER TABLE proxy_config ADD COLUMN enable_logging INTEGER NOT NULL DEFAULT 1",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN request_log_max_sessions INTEGER NOT NULL DEFAULT 20",
+            [],
+        );
 
         // 尝试添加超时配置列到 proxy_config 表
         let _ = conn.execute(
@@ -563,6 +568,18 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（request-log 会话保留数）");
+                        if Self::table_exists(conn, "proxy_config")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "proxy_config",
+                                "request_log_max_sessions",
+                                "INTEGER NOT NULL DEFAULT 20",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -898,6 +915,7 @@ impl Database {
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+            request_log_max_sessions INTEGER NOT NULL DEFAULT 20,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,

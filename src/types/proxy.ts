@@ -122,6 +122,8 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+  // 每个应用目录保留的最大 request-log 会话文件数；0 表示关闭记录
+  requestLogMaxSessions: number;
 }
 
 // 应用级代理配置（每个 app 独立）
@@ -138,4 +140,58 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+}
+
+// request-log 会话文件元信息
+export interface ProxyRequestLogFileMeta {
+  appType: string;
+  fileName: string;
+  sizeBytes: number;
+  modifiedAtMs: number;
+  // 复用 session_manager 解析出的会话标题（匹配不到为空）
+  sessionTitle?: string | null;
+}
+
+// request-log 记录分页结果（轻量行：列表展示字段 + token 数，不含 body）
+export interface ProxyRequestLogRecordsPage {
+  records: ProxyRequestLogListRow[];
+  total: number;
+}
+
+// 列表行（get_proxy_request_log_records 返回；body 详情按 lineNo 单独取）
+export interface ProxyRequestLogListRow {
+  lineNo: number;
+  startTime?: string | null;
+  endTime?: string | null;
+  method?: string | null;
+  endpoint?: string | null;
+  model?: string | null;
+  durationMs?: number | null;
+  isStreaming?: boolean;
+  statusCode?: number | null;
+  error?: string | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+}
+
+// 单条 request-log 记录（get_proxy_request_log_record 返回，含完整 body）
+export interface ProxyRequestLogRecord {
+  lineNo?: number;
+  startTime?: string;
+  endTime?: string;
+  requestId?: string;
+  sessionId?: string;
+  providerId?: string;
+  appType?: string;
+  method?: string;
+  endpoint?: string;
+  model?: string;
+  durationMs?: number;
+  isStreaming?: boolean;
+  requestHeaders?: { name: string; value: string }[];
+  requestBody?: unknown;
+  responseHeaders?: { name: string; value: string }[];
+  responseBody?: unknown;
+  statusCode?: number;
+  error?: string | null;
 }

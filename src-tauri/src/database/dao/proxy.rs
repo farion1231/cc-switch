@@ -63,7 +63,7 @@ impl Database {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
-                "SELECT proxy_enabled, listen_address, listen_port, enable_logging
+                "SELECT proxy_enabled, listen_address, listen_port, enable_logging, request_log_max_sessions
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -72,6 +72,7 @@ impl Database {
                         listen_address: row.get(1)?,
                         listen_port: row.get::<_, i32>(2)? as u16,
                         enable_logging: row.get::<_, i32>(3)? != 0,
+                        request_log_max_sessions: row.get::<_, i64>(4)? as u64,
                     })
                 },
             )
@@ -88,6 +89,7 @@ impl Database {
                     listen_address: "127.0.0.1".to_string(),
                     listen_port: 15721,
                     enable_logging: true,
+                    request_log_max_sessions: 20,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -107,12 +109,14 @@ impl Database {
                 listen_address = ?2,
                 listen_port = ?3,
                 enable_logging = ?4,
+                request_log_max_sessions = ?5,
                 updated_at = datetime('now')",
             rusqlite::params![
                 if config.proxy_enabled { 1 } else { 0 },
                 config.listen_address,
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
+                config.request_log_max_sessions as i64,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -423,7 +427,7 @@ impl Database {
             let conn = lock_conn!(self.conn);
             conn.query_row(
                 "SELECT listen_address, listen_port, max_retries,
-                        enable_logging,
+                        enable_logging, request_log_max_sessions,
                         streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
@@ -434,10 +438,11 @@ impl Database {
                         max_retries: row.get::<_, i32>(2)? as u8,
                         request_timeout: 600, // 废弃字段，返回默认值
                         enable_logging: row.get::<_, i32>(3)? != 0,
+                        request_log_max_sessions: row.get::<_, i64>(4).unwrap_or(20) as u64,
                         live_takeover_active: false, // 废弃字段
-                        streaming_first_byte_timeout: row.get::<_, i32>(4).unwrap_or(60) as u64,
-                        streaming_idle_timeout: row.get::<_, i32>(5).unwrap_or(120) as u64,
-                        non_streaming_timeout: row.get::<_, i32>(6).unwrap_or(600) as u64,
+                        streaming_first_byte_timeout: row.get::<_, i32>(5).unwrap_or(60) as u64,
+                        streaming_idle_timeout: row.get::<_, i32>(6).unwrap_or(120) as u64,
+                        non_streaming_timeout: row.get::<_, i32>(7).unwrap_or(600) as u64,
                     })
                 },
             )

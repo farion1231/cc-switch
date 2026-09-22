@@ -13,6 +13,7 @@ export const proxyKeys = {
   takeoverStatus: ["proxyTakeoverStatus"] as const,
   globalConfig: ["globalProxyConfig"] as const,
   appConfig: (appType: string) => ["appProxyConfig", appType] as const,
+  requestLogFiles: ["proxyRequestLogFiles"] as const,
 };
 
 // ========== 代理服务器状态 Hooks ==========
@@ -137,5 +138,19 @@ export function useUpdateAppProxyConfig() {
         t("proxy.settings.toast.saveFailed", { error: error.message }),
       );
     },
+  });
+}
+
+// ========== Request-Log 查看器 Hooks ==========
+
+/**
+ * 获取 request-log 会话文件列表
+ */
+export function useProxyRequestLogFiles(enabled: boolean) {
+  return useQuery({
+    queryKey: proxyKeys.requestLogFiles,
+    queryFn: () => proxyApi.listProxyRequestLogFiles(),
+    enabled,
+    staleTime: 5_000,
   });
 }

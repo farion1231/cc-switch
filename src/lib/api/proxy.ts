@@ -5,6 +5,9 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  ProxyRequestLogFileMeta,
+  ProxyRequestLogRecordsPage,
+  ProxyRequestLogRecord,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -90,5 +93,40 @@ export const proxyApi = {
   // 设置计费模式来源
   async setPricingModelSource(appType: string, value: string): Promise<void> {
     return invoke("set_pricing_model_source", { appType, value });
+  },
+
+  // ========== Request-Log 查看器 API ==========
+
+  // 列出所有应用的 request-log 会话文件（按修改时间降序）
+  async listProxyRequestLogFiles(): Promise<ProxyRequestLogFileMeta[]> {
+    return invoke("list_proxy_request_log_files");
+  },
+
+  // 读取指定会话文件的 request-log 记录（分页；order=desc 新→旧 / asc 旧→新；search 关键词过滤）
+  async getProxyRequestLogRecords(params: {
+    appType: string;
+    fileName: string;
+    offset: number;
+    limit?: number;
+    order?: "desc" | "asc";
+    search?: string;
+    beforeLineNo?: number;
+    afterLineNo?: number;
+  }): Promise<ProxyRequestLogRecordsPage> {
+    return invoke("get_proxy_request_log_records", params);
+  },
+
+  // 读取单条完整记录（展开详情时按 lineNo 取，含完整 body）
+  async getProxyRequestLogRecord(params: {
+    appType: string;
+    fileName: string;
+    lineNo: number;
+  }): Promise<ProxyRequestLogRecord> {
+    return invoke("get_proxy_request_log_record", params);
+  },
+
+  // 在系统文件管理器中打开日志目录
+  async openProxyRequestLogDir(): Promise<void> {
+    return invoke("open_proxy_request_log_dir");
   },
 };

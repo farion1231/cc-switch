@@ -33,8 +33,11 @@ pub struct StreamingTimeoutConfig {
 /// - 日志标签
 /// - Session ID（用于日志关联）
 pub struct RequestContext {
-    /// 请求开始时间
+    /// 请求开始时间（单调时钟，用于计算 durationMs）
     pub start_time: Instant,
+    /// 请求开始时间的墙钟（UTC RFC3339，用于 request-log 的 startTime 字段；
+    /// Instant 无法换算回绝对时间，须在创建上下文时同步捕获）
+    pub start_time_utc: chrono::DateTime<chrono::Utc>,
     /// 应用级代理配置（per-app，包含重试次数和超时配置）
     pub app_config: AppProxyConfig,
     /// 选中的 Provider（故障转移链的第一个）
@@ -64,12 +67,33 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// 本次请求的唯一标识（UUIDv4，入口处生成一次）。
+    /// request-log 与 usage 元数据表共享同一值，用于关联同一次请求。
+    pub request_id: String,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 客户端发往代理的请求体 JSON 快照（克隆自 handler 入口的 body）。
+    /// 仅在 request-log 开启时用于落盘；关闭路径上保留为 Null，避免拷贝开销。
+    pub request_snapshot: serde_json::Value,
+    /// 客户端发往代理的请求头快照（已脱敏）。
+    pub request_headers_snapshot: serde_json::Value,
+    /// 实际发往上游的请求头（已脱敏）。
+    pub outbound_headers: Option<serde_json::Value>,
+    /// 客户端请求方法。
+    pub method: String,
+    /// 请求 endpoint（如 `/v1/messages`、`/v1/responses`），用于 request-log 聚合器路由
+    /// 与落盘记录。Gemini 路径在 `with_model_from_uri` 之后可再覆盖一次。
+    pub endpoint: String,
+    /// 实际发往上游的 endpoint（格式转换后，如 `/v1/chat/completions`）。
+    /// 仅 request-log 开启且 forward 成功后回填；否则为 None。
+    pub outbound_endpoint: Option<String>,
+    /// 实际发往上游的请求体（所有映射/转换/过滤之后的最终 body）。
+    /// 仅 request-log 开启且 forward 成功后回填；否则为 None。
+    pub outbound_request: Option<serde_json::Value>,
 }
 
 impl RequestContext {
@@ -85,15 +109,19 @@ impl RequestContext {
     ///
     /// # Errors
     /// 返回 `ProxyError` 如果 Provider 选择失败
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         state: &ProxyState,
         body: &serde_json::Value,
         headers: &HeaderMap,
+        method: &http::Method,
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
+        endpoint: &str,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
+        let start_time_utc = chrono::Utc::now();
 
         // 从数据库读取应用级代理配置（per-app）
         let app_config = state
@@ -120,6 +148,8 @@ impl RequestContext {
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
         let session_id = session_result.session_id.clone();
+
+        let request_id = uuid::Uuid::new_v4().to_string();
 
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
@@ -157,8 +187,27 @@ impl RequestContext {
             session_id
         );
 
+        // 只有 request-log 开启（max_sessions > 0）时才克隆请求体快照（body 可能很大：
+        // 长 prompt、多图等）。关闭路径上保留为 Null，避免拷贝大对象的内存与序列化开销。
+        let request_log_on = state
+            .config
+            .try_read()
+            .map(|c| c.request_log_max_sessions > 0)
+            .unwrap_or(false);
+        let request_snapshot = if request_log_on {
+            body.clone()
+        } else {
+            serde_json::Value::Null
+        };
+        let request_headers_snapshot = if request_log_on {
+            super::request_logger::sanitize_request_headers(headers)
+        } else {
+            serde_json::Value::Null
+        };
+
         Ok(Self {
             start_time,
+            start_time_utc,
             app_config,
             provider,
             providers,
@@ -170,9 +219,17 @@ impl RequestContext {
             app_type,
             session_id,
             session_client_provided: session_result.client_provided,
+            request_id,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            request_snapshot,
+            request_headers_snapshot,
+            outbound_headers: None,
+            method: method.as_str().to_string(),
+            endpoint: endpoint.to_string(),
+            outbound_endpoint: None,
+            outbound_request: None,
         })
     }
 
@@ -187,6 +244,12 @@ impl RequestContext {
 
         self.request_model =
             extract_gemini_model_from_path(endpoint).unwrap_or_else(|| "unknown".to_string());
+        // Gemini 路径在创建 ctx 时 endpoint 还不知道（path_and_query 在 handle_gemini
+        // 里才取得），这里把完整 endpoint 覆盖回 ctx 用于 request-log 路由与落盘
+        self.endpoint = uri
+            .path_and_query()
+            .map(|pq| pq.as_str().to_string())
+            .unwrap_or_else(|| endpoint.to_string());
 
         self
     }
