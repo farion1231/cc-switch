@@ -143,7 +143,8 @@ impl StreamCheckService {
             None => Self::resolve_base_url(app_type, provider)?,
         };
 
-        let client = crate::proxy::http_client::get();
+        let client =
+            crate::proxy::http_client::get_without_redirects().map_err(AppError::Message)?;
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
 
@@ -200,6 +201,7 @@ impl StreamCheckService {
     /// 轻量可达性探测：GET `base_url`，收到任意 HTTP 响应即可达。
     ///
     /// - `send()` 在收到响应头时即返回，故计时天然是 TTFB；不读 body。
+    /// - 客户端不跟随重定向，首次 3xx 响应也已证明目标可达。
     /// - reqwest 对任何 HTTP 状态码都返回 `Ok`，只有网络级错误进 `Err`——
     ///   这正是"任何响应都算可达、只有连不上才算失败"的语义。
     async fn probe_reachability(
@@ -382,6 +384,52 @@ impl StreamCheckService {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    #[serial_test::serial(http_proxy_env)]
+    async fn test_check_once_stops_at_first_redirect() {
+        use axum::{http::StatusCode, response::Redirect, routing::get, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = requests.clone();
+        let app = Router::new().route(
+            "/v1",
+            get(move || {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    Redirect::permanent("/v1")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let provider = make_provider(serde_json::json!({}));
+        let config = StreamCheckConfig {
+            timeout_secs: 2,
+            ..Default::default()
+        };
+        let result = StreamCheckService::check_once(
+            &AppType::Codex,
+            &provider,
+            &config,
+            Some(format!("http://{address}/v1")),
+            Instant::now(),
+        )
+        .await;
+        server.abort();
+        let result = result.unwrap();
+
+        assert!(result.success, "{}", result.message);
+        assert_eq!(
+            result.http_status,
+            Some(StatusCode::PERMANENT_REDIRECT.as_u16())
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
     fn make_provider(settings_config: serde_json::Value) -> Provider {
         Provider::with_id(
             "test".to_string(),
@@ -431,7 +479,7 @@ mod tests {
     #[test]
     fn test_build_result_any_http_status_is_reachable() {
         // 任何 HTTP 状态码都算可达（success=true）
-        for status in [200u16, 401, 403, 404, 429, 500, 503] {
+        for status in [200u16, 301, 302, 307, 308, 401, 403, 404, 429, 500, 503] {
             let r = StreamCheckService::build_result(Ok(status), 100, 1500);
             assert!(r.success, "status {status} should be reachable");
             assert_eq!(r.status, HealthStatus::Operational);
