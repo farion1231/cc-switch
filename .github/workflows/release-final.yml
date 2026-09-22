@@ -43,6 +43,7 @@ jobs:
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
         shell: pwsh
         run: rustup target add aarch64-pc-windows-msvc
+
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         shell: bash
@@ -171,7 +172,6 @@ jobs:
           fi
           echo "✅ Tauri signing key prepared"
 
-
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -188,7 +188,6 @@ jobs:
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
-
 
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
@@ -327,6 +326,14 @@ jobs:
           echo "Listing bundles in src-tauri/target..."
           find src-tauri/target -maxdepth 4 -type f -name "*.*" 2>/dev/null || true
 
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-22.04
+    needs: release
+    permissions:
+      contents: write
+    steps:
       - name: Download built release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -355,6 +362,7 @@ jobs:
 
             ### 下载
 
+            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
             - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
             - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
@@ -363,6 +371,7 @@ jobs:
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 
             ---
+            macOS 版本已通过 Apple 代码签名和公证，可直接安装使用。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -398,6 +407,7 @@ jobs:
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
           # 初始化空平台映射
+          mac_url=""; mac_sig=""
           win_x64_url=""; win_x64_sig=""
           win_arm64_url=""; win_arm64_sig=""
           linux_x64_url=""; linux_x64_sig=""
@@ -410,6 +420,8 @@ jobs:
             sig_content=$(cat "$sig")
             case "$fname" in
               *.tar.gz)
+                # 视为 macOS updater artifact
+                mac_url="$url"; mac_sig="$sig_content";;
               *-Windows-arm64.msi)
                 win_arm64_url="$url"; win_arm64_sig="$sig_content";;
               *-Windows.msi)
@@ -429,6 +441,14 @@ jobs:
             echo "  \"pub_date\": \"$PUB_DATE\",";
             echo '  "platforms": {'
             first=1
+            if [ -n "$mac_url" ] && [ -n "$mac_sig" ]; then
+              # 为兼容 arm64 / x64，重复写入两个键，指向同一 universal 包
+              for key in darwin-aarch64 darwin-x86_64; do
+                [ $first -eq 0 ] && echo ','
+                echo "    \"$key\": {\"signature\": \"$mac_sig\", \"url\": \"$mac_url\"}"
+                first=0
+              done
+            fi
             if [ -n "$win_x64_url" ] && [ -n "$win_x64_sig" ]; then
               [ $first -eq 0 ] && echo ','
               echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"}"

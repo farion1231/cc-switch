@@ -1,0 +1,4 @@
+  File "<string>", line 27
+    if stripped.startswith('if:') and \
+                                       ^
+SyntaxError: unexpected EOF while parsing
