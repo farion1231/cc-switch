@@ -1678,10 +1678,22 @@ GEMINI_TIMEOUT_MS=30000
         assert_eq!(base_url, "https://claude.example");
     }
 
+    /// Top-level `web_search` value of an extracted snippet, read by parsing
+    /// rather than by substring: a marked sentinel contains the unmarked text,
+    /// so a `contains` assertion cannot tell the two apart.
+    fn extracted_top_level_web_search(extracted: &str) -> Option<String> {
+        let parsed: toml::Value =
+            toml::from_str(extracted).expect("extracted snippet is valid TOML");
+        parsed
+            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .and_then(toml::Value::as_str)
+            .map(str::to_string)
+    }
+
     #[test]
     fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
         // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
-        // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
+        // web_search = "disabled" # cc-switch:managed 是 cc-switch 对黑名单网关注入的带归属标记哨兵；
         // 顶层 wire_api 模拟无 model_provider 时的 fallback 写法；
         // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
@@ -1690,7 +1702,7 @@ wire_api = "chat"
 disable_response_storage = true
 experimental_bearer_token = "sk-live-secret"
 model_catalog_json = "cc-switch-model-catalog.json"
-web_search = "disabled"
+web_search = "disabled" # cc-switch:managed
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -1750,13 +1762,29 @@ command = "legacy-cmd"
             "should strip catalog projection pointer, got: {extracted}"
         );
         assert!(
-            !extracted.contains("web_search"),
+            extracted_top_level_web_search(&extracted).is_none(),
             "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
         );
         // 真正可共享的键保留
         assert!(
             extracted.contains("disable_response_storage = true"),
             "shareable keys must survive extraction, got: {extracted}"
+        );
+    }
+
+    #[test]
+    fn extract_codex_common_config_keeps_user_web_search_disabled_without_marker() {
+        // #5910: "disabled" without cc-switch's ownership marker is the user's
+        // own shareable preference, not our injected sentinel, so it must reach
+        // the shared snippet instead of being stripped as an artifact.
+        let config_toml = "web_search = \"disabled\"\ndisable_response_storage = true\n";
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract should succeed");
+        assert_eq!(
+            extracted_top_level_web_search(&extracted).as_deref(),
+            Some("disabled"),
+            "an unmarked disabled value must survive extraction, got: {extracted}"
         );
     }
 
@@ -6538,12 +6566,11 @@ impl ProviderService {
         root.remove("experimental_bearer_token");
         // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
         root.remove("model_catalog_json");
-        // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
-        //   属于可共享偏好，保留。
+        // - web_search 只剥带归属标记（`# cc-switch:managed`）的注入哨兵；用户
+        //   手设的值——包括无标记的 "disabled"——属于可共享偏好，保留（#5910）。
         if root
             .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
-            .and_then(|item| item.as_str())
-            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+            .is_some_and(crate::codex_config::codex_web_search_item_is_managed)
         {
             root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
         }

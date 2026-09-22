@@ -2418,6 +2418,7 @@ mod tests {
     use super::*;
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
+    use serial_test::serial;
 
     #[test]
     fn proxy_oauth_codex_snapshot_neutralizes_official_auth_fallback() {
@@ -3520,6 +3521,125 @@ base_url = "https://a.example/v1"
         assert!(
             config_text.contains("model = \"gpt-5.5\""),
             "non-MCP content must survive the strip"
+        );
+    }
+
+    /// Isolates `CC_SWITCH_TEST_HOME` so a generated Codex model catalog is
+    /// written into a temp dir instead of the developer's real `~/.codex`.
+    struct CodexCatalogTestHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl CodexCatalogTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated Codex test home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings for isolated test home");
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for CodexCatalogTestHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    fn codex_top_level_web_search(config_text: &str) -> Option<String> {
+        let parsed: toml::Value =
+            toml::from_str(config_text).expect("prepared config is valid TOML");
+        parsed
+            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .and_then(toml::Value::as_str)
+            .map(str::to_string)
+    }
+
+    #[test]
+    #[serial]
+    fn codex_common_config_user_web_search_survives_provider_switch() {
+        // End-to-end (#5910): the user keeps `web_search = "disabled"` in the
+        // shared common-config snippet because their `/responses` relay rejects
+        // the hosted tool. Merging the snippet into the provider settings and
+        // preparing the live text must not drop it. The provider carries a
+        // `modelCatalog`, so this runs the real catalog branch and reaches
+        // `codex_native_gateway_rejects_web_search`, which answers false for
+        // this off-blacklist relay host with `model = "auto"` — exactly the
+        // configuration that used to delete the user's line. It also pins the
+        // ownership marker's survival through `merge_toml_table_like`, which
+        // the cleanup rule depends on.
+        let _home = CodexCatalogTestHome::new();
+        let provider_settings = json!({
+            "modelCatalog": { "models": [{ "model": "auto" }] },
+            "config": "model = \"auto\"\nmodel_provider = \"relay\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n"
+        });
+
+        let merged = apply_common_config_to_settings(
+            &AppType::Codex,
+            &provider_settings,
+            "web_search = \"disabled\"\n",
+        )
+        .expect("apply common config");
+        let merged_config = merged
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("merged config text");
+        let prepared = crate::codex_config::prepare_codex_config_text_with_model_catalog(
+            &merged,
+            merged_config,
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("prepare codex live config");
+        assert!(
+            prepared.contains("model_catalog_json"),
+            "the catalog branch must actually run, otherwise the blacklist check \
+             this test is about is never reached, got: {prepared}"
+        );
+        assert_eq!(
+            codex_top_level_web_search(&prepared).as_deref(),
+            Some("disabled"),
+            "the user's shared web_search preference must survive, got: {prepared}"
+        );
+
+        let managed_snippet = format!(
+            "web_search = \"disabled\" # {}\n",
+            crate::codex_config::CODEX_WEB_SEARCH_MANAGED_MARKER
+        );
+        let merged_managed =
+            apply_common_config_to_settings(&AppType::Codex, &provider_settings, &managed_snippet)
+                .expect("apply common config");
+        let merged_managed_config = merged_managed
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("merged config text");
+        let merged_managed_doc = merged_managed_config
+            .parse::<toml_edit::DocumentMut>()
+            .expect("merged config is valid TOML");
+        assert!(
+            merged_managed_doc
+                .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+                .is_some_and(crate::codex_config::codex_web_search_item_is_managed),
+            "the ownership marker must survive the common-config merge, got: {merged_managed_config}"
+        );
+
+        let cleaned = crate::codex_config::prepare_codex_config_text_with_model_catalog(
+            &merged_managed,
+            merged_managed_config,
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("prepare codex live config");
+        assert_eq!(
+            codex_top_level_web_search(&cleaned),
+            None,
+            "cc-switch's own marked sentinel must still be removed, got: {cleaned}"
         );
     }
 
