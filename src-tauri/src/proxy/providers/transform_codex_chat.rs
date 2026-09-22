@@ -1302,29 +1302,26 @@ fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
 /// private-extension carrier). The xAI Responses passthrough already promotes
 /// the same carriers (`promote_additional_tools`); the Chat and Anthropic
 /// converters go through this registry so they keep the carried tools too.
-fn collect_input_declared_tools(value: &Value, context: &mut CodexToolContext) {
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                collect_input_declared_tools(item, context);
-            }
-        }
-        Value::Object(obj) => {
-            if matches!(
-                obj.get("type").and_then(|v| v.as_str()),
-                Some("tool_search_output" | "additional_tools")
-            ) {
-                if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
-                    for tool in tools {
-                        context.add_response_tool(tool);
-                    }
+///
+/// Only direct `input[]` items are scanned: the carriers live at the top
+/// level of the request input, and a structured tool output that merely
+/// contains this shape must not inject tools (#6159's direct-item scan).
+fn collect_input_declared_tools(input: &Value, context: &mut CodexToolContext) {
+    let Some(items) = input.as_array() else {
+        return;
+    };
+    for item in items {
+        let declares_tools = matches!(
+            item.get("type").and_then(|v| v.as_str()),
+            Some("tool_search_output" | "additional_tools")
+        );
+        if declares_tools {
+            if let Some(tools) = item.get("tools").and_then(|v| v.as_array()) {
+                for tool in tools {
+                    context.add_response_tool(tool);
                 }
             }
-            for value in obj.values() {
-                collect_input_declared_tools(value, context);
-            }
         }
-        _ => {}
     }
 }
 
@@ -3220,6 +3217,43 @@ mod tests {
         assert_eq!(messages[0]["content"], "Instructions.");
         assert_eq!(messages[1]["role"], "user");
         assert!(result.get("tools").is_none());
+    }
+
+    #[test]
+    fn nested_input_declared_tool_shapes_do_not_inject_tools() {
+        // Only direct `input[]` items declare tools; a structured value that
+        // merely contains the carrier shape (e.g. message metadata or a
+        // parsed tool output) must not inject tools — #6159's direct-item
+        // scan, tightened per the #7454 review.
+        let input = json!({
+            "model": "m",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}],
+                    "metadata": {
+                        "results": [{
+                            "type": "tool_search_output",
+                            "tools": [{
+                                "type": "function",
+                                "name": "smuggled",
+                                "parameters": {"type": "object"}
+                            }]
+                        }]
+                    }
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        assert!(
+            result
+                .get("tools")
+                .map_or(true, |v| v.as_array().is_some_and(|a| a.is_empty())),
+            "a nested carrier shape must not inject tools: {}",
+            result.get("tools").cloned().unwrap_or(json!(null))
+        );
     }
 
     #[test]
