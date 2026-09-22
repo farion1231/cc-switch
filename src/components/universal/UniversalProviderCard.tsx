@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Edit2, Trash2, RefreshCw, Globe, Copy } from "lucide-react";
+import { Edit2, Trash2, RefreshCw, Globe, Copy, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import type { UniversalProvider } from "@/types";
@@ -10,6 +10,7 @@ interface UniversalProviderCardProps {
   onDelete: (id: string) => void;
   onSync: (id: string) => void;
   onDuplicate: (provider: UniversalProvider) => void;
+  onExport: (provider: UniversalProvider) => void;
 }
 
 export function UniversalProviderCard({
@@ -18,6 +19,7 @@ export function UniversalProviderCard({
   onDelete,
   onSync,
   onDuplicate,
+  onExport,
 }: UniversalProviderCardProps) {
   const { t } = useTranslation();
 
@@ -63,6 +65,17 @@ export function UniversalProviderCard({
             title={t("universalProvider.duplicate", { defaultValue: "复制" })}
           >
             <Copy className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => onExport(provider)}
+            title={t("universalProvider.export", {
+              defaultValue: "导出到剪贴板",
+            })}
+          >
+            <Share2 className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"

@@ -245,4 +245,45 @@ export const universalProvidersApi = {
   async sync(id: string): Promise<boolean> {
     return await invoke("sync_universal_provider", { id });
   },
+
+  /**
+   * 将指定客户端的供应商配置转换为统一供应商（不落库，仅返回供表单预填）。
+   * `app` 为客户端标识，`provider` 为完整 Provider 负载（可来自数据库或剪贴板导入）。
+   */
+  async convertFromProvider(
+    app: AppId,
+    provider: Provider,
+  ): Promise<UniversalProvider> {
+    return await invoke("convert_provider_to_universal", { app, provider });
+  },
+
+  /**
+   * 将供应商配置转换为目标客户端格式（用于跨客户端粘贴导入）。
+   * 来源与目标相同时原样返回；不同时经统一供应商中转。返回的 Provider 由前端重新生成 id 后入库。
+   */
+  async convertProviderForApp(
+    sourceApp: AppId,
+    provider: Provider,
+    targetApp: AppId,
+  ): Promise<Provider> {
+    return await invoke("convert_provider_for_app", {
+      sourceApp,
+      provider,
+      targetApp,
+    });
+  },
+
+  /**
+   * 将统一供应商转换为目标客户端格式（用于跨客户端粘贴导入）。
+   * 支持的目标为 Claude / Codex / Gemini；其他目标返回错误。
+   */
+  async convertUniversalToProvider(
+    universal: UniversalProvider,
+    targetApp: AppId,
+  ): Promise<Provider> {
+    return await invoke("convert_universal_to_provider", {
+      universal,
+      targetApp,
+    });
+  },
 };
