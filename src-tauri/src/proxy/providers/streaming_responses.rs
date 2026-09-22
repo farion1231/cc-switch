@@ -3200,6 +3200,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             .get("arguments")
                                             .or_else(|| data.pointer("/item/arguments"))
                                             .and_then(|v| v.as_str())
+                                            .filter(|value| !value.is_empty())
                                             .map(str::to_string)
                                             .unwrap_or_else(|| {
                                                 tool_args_by_index
@@ -6668,6 +6669,35 @@ mod tests {
         assert!(merged.contains("\"name\":\"Read\""));
         assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0}"));
         assert!(!merged.contains("\\\"pages\\\":\\\"\\\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_tool_empty_arguments_on_done_falls_back_to_buffered_deltas() {
+        // 某些网关（如新版 claude-code-router 容器）在 function_call_arguments.done 事件里
+        // 返回空字符串 arguments，完整参数只出现在后续 output_item.done 中。
+        // Read 的分片被缓冲等待 done 归并，此时必须回退到已缓冲分片，否则 tool_use 参数丢失。
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_read\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"{\\\"file_path\\\":\"}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"\\\"/tmp/demo.py\\\"}\"}\n\n",
+            "event: response.function_call_arguments.done\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_read\",\"arguments\":\"\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\",\"arguments\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\"}\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+
+        assert!(merged.contains("\"name\":\"Read\""));
+        assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\"}\""));
+        assert!(merged.contains("event: content_block_stop"));
     }
 
     #[tokio::test]
