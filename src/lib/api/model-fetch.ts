@@ -122,6 +122,13 @@ export function showFetchModelsError(
     toast.error(t("providerForm.fetchModelsNotSupported"));
     return;
   }
+  // HTTP 200 错误信封：供应商返回了错误信息（如鉴权失败），
+  // detail 已在后端做过脱敏，可以直接展示
+  if (msg.includes("Model fetch failed:")) {
+    const detail = msg.replace("Model fetch failed:", "").trim();
+    toast.error(detail || t("providerForm.fetchModelsFailed"));
+    return;
+  }
 
   // 通用兜底
   toast.error(t("providerForm.fetchModelsFailed"));
