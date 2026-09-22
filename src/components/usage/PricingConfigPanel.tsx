@@ -33,6 +33,7 @@ import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 import { ModelsDevAutoSyncPanel } from "./ModelsDevAutoSyncPanel";
+import { ManagementListSearch } from "@/components/common/ManagementListSearch";
 
 const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
@@ -52,6 +53,7 @@ export function PricingConfigPanel() {
   const [editingModel, setEditingModel] = useState<ModelPricing | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // All applications with a first-class usage pipeline.
   const [appConfigs, setAppConfigs] = useState<AppConfigState>({
@@ -200,6 +202,16 @@ export function PricingConfigPanel() {
     });
   };
 
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredPricing =
+    pricing?.filter((model) => {
+      if (!normalizedSearchQuery) return true;
+
+      return [model.modelId, model.displayName].some((value) =>
+        value.toLowerCase().includes(normalizedSearchQuery),
+      );
+    }) ?? [];
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-4">
@@ -344,16 +356,27 @@ export function PricingConfigPanel() {
       <div className="space-y-4">
         <ModelsDevAutoSyncPanel />
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center gap-3">
           <h4 className="text-sm font-medium text-muted-foreground">
             {t("usage.modelPricingDesc")} {t("usage.perMillion")}
           </h4>
+          {pricing && pricing.length > 0 && (
+            <ManagementListSearch
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              placeholder={t("usage.pricingSearchPlaceholder")}
+              ariaLabel={t("usage.pricingSearchAriaLabel")}
+              clearLabel={t("common.clear")}
+              className="mb-0 w-[180px] max-w-full [&>input]:text-xs [&>input]:focus:border-border-default"
+            />
+          )}
           <Button
             onClick={(e) => {
               e.stopPropagation();
               handleAddNew();
             }}
             size="sm"
+            className="ml-auto"
           >
             <Plus className="mr-1 h-4 w-4" />
             {t("common.add")}
@@ -364,6 +387,12 @@ export function PricingConfigPanel() {
           {!pricing || pricing.length === 0 ? (
             <Alert>
               <AlertDescription>{t("usage.noPricingData")}</AlertDescription>
+            </Alert>
+          ) : filteredPricing.length === 0 ? (
+            <Alert>
+              <AlertDescription>
+                {t("usage.noPricingSearchResults")}
+              </AlertDescription>
             </Alert>
           ) : (
             <div className="rounded-md bg-card/60 shadow-sm">
@@ -390,7 +419,7 @@ export function PricingConfigPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pricing.map((model) => (
+                  {filteredPricing.map((model) => (
                     <TableRow key={model.modelId}>
                       <TableCell className="font-mono text-sm">
                         {model.modelId}
