@@ -1343,10 +1343,19 @@ fn hexd_mask_block(
     if spans.is_empty() {
         return;
     }
+    // 检测 span 是解码串的 UTF-8 字节偏移；owner 以字节（=Latin-1 字符）为单位，
+    // 须映射回字符下标，否则含高位字节的转储会越界 panic
+    let map = byte_to_char_map(&decoded);
     let mut edits: HashMap<usize, Vec<(usize, usize, &'static str)>> = HashMap::new();
     for span in &spans {
-        let end = span.end.min(owner.len());
-        for &(r, k) in &owner[span.start..end] {
+        let (Some(&cs), Some(&ce)) = (map.get(&span.start), map.get(&span.end)) else {
+            continue;
+        };
+        let end = ce.min(owner.len());
+        if cs >= end {
+            continue;
+        }
+        for &(r, k) in &owner[cs..end] {
             let (li, pairs, ascii_text, ascii_start) = &rows[r];
             let (s, e, _) = pairs[k];
             edits.entry(*li).or_default().push((s, e, "xx"));
@@ -1434,6 +1443,19 @@ fn is_hex_char(b: u8) -> bool {
 /// 另一编码载体。把 ≥[`CONTINUOUS_HEX_MIN_CHARS`] 的连续 hex 串两两解码为
 /// 字节流复用规则检测，命中的字节以其 hex 字符等长替换为 `x`（不可逆抹除、
 /// 不产生标记映射）。随机散列（SHA/MD5）解码出规则目标的概率可忽略。
+/// UTF-8 字节偏移 → 字符（码点）下标对照（仅字符边界有映射）。
+/// Latin-1 语义的解码串里，≥0x80 的字节会膨胀成 2 字节 UTF-8，检测返回的
+/// 字节偏移必须经此映射回字节流/字符流下标，否则越界 panic（历史缺陷）。
+fn byte_to_char_map(s: &str) -> std::collections::HashMap<usize, usize> {
+    let mut map = std::collections::HashMap::new();
+    for (char_idx, (byte_off, _ch)) in s.char_indices().enumerate() {
+        map.insert(byte_off, char_idx);
+    }
+    // 尾哨兵：UTF-8 长度 → 字符总数（span.end 恰好落在串尾时命中）
+    map.insert(s.len(), s.chars().count());
+    map
+}
+
 fn continuous_hex_mask(text: &str, detect: &mut dyn FnMut(&str) -> Vec<MatchSpan>) -> String {
     let bytes = text.as_bytes();
     let mut spans_to_erase: Vec<(usize, usize)> = Vec::new(); // 字符偏移（hex 串内）
@@ -1463,10 +1485,17 @@ fn continuous_hex_mask(text: &str, detect: &mut dyn FnMut(&str) -> Vec<MatchSpan
         if decoded.is_empty() {
             continue;
         }
+        // 检测 span 是解码串的 UTF-8 字节偏移，须映射回字符（=原始字节）下标；
+        // 非字符边界的偏移视为检测异常，丢弃该 span（fail-open）
+        let map = byte_to_char_map(&decoded);
         for span in detect(&decoded) {
-            let end = span.end.min(decoded.len());
-            if span.start < end {
-                spans_to_erase.push((start + span.start * 2, start + end * 2));
+            match (map.get(&span.start), map.get(&span.end)) {
+                (Some(&cs), Some(&ce)) if cs < ce => {
+                    spans_to_erase.push((start + cs * 2, start + ce * 2));
+                }
+                _ => {
+                    log::debug!("[PRIVACY] 连续 hex 防护：span 偏移非字符边界，已丢弃");
+                }
             }
         }
     }
@@ -1937,7 +1966,7 @@ impl BuiltinPrivacyPlugin {
         if let Err(e) = plugin.load_and_apply() {
             log::warn!("[PRIVACY] 初始配置加载失败，以空配置运行(fail-open): {e}");
         }
-        *plugin.state.mtimes.lock().unwrap() = mtimes;
+        *plugin.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = mtimes;
         plugin
     }
 
@@ -1948,7 +1977,7 @@ impl BuiltinPrivacyPlugin {
     /// 规则的一次性升级（见 [`Self::upgrade_legacy_kv_patterns`]）。
     /// 进程级互斥：并发构造（测试并行 / 多窗口）时避免读写到彼此写到一半的文件
     fn init_config_files(&self) {
-        let _init_guard = CONFIG_INIT_LOCK.lock().unwrap();
+        let _init_guard = CONFIG_INIT_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = &self.state.config_dir;
         let any_exists = CONFIG_DOC_FILES
             .iter()
@@ -2078,7 +2107,7 @@ impl BuiltinPrivacyPlugin {
                 Err(e) => log::warn!("[PRIVACY] 淘汰超限映射失败: {e}"),
             }
         }
-        let mut store = self.state.store.lock().unwrap();
+        let mut store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for (id, original, _, _) in kept {
             store.by_id.insert(
                 id.clone(),
@@ -2116,7 +2145,7 @@ impl BuiltinPrivacyPlugin {
     fn pre_register_custom_values(&self, snapshot: &EngineSnapshot) {
         let mut pending: Vec<(String, String, String)> = Vec::new();
         {
-            let mut store = self.state.store.lock().unwrap();
+            let mut store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             for cv in &snapshot.custom_values {
                 if !store.by_original.contains_key(&cv.value) {
                     let (id, is_new) = store.insert(&cv.value, &snapshot.hash);
@@ -2138,7 +2167,7 @@ impl BuiltinPrivacyPlugin {
     fn refresh_snapshot_if_changed(&self) {
         let now = self.read_mtimes();
         {
-            let mt = self.state.mtimes.lock().unwrap();
+            let mt = self.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if now == *mt {
                 return;
             }
@@ -2147,7 +2176,7 @@ impl BuiltinPrivacyPlugin {
             Ok(()) => log::info!("[PRIVACY] 配置文件变更，已热重载"),
             Err(e) => log::warn!("[PRIVACY] 配置重载失败，沿用旧配置: {e}"),
         }
-        *self.state.mtimes.lock().unwrap() = now;
+        *self.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = now;
     }
 
     fn current_snapshot(&self) -> Arc<EngineSnapshot> {
@@ -2156,7 +2185,7 @@ impl BuiltinPrivacyPlugin {
     }
 
     fn mapping_is_empty(&self) -> bool {
-        self.state.store.lock().unwrap().by_id.is_empty()
+        self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).by_id.is_empty()
     }
 
     /// 十六进制转储防护的检测回调：在重建的字节流上复用特殊值与正则规则
@@ -2184,7 +2213,7 @@ impl BuiltinPrivacyPlugin {
         let mut result: HashMap<String, String> = HashMap::with_capacity(texts.len());
         // 阶段 1a：缓存命中直接取，未命中的进入待检测列表
         let pending: Vec<String> = {
-            let cache = self.state.cache.lock().unwrap();
+            let cache = self.state.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             texts
                 .iter()
                 .filter_map(
@@ -2205,7 +2234,7 @@ impl BuiltinPrivacyPlugin {
             .replace_runs
             .fetch_add(pending.len() as u64, Ordering::Relaxed);
         // 阶段 1b：转储防护 → span 收集 → 统一替换，写缓存
-        let mut cache = self.state.cache.lock().unwrap();
+        let mut cache = self.state.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for text in &pending {
             let masked;
             let work: &str = if snapshot.enable_hexdump_guard {
@@ -2277,7 +2306,7 @@ impl BuiltinPrivacyPlugin {
         // 新增映射 (id, original, label)，锁外落库
         let mut pending_db: Vec<(String, String, String)> = Vec::new();
         {
-            let mut store = self.state.store.lock().unwrap();
+            let mut store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             for span in spans {
                 let original = &text[span.start..span.end];
                 let (id, is_new) = store.insert(original, hash);
@@ -2345,7 +2374,7 @@ impl BuiltinPrivacyPlugin {
         }
         // 从磁盘整载重建快照（同时刷新 mtime 记录，避免下次请求重复热重载）
         self.load_and_apply()?;
-        *self.state.mtimes.lock().unwrap() = self.read_mtimes();
+        *self.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = self.read_mtimes();
         Ok(())
     }
 }
@@ -2648,7 +2677,7 @@ impl ProxyPlugin for BuiltinPrivacyPlugin {
         if self.mapping_is_empty() {
             return Ok(false);
         }
-        let store = self.state.store.lock().unwrap();
+        let store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut changed = false;
         walk_json(
             body,
@@ -2706,7 +2735,7 @@ impl ProxyPlugin for BuiltinPrivacyPlugin {
 
         let block_key = sse_block_key(&value);
         let flush = is_sse_flush_event(event_name);
-        let store = self.state.store.lock().unwrap();
+        let store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut lookup = |id: &str| store.by_id.get(id).map(|record| record.original.clone());
 
         let mut changed = false;
@@ -3096,7 +3125,7 @@ mod tests {
             ..HashConfig::default()
         };
         {
-            let mut store = plugin.state.store.lock().unwrap();
+            let mut store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let (same, is_new) = store.insert("a@b.com", &hash_sha256);
             assert_eq!(same, old_id, "已有映射 id 不随散列配置改变");
             assert!(!is_new);
@@ -3235,7 +3264,7 @@ mod tests {
         );
 
         // 还原回原文
-        let store = plugin.state.store.lock().unwrap();
+        let store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(store.by_id.get(markers[0].2).unwrap().original, "a@b.com");
         let restored = restore_markers(&replaced, &mut |i| {
             store.by_id.get(i).map(|r| r.original.clone())
@@ -3490,7 +3519,7 @@ mod tests {
         assert_eq!(rows[0].2, "PASSWORD");
 
         // 响应侧还原：无需请求先行（用预注册的真实 id 构造标记）
-        let id = plugin.state.store.lock().unwrap().by_original["my-secret-password-01"].clone();
+        let id = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).by_original["my-secret-password-01"].clone();
         let mut body = json!({"text": format!("key is ⟦PII|{id}|PASSWORD|主密码⟧")});
         assert!(plugin
             .transform_response(&post_response_ctx(), &mut body)
@@ -3682,7 +3711,7 @@ mod tests {
         assert_eq!(delta_text(&data), "a@b.com thanks");
 
         // 三个 delta 的输出按序拼接 == 直接对完整标记做还原的结果（无残留、无丢失）
-        let store = plugin.state.store.lock().unwrap();
+        let store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let direct = restore_markers(&marker, &mut |id| {
             store.by_id.get(id).map(|record| record.original.clone())
         })
@@ -4186,7 +4215,7 @@ mod tests {
             system.contains("⟦PII|<id>|<label>|<描述>⟧"),
             "示例标记应原样保留"
         );
-        let store = plugin.state.store.lock().unwrap();
+        let store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(
             store
                 .by_original
@@ -4377,6 +4406,43 @@ mod tests {
         assert_eq!(replaced, short);
     }
 
+    #[test]
+    fn test_hexguard_multibyte_offsets_no_panic_and_masks() {
+        // 回归（线上 panic："range start index 966 out of range for slice of
+        // length 640"）：Latin-1 解码串中 ≥0x80 的字节膨胀为 2 字节 UTF-8，
+        // 检测 span 的 UTF-8 字节偏移若未映射回字节流下标，直接用作 owner/
+        // 原文下标即越界 panic，且毒化互斥锁令插件整场失效（显示启用如同未启用）。
+        let (plugin, _dir) = plugin_with_rules(test_rules());
+        let to_hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        // 高位字节（中文）在前、ASCII 秘密在后 → 匹配偏移恰落在膨胀区之后
+        let payload = "中文说明前缀，然后 mail a@b.com 结束";
+        let text = format!("read bytes: {} end", to_hex(payload));
+        let (replaced, changed) = plugin.replace_text(&text);
+        assert!(changed, "含高位字节的连续 hex 也应检测并抹除");
+        assert!(
+            !replaced.contains(&to_hex("a@b.com")),
+            "a@b.com 的 hex 应被抹除: {replaced}"
+        );
+        assert!(!replaced.contains(MARKER_PREFIX), "hex 抹除不走标记映射");
+    }
+
+    #[test]
+    fn test_hexdump_guard_multibyte_offsets_no_panic_and_masks() {
+        // 同类回归的 xxd 列视图形态：转储内容为 UTF-8 中文（pairs 含高位字节），
+        // ASCII 列/email 检测命中落在膨胀偏移之后
+        let (plugin, _dir) = plugin_with_rules(test_rules());
+        let payload = "中文备注 mail a@b.com end";
+        let mut hex_part = String::new();
+        for b in payload.bytes() {
+            let _ = write!(hex_part, "{b:02x} ");
+        }
+        let hex_part = hex_part.trim_end().to_string();
+        let text = format!("00000000: {}  {}
+", hex_part, payload);
+        let (replaced, changed) = plugin.replace_text(&text);
+        assert!(changed, "含高位字节的转储块应被检测");
+        assert!(!replaced.contains("a@b.com"), "ASCII 列邮箱应抹除: {replaced}");
+    }
     #[test]
     fn test_continuous_hex_no_false_positive_on_hashes_and_uuid() {
         let (plugin, _dir) = plugin_with_rules(test_rules());

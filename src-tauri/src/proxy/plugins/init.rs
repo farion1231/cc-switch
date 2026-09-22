@@ -117,6 +117,7 @@ mod tests {
     use std::fs;
 
     use serde_json::json;
+    use serial_test::serial;
 
     use super::super::types::{PluginProviderInfo, PluginRequestContext, PluginStage};
     use super::*;
@@ -280,12 +281,43 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_pipeline_noop_with_empty_plugin_dir() {
         // 目录无用户插件时 PreRequest 管线仅含内置隐私替换插件：
         // 无 PII 的 body 不产生替换（内容不变），但注入协议说明（changed=true）；
         // 面板禁用 privacy 后管线回归零改动。外部插件改写 body 的路径由
         // external.rs 的 mock runner 测试覆盖；forwarder 侧的 PreSend 管线调用
         // 测试见 forwarder.rs 测试模块
+        //
+        // 隔离：内置隐私插件读 <配置目录>/privacy/rules.json，而 s3/webdav 等
+        // 测试会中途改写 CC_SWITCH_TEST_HOME（并行竞争）。本测试自备隔离 home
+        // 与规则文件并以 #[serial] 串行执行，保证确定性。
+        let test_home = std::env::temp_dir().join(format!(
+            "cc-switch-init-privacy-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&test_home);
+        let privacy_dir = test_home.join(".cc-switch").join("privacy");
+        std::fs::create_dir_all(&privacy_dir).expect("create isolated privacy dir");
+        std::fs::write(
+            privacy_dir.join("rules.json"),
+            json!({
+                "enabled": true,
+                "rules": [{
+                    "kind": "regex",
+                    "name": "email",
+                    "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+                    "label": "EMAIL",
+                    "desc": "邮箱",
+                    "priority": 20,
+                    "enabled": true
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write isolated rules");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Database::memory().unwrap());
         let registry = build_registry(db, tmp.path());
