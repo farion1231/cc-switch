@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use super::builtin::{BuiltinCacheInjectorPlugin, BuiltinThinkingOptimizerPlugin};
 use super::external::load_user_plugins;
+use super::privacy::BuiltinPrivacyPlugin;
 use super::registry::PluginRegistry;
 use super::types::{PluginInfo, PluginsConfig};
 use crate::database::Database;
@@ -82,6 +83,9 @@ pub fn init_registry(db: Arc<Database>) -> Arc<PluginRegistry> {
 fn build_registry(db: Arc<Database>, dir: &Path) -> Arc<PluginRegistry> {
     let config = load_plugins_config(&db);
     let registry = PluginRegistry::new();
+    // 隐私替换（优先级 100）：PreRequest 替换 / PostResponse + SseChunk 还原，
+    // 注册在其它内置插件之前（同优先级按注册顺序稳定排序）
+    registry.register(Arc::new(BuiltinPrivacyPlugin::new(db.clone())));
     registry.register(Arc::new(BuiltinThinkingOptimizerPlugin::new(db.clone())));
     registry.register(Arc::new(BuiltinCacheInjectorPlugin::new(db.clone())));
     load_user_plugins_into(&registry, dir);
@@ -113,6 +117,7 @@ mod tests {
     use std::fs;
 
     use serde_json::json;
+    use serial_test::serial;
 
     use super::super::types::{PluginProviderInfo, PluginRequestContext, PluginStage};
     use super::*;
@@ -276,15 +281,71 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_pipeline_noop_with_empty_plugin_dir() {
-        // 目录无用户插件时 PreRequest 管线零改动（核心注册表只含内置 PreSend
-        // 插件与外部用户插件，无 PreRequest 内置逻辑）；
-        // 外部插件改写 body 的路径由 external.rs 的 mock runner 测试覆盖；
-        // forwarder 侧的 PreSend 管线调用测试见 forwarder.rs 测试模块
+        // 目录无用户插件时 PreRequest 管线仅含内置隐私替换插件：
+        // 无 PII 的 body 不产生替换（内容不变），但注入协议说明（changed=true）；
+        // 面板禁用 privacy 后管线回归零改动。外部插件改写 body 的路径由
+        // external.rs 的 mock runner 测试覆盖；forwarder 侧的 PreSend 管线调用
+        // 测试见 forwarder.rs 测试模块
+        //
+        // 隔离：内置隐私插件读 <配置目录>/privacy/rules.json，而 s3/webdav 等
+        // 测试会中途改写 CC_SWITCH_TEST_HOME（并行竞争）。本测试自备隔离 home
+        // 与规则文件并以 #[serial] 串行执行，保证确定性。
+        let test_home = std::env::temp_dir().join(format!(
+            "cc-switch-init-privacy-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&test_home);
+        let privacy_dir = test_home.join(".cc-switch").join("privacy");
+        std::fs::create_dir_all(&privacy_dir).expect("create isolated privacy dir");
+        std::fs::write(
+            privacy_dir.join("rules.json"),
+            json!({
+                "enabled": true,
+                "rules": [{
+                    "kind": "regex",
+                    "name": "email",
+                    "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+                    "label": "EMAIL",
+                    "desc": "邮箱",
+                    "priority": 20,
+                    "enabled": true
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write isolated rules");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Database::memory().unwrap());
         let registry = build_registry(db, tmp.path());
 
+        let pre_request_ids: Vec<String> = registry
+            .plugins_for_stage(PluginStage::PreRequest)
+            .iter()
+            .map(|p| p.id().to_string())
+            .collect();
+        assert_eq!(pre_request_ids, vec!["builtin:privacy-replace".to_string()]);
+
+        // 无 PII：仅注入 system 说明
+        let mut body = json!({"model": "claude-x"});
+        let changed = super::super::registry::run_request_pipeline(
+            &registry,
+            PluginStage::PreRequest,
+            &pre_request_ctx(),
+            &mut body,
+            |p, c, b| p.transform_request(c, b),
+        );
+        assert!(changed, "应注入隐私标记协议说明");
+        assert!(body["system"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("隐私标记协议"));
+
+        // 禁用 privacy：管线零改动
+        registry.set_override("builtin:privacy-replace", Some(false), None);
         let mut body = json!({"model": "claude-x"});
         let changed = super::super::registry::run_request_pipeline(
             &registry,

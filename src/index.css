@@ -128,6 +128,33 @@
   -ms-overflow-style: none;
 }
 
+/* 显式恢复某个滚动容器的滚动条（全局默认隐藏，见上方 * 规则）。
+   用于滚动必须"可发现"的场景，如配置对话框内多列表格的横向滚动：
+   需要与 overflow-auto/-x-auto 同用在同一元素上 */
+.scrollbar-visible {
+  scrollbar-width: thin;
+}
+
+.scrollbar-visible::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: hsl(var(--muted-foreground) / 0.35);
+}
+
+.scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.6);
+}
+
+.scrollbar-visible::-webkit-scrollbar-track,
+.scrollbar-visible::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html {
   @apply font-sans antialiased;
   line-height: 1.5;

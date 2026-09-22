@@ -353,6 +353,21 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 20. 隐私替换插件映射表（内置隐私插件自有存储，不占插件框架协议）：
+        //     id ↔ 原文明文映射（安全边界：明文存储原文，数据库文件需用户妥善保护）；
+        //     纯增量建表（无数据回填），`CREATE TABLE IF NOT EXISTS` 每次启动执行，
+        //     老库无需单独的 SCHEMA_VERSION 迁移步骤
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS privacy_mapping (
+                id TEXT PRIMARY KEY,
+                original TEXT NOT NULL,
+                label TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
         if conn
