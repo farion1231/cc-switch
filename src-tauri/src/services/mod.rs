@@ -2,6 +2,7 @@ pub mod balance;
 pub mod codex_oauth_models;
 pub mod coding_plan;
 pub mod config;
+pub(crate) mod dsh_state;
 pub mod env_checker;
 pub mod env_manager;
 pub mod mcp;

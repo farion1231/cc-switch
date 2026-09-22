@@ -37,6 +37,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+  "deepseek-harness": "deepseek",
   mcode: "minimax",
 };
 
@@ -50,6 +51,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  "deepseek-harness": "DeepSeek Harness",
   mcode: "MiniMax Code",
 };
 

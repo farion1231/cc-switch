@@ -157,9 +157,9 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
-        AppType::Pi => {
+        AppType::Pi | AppType::DeepSeekHarness => {
             return Err(AppError::InvalidInput(
-                "Pi providers must be added from the Pi provider page".to_string(),
+                "These providers must be added from their provider page".to_string(),
             ));
         }
     };

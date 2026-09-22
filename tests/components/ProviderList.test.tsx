@@ -197,6 +197,38 @@ describe("ProviderList Component", () => {
     expect(handleCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("imports DeepSeek Harness providers through the dedicated native importer", async () => {
+    let importCalls = 0;
+    server.use(
+      http.post(
+        `${TAURI_ENDPOINT}/import_deepseek_harness_providers_from_live`,
+        () => {
+          importCalls += 1;
+          return HttpResponse.json(4);
+        },
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="deepseek-harness"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.importCurrent" }),
+    );
+    await waitFor(() => expect(importCalls).toBe(1));
+  });
+
   it("should render in order returned by useDragSort and pass through action callbacks", () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const providerB = createProvider({ id: "b", name: "B" });

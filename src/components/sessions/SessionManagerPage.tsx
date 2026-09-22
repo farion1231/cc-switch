@@ -92,6 +92,7 @@ type ProviderFilter =
   | "gemini"
   | "hermes"
   | "pi"
+  | "deepseek-harness"
   | "mcode";
 
 type SessionListViewMode = "flat" | "grouped";
@@ -1188,6 +1189,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               <div className="flex items-center gap-2">
                                 <ProviderIcon icon="pi" name="pi" size={14} />
                                 <span>Pi</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="deepseek-harness">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="deepseek"
+                                  name="deepseek-harness"
+                                  size={14}
+                                />
+                                <span>DeepSeek Harness</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

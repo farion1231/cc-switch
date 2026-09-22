@@ -101,6 +101,8 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { dshApi } from "@/lib/api/dsh";
+import { invalidateDshProviderCaches, dshKeys } from "@/lib/query/dsh";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -110,6 +112,7 @@ import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
+  getAppLabel,
   isProxyAppId,
 } from "@/config/appConfig";
 
@@ -226,7 +229,17 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
-    if (currentView === "mcp" && sharedFeatureApp === "pi") {
+    if (
+      currentView === "mcp" &&
+      (sharedFeatureApp === "pi" || sharedFeatureApp === "deepseek-harness")
+    ) {
+      setCurrentView("providers");
+      return;
+    }
+    if (
+      (currentView === "skills" || currentView === "skillsDiscovery") &&
+      sharedFeatureApp === "deepseek-harness"
+    ) {
       setCurrentView("providers");
       return;
     }
@@ -240,6 +253,7 @@ function App() {
       sharedFeatureApp !== "gemini" &&
       sharedFeatureApp !== "hermes" &&
       sharedFeatureApp !== "pi" &&
+      sharedFeatureApp !== "deepseek-harness" &&
       sharedFeatureApp !== "mcode"
     ) {
       setCurrentView("providers");
@@ -324,7 +338,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "deepseek-harness";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -334,8 +349,10 @@ function App() {
     sharedFeatureApp === "gemini" ||
     sharedFeatureApp === "hermes" ||
     sharedFeatureApp === "pi" ||
+    sharedFeatureApp === "deepseek-harness" ||
     sharedFeatureApp === "mcode";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+  const hasMcpSupport =
+    sharedFeatureApp !== "pi" && sharedFeatureApp !== "deepseek-harness";
 
   const {
     addProvider,
@@ -376,6 +393,41 @@ function App() {
             translatePiProviderMutationError(detail, t) || detail || undefined,
           closeButton: true,
         },
+      );
+    }
+  };
+
+  const handleSetDshDefaultModel = async (
+    provider: Provider,
+    modelId?: string,
+  ) => {
+    const config = provider.settingsConfig as {
+      models?: Array<{ id?: string } | string>;
+    };
+    const firstModel = config.models?.[0];
+    const resolved =
+      modelId ?? (typeof firstModel === "string" ? firstModel : firstModel?.id);
+    if (!resolved) {
+      toast.error(
+        t("dsh.provider.noModels", {
+          defaultValue: "该供应商没有配置模型",
+        }),
+      );
+      return;
+    }
+    try {
+      await dshApi.setCurrentModel(provider.id, resolved);
+      await invalidateDshProviderCaches(queryClient);
+      toast.success(
+        t("dsh.provider.defaultSet", { defaultValue: "已设为 DSH 默认模型" }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("dsh.provider.defaultFailed", {
+          defaultValue: "设置 DSH 默认模型失败",
+        }),
+        { description: extractErrorMessage(error), closeButton: true },
       );
     }
   };
@@ -427,6 +479,9 @@ function App() {
             }
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
+            }
+            if (event.appType === "deepseek-harness") {
+              await invalidateDshProviderCaches(queryClient);
             }
           },
         );
@@ -752,6 +807,9 @@ function App() {
         if (activeApp === "pi") {
           void invalidatePiProviderCaches(queryClient).catch(() => undefined);
         }
+        if (activeApp === "deepseek-harness") {
+          void invalidateDshProviderCaches(queryClient).catch(() => undefined);
+        }
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
@@ -760,6 +818,9 @@ function App() {
       }
       if (activeApp === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (activeApp === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
       }
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
@@ -816,6 +877,22 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // The native official route is a singleton keyed by id; a copy inheriting
+    // its dsh_deepseek provider_type would be routed to the same id-blind
+    // llm-deepseek adapter, so deleting or enabling the copy would clobber
+    // the real official route.
+    if (
+      activeApp === "deepseek-harness" &&
+      (provider.id === "deepseek-official" ||
+        provider.meta?.providerType === "dsh_deepseek")
+    ) {
+      toast.error(
+        t("deepseekHarness.officialNotCopyable", {
+          defaultValue: "官方 DeepSeek 路由不可复制",
+        }),
+      );
+      return;
+    }
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
@@ -837,7 +914,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "deepseek-harness"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -857,12 +935,19 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
-                    })
-                  ).enabledProviderIds;
+                : activeApp === "pi"
+                  ? (
+                      await queryClient.ensureQueryData({
+                        queryKey: ["pi", "currentState"],
+                        queryFn: () => piApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: dshKeys.currentState,
+                        queryFn: () => dshApi.getCurrentState(),
+                      })
+                    ).providerIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1126,6 +1211,17 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
+                    <div
+                      data-testid="active-provider-app-title"
+                      className="flex items-center gap-2 border-b border-border px-1 pb-3 pt-4"
+                    >
+                      <h2 className="text-base font-semibold">
+                        {getAppLabel(activeApp)}
+                      </h2>
+                      <span className="text-sm text-muted-foreground">
+                        {t("provider.title", { defaultValue: "供应商" })}
+                      </span>
+                    </div>
                     <ProviderList
                       providers={providers}
                       currentProviderId={currentProviderId}
@@ -1152,6 +1248,7 @@ function App() {
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
                         activeApp === "pi" ||
+                        activeApp === "deepseek-harness" ||
                         activeApp === "mcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
@@ -1177,7 +1274,9 @@ function App() {
                           ? setAsDefaultModel
                           : activeApp === "hermes"
                             ? switchProvider
-                            : undefined
+                            : activeApp === "deepseek-harness"
+                              ? handleSetDshDefaultModel
+                              : undefined
                       }
                     />
                   </motion.div>
