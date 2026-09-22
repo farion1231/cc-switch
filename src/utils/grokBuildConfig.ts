@@ -45,26 +45,29 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 const asString = (value: unknown, fallback = "") =>
   typeof value === "string" ? value : fallback;
 
-const GROK_REASONING_LEVELS = [
-  "none",
-  "minimal",
+// Levels Grok 4.5/4.6 actually send. grok-4.6 adds xhigh; grok-4.5 uses the
+// first three. Other Codex tiers (none, minimal, max, ultra) are not in these
+// menus, so writing them makes /effort offer a value the request cannot use.
+export const GROK_REASONING_LEVELS = [
   "low",
   "medium",
   "high",
   "xhigh",
-  "max",
-  "ultra",
 ] as const;
 
-const GROK_REASONING_LABELS: Record<string, string> = {
-  none: "None",
-  minimal: "Minimal Effort",
+const GROK_REASONING_LABELS: Record<
+  (typeof GROK_REASONING_LEVELS)[number],
+  string
+> = {
   low: "Low Effort",
   medium: "Medium Effort",
   high: "High Effort",
   xhigh: "Extra High Effort",
-  max: "Max Effort",
-  ultra: "Ultra Effort",
+};
+
+const grokReasoningLevels = (levels: readonly string[] | undefined) => {
+  const declared = new Set(levels ?? []);
+  return GROK_REASONING_LEVELS.filter((level) => declared.has(level));
 };
 
 const readContextWindow = (value: unknown, fallback: number) =>
@@ -82,13 +85,7 @@ const readReasoning = (
     const value = asString(record?.value).trim();
     return value ? [value] : [];
   });
-  const reasoningLevels = GROK_REASONING_LEVELS.filter((level) =>
-    declared.includes(level),
-  );
-  const extras = declared.filter(
-    (level) => !(GROK_REASONING_LEVELS as readonly string[]).includes(level),
-  );
-  const levels = [...reasoningLevels, ...extras];
+  const levels = grokReasoningLevels(declared);
   if (levels.length === 0) return {};
   const defaultReasoningLevel = raw
     .map((entry) => asRecord(entry))
@@ -96,7 +93,7 @@ const readReasoning = (
   const normalizedDefault = asString(defaultReasoningLevel).trim();
   return {
     reasoningLevels: levels,
-    ...(normalizedDefault && levels.includes(normalizedDefault)
+    ...(normalizedDefault && levels.some((level) => level === normalizedDefault)
       ? { defaultReasoningLevel: normalizedDefault }
       : {}),
   };
@@ -106,10 +103,11 @@ const reasoningEfforts = (
   levels: string[] | undefined,
   defaultLevel: string | undefined,
 ) => {
-  if (!levels || levels.length === 0) return undefined;
-  return levels.map((value) => ({
+  const allowed = grokReasoningLevels(levels);
+  if (allowed.length === 0) return undefined;
+  return allowed.map((value) => ({
     value,
-    label: GROK_REASONING_LABELS[value] ?? value,
+    label: GROK_REASONING_LABELS[value],
     ...(defaultLevel === value ? { default: true } : {}),
   }));
 };
@@ -210,9 +208,14 @@ export function updateGrokBuildConfig(
     default: profile,
   };
   if (values.reasoningLevels) {
-    if (values.defaultReasoningLevel?.trim()) {
-      modelsTable.default_reasoning_effort =
-        values.defaultReasoningLevel.trim();
+    const defaultLevel = values.defaultReasoningLevel?.trim();
+    const allowed = grokReasoningLevels(values.reasoningLevels);
+    const allowedDefault =
+      defaultLevel && allowed.some((level) => level === defaultLevel)
+        ? defaultLevel
+        : undefined;
+    if (allowedDefault) {
+      modelsTable.default_reasoning_effort = allowedDefault;
     } else {
       delete modelsTable.default_reasoning_effort;
     }

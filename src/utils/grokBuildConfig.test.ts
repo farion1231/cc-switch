@@ -253,4 +253,41 @@ description = "keep me"
       "https://gateway.example/v1",
     );
   });
+
+  it("writes only the four effort levels Grok sends", () => {
+    const config = updateGrokBuildConfig(undefined, {
+      model: "grok-4.6",
+      baseUrl: "https://gateway.example/v1",
+      name: "Gateway",
+      apiKey: "secret",
+      apiBackend: "responses",
+      contextWindow: 500000,
+      reasoningLevels: ["ultra", "xhigh", "none", "low", "max"],
+      defaultReasoningLevel: "max",
+    });
+    const parsed = parseToml(config) as any;
+    expect(parsed.model["grok-4.6"].reasoning_efforts).toEqual([
+      { value: "low", label: "Low Effort" },
+      { value: "xhigh", label: "Extra High Effort" },
+    ]);
+    expect(parsed.models.default_reasoning_effort).toBeUndefined();
+
+    const readBack = parseGrokBuildConfig(
+      `[models]
+default = "grok-4.6"
+
+[[model."grok-4.6".reasoning_efforts]]
+value = "minimal"
+
+[[model."grok-4.6".reasoning_efforts]]
+value = "high"
+default = true
+
+[[model."grok-4.6".reasoning_efforts]]
+value = "ultra"
+`,
+    );
+    expect(readBack.reasoningLevels).toEqual(["high"]);
+    expect(readBack.defaultReasoningLevel).toBe("high");
+  });
 });

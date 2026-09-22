@@ -33,6 +33,7 @@ import {
   ModelDropdown,
   ReasoningLevelsEditor,
 } from "./shared";
+import { GROK_REASONING_LEVELS } from "@/utils/grokBuildConfig";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
   fetchModelsForConfig,
@@ -1156,6 +1157,9 @@ export function CodexFormFields({
                         <ReasoningLevelsEditor
                           levels={row.reasoningLevels}
                           defaultLevel={row.defaultReasoningLevel}
+                          options={
+                            isGrokBuild ? GROK_REASONING_LEVELS : undefined
+                          }
                           onLevelsChange={(levels) =>
                             handleUpdateCatalogRow(index, {
                               reasoningLevels: levels,

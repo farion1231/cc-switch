@@ -23,8 +23,8 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-// Reasoning effort levels the Codex catalog and Grok `/effort` menu share,
-// in ascending depth order. Unknown values are dropped by both clients.
+// Codex catalog levels, in ascending depth order. Grok passes its own menu
+// through `options`; unknown values are dropped by the client that owns them.
 export const REASONING_EFFORT_LEVELS = [
   "none",
   "minimal",
@@ -43,19 +43,21 @@ const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
 export function ReasoningLevelsEditor({
   levels,
   defaultLevel,
+  options = REASONING_EFFORT_LEVELS,
   onLevelsChange,
   onDefaultLevelChange,
 }: {
   levels?: string[];
   defaultLevel?: string;
+  /** Selectable ids, in menu order. Defaults to the Codex catalog. */
+  options?: readonly string[];
   onLevelsChange: (levels: string[] | undefined) => void;
   onDefaultLevelChange: (level: string | undefined) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const selected = (levels ?? []).filter((level) =>
-    (REASONING_EFFORT_LEVELS as readonly string[]).includes(level),
-  );
+  const menu = options;
+  const selected = (levels ?? []).filter((level) => menu.includes(level));
 
   const toggleLevel = (level: string) => {
     const picked = selected.includes(level)
@@ -63,9 +65,7 @@ export function ReasoningLevelsEditor({
       : [...selected, level];
     // Store in canonical ascending-depth order (not click order): the Codex
     // picker and the generated catalog both follow array order.
-    const next = (REASONING_EFFORT_LEVELS as readonly string[]).filter((item) =>
-      picked.includes(item),
-    );
+    const next = menu.filter((item) => picked.includes(item));
     onLevelsChange(next.length > 0 ? next : undefined);
     if (defaultLevel && !next.includes(defaultLevel)) {
       onDefaultLevelChange(undefined);
@@ -120,7 +120,7 @@ export function ReasoningLevelsEditor({
               })}
             </CommandEmpty>
             <CommandGroup>
-              {REASONING_EFFORT_LEVELS.map((level) => (
+              {menu.map((level) => (
                 <CommandItem
                   key={level}
                   value={level}

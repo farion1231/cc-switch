@@ -51,6 +51,7 @@ import {
   parseGrokBuildConfig,
   updateGrokBuildConfig,
   validateGrokBuildConfig,
+  GROK_REASONING_LEVELS,
   type GrokBuildExtraModel,
 } from "@/utils/grokBuildConfig";
 import { resolveProviderIcon } from "@/utils/providerIcon";
@@ -621,6 +622,7 @@ export function GrokBuildProviderForm({
               <ReasoningLevelsEditor
                 levels={reasoningLevels}
                 defaultLevel={defaultReasoningLevel}
+                options={GROK_REASONING_LEVELS}
                 onLevelsChange={(levels) => {
                   const next = levels ?? [];
                   const nextDefault =
