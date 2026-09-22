@@ -70,7 +70,9 @@ impl WindowsSystemProxyConfig {
             }
         };
 
-        config.bypass.extend(ProxyBypassMatcher::from_no_proxy_env());
+        config
+            .bypass
+            .extend(ProxyBypassMatcher::from_no_proxy_env());
 
         if !config.has_proxy() {
             return Ok(None);
@@ -207,7 +209,9 @@ impl ProxyBypassMatcher {
             self.rules.push(ProxyBypassRule::Exact(lower));
             return;
         }
-        self.rules.push(ProxyBypassRule::Domain(lower.trim_start_matches('.').to_string()));
+        self.rules.push(ProxyBypassRule::Domain(
+            lower.trim_start_matches('.').to_string(),
+        ));
     }
 }
 
@@ -222,7 +226,11 @@ enum ProxyBypassRule {
 
 impl ProxyBypassRule {
     fn matches(&self, host: &str) -> bool {
-        let lower = host.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase();
+        let lower = host
+            .trim()
+            .trim_matches('[')
+            .trim_matches(']')
+            .to_ascii_lowercase();
         match self {
             Self::Local => is_local_intranet_host(&lower),
             Self::Exact(expected) => lower == *expected,
@@ -259,7 +267,8 @@ impl ProxyKind {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn load_manual_system_proxy_config() -> Result<Option<WindowsSystemProxyConfig>, String> {
+pub(crate) fn load_manual_system_proxy_config() -> Result<Option<WindowsSystemProxyConfig>, String>
+{
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
 
@@ -275,13 +284,16 @@ pub(crate) fn load_manual_system_proxy_config() -> Result<Option<WindowsSystemPr
     let proxy_server = key
         .get_value::<String, _>("ProxyServer")
         .map_err(|error| format!("failed to read ProxyServer from registry: {error}"))?;
-    let proxy_override = key.get_value::<String, _>("ProxyOverride").unwrap_or_default();
+    let proxy_override = key
+        .get_value::<String, _>("ProxyOverride")
+        .unwrap_or_default();
 
     WindowsSystemProxyConfig::parse(&proxy_server, &proxy_override)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn load_manual_system_proxy_config() -> Result<Option<WindowsSystemProxyConfig>, String> {
+pub(crate) fn load_manual_system_proxy_config() -> Result<Option<WindowsSystemProxyConfig>, String>
+{
     Ok(None)
 }
 
@@ -313,7 +325,9 @@ fn normalize_proxy_url(raw: &str, kind: ProxyKind) -> Result<String, String> {
 }
 
 fn split_bypass_entries(raw: &str) -> impl Iterator<Item = &str> {
-    raw.split([';', ',']).map(str::trim).filter(|entry| !entry.is_empty())
+    raw.split([';', ','])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
 }
 
 fn parse_cidr_rule(raw: &str) -> Option<ProxyBypassRule> {
@@ -335,7 +349,9 @@ fn is_local_intranet_host(host: &str) -> bool {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return match ip {
             IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
-            IpAddr::V6(ip) => ip.is_loopback() || ip.is_unicast_link_local() || is_unique_local_ipv6(ip),
+            IpAddr::V6(ip) => {
+                ip.is_loopback() || ip.is_unicast_link_local() || is_unique_local_ipv6(ip)
+            }
         };
     }
 
@@ -347,7 +363,10 @@ fn is_unique_local_ipv6(ip: Ipv6Addr) -> bool {
 }
 
 fn domain_matches(host: &str, suffix: &str) -> bool {
-    host == suffix || host.strip_suffix(suffix).is_some_and(|prefix| prefix.ends_with('.'))
+    host == suffix
+        || host
+            .strip_suffix(suffix)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 fn wildcard_matches(host: &str, pattern: &str) -> bool {
@@ -454,7 +473,10 @@ mod tests {
         .expect("config");
 
         assert_eq!(config.http_proxy(), Some("http://proxy.local:8080/"));
-        assert_eq!(config.https_proxy(), Some("https://secure.proxy.local:8443/"));
+        assert_eq!(
+            config.https_proxy(),
+            Some("https://secure.proxy.local:8443/")
+        );
         assert!(config.bypass().matches_host("service.corp.local"));
         assert!(config.bypass().matches_host("192.168.137.163"));
         assert!(config.bypasses_local());

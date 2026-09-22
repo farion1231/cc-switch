@@ -260,15 +260,13 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
             {
                 match windows_proxy::load_manual_system_proxy_config() {
                     Ok(Some(config)) => {
+                        let http_proxy = config.http_proxy().map(str::to_string);
+                        let https_proxy = config.https_proxy().map(str::to_string);
                         let masked_http = config.http_proxy().map(mask_url);
                         let masked_https = config.https_proxy().map(mask_url);
 
-                        if masked_http
-                            .as_deref()
-                            .is_some_and(proxy_points_to_loopback)
-                            || masked_https
-                                .as_deref()
-                                .is_some_and(proxy_points_to_loopback)
+                        if http_proxy.as_deref().is_some_and(proxy_points_to_loopback)
+                            || https_proxy.as_deref().is_some_and(proxy_points_to_loopback)
                         {
                             builder = builder.no_proxy();
                             log::warn!(
@@ -282,13 +280,19 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
                             builder = builder.no_proxy();
 
                             if let Some(proxy_url) = config.http_proxy() {
-                                builder =
-                                    builder.proxy(custom_windows_proxy("http", proxy_url, bypass.clone()));
+                                builder = builder.proxy(custom_windows_proxy(
+                                    "http",
+                                    proxy_url,
+                                    bypass.clone(),
+                                ));
                                 applied = true;
                             }
                             if let Some(proxy_url) = config.https_proxy() {
-                                builder =
-                                    builder.proxy(custom_windows_proxy("https", proxy_url, bypass.clone()));
+                                builder = builder.proxy(custom_windows_proxy(
+                                    "https",
+                                    proxy_url,
+                                    bypass.clone(),
+                                ));
                                 applied = true;
                             }
 
@@ -308,13 +312,17 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
                         }
                     }
                     Ok(None) => {
-                        log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+                        log::debug!(
+                            "[GlobalProxy] Following system proxy (no explicit proxy configured)"
+                        );
                     }
                     Err(error) => {
                         log::warn!(
                             "[GlobalProxy] Failed to load Windows manual proxy bypass rules, falling back to reqwest system proxy detection: {error}"
                         );
-                        log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
+                        log::debug!(
+                            "[GlobalProxy] Following system proxy (no explicit proxy configured)"
+                        );
                     }
                 }
             }
