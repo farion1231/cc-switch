@@ -933,6 +933,20 @@ impl ProxyService {
         self.switch_locks.is_locked_for_app(app_type).await
     }
 
+    /// Save editable settings without overwriting the state owned by start/stop.
+    pub async fn update_global_config(&self, mut config: GlobalProxyConfig) -> Result<(), String> {
+        let current = self
+            .db
+            .get_global_proxy_config()
+            .await
+            .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+        config.proxy_enabled = current.proxy_enabled;
+        self.db
+            .update_global_proxy_config(config)
+            .await
+            .map_err(|e| format!("保存全局代理配置失败: {e}"))
+    }
+
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
         // 1. 启动时自动设置 proxy_enabled = true
@@ -4085,6 +4099,55 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn startup_restores_standalone_proxy_after_takeover_failure() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let mut global = db
+            .get_global_proxy_config()
+            .await
+            .expect("read global config");
+        global.proxy_enabled = true;
+        db.update_global_proxy_config(global)
+            .await
+            .expect("enable standalone route");
+        let mut config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read app config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable takeover");
+        let state = crate::store::AppState::new(db.clone());
+
+        // The CLI settings file is absent, so restoring takeover must fail.
+        crate::restore_proxy_state_on_startup(&state).await;
+        let running = state.proxy_service.is_running().await;
+        let enabled = db
+            .get_global_proxy_config()
+            .await
+            .expect("read restored state")
+            .proxy_enabled;
+        let takeover = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read takeover state")
+            .enabled;
+        if running {
+            state.proxy_service.stop().await.expect("cleanup");
+        }
+        assert!(!takeover, "failed takeover should be cleared");
+        assert!(running, "standalone route should survive takeover cleanup");
+        assert!(
+            enabled,
+            "standalone route should remain enabled for next launch"
+        );
     }
 
     #[tokio::test]

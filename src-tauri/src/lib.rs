@@ -1976,14 +1976,6 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
         return;
     }
 
-    if apps_to_restore.is_empty() {
-        match state.proxy_service.start().await {
-            Ok(info) => log::info!("✓ 已恢复本地代理服务: {}:{}", info.address, info.port),
-            Err(error) => log::error!("✗ 恢复本地代理服务失败: {error}"),
-        }
-        return;
-    }
-
     log::info!("检测到上次代理状态需要恢复，应用列表: {apps_to_restore:?}");
 
     // 逐个恢复接管状态
@@ -2007,6 +1999,14 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
+        }
+    }
+
+    // Failed takeover cleanup can stop the listener and clear its enabled flag.
+    if restore_standalone_proxy && !state.proxy_service.is_running().await {
+        match state.proxy_service.start().await {
+            Ok(info) => log::info!("✓ 已恢复本地代理服务: {}:{}", info.address, info.port),
+            Err(error) => log::error!("✗ 恢复本地代理服务失败: {error}"),
         }
     }
 }
@@ -2458,6 +2458,70 @@ mod tests {
 
         restore_proxy_state_on_startup(&state).await;
         assert!(state.proxy_service.is_running().await);
-        state.proxy_service.stop().await.expect("final cleanup");
+        state.proxy_service.stop().await.expect("manual stop");
+        assert!(
+            !db.get_global_proxy_config()
+                .await
+                .expect("read stopped state")
+                .proxy_enabled
+        );
+        restore_proxy_state_on_startup(&state).await;
+        assert!(!state.proxy_service.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn stale_global_config_save_preserves_startup_restore_intent() {
+        // Exercise stale snapshots from both before start and before manual stop.
+        for manually_stopped in [false, true] {
+            let db = Arc::new(Database::memory().expect("initialize database"));
+            let mut config = db.get_global_proxy_config().await.expect("read config");
+            config.listen_port = 0;
+            db.update_global_proxy_config(config)
+                .await
+                .expect("set ephemeral port");
+            let state = AppState::new(db.clone());
+            let mut stale = db
+                .get_global_proxy_config()
+                .await
+                .expect("snapshot while stopped");
+            state.proxy_service.start().await.expect("start");
+            if manually_stopped {
+                stale = db
+                    .get_global_proxy_config()
+                    .await
+                    .expect("snapshot while running");
+                state.proxy_service.stop().await.expect("manual stop");
+            }
+            stale.listen_port = 0;
+            stale.enable_logging = !stale.enable_logging;
+            state
+                .proxy_service
+                .update_global_config(stale.clone())
+                .await
+                .expect("save stale settings");
+            let saved = db
+                .get_global_proxy_config()
+                .await
+                .expect("read saved config");
+            assert_eq!(saved.proxy_enabled, !manually_stopped);
+            assert_eq!(saved.listen_port, stale.listen_port);
+            assert_eq!(saved.enable_logging, stale.enable_logging);
+            if !manually_stopped {
+                state
+                    .proxy_service
+                    .stop_keep_enabled_state()
+                    .await
+                    .expect("shutdown");
+            }
+            restore_proxy_state_on_startup(&state).await;
+            let running = state.proxy_service.is_running().await;
+            if running {
+                state.proxy_service.stop().await.expect("cleanup");
+            }
+            assert_eq!(
+                running, !manually_stopped,
+                "stale settings must not change startup intent"
+            );
+        }
     }
 }
