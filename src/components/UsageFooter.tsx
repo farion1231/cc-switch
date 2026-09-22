@@ -95,12 +95,20 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
   // 错误状态（业务失败，或无缓存成功值的 reject）
   if (!usage || !usage.success) {
+    const errorText = usage?.error || t("usage.queryFailed");
+
     if (inline) {
       return (
-        <div className="inline-flex items-center gap-2 text-xs rounded-lg border border-border-default bg-card px-3 py-2 shadow-sm">
-          <div className="flex items-center gap-1.5 text-red-500 dark:text-red-400">
-            <AlertCircle size={12} />
-            <span>{t("usage.queryFailed")}</span>
+        <div
+          className="inline-flex items-center gap-2 text-xs rounded-lg border border-border-default bg-card px-3 py-2 shadow-sm"
+          title={usage?.error || undefined}
+        >
+          <div
+            className="flex items-center gap-1.5 text-red-500 dark:text-red-400 max-w-[240px] truncate"
+            title={usage?.error || undefined}
+          >
+            <AlertCircle size={12} className="flex-shrink-0" />
+            <span className="truncate">{errorText}</span>
           </div>
           <button
             onClick={() => refetch()}
@@ -119,7 +127,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
         <div className="flex items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 text-red-500 dark:text-red-400">
             <AlertCircle size={14} />
-            <span>{usage?.error || t("usage.queryFailed")}</span>
+            <span>{errorText}</span>
           </div>
 
           {/* 刷新按钮 */}
