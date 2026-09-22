@@ -7,7 +7,8 @@
 //! - 文件名用 session-id，与各 CLI 自己写的 `<session-id>.jsonl` 日志对应，
 //!   Codex 去掉内部 `codex_` 前缀，session 缺失落 `unknown-session.jsonl`。
 //! - 与 `proxy_request_logs` 表的元数据互补：那张表只存 token/cost/latency，
-//!   这里存完整 body。共用同一个 `request_id` 字段（UUIDv4）做关联。
+//!   这里存完整 body。两者的 request_id 来源不同（这里为代理内部 UUIDv4，
+//!   表里由上游 message id 派生），只能按 `(session_id, 时间窗口)` 对齐。
 //! - 写入用每文件路径一把短时锁；失败仅 warn，不影响转发。
 //! - 每个应用目录只保留最新的 `request_log_max_sessions` 个会话文件，
 //!   超出的最旧文件在写入后清理；`request_log_max_sessions = 0` 表示关闭记录。
@@ -119,17 +120,9 @@ impl RequestLogRecord {
     }
 }
 
-/// 记录原始 headers（不脱敏）：请求日志用于本地排障与 cURL 重放，
-/// 保留真实凭据才能直接复制执行。
-pub fn sanitize_request_headers(headers: &http::HeaderMap) -> Value {
-    headers_to_value(headers)
-}
-
-pub fn sanitize_response_headers(headers: &http::HeaderMap) -> Value {
-    headers_to_value(headers)
-}
-
-fn headers_to_value(headers: &http::HeaderMap) -> Value {
+/// 把 HeaderMap 转成 `[{name, value}]` 数组（原始值，不脱敏）：
+/// 请求日志用于本地排障与 cURL 重放，保留真实凭据才能直接复制执行。
+pub fn headers_to_value(headers: &http::HeaderMap) -> Value {
     Value::Array(
         headers
             .iter()
@@ -556,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_request_headers_keeps_original_values() {
+    fn headers_to_value_keeps_request_header_values() {
         let mut headers = http::HeaderMap::new();
         headers.insert("authorization", "Bearer secret".parse().unwrap());
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
@@ -571,7 +564,7 @@ mod tests {
         headers.insert("host", "api.anthropic.com".parse().unwrap());
         headers.insert("x-api-key", "sk-ant-abc123".parse().unwrap());
 
-        let entries = sanitize_request_headers(&headers);
+        let entries = headers_to_value(&headers);
         let entries = entries.as_array().unwrap();
         let values_for = |name: &str| -> Vec<&str> {
             entries
@@ -599,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_response_headers_keeps_original_values() {
+    fn headers_to_value_keeps_response_header_values() {
         let mut headers = http::HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
         headers.insert("set-cookie", "sid=secret".parse().unwrap());
@@ -607,7 +600,7 @@ mod tests {
         headers.insert("x-response-token", "secret-token".parse().unwrap());
         headers.insert("host", "api.example.com:8443".parse().unwrap());
 
-        let entries = sanitize_response_headers(&headers);
+        let entries = headers_to_value(&headers);
         let entries = entries.as_array().unwrap();
         let values_for = |name: &str| -> Vec<&str> {
             entries

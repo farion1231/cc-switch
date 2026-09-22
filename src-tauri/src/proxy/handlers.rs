@@ -447,7 +447,7 @@ async fn handle_claude_transform(
     if use_streaming {
         // 根据 api_format 选择流式转换器
         let request_log_upstream_response_headers =
-            super::request_logger::sanitize_response_headers(response.headers());
+            super::request_logger::headers_to_value(response.headers());
         let client_response_headers = sse_response_headers();
         let stream = response.bytes_stream();
 
@@ -657,7 +657,7 @@ async fn handle_claude_transform(
             (response_headers, None, Some(upstream_response))
         };
     let request_log_upstream_response_headers =
-        super::request_logger::sanitize_response_headers(&response_headers);
+        super::request_logger::headers_to_value(&response_headers);
 
     // Preserve usage so a post-upstream conversion failure still records tokens.
     // The direct Anthropic branch below is already fully transformed and cannot
@@ -1304,7 +1304,7 @@ async fn handle_codex_xai_native_responses_rewrite(
 
     if response.is_sse() {
         let request_log_upstream_response_headers =
-            super::request_logger::sanitize_response_headers(response.headers());
+            super::request_logger::headers_to_value(response.headers());
         let mut response_headers = response.headers().clone();
         strip_hop_by_hop_response_headers(&mut response_headers);
         let mut builder = axum::response::Response::builder().status(status);
@@ -1373,7 +1373,7 @@ async fn handle_codex_xai_native_responses_rewrite(
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let request_log_upstream_response_headers =
-        super::request_logger::sanitize_response_headers(&response_headers);
+        super::request_logger::headers_to_value(&response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     // Restore names when the body parses as JSON; otherwise pass the bytes
@@ -1483,7 +1483,7 @@ async fn handle_codex_chat_to_responses_transform(
 
     if is_stream || response.is_sse() {
         let request_log_upstream_response_headers =
-            super::request_logger::sanitize_response_headers(response.headers());
+            super::request_logger::headers_to_value(response.headers());
         let client_response_headers = sse_response_headers();
         let stream = response.bytes_stream();
 
@@ -1600,7 +1600,7 @@ async fn handle_codex_chat_to_responses_transform(
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let request_log_upstream_response_headers =
-        super::request_logger::sanitize_response_headers(&response_headers);
+        super::request_logger::headers_to_value(&response_headers);
     let body_str = String::from_utf8_lossy(&body_bytes);
     let chat_response: Value = match serde_json::from_slice(&body_bytes) {
         Ok(value) => value,
@@ -1759,7 +1759,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
         let request_log_upstream_response_headers =
-            super::request_logger::sanitize_response_headers(response.headers());
+            super::request_logger::headers_to_value(response.headers());
         let stream = response.bytes_stream();
 
         // Request-log：上游是原始 Anthropic Messages SSE，在转换前旁路记录。
@@ -1806,7 +1806,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let request_log_upstream_response_headers =
-        super::request_logger::sanitize_response_headers(&response_headers);
+        super::request_logger::headers_to_value(&response_headers);
     let body_str = String::from_utf8_lossy(&body_bytes);
     let anthropic_response: Value = match serde_json::from_slice(&body_bytes) {
         Ok(value) => value,

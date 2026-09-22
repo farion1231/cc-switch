@@ -67,8 +67,9 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
-    /// 本次请求的唯一标识（UUIDv4，入口处生成一次）。
-    /// request-log 与 usage 元数据表共享同一值，用于关联同一次请求。
+    /// 本次请求的唯一标识（UUIDv4，入口处生成一次），写入 request-log 的 JSONL。
+    /// 注意与 usage 元数据表的 request_id 无关（那个由上游 message id 派生），
+    /// 两边只能按 `(session_id, 时间窗口)` 对齐。
     pub request_id: String,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
@@ -79,9 +80,9 @@ pub struct RequestContext {
     /// 客户端发往代理的请求体 JSON 快照（克隆自 handler 入口的 body）。
     /// 仅在 request-log 开启时用于落盘；关闭路径上保留为 Null，避免拷贝开销。
     pub request_snapshot: serde_json::Value,
-    /// 客户端发往代理的请求头快照（已脱敏）。
+    /// 客户端请求头快照（原始值，不脱敏——request-log 用于 cURL 重放）。
     pub request_headers_snapshot: serde_json::Value,
-    /// 实际发往上游的请求头（已脱敏）。
+    /// 实际发往上游的请求头（原始值，不脱敏）。
     pub outbound_headers: Option<serde_json::Value>,
     /// 客户端请求方法。
     pub method: String,
@@ -89,10 +90,10 @@ pub struct RequestContext {
     /// 与落盘记录。Gemini 路径在 `with_model_from_uri` 之后可再覆盖一次。
     pub endpoint: String,
     /// 实际发往上游的 endpoint（格式转换后，如 `/v1/chat/completions`）。
-    /// 仅 request-log 开启且 forward 成功后回填；否则为 None。
+    /// forward 成功后回填；否则为 None。
     pub outbound_endpoint: Option<String>,
     /// 实际发往上游的请求体（所有映射/转换/过滤之后的最终 body）。
-    /// 仅 request-log 开启且 forward 成功后回填；否则为 None。
+    /// forward 成功后回填；否则为 None。
     pub outbound_request: Option<serde_json::Value>,
 }
 
@@ -200,7 +201,7 @@ impl RequestContext {
             serde_json::Value::Null
         };
         let request_headers_snapshot = if request_log_on {
-            super::request_logger::sanitize_request_headers(headers)
+            super::request_logger::headers_to_value(headers)
         } else {
             serde_json::Value::Null
         };

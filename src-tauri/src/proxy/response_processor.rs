@@ -173,8 +173,7 @@ pub async fn handle_streaming(
     }
 
     let mut response_headers = response.headers().clone();
-    let request_log_response_headers =
-        super::request_logger::sanitize_response_headers(&response_headers);
+    let request_log_response_headers = super::request_logger::headers_to_value(&response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     let mut builder = axum::response::Response::builder().status(status);
@@ -239,8 +238,7 @@ pub async fn handle_non_streaming(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
-    let request_log_response_headers =
-        super::request_logger::sanitize_response_headers(&response_headers);
+    let request_log_response_headers = super::request_logger::headers_to_value(&response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(

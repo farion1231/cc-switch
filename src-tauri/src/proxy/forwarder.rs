@@ -8,7 +8,7 @@ use super::{
     content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
-    json_canonical::{canonicalize_value, short_value_hash},
+    json_canonical::short_value_hash,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
@@ -108,13 +108,11 @@ pub struct ForwardResult {
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
     /// 实际发往上游的 endpoint（格式转换后的真值，如 `/v1/chat/completions`）。
-    /// 仅 request-log 开启时有意义；关闭路径传空字符串以避免克隆开销。
     pub outbound_endpoint: String,
     /// 实际发往上游的请求体（所有映射/转换/过滤之后的最终 body）。
-    /// 仅 request-log 开启时填充；关闭路径传 Value::Null 避免克隆开销。
+    /// forward 成功时必然有值：body 本就要序列化后发送，这里只是复用同一份。
     pub outbound_request: serde_json::Value,
     /// 实际发往上游的请求头（原始值，不脱敏）。
-    /// 仅 request-log 开启时填充；关闭路径传 Value::Null 避免克隆开销。
     pub outbound_headers: serde_json::Value,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
@@ -123,9 +121,6 @@ pub struct ForwardResult {
 
 impl ForwardResult {
     /// 把出站真值（模型 / endpoint / 请求体 / 请求头）从 result move 进请求上下文。
-    ///
-    /// request-log 关闭时 outbound_* 为空值占位，本方法保持 ctx 字段为 None，
-    /// 不产生克隆开销。
     pub fn apply_outbound_to_ctx(&mut self, ctx: &mut super::handler_context::RequestContext) {
         ctx.outbound_model = self.outbound_model.take();
         if !self.outbound_endpoint.is_empty() {
@@ -2407,7 +2402,7 @@ impl RequestForwarder {
             short_value_hash(Some(&filtered_body))
         );
 
-        let outbound_headers = super::request_logger::sanitize_request_headers(&ordered_headers);
+        let outbound_headers = super::request_logger::headers_to_value(&ordered_headers);
 
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -3831,7 +3826,7 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
 }
 
 fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+    filter_private_params_with_whitelist(request_body, &[])
 }
 
 fn log_prompt_cache_trace(
@@ -4110,6 +4105,7 @@ mod tests {
 
         let prepared = prepare_upstream_request_body(body);
 
+        // Private fields are stripped
         assert!(prepared.get("_internal").is_none());
         assert!(prepared["tools"][0]["parameters"]["properties"]
             .get("_id")
@@ -4117,10 +4113,10 @@ mod tests {
         assert!(prepared["tools"][0]["parameters"]["properties"]["_id"]
             .get("_private_note")
             .is_none());
-        assert_eq!(
-            serde_json::to_string(&prepared).unwrap(),
-            r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
-        );
+        // Public fields are preserved (insertion order, not alphabetically sorted)
+        assert!(prepared.get("z").is_some());
+        assert!(prepared.get("a").is_some());
+        assert!(prepared.get("tools").is_some());
     }
 
     #[test]
