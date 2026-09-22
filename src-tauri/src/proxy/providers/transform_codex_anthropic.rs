@@ -1684,6 +1684,76 @@ mod tests {
     }
 
     #[test]
+    fn test_request_additional_tools_carrier_lifted_not_a_message() {
+        // Regression lock for the Anthropic converter (#7454): before the
+        // carrier lift, the Anthropic conversion silently dropped every
+        // carried tool. The replay passed at merge time but nothing locked it.
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "id": "at_a8d5b9f5",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "description": "",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "exec_command",
+                                    "description": "Run a shell command.",
+                                    "strict": false,
+                                    "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function",
+                            "name": "wait",
+                            "description": "Waits on a yielded exec cell.",
+                            "strict": false,
+                            "parameters": {"type": "object", "properties": {"cell_id": {"type": "string"}}, "required": ["cell_id"]}
+                        }
+                    ]
+                },
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "You are Codex, a coding agent."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+        // The carrier is not a message: only the user role is emitted with
+        // real content, and the developer instruction hoists to the system.
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1, "carrier must not become a message");
+        assert_eq!(messages[0]["role"], "user");
+        assert!(
+            messages[0].get("content").is_some_and(|c| !c.is_null()),
+            "message lost its content: {messages:?}"
+        );
+        assert_eq!(result["system"], "You are Codex, a coding agent.");
+
+        // The carried tools must reach the Anthropic upstream.
+        let tools = result["tools"]
+            .as_array()
+            .expect("carrier tools must be lifted");
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(
+            names.contains(&"functions__exec_command"),
+            "namespace-flattened tool missing: {names:?}"
+        );
+        assert!(names.contains(&"wait"), "{names:?}");
+    }
+
+    #[test]
     fn test_request_no_instructions_no_system() {
         let input = json!({
             "model": "claude",
