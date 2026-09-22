@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,7 @@ import {
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
+  CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ProviderCategory,
@@ -31,6 +32,7 @@ import type {
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexFormFields } from "./CodexFormFields";
+import { ReasoningLevelsEditor } from "./shared";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import {
   grokBuildOfficialPreset,
@@ -49,11 +51,55 @@ import {
   parseGrokBuildConfig,
   updateGrokBuildConfig,
   validateGrokBuildConfig,
+  type GrokBuildExtraModel,
 } from "@/utils/grokBuildConfig";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
+
+type GrokConfigDraft = {
+  model: string;
+  upstreamModel: string;
+  baseUrl: string;
+  apiKey: string;
+  contextWindow: number;
+  extraModels: GrokBuildExtraModel[];
+  reasoningLevels?: string[];
+  defaultReasoningLevel?: string;
+};
+
+const catalogModelFromExtra = (
+  extra: GrokBuildExtraModel,
+): CodexCatalogModel => ({
+  model: extra.model,
+  displayName: extra.name ?? "",
+  contextWindow: extra.contextWindow ? String(extra.contextWindow) : "",
+  ...(extra.reasoningLevels?.length
+    ? { reasoningLevels: extra.reasoningLevels }
+    : {}),
+  ...(extra.defaultReasoningLevel
+    ? { defaultReasoningLevel: extra.defaultReasoningLevel }
+    : {}),
+});
+
+const extraModelFromCatalog = (
+  model: CodexCatalogModel,
+): GrokBuildExtraModel => {
+  const contextWindow = Number.parseInt(String(model.contextWindow ?? ""), 10);
+  return {
+    profile: model.model.trim(),
+    model: model.model,
+    name: model.displayName,
+    ...(Number.isInteger(contextWindow) && contextWindow > 0
+      ? { contextWindow }
+      : {}),
+    reasoningLevels: model.reasoningLevels ?? [],
+    ...(model.defaultReasoningLevel
+      ? { defaultReasoningLevel: model.defaultReasoningLevel }
+      : {}),
+  };
+};
 
 // 预设列表见 grokBuildProviderPresets.ts：独立维护（与 Codex 预设无联动），
 // 不含官方 / OAuth / 国产官方直连 / 纯开源托管站，默认模型为 Grok 系。
@@ -110,6 +156,15 @@ export function GrokBuildProviderForm({
   const [rawConfig, setRawConfig] = useState(
     initialConfigText ?? buildGrokBuildConfig(initialConfig),
   );
+  const [extraModels, setExtraModels] = useState<GrokBuildExtraModel[]>(
+    initialConfig.extraModels ?? [],
+  );
+  const [reasoningLevels, setReasoningLevels] = useState<string[] | undefined>(
+    initialConfig.reasoningLevels,
+  );
+  const [defaultReasoningLevel, setDefaultReasoningLevel] = useState<
+    string | undefined
+  >(initialConfig.defaultReasoningLevel);
   const [apiFormat, setApiFormat] = useState<CodexApiFormat>(
     (initialData?.meta?.apiFormat as CodexApiFormat | undefined) ??
       "openai_responses",
@@ -207,20 +262,37 @@ export function GrokBuildProviderForm({
     return Array.from(urls).map((url) => ({ url }));
   }, [baseUrl, draftCustomEndpoints, presetEndpoints]);
 
-  const syncStructuredConfig = (
-    overrides: Partial<ReturnType<typeof parseGrokBuildConfig>>,
-  ) => {
-    const next = {
-      model: profile,
-      upstreamModel,
-      baseUrl,
-      name: form.getValues("name") || initialConfig.name,
-      apiKey,
-      contextWindow: Number.parseInt(contextWindow, 10),
-      ...overrides,
-      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
-    };
-    setRawConfig((current) => updateGrokBuildConfig(current, next));
+  const draftRef = useRef<GrokConfigDraft>({
+    model: profile,
+    upstreamModel,
+    baseUrl,
+    apiKey,
+    contextWindow: Number.parseInt(contextWindow, 10),
+    extraModels,
+    reasoningLevels,
+    defaultReasoningLevel,
+  });
+  draftRef.current = {
+    model: profile,
+    upstreamModel,
+    baseUrl,
+    apiKey,
+    contextWindow: Number.parseInt(contextWindow, 10),
+    extraModels,
+    reasoningLevels,
+    defaultReasoningLevel,
+  };
+
+  const syncStructuredConfig = (overrides: Partial<GrokConfigDraft> = {}) => {
+    const next = { ...draftRef.current, ...overrides };
+    draftRef.current = next;
+    setRawConfig((current) =>
+      updateGrokBuildConfig(current, {
+        ...next,
+        name: form.getValues("name") || initialConfig.name,
+        apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+      }),
+    );
   };
 
   const handlePresetChange = (presetId: string) => {
@@ -273,6 +345,9 @@ export function GrokBuildProviderForm({
     setBaseUrl(presetBaseUrl);
     setApiKey(presetApiKey);
     setUpstreamModel(presetModel);
+    setExtraModels([]);
+    setReasoningLevels(undefined);
+    setDefaultReasoningLevel(undefined);
     setApiFormat(presetApiFormat);
     setPresetEndpoints(preset.endpointCandidates ?? []);
     setRawConfig(
@@ -284,6 +359,7 @@ export function GrokBuildProviderForm({
         apiKey: presetApiKey,
         apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
         contextWindow: Number.parseInt(contextWindow, 10),
+        extraModels: [],
       }),
     );
   };
@@ -297,6 +373,9 @@ export function GrokBuildProviderForm({
     setBaseUrl(parsed.baseUrl);
     setApiKey(parsed.apiKey);
     setContextWindow(String(parsed.contextWindow));
+    setExtraModels(parsed.extraModels ?? []);
+    setReasoningLevels(parsed.reasoningLevels);
+    setDefaultReasoningLevel(parsed.defaultReasoningLevel);
     if (parsed.name) form.setValue("name", parsed.name);
   };
 
@@ -352,6 +431,9 @@ export function GrokBuildProviderForm({
       apiKey,
       apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
       contextWindow: parsedContextWindow,
+      extraModels,
+      reasoningLevels: reasoningLevels ?? [],
+      defaultReasoningLevel,
     });
     const configError = validateGrokBuildConfig(finalConfig);
     if (configError) {
@@ -469,8 +551,22 @@ export function GrokBuildProviderForm({
               onAutoSelectChange={setEndpointAutoSelect}
               codexModel={upstreamModel}
               onModelChange={(value) => {
+                const nextProfile =
+                  profile === upstreamModel ? value.trim() || profile : profile;
                 setUpstreamModel(value);
-                syncStructuredConfig({ upstreamModel: value });
+                setProfile(nextProfile);
+                syncStructuredConfig({
+                  upstreamModel: value,
+                  model: nextProfile,
+                });
+              }}
+              catalogModels={extraModels.map(catalogModelFromExtra)}
+              onCatalogModelsChange={(models) => {
+                const next = models
+                  .map(extraModelFromCatalog)
+                  .filter((model) => model.model.trim());
+                setExtraModels(next);
+                syncStructuredConfig({ extraModels: next });
               }}
               apiFormat={apiFormat}
               onApiFormatChange={(value) => {
@@ -514,6 +610,42 @@ export function GrokBuildProviderForm({
                   });
                 }}
               />
+            </FormItem>
+
+            <FormItem>
+              <FormLabel>
+                {t("grokBuild.defaultReasoningLevels", {
+                  defaultValue: "默认模型思考等级",
+                })}
+              </FormLabel>
+              <ReasoningLevelsEditor
+                levels={reasoningLevels}
+                defaultLevel={defaultReasoningLevel}
+                onLevelsChange={(levels) => {
+                  const next = levels ?? [];
+                  const nextDefault =
+                    defaultReasoningLevel &&
+                    next.includes(defaultReasoningLevel)
+                      ? defaultReasoningLevel
+                      : undefined;
+                  setReasoningLevels(next.length > 0 ? next : undefined);
+                  setDefaultReasoningLevel(nextDefault);
+                  syncStructuredConfig({
+                    reasoningLevels: next,
+                    defaultReasoningLevel: nextDefault,
+                  });
+                }}
+                onDefaultLevelChange={(level) => {
+                  setDefaultReasoningLevel(level);
+                  syncStructuredConfig({ defaultReasoningLevel: level });
+                }}
+              />
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("grokBuild.defaultReasoningLevelsHint", {
+                  defaultValue:
+                    "写入默认模型的 reasoning_efforts。网关的 /v1/models 没有声明思考等级时，Grok 的 /effort 依赖这里。",
+                })}
+              </p>
             </FormItem>
 
             <div className="space-y-2">

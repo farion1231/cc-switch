@@ -299,4 +299,75 @@ context_window = 500000
       screen.queryByText(/Codex 不会把 model_max_output_tokens/),
     ).toBeNull();
   });
+
+  it("saves an added model and both reasoning menus", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const configToml = `[models]
+default = "grok-4.7"
+default_reasoning_effort = "xhigh"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://gateway.example/v1"
+name = "Person"
+api_key = "secret-key"
+api_backend = "responses"
+context_window = 500000
+
+[[model."grok-4.7".reasoning_efforts]]
+value = "xhigh"
+label = "Extra High Effort"
+default = true
+
+[model."grok-4.6"]
+model = "grok-4.6"
+base_url = "https://gateway.example/v1"
+name = "Person 4.6"
+api_key = "secret-key"
+api_backend = "responses"
+context_window = 500000
+
+[[model."grok-4.6".reasoning_efforts]]
+value = "high"
+label = "High Effort"
+default = true
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="gateway"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Person",
+          category: "custom",
+          settingsConfig: { config: configToml },
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("实际请求模型")).toHaveValue("grok-4.6");
+    expect(screen.getByLabelText("菜单显示名")).toHaveValue("Person 4.6");
+    expect(screen.getByText(/写入 config\.toml/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    const config = parseToml(settings.config) as any;
+    expect(config.models.default).toBe("grok-4.7");
+    expect(config.models.default_reasoning_effort).toBe("xhigh");
+    expect(config.model["grok-4.6"].name).toBe("Person 4.6");
+    expect(config.model["grok-4.6"].base_url).toBe(
+      "https://gateway.example/v1",
+    );
+    expect(config.model["grok-4.7"].reasoning_efforts[0]).toMatchObject({
+      value: "xhigh",
+      default: true,
+    });
+    expect(config.model["grok-4.6"].reasoning_efforts[0]).toMatchObject({
+      value: "high",
+      default: true,
+    });
+  });
 });
