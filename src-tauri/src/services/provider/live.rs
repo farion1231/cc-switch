@@ -1132,7 +1132,9 @@ fn restore_live_settings_for_provider_backfill(
     // switch-away backfill must not erase it. Live still wins whenever it
     // carries material (the manual `~/.codex/auth.json` edit path), and
     // official providers keep the Live login as their authoritative source.
-    if provider.category.as_deref() != Some("official") {
+    if provider.category.as_deref() != Some("official")
+        && !crate::proxy::providers::is_codex_official_provider(provider)
+    {
         let stored_auth = provider.settings_config.get("auth");
         let live_auth_has_material = settings
             .get("auth")
@@ -3123,6 +3125,65 @@ base_url = "https://a.example/v1"
             json!("live-refresh-secret")
         );
         assert_eq!(backfilled["config"], json!(""));
+    }
+
+    #[test]
+    fn category_less_fixed_follow_login_backfill_preserves_logout() {
+        let provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "tokens": { "refresh_token": "old-refresh-token" }
+                },
+                "config": "model = \"old-model\"\n"
+            }),
+            None,
+        );
+        assert!(crate::proxy::providers::is_codex_official_provider(
+            &provider
+        ));
+
+        for live_auth in [json!({}), json!({ "auth_mode": "chatgpt" })] {
+            let live_settings = json!({
+                "auth": live_auth,
+                "config": "model = \"live-model\"\n"
+            });
+            let backfilled = restore_live_settings_for_provider_backfill(
+                &AppType::Codex,
+                &provider,
+                live_settings.clone(),
+            );
+
+            assert_eq!(
+                backfilled, live_settings,
+                "a legacy official card must not restore the stored login after logout"
+            );
+        }
+    }
+
+    #[test]
+    fn category_less_fixed_third_party_backfill_keeps_stored_api_key() {
+        let provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "Custom API".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-db-only" },
+                "config": "model_provider = \"custom\"\n"
+            }),
+            None,
+        );
+        assert!(!crate::proxy::providers::is_codex_official_provider(
+            &provider
+        ));
+        let backfilled = restore_live_settings_for_provider_backfill(
+            &AppType::Codex,
+            &provider,
+            json!({ "auth": {}, "config": "model_provider = \"custom\"\n" }),
+        );
+
+        assert_eq!(backfilled, provider.settings_config);
     }
 
     #[test]

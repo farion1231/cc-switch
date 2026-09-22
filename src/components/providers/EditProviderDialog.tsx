@@ -17,6 +17,7 @@ import {
   type ManagedAuthProvider,
 } from "@/lib/api";
 import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
+import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -67,9 +68,9 @@ const hasCodexAuthMaterial = (auth: Record<string, unknown> | null): boolean =>
 const reconcileCodexLiveAuth = (
   liveSettings: Record<string, unknown>,
   storedSettings: Record<string, unknown> | null,
-  category: string | undefined,
+  isOfficialProvider: boolean,
 ): Record<string, unknown> => {
-  if (category === "official") return liveSettings;
+  if (isOfficialProvider) return liveSettings;
 
   const configText =
     typeof liveSettings.config === "string" ? liveSettings.config : "";
@@ -266,6 +267,13 @@ export function EditProviderDialog({
     };
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
+  // Legacy official cards may have no category; their live logout still owns auth.
+  const isCodexOfficialProvider =
+    appId === "codex" &&
+    provider !== null &&
+    (provider.category === "official" ||
+      resolveCodexOfficialIdentity(appId, provider) !== null);
+
   const initialSettingsConfig = useMemo(() => {
     const storedSettings = asRecord(provider?.settingsConfig);
     const base =
@@ -273,7 +281,7 @@ export function EditProviderDialog({
         ? reconcileCodexLiveAuth(
             liveSettings,
             storedSettings,
-            provider?.category,
+            isCodexOfficialProvider,
           )
         : (liveSettings ?? storedSettings ?? {});
 
@@ -296,7 +304,7 @@ export function EditProviderDialog({
     }
 
     return base;
-  }, [liveSettings, provider?.settingsConfig, provider?.category, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
+  }, [liveSettings, provider?.settingsConfig, isCodexOfficialProvider, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
