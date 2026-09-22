@@ -2260,6 +2260,20 @@ impl RequestForwarder {
             ordered_headers.insert(name, value);
         }
 
+        // OpenCode Go 要求随对话携带稳定的 x-opencode-session，用于路由亲和和
+        // 提示词缓存。Claude Desktop 经本地代理转发时不会自己发送该头，这里把
+        // 代理已提取的 Claude 会话 ID 原样映射过去。只映射客户端提供的 ID，
+        // 自生成的 UUID 逐请求不同，反而会破坏前缀缓存；客户端已显式携带时不覆盖。
+        if is_opencode_go_upstream_url(&url) && should_send_anthropic_headers {
+            if let Some(value) = maybe_opencode_session_header(
+                &self.session_id,
+                self.session_client_provided,
+                ordered_headers.contains_key("x-opencode-session"),
+            ) {
+                ordered_headers.append("x-opencode-session", value);
+            }
+        }
+
         // 序列化请求体。GET/HEAD 是 idempotent/safe 方法，按 HTTP 语义不应携带 body；
         // 强行附带 JSON body 会让某些上游（如 Google Gemini 的 models.list）拒绝请求。
         let body_bytes = if matches!(method, &http::Method::GET | &http::Method::HEAD) {
@@ -3479,6 +3493,27 @@ fn build_codex_oauth_session_headers(
     headers
 }
 
+/// OpenCode Go 会话头的取值判定。
+///
+/// opencode.ai/go 要求客户端随对话发送稳定的 `x-opencode-session`。Claude 客户端
+/// 自己不发送该头，本地代理把已从请求中提取的 Claude 会话 ID 原样映射过去。
+/// 仅当会话 ID 确由客户端提供时才返回：自生成的 UUID 逐请求变化，反而破坏网关的
+/// 前缀缓存（与 Codex OAuth 的考量一致）。已有客户端显式携带的头不覆盖。
+fn maybe_opencode_session_header(
+    session_id: &str,
+    client_provided: bool,
+    already_present: bool,
+) -> Option<http::HeaderValue> {
+    if !client_provided || already_present {
+        return None;
+    }
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    http::HeaderValue::from_str(session_id).ok()
+}
+
 fn reject_proxy_placeholder_for_managed_account_upstream(
     url: &str,
     headers: &http::HeaderMap,
@@ -3506,6 +3541,22 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
         || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
+}
+
+/// 目标上游是否为 OpenCode Go 网关（opencode.ai）。
+///
+/// Claude / Claude Desktop 的 `/zen/go` 端点 host 为 opencode.ai。按 host 判定，
+/// 避免给同域其它路径误加会话头；host 大小写归一化，DNS 主机名不区分大小写。
+fn is_opencode_go_upstream_url(url: &str) -> bool {
+    let Ok(uri) = url.parse::<http::Uri>() else {
+        return false;
+    };
+
+    let Some(host) = uri.host().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+
+    host == "opencode.ai" || host.ends_with(".opencode.ai")
 }
 
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -5521,5 +5572,63 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn opencode_session_uses_client_provided_id() {
+        let value = maybe_opencode_session_header("conv-724f4275", true, false)
+            .expect("should inject when client provided the id");
+        assert_eq!(value.to_str().unwrap(), "conv-724f4275");
+    }
+
+    #[test]
+    fn opencode_session_skips_when_header_already_present() {
+        assert!(maybe_opencode_session_header("conv-724f4275", true, true).is_none());
+    }
+
+    #[test]
+    fn opencode_session_skips_generated_uuid() {
+        // 自生成的 UUID 逐请求不同，注入反而破坏网关前缀缓存 → 只在客户端
+        // 真正提供会话 ID 时才发。
+        assert!(maybe_opencode_session_header(
+            "5e1f9f88-9ad1-4e35-a5e0-b0f2c7aa9b31",
+            false,
+            false
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn opencode_session_skips_blank_id() {
+        assert!(maybe_opencode_session_header("", true, false).is_none());
+        assert!(maybe_opencode_session_header("   ", true, false).is_none());
+    }
+
+    #[test]
+    fn opencode_session_rejects_non_ascii_id() {
+        // 非法 header 值（如含换行）不能注入，返回 None 而不是 panic。
+        assert!(maybe_opencode_session_header("bad\nvalue", true, false).is_none());
+    }
+
+    #[test]
+    fn opencode_upstream_matches_host_case_insensitively() {
+        assert!(is_opencode_go_upstream_url(
+            "https://opencode.ai/zen/go/v1/messages"
+        ));
+        assert!(is_opencode_go_upstream_url(
+            "https://OpenCode.AI/zen/go/v1/messages"
+        ));
+        assert!(is_opencode_go_upstream_url("https://Go.Opencode.ai/zen/go"));
+    }
+
+    #[test]
+    fn opencode_upstream_rejects_other_hosts() {
+        assert!(!is_opencode_go_upstream_url(
+            "https://api.anthropic.com/v1/messages"
+        ));
+        assert!(!is_opencode_go_upstream_url(
+            "https://notopencode.ai/v1/messages"
+        ));
+        assert!(!is_opencode_go_upstream_url("not a url"));
     }
 }
