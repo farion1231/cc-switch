@@ -11,6 +11,10 @@ import {
   setProviders,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import {
+  FullScreenPanel,
+  subscribeToFullScreenPanelDismiss,
+} from "@/components/common/FullScreenPanel";
 import { server } from "../msw/server";
 
 const toastSuccessMock = vi.fn();
@@ -476,5 +480,36 @@ describe("App integration with MSW", () => {
 
     expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
+  });
+  it("replays in place instead of remounting the view container", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toBeInTheDocument(),
+    );
+
+    const container = document.querySelector(".view-enter");
+    expect(container).not.toBeNull();
+
+    // Closing the last full-screen panel notifies subscribers. The view has to
+    // replay its entrance animation on the SAME element: remounting it would
+    // throw away the scroll position and any view-local state.
+    const onDismiss = vi.fn();
+    const unsubscribe = subscribeToFullScreenPanelDismiss(onDismiss);
+    try {
+      const panel = render(
+        <FullScreenPanel isOpen title="panel" onClose={() => undefined}>
+          body
+        </FullScreenPanel>,
+      );
+      panel.unmount();
+
+      // Guard against a vacuous pass: the dismissal must actually have fired.
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+      expect(document.querySelector(".view-enter")).toBe(container);
+    } finally {
+      unsubscribe();
+    }
   });
 });

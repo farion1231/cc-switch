@@ -1,4 +1,5 @@
 import { CSS } from "@dnd-kit/utilities";
+import { createPortal } from "react-dom";
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -545,69 +546,74 @@ export function ProviderList({
           </ul>
         </div>
       )}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
+      {/* 视图容器带有 transform，会让 fixed 元素相对容器而非视口定位，
+          因此把搜索浮层 portal 到 body。 */}
+      {createPortal(
+        <AnimatePresence>
+          {isSearchOpen && (
+            <motion.div
+              key="provider-search"
+              initial={{ opacity: 0, y: -8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.98 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
+            >
+              <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
+                <div className="relative flex items-center gap-2">
+                  <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
+                  <Input
+                    ref={searchInputRef}
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder={t("provider.searchPlaceholder", {
+                      defaultValue: "Search name, notes, or URL...",
+                    })}
+                    aria-label={t("provider.searchAriaLabel", {
+                      defaultValue: "Search providers",
+                    })}
+                    className="pr-16 pl-9"
+                  />
+                  {searchTerm && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
+                      onClick={() => setSearchTerm("")}
+                    >
+                      {t("common.clear", { defaultValue: "Clear" })}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
+                    size="icon"
+                    className="ml-auto"
+                    onClick={() => setIsSearchOpen(false)}
+                    aria-label={t("provider.searchCloseAriaLabel", {
+                      defaultValue: "Close provider search",
+                    })}
                   >
-                    {t("common.clear", { defaultValue: "Clear" })}
+                    <X className="w-4 h-4" />
                   </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {t("provider.searchScopeHint", {
+                      defaultValue: "Matches provider name, notes, and URL.",
+                    })}
+                  </span>
+                  <span>
+                    {t("provider.searchCloseHint", {
+                      defaultValue: "Press Esc to close",
+                    })}
+                  </span>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
 
       {filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">

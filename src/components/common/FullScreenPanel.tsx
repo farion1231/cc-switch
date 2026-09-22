@@ -42,11 +42,27 @@ const lockBodyScroll = () => {
   bodyScrollLockCount += 1;
 };
 
+const dismissListeners = new Set<() => void>();
+
+/**
+ * 订阅「所有全屏面板都已关闭」。
+ *
+ * 只在计数归零时通知，所以嵌套面板（例如添加供应商里的认证设置）关闭回到
+ * 上一层面板时不会触发 —— 只有真正回到页面才会。
+ */
+export const subscribeToFullScreenPanelDismiss = (listener: () => void) => {
+  dismissListeners.add(listener);
+  return () => {
+    dismissListeners.delete(listener);
+  };
+};
+
 const unlockBodyScroll = () => {
   bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
   if (bodyScrollLockCount === 0) {
     document.body.style.overflow = bodyOverflowBeforeFirstLock ?? "";
     bodyOverflowBeforeFirstLock = null;
+    dismissListeners.forEach((listener) => listener());
   }
 };
 
@@ -68,6 +84,10 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   const prefersReducedMotion = useReducedMotion();
   const shouldSlideFromRight =
     motionPreset === "slide-from-right" && !prefersReducedMotion;
+  // 表面是不透明的整屏涂层，它本身不能做淡入淡出（见 FullScreenPanel.test.tsx）：
+  // 让不透明涂层从 opacity 0 淡入，整个过渡期间都会和它下面的页面混在一起重影。
+  // 表面瞬时出现，只让内部内容淡入。
+  const animateContent = !shouldSlideFromRight && !prefersReducedMotion;
 
   React.useEffect(() => {
     if (!isOpen) return;
@@ -113,19 +133,13 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={
-            prefersReducedMotion
-              ? false
-              : shouldSlideFromRight
-                ? { x: "100%" }
-                : { opacity: 0 }
-          }
-          animate={shouldSlideFromRight ? { x: 0 } : { opacity: 1 }}
-          exit={shouldSlideFromRight ? { x: "100%" } : { opacity: 0 }}
+          initial={shouldSlideFromRight ? { x: "100%" } : false}
+          animate={shouldSlideFromRight ? { x: 0 } : undefined}
+          exit={shouldSlideFromRight ? { x: "100%" } : undefined}
           transition={
             shouldSlideFromRight
               ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
-              : { duration: prefersReducedMotion ? 0 : 0.2 }
+              : undefined
           }
           className="fixed inset-0 z-[60] flex flex-col"
           style={{ backgroundColor: "hsl(var(--background))" }}
@@ -144,58 +158,67 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
             />
           )}
 
-          {/* Header - match App.tsx */}
-          <div
-            className="flex-shrink-0 flex items-center"
-            {...DRAG_REGION_ATTR}
-            style={
-              {
-                ...DRAG_REGION_STYLE,
-                backgroundColor: "hsl(var(--background))",
-                height: HEADER_HEIGHT,
-              } as React.CSSProperties
-            }
+          <motion.div
+            className="flex flex-col flex-1 min-h-0"
+            initial={animateContent ? { opacity: 0, y: 10 } : false}
+            animate={animateContent ? { opacity: 1, y: 0 } : undefined}
+            transition={{ duration: animateContent ? 0.3 : 0 }}
           >
+            {/* Header - match App.tsx */}
             <div
-              className="px-6 w-full flex items-center gap-4"
+              className="flex-shrink-0 flex items-center"
               {...DRAG_REGION_ATTR}
-              style={{ ...DRAG_REGION_STYLE } as React.CSSProperties}
+              style={
+                {
+                  ...DRAG_REGION_STYLE,
+                  backgroundColor: "hsl(var(--background))",
+                  height: HEADER_HEIGHT,
+                } as React.CSSProperties
+              }
             >
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={onClose}
-                aria-label={t("common.back")}
-                className="rounded-lg select-none"
-                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+              <div
+                className="px-6 w-full flex items-center gap-4"
+                {...DRAG_REGION_ATTR}
+                style={{ ...DRAG_REGION_STYLE } as React.CSSProperties}
               >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <h2 className="text-lg font-semibold text-foreground select-none">
-                {title}
-              </h2>
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
-            <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
-              {children}
-            </div>
-          </div>
-
-          {/* Footer */}
-          {footer && (
-            <div
-              className="flex-shrink-0 py-4 border-t border-border-default"
-              style={{ backgroundColor: "hsl(var(--background))" }}
-            >
-              <div className="px-6 flex items-center justify-end gap-3">
-                {footer}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={onClose}
+                  aria-label={t("common.back")}
+                  className="rounded-lg select-none"
+                  style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <h2 className="text-lg font-semibold text-foreground select-none">
+                  {title}
+                </h2>
               </div>
             </div>
-          )}
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto scroll-overlay">
+              <div
+                className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}
+              >
+                {children}
+              </div>
+            </div>
+
+            {/* Footer */}
+            {footer && (
+              <div
+                className="flex-shrink-0 py-4 border-t border-border-default"
+                style={{ backgroundColor: "hsl(var(--background))" }}
+              >
+                <div className="px-6 flex items-center justify-end gap-3">
+                  {footer}
+                </div>
+              </div>
+            )}
+          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>,
