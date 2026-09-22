@@ -22,6 +22,11 @@ pub struct FetchedModel {
 ///
 /// OpenAI 兼容接口和 Anthropic 接口使用 `data` 字段，智谱 OpenAI Responses
 /// 接口使用 `models` 字段，此结构同时兼容这两种格式。
+///
+/// 注意：部分 OpenAI 兼容供应商的响应也会附带顶层 `models` 字段，但条目是
+/// OpenAI 风格的 `{id, ...}` 而非智谱的 `{slug}`。serde 反序列化的是整个
+/// 结构体，任何字段形状不匹配都会导致整体解析失败，因此 `ZhipuModelEntry`
+/// 必须对条目形状保持宽容（slug 缺失时回退 id，两者皆缺时跳过该条目）。
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
@@ -36,7 +41,20 @@ struct ModelEntry {
 
 #[derive(Debug, Deserialize)]
 struct ZhipuModelEntry {
-    slug: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+}
+
+impl ZhipuModelEntry {
+    /// 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
+    /// 两者皆缺（或为空）时返回 `None`，调用方跳过该条目。
+    fn model_id(&self) -> Option<String> {
+        let slug = self.slug.as_deref().filter(|s| !s.is_empty());
+        let id = self.id.as_deref().filter(|s| !s.is_empty());
+        slug.or(id).map(|s| s.to_string())
+    }
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -118,9 +136,11 @@ pub async fn fetch_models(
                 resp.models
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|m| FetchedModel {
-                        id: m.slug,
-                        owned_by: None,
+                    .filter_map(|m| {
+                        m.model_id().map(|id| FetchedModel {
+                            id,
+                            owned_by: None,
+                        })
                     })
                     .collect()
             };
@@ -630,5 +650,47 @@ mod tests {
         let json = r#"{"object":"list","data":[]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert!(resp.data.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_response_with_non_zhipu_models_field() {
+        // 回归 #7593：部分供应商的 /models 响应在标准 `data` 之外还附带顶层
+        // `models` 字段（条目为 OpenAI 风格的 {id, ...}，无 slug）。整个响应
+        // 的反序列化不应因此失败。
+        let json = r#"{
+            "data": [
+                {"id": "model-a", "name": "model-a", "max_tokens": 32000, "context_window": 400000},
+                {"id": "model-b", "name": "model-b", "max_tokens": 32000, "context_window": 1000000}
+            ],
+            "models": [
+                {"id": "model-a", "name": "model-a", "max_tokens": 32000, "context_window": 400000},
+                {"id": "model-b", "name": "model-b", "max_tokens": 32000, "context_window": 1000000}
+            ],
+            "success": true
+        }"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].id, "model-a");
+        assert_eq!(data[1].id, "model-b");
+    }
+
+    #[test]
+    fn test_zhipu_models_entry_id_fallback() {
+        // `models` 条目解析：slug 优先，回退 id，两者皆缺时跳过。
+        let json = r#"{"models": [
+            {"slug": "glm-4.7"},
+            {"id": "openai-shaped"},
+            {"name": "neither-slug-nor-id"},
+            {}
+        ]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let ids: Vec<String> = resp
+            .models
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.model_id())
+            .collect();
+        assert_eq!(ids, vec!["glm-4.7".to_string(), "openai-shaped".to_string()]);
     }
 }
