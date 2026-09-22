@@ -33,6 +33,24 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
   });
 });
 
+describe("detectCodingPlanProvider (MiniMax)", () => {
+  it.each([
+    "https://api.minimax.cn/v1",
+    "https://api.minimaxi.com/v1",
+    "https://api.minimax.io/v1",
+    "https://API.MINIMAX.CN/anthropic",
+  ])("recognizes the MiniMax usage provider for %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("minimax");
+  });
+
+  it.each([
+    "https://api.minimax.cn.example.com/v1",
+    "https://proxy.example.com/api.minimax.io/v1",
+  ])("ignores look-alike MiniMax hosts such as %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
+});
+
 describe("extractBaseUrlForUsageDetection", () => {
   it("reads env.ANTHROPIC_BASE_URL for claude and claude-desktop", () => {
     const config = {

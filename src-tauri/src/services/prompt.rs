@@ -59,7 +59,29 @@ impl PromptService {
         if matches!(app, AppType::Pi) {
             return get_pi_prompts(state);
         }
-        state.db.get_prompts(app.as_str())
+        // A restore replaces the DB before projecting it to live files. Keep
+        // backfill outside that window, including calls outside the UI command.
+        let Ok(_sync_guard) = super::sync_protocol::sync_mutex().try_lock() else {
+            return state.db.get_prompts(app.as_str());
+        };
+        let mut prompts = state.db.get_prompts(app.as_str())?;
+        // External editors change the live file without updating the saved
+        // selection. Refresh only that selection; inactive templates are separate.
+        if let Some(prompt) = prompts.values_mut().find(|prompt| prompt.enabled) {
+            match Self::get_current_file_content(app.clone()) {
+                Ok(Some(content)) if !content.trim().is_empty() && prompt.content != content => {
+                    prompt.content = content;
+                    prompt.updated_at = Some(get_unix_timestamp()?);
+                    state.db.save_prompt(app.as_str(), prompt)?;
+                }
+                Ok(_) => {}
+                Err(error) => log::warn!(
+                    "Failed to refresh {} prompt from live file; keeping saved prompts: {error}",
+                    app.as_str()
+                ),
+            }
+        }
+        Ok(prompts)
     }
 
     pub fn upsert_prompt(
