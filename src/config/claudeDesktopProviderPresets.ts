@@ -851,7 +851,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://api.sudocode.chat"],
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
     isPartner: true,
     partnerPromotionKey: "sudocode",
     icon: "sudocode",

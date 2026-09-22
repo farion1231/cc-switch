@@ -888,7 +888,10 @@ export const providerPresets: ProviderPreset[] = [
         API_TIMEOUT_MS: "300000",
       },
     },
-    endpointCandidates: ["https://api.sudocode.chat"],
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "sudocode",

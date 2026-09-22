@@ -1219,7 +1219,10 @@ name = "SudoCode"
 base_url = "https://api.sudocode.chat/v1"
 wire_api = "responses"
 requires_openai_auth = true`,
-    endpointCandidates: ["https://api.sudocode.chat/v1"],
+    endpointCandidates: [
+      "https://api.sudocode.chat/v1",
+      "https://api.sudorelay.com/v1",
+    ],
     apiFormat: "openai_responses",
     isPartner: true,
     partnerPromotionKey: "sudocode",
