@@ -68,6 +68,23 @@ interface EndpointCandidate {
   url: string;
 }
 
+export function replaceSingleCodexCatalogModel<T extends CodexCatalogModel>(
+  models: T[],
+  nextModel: string,
+): T[] {
+  const model = nextModel.trim();
+  if (!model || models.length !== 1) return models;
+
+  const [current] = models;
+  const replacement = {
+    ...current,
+    model,
+    displayName: model,
+  };
+  delete replacement.baseInstructions;
+  return [replacement];
+}
+
 interface CodexFormFieldsProps {
   appId?: AppId;
   providerId?: string;
@@ -687,6 +704,13 @@ export function CodexFormFields({
     ]);
   }, [onCatalogModelsChange, trimmedDefaultModel]);
 
+  const handleReplaceDefaultModelInCatalog = useCallback(() => {
+    if (!onCatalogModelsChange || !trimmedDefaultModel) return;
+    setCatalogRows((current) =>
+      replaceSingleCodexCatalogModel(current, trimmedDefaultModel),
+    );
+  }, [onCatalogModelsChange, trimmedDefaultModel]);
+
   const renderCatalogActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
       <Button
@@ -858,11 +882,19 @@ export function CodexFormFields({
                 variant="link"
                 size="sm"
                 className="h-auto p-0 text-xs"
-                onClick={handleAddDefaultModelToCatalog}
+                onClick={
+                  catalogRows.length === 1
+                    ? handleReplaceDefaultModelInCatalog
+                    : handleAddDefaultModelToCatalog
+                }
               >
-                {t("codexConfig.addToModelMapping", {
-                  defaultValue: "加入映射",
-                })}
+                {catalogRows.length === 1
+                  ? t("codexConfig.replaceModelMapping", {
+                      defaultValue: "替换映射",
+                    })
+                  : t("codexConfig.addToModelMapping", {
+                      defaultValue: "加入映射",
+                    })}
               </Button>
             </p>
           )}
