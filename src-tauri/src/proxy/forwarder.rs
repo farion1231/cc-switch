@@ -2343,9 +2343,6 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        #[cfg(all(test, target_os = "windows"))]
-        super::advisor_live_test::reserve_request(&url, request_model)?;
-
         // 发送请求
         let response = if is_socks_proxy || !preserve_exact_header_case {
             // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest

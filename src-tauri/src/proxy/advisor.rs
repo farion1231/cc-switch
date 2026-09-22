@@ -104,11 +104,20 @@ fn normalize_history(body: &mut Value) {
     }
 }
 
-fn block_events(block: Value, index: usize) -> Vec<Value> {
+fn block_events(mut block: Value, index: usize) -> Vec<Value> {
     if block["type"] == "text" {
         vec![
             json!({"type":"content_block_start","index":index,"content_block":{"type":"text","text":""}}),
             json!({"type":"content_block_delta","index":index,"delta":{"type":"text_delta","text":block["text"]}}),
+            json!({"type":"content_block_stop","index":index}),
+        ]
+    } else if block["type"] == "tool_use" {
+        // Claude Code reads tool arguments from deltas, not the opening block.
+        let input = block.get("input").cloned().unwrap_or(json!({}));
+        block["input"] = json!({});
+        vec![
+            json!({"type":"content_block_start","index":index,"content_block":block}),
+            json!({"type":"content_block_delta","index":index,"delta":{"type":"input_json_delta","partial_json":input.to_string()}}),
             json!({"type":"content_block_stop","index":index}),
         ]
     } else {
@@ -197,8 +206,9 @@ where
         // The transport caps each response; incremental forwarding can reduce first-text latency later.
         for round in 0..(MAX_USES + 2) {
             body["max_tokens"] = json!(output_budget.saturating_sub(usage["output_tokens"].as_u64().unwrap_or(0)).max(1));
-            let response = tokio::time::timeout(std::time::Duration::from_secs(180), send(body.clone(), false)).await
-                .map_err(|_| ProxyError::Timeout("Executor request timed out".into()))??;
+            // Executor streams use the transport's timeout policy. A total deadline
+            // here kills healthy long reasoning and compaction requests.
+            let response = send(body.clone(), false).await?;
             if round == 0 {
                 yield json!({"type":"message_start","message":{"id":format!("msg_{}",uuid::Uuid::new_v4().simple()),"type":"message","role":"assistant","model":response.get("model").unwrap_or(&body["model"]),"content":[],"stop_reason":null,"usage":usage}});
             }
@@ -447,6 +457,63 @@ mod tests {
         .await;
         assert!(events.last().unwrap().is_err());
         assert_eq!(*calls.lock().unwrap(), (4, 2));
+    }
+
+    #[tokio::test]
+    async fn advisor_stream_sends_client_tool_arguments_as_json_deltas() {
+        // Claude Code reconstructs tool input from deltas, ignoring start input.
+        for model in [Some("gpt-6-astra".into()), None] {
+            let events: Vec<_> = run(request(), model, |_, advisor| async move {
+                assert!(!advisor);
+                Ok(reply(json!([
+                    {"type":"tool_use","id":"call_read","name":"Read","input":{"file_path":"C:\\test\\quoted \"文\".txt"}},
+                    {"type":"tool_use","id":"call_mcp","name":"mcp__test","input":{"nested":{"items":[1,true,null]},"text":"first\nsecond"}},
+                    {"type":"tool_use","id":"call_empty","name":"Empty","input":{}}
+                ])))
+            }).collect().await;
+            let events: Vec<_> = events.into_iter().map(Result::unwrap).collect();
+            for (index, expected) in [
+                json!({"file_path":"C:\\test\\quoted \"文\".txt"}),
+                json!({"nested":{"items":[1,true,null]},"text":"first\nsecond"}),
+                json!({}),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let partial: String = events
+                    .iter()
+                    .filter(|event| {
+                        event["index"] == index && event["delta"]["type"] == "input_json_delta"
+                    })
+                    .map(|event| event["delta"]["partial_json"].as_str().unwrap())
+                    .collect();
+                assert!(
+                    !partial.is_empty(),
+                    "tool {index} lost its arguments: no JSON delta"
+                );
+                assert_eq!(serde_json::from_str::<Value>(&partial).unwrap(), expected);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn advisor_allows_executor_compaction_longer_than_three_minutes() {
+        let mut body = request();
+        body["tools"] = json!([]);
+        body["stream"] = json!(false);
+        let result = collect(run(
+            body,
+            Some("gpt-6-astra".into()),
+            |_, advisor| async move {
+                assert!(!advisor);
+                tokio::time::sleep(std::time::Duration::from_secs(181)).await;
+                Ok(reply(
+                    json!([{"type":"text","text":"Compaction completed"}]),
+                ))
+            },
+        ))
+        .await;
+        assert_eq!(result["content"][0]["text"], "Compaction completed");
     }
 
     #[tokio::test]

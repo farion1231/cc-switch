@@ -1160,6 +1160,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn advisor_compaction_preserves_upstream_errors_in_json_and_streams() {
+        let mock_app = Router::new().route(
+            "/v1/responses",
+            post(|axum::Json(body): axum::Json<Value>| async move {
+                let (status, kind, message) = if body["model"] == "rate-limit" {
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "rate_limit_error",
+                        "Rate limit reached",
+                    )
+                } else {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        "prompt is too long",
+                    )
+                };
+                (
+                    status,
+                    axum::Json(json!({"error":{"type":kind,"message":message}})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock_handle =
+            tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let mut provider = Provider::with_id(
+            "advisor-errors".into(),
+            "Advisor errors".into(),
+            json!({"env":{"ANTHROPIC_BASE_URL":format!("http://{address}/v1"),
+                "ANTHROPIC_AUTH_TOKEN":"synthetic-secret","CC_SWITCH_ADVISOR_MODEL":"gpt-6-astra"}}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let server = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..Default::default()
+            },
+            db,
+            None,
+        );
+        let info = server.start().await.unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        for (model, status, kind, message) in [
+            (
+                "context-limit",
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "prompt is too long",
+            ),
+            (
+                "rate-limit",
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "Rate limit reached",
+            ),
+        ] {
+            for streaming in [false, true] {
+                let response = client.post(format!("http://127.0.0.1:{}/v1/messages", info.port))
+                    .json(&json!({"model":model,"stream":streaming,"max_tokens":4096,
+                        "messages":[{"role":"user","content":"Summarize the conversation"}],"tools":[]}))
+                    .send().await.unwrap();
+                assert_eq!(
+                    response.status(),
+                    if streaming { StatusCode::OK } else { status }
+                );
+                let text = response.text().await.unwrap();
+                let error: Value = if streaming {
+                    serde_json::from_str(
+                        text.lines()
+                            .find_map(|line| line.strip_prefix("data: "))
+                            .unwrap(),
+                    )
+                    .unwrap()
+                } else {
+                    serde_json::from_str(&text).unwrap()
+                };
+                assert_eq!(error["error"]["type"], kind);
+                assert_eq!(error["error"]["message"], message);
+            }
+        }
+        server.stop().await.unwrap();
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
     async fn native_advisor_is_passed_through_without_local_execution() {
         let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
         let mock_app = Router::new().route("/v1/messages", post({

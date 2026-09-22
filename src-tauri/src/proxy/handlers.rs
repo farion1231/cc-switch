@@ -358,8 +358,7 @@ async fn handle_advisor_messages(
             });
         }
     }
-    // A consultation must never fail over to another provider or account.
-    ctx.app_config.auto_failover_enabled = false;
+    // The single candidate below prevents failover while retaining configured timeouts.
     let events = super::advisor::run(body, model, move |mut request_body, advisor| {
         let mut ctx = ctx.clone();
         let state = state.clone();
@@ -420,6 +419,30 @@ async fn handle_advisor_messages(
             transform_codex_anthropic::anthropic_sse_to_message_value(text)
         }
     });
+    if !streaming {
+        // Preserve the original status and error for compaction/non-streaming clients.
+        // Converting failures to SSE and parsing them back turns every error into 422.
+        tokio::pin!(events);
+        let mut wire = String::new();
+        while let Some(event) = events.next().await {
+            let event = event?;
+            let chunk = format!(
+                "event: {}\ndata: {}\n\n",
+                event["type"].as_str().unwrap_or("error"),
+                event
+            );
+            if wire.len() + chunk.len() > 16 * 1024 * 1024 {
+                return Err(ProxyError::ResponseBodyTooLarge(16 * 1024 * 1024));
+            }
+            wire.push_str(&chunk);
+        }
+        return Ok(
+            Json(transform_codex_anthropic::anthropic_sse_to_message_value(
+                &wire,
+            )?)
+            .into_response(),
+        );
+    }
     let stream = async_stream::stream! {
         tokio::pin!(events);
         loop {
@@ -432,30 +455,27 @@ async fn handle_advisor_messages(
             let failed = event.is_err();
             let event = match event {
                 Ok(event) => event,
-                Err(_) => json!({"type":"error","error":{"type":"api_error","message":"CC Switch advisor exchange failed; retry or disable the advisor."}}),
+                Err(error) => {
+                    let upstream = match &error {
+                        ProxyError::UpstreamError { body: Some(body), .. } => serde_json::from_str::<Value>(body).ok()
+                            .and_then(|body| body.get("error").filter(|error| error.is_object()).cloned()),
+                        _ => None,
+                    };
+                    json!({"type":"error","error":upstream.unwrap_or_else(|| json!({"type":"api_error","message":get_error_message(&error)}))})
+                },
             };
             yield Ok::<Bytes, std::io::Error>(Bytes::from(format!("event: {}\ndata: {}\n\n", event["type"].as_str().unwrap_or("error"), event)));
             if failed { break; }
         }
     };
-    if streaming {
-        Ok((
-            [
-                ("Content-Type", "text/event-stream"),
-                ("Cache-Control", "no-cache"),
-            ],
-            axum::body::Body::from_stream(stream),
-        )
-            .into_response())
-    } else {
-        let bytes = axum::body::to_bytes(axum::body::Body::from_stream(stream), 16 * 1024 * 1024)
-            .await
-            .map_err(|_| ProxyError::ForwardFailed("Advisor response exceeded its limit".into()))?;
-        let message = transform_codex_anthropic::anthropic_sse_to_message_value(
-            &String::from_utf8_lossy(&bytes),
-        )?;
-        Ok(Json(message).into_response())
-    }
+    Ok((
+        [
+            ("Content-Type", "text/event-stream"),
+            ("Cache-Control", "no-cache"),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
 }
 
 fn validate_claude_desktop_gateway_auth(
