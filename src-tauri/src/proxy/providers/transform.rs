@@ -66,8 +66,8 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// Supported families:
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
-/// - xAI Grok Build models. `grok-4.5`/`grok-4.6` are the documented Grok
-///   Build models; retain the previous `grok-build-*` family for saved providers.
+/// - xAI Grok models. `grok-4.5`/`grok-4.6`/`grok-4.7` accept
+///   `reasoning.effort`; retain the previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
     is_openai_o_series(&normalized)
@@ -79,6 +79,8 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
         || normalized.starts_with("grok-4.5-")
         || normalized == "grok-4.6"
         || normalized.starts_with("grok-4.6-")
+        || normalized == "grok-4.7"
+        || normalized.starts_with("grok-4.7-")
         || normalized.starts_with("grok-build-")
 }
 
@@ -1790,6 +1792,8 @@ mod tests {
         assert!(supports_reasoning_effort("grok-4.5"));
         assert!(supports_reasoning_effort("grok-4.6"));
         assert!(supports_reasoning_effort("grok-4.6-build"));
+        assert!(supports_reasoning_effort("grok-4.7"));
+        assert!(supports_reasoning_effort("grok-4.7-fast"));
         assert!(supports_reasoning_effort("grok-build-0.1"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));

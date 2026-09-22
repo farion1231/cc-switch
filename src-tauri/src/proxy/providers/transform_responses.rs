@@ -4915,6 +4915,22 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_grok_4_7_reasoning_effort_not_dropped() {
+        // After model mapping, the Responses gate runs on the mapped name.
+        // grok-4.7 was missing from the whitelist, so Claude Code's
+        // output_config.effort never became reasoning.effort and xAI defaulted to high.
+        let input = json!({
+            "model": "grok-4.7",
+            "max_tokens": 1024,
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
     fn test_responses_output_config_takes_priority_over_thinking() {
         let input = json!({
             "model": "gpt-5.4",
