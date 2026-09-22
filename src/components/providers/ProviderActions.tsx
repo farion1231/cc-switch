@@ -114,6 +114,9 @@ export function ProviderActions({
     !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
   const isMembershipMode = isAdditiveMode;
   const piStateChangeHint = t("pi.current.stateUnavailableHint");
+  const readOnlyHint = t("provider.managedByHermesHint", {
+    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
+  });
 
   const handleMainButtonClick = () => {
     if (isOmo) {
@@ -141,6 +144,23 @@ export function ProviderActions({
   };
 
   const getMainButtonState = (): MainButtonState => {
+    if (isReadOnly) {
+      return {
+        disabled: true,
+        variant: "secondary" as const,
+        className: "opacity-40 cursor-not-allowed",
+        icon: isCurrent ? (
+          <Check className="h-4 w-4" />
+        ) : (
+          <Play className="h-4 w-4" />
+        ),
+        text: isCurrent
+          ? t("provider.inUse")
+          : t("provider.enable", { defaultValue: "启用" }),
+        title: readOnlyHint,
+      };
+    }
+
     if (isOmo) {
       if (isCurrent) {
         return {
@@ -266,9 +286,6 @@ export function ProviderActions({
       : isOmo || isAdditiveMode
         ? true
         : !isCurrent);
-  const readOnlyHint = t("provider.managedByHermesHint", {
-    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
-  });
   const deleteHint =
     appId === "pi" && isStateChangeProtected
       ? piStateChangeHint
@@ -279,6 +296,7 @@ export function ProviderActions({
   return (
     <div className="flex items-center gap-1.5">
       {(appId === "openclaw" || appId === "hermes") &&
+        !isReadOnly &&
         isInConfig &&
         onSetAsDefault &&
         (() => {

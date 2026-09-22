@@ -12,9 +12,18 @@ const TAURI_ENDPOINT = "http://tauri.local";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+const useHermesLiveProviderIdsMock = vi.fn();
+const useHermesModelConfigMock = vi.fn();
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
+}));
+
+vi.mock("@/hooks/useHermes", () => ({
+  useHermesLiveProviderIds: (...args: unknown[]) =>
+    useHermesLiveProviderIdsMock(...args),
+  useHermesModelConfig: (...args: unknown[]) =>
+    useHermesModelConfigMock(...args),
 }));
 
 vi.mock("@/components/providers/ProviderCard", () => ({
@@ -128,6 +137,11 @@ beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
+  useHermesLiveProviderIdsMock.mockReset();
+  useHermesModelConfigMock.mockReset();
+
+  useHermesLiveProviderIdsMock.mockReturnValue({ data: undefined });
+  useHermesModelConfigMock.mockReturnValue({ data: undefined });
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -266,6 +280,199 @@ describe("ProviderList Component", () => {
       { a: providerA, b: providerB },
       "claude",
     );
+  });
+
+  it("marks a Hermes dictionary provider current by its canonical key", () => {
+    const provider = createProvider({
+      id: "Acme",
+      name: "Acme",
+      settingsConfig: { provider_key: "corp-key" },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    useHermesLiveProviderIdsMock.mockReturnValue({ data: [provider.id] });
+    useHermesModelConfigMock.mockReturnValue({
+      data: { provider: "custom:corp-key", default: "acme-model" },
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    const cardProps = providerCardRenderSpy.mock.calls[0][0];
+    expect(cardProps.isCurrent).toBe(true);
+    expect(cardProps.isDefaultModel).toBe(true);
+    expect(cardProps.isRemovalProtected).toBe(true);
+  });
+
+  it("normalizes a Hermes custom provider reference from the provider ID", () => {
+    const provider = createProvider({
+      id: "Demo Provider",
+      name: "Demo Provider",
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    useHermesLiveProviderIdsMock.mockReturnValue({ data: [provider.id] });
+    useHermesModelConfigMock.mockReturnValue({
+      data: { provider: "custom:demo-provider", default: "demo-model" },
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(true);
+  });
+
+  it("does not treat a bare built-in Hermes provider as a custom provider", () => {
+    const provider = createProvider({
+      id: "OpenAI",
+      name: "OpenAI",
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    useHermesLiveProviderIdsMock.mockReturnValue({ data: [provider.id] });
+    useHermesModelConfigMock.mockReturnValue({
+      data: { provider: "openai", default: "gpt-4o" },
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(false);
+  });
+
+  it("does not mark colliding Hermes slugs current", () => {
+    const spacedProvider = createProvider({
+      id: "Foo Bar",
+      name: "Foo Bar",
+    });
+    const dashedProvider = createProvider({
+      id: "foo-bar",
+      name: "foo-bar",
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [spacedProvider, dashedProvider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    useHermesLiveProviderIdsMock.mockReturnValue({
+      data: [spacedProvider.id, dashedProvider.id],
+    });
+    useHermesModelConfigMock.mockReturnValue({
+      data: { provider: "custom:foo-bar", default: "shared-model" },
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{
+          [spacedProvider.id]: spacedProvider,
+          [dashedProvider.id]: dashedProvider,
+        }}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    for (const [props] of providerCardRenderSpy.mock.calls) {
+      expect(props.isCurrent).toBe(false);
+      expect(props.isDefaultModel).toBe(false);
+      expect(props.isRemovalProtected).toBe(false);
+    }
+  });
+
+  it("ignores a stale Hermes database row when matching the current provider", () => {
+    const staleProvider = createProvider({
+      id: "Foo Bar",
+      name: "Foo Bar",
+    });
+    const liveProvider = createProvider({
+      id: "foo-bar",
+      name: "foo-bar",
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [staleProvider, liveProvider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    useHermesLiveProviderIdsMock.mockReturnValue({
+      data: [liveProvider.id],
+    });
+    useHermesModelConfigMock.mockReturnValue({
+      data: { provider: "custom:foo-bar", default: "shared-model" },
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{
+          [staleProvider.id]: staleProvider,
+          [liveProvider.id]: liveProvider,
+        }}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    const staleCardProps = providerCardRenderSpy.mock.calls[0][0];
+    const liveCardProps = providerCardRenderSpy.mock.calls[1][0];
+    expect(staleCardProps.isCurrent).toBe(false);
+    expect(staleCardProps.isDefaultModel).toBe(false);
+    expect(staleCardProps.isRemovalProtected).toBe(false);
+    expect(liveCardProps.isCurrent).toBe(true);
+    expect(liveCardProps.isDefaultModel).toBe(true);
+    expect(liveCardProps.isRemovalProtected).toBe(true);
   });
 
   it("filters providers with the search input", () => {
