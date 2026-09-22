@@ -2301,9 +2301,27 @@ fn codex_model_catalog_from_settings(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
-    let specs = codex_catalog_model_specs(settings);
+    let mut specs = codex_catalog_model_specs(settings);
     if specs.is_empty() {
         return Ok(None);
+    }
+
+    // The selected model can be edited independently of the catalog rows.
+    // Keep it resolvable in a generated catalog without replacing explicit
+    // per-model overrides or enabling catalogs for providers without rows.
+    if let Some(model) = codex_top_level_model(config_text) {
+        if !specs.iter().any(|spec| spec.model == model) {
+            specs.push(CodexCatalogModelSpec {
+                model,
+                display_name: None,
+                context_window: None,
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
+            });
+        }
     }
 
     // Vendors that publish an OFFICIAL Codex models.json for their native
@@ -6777,6 +6795,107 @@ base_url = "https://production.api/v1"
                 .and_then(Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn codex_model_catalog_includes_configured_model_missing_from_rows() {
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-flash" }] }
+        });
+        let config = r#"model = "deepseek-v4.1-flash"
+model_context_window = 256000
+"#;
+        assert_eq!(
+            codex_top_level_model(config).as_deref(),
+            Some("deepseek-v4.1-flash")
+        );
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            config,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        let models = catalog["models"].as_array().unwrap();
+        let configured = models
+            .iter()
+            .find(|entry| entry["slug"] == "deepseek-v4.1-flash")
+            .expect("generated catalog must include the configured model");
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0]["slug"], "deepseek-v4-flash");
+        assert_eq!(configured["display_name"], "deepseek-v4.1-flash");
+        assert_eq!(configured["context_window"], 256000);
+    }
+
+    #[test]
+    fn codex_model_catalog_preserves_configured_model_overrides() {
+        let settings = json!({
+            "modelCatalog": { "models": [{
+                "model": "deepseek-v4.1-flash",
+                "displayName": "My Flash",
+                "contextWindow": 64000,
+                "inputModalities": ["text"],
+                "reasoningLevels": ["low", "high"],
+                "defaultReasoningLevel": "low"
+            }] }
+        });
+        let profile = CodexCatalogToolProfile::NativeResponses;
+        let without_default = codex_model_catalog_from_settings(&settings, "", profile).unwrap();
+        let with_default = codex_model_catalog_from_settings(
+            &settings,
+            r#"model = "deepseek-v4.1-flash""#,
+            profile,
+        )
+        .unwrap();
+
+        assert_eq!(with_default, without_default);
+        assert_eq!(with_default.unwrap()["models"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn codex_model_catalog_keeps_empty_catalog_disabled() {
+        for settings in [
+            json!({}),
+            json!({ "modelCatalog": { "models": [] } }),
+            json!({ "modelCatalog": { "models": [{ "model": " " }] } }),
+        ] {
+            assert!(codex_model_catalog_from_settings(
+                &settings,
+                r#"model = "deepseek-v4.1-flash""#,
+                CodexCatalogToolProfile::NativeResponses,
+            )
+            .unwrap()
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn codex_model_catalog_missing_configured_vendor_model_uses_official_metadata() {
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-flash" }] }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            r#"model = "deepseek-v4-pro"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.deepseek.com"
+"#,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        let configured = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["slug"] == "deepseek-v4-pro")
+            .expect("default model must also be present in a vendor catalog");
+
+        assert_eq!(configured["context_window"], 1_048_576);
+        assert_eq!(configured["input_modalities"], json!(["text"]));
+        assert_eq!(configured["apply_patch_tool_type"], "freeform");
     }
 
     #[test]
