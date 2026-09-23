@@ -1980,6 +1980,51 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // 平台 OpenClaw 指南：anthropic-messages 协议 baseUrl 不带 /v1（指南里
+    // "去掉 /v2 后缀"是笔误，/v2/* 实测全 404）。定价取模型市场标价（USD）。
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    settingsConfig: {
+      baseUrl: "https://maas.so-show.com",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5",
+          name: "Claude Opus 5",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "soshow",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "soshow/claude-opus-5",
+        fallbacks: ["soshow/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "soshow/claude-opus-5": { alias: "Opus" },
+        "soshow/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",

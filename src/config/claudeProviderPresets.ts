@@ -888,7 +888,10 @@ export const providerPresets: ProviderPreset[] = [
         API_TIMEOUT_MS: "300000",
       },
     },
-    endpointCandidates: ["https://api.sudocode.chat"],
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "sudocode",
@@ -960,6 +963,25 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.atlascloud.ai"],
     category: "aggregator",
     icon: "atlascloud",
+  },
+  {
+    // 平台「模型 API 文档」写明 Claude 协议须禁用所有 beta 参数，Claude Code
+    // 要设 CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS。模型市场只有 sonnet-5 /
+    // opus-5 两款 Claude、没有 Haiku，后台 Haiku 档改指 sonnet-5。
+    // AK 只能调已在模型市场订阅的模型。
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://maas.so-show.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5",
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+      },
+    },
+    category: "aggregator",
+    icon: "soshow",
   },
   {
     name: "Gemini Native",

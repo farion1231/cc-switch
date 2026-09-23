@@ -777,6 +777,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "mcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "mcode"],
+        });
       }
       toast.success(
         activeApp === "pi"

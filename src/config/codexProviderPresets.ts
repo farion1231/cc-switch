@@ -1219,7 +1219,10 @@ name = "SudoCode"
 base_url = "https://api.sudocode.chat/v1"
 wire_api = "responses"
 requires_openai_auth = true`,
-    endpointCandidates: ["https://api.sudocode.chat/v1"],
+    endpointCandidates: [
+      "https://api.sudocode.chat/v1",
+      "https://api.sudorelay.com/v1",
+    ],
     apiFormat: "openai_responses",
     isPartner: true,
     partnerPromotionKey: "sudocode",
@@ -1320,6 +1323,21 @@ requires_openai_auth = true`,
       outputFormat: "reasoning_content",
     },
     icon: "atlascloud",
+  },
+  {
+    // 平台文档只写了 chat/completions 与 messages；/v1/responses 经探测是
+    // 真实路由（未知路径 404、该路径 401 缺鉴权），GPT 系按原生 Responses 直连。
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "soshow",
+      "https://maas.so-show.com/v1",
+      "gpt-5.6-sol",
+    ),
+    icon: "soshow",
   },
   {
     name: "Azure OpenAI",

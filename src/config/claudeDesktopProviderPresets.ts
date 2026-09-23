@@ -851,7 +851,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://api.sudocode.chat"],
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
     isPartner: true,
     partnerPromotionKey: "sudocode",
     icon: "sudocode",
@@ -906,6 +909,30 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://api.atlascloud.ai"],
     icon: "atlascloud",
+  },
+  {
+    // 模型市场只有 sonnet-5 / opus-5 两款 Claude、没有 Haiku；direct 模式
+    // 不能映射，故只声明这两条而非 passthroughRoutes()。
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    category: "aggregator",
+    baseUrl: "https://maas.so-show.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        supports1m: false,
+      },
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+        supports1m: false,
+      },
+    ],
+    icon: "soshow",
   },
   {
     name: "Gemini Native",

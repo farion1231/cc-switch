@@ -98,6 +98,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "currentColor",
   },
+  soshow: {
+    name: "soshow",
+    displayName: "Soshow",
+    category: "ai-provider",
+    keywords: ["soshow", "so-show", "model market", "aggregator", "claude"],
+    defaultColor: "#7966FE",
+  },
   sudocode: {
     name: "sudocode",
     displayName: "SudoCode.chat",

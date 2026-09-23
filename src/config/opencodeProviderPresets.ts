@@ -1543,6 +1543,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Soshow",
+      options: {
+        baseURL: "https://maas.so-show.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-opus-5": { name: "Claude Opus 5" },
+      },
+    },
+    category: "aggregator",
+    icon: "soshow",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",

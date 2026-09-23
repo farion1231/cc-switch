@@ -461,6 +461,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, [t, updateInfo?.availableVersion, version]);
 
+  const handleOpenGithub = useCallback(() => {
+    void settingsApi.openExternal("https://github.com/farion1231/cc-switch");
+  }, []);
+
   const handleCheckUpdate = useCallback(async () => {
     if (hasUpdate) {
       if (isPortable) {
@@ -901,7 +905,39 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             </div>
           </div>
 
+          <p className="min-w-0 flex-1 text-xs leading-relaxed sm:text-right">
+            <a
+              href="https://github.com/farion1231/cc-switch"
+              onClick={(event) => {
+                event.preventDefault();
+                handleOpenGithub();
+              }}
+              className="font-medium text-primary hover:underline"
+            >
+              {t("settings.starPrompt")}
+            </a>
+            <span aria-hidden="true" className="ml-1.5">
+              👉
+            </span>
+          </p>
+
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleOpenGithub}
+              className="h-8 gap-1.5 border-primary/30 bg-primary/10 text-xs text-primary hover:bg-primary/20 hover:text-primary"
+            >
+              <Github className="h-3.5 w-3.5" />
+              {t("settings.github")}
+              <span
+                aria-hidden="true"
+                className="inline-block animate-[spin_4s_linear_infinite] motion-reduce:animate-none"
+              >
+                ⭐
+              </span>
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -911,20 +947,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             >
               <Globe className="h-3.5 w-3.5" />
               {t("settings.officialWebsite")}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                settingsApi.openExternal(
-                  "https://github.com/farion1231/cc-switch",
-                )
-              }
-              className="h-8 gap-1.5 text-xs"
-            >
-              <Github className="h-3.5 w-3.5" />
-              {t("settings.github")}
             </Button>
             <Button
               type="button"
