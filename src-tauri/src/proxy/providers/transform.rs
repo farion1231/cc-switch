@@ -327,8 +327,21 @@ pub fn anthropic_to_openai_with_reasoning_content(
     if let Some(msgs) = body.get("messages").and_then(|m| m.as_array()) {
         for msg in msgs {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+            // OpenAI-compatible chat 后端（SGLang/vLLM 等）要求 system 消息必须位于
+            // 数组首位；中途出现的 system 会直接 400
+            // ("System message must be at the beginning")。Claude Desktop / Agent
+            // SDK 会把 <system-reminder>（日期、工作目录、CLAUDE.md 等）作为
+            // role:"system" 注入到对话中段，此类消息降级为 user 语义等价且合法。
+            // 仅当本条转换恰好产生数组首条消息时保留 system 角色。
+            let at_head = messages.is_empty();
+            let effective_role = if role == "system" && !at_head {
+                "user"
+            } else {
+                role
+            };
             let content = msg.get("content");
-            let converted = convert_message_to_openai(role, content, preserve_reasoning_content)?;
+            let converted =
+                convert_message_to_openai(effective_role, content, preserve_reasoning_content)?;
             messages.extend(converted);
         }
     }
@@ -1095,8 +1108,12 @@ mod tests {
 
     #[test]
     fn test_anthropic_to_openai_preserves_mid_conversation_system_in_place() {
-        // Claude Code 会在对话中间注入 system 消息（如 <total_tokens>），
-        // 必须保持原位，不合并不上提，否则破坏前缀缓存。
+        // Claude Code 会在对话中间注入 system 消息（如 <total_tokens>）。
+        // 历史行为是「保持原位、不合并不上提」以稳定前缀缓存；但 OpenAI-compatible
+        // 严格后端（SGLang/vLLM）要求 system 只能位于数组首位，中途 system 直接
+        // 400 "System message must be at the beginning"。现契约：内容原位保留
+        // （前缀文本稳定），角色降级为 user。生产端 CLAUDE_CODE_TOTAL_TOKENS_REMINDER
+        // 建议 off 以完全避免中途 system。
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -1116,8 +1133,8 @@ mod tests {
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[0]["content"], "You are Claude Code.");
 
-        // 中途 system 保持原位（第 3 条，index=3），不被合并或上提
-        assert_eq!(messages[3]["role"], "system");
+        // 中途 system：内容原位保留（第 3 条，index=3），角色降级 user
+        assert_eq!(messages[3]["role"], "user");
         assert_eq!(
             messages[3]["content"],
             "<total_tokens>14963538 tokens left</total_tokens>"
@@ -2395,5 +2412,53 @@ mod tests {
         let legacy: crate::provider::ProviderMeta =
             serde_json::from_str(r#"{"claudeDesktopMode":"proxy"}"#).unwrap();
         assert!(legacy.claude_chat_reasoning.is_none());
+    }
+
+    #[test]
+    fn anthropic_to_openai_demotes_mid_conversation_system() {
+        // Claude Desktop / Agent SDK 会把 <system-reminder> 以 role:"system"
+        // 注入对话中段；OpenAI-compatible 严格后端要求 system 只能位于首位，
+        // 否则 400 "System message must be at the beginning"。
+        // 顶层 system 已在首位 → 中段 system 必须降级。
+        let body = json!({
+            "model": "claude-sonnet-5",
+            "max_tokens": 100,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "system", "content": "<system-reminder>date</system-reminder>"},
+                {"role": "user", "content": "second"}
+            ]
+        });
+        let out = anthropic_to_openai_with_reasoning_content(body, false).unwrap();
+        let roles: Vec<&str> = out["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["system", "user", "user", "user"]);
+    }
+
+    #[test]
+    fn anthropic_to_openai_keeps_leading_in_array_system() {
+        // 数组首位的 system 合法保留（不经过顶层 system 路径的场景）
+        let body = json!({
+            "model": "claude-sonnet-5",
+            "max_tokens": 100,
+            "messages": [
+                {"role": "system", "content": "be terse"},
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "mid reminder"}
+            ]
+        });
+        let out = anthropic_to_openai_with_reasoning_content(body, false).unwrap();
+        let roles: Vec<&str> = out["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["system", "user", "user"]);
     }
 }
