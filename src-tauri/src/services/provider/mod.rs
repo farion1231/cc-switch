@@ -3375,7 +3375,11 @@ wire_api = "responses"
                         .unwrap()
                         .enabled
                 );
-                assert!(!restarted.proxy_service.is_running().await);
+                assert_eq!(
+                    restarted.proxy_service.is_running().await,
+                    exit_state == "normal",
+                    "{exit_state}"
+                );
                 assert!(!restarted
                     .proxy_service
                     .detect_takeover_in_live_config_for_app(&AppType::Codex));
