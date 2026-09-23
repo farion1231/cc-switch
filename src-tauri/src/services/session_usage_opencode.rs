@@ -339,6 +339,7 @@ fn insert_opencode_message(
 
     let dedup_key = DedupKey {
         app_type: "opencode",
+        data_source: "opencode_session",
         model: &msg.model_id,
         input_tokens: msg.input_tokens,
         output_tokens: output_with_reasoning,
