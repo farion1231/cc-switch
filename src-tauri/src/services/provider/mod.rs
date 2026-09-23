@@ -1044,6 +1044,143 @@ mod tests {
         );
     }
 
+    /// 切换 Claude 供应商不得改写 ~/.claude.json（issue #7614）。
+    ///
+    /// MCP 文件独立于 Claude 的 live（settings.json）。用户带外在
+    /// ~/.claude.json 里删除了数据库中仍启用的服务器、新增了未知服务器，
+    /// 切换后两者都必须保持原样；其余字段更不能被动。
+    #[tokio::test]
+    #[serial]
+    async fn switch_claude_provider_leaves_claude_json_untouched() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let pa = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "token-a"}}),
+            None,
+        );
+        let pb = Provider::with_id(
+            "p2".into(),
+            "Claude B".into(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "token-b"}}),
+            None,
+        );
+        for provider in [&pa, &pb] {
+            db.save_provider("claude", provider).expect("save provider");
+        }
+        db.set_current_provider("claude", "p1")
+            .expect("set current");
+
+        // 数据库侧仍记录 managed 已启用（用户已在 Claude Code 里带外删除）
+        db.save_mcp_server(&crate::app_config::McpServer {
+            id: "managed".into(),
+            name: "managed".into(),
+            server: json!({"command": "npx", "args": ["-y", "managed-mcp"]}),
+            apps: crate::app_config::McpApps {
+                claude: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save mcp server");
+
+        // 带外现状：managed 已被用户删除，manual 是用户手工新增的
+        let claude_json = crate::config::get_claude_mcp_path();
+        write_json_file(
+            &claude_json,
+            &json!({
+                "numStartups": 42,
+                "mcpServers": {
+                    "out-of-band": {"command": "foo"}
+                }
+            }),
+        )
+        .expect("seed claude.json");
+
+        ProviderService::switch(&state, AppType::Claude, "p2").expect("switch provider");
+
+        let live: Value = read_json_file(&claude_json).expect("read claude.json");
+        assert_eq!(
+            live.get("mcpServers")
+                .and_then(|m| m.as_object())
+                .map(|m| m.len()),
+            Some(1),
+            "切换不得把数据库中已启用的 MCP 复活回 ~/.claude.json"
+        );
+        assert!(
+            live["mcpServers"].get("out-of-band").is_some(),
+            "切换不得删除数据库未纳管的带外 MCP 服务器"
+        );
+        assert_eq!(
+            live["numStartups"].as_i64(),
+            Some(42),
+            "切换不得改动 mcpServers 之外的字段"
+        );
+
+        // settings.json 仍应正常写入新供应商
+        let settings_live: Value =
+            read_json_file(&get_claude_settings_path()).expect("read live settings");
+        assert_eq!(
+            settings_live["env"]["ANTHROPIC_AUTH_TOKEN"].as_str(),
+            Some("token-b")
+        );
+    }
+
+    /// 同文件应用（Codex）切换后仍必须重投影 MCP：整体重写 config.toml
+    /// 会把 [mcp_servers] 一并冲掉，数据库中启用的服务器要补回。
+    #[tokio::test]
+    #[serial]
+    async fn switch_codex_provider_still_reprojects_mcp_servers() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".into(),
+            "Third".into(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model = \"gpt-5\"\n"
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+
+        db.save_mcp_server(&crate::app_config::McpServer {
+            id: "managed".into(),
+            name: "managed".into(),
+            server: json!({"command": "npx", "args": ["-y", "managed-mcp"]}),
+            apps: crate::app_config::McpApps {
+                codex: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save mcp server");
+
+        ProviderService::switch(&state, AppType::Codex, "p1").expect("switch provider");
+
+        let config_text = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read config.toml");
+        assert!(
+            config_text.contains("mcp_servers"),
+            "切换后 config.toml 必须补回数据库中启用的 [mcp_servers]"
+        );
+    }
+
     /// A stale backup row must be refreshed but must not divert the live write.
     #[tokio::test]
     #[serial]
@@ -5539,12 +5676,19 @@ impl ProviderService {
                 live::sync_live_for_provider_respecting_takeover(state, &app_type, &provider)?;
             if outcome == LiveSyncOutcome::WroteLive {
                 // MCP is stored in the database and projected after a successful
-                // live write. Keep the failure best-effort so the provider save
-                // itself is not reported as failed when MCP projection can retry.
-                if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
-                    log::warn!(
-                        "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
-                    );
+                // live write — but only when MCP shares the live file (Codex /
+                // Grok Build config.toml). Apps with an independent MCP file
+                // (e.g. Claude's ~/.claude.json) must not be re-projected here:
+                // the database snapshot would clobber out-of-band edits the
+                // user made to the live MCP list (issue #7614). Keep the
+                // failure best-effort so the provider save itself is not
+                // reported as failed when MCP projection can retry.
+                if app_type.mcp_shares_live_file() {
+                    if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                        log::warn!(
+                            "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
+                        );
+                    }
                 }
             }
         }
@@ -6070,15 +6214,20 @@ impl ProviderService {
             }
         }
 
-        // 切换重写了目标应用的 live，只重投影该应用的 MCP（Codex 的
-        // [mcp_servers] 与 live 同文件，整体替换后必须补回；其余应用的
-        // MCP 文件独立于 live，投影是幂等维护）。不用全量 sync_all_enabled：
-        // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）不该阻断切换。
-        // 走到这里 DB is_current 与 live 都已落盘，切换事实上已成功；
-        // 投影失败上抛会让前端报"切换失败"制造分裂假象，故降级为警告
-        // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
-        if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
-            log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+        // 切换重写了目标应用的 live。仅当 MCP 与 live 同文件（Codex /
+        // Grok Build 的 config.toml [mcp_servers]）时才重投影补回——整体
+        // 替换会把 MCP 一并冲掉。其余应用（如 Claude 的 ~/.claude.json）
+        // 的 MCP 文件独立于 live，切换不触碰它们；再投影只会用数据库快照
+        // 覆盖用户带外修改过的 mcpServers，把新增/删除/修改打回旧状态
+        // （issue #7614）。不用全量 sync_all_enabled：无关应用的 live 损坏
+        // （如 ~/.claude.json 坏 JSON）不该阻断切换。走到这里 DB is_current
+        // 与 live 都已落盘，切换事实上已成功；投影失败上抛会让前端报
+        // "切换失败"制造分裂假象，故降级为警告（同文件应用的 MCP 投影可
+        // 自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+        if app_type.mcp_shares_live_file() {
+            if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+            }
         }
 
         Ok(result)
@@ -6113,6 +6262,12 @@ impl ProviderService {
             return Ok(());
         }
 
+        // 仅当 MCP 与 live 同文件时才重投影（见 switch 处注释，issue #7614）：
+        // 独立 MCP 文件的应用（Claude/Gemini）这里只写了 settings.json / .env，
+        // 重投影只会把带外修改过的 mcpServers 打回数据库快照。
+        if !app_type.mcp_shares_live_file() {
+            return Ok(());
+        }
         McpService::sync_enabled_for_app(state, &app_type)
     }
 

@@ -446,6 +446,17 @@ impl AppType {
         )
     }
 
+    /// 该应用的 MCP 配置是否与供应商 live 配置共存于同一文件。
+    ///
+    /// Codex / Grok Build 的 `[mcp_servers]` 与供应商配置同在 config.toml，
+    /// 切换整体重写该文件后必须重投影 MCP 补回；其余应用（如 Claude 的
+    /// ~/.claude.json、Gemini 的 ~/.gemini/settings.json）的 MCP 文件独立于
+    /// live，切换根本不触碰它们，重投影只会把数据库快照整体盖回 live，
+    /// 抹掉用户的带外修改。
+    pub fn mcp_shares_live_file(&self) -> bool {
+        matches!(self, AppType::Codex | AppType::GrokBuild)
+    }
+
     /// Return an iterator over all app types
     pub fn all() -> impl Iterator<Item = AppType> {
         [
