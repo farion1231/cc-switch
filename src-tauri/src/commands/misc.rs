@@ -658,13 +658,22 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                installs_anchored_command(tool, &installs)
-                    .unwrap_or_else(|| static_fallback_command(tool))
+                match installs_anchored_command(tool, &installs) {
+                    Some(command) => Ok(command),
+                    // Store/MSIX 托管的安装不做 npm 兜底（只会失败或装出第二份）。
+                    // 正常路径前端在 probe 阶段就按 update_supported=false 拦下并
+                    // 引导走 Store；这里兜住"探测失败退回直接执行"的窗口。
+                    None if is_store_managed_default(&installs) => Err(format!(
+                        "{tool} is managed by the Microsoft Store; update it via the Store app"
+                    )),
+                    None => Ok(static_fallback_command(tool)),
+                }
             }
-            ToolLifecycleAction::Install => {
-                static_fallback_command_for(tool, ToolLifecycleAction::Install)
-            }
-        };
+            ToolLifecycleAction::Install => Ok(static_fallback_command_for(
+                tool,
+                ToolLifecycleAction::Install,
+            )),
+        }?;
         if command.is_empty() {
             return Err(format!("Unsupported tool action target: {tool}"));
         }
@@ -2176,7 +2185,7 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
 
 /// 单个工具在系统中的一处安装，用于"多处安装互相打架"的冲突诊断。
 /// 字段保持 snake_case（与 `ToolVersion` 一致），前端按同名字段读取。
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolInstallation {
     /// 候选入口路径（用户实际在 PATH 里看到/输入的那个，未解析软链）。
     path: String,
@@ -3103,6 +3112,13 @@ fn default_install(installs: &[ToolInstallation]) -> Option<&ToolInstallation> {
     })
 }
 
+/// 默认升级目标是否为 Microsoft Store 托管（WindowsApps 下的 App Execution
+/// Alias，`source == "ms-store"`）。Store 包不受 npm 兜底管理：锚定不到原生
+/// 更新通道时，`npm i -g` 只会失败或装出第二份，升级应引导用户走 Store(#7591)。
+fn is_store_managed_default(installs: &[ToolInstallation]) -> bool {
+    default_install(installs).is_some_and(|inst| inst.source == "ms-store")
+}
+
 fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
@@ -3676,6 +3692,9 @@ fn install_command_for(tool: &str) -> String {
 /// - 其他平台与 Windows 原生工具走 `installs_anchored_command`:命中 → 锚定;
 ///   None(无默认 / sibling 不存在等)→ 静态兜底、`anchored=false`,
 ///   前端据此给"默认入口无法确定"诚实文案。
+///   **例外**:默认那处是 Store/MSIX 托管(`ms-store`)时**不落 npm 兜底**——
+///   Store 包不归 npm 管,`npm i -g` 只会失败或装出第二份;返回空命令 +
+///   `update_supported=false`,前端引导用户通过 Microsoft Store 更新(#7591)。
 fn plan_command_for(tool: &str, installs: &[ToolInstallation]) -> (String, bool, bool) {
     #[cfg(target_os = "windows")]
     {
@@ -3687,6 +3706,7 @@ fn plan_command_for(tool: &str, installs: &[ToolInstallation]) -> (String, bool,
     }
     match installs_anchored_command(tool, installs) {
         Some(command) => (command, installs.len() >= 2, true),
+        None if is_store_managed_default(installs) => (String::new(), installs.len() >= 2, false),
         None => (static_fallback_command(tool), installs.len() >= 2, false),
     }
 }
@@ -3721,6 +3741,9 @@ pub struct ToolInstallationReport {
     /// 是否成功锚定到某处具体安装。false = 退到裸 fallback 命令（无法确定命令行实际
     /// 命中哪处，或该处无同级 npm）；前端据此给出"默认入口无法确定"的诚实文案。
     anchored: bool,
+    /// CLI 侧是否存在受支持的升级动作。false = 默认安装由 Store 托管（ms-store）、
+    /// 不提供 npm 兜底；前端据此引导用户通过 Microsoft Store 更新(#7591)。
+    update_supported: bool,
 }
 
 /// 探测各工具的安装分布：枚举所有安装、标记冲突、生成锚定升级命令。只读、无副作用。
@@ -3741,6 +3764,7 @@ pub async fn probe_tool_installations(
                 let installs = enumerate_tool_installations(tool);
                 let (command, needs_confirmation, anchored) = plan_command_for(tool, &installs);
                 let is_conflict = is_conflicting(&installs);
+                let update_supported = !(command.is_empty() && is_store_managed_default(&installs));
                 ToolInstallationReport {
                     tool: tool.to_string(),
                     installs,
@@ -3748,6 +3772,7 @@ pub async fn probe_tool_installations(
                     needs_confirmation,
                     command,
                     anchored,
+                    update_supported,
                 }
             })
             .collect()
@@ -6871,6 +6896,63 @@ mod tests {
             infer_install_source(Path::new(r"C:\Users\tester\AppData\Roaming\npm\codex.cmd")),
             "system"
         );
+    }
+
+    #[test]
+    fn plan_command_for_store_install_skips_npm_fallback() {
+        // cc-switch#7591 后续：唯一安装是 WindowsApps 下的 Store Codex 时锚定不到
+        // npm sibling，不得静默退到 `npm i -g @openai/codex@latest`（没 npm 直接
+        // 失败、有 npm 装出第二份）。空命令 = CLI 侧无受支持的升级动作，前端据此
+        // 置 update_supported=false 并引导用户通过 Microsoft Store 更新。
+        let alias = if cfg!(target_os = "windows") {
+            PathBuf::from(r"C:\Users\tester\AppData\Local\Microsoft\WindowsApps\codex.exe")
+        } else {
+            PathBuf::from("/home/tester/.local/bin/codex")
+        };
+        let store_install = ToolInstallation {
+            path: alias.to_string_lossy().into_owned(),
+            version: Some("0.1.0".into()),
+            runnable: true,
+            error: None,
+            source: "ms-store".into(),
+            is_path_default: false,
+            real: alias,
+        };
+
+        assert!(is_store_managed_default(&[store_install.clone()]));
+
+        let (command, needs_confirmation, anchored) = plan_command_for("codex", &[store_install]);
+        assert!(command.is_empty());
+        assert!(!needs_confirmation);
+        assert!(!anchored);
+    }
+
+    #[test]
+    fn plan_command_for_npm_install_keeps_static_fallback() {
+        // 非 Store 来源不归新守卫管：锚定不到时仍退到静态兜底命令。
+        let npm_install = ToolInstallation {
+            path: if cfg!(target_os = "windows") {
+                String::from(r"C:\Users\tester\AppData\Roaming\npm\codex.cmd")
+            } else {
+                String::from("/home/tester/.local/bin/codex")
+            },
+            version: Some("0.1.0".into()),
+            runnable: true,
+            error: None,
+            source: "system".into(),
+            is_path_default: false,
+            real: PathBuf::from(if cfg!(target_os = "windows") {
+                r"C:\Users\tester\AppData\Roaming\npm\codex.cmd"
+            } else {
+                "/home/tester/.local/bin/codex"
+            }),
+        };
+
+        assert!(!is_store_managed_default(&[npm_install.clone()]));
+
+        let (command, _needs_confirmation, anchored) = plan_command_for("codex", &[npm_install]);
+        assert!(!command.is_empty());
+        assert!(!anchored);
     }
 
     #[cfg(target_os = "windows")]

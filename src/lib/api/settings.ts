@@ -319,6 +319,8 @@ export interface ToolInstallationReport {
   needs_confirmation: boolean;
   command: string;
   anchored: boolean;
+  /** CLI 侧是否存在受支持的升级动作。false = Store 托管安装，应走 Microsoft Store 更新。 */
+  update_supported: boolean;
 }
 
 export interface RectifierConfig {
