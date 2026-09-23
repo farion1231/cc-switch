@@ -1604,6 +1604,19 @@ impl RequestForwarder {
             if codex_impersonate_claude_code {
                 prepend_claude_code_system_prompt(&mut anthropic_body);
             }
+            // Mirror the Claude adapter's vendor-gated history normalization above:
+            // strict Anthropic-compatible upstreams (DeepSeek official, MiMo) reject
+            // assistant tool-call turns without a thinking block (`content[].thinking
+            // ... must be passed back`, #7525). The conversion only replays thinking
+            // that round-tripped through our encrypted envelope; reasoning items from
+            // any other origin drop silently, so this path needs the same heal.
+            // Applied before prompt-cache injection so breakpoints land on the final
+            // history layout.
+            super::providers::normalize_anthropic_messages_for_provider(
+                &mut anthropic_body,
+                provider,
+                "anthropic",
+            );
             // Enable Anthropic prompt caching (no beta header required). Reuse the
             // configured TTL rather than silently forcing 5m on this conversion path.
             // otherwise system/tools/history are re-sent at full price every round,
