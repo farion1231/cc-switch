@@ -1,5 +1,5 @@
 //! 代理服务器模块
-//!
+//! 
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
 pub mod body_filter;
@@ -34,6 +34,7 @@ pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
 pub mod usage;
+#[cfg(windows)]
 pub(crate) mod windows_proxy;
 
 // 公开导出给外部使用（commands, services等模块需要）
