@@ -2508,6 +2508,7 @@
     "uninstall": "Uninstall",
     "uninstalling": "Uninstalling...",
     "view": "View",
+    "requirements": "Requirements",
     "noDescription": "No description",
     "loadFailed": "Failed to load",
     "installSuccess": "Skill {{name}} installed",
