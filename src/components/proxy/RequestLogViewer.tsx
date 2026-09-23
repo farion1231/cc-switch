@@ -928,11 +928,6 @@ function RecordDetail({
           </span>
         </span>
         <span className="font-mono">{record.requestId?.slice(0, 8)}</span>
-        {record.providerId && (
-          <Badge variant="outline" className="text-[10px] h-5">
-            {record.providerId}
-          </Badge>
-        )}
         <span className="ml-auto flex items-center gap-1">
           {/* 惰性序列化：整条记录可能几 MB，render 时不 stringify */}
           <CopyButton
