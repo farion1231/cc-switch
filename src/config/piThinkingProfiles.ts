@@ -148,6 +148,17 @@ export const piThinkingProfiles = {
       max: "max",
     },
   },
+  openaiResponsesGpt6Astra: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
   geminiLowHigh: {
     map: {
       off: null,
@@ -177,6 +188,20 @@ export interface PiThinkingBinding {
  * transport semantics.
  */
 export const piThinkingBindings: readonly PiThinkingBinding[] = [
+  // Always-on adaptive thinking and effort levels verified in Anthropic's
+  // model overview / effort documentation on 2026-09-23.
+  {
+    catalogKey: "anthropic/claude-opus-5.5",
+    api: "anthropic-messages",
+    profileId: "offUnsupportedXhighAndMax",
+    modelCompat: { forceAdaptiveThinking: true },
+  },
+  {
+    catalogKey: "anthropic/claude-fable-5.1",
+    api: "anthropic-messages",
+    profileId: "offUnsupportedXhighAndMax",
+    modelCompat: { forceAdaptiveThinking: true },
+  },
   {
     catalogKey: "anthropic/claude-fable-5",
     api: "anthropic-messages",
@@ -285,6 +310,21 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
   },
   {
     catalogKey: "openai/gpt-5.6-terra",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
+    catalogKey: "openai/gpt-6-astra",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt6Astra",
+  },
+  {
+    catalogKey: "openai/gpt-6-sol",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
+    catalogKey: "openai/gpt-6-luna",
     api: "openai-responses",
     profileId: "openaiResponsesGpt56",
   },

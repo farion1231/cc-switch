@@ -1143,6 +1143,83 @@ fn model_pricing_seed_includes_claude_opus_5_5() {
 }
 
 #[test]
+fn model_pricing_refresh_removes_only_unchanged_retired_builtins() {
+    let db = Database::memory().expect("create memory db");
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM model_pricing WHERE model_id IN
+             ('claude-opus-4-20250514', 'claude-opus-4-1-20250805',
+              'claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022',
+              'claude-3-5-sonnet-20241022', 'gemini-2.0-flash', 'gemini-3-pro-preview', 'o1-mini')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "fresh databases must not offer retired default rates"
+        );
+        conn.execute_batch(
+            "INSERT INTO model_pricing VALUES
+             ('gemini-2.0-flash', 'Gemini 2.0 Flash', '0.10', '0.40', '0.025', '0'),
+             ('o1-mini', 'My hosted o1-mini', '0.55', '2.20', '0.55', '0'),
+             ('claude-opus-4-20250514', 'Claude Opus 4', '7', '35', '0.7', '8.75');",
+        )
+        .unwrap();
+    }
+    db.ensure_model_pricing_seeded().unwrap();
+    db.ensure_model_pricing_seeded().unwrap();
+    let conn = db.conn.lock().unwrap();
+    let remaining: Vec<String> = conn
+        .prepare(
+            "SELECT model_id FROM model_pricing WHERE model_id IN
+         ('gemini-2.0-flash', 'o1-mini', 'claude-opus-4-20250514') ORDER BY model_id",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(remaining, vec!["claude-opus-4-20250514", "o1-mini"]);
+}
+
+#[test]
+fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices() {
+    let db = Database::memory().expect("create memory db");
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE model_pricing SET input_cost_per_million = '0.09',
+                output_cost_per_million = '0.29', cache_read_cost_per_million = '0.009',
+                cache_creation_cost_per_million = '0' WHERE model_id = 'mimo-v2.5';
+             UPDATE model_pricing SET cache_creation_cost_per_million = '0' WHERE model_id = 'kimi-k3';
+             UPDATE model_pricing SET input_cost_per_million = '9.99' WHERE model_id = 'o3-mini';",
+        ).unwrap();
+    }
+    db.ensure_model_pricing_seeded().unwrap();
+    for _ in 0..2 {
+        {
+            let conn = db.conn.lock().unwrap();
+            let output: String = conn.query_row("SELECT output_cost_per_million FROM model_pricing WHERE model_id = 'mimo-v2.5'", [], |row| row.get(0)).unwrap();
+            assert_eq!(output, "0.28");
+            let cache_write: String = conn.query_row("SELECT cache_creation_cost_per_million FROM model_pricing WHERE model_id = 'kimi-k3'", [], |row| row.get(0)).unwrap();
+            assert_eq!(cache_write, "3.00");
+            let custom: String = conn
+                .query_row(
+                    "SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'o3-mini'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(custom, "9.99");
+        }
+        db.ensure_model_pricing_seeded().unwrap();
+    }
+}
+
+#[test]
 fn model_pricing_seed_includes_gpt_6_astra() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
