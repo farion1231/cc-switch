@@ -2701,13 +2701,34 @@ mod tests {
                     "104.375000",
                 ],
             ),
+            // Pro 系列无缓存折扣，缓存列记 0
+            (
+                "gpt-5.5-pro",
+                "codex",
+                3_000_000,
+                [
+                    "30.000000",
+                    "180.000000",
+                    "0.000000",
+                    "0.000000",
+                    "210.000000",
+                ],
+            ),
+            // 剥日期后缀后精确命中 gpt-4o-mini，不会落到更短的 gpt-4o
+            (
+                "gpt-4o-mini-2024-07-18",
+                "codex",
+                3_000_000,
+                ["0.150000", "0.600000", "0.075000", "0.000000", "0.825000"],
+            ),
         ];
         {
             let conn = lock_conn!(db.conn);
             // Simulate an existing database with unpriced usage before the update.
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
-                 ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-cyber')",
+                 ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
+                  'gpt-5.5-pro', 'gpt-4o-mini')",
                 [],
             )?;
             for (model, app, input, _) in &cases {
