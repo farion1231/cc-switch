@@ -49,7 +49,7 @@ pub(crate) fn configured_model(provider: &crate::provider::Provider) -> Option<S
 pub(crate) fn has_advisor(body: &Value) -> bool {
     body.get("tools")
         .and_then(Value::as_array)
-        .is_some_and(|tools| tools.iter().any(is_advisor))
+        .is_some_and(|tools| tools.iter().any(is_native_advisor_tool))
         || body
             .get("messages")
             .and_then(Value::as_array)
@@ -69,12 +69,12 @@ pub(crate) fn has_advisor(body: &Value) -> bool {
             })
 }
 
-fn is_advisor(tool: &Value) -> bool {
-    tool["name"] == "advisor"
+fn is_native_advisor_tool(tool: &Value) -> bool {
+    tool["type"] == "advisor_20260301"
 }
 
 fn replay_content(content: &mut Vec<Value>) {
-    content.retain(|block| !(block["type"] == "server_tool_use" && is_advisor(block)));
+    content.retain(|block| !(block["type"] == "server_tool_use" && block["name"] == "advisor"));
     for block in content {
         if block["type"] == "advisor_tool_result" {
             let guidance = block
@@ -182,22 +182,32 @@ where
         }
         // A byte guard, not a token limit; the provider enforces its context window.
         let max_context_bytes = if model.as_deref() != usage_model { MAX_ONE_M_CONTEXT_BYTES } else { MAX_CONTEXT_BYTES };
-        let native_tool = body.get("tools").and_then(Value::as_array).and_then(|tools| tools.iter().find(|tool| is_advisor(tool))).cloned();
+        let native_tool = body.get("tools").and_then(Value::as_array).and_then(|tools| tools.iter().find(|tool| is_native_advisor_tool(tool))).cloned();
         let max_uses = if model.is_some() { native_tool.as_ref().and_then(|tool| tool["max_uses"].as_u64()).unwrap_or(1).min(MAX_USES) } else { 0 };
         let max_tokens = native_tool.as_ref().and_then(|tool| tool["max_tokens"].as_u64()).unwrap_or(2048).clamp(1024, 4096);
         let output_budget = body["max_tokens"].as_u64().unwrap_or(8192);
         normalize_history(&mut body);
         let transcript_tools = body.get("tools").cloned().unwrap_or(json!([]));
         let mut tools = transcript_tools.as_array().cloned().unwrap_or_default();
-        tools.retain(|tool| !is_advisor(tool));
-        if max_uses > 0 {
-            tools.push(json!({"name":"advisor","description":"Consult a second model for strategic guidance when stuck, before a difficult decision, or to review your approach. The server supplies the conversation; call with empty input. You remain responsible for the task.",
+        let custom_advisor = tools.iter().any(|tool| !is_native_advisor_tool(tool) && tool["name"] == "advisor");
+        tools.retain(|tool| !is_native_advisor_tool(tool));
+        let advisor_name = if max_uses > 0 {
+            let mut name = if custom_advisor { "cc_switch_advisor".to_string() } else { "advisor".to_string() };
+            while tools.iter().any(|tool| tool["name"] == name) {
+                name.push('_');
+            }
+            tools.push(json!({"name":name,"description":"Consult a second model for strategic guidance when stuck, before a difficult decision, or to review your approach. The server supplies the conversation; call with empty input. You remain responsible for the task.",
                 "input_schema":{"type":"object","properties":{},"additionalProperties":false}}));
-        }
+            Some(name)
+        } else {
+            None
+        };
         body["tools"] = json!(tools);
-        if body.pointer("/tool_choice/name").and_then(Value::as_str) == Some("advisor") && max_uses == 0 {
+        if body.pointer("/tool_choice/name").and_then(Value::as_str) == Some("advisor") && native_tool.is_some() && !custom_advisor && max_uses == 0 {
             body["tool_choice"] = json!({"type":"auto"});
         }
+        let web_search_limit = super::providers::transform_responses::anthropic_web_search_max_uses(&body);
+        let mut web_search_used = 0_u64;
         let mut usage = json!({"input_tokens":0,"output_tokens":0,"iterations":[]});
 
         let mut uses = 0;
@@ -218,8 +228,25 @@ where
             let mut replay = Vec::new();
             let mut consulted = false;
             let mut client_tools = false;
+            let truncated = response["stop_reason"] == "max_tokens";
+            if web_search_limit.is_some() {
+                let visible_searches = blocks.iter().filter(|block| block["type"] == "server_tool_use"
+                    && transcript_tools.as_array().is_some_and(|tools| tools.iter().any(|tool| {
+                        let kind = tool["type"].as_str().unwrap_or("");
+                        (kind == "web_search" || kind.starts_with("web_search_"))
+                            && tool["name"] == block["name"]
+                    }))).count() as u64;
+                let round_searches = response.pointer("/usage/server_tool_use/web_search_requests")
+                    .and_then(Value::as_u64).unwrap_or(0).max(visible_searches);
+                web_search_used = web_search_used.saturating_add(round_searches);
+            }
             for block in blocks {
-                if block["type"] != "tool_use" || !is_advisor(block) {
+                let local_advisor = block["type"] == "tool_use"
+                    && advisor_name.as_deref().is_some_and(|name| block["name"] == name);
+                if truncated && local_advisor {
+                    continue;
+                }
+                if !local_advisor {
                     client_tools |= block["type"] == "tool_use";
                     replay.push(block.clone());
                     for event in block_events(block.clone(), index) { yield event; }
@@ -273,7 +300,7 @@ where
             }
             let exhausted = usage["output_tokens"].as_u64().unwrap_or(0) >= output_budget;
             if !consulted || client_tools || exhausted {
-                let reason = if client_tools { json!("tool_use") } else if exhausted { json!("max_tokens") } else { response["stop_reason"].clone() };
+                let reason = if truncated || exhausted { json!("max_tokens") } else if client_tools { json!("tool_use") } else { response["stop_reason"].clone() };
                 yield json!({"type":"message_delta","delta":{"stop_reason":reason,"stop_sequence":null},"usage":usage});
                 yield json!({"type":"message_stop"});
                 break;
@@ -288,7 +315,20 @@ where
             messages.push(json!({"role":"user","content":"Continue the original task using the advisor's guidance where appropriate."}));
             body["tool_choice"] = json!({"type":"auto"});
             if uses >= max_uses {
-                body["tools"].as_array_mut().unwrap().retain(|tool| !is_advisor(tool));
+                body["tools"].as_array_mut().unwrap().retain(|tool| {
+                    advisor_name.as_deref().is_none_or(|name| tool["name"] != name)
+                });
+            }
+            if let Some(limit) = web_search_limit {
+                let remaining = limit.saturating_sub(web_search_used);
+                body["tools"].as_array_mut().unwrap().retain_mut(|tool| {
+                    let kind = tool["type"].as_str().unwrap_or("");
+                    if kind == "web_search" || kind.starts_with("web_search_") {
+                        if remaining == 0 { return false; }
+                        tool["max_uses"] = json!(remaining);
+                    }
+                    true
+                });
             }
         }
     }
@@ -571,6 +611,152 @@ mod tests {
         assert!(dropped.load(Ordering::SeqCst));
     }
 
+    #[tokio::test]
+    async fn truncated_tool_arguments_keep_max_tokens_for_streaming_and_non_streaming() {
+        let upstream_wire = [
+            json!({"type":"message_start","message":reply(json!([]))}),
+            json!({"type":"content_block_start","index":0,"content_block":
+                {"type":"tool_use","id":"call_read","name":"Read","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":
+                {"type":"input_json_delta","partial_json":"{\"file_path\":\"README"}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"max_tokens"}}),
+            json!({"type":"message_stop"}),
+        ]
+        .iter()
+        .map(|event| {
+            format!(
+                "event: {}\ndata: {}\n\n",
+                event["type"].as_str().unwrap(),
+                event
+            )
+        })
+        .collect::<String>();
+        let response =
+            super::super::providers::transform_codex_anthropic::anthropic_sse_to_message_value(
+                &upstream_wire,
+            )
+            .unwrap();
+        assert_eq!(response["content"][0]["input"], json!({}));
+        assert_eq!(response["stop_reason"], "max_tokens");
+        for streaming in [true, false] {
+            let mut body = request();
+            body["stream"] = json!(streaming);
+            let response = response.clone();
+            let events: Vec<_> = run(body, Some("gpt-6-astra".into()), move |_, advisor| {
+                assert!(!advisor);
+                let response = response.clone();
+                async move { Ok(response) }
+            })
+            .collect()
+            .await;
+            let wire = events
+                .into_iter()
+                .map(|event| {
+                    let event = event.unwrap();
+                    format!(
+                        "event: {}\ndata: {}\n\n",
+                        event["type"].as_str().unwrap(),
+                        event
+                    )
+                })
+                .collect::<String>();
+            let result =
+                super::super::providers::transform_codex_anthropic::anthropic_sse_to_message_value(
+                    &wire,
+                )
+                .unwrap();
+            assert_eq!(result["stop_reason"], "max_tokens");
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_advisor_tool_is_preserved_and_not_consulted() {
+        let mut body = request();
+        body["tools"] = json!([{"name":"advisor","description":"Find a person",
+            "input_schema":{"type":"object","properties":{"person":{"type":"string"}},"required":["person"]}}]);
+        body["tool_choice"] = json!({"type":"tool","name":"advisor"});
+        assert!(!has_advisor(&body));
+        for model in [None, Some("gpt-6-astra".into())] {
+            let input = body.clone();
+            let result = collect(run(input, model, |sent, consultation| async move {
+                assert!(!consultation);
+                assert_eq!(sent["tools"][0]["name"], "advisor");
+                assert_eq!(sent["tools"][0]["input_schema"]["required"], json!(["person"]));
+                Ok(reply(json!([{"type":"tool_use","id":"call_person","name":"advisor","input":{"person":"Ada"}}])))
+            })).await;
+            assert_eq!(result["content"][0]["name"], "advisor");
+            assert_eq!(result["content"][0]["input"]["person"], "Ada");
+            assert_eq!(result["stop_reason"], "tool_use");
+        }
+    }
+
+    #[tokio::test]
+    async fn native_advisor_uses_a_distinct_name_when_custom_tool_collides() {
+        let mut body = request();
+        body["tools"].as_array_mut().unwrap().extend([
+            json!({"name":"advisor","input_schema":{"type":"object"}}),
+            json!({"name":"cc_switch_advisor","input_schema":{"type":"object"}}),
+        ]);
+        let mut round = 0;
+        let result = collect(run(body, Some("gpt-6-astra".into()), move |sent, consultation| {
+            let response = if consultation {
+                reply(json!([{"type":"text","text":"Advice"}]))
+            } else {
+                round += 1;
+                if round == 1 {
+                    let names = sent["tools"].as_array().unwrap().iter()
+                        .filter_map(|tool| tool["name"].as_str()).collect::<Vec<_>>();
+                    assert_eq!(names.len(), 3);
+                    assert_eq!(&names[0..2], &["advisor", "cc_switch_advisor"]);
+                    reply(json!([{"type":"tool_use","id":"call_advice","name":names[2],"input":{}}]))
+                } else {
+                    reply(json!([{"type":"text","text":"Done"}]))
+                }
+            };
+            async move { Ok(response) }
+        })).await;
+        assert_eq!(result["content"][0]["type"], "server_tool_use");
+        assert_eq!(result["content"][1]["type"], "advisor_tool_result");
+        assert_eq!(result["content"][2]["text"], "Done");
+    }
+
+    #[tokio::test]
+    async fn web_search_budget_is_shared_across_advisor_rounds() {
+        for limit in [1, 2] {
+            let mut body = request();
+            body["tools"].as_array_mut().unwrap().push(json!({
+                "type":"web_search_20250305","name":"web_search","max_uses":limit
+            }));
+            let mut round = 0;
+            collect(run(body, Some("gpt-6-astra".into()), move |sent, consultation| {
+                let response = if consultation {
+                    reply(json!([{"type":"text","text":"Advice"}]))
+                } else {
+                    round += 1;
+                    if round == 1 {
+                        let mut response = reply(json!([
+                            {"type":"server_tool_use","id":"ws_1","name":"web_search","input":{"query":"example"}},
+                            {"type":"web_search_tool_result","tool_use_id":"ws_1","content":[]},
+                            {"type":"tool_use","id":"call_advice","name":"advisor","input":{}}
+                        ]));
+                        response["usage"]["server_tool_use"] = json!({"web_search_requests":1});
+                        response
+                    } else {
+                        let search = sent["tools"].as_array().unwrap().iter()
+                            .find(|tool| tool["name"] == "web_search");
+                        if limit == 1 {
+                            assert!(search.is_none(), "exhausted search tool was offered again");
+                        } else {
+                            assert_eq!(search.unwrap()["max_uses"], 1);
+                        }
+                        reply(json!([{"type":"text","text":"Done"}]))
+                    }
+                };
+                async move { Ok(response) }
+            })).await;
+        }
+    }
     fn request() -> Value {
         json!({"model":"claude-sonnet-4-6", "max_tokens":4096,
             "system":"Work on the user's task.",
