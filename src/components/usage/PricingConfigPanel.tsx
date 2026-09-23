@@ -295,7 +295,7 @@ export function PricingConfigPanel() {
                         }
                         disabled={isSaving}
                         placeholder="1"
-                        className="h-7 w-24"
+                        className="w-24"
                       />
                     </td>
                     <td className="px-3 py-1.5">
@@ -312,7 +312,7 @@ export function PricingConfigPanel() {
                         }
                         disabled={isSaving}
                       >
-                        <SelectTrigger className="h-7 w-28">
+                        <SelectTrigger className="w-40">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>

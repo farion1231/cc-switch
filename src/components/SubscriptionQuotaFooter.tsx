@@ -25,6 +25,7 @@ interface SubscriptionQuotaViewProps {
 export const TIER_I18N_KEYS: Record<string, string> = {
   five_hour: "subscription.fiveHour",
   seven_day: "subscription.sevenDay",
+  seven_day_fable: "subscription.sevenDayFable",
   seven_day_opus: "subscription.sevenDayOpus",
   seven_day_sonnet: "subscription.sevenDaySonnet",
   // Codex 免费方案的次要窗口是 30 天（付费方案为 7 天）
