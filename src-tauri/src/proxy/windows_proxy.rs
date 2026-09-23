@@ -115,15 +115,9 @@ impl WindowsSystemProxyConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ProxyBypassMatcher {
     rules: Vec<ProxyBypassRule>,
-}
-
-impl Default for ProxyBypassMatcher {
-    fn default() -> Self {
-        Self { rules: Vec::new() }
-    }
 }
 
 impl ProxyBypassMatcher {
