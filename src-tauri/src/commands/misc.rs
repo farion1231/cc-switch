@@ -1481,30 +1481,27 @@ fn extend_from_path_list(
     }
 }
 
+/// Append every segment of the merged "effective PATH" as an enumeration
+/// candidate.
+///
+/// `%LOCALAPPDATA%\Microsoft\WindowsApps` is deliberately KEPT: packaged CLIs
+/// (e.g. a Microsoft Store Codex, #7591) surface there as App Execution
+/// Aliases. Enumeration only ever probes `<tool>.exe` / `<tool>.cmd` /
+/// `<tool>` for the eight known tool names, none of which has a
+/// Windows-created Store stub (those are limited to `python.exe` /
+/// `python3.exe`), so an alias file only exists when the matching package is
+/// actually installed — probing it is safe. `resolve_path_default` still
+/// refuses to treat an alias as the PATH default (see its filter), and
+/// `enumerate_tool_installations` falls back to the raw path when
+/// `canonicalize` cannot resolve the APPEXECLINK reparse point.
 fn extend_from_cli_path_env(
     paths: &mut Vec<std::path::PathBuf>,
     value: Option<std::ffi::OsString>,
 ) {
     if let Some(raw) = value {
         for p in std::env::split_paths(&raw) {
-            if should_skip_cli_path_env_dir(&p) {
-                continue;
-            }
             push_unique_path(paths, p);
         }
-    }
-}
-
-fn should_skip_cli_path_env_dir(path: &Path) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        is_windows_app_execution_alias_dir(path)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = path;
-        false
     }
 }
 
@@ -2230,6 +2227,10 @@ fn infer_install_source(path: &Path) -> &'static str {
         "pnpm"
     } else if s.contains("/scoop/") {
         "scoop"
+    // Microsoft Store packaged CLIs surface as App Execution Aliases under
+    // `%LOCALAPPDATA%\Microsoft\WindowsApps` (#7591).
+    } else if s.contains("/microsoft/windowsapps/") {
+        "ms-store"
     } else if s.contains("/library/python")
         || s.contains("/scripts/")
         || s.contains("/site-packages/")
@@ -2402,9 +2403,11 @@ fn resolve_path_default(
     let raw = decode_command_output(&out.stdout);
     // `where` lists every match on PATH in order; the first is what the user
     // actually runs. Skip App Execution Aliases (reparse points under
-    // `Microsoft\WindowsApps`) — they launch the Store / a protocol handler,
-    // are not CLIs we can `--version`-probe, and must not be treated as the
-    // PATH default. Take the first remaining real entry.
+    // `Microsoft\WindowsApps`): `canonicalize` cannot resolve the APPEXECLINK
+    // reparse point, so an alias can never be compared against the enumerated
+    // install identities, and a stub alias (e.g. the pre-created `python.exe`
+    // Store launcher) must never become the PATH default. Enumeration probes
+    // installed packaged CLIs separately (see `extend_from_cli_path_env`).
     let resolved = raw.lines().map(str::trim).find(|line| {
         !line.is_empty()
             && !is_windows_app_execution_alias_dir(
@@ -6833,13 +6836,41 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn cli_path_env_skips_windows_apps_alias_dir() {
-        assert!(is_windows_app_execution_alias_dir(Path::new(
-            r"C:\Users\tester\AppData\Local\Microsoft\WindowsApps"
-        )));
-        assert!(!is_windows_app_execution_alias_dir(Path::new(
-            r"C:\Users\tester\AppData\Roaming\npm"
-        )));
+    fn cli_path_env_keeps_windows_apps_alias_dir_for_enumeration() {
+        // Packaged CLIs (a Microsoft Store Codex, #7591) surface as App
+        // Execution Aliases under `%LOCALAPPDATA%\Microsoft\WindowsApps`;
+        // enumeration must see that dir. `resolve_path_default` still refuses
+        // to treat an alias as the PATH default via
+        // `is_windows_app_execution_alias_dir`.
+        let alias_dir = Path::new(r"C:\Users\tester\AppData\Local\Microsoft\WindowsApps");
+        let npm_dir = Path::new(r"C:\Users\tester\AppData\Roaming\npm");
+        let path_env =
+            std::ffi::OsString::from(format!("{};{}", alias_dir.display(), npm_dir.display()));
+
+        let mut paths = Vec::new();
+        extend_from_cli_path_env(&mut paths, Some(path_env));
+
+        assert!(paths.contains(&alias_dir.to_path_buf()));
+        assert!(paths.contains(&npm_dir.to_path_buf()));
+
+        // The dir-shape helper keeps driving the `resolve_path_default` filter.
+        assert!(is_windows_app_execution_alias_dir(alias_dir));
+        assert!(!is_windows_app_execution_alias_dir(npm_dir));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn infer_install_source_marks_windows_apps_alias_as_ms_store() {
+        assert_eq!(
+            infer_install_source(Path::new(
+                r"C:\Users\tester\AppData\Local\Microsoft\WindowsApps\codex.exe",
+            )),
+            "ms-store"
+        );
+        assert_eq!(
+            infer_install_source(Path::new(r"C:\Users\tester\AppData\Roaming\npm\codex.cmd")),
+            "system"
+        );
     }
 
     #[cfg(target_os = "windows")]
