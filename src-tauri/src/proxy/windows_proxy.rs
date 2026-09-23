@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::IpAddr;
 
 use url::Url;
 
@@ -50,6 +50,8 @@ impl WindowsSystemProxyConfig {
                     _ => continue,
                 };
 
+                // The key identifies the destination protocol. A bare HTTP/HTTPS
+                // entry is still an HTTP proxy unless it explicitly has a scheme.
                 *slot = Some(normalize_proxy_url(value, ProxyKind::from_label(&kind))?);
             }
 
@@ -199,8 +201,8 @@ impl ProxyBypassMatcher {
             self.rules.push(ProxyBypassRule::Wildcard(lower));
             return;
         }
-        if lower.parse::<IpAddr>().is_ok() {
-            self.rules.push(ProxyBypassRule::Exact(lower));
+        if let Ok(ip) = lower.parse::<IpAddr>() {
+            self.rules.push(ProxyBypassRule::Ip(ip));
             return;
         }
         self.rules.push(ProxyBypassRule::Domain(
@@ -213,6 +215,7 @@ impl ProxyBypassMatcher {
 enum ProxyBypassRule {
     Local,
     Exact(String),
+    Ip(IpAddr),
     Domain(String),
     Wildcard(String),
     Cidr(IpAddr, u8),
@@ -228,6 +231,7 @@ impl ProxyBypassRule {
         match self {
             Self::Local => is_local_intranet_host(&lower),
             Self::Exact(expected) => lower == *expected,
+            Self::Ip(expected) => lower.parse::<IpAddr>().is_ok_and(|actual| actual == *expected),
             Self::Domain(suffix) => domain_matches(&lower, suffix),
             Self::Wildcard(pattern) => wildcard_matches(&lower, pattern),
             Self::Cidr(network, prefix) => ip_matches_cidr(&lower, network, *prefix),
@@ -238,14 +242,12 @@ impl ProxyBypassRule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProxyKind {
     Http,
-    Https,
     Socks5,
 }
 
 impl ProxyKind {
     fn from_label(label: &str) -> Self {
         match label {
-            "https" => Self::Https,
             "socks" | "socks5" | "socks5h" => Self::Socks5,
             _ => Self::Http,
         }
@@ -254,7 +256,6 @@ impl ProxyKind {
     fn scheme(self) -> &'static str {
         match self {
             Self::Http => "http",
-            Self::Https => "https",
             Self::Socks5 => "socks5",
         }
     }
@@ -340,20 +341,13 @@ fn is_local_intranet_host(host: &str) -> bool {
         return true;
     }
 
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
-            IpAddr::V6(ip) => {
-                ip.is_loopback() || ip.is_unicast_link_local() || is_unique_local_ipv6(ip)
-            }
-        };
+    // <local> means a simple hostname without a dot; it does not include all
+    // private or loopback IP addresses.
+    if host.parse::<IpAddr>().is_ok() {
+        return false;
     }
 
     !host.contains('.')
-}
-
-fn is_unique_local_ipv6(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xfe00) == 0xfc00
 }
 
 fn domain_matches(host: &str, suffix: &str) -> bool {
@@ -458,6 +452,15 @@ mod tests {
     }
 
     #[test]
+    fn no_proxy_exact_ipv6_matches_equivalent_forms() {
+        let mut matcher = ProxyBypassMatcher::default();
+        matcher.push_no_proxy_rule("0:0:0:0:0:0:0:1");
+
+        assert!(matcher.matches_host("::1"));
+        assert!(matcher.matches_host("0:0:0:0:0:0:0:1"));
+    }
+
+    #[test]
     fn parse_windows_proxy_server_supports_per_scheme_and_bypass_rules() {
         let config = WindowsSystemProxyConfig::parse(
             "http=proxy.local:8080;https=secure.proxy.local:8443;socks=127.0.0.1:1080",
@@ -469,7 +472,7 @@ mod tests {
         assert_eq!(config.http_proxy(), Some("http://proxy.local:8080/"));
         assert_eq!(
             config.https_proxy(),
-            Some("https://secure.proxy.local:8443/")
+            Some("http://secure.proxy.local:8443/")
         );
         assert!(config.bypass().matches_host("service.corp.local"));
         assert!(config.bypass().matches_host("192.168.137.163"));
@@ -488,13 +491,13 @@ mod tests {
     }
 
     #[test]
-    fn local_rule_treats_private_addresses_as_intranet() {
+    fn local_rule_only_matches_simple_hostnames() {
         let matcher = ProxyBypassMatcher::from_windows_override("<local>");
 
-        assert!(matcher.matches_host("192.168.137.163"));
-        assert!(matcher.matches_host("10.0.0.4"));
         assert!(matcher.matches_host("localhost"));
         assert!(matcher.matches_host("fileserver"));
+        assert!(!matcher.matches_host("192.168.137.163"));
+        assert!(!matcher.matches_host("10.0.0.4"));
         assert!(!matcher.matches_host("api.example.com"));
     }
 }
