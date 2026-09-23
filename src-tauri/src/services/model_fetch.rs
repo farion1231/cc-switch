@@ -136,12 +136,7 @@ pub async fn fetch_models(
                 resp.models
                     .unwrap_or_default()
                     .into_iter()
-                    .filter_map(|m| {
-                        m.model_id().map(|id| FetchedModel {
-                            id,
-                            owned_by: None,
-                        })
-                    })
+                    .filter_map(|m| m.model_id().map(|id| FetchedModel { id, owned_by: None }))
                     .collect()
             };
 
@@ -691,6 +686,9 @@ mod tests {
             .iter()
             .filter_map(|m| m.model_id())
             .collect();
-        assert_eq!(ids, vec!["glm-4.7".to_string(), "openai-shaped".to_string()]);
+        assert_eq!(
+            ids,
+            vec!["glm-4.7".to_string(), "openai-shaped".to_string()]
+        );
     }
 }
