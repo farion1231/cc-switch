@@ -591,6 +591,65 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_v41_flash_aliases_are_priced_through_logger() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+        let cases = [
+            ("deepseek-v41-raw", "deepseek-ai/DeepSeek-V4.1-Flash"),
+            ("deepseek-v41-recommended", "deepseek-flash"),
+            ("deepseek-v41-legacy", "deepseek-v4-flash"),
+            ("deepseek-v41-dated", "deepseek-v4-flash-0731"),
+            ("deepseek-v41-vision", "deepseek-v4-flash-vision-exp"),
+        ];
+
+        for (request_id, model_id) in cases {
+            logger.log_with_calculation(
+                request_id.to_string(),
+                "deepseek-provider".to_string(),
+                "claude".to_string(),
+                model_id.to_string(),
+                model_id.to_string(),
+                model_id.to_string(),
+                TokenUsage {
+                    input_tokens: 1_000_000,
+                    output_tokens: 1_000_000,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    model: None,
+                    message_id: None,
+                },
+                Decimal::from(1),
+                100,
+                None,
+                200,
+                None,
+                Some("claude".to_string()),
+                false,
+            )?;
+        }
+
+        let conn = crate::database::lock_conn!(db.conn);
+        for (request_id, model_id) in cases {
+            let (input_cost, output_cost, total_cost): (f64, f64, f64) = conn.query_row(
+                "SELECT CAST(input_cost_usd AS REAL),
+                        CAST(output_cost_usd AS REAL),
+                        CAST(total_cost_usd AS REAL)
+                 FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert!((input_cost - 0.3).abs() < 1e-9, "{model_id}: {input_cost}");
+            assert!(
+                (output_cost - 1.2).abs() < 1e-9,
+                "{model_id}: {output_cost}"
+            );
+            assert!((total_cost - 1.5).abs() < 1e-9, "{model_id}: {total_cost}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn identical_replay_writes_and_notifies_once() -> Result<(), AppError> {
         let db = Database::memory()?;
         let logger = UsageLogger::new(&db);
