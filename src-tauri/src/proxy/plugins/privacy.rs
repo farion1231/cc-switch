@@ -1966,7 +1966,11 @@ impl BuiltinPrivacyPlugin {
         if let Err(e) = plugin.load_and_apply() {
             log::warn!("[PRIVACY] 初始配置加载失败，以空配置运行(fail-open): {e}");
         }
-        *plugin.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = mtimes;
+        *plugin
+            .state
+            .mtimes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = mtimes;
         plugin
     }
 
@@ -1977,7 +1981,9 @@ impl BuiltinPrivacyPlugin {
     /// 规则的一次性升级（见 [`Self::upgrade_legacy_kv_patterns`]）。
     /// 进程级互斥：并发构造（测试并行 / 多窗口）时避免读写到彼此写到一半的文件
     fn init_config_files(&self) {
-        let _init_guard = CONFIG_INIT_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _init_guard = CONFIG_INIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = &self.state.config_dir;
         let any_exists = CONFIG_DOC_FILES
             .iter()
@@ -2107,7 +2113,11 @@ impl BuiltinPrivacyPlugin {
                 Err(e) => log::warn!("[PRIVACY] 淘汰超限映射失败: {e}"),
             }
         }
-        let mut store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut store = self
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (id, original, _, _) in kept {
             store.by_id.insert(
                 id.clone(),
@@ -2145,7 +2155,11 @@ impl BuiltinPrivacyPlugin {
     fn pre_register_custom_values(&self, snapshot: &EngineSnapshot) {
         let mut pending: Vec<(String, String, String)> = Vec::new();
         {
-            let mut store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut store = self
+                .state
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for cv in &snapshot.custom_values {
                 if !store.by_original.contains_key(&cv.value) {
                     let (id, is_new) = store.insert(&cv.value, &snapshot.hash);
@@ -2167,7 +2181,11 @@ impl BuiltinPrivacyPlugin {
     fn refresh_snapshot_if_changed(&self) {
         let now = self.read_mtimes();
         {
-            let mt = self.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mt = self
+                .state
+                .mtimes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if now == *mt {
                 return;
             }
@@ -2176,7 +2194,11 @@ impl BuiltinPrivacyPlugin {
             Ok(()) => log::info!("[PRIVACY] 配置文件变更，已热重载"),
             Err(e) => log::warn!("[PRIVACY] 配置重载失败，沿用旧配置: {e}"),
         }
-        *self.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = now;
+        *self
+            .state
+            .mtimes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = now;
     }
 
     fn current_snapshot(&self) -> Arc<EngineSnapshot> {
@@ -2185,7 +2207,12 @@ impl BuiltinPrivacyPlugin {
     }
 
     fn mapping_is_empty(&self) -> bool {
-        self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).by_id.is_empty()
+        self.state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .by_id
+            .is_empty()
     }
 
     /// 十六进制转储防护的检测回调：在重建的字节流上复用特殊值与正则规则
@@ -2213,7 +2240,11 @@ impl BuiltinPrivacyPlugin {
         let mut result: HashMap<String, String> = HashMap::with_capacity(texts.len());
         // 阶段 1a：缓存命中直接取，未命中的进入待检测列表
         let pending: Vec<String> = {
-            let cache = self.state.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let cache = self
+                .state
+                .cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             texts
                 .iter()
                 .filter_map(
@@ -2234,7 +2265,11 @@ impl BuiltinPrivacyPlugin {
             .replace_runs
             .fetch_add(pending.len() as u64, Ordering::Relaxed);
         // 阶段 1b：转储防护 → span 收集 → 统一替换，写缓存
-        let mut cache = self.state.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut cache = self
+            .state
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for text in &pending {
             let masked;
             let work: &str = if snapshot.enable_hexdump_guard {
@@ -2306,7 +2341,11 @@ impl BuiltinPrivacyPlugin {
         // 新增映射 (id, original, label)，锁外落库
         let mut pending_db: Vec<(String, String, String)> = Vec::new();
         {
-            let mut store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut store = self
+                .state
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for span in spans {
                 let original = &text[span.start..span.end];
                 let (id, is_new) = store.insert(original, hash);
@@ -2374,7 +2413,11 @@ impl BuiltinPrivacyPlugin {
         }
         // 从磁盘整载重建快照（同时刷新 mtime 记录，避免下次请求重复热重载）
         self.load_and_apply()?;
-        *self.state.mtimes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = self.read_mtimes();
+        *self
+            .state
+            .mtimes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = self.read_mtimes();
         Ok(())
     }
 }
@@ -2677,7 +2720,11 @@ impl ProxyPlugin for BuiltinPrivacyPlugin {
         if self.mapping_is_empty() {
             return Ok(false);
         }
-        let store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let store = self
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut changed = false;
         walk_json(
             body,
@@ -2735,7 +2782,11 @@ impl ProxyPlugin for BuiltinPrivacyPlugin {
 
         let block_key = sse_block_key(&value);
         let flush = is_sse_flush_event(event_name);
-        let store = self.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let store = self
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut lookup = |id: &str| store.by_id.get(id).map(|record| record.original.clone());
 
         let mut changed = false;
@@ -3125,7 +3176,11 @@ mod tests {
             ..HashConfig::default()
         };
         {
-            let mut store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut store = plugin
+                .state
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let (same, is_new) = store.insert("a@b.com", &hash_sha256);
             assert_eq!(same, old_id, "已有映射 id 不随散列配置改变");
             assert!(!is_new);
@@ -3264,7 +3319,11 @@ mod tests {
         );
 
         // 还原回原文
-        let store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let store = plugin
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(store.by_id.get(markers[0].2).unwrap().original, "a@b.com");
         let restored = restore_markers(&replaced, &mut |i| {
             store.by_id.get(i).map(|r| r.original.clone())
@@ -3519,7 +3578,13 @@ mod tests {
         assert_eq!(rows[0].2, "PASSWORD");
 
         // 响应侧还原：无需请求先行（用预注册的真实 id 构造标记）
-        let id = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).by_original["my-secret-password-01"].clone();
+        let id = plugin
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .by_original["my-secret-password-01"]
+            .clone();
         let mut body = json!({"text": format!("key is ⟦PII|{id}|PASSWORD|主密码⟧")});
         assert!(plugin
             .transform_response(&post_response_ctx(), &mut body)
@@ -3711,7 +3776,11 @@ mod tests {
         assert_eq!(delta_text(&data), "a@b.com thanks");
 
         // 三个 delta 的输出按序拼接 == 直接对完整标记做还原的结果（无残留、无丢失）
-        let store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let store = plugin
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let direct = restore_markers(&marker, &mut |id| {
             store.by_id.get(id).map(|record| record.original.clone())
         })
@@ -4215,7 +4284,11 @@ mod tests {
             system.contains("⟦PII|<id>|<label>|<描述>⟧"),
             "示例标记应原样保留"
         );
-        let store = plugin.state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let store = plugin
+            .state
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(
             store
                 .by_original
@@ -4437,11 +4510,17 @@ mod tests {
             let _ = write!(hex_part, "{b:02x} ");
         }
         let hex_part = hex_part.trim_end().to_string();
-        let text = format!("00000000: {}  {}
-", hex_part, payload);
+        let text = format!(
+            "00000000: {}  {}
+",
+            hex_part, payload
+        );
         let (replaced, changed) = plugin.replace_text(&text);
         assert!(changed, "含高位字节的转储块应被检测");
-        assert!(!replaced.contains("a@b.com"), "ASCII 列邮箱应抹除: {replaced}");
+        assert!(
+            !replaced.contains("a@b.com"),
+            "ASCII 列邮箱应抹除: {replaced}"
+        );
     }
     #[test]
     fn test_continuous_hex_no_false_positive_on_hashes_and_uuid() {
@@ -5046,7 +5125,7 @@ mod tests {
 
         // 逐规则计时（全量文本，定位规模性爆炸点）
         let docs = load_docs_from_files(&plugin.state.config_dir).unwrap();
-        let rules = compile_rules(&docs.get(RULES_DOC_FILE).unwrap());
+        let rules = compile_rules(docs.get(RULES_DOC_FILE).unwrap());
         let named: Vec<&str> = docs[RULES_DOC_FILE]["rules"]
             .as_array()
             .unwrap()
@@ -5094,7 +5173,7 @@ mod tests {
         let text = big_agent_text(0)[..60_000].to_string();
         eprintln!("样本: {} KB", text.len() / 1024);
         let docs = load_docs_from_files(&plugin.state.config_dir).unwrap();
-        let rules = compile_rules(&docs.get(RULES_DOC_FILE).unwrap());
+        let rules = compile_rules(docs.get(RULES_DOC_FILE).unwrap());
         assert!(!rules.is_empty());
         let named: Vec<&str> = docs[RULES_DOC_FILE]["rules"]
             .as_array()
