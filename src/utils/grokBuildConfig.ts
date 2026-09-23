@@ -112,9 +112,19 @@ const reasoningEfforts = (
   }));
 };
 
+const normalizeGatewayUrl = (url: string) => url.trim().replace(/\/+$/, "");
+
+const sharesGateway = (tableUrl: string, providerUrl: string) => {
+  const table = normalizeGatewayUrl(tableUrl);
+  const provider = normalizeGatewayUrl(providerUrl);
+  if (!table || !provider) return true;
+  return table === provider;
+};
+
 const readExtraModels = (
   modelTables: Record<string, unknown> | undefined,
   defaultProfile: string,
+  providerUrl: string,
   fallbackWindow: number,
 ): GrokBuildExtraModel[] => {
   if (!modelTables) return [];
@@ -122,6 +132,10 @@ const readExtraModels = (
     if (profile === defaultProfile) return [];
     const table = asRecord(value);
     if (!table) return [];
+    const tableUrl = asString(table.base_url);
+    // Other gateways stay out of this form's shared-endpoint list so a save
+    // cannot retarget their URL, key, or protocol.
+    if (!sharesGateway(tableUrl, providerUrl)) return [];
     const model = asString(table.model, profile).trim() || profile;
     const reasoning = readReasoning(table);
     return [
@@ -175,7 +189,12 @@ export function parseGrokBuildConfig(
         GROK_BUILD_DEFAULT_API_BACKEND,
       ),
       contextWindow,
-      extraModels: readExtraModels(modelTables, defaultModel, contextWindow),
+      extraModels: readExtraModels(
+        modelTables,
+        defaultModel,
+        asString(selectedModel?.base_url),
+        contextWindow,
+      ),
       ...readReasoning(selectedModel),
     };
   } catch {
@@ -294,6 +313,7 @@ export function updateGrokBuildConfig(
     });
     for (const extra of values.extraModels) {
       const model = extra.model.trim();
+      if (!model) continue;
       const key = extra.profile?.trim() || model;
       writeUnique(key, undefined, {
         model,
@@ -302,6 +322,16 @@ export function updateGrokBuildConfig(
         reasoningLevels: extra.reasoningLevels ?? [],
         defaultReasoningLevel: extra.defaultReasoningLevel,
       });
+    }
+    const formUrl = normalizeGatewayUrl(values.baseUrl);
+    for (const [key, value] of Object.entries(modelTables)) {
+      if (used.has(key)) continue;
+      const table = asRecord(value);
+      if (!table) continue;
+      const tableUrl = normalizeGatewayUrl(asString(table.base_url));
+      if (tableUrl && formUrl && tableUrl !== formUrl) {
+        nextTables[key] = table;
+      }
     }
     config.model = nextTables;
   } else {

@@ -290,4 +290,40 @@ value = "ultra"
     expect(readBack.reasoningLevels).toEqual(["high"]);
     expect(readBack.defaultReasoningLevel).toBe("high");
   });
+
+  it("keeps other-gateway profiles and an untouched global effort on save", () => {
+    const original = `[models]
+default = "grok-4.7"
+default_reasoning_effort = "low"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://gateway.example/v1"
+name = "Person"
+api_key = "dummy-key"
+api_backend = "responses"
+context_window = 500000
+
+[model."other"]
+model = "other-model"
+base_url = "https://other.example/v1"
+name = "Other"
+api_key = "dummy-other-key"
+api_backend = "chat_completions"
+context_window = 500000
+`;
+    const saved = updateGrokBuildConfig(original, {
+      ...parseGrokBuildConfig(original),
+      extraModels: parseGrokBuildConfig(original).extraModels,
+    });
+    const parsed = parseToml(saved) as any;
+    expect(parsed.models.default_reasoning_effort).toBe("low");
+    expect(parsed.model.other).toMatchObject({
+      model: "other-model",
+      base_url: "https://other.example/v1",
+      api_key: "dummy-other-key",
+      api_backend: "chat_completions",
+    });
+    expect(parseGrokBuildConfig(original).extraModels).toEqual([]);
+  });
 });

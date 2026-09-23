@@ -162,6 +162,7 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.defaultReasoningLevel
       ? { defaultReasoningLevel: seed.defaultReasoningLevel }
       : {}),
+    ...(seed?.profileKey ? { profileKey: seed.profileKey } : {}),
   };
 }
 
@@ -189,7 +190,8 @@ function catalogRowsMatchModels(
       JSON.stringify(row.reasoningLevels ?? []) ===
         JSON.stringify(incoming.reasoningLevels ?? []) &&
       (row.defaultReasoningLevel ?? "") ===
-        (incoming.defaultReasoningLevel ?? "")
+        (incoming.defaultReasoningLevel ?? "") &&
+      (row.profileKey ?? "") === (incoming.profileKey ?? "")
     );
   });
 }

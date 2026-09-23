@@ -282,6 +282,9 @@ export interface CodexCatalogModel {
   // reasoningLevels; when omitted the backend keeps the template default if it
   // is still in the list, otherwise the highest declared level.
   defaultReasoningLevel?: string;
+  // Grok config.toml table key (`[model."<profileKey>"]`). Independent of the
+  // upstream model id so aliases survive display-name edits. Codex ignores it.
+  profileKey?: string;
 }
 
 // Claude 认证字段类型

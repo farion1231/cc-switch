@@ -76,6 +76,7 @@ const catalogModelFromExtra = (
   model: extra.model,
   displayName: extra.name ?? "",
   contextWindow: extra.contextWindow ? String(extra.contextWindow) : "",
+  ...(extra.profile ? { profileKey: extra.profile } : {}),
   ...(extra.reasoningLevels?.length
     ? { reasoningLevels: extra.reasoningLevels }
     : {}),
@@ -88,8 +89,9 @@ const extraModelFromCatalog = (
   model: CodexCatalogModel,
 ): GrokBuildExtraModel => {
   const contextWindow = Number.parseInt(String(model.contextWindow ?? ""), 10);
+  const profile = model.profileKey?.trim();
   return {
-    profile: model.model.trim(),
+    ...(profile ? { profile } : {}),
     model: model.model,
     name: model.displayName,
     ...(Number.isInteger(contextWindow) && contextWindow > 0
@@ -433,7 +435,7 @@ export function GrokBuildProviderForm({
       apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
       contextWindow: parsedContextWindow,
       extraModels,
-      reasoningLevels: reasoningLevels ?? [],
+      reasoningLevels,
       defaultReasoningLevel,
     });
     const configError = validateGrokBuildConfig(finalConfig);
@@ -563,9 +565,9 @@ export function GrokBuildProviderForm({
               }}
               catalogModels={extraModels.map(catalogModelFromExtra)}
               onCatalogModelsChange={(models) => {
-                const next = models
-                  .map(extraModelFromCatalog)
-                  .filter((model) => model.model.trim());
+                // Keep blank rows. Filtering here deletes a row before the
+                // model id can be typed; empty ids are skipped only at write.
+                const next = models.map(extraModelFromCatalog);
                 setExtraModels(next);
                 syncStructuredConfig({ extraModels: next });
               }}
