@@ -109,6 +109,8 @@ pub struct ForwardResult {
     pub outbound_model: Option<String>,
     /// 实际发往上游的 endpoint（格式转换后的真值，如 `/v1/chat/completions`）。
     pub outbound_endpoint: String,
+    /// 实际发往上游的完整 URL。
+    pub outbound_url: String,
     /// 实际发往上游的请求体（所有映射/转换/过滤之后的最终 body）。
     /// forward 成功时必然有值：body 本就要序列化后发送，这里只是复用同一份。
     pub outbound_request: serde_json::Value,
@@ -125,6 +127,9 @@ impl ForwardResult {
         ctx.outbound_model = self.outbound_model.take();
         if !self.outbound_endpoint.is_empty() {
             ctx.outbound_endpoint = Some(std::mem::take(&mut self.outbound_endpoint));
+        }
+        if !self.outbound_url.is_empty() {
+            ctx.outbound_url = Some(std::mem::take(&mut self.outbound_url));
         }
         if !self.outbound_request.is_null() {
             ctx.outbound_request = Some(std::mem::replace(
@@ -572,6 +577,7 @@ impl RequestForwarder {
                     claude_api_format,
                     outbound_model,
                     outbound_endpoint,
+                    outbound_url,
                     outbound_request,
                     outbound_headers,
                 )) => {
@@ -624,6 +630,7 @@ impl RequestForwarder {
                         claude_api_format,
                         outbound_model,
                         outbound_endpoint,
+                        outbound_url,
                         outbound_request,
                         outbound_headers,
                         connection_guard: None,
@@ -681,6 +688,7 @@ impl RequestForwarder {
                                     claude_api_format,
                                     outbound_model,
                                     outbound_endpoint,
+                                    outbound_url,
                                     outbound_request,
                                     outbound_headers,
                                 )) => {
@@ -737,6 +745,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         outbound_endpoint,
+                                        outbound_url,
                                         outbound_request,
                                         outbound_headers,
                                         connection_guard: None,
@@ -837,6 +846,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         outbound_endpoint,
+                                        outbound_url,
                                         outbound_request,
                                         outbound_headers,
                                     )) => {
@@ -896,6 +906,7 @@ impl RequestForwarder {
                                             claude_api_format,
                                             outbound_model,
                                             outbound_endpoint,
+                                            outbound_url,
                                             outbound_request,
                                             outbound_headers,
                                             connection_guard: None,
@@ -1013,6 +1024,7 @@ impl RequestForwarder {
                                     claude_api_format,
                                     outbound_model,
                                     outbound_endpoint,
+                                    outbound_url,
                                     outbound_request,
                                     outbound_headers,
                                 )) => {
@@ -1066,6 +1078,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         outbound_endpoint,
+                                        outbound_url,
                                         outbound_request,
                                         outbound_headers,
                                         connection_guard: None,
@@ -1226,9 +1239,10 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回 `(response, claude_api_format, outbound_model, outbound_endpoint, outbound_request, outbound_headers)`，其中
+    /// 成功时返回 `(response, claude_api_format, outbound_model, outbound_endpoint, outbound_url, outbound_request, outbound_headers)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后），
     /// `outbound_endpoint` 是实际请求的上游路径（格式转换后），
+    /// `outbound_url` 是实际请求的完整上游 URL，
     /// `outbound_request` 是发往上游的最终请求体（所有映射/转换/过滤之后），
     /// `outbound_headers` 是发往上游的最终请求头（原始值，不脱敏）。
     #[allow(clippy::too_many_arguments)]
@@ -1247,6 +1261,7 @@ impl RequestForwarder {
             ProxyResponse,
             Option<String>,
             Option<String>,
+            String,
             String,
             Value,
             Value,
@@ -2521,6 +2536,7 @@ impl RequestForwarder {
                 resolved_claude_api_format,
                 outbound_model,
                 effective_endpoint,
+                url,
                 filtered_body,
                 outbound_headers,
             ))

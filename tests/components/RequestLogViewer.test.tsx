@@ -77,6 +77,7 @@ function makeRecord(
     requestId: "req-12345678",
     method: "POST",
     endpoint: "/v1/messages",
+    url: "https://api.anthropic.com/v1/messages",
     model: "claude-sonnet-5",
     durationMs: 1500,
     isStreaming: false,
@@ -269,7 +270,6 @@ describe("RequestLogViewer", () => {
 
     await waitFor(() => expect(copyTextMock).toHaveBeenCalled());
     const command = copyTextMock.mock.calls[0][0] as string;
-    // host 头拼出可执行 URL；路径由 endpoint 补齐
     expect(command).toContain(
       "curl -X POST 'https://api.anthropic.com/v1/messages'",
     );
@@ -282,12 +282,33 @@ describe("RequestLogViewer", () => {
     expect(command).toContain("-d '");
   });
 
+  it("uses the recorded outbound URL in the cURL command", async () => {
+    getRecords.mockResolvedValue(page([makeListRow(1)], 1));
+    getRecord.mockImplementation(async () =>
+      makeRecord(1, {
+        endpoint: "/v1/responses",
+        url: "https://gateway.example.com/base/v1/responses?api-version=2026-09-01",
+      }),
+    );
+    renderViewer();
+
+    await expandFirstRecord();
+    fireEvent.click(screen.getByText("proxy.requestLogViewer.copyAsCurl"));
+
+    await waitFor(() => expect(copyTextMock).toHaveBeenCalled());
+    const command = copyTextMock.mock.calls[0][0] as string;
+    expect(command).toContain(
+      "curl -X POST 'https://gateway.example.com/base/v1/responses?api-version=2026-09-01'",
+    );
+  });
+
   it("omits -X for GET requests in the cURL command", async () => {
     getRecords.mockResolvedValue(page([makeListRow(1)], 1));
     getRecord.mockImplementation(async () =>
       makeRecord(1, {
         method: "GET",
         endpoint: "/v1/models",
+        url: "https://api.anthropic.com/v1/models",
         requestBody: undefined,
       }),
     );
@@ -341,6 +362,57 @@ describe("RequestLogViewer", () => {
         expect.objectContaining({ fileName: "session-b.jsonl" }),
       );
     });
+  });
+
+  it("ignores stale detail responses after switching sessions", async () => {
+    let resolveFirstDetail: (record: Record<string, unknown>) => void = () => {};
+    getRecords.mockImplementation(async (params: { fileName: string }) => {
+      if (params.fileName === "session-a.jsonl") {
+        return page([makeListRow(1)], 1);
+      }
+      return page([makeListRow(1)], 1);
+    });
+    getRecord
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstDetail = resolve;
+          }),
+      )
+      .mockImplementationOnce(async () =>
+        makeRecord(1, {
+          endpoint: "/session-b",
+          url: "https://api.example.com/session-b",
+          requestBody: { session: "b" },
+        }),
+      );
+
+    renderViewer();
+    await screen.findByText("Session A");
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]);
+    await screen.findByText("proxy.requestLogViewer.loading");
+
+    fireEvent.click(screen.getByText("Session B"));
+    await waitFor(() =>
+      expect(getRecords).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: "session-b.jsonl" }),
+      ),
+    );
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]);
+
+    resolveFirstDetail(
+      makeRecord(1, {
+        endpoint: "/session-a-stale",
+        requestBody: { session: "a" },
+      }),
+    );
+
+    await screen.findByText("proxy.requestLogViewer.copyAsCurl");
+    fireEvent.click(screen.getByText("proxy.requestLogViewer.copyAsCurl"));
+    await waitFor(() => expect(copyTextMock).toHaveBeenCalled());
+    const command = copyTextMock.mock.calls[0][0] as string;
+    expect(command).toContain("https://api.example.com/session-b");
+    expect(command).not.toContain("/session-a-stale");
   });
 
   it("renders the full body without line truncation", async () => {

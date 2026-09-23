@@ -185,6 +185,7 @@ export interface ProxyRequestLogRecord {
   appType?: string;
   method?: string;
   endpoint?: string;
+  url?: string;
   model?: string;
   durationMs?: number;
   isStreaming?: boolean;

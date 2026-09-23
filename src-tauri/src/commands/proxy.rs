@@ -6,6 +6,7 @@ use crate::error::AppError;
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use tauri_plugin_opener::OpenerExt;
 
@@ -14,6 +15,22 @@ fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, Strin
         .map_err(|error| format!("无效的应用类型: {error}"))?;
     if !app.supports_local_proxy() {
         return Err(format!("{} 不支持本地路由", app.as_str()));
+    }
+    Ok(app)
+}
+
+fn require_request_log_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
+    let app = crate::app_config::AppType::from_str(app_type)
+        .map_err(|error| format!("无效的应用类型: {error}"))?;
+    if !matches!(
+        app,
+        crate::app_config::AppType::Claude
+            | crate::app_config::AppType::ClaudeDesktop
+            | crate::app_config::AppType::Codex
+            | crate::app_config::AppType::Gemini
+            | crate::app_config::AppType::GrokBuild
+    ) {
+        return Err(format!("{} 不支持 request-log", app.as_str()));
     }
     Ok(app)
 }
@@ -266,16 +283,42 @@ fn parse_list_row(line_no: u64, value: &serde_json::Value) -> Option<ProxyReques
     })
 }
 
+fn resolve_request_log_file(app_type: &str, file_name: &str) -> Result<(String, PathBuf), String> {
+    let app = require_request_log_app(app_type)?;
+    let file_path = Path::new(file_name);
+    if file_path.is_absolute()
+        || file_path.components().count() != 1
+        || !matches!(file_path.components().next(), Some(Component::Normal(_)))
+        || file_name != file_name.trim()
+        || !file_name.ends_with(".jsonl")
+        || file_name == ".jsonl"
+    {
+        return Err("无效的日志文件名".to_string());
+    }
+
+    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
+    let app_dir = dir.join(crate::proxy::request_logger::sanitize_path_component(
+        app.as_str(),
+    ));
+    let path = app_dir.join(file_name);
+    let canonical_app_dir = app_dir
+        .canonicalize()
+        .map_err(|e| format!("打开日志目录失败: {e}"))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("打开日志文件失败: {e}"))?;
+    if !crate::config::path_is_within(&canonical_app_dir, &canonical_path) {
+        return Err("无效的日志文件路径".to_string());
+    }
+    Ok((app.as_str().to_string(), canonical_path))
+}
+
 /// 取（或构建）指定文件的行索引。文件 mtime/size 变化时重扫。
 fn get_file_index(
     app_type: &str,
     file_name: &str,
 ) -> Result<(std::time::SystemTime, u64, RequestLogFileIndex), String> {
-    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
-    let app_dir = dir.join(crate::proxy::request_logger::sanitize_path_component(
-        app_type,
-    ));
-    let path = app_dir.join(file_name);
+    let (cache_app_type, path) = resolve_request_log_file(app_type, file_name)?;
 
     let meta = std::fs::metadata(&path).map_err(|e| format!("打开日志文件失败: {e}"))?;
     let mtime = meta
@@ -283,7 +326,7 @@ fn get_file_index(
         .map_err(|e| format!("读取文件时间失败: {e}"))?;
     let size = meta.len();
 
-    let cache_key = (app_type.to_string(), file_name.to_string());
+    let cache_key = (cache_app_type, file_name.to_string());
     {
         let cache = index_cache().lock().unwrap();
         if let Some((c_mtime, c_size, index)) = cache.get(&cache_key) {
@@ -307,10 +350,10 @@ fn get_file_index(
         };
         let line_start = offset;
         offset += line.len() as u64 + 1; // +1 为换行符
+        line_no += 1;
         if line.trim().is_empty() {
             continue;
         }
-        line_no += 1;
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
             if let Some(row) = parse_list_row(line_no, &value) {
                 rows.push(row);
@@ -456,7 +499,7 @@ pub async fn get_proxy_request_log_records(
     before_line_no: Option<u64>,
     after_line_no: Option<u64>,
 ) -> Result<ProxyRequestLogRecordsPage, String> {
-    require_proxy_app(&app_type)?;
+    require_request_log_app(&app_type)?;
     let mut offset = offset.min(100_000);
     let limit = limit
         .unwrap_or(REQUEST_LOG_DEFAULT_LIMIT)
@@ -488,8 +531,7 @@ pub async fn get_proxy_request_log_records(
     .map_err(|e| format!("读取日志失败: {e}"))?
 }
 
-/// 路径安全：file_name 必须经 get_file_index 校验（metadata 打不开即报错），
-/// 不接受任意路径。行索引有进程内缓存（mtime/size 失效），翻页/搜索在缓存上行进。
+/// 行索引有进程内缓存（mtime/size 失效），翻页/搜索在缓存上行进。
 #[allow(clippy::too_many_arguments)]
 fn read_request_log_records(
     app_type: &str,
@@ -524,31 +566,27 @@ fn read_request_log_records(
         hay.contains(kw)
     };
 
-    // 行号游标（rows 按文件序构建，数组下标 i 的行号 = i+1）：
-    // desc 模式 before_line_no 取「该行号之前（更旧）」；asc 模式 after_line_no 取「该行号之后（更新）」
-    let in_range = |i: usize| -> bool {
-        let line_no = (i + 1) as u64;
+    let total = index.rows.iter().filter(|row| matches(row)).count() as u64;
+
+    // 行号游标（rows 按文件序构建，但坏行会被跳过，必须使用记录中的真实 line_no）。
+    let in_range = |row: &ProxyRequestLogListRow| -> bool {
         if let Some(b) = before_line_no {
-            if line_no >= b {
+            if row.line_no >= b {
                 return false;
             }
         }
         if let Some(a) = after_line_no {
-            if line_no <= a {
+            if row.line_no <= a {
                 return false;
             }
         }
         true
     };
 
-    let total = index
-        .rows
-        .iter()
-        .enumerate()
-        .filter(|(i, row)| in_range(*i) && matches(row))
-        .count() as u64;
-
-    let iter = (0..index.rows.len()).filter(|&i| in_range(i) && matches(&index.rows[i]));
+    let iter = (0..index.rows.len()).filter(|&i| {
+        let row = &index.rows[i];
+        in_range(row) && matches(row)
+    });
     let selected: Vec<ProxyRequestLogListRow> = if order == "desc" {
         iter.rev()
             .skip(offset as usize)
@@ -575,7 +613,7 @@ pub async fn get_proxy_request_log_record(
     file_name: String,
     line_no: u64,
 ) -> Result<serde_json::Value, String> {
-    require_proxy_app(&app_type)?;
+    require_request_log_app(&app_type)?;
     tauri::async_runtime::spawn_blocking(move || {
         read_request_log_record(&app_type, &file_name, line_no)
     })
@@ -589,17 +627,14 @@ fn read_request_log_record(
     line_no: u64,
 ) -> Result<serde_json::Value, String> {
     let (_, _, index) = get_file_index(app_type, file_name)?;
-    let pos = (line_no as usize)
-        .checked_sub(1)
-        .filter(|&p| p < index.rows.len() && index.rows[p].line_no == line_no)
+    let pos = index
+        .rows
+        .iter()
+        .position(|row| row.line_no == line_no)
         .ok_or_else(|| format!("记录不存在: {line_no}"))?;
 
-    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
-    let app_dir = dir.join(crate::proxy::request_logger::sanitize_path_component(
-        app_type,
-    ));
-    let mut file = std::fs::File::open(app_dir.join(file_name))
-        .map_err(|e| format!("打开日志文件失败: {e}"))?;
+    let (_, path) = resolve_request_log_file(app_type, file_name)?;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("打开日志文件失败: {e}"))?;
 
     use std::io::{BufRead, BufReader, Seek, SeekFrom};
     file.seek(SeekFrom::Start(index.offsets[pos]))
@@ -971,4 +1006,173 @@ pub async fn get_circuit_breaker_stats(
     // 目前先返回 None，后续可以通过 ProxyService 暴露接口来实现
     let _ = (state, provider_id, app_type);
     Ok(None)
+}
+
+#[cfg(test)]
+mod request_log_tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TestHome {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let guard = ENV_LOCK.lock().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            Self {
+                _guard: guard,
+                _dir: dir,
+            }
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            std::env::remove_var("CC_SWITCH_TEST_HOME");
+        }
+    }
+
+    fn write_log(app_type: &str, file_name: &str, lines: &[&str]) {
+        let dir = crate::config::get_proxy_request_log_dir()
+            .unwrap()
+            .join(app_type);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut file = std::fs::File::create(dir.join(file_name)).unwrap();
+        for line in lines {
+            writeln!(file, "{line}").unwrap();
+        }
+    }
+
+    fn record(endpoint: &str, status_code: u16) -> String {
+        json!({
+            "startTime": "2026-09-20T10:00:00Z",
+            "endTime": "2026-09-20T10:00:01Z",
+            "method": "POST",
+            "endpoint": endpoint,
+            "model": "claude-sonnet-5",
+            "durationMs": 1000,
+            "isStreaming": false,
+            "statusCode": status_code,
+            "responseBody": {"usage": {"input_tokens": 1, "output_tokens": 2}}
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn request_log_file_rejects_path_traversal() {
+        let _home = TestHome::new();
+        write_log("claude", "safe.jsonl", &[&record("/v1/messages", 200)]);
+
+        assert!(resolve_request_log_file("claude", "../safe.jsonl").is_err());
+        assert!(resolve_request_log_file("claude", "/tmp/safe.jsonl").is_err());
+        assert!(resolve_request_log_file("claude", "safe.txt").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn request_log_file_rejects_symlink_escape() {
+        let _home = TestHome::new();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        let dir = crate::config::get_proxy_request_log_dir()
+            .unwrap()
+            .join("claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.join("escape.jsonl")).unwrap();
+
+        assert!(resolve_request_log_file("claude", "escape.jsonl").is_err());
+    }
+
+    #[test]
+    fn request_log_records_total_ignores_cursor_range() {
+        let _home = TestHome::new();
+        write_log(
+            "claude",
+            "session.jsonl",
+            &[
+                &record("/v1/messages", 200),
+                &record("/v1/messages", 201),
+                &record("/v1/messages", 202),
+            ],
+        );
+
+        let page =
+            read_request_log_records("claude", "session.jsonl", 0, 2, "desc", None, Some(3), None)
+                .unwrap();
+
+        assert_eq!(page.total, 3);
+        assert_eq!(
+            page.records
+                .iter()
+                .map(|row| row.line_no)
+                .collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+    }
+
+    #[test]
+    fn request_log_record_lookup_uses_actual_line_number_after_bad_lines() {
+        let _home = TestHome::new();
+        write_log(
+            "claude",
+            "session.jsonl",
+            &[
+                &record("/v1/messages", 200),
+                "not json",
+                &record("/v1/chat/completions", 201),
+            ],
+        );
+
+        let page =
+            read_request_log_records("claude", "session.jsonl", 0, 10, "asc", None, None, None)
+                .unwrap();
+        assert_eq!(
+            page.records
+                .iter()
+                .map(|row| row.line_no)
+                .collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+
+        let detail = read_request_log_record("claude", "session.jsonl", 3).unwrap();
+        assert_eq!(
+            detail.get("endpoint").and_then(|value| value.as_str()),
+            Some("/v1/chat/completions")
+        );
+        assert_eq!(
+            detail.get("lineNo").and_then(|value| value.as_u64()),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn request_log_reads_claude_desktop_files() {
+        let _home = TestHome::new();
+        write_log(
+            "claude-desktop",
+            "session.jsonl",
+            &[&record("/v1/messages", 200)],
+        );
+
+        let page = read_request_log_records(
+            "claude-desktop",
+            "session.jsonl",
+            0,
+            10,
+            "desc",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(page.total, 1);
+    }
 }

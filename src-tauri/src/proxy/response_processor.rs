@@ -652,13 +652,13 @@ pub(crate) fn request_log_enabled(state: &ProxyState) -> bool {
     request_log_max_sessions(state) > 0
 }
 
-/// 每个应用目录保留的最大 request-log 会话文件数。读锁拿不到时按默认 20 处理。
+/// 每个应用目录保留的最大 request-log 会话文件数。读锁拿不到时按 0 处理。
 pub(crate) fn request_log_max_sessions(state: &ProxyState) -> u64 {
     state
         .config
         .try_read()
         .map(|config| config.request_log_max_sessions)
-        .unwrap_or(20)
+        .unwrap_or(0)
 }
 
 /// 构造 SSE 流式 request-log 收集器（仅在开关开启时返回 Some）。
@@ -737,6 +737,7 @@ fn build_request_log_collector(
         .outbound_endpoint
         .clone()
         .unwrap_or_else(|| ctx.endpoint.clone());
+    let url = ctx.outbound_url.clone().unwrap_or_else(|| endpoint.clone());
     let model = ctx
         .outbound_model
         .clone()
@@ -760,6 +761,7 @@ fn build_request_log_collector(
         let model = model.clone();
         let method = method.clone();
         let endpoint = endpoint.clone();
+        let url = url.clone();
         let request_headers = request_headers.clone();
         let request_body = request_body.clone();
         let response_headers = response_headers.clone();
@@ -774,6 +776,7 @@ fn build_request_log_collector(
             app_type,
             method,
             endpoint,
+            url,
             model,
             duration_ms,
             is_streaming,
@@ -810,6 +813,7 @@ pub(crate) fn spawn_request_log_record(
         .outbound_endpoint
         .clone()
         .unwrap_or_else(|| ctx.endpoint.clone());
+    let url = ctx.outbound_url.clone().unwrap_or_else(|| endpoint.clone());
     let model = ctx
         .outbound_model
         .clone()
@@ -832,6 +836,7 @@ pub(crate) fn spawn_request_log_record(
         ctx.app_type_str.to_string(),
         method,
         endpoint,
+        url,
         model,
         ctx.latency_ms(),
         is_streaming,

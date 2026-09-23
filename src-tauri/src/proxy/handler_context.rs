@@ -92,6 +92,9 @@ pub struct RequestContext {
     /// 实际发往上游的 endpoint（格式转换后，如 `/v1/chat/completions`）。
     /// forward 成功后回填；否则为 None。
     pub outbound_endpoint: Option<String>,
+    /// 实际发往上游的完整 URL。
+    /// forward 成功后回填；否则为 None。
+    pub outbound_url: Option<String>,
     /// 实际发往上游的请求体（所有映射/转换/过滤之后的最终 body）。
     /// forward 成功后回填；否则为 None。
     pub outbound_request: Option<serde_json::Value>,
@@ -230,6 +233,7 @@ impl RequestContext {
             method: method.as_str().to_string(),
             endpoint: endpoint.to_string(),
             outbound_endpoint: None,
+            outbound_url: None,
             outbound_request: None,
         })
     }

@@ -132,18 +132,7 @@ function shellQuote(value: string): string {
 /** 由记录生成可直接执行的 cURL 命令（含真实凭据，注意不要外传） */
 function recordToCurl(record: ProxyRequestLogRecord): string {
   const method = record.method || "GET";
-  // endpoint 只记 path（如 /v1/messages）；上游 host 在转发时被原位写入 host 头
-  const hostHeader = (record.requestHeaders ?? []).find(
-    (h) => h.name.toLowerCase() === "host",
-  )?.value;
-  // 拼出可执行 URL；取不到 host（记录缺失/host 被剥）时保留 path 并提示
-  const endpoint = record.endpoint || "/";
-  const url =
-    hostHeader && /^https?:\/\//i.test(endpoint)
-      ? endpoint
-      : hostHeader
-        ? `https://${hostHeader}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
-        : endpoint;
+  const url = record.url || record.endpoint || "/";
   // GET/HEAD 不写 -X：curl 手册明确 -X 会破坏重定向方法降级
   // （301/302 时 GET 是默认安全行为），显式 -X GET 反而制造隐患
   const methodPart =
@@ -998,6 +987,17 @@ function RecordDetail({
   );
 }
 
+function detailKey(
+  file: ProxyRequestLogFileMeta,
+  lineNo: number,
+): string {
+  return `${file.appType}\u0000${file.fileName}\u0000${lineNo}`;
+}
+
+function fileKey(file: ProxyRequestLogFileMeta): string {
+  return `${file.appType}\u0000${file.fileName}`;
+}
+
 export function RequestLogViewer() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -1023,21 +1023,26 @@ export function RequestLogViewer() {
   // 展开的记录（虚拟化后展开状态提升到列表层，键为 lineNo）
   const [expandedKeys, setExpandedKeys] = useState<Set<number>>(new Set());
   // 展开行的完整记录缓存（列表行是轻量字段，body 详情按 lineNo 单独取）
-  const [details, setDetails] = useState<Map<number, ProxyRequestLogRecord>>(
+  const [details, setDetails] = useState<Map<string, ProxyRequestLogRecord>>(
     new Map(),
   );
   // 加载中的详情行（显示骨架，避免重复发请求）
-  const [loadingDetails, setLoadingDetails] = useState<Set<number>>(new Set());
+  const [loadingDetails, setLoadingDetails] = useState<Set<string>>(new Set());
   // 搜索：searchInput 为输入框即时值，searchKeyword 为防抖后的生效值
   const [searchInput, setSearchInput] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
   // 左栏会话过滤
   const [sessionFilter, setSessionFilter] = useState("");
   const requestIdRef = useRef(0);
+  const selectedRef = useRef<ProxyRequestLogFileMeta | null>(null);
   const recordsLoadingRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const lastBoundaryRefreshRef = useRef(0);
   const lastBoundaryLoadRef = useRef(0);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   useEffect(() => {
     const timer = setTimeout(
@@ -1185,10 +1190,13 @@ export function RequestLogViewer() {
         next.add(lineNo);
         return next;
       });
+      if (!selected) return;
+      const file = selected;
+      const currentFileKey = fileKey(file);
+      const key = detailKey(file, lineNo);
       // 展开时按需拉取完整记录（列表行只有轻量字段）
-      if (!details.has(lineNo) && !loadingDetails.has(lineNo) && selected) {
-        const file = selected;
-        setLoadingDetails((prev) => new Set(prev).add(lineNo));
+      if (!details.has(key) && !loadingDetails.has(key)) {
+        setLoadingDetails((prev) => new Set(prev).add(key));
         proxyApi
           .getProxyRequestLogRecord({
             appType: file.appType,
@@ -1196,11 +1204,17 @@ export function RequestLogViewer() {
             lineNo,
           })
           .then((record) => {
+            if (selectedRef.current && fileKey(selectedRef.current) !== currentFileKey) {
+              return;
+            }
             setDetails((prev) =>
-              new Map(prev).set(lineNo, { ...record, lineNo }),
+              new Map(prev).set(key, { ...record, lineNo }),
             );
           })
           .catch((error) => {
+            if (selectedRef.current && fileKey(selectedRef.current) !== currentFileKey) {
+              return;
+            }
             toast.error(extractErrorMessage(error));
             setExpandedKeys((prev) => {
               const next = new Set(prev);
@@ -1211,7 +1225,7 @@ export function RequestLogViewer() {
           .finally(() => {
             setLoadingDetails((prev) => {
               const next = new Set(prev);
-              next.delete(lineNo);
+              next.delete(key);
               return next;
             });
           });
@@ -1686,9 +1700,9 @@ export function RequestLogViewer() {
                                 }).format(new Date(row.timestamp!))}
                               </div>
                             ) : row.type === "detail" ? (
-                              details.has(row.lineNo) ? (
+                              selected && details.has(detailKey(selected, row.lineNo)) ? (
                                 <RecordDetail
-                                  record={details.get(row.lineNo)!}
+                                  record={details.get(detailKey(selected, row.lineNo))!}
                                   locale={locale}
                                   onContentHeightChange={
                                     handleContentHeightChange
