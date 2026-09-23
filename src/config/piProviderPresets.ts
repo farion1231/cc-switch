@@ -121,7 +121,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
-
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -158,7 +157,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
-
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -1576,7 +1574,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("xiaomi/mimo-v2.5", {
           id: "mimo-v2.5",
         }),
-
         {
           ...piModel("xiaomi/mimo-v2.6-pro", { id: "mimo-v2.6-pro" }),
           compat: XIAOMI_THINKING_COMPAT,

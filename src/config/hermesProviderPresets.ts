@@ -395,7 +395,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
-
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
@@ -644,7 +643,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-
         { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
       ],
     },
@@ -928,7 +926,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-
         { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
       ],
     },
@@ -1278,7 +1275,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-
         { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
       ],
     },
@@ -2084,7 +2080,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-
         { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
       ],
     },

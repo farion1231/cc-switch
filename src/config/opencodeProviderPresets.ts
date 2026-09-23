@@ -536,7 +536,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           limit: { context: 1050000, output: 128000 },
@@ -817,7 +816,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           limit: { context: 1050000, output: 128000 },
@@ -966,7 +964,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           limit: { context: 1050000, output: 128000 },
@@ -1233,7 +1230,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           limit: { context: 1050000, output: 128000 },
@@ -1621,7 +1617,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           limit: { context: 1050000, output: 128000 },
