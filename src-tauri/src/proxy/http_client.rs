@@ -214,7 +214,23 @@ pub fn is_proxy_enabled() -> bool {
 
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_with_redirect_policy(proxy_url, reqwest::redirect::Policy::default())
+}
+
+/// Account-scoped requests must not carry their headers to a redirect target.
+pub(crate) fn get_without_redirects() -> Result<Client, String> {
+    build_client_with_redirect_policy(
+        get_current_proxy_url().as_deref(),
+        reqwest::redirect::Policy::none(),
+    )
+}
+
+fn build_client_with_redirect_policy(
+    proxy_url: Option<&str>,
+    redirect_policy: reqwest::redirect::Policy,
+) -> Result<Client, String> {
     let mut builder = Client::builder()
+        .redirect(redirect_policy)
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
