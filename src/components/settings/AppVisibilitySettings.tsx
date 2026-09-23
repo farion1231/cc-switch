@@ -37,6 +37,7 @@ const APP_CONFIG: Array<{
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
   { id: "pi", icon: "pi", nameKey: "apps.pi" },
   { id: "ohmypi", icon: "ohmypi", nameKey: "apps.ohmypi" },
+  { id: "mcode", icon: "minimax", nameKey: "apps.mcode" },
 ];
 
 export function AppVisibilitySettings({

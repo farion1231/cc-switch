@@ -157,6 +157,11 @@ pub(crate) fn build_provider_from_request(
                 "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
             ));
         }
+        AppType::Mcode => {
+            return Err(AppError::InvalidInput(
+                "Add MCode providers from the MCode page".into(),
+            ))
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers must be added from the Pi provider page".to_string(),

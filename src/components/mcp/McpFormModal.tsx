@@ -70,12 +70,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     openclaw: boolean;
     hermes: boolean;
     ohmypi: boolean;
+    mcode: boolean;
   }>(() => {
     if (initialData?.apps) {
       return {
         ...initialData.apps,
         grokbuild: initialData.apps.grokbuild ?? false,
         ohmypi: initialData.apps.ohmypi ?? false,
+        mcode: initialData.apps.mcode ?? false,
       };
     }
     return {
@@ -87,6 +89,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
       ohmypi: defaultEnabledApps.includes("ohmypi"),
+      mcode: defaultEnabledApps.includes("mcode"),
     };
   });
 
@@ -643,6 +646,19 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     {t("mcp.unifiedPanel.apps.ohmypi", {
                       defaultValue: "Oh My Pi",
                     })}
+                  </label>
+                  <Checkbox
+                    id="enable-mcode"
+                    checked={enabledApps.mcode}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, mcode: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-mcode"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.mcode")}
                   </label>
                 </div>
               </div>

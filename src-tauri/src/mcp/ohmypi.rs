@@ -65,6 +65,7 @@ pub fn import_from_ohmypi(config: &mut MultiAppConfig) -> Result<usize, AppError
                         opencode: false,
                         hermes: false,
                         ohmypi: true,
+                        mcode: false,
                     },
                     description: None,
                     homepage: None,

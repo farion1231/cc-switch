@@ -27,6 +27,7 @@ const baseSettings: SettingsFormState = {
     hermes: false,
     pi: true,
     ohmypi: false,
+    mcode: true,
   },
   showProfileSwitcher: true,
   language: "en",
