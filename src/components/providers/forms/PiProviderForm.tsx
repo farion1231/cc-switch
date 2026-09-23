@@ -105,8 +105,12 @@ interface PiModelDraft {
   hasInput: boolean;
   contextWindow: string;
   hasContextWindow: boolean;
+  /** True when contextWindow was last filled from fetched /v1/models metadata. */
+  autoContextWindow: boolean;
   maxTokens: string;
   hasMaxTokens: boolean;
+  /** True when maxTokens was last filled from fetched /v1/models metadata. */
+  autoMaxTokens: boolean;
   thinkingLevelMap: unknown;
   hasThinkingLevelMap: boolean;
   passthrough: Record<string, unknown>;
@@ -173,6 +177,12 @@ function optionalNumberText(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value)
     ? String(value)
     : "";
+}
+
+function optionalPositiveNumberText(value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? String(value)
+    : undefined;
 }
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
@@ -279,8 +289,10 @@ function modelDraft(
     hasInput: hasOwn(model, "input"),
     contextWindow: optionalNumberText(model.contextWindow),
     hasContextWindow: hasOwn(model, "contextWindow"),
+    autoContextWindow: false,
     maxTokens: optionalNumberText(model.maxTokens),
     hasMaxTokens: hasOwn(model, "maxTokens"),
+    autoMaxTokens: false,
     thinkingLevelMap: model.thinkingLevelMap,
     hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
@@ -299,8 +311,10 @@ function newModel(): PiModelDraft {
     hasInput: true,
     contextWindow: "",
     hasContextWindow: true,
+    autoContextWindow: false,
     maxTokens: "",
     hasMaxTokens: true,
+    autoMaxTokens: false,
     thinkingLevelMap: undefined,
     hasThinkingLevelMap: false,
     passthrough: {},
@@ -842,7 +856,9 @@ export function PiProviderForm({
     );
   };
 
-  const changeModelId = (key: string, id: string) => {
+  const changeModelId = (key: string, id: string, fetched?: FetchedModel) => {
+    const contextWindow = optionalPositiveNumberText(fetched?.maxInputTokens);
+    const maxTokens = optionalPositiveNumberText(fetched?.maxOutputTokens);
     commitModels(
       modelsRef.current.map((model) =>
         model.key === key
@@ -854,6 +870,36 @@ export function PiProviderForm({
                 (model.name.length === 0 || model.name === model.id)
                   ? id
                   : model.name,
+              ...(fetched
+                ? {
+                    ...(contextWindow !== undefined
+                      ? {
+                          contextWindow,
+                          hasContextWindow: true,
+                          autoContextWindow: true,
+                        }
+                      : model.autoContextWindow
+                        ? {
+                            contextWindow: "",
+                            hasContextWindow: false,
+                            autoContextWindow: false,
+                          }
+                        : {}),
+                    ...(maxTokens !== undefined
+                      ? {
+                          maxTokens,
+                          hasMaxTokens: true,
+                          autoMaxTokens: true,
+                        }
+                      : model.autoMaxTokens
+                        ? {
+                            maxTokens: "",
+                            hasMaxTokens: false,
+                            autoMaxTokens: false,
+                          }
+                        : {}),
+                  }
+                : {}),
             }
           : model,
       ),
@@ -1578,7 +1624,9 @@ export function PiProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) => changeModelId(model.key, id)}
+                                onSelect={(id, fetched) =>
+                                  changeModelId(model.key, id, fetched)
+                                }
                               />
                             )}
                           </div>
@@ -1678,6 +1726,7 @@ export function PiProviderForm({
                                   updateModelOverride(model.key, {
                                     contextWindow: event.target.value,
                                     hasContextWindow: true,
+                                    autoContextWindow: false,
                                   })
                                 }
                                 placeholder="128000"
@@ -1710,6 +1759,7 @@ export function PiProviderForm({
                                   updateModelOverride(model.key, {
                                     maxTokens: event.target.value,
                                     hasMaxTokens: true,
+                                    autoMaxTokens: false,
                                   })
                                 }
                                 placeholder="16384"
