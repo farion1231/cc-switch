@@ -48,6 +48,7 @@ import {
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { resolveKnownBaseUrlForApiFormat } from "./helpers/apiFormatBaseUrl";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -245,6 +246,14 @@ export function ClaudeFormFields({
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
+
+  const handleApiFormatChange = (format: ClaudeApiFormat) => {
+    const nextBaseUrl = resolveKnownBaseUrlForApiFormat(baseUrl, format);
+    onApiFormatChange(format);
+    if (nextBaseUrl) {
+      onBaseUrlChange(nextBaseUrl);
+    }
+  };
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
@@ -814,7 +823,7 @@ export function ClaudeFormFields({
                 <FormLabel htmlFor="apiFormat">
                   {t("providerForm.apiFormat", { defaultValue: "上游格式" })}
                 </FormLabel>
-                <Select value={apiFormat} onValueChange={onApiFormatChange}>
+                <Select value={apiFormat} onValueChange={handleApiFormatChange}>
                   <SelectTrigger id="apiFormat" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
