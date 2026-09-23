@@ -548,6 +548,31 @@ fn chain_update_commands(
     }
 }
 
+/// Select the Windows update command after an official self-update has been anchored.
+///
+/// Claude's official updater honors `autoUpdatesChannel`. When the `stable` dist-tag
+/// trails `latest`, it can exit 0 after deciding the installation is already current,
+/// which short-circuits the `||` package-manager fallback. An anchored package
+/// command targets `@latest` and writes back to the same installation, so it is the
+/// primary update path for Claude. Native Claude installs have no sibling package
+/// manager and keep using `claude update`; other tools retain the existing chain.
+#[cfg(any(target_os = "windows", test))]
+fn select_windows_update_command(
+    tool: &str,
+    official_update: String,
+    package_manager_command: Option<String>,
+) -> String {
+    match package_manager_command {
+        Some(package_command) if tool == "claude" => package_command,
+        Some(package_command) => chain_update_commands(
+            official_update,
+            package_command,
+            LifecycleCommandShell::WindowsBatch,
+        ),
+        None => official_update,
+    }
+}
+
 fn tool_action_shell_command_for_shell(
     tool: &str,
     action: ToolLifecycleAction,
@@ -3075,12 +3100,7 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
     if prefers_official_update(tool, LifecycleCommandShell::WindowsBatch) {
         let update = anchored_official_update_command(tool, bin_path)?;
-        return Some(match package_command {
-            Some(fallback) => {
-                chain_update_commands(update, fallback, LifecycleCommandShell::WindowsBatch)
-            }
-            None => update,
-        });
+        return Some(select_windows_update_command(tool, update, package_command));
     }
     package_command
 }
@@ -5157,6 +5177,34 @@ mod tests {
     }
 
     #[test]
+    fn windows_npm_claude_uses_package_manager_before_stable_self_update() {
+        // Regression for #7102: when npm's `stable` dist-tag trails `latest`,
+        // Claude's self-update exits 0 without installing anything, so an
+        // anchored package-manager command must be the primary Windows path.
+        let official_update = r#""C:\nodejs\claude.cmd" update"#.to_string();
+        let package_update =
+            r#""C:\nodejs\npm.cmd" i -g @anthropic-ai/claude-code@latest"#.to_string();
+
+        assert_eq!(
+            select_windows_update_command("claude", official_update, Some(package_update.clone())),
+            package_update
+        );
+    }
+
+    #[test]
+    fn windows_native_claude_keeps_official_self_update() {
+        // Native Claude has no sibling package manager, so there is no safe
+        // npm fallback; preserve its official self-update path.
+        let official_update =
+            r#""C:\Users\me\AppData\Local\Programs\claude\claude.exe" update"#.to_string();
+
+        assert_eq!(
+            select_windows_update_command("claude", official_update.clone(), None),
+            official_update
+        );
+    }
+
+    #[test]
     fn pi_lifecycle_metadata_matches_pinned_distribution() {
         let requested = vec!["unsupported".to_string(), "pi".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["pi"]);
@@ -5429,6 +5477,25 @@ mod tests {
                 expect_quoted_path(&npm_full)
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn npm_claude_windows_skips_stable_self_update() {
+            // #7102: npm global Claude + `autoUpdatesChannel=stable` can run through
+            // `claude update` with exit code 0 while `latest` is still ahead. The
+            // sibling npm is the only command that is guaranteed to install @latest.
+            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "claude.cmd", &["npm.cmd"]);
+            let cmd = anchored_command_from_paths("claude", &bin_path, &bin_path);
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} i -g @anthropic-ai/claude-code@latest",
+                expect_quoted_path(&npm_full)
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+            assert!(!cmd
+                .as_deref()
+                .unwrap_or_default()
+                .contains("claude.cmd\" update"));
         }
 
         #[test]
@@ -5928,6 +5995,22 @@ mod tests {
                 "/Users/me/.local/share/claude/versions/2.1.146",
             );
             assert_eq!(cmd.as_deref(), Some("/Users/me/.local/bin/claude update"));
+        }
+
+        #[test]
+        fn claude_homebrew_cask_keeps_self_update_with_npm_fallback() {
+            // Homebrew cask symlinks /opt/homebrew/bin/claude to Caskroom rather than
+            // Cellar. Keep the existing POSIX behavior intact while the Windows-only
+            // npm-source regression is fixed above.
+            let cmd = anchored_command_from_paths(
+                "claude",
+                "/opt/homebrew/bin/claude",
+                "/opt/homebrew/Caskroom/claude-code/2.1.236/claude",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/opt/homebrew/bin/claude update || PATH='/opt/homebrew/bin':\"$PATH\" /opt/homebrew/bin/npm i -g @anthropic-ai/claude-code@latest")
+            );
         }
 
         #[test]
