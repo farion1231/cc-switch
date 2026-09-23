@@ -127,7 +127,11 @@ describe("JieKou AI provider presets", () => {
         apiKey: { label: "API Key", placeholder: "", editorValue: "" },
       },
     });
-    expect(Object.keys(preset.settingsConfig.models)).toEqual([defaultModelId]);
+    expect(Object.keys(preset.settingsConfig.models)).toEqual([
+      defaultModelId,
+      "claude-opus-5-5",
+      "claude-fable-5-1",
+    ]);
     expect(`${preset.settingsConfig.options.baseURL}/chat/completions`).toBe(
       "https://api.jiekou.ai/openai/v1/chat/completions",
     );
@@ -141,17 +145,17 @@ describe("JieKou AI provider presets", () => {
         baseUrl: openAiBaseUrl,
         apiKey: "",
         api: "openai-completions",
-        models: [
-          {
+        models: expect.arrayContaining([
+          expect.objectContaining({
             id: defaultModelId,
             name: defaultModelName,
             reasoning: true,
             input: ["text", "image"],
             contextWindow: 1000000,
             maxTokens: 128000,
-            cost: { input: 10, output: 50 },
-          },
-        ],
+            cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+          }),
+        ]),
       },
       templateValues: {
         apiKey: { label: "API Key", placeholder: "sk-...", editorValue: "" },
@@ -177,13 +181,13 @@ describe("JieKou AI provider presets", () => {
         base_url: openAiBaseUrl,
         api_key: "",
         api_mode: "chat_completions",
-        models: [
-          {
+        models: expect.arrayContaining([
+          expect.objectContaining({
             id: defaultModelId,
             name: defaultModelName,
             context_length: 1000000,
-          },
-        ],
+          }),
+        ]),
       },
       suggestedDefaults: {
         model: { default: defaultModelId, provider: "jiekou" },

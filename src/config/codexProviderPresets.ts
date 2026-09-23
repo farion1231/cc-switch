@@ -10,6 +10,11 @@ import type {
 } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
+// MiMo 官方 Codex 目录的系统提示词。
+// https://mimo.mi.com/docs/tokenplan/integration/codex-configuration
+const MIMO_CODEX_BASE_INSTRUCTIONS =
+  "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.";
+
 export interface CodexProviderPreset {
   name: string;
   nameKey?: string; // i18n key for localized display name
@@ -523,7 +528,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "qiniu",
       "https://api.qnaigc.com/bypass/openai/v1",
-      "gpt-5.6-sol",
+      "gpt-6-astra",
     ),
     endpointCandidates: [
       "https://api.qnaigc.com/bypass/openai/v1",
@@ -1018,7 +1023,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "compshare",
       "https://api.modelverse.cn/v1",
-      "gpt-5.6-sol",
+      "gpt-6-astra",
     ),
     endpointCandidates: ["https://api.modelverse.cn/v1"],
     category: "aggregator",
@@ -1055,7 +1060,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "ccsub",
       "https://www.ccsub.net/v1",
-      "gpt-5.6-sol",
+      "gpt-6-astra",
     ),
     endpointCandidates: ["https://www.ccsub.net/v1"],
     isPartner: true,
@@ -2841,34 +2846,64 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "xiaomi_mimo",
       "https://api.xiaomimimo.com/v1",
-      "mimo-v2.5-pro",
+      "mimo-v2.6-pro",
     ),
     endpointCandidates: ["https://api.xiaomimimo.com/v1"],
     // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
     apiFormat: "openai_responses",
-    // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
-    // shell_command 编辑、不声明 freeform apply_patch。
-    // 档位照抄官方 catalog：none/high（端点另收 low/medium 但官方自述三档
-    // "效果一致，暂不区分推理强度"，不给假差异档）。与模板默认一致故 Codex 侧
-    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
+    // 官方目录 2026-09-23 起改为四档（none/low/medium/high）、默认 low。
+    // https://mimo.mi.com/docs/tokenplan/integration/codex-configuration
+    // 仅同步模型元数据，沿用现有工具传输配置。
     modelCatalog: modelCatalog([
+      {
+        model: "mimo-v2.6-pro",
+        displayName: "MiMo V2.6 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
+      },
+      {
+        model: "mimo-v2.6-flash",
+        displayName: "MiMo V2.6 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
+      },
+      {
+        model: "mimo-v2.6-pro-ultraspeed",
+        displayName: "MiMo V2.6 Pro UltraSpeed",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
+      },
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
         inputModalities: ["text"],
-        reasoningLevels: ["none", "high"],
-        baseInstructions:
-          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
       },
       {
         model: "mimo-v2.5",
         displayName: "MiMo V2.5",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
-        reasoningLevels: ["none", "high"],
-        baseInstructions:
-          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
       },
     ]),
     category: "cn_official",
@@ -2883,34 +2918,54 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "xiaomi_mimo_token_plan",
       "https://token-plan-cn.xiaomimimo.com/v1",
-      "mimo-v2.5-pro",
+      "mimo-v2.6-pro",
     ),
     endpointCandidates: ["https://token-plan-cn.xiaomimimo.com/v1"],
     // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
     apiFormat: "openai_responses",
-    // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
-    // shell_command 编辑、不声明 freeform apply_patch。
-    // 档位照抄官方 catalog：none/high（端点另收 low/medium 但官方自述三档
-    // "效果一致，暂不区分推理强度"，不给假差异档）。与模板默认一致故 Codex 侧
-    // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
+    // 官方目录 2026-09-23 起改为四档（none/low/medium/high）、默认 low。
+    // https://mimo.mi.com/docs/tokenplan/integration/codex-configuration
+    // 仅同步模型元数据，沿用现有工具传输配置。
     modelCatalog: modelCatalog([
+      {
+        model: "mimo-v2.6-pro",
+        displayName: "MiMo V2.6 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
+      },
+      {
+        model: "mimo-v2.6-flash",
+        displayName: "MiMo V2.6 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
+      },
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
         inputModalities: ["text"],
-        reasoningLevels: ["none", "high"],
-        baseInstructions:
-          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
       },
       {
         model: "mimo-v2.5",
         displayName: "MiMo V2.5",
         contextWindow: 1048576,
         inputModalities: ["text", "image"],
-        reasoningLevels: ["none", "high"],
-        baseInstructions:
-          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+        supportsParallelToolCalls: false,
+        baseInstructions: MIMO_CODEX_BASE_INSTRUCTIONS,
+        reasoningLevels: ["none", "low", "medium", "high"],
+        defaultReasoningLevel: "low",
       },
     ]),
     category: "cn_official",
@@ -2964,6 +3019,15 @@ requires_openai_auth = true`,
     // 原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
+      // https://docs.x.ai/developers/models/grok-4.7 (2026-09-23)
+      {
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+      },
       {
         model: "grok-4.5",
         displayName: "Grok 4.5",
