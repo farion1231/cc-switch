@@ -35,6 +35,8 @@ mod lightweight;
 mod s3_sync;
 mod usage;
 mod webdav_sync;
+#[cfg(any(target_os = "windows", test))]
+mod windows_terminal;
 mod workspace;
 
 pub use auth::*;
