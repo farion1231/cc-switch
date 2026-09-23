@@ -1619,6 +1619,9 @@ impl Database {
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
+            // 2026-09-23 核对：https://platform.claude.com/docs/en/about-claude/pricing
+            // Opus 5.5 缓存读为 0.05x 输入价；缓存写沿用本表的 5 分钟 TTL 口径。
+            ("claude-opus-5-5", "Claude Opus 5.5", "4", "20", "0.20", "5"),
             // Claude Fable 5.1 / Mythos 5.1（2026-09-01 发布；同 Fable 5 价，
             // 但缓存读为 0.025x = $0.25，非 Fable 5 的 $1）
             (
@@ -1784,12 +1787,14 @@ impl Database {
                 "0.30",
                 "3.75",
             ),
-            // GPT-6 系列（Astra，2026-09-04 发布，1.05M 窗口）
-            // 官方价页 + 模型页 + models.dev 三源一致：10/50，cache read 1，cache write 1.25× 输入 = 12.50。
-            // >272K 长上下文档（20/75/2/25）本表无法表达，与 gpt-5.5 同样忽略。
+            // GPT-6 系列：2026-09-23 核对 https://developers.openai.com/api/docs/pricing
+            // 录入 Standard 短上下文价，cache write 为 1.25x 输入价。
+            // >272K 长上下文、Batch/Flex、Fast/区域加价，本表无法表达。
             // effort 档 low/medium/high/xhigh 由查价剥后缀回落到本行；max 不在剥离列表
             //（会与 *-max 真 id 撞名），不另加后缀行。
             ("gpt-6-astra", "GPT-6 Astra", "10", "50", "1", "12.5"),
+            ("gpt-6-sol", "GPT-6 Sol", "2", "10", "0.20", "2.50"),
+            ("gpt-6-luna", "GPT-6 Luna", "0.10", "0.50", "0.01", "0.125"),
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
             // 5.6 家族起 cache write 收 1.25× 输入价（此前 GPT 模型写缓存免费，勿回填旧系列）
             // 2026-09-06 审计：Sol 改促销价 4/20/0.40/5（OpenAI 价页原文"至少持续到 2026-11-21"），
@@ -1804,6 +1809,34 @@ impl Database {
                 "1.20",
                 "0.02",
                 "0.25",
+            ),
+            (
+                "gpt-5.6-cyber",
+                "GPT-5.6 Cyber",
+                "12.50",
+                "75",
+                "1.25",
+                "15.625",
+            ),
+            // 官方模型页的 Snapshots 确认 Daybreak Red/Blue 分别指向 Cyber/Sol：
+            // https://developers.openai.com/api/docs/models/gpt-daybreak-red-latest
+            // https://developers.openai.com/api/docs/models/gpt-daybreak-blue-latest
+            // Blue 同 Sol 使用当前促销价；别名切换或促销结束时需同步核价。
+            (
+                "gpt-daybreak-red-latest",
+                "GPT Daybreak Red",
+                "12.50",
+                "75",
+                "1.25",
+                "15.625",
+            ),
+            (
+                "gpt-daybreak-blue-latest",
+                "GPT Daybreak Blue",
+                "4",
+                "20",
+                "0.40",
+                "5",
             ),
             // 裸名 gpt-5.6 是 sol 的官方别名；effort 后缀对齐 gpt-5.5 系列的记账形态。
             // 查价先精确匹配 id 再剥 effort 后缀，这些行必须与 sol 同步改价，否则旧价会压过基础行。
@@ -1999,6 +2032,25 @@ impl Database {
             ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
             ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
             ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // OpenAI 文本模型补全（2026-09-23）：各模型页的标准 token 价。
+            // 来源：https://developers.openai.com/api/docs/models/<model_id>
+            // 已按 /api/docs/deprecations 排除弃用模型；不含工具调用费及多模态价格。
+            // Pro 系列未提供缓存折扣，与 o3-pro 一样将未支持的缓存价格记为 0。
+            ("gpt-5.5-pro", "GPT-5.5 Pro", "30", "180", "0", "0"),
+            ("gpt-5.4-pro", "GPT-5.4 Pro", "30", "180", "0", "0"),
+            ("gpt-5.2-pro", "GPT-5.2 Pro", "21", "168", "0", "0"),
+            ("chat-latest", "Chat Latest", "5", "30", "0.50", "0"),
+            ("gpt-4o", "GPT-4o", "2.50", "10", "1.25", "0"),
+            ("gpt-4o-mini", "GPT-4o Mini", "0.15", "0.60", "0.075", "0"),
+            // GPT-Rosalind 的公开定价列在 pricing 页的 Specialized models 表中。
+            (
+                "gpt-rosalind-research",
+                "GPT-Rosalind Research",
+                "5",
+                "25",
+                "0.50",
+                "0",
+            ),
             // Gemini 3.8 系列（2026-09-02 发布，1M 窗口）
             // 介绍价 0.75/3.75/0.075 至 2026-12-31，2027-01-01 起挂牌价 1.50/7.50/0.15；口径同 3.7 Flash，勿加豁免。
             (
