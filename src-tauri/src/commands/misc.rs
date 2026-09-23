@@ -16,8 +16,6 @@ use tauri_plugin_opener::OpenerExt;
 use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
-const CREATE_NEW_CONSOLE: u32 = 0x00000010;
-#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// 打开外部链接
@@ -4671,9 +4669,7 @@ pub(super) fn configure_windows_cmd_batch(
 fn run_windows_cmd_batch(bat_path: &str, launch_env: &[(&str, &str)]) -> Result<(), String> {
     let mut command = std::process::Command::new("cmd");
     configure_windows_cmd_batch_with(&mut command, "/K", bat_path, launch_env);
-    command
-        .creation_flags(CREATE_NEW_CONSOLE)
-        .spawn()
+    super::windows_console::spawn_new_console(&mut command)
         .map_err(|e| format!("启动 cmd 失败: {e}"))?;
     Ok(())
 }
@@ -4683,9 +4679,7 @@ fn run_windows_powershell_batch(bat_path: &str, launch_env: &[(&str, &str)]) -> 
     let mut command = std::process::Command::new("powershell");
     configure_windows_batch_env_with(&mut command, bat_path, launch_env);
     command.args(["-NoExit", "-Command", WINDOWS_POWERSHELL_BATCH_COMMAND]);
-    command
-        .creation_flags(CREATE_NEW_CONSOLE)
-        .spawn()
+    super::windows_console::spawn_new_console(&mut command)
         .map_err(|e| format!("启动 PowerShell 失败: {e}"))?;
     Ok(())
 }
