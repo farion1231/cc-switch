@@ -125,6 +125,45 @@ describe("MoArk (模力方舟) provider presets", () => {
     );
   });
 
+  it("declares positive capacity limits for every OpenCode model", () => {
+    const preset = opencodeProviderPresets.find(
+      (item) => item.name === "模力方舟",
+    );
+    const models = preset?.settingsConfig.models ?? {};
+
+    // OpenCode treats a missing limit as 0 and then skips auto-compaction
+    // (`isOverflow` returns false when `limit.context === 0`), so every model
+    // of a custom provider key must carry explicit capacity numbers.
+    expect(Object.keys(models)).toHaveLength(5);
+    for (const [id, model] of Object.entries(models)) {
+      expect(model.limit?.context, `${id} limit.context`).toBeGreaterThan(0);
+      expect(model.limit?.output, `${id} limit.output`).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps OpenCode capacities consistent with the OpenClaw preset", () => {
+    const opencode = opencodeProviderPresets.find(
+      (item) => item.name === "模力方舟",
+    );
+    const openclaw = openclawProviderPresets.find(
+      (item) => item.name === "模力方舟",
+    );
+    const openclawById = new Map(
+      (openclaw?.settingsConfig.models ?? []).map((model) => [model.id, model]),
+    );
+
+    for (const [id, model] of Object.entries(
+      opencode?.settingsConfig.models ?? {},
+    )) {
+      const counterpart = openclawById.get(id);
+      expect(counterpart, `${id} exists in the OpenClaw preset`).toBeDefined();
+      expect(model.limit?.context, `${id} context`).toBe(
+        counterpart?.contextWindow,
+      );
+      expect(model.limit?.output, `${id} output`).toBe(counterpart?.maxTokens);
+    }
+  });
+
   it("inherits the Pi preset for MiniMax Code", () => {
     const preset = mcodeProviderPresets.find((item) => item.name === "模力方舟");
 
