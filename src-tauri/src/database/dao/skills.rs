@@ -135,11 +135,11 @@ impl Database {
                 skill.apps.grokbuild,
                 skill.apps.opencode,
                 skill.apps.hermes,
+                skill.apps.mcode,
                 skill.apps.ohmypi,
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
-                skill.apps.mcode,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -208,8 +208,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_ohmypi = ?9 WHERE id = ?7",
+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.ohmypi],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

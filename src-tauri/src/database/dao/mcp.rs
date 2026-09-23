@@ -145,8 +145,8 @@ impl Database {
                 server.apps.grokbuild,
                 server.apps.opencode,
                 server.apps.hermes,
-                server.apps.ohmypi,
                 server.apps.mcode,
+                server.apps.ohmypi,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
