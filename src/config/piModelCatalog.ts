@@ -683,7 +683,7 @@ export const piModelCatalog = {
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1000000,
-      maxTokens: 1000000,
+      maxTokens: 64000,
     },
   },
   "stepfun/step-3.7-flash": {

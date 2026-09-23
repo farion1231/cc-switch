@@ -4399,10 +4399,10 @@ mod tests {
             result.is_some(),
             "OpenAI 日期后缀模型应能回退到 gpt-5.5 基础定价"
         );
-        let result = find_model_pricing_row(&conn, "google/gemini-3.1-pro-preview-20260514")?;
+        let result = find_model_pricing_row(&conn, "google/gemini-3-pro-preview-20260514")?;
         assert!(
             result.is_some(),
-            "Gemini 日期后缀模型应能回退到 gemini-3.1-pro-preview 基础定价"
+            "Gemini 日期后缀模型应能回退到 gemini-3-pro-preview 基础定价"
         );
 
         // Claude Desktop route 短 ID：应通过前缀匹配到带日期的定价

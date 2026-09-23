@@ -188,8 +188,7 @@ export interface PiThinkingBinding {
  * transport semantics.
  */
 export const piThinkingBindings: readonly PiThinkingBinding[] = [
-  // Always-on adaptive thinking and effort levels verified in Anthropic's
-  // model overview / effort documentation on 2026-09-23.
+  // 2026-09-23 按 Anthropic 模型概览和 effort 文档核对：常开自适应思考及对应档位。
   {
     catalogKey: "anthropic/claude-opus-5.5",
     api: "anthropic-messages",

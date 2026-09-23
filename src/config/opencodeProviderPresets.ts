@@ -739,6 +739,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
         "moonshotai/kimi-k3": {
           name: "Kimi K3",
           limit: { context: 1048576, output: 131072 },
@@ -2365,7 +2370,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         },
         "step-5-preview": {
           name: "Step 5 Preview",
-          limit: { context: 1000000, output: 1000000 },
+          limit: { context: 1000000, output: 64000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -2408,7 +2413,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         },
         "step-5-preview": {
           name: "Step 5 Preview",
-          limit: { context: 1000000, output: 1000000 },
+          limit: { context: 1000000, output: 64000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -2451,7 +2456,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         },
         "step-5-preview": {
           name: "Step 5 Preview",
-          limit: { context: 1000000, output: 1000000 },
+          limit: { context: 1000000, output: 64000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },

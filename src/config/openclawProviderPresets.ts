@@ -1,9 +1,8 @@
 /**
  * OpenClaw provider presets configuration
  * OpenClaw uses models.providers structure with custom provider configs
- * Costs are standard USD / 1M token estimates; published supplier rates take
- * precedence. Plan/relay estimates do not include subscription or account discounts.
- * Sources and verification limits: docs/model-catalog-audit-2026-09-23.md.
+ * 费用为标准 USD / 百万 tokens 估算，优先使用供应商公布的单价。
+ * 套餐和中转参考价不包含订阅费用或账户折扣。
  */
 import type {
   ProviderCategory,
@@ -123,7 +122,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           id: "kimi-k3",
           name: "Kimi K3",
           contextWindow: 1048576,
-          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 },
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
         },
         {
           id: "kimi-k2.7-code-highspeed",
@@ -187,7 +186,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           id: "kimi-k3",
           name: "Kimi K3",
           contextWindow: 1048576,
-          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 },
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
         },
         {
           id: "kimi-k2.7-code-highspeed",
@@ -720,6 +719,15 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        },
+        {
           id: "moonshotai/kimi-k3",
           name: "Kimi K3",
           contextWindow: 1048576,
@@ -758,10 +766,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "qiniu/moonshotai/kimi-k3",
+        primary: "qiniu/gpt-6-astra",
       },
       modelCatalog: {
-        "qiniu/moonshotai/kimi-k3": { alias: "Kimi K3" },
+        "qiniu/gpt-6-astra": { alias: "GPT-6 Astra" },
       },
     },
   },
@@ -3443,7 +3451,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           input: ["text", "image"],
           contextWindow: 256000,
           maxTokens: 256000,
-          cost: { input: 0.185, output: 1.11, cacheRead: 0.037, cacheWrite: 0 },
+          cost: { input: 0.19, output: 1.13, cacheRead: 0.04, cacheWrite: 0 },
         },
         {
           id: "step-5-preview",
@@ -3451,11 +3459,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
-          maxTokens: 1000000,
+          maxTokens: 64000,
           cost: {
-            input: 0.959,
-            output: 2.741,
-            cacheRead: 0.048,
+            input: 0.98,
+            output: 2.8,
+            cacheRead: 0.05,
             cacheWrite: 0,
           },
         },
@@ -3511,7 +3519,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           input: ["text", "image"],
           contextWindow: 256000,
           maxTokens: 256000,
-          cost: { input: 0.185, output: 1.11, cacheRead: 0.037, cacheWrite: 0 },
+          cost: { input: 0.19, output: 1.13, cacheRead: 0.04, cacheWrite: 0 },
         },
         {
           id: "step-5-preview",
@@ -3519,11 +3527,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
-          maxTokens: 1000000,
+          maxTokens: 64000,
           cost: {
-            input: 0.959,
-            output: 2.741,
-            cacheRead: 0.048,
+            input: 0.98,
+            output: 2.8,
+            cacheRead: 0.05,
             cacheWrite: 0,
           },
         },
@@ -4471,7 +4479,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           input: ["text", "image"],
           contextWindow: 1000000,
           maxTokens: 128000,
-          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 0 },
+          // 供应商未公布缓存写入价，按 Anthropic 标准参考价估算。
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
         },
         {
           id: "claude-fable-5-1",

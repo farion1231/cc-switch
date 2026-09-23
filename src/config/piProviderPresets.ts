@@ -234,7 +234,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -279,7 +278,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
@@ -355,7 +353,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-haiku-4.5", {
           id: "claude-haiku-4-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -383,7 +380,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-sonnet-5", {
           id: "anthropic/claude-sonnet-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", {
           id: "anthropic/claude-opus-5.5",
         }),
@@ -434,10 +430,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
         piModel("moonshotai/kimi-k3", {
           id: "moonshotai/kimi-k3",
         }),
-
         piModel("zai/glm-5.3", { id: "z-ai/glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "z-ai/glm-5.3-flash" }),
       ],
@@ -486,7 +482,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
@@ -581,7 +576,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-haiku-4.5", {
           id: "claude-haiku-4-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -605,7 +599,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
@@ -685,7 +678,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-haiku-4.5", {
           id: "claude-haiku-4-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -782,7 +774,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
@@ -978,7 +969,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
         }),
-
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
     },
@@ -1026,7 +1016,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
         piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
@@ -1051,7 +1040,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -1074,7 +1062,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
@@ -1162,7 +1149,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5.3", {
           id: "glm-5.3",
         }),
-
         piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
       ],
     },
@@ -1184,7 +1170,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5.3", {
           id: "glm-5.3",
         }),
-
         piModel("zai/glm-5.3-flash", { id: "glm-5.3-flash" }),
       ],
     },
@@ -1347,7 +1332,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash",
         }),
-
         piModel("stepfun/step-3.7-flash", { id: "step-3.7-flash" }),
         piModel("stepfun/step-5-preview", { id: "step-5-preview" }),
       ],
@@ -1374,7 +1358,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash",
         }),
-
         piModel("stepfun/step-3.7-flash", { id: "step-3.7-flash" }),
         piModel("stepfun/step-5-preview", { id: "step-5-preview" }),
       ],
@@ -1397,7 +1380,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash",
         }),
-
         piModel("stepfun/step-3.7-flash", { id: "step-3.7-flash" }),
         piModel("stepfun/step-5-preview", { id: "step-5-preview" }),
       ],
@@ -1678,7 +1660,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
         piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
       ],
@@ -1704,7 +1685,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-opus-5", {
           id: "anthropic/claude-opus-5",
         }),
-
         piModel("anthropic/claude-fable-5.1", {
           id: "anthropic/claude-fable-5.1",
         }),
@@ -1730,7 +1710,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-opus-5", {
           id: "anthropic/claude-opus-5",
         }),
-
         piModel("anthropic/claude-opus-5.5", {
           id: "anthropic/claude-opus-5.5",
         }),
@@ -1787,7 +1766,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("zai/glm-5.1", {
           id: "zai-org/glm-5.1",
         }),
-
         piModel("zai/glm-5.3", { id: "zai-org/glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "zai-org/glm-5.3-flash" }),
         piModel("moonshotai/kimi-k3", { id: "moonshotai/kimi-k3" }),
@@ -1811,7 +1789,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("moonshotai/kimi-k3", {
           id: "moonshotai/kimi-k3",
         }),
-
         piModel("zai/glm-5.3", { id: "z-ai/glm-5.3" }),
         piModel("zai/glm-5.3-flash", { id: "z-ai/glm-5.3-flash" }),
       ],
@@ -1863,7 +1840,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "gpt-5.6-sol",
         }),
-
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -1891,7 +1867,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           id: "gpt-5.3-codex",
           name: "gpt-5.3-codex",
         }),
-
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],

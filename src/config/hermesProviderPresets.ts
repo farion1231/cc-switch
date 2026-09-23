@@ -446,6 +446,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
         { id: "moonshotai/kimi-k3", name: "Kimi K3", context_length: 1048576 },
         { id: "z-ai/glm-5.3", name: "GLM-5.3", context_length: 1048576 },
         {
@@ -460,7 +461,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "qiniu",
     icon: "qiniu",
     suggestedDefaults: {
-      model: { default: "moonshotai/kimi-k3", provider: "qiniu" },
+      model: { default: "gpt-6-astra", provider: "qiniu" },
     },
   },
   {
@@ -950,7 +951,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.modelverse.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "kimi-k3", name: "Kimi K3" }],
+      models: [
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+      ],
     },
     category: "aggregator",
     isPartner: true,
@@ -958,7 +962,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "ucloud",
     iconColor: "#000000",
     suggestedDefaults: {
-      model: { default: "kimi-k3", provider: "compshare" },
+      model: { default: "gpt-6-astra", provider: "compshare" },
     },
   },
   {

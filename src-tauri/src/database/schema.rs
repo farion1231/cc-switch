@@ -1745,6 +1745,48 @@ impl Database {
                 "0.10",
                 "1.25",
             ),
+            // Claude 4 系列 (Legacy Models)
+            (
+                "claude-opus-4-20250514",
+                "Claude Opus 4",
+                "15",
+                "75",
+                "1.50",
+                "18.75",
+            ),
+            (
+                "claude-opus-4-1-20250805",
+                "Claude Opus 4.1",
+                "15",
+                "75",
+                "1.50",
+                "18.75",
+            ),
+            (
+                "claude-sonnet-4-20250514",
+                "Claude Sonnet 4",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
+            // Claude 3.5 系列
+            (
+                "claude-3-5-haiku-20241022",
+                "Claude 3.5 Haiku",
+                "0.80",
+                "4",
+                "0.08",
+                "1",
+            ),
+            (
+                "claude-3-5-sonnet-20241022",
+                "Claude 3.5 Sonnet",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
             // GPT-6 系列（Astra 2026-09-04 发布，1.05M 窗口；Sol / Luna 2026-09-22 发布）
             // 2026-09-23 核对官方价页 + 模型页 + models.dev：录入 Standard 短上下文价，
             // cache read 0.1×、cache write 1.25× 输入价。>272K 长上下文档（输入与缓存 2×、输出 1.5×）、
@@ -2064,6 +2106,14 @@ impl Database {
             ),
             // Gemini 3 系列
             (
+                "gemini-3-pro-preview",
+                "Gemini 3 Pro Preview",
+                "2",
+                "12",
+                "0.2",
+                "0",
+            ),
+            (
                 "gemini-3-flash-preview",
                 "Gemini 3 Flash Preview",
                 "0.5",
@@ -2096,7 +2146,25 @@ impl Database {
                 "0.01",
                 "0",
             ),
-            // StepFun 系列
+            // Gemini 2.0 系列
+            (
+                "gemini-2.0-flash",
+                "Gemini 2.0 Flash",
+                "0.10",
+                "0.40",
+                "0.025",
+                "0",
+            ),
+            // StepFun 系列：CNY 按 1 USD ≈ 7.14 CNY 折算，保留两位小数。
+            // Step 5 Preview 官方输入 / 输出 / 缓存读取：7 / 20 / 0.35 元。
+            (
+                "step-5-preview",
+                "Step 5 Preview",
+                "0.98",
+                "2.80",
+                "0.05",
+                "0",
+            ),
             (
                 "step-3.7-flash",
                 "Step 3.7 Flash",
@@ -2335,7 +2403,7 @@ impl Database {
                 "0.38",
                 "0",
             ),
-            ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
+            ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
             ("k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
@@ -2687,11 +2755,11 @@ impl Database {
             ("o3-pro", "OpenAI o3-pro", "20", "80", "0", "0"),
             ("o3-mini", "OpenAI o3-mini", "1.10", "4.40", "0.55", "0"),
             ("o1", "OpenAI o1", "15", "60", "7.50", "0"),
+            ("o1-mini", "OpenAI o1-mini", "0.55", "2.20", "0.55", "0"),
             ("codex-mini", "Codex Mini", "0.75", "3", "0.025", "0"),
             ("gpt-5-mini", "GPT-5 Mini", "0.25", "2", "0.025", "0"),
             ("gpt-5-nano", "GPT-5 Nano", "0.05", "0.40", "0.005", "0"),
-            // Reviewed 2026-09-23; standard realtime USD / 1M tokens.
-            // StepFun publishes CNY: 7 / 20 / 0.35, converted at 7.3 CNY/USD.
+            // MiMo 2.6：2026-09-23 核对官方标准价格，单位 USD / 百万 tokens。
             (
                 "mimo-v2.6-pro",
                 "MiMo V2.6 Pro",
@@ -2714,14 +2782,6 @@ impl Database {
                 "4.35",
                 "8.7",
                 "0.036",
-                "0",
-            ),
-            (
-                "step-5-preview",
-                "Step 5 Preview",
-                "0.959",
-                "2.741",
-                "0.048",
                 "0",
             ),
         ];
@@ -3414,10 +3474,7 @@ impl Database {
                 "0.006",
                 "0",
             ),
-            // Official standard prices reviewed 2026-09-23; match old built-ins only.
-            (
-                "kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00", "3.00", "15.00", "0.30", "0",
-            ),
+            // 2026-09-23 核对标准价格，仅修正仍匹配旧内置值的记录。
             (
                 "mimo-v2.5",
                 "MiMo V2.5",
@@ -3488,87 +3545,6 @@ impl Database {
         Ok(())
     }
 
-    /// Remove retired built-in rates without deleting user overrides or usage history.
-    /// Retirement dates and sources: docs/model-catalog-audit-2026-09-23.md.
-    fn remove_retired_model_pricing(conn: &Connection) -> Result<(), AppError> {
-        let retired = [
-            (
-                "claude-opus-4-20250514",
-                "Claude Opus 4",
-                "15",
-                "75",
-                "1.50",
-                "18.75",
-            ),
-            (
-                "claude-opus-4-1-20250805",
-                "Claude Opus 4.1",
-                "15",
-                "75",
-                "1.50",
-                "18.75",
-            ),
-            (
-                "claude-sonnet-4-20250514",
-                "Claude Sonnet 4",
-                "3",
-                "15",
-                "0.30",
-                "3.75",
-            ),
-            (
-                "claude-3-5-haiku-20241022",
-                "Claude 3.5 Haiku",
-                "0.80",
-                "4",
-                "0.08",
-                "1",
-            ),
-            (
-                "claude-3-5-sonnet-20241022",
-                "Claude 3.5 Sonnet",
-                "3",
-                "15",
-                "0.30",
-                "3.75",
-            ),
-            (
-                "gemini-3-pro-preview",
-                "Gemini 3 Pro Preview",
-                "2",
-                "12",
-                "0.2",
-                "0",
-            ),
-            (
-                "gemini-2.0-flash",
-                "Gemini 2.0 Flash",
-                "0.10",
-                "0.40",
-                "0.025",
-                "0",
-            ),
-            ("o1-mini", "OpenAI o1-mini", "0.55", "2.20", "0.55", "0"),
-        ];
-        for (model_id, display_name, input, output, cache_read, cache_creation) in retired {
-            conn.execute(
-                "DELETE FROM model_pricing WHERE model_id = ?1 AND display_name = ?2
-                 AND input_cost_per_million = ?3 AND output_cost_per_million = ?4
-                 AND cache_read_cost_per_million = ?5 AND cache_creation_cost_per_million = ?6",
-                rusqlite::params![
-                    model_id,
-                    display_name,
-                    input,
-                    output,
-                    cache_read,
-                    cache_creation
-                ],
-            )
-            .map_err(|e| AppError::Database(format!("清理已下线模型 {model_id} 定价失败: {e}")))?;
-        }
-        Ok(())
-    }
-
     /// 确保模型定价表具备默认数据
     pub fn ensure_model_pricing_seeded(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -3577,7 +3553,6 @@ impl Database {
 
     pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
-        Self::remove_retired_model_pricing(conn)?;
         Self::seed_model_pricing(conn)?;
         Self::repair_current_model_pricing(conn)
     }
