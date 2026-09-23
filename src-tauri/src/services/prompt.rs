@@ -150,7 +150,6 @@ impl PromptService {
         };
         let prompts = Self::get_prompts(state, app.clone())?;
 
-
         if let Some(prompt) = prompts.get(id) {
             if prompt.enabled {
                 return Err(AppError::InvalidInput("无法删除已启用的提示词".to_string()));

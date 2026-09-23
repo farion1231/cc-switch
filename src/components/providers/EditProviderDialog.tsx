@@ -205,7 +205,12 @@ export function EditProviderDialog({
       // OpenCode uses additive mode, while Pi/Oh My Pi's shared models.yml is
       // owned by the catalog coordinator. Neither has a per-provider generic
       // live snapshot that may replace the DB aggregate in this form.
-      if (appId === "opencode" || appId === "pi" || appId === "ohmypi" || appId === "mcode") {
+      if (
+        appId === "opencode" ||
+        appId === "pi" ||
+        appId === "ohmypi" ||
+        appId === "mcode"
+      ) {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);

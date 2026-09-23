@@ -1034,7 +1034,6 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Mcode | AppType::OhMyPi | AppType::Pi => None,
-
     }
 }
 
@@ -1054,7 +1053,6 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Mcode | AppType::OhMyPi | AppType::Pi => {}
-
     })
 }
 

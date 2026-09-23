@@ -453,7 +453,12 @@ impl AppType {
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::OhMyPi | AppType::Mcode
+            AppType::OpenCode
+                | AppType::OpenClaw
+                | AppType::Hermes
+                | AppType::Pi
+                | AppType::OhMyPi
+                | AppType::Mcode
         )
     }
 
@@ -544,7 +549,6 @@ impl CommonConfigSnippets {
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
             AppType::Mcode | AppType::OhMyPi | AppType::Pi => None,
-
         }
     }
 
@@ -560,7 +564,6 @@ impl CommonConfigSnippets {
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
             AppType::Mcode | AppType::OhMyPi | AppType::Pi => {}
-
         }
     }
 }
@@ -887,7 +890,6 @@ impl MultiAppConfig {
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
             AppType::Mcode | AppType::OhMyPi | AppType::Pi => return Ok(false),
-
         };
 
         prompts.insert(id, prompt);
@@ -931,7 +933,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Mcode | AppType::OhMyPi | AppType::Pi => continue,       // Pi didn't exist in v3.6.x, skip
+                AppType::Mcode | AppType::OhMyPi | AppType::Pi => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

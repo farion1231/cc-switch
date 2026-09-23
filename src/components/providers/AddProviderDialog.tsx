@@ -199,9 +199,9 @@ export function AddProviderDialog({
         (appId === "opencode" ||
           appId === "openclaw" ||
           appId === "hermes" ||
-        appId === "pi" ||
-        appId === "ohmypi" ||
-        appId === "mcode") &&
+          appId === "pi" ||
+          appId === "ohmypi" ||
+          appId === "mcode") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

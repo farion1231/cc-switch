@@ -1978,7 +1978,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-AppType::Hermes | AppType::Mcode | AppType::OhMyPi | AppType::OpenClaw | AppType::OpenCode | AppType::Pi => {
+        AppType::Hermes
+        | AppType::Mcode
+        | AppType::OhMyPi
+        | AppType::OpenClaw
+        | AppType::OpenCode
+        | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

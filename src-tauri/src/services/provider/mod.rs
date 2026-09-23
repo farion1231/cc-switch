@@ -6351,7 +6351,6 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Mcode | AppType::OhMyPi | AppType::Pi => Ok(String::new()),
-
         }
     }
 
@@ -6370,7 +6369,6 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Mcode | AppType::OhMyPi | AppType::Pi => Ok(String::new()),
-
         }
     }
 
@@ -7352,7 +7350,11 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-AppType::Hermes | AppType::Mcode | AppType::OhMyPi | AppType::OpenClaw | AppType::Pi => {
+            AppType::Hermes
+            | AppType::Mcode
+            | AppType::OhMyPi
+            | AppType::OpenClaw
+            | AppType::Pi => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

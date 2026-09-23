@@ -554,7 +554,9 @@ impl Database {
                         Self::set_user_version(conn, 18)?;
                     }
                     18 => {
-                        log::info!("迁移数据库从 v18 到 v19（Skills/MCP 添加 Mcode 和 Oh My Pi 支持）");
+                        log::info!(
+                            "迁移数据库从 v18 到 v19（Skills/MCP 添加 Mcode 和 Oh My Pi 支持）"
+                        );
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
