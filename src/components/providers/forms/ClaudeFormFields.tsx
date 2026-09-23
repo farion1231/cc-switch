@@ -57,6 +57,7 @@ import {
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { resolveKnownBaseUrlForApiFormat } from "./helpers/apiFormatBaseUrl";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -270,6 +271,14 @@ export function ClaudeFormFields({
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
+
+  const handleApiFormatChange = (format: ClaudeApiFormat) => {
+    const nextBaseUrl = resolveKnownBaseUrlForApiFormat(baseUrl, format);
+    onApiFormatChange(format);
+    if (nextBaseUrl) {
+      onBaseUrlChange(nextBaseUrl);
+    }
+  };
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {

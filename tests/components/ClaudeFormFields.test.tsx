@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -123,6 +124,7 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
 
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
     copilotApiMock.copilotGetModelsForAccount.mockResolvedValue([]);
     modelFetchApiMock.fetchCodexOauthModels.mockResolvedValue([]);
@@ -157,6 +159,58 @@ describe("ClaudeFormFields", () => {
     renderCodexOauthForm();
 
     expect(modelFetchApiMock.fetchCodexOauthModels).not.toHaveBeenCalled();
+  });
+
+  it("switching a known MiniMax preset to OpenAI Chat updates its base URL", async () => {
+    const onBaseUrlChange = vi.fn();
+    const onApiFormatChange = vi.fn();
+    const user = userEvent.setup();
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "cn_official",
+      baseUrl: "https://api.minimax.cn/anthropic",
+      apiFormat: "anthropic",
+      claudeModel: "MiniMax-M3",
+      onBaseUrlChange,
+      onApiFormatChange,
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "上游格式" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "OpenAI Chat Completions (需转换)",
+      }),
+    );
+
+    expect(onApiFormatChange).toHaveBeenCalledWith("openai_chat");
+    expect(onBaseUrlChange).toHaveBeenCalledWith("https://api.minimax.cn/v1");
+  });
+
+  it("never overwrites a custom base URL when changing API format", async () => {
+    const onBaseUrlChange = vi.fn();
+    const onApiFormatChange = vi.fn();
+    const user = userEvent.setup();
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "cn_official",
+      baseUrl: "https://relay.example.com/anthropic",
+      apiFormat: "anthropic",
+      claudeModel: "MiniMax-M3",
+      onBaseUrlChange,
+      onApiFormatChange,
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "上游格式" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "OpenAI Chat Completions (需转换)",
+      }),
+    );
+
+    expect(onApiFormatChange).toHaveBeenCalledWith("openai_chat");
+    expect(onBaseUrlChange).not.toHaveBeenCalled();
   });
 
   it("点击获取模型列表后才请求当前 Codex OAuth 账号的模型", async () => {

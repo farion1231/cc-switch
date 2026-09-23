@@ -8,6 +8,7 @@ import {
   parseOpencodeConfig,
   toOpencodeExtraOptions,
 } from "../helpers/opencodeFormUtils";
+import { resolveKnownOpencodeBaseUrl } from "../helpers/apiFormatBaseUrl";
 
 interface UseOpencodeFormStateParams {
   initialData?: {
@@ -111,12 +112,20 @@ export function useOpencodeFormState({
 
   const handleOpencodeNpmChange = useCallback(
     (npm: string) => {
+      const nextBaseUrl = resolveKnownOpencodeBaseUrl(opencodeBaseUrl, npm);
       setOpencodeNpm(npm);
+      if (nextBaseUrl) {
+        setOpencodeBaseUrl(nextBaseUrl);
+      }
       updateOpencodeSettings((config) => {
         config.npm = npm;
+        if (nextBaseUrl) {
+          if (!config.options) config.options = {};
+          config.options.baseURL = nextBaseUrl;
+        }
       });
     },
-    [updateOpencodeSettings],
+    [opencodeBaseUrl, updateOpencodeSettings],
   );
 
   const handleOpencodeApiKeyChange = useCallback(
