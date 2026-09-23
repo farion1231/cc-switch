@@ -3488,14 +3488,20 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     terminated = true;
                                     continue;
                                 }
-                                if event_name == "response.completed"
-                                    && next_content_index == 0
+                                if next_content_index == 0
                                     && !has_substantive_output
-                                    && open_indices.is_empty()
                                     && response_obj.get("output").and_then(Value::as_array).is_some()
                                 {
+                                    let mut terminal_body = response_obj.clone();
+                                    if terminal_body.get("status").and_then(Value::as_str).is_none() {
+                                        terminal_body["status"] = json!(if event_name == "response.incomplete" {
+                                            "incomplete"
+                                        } else {
+                                            "completed"
+                                        });
+                                    }
                                     for event in responses_json_to_anthropic_sse(
-                                        response_obj.clone(),
+                                        terminal_body,
                                         Some(hosted_web_search_name.as_str()),
                                         max_web_search_uses,
                                     ) {
@@ -6460,30 +6466,67 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before\",\"annotations\":[]}]},{\"id\":\"ws_order\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"After\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
         );
 
-        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
-        let events = sse_data_values(&merged);
-        let block_types: Vec<&str> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_start")
-            })
-            .filter_map(|event| event.pointer("/content_block/type").and_then(Value::as_str))
-            .collect();
-        let text_deltas: Vec<&str> = events
-            .iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
-            .collect();
+        let completed_only = &input[input.find("event: response.completed").unwrap()..];
+        let incomplete = input
+            .replace("response.completed", "response.incomplete")
+            .replace("\"status\":\"completed\",\"output\"", "\"output\"");
+        for (stream, stop_reason) in [
+            (input, "end_turn"),
+            (completed_only, "end_turn"),
+            (incomplete.as_str(), "max_tokens"),
+        ] {
+            let merged =
+                convert_stream_text_with_web_search_name(stream.to_owned(), "web_search").await;
+            let events = sse_data_values(&merged);
+            let block_types: Vec<&str> = events
+                .iter()
+                .filter(|event| {
+                    event.get("type").and_then(Value::as_str) == Some("content_block_start")
+                })
+                .filter_map(|event| event.pointer("/content_block/type").and_then(Value::as_str))
+                .collect();
+            let text_deltas: Vec<&str> = events
+                .iter()
+                .filter(|event| {
+                    event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+                })
+                .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
+                .collect();
 
-        assert_eq!(
-            block_types,
-            vec!["text", "server_tool_use", "web_search_tool_result", "text"]
-        );
-        assert_eq!(text_deltas, vec!["Before", "After"]);
-        assert_eq!(merged.matches("event: message_start").count(), 1);
-        assert!(merged.contains("event: message_stop"));
+            assert_eq!(
+                block_types,
+                vec!["text", "server_tool_use", "web_search_tool_result", "text"]
+            );
+            assert_eq!(text_deltas, vec!["Before", "After"]);
+            assert_eq!(merged.matches("event: message_start").count(), 1);
+            assert!(merged.contains(&format!("\"stop_reason\":\"{stop_reason}\"")));
+            assert!(merged.contains("event: message_stop"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_terminal_only_completed_without_status_keeps_stop_reason() {
+        for (output, stop_reason) in [
+            (
+                json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}),
+                "end_turn",
+            ),
+            (
+                json!({"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"}),
+                "tool_use",
+            ),
+        ] {
+            let input = format!(
+                "event: response.completed\ndata: {}\n\n",
+                json!({"type":"response.completed","response":{"id":"resp_statusless","model":"gpt-5.6","output":[output]}})
+            );
+            let merged = convert_stream_text(input).await;
+            assert!(merged.contains(&format!("\"stop_reason\":\"{stop_reason}\"")));
+            if stop_reason == "tool_use" {
+                assert!(merged.contains("\"type\":\"tool_use\""));
+            }
+            assert!(merged.contains("event: message_stop"));
+        }
     }
 
     #[tokio::test]
