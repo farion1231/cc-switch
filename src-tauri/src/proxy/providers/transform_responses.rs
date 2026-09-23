@@ -29,6 +29,51 @@ pub(crate) const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]
 /// 会被严格网关整体拒绝，转换时把低于下限的预算抬到最小值而不是让请求失败。
 pub(crate) const RESPONSES_MIN_MAX_OUTPUT_TOKENS: u64 = 16;
 
+const DEFAULT_RESPONSES_JSON_SCHEMA_NAME: &str = "anthropic_output";
+
+fn valid_responses_json_schema_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+}
+
+/// Anthropic's structured-output contract uses a top-level schema. Responses
+/// expects the same schema inside `text.format`, with a required format name and
+/// explicit strictness. Anthropic structured outputs are strict by definition,
+/// so default `strict` to true unless a caller already supplied explicit intent.
+fn anthropic_output_format_to_responses(format: &Value) -> Option<Value> {
+    if format.get("type").and_then(Value::as_str) != Some("json_schema") {
+        return None;
+    }
+    let schema = format.get("schema")?;
+    if !schema.is_object() {
+        return None;
+    }
+
+    let name = format
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| valid_responses_json_schema_name(name))
+        .unwrap_or(DEFAULT_RESPONSES_JSON_SCHEMA_NAME);
+    let strict = format
+        .get("strict")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    let mut mapped = json!({
+        "type": "json_schema",
+        "name": name,
+        "schema": schema.clone(),
+        "strict": strict,
+    });
+    if let Some(description) = format.get("description").and_then(Value::as_str) {
+        mapped["description"] = json!(description);
+    }
+    Some(mapped)
+}
+
 fn has_http_url_scheme(value: &str) -> bool {
     value
         .get(.."http://".len())
@@ -1843,6 +1888,15 @@ pub fn anthropic_to_responses(
             if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
                 result["reasoning"] = json!({ "effort": effort });
             }
+        }
+    }
+
+    // Anthropic output_config.format → Responses text.format. Structured output
+    // requests use the same JSON Schema, but Responses requires a format name and
+    // explicit strictness in its text configuration.
+    if let Some(format) = body.pointer("/output_config/format") {
+        if let Some(mapped_format) = anthropic_output_format_to_responses(format) {
+            result["text"] = json!({ "format": mapped_format });
         }
     }
 
@@ -4848,6 +4902,84 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["max_output_tokens"], 4096);
         assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_output_config_json_schema_maps_to_responses_text_format() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "allowed": {"type": "boolean"},
+                "reason": {"type": "string"}
+            },
+            "required": ["allowed", "reason"],
+            "additionalProperties": false
+        });
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": schema
+                }
+            },
+            "messages": [{"role": "user", "content": "Classify this action"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+        assert_eq!(result["text"]["format"]["type"], "json_schema");
+        assert_eq!(
+            result["text"]["format"]["name"],
+            DEFAULT_RESPONSES_JSON_SCHEMA_NAME
+        );
+        assert_eq!(result["text"]["format"]["schema"], schema);
+        assert_eq!(result["text"]["format"]["strict"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_anthropic_output_config_json_schema_preserves_explicit_format_metadata() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "classification",
+                    "description": "Permission classifier result",
+                    "strict": false,
+                    "schema": {"type": "object", "properties": {}}
+                }
+            },
+            "messages": [{"role": "user", "content": "Classify this action"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+        assert_eq!(result["text"]["format"]["name"], "classification");
+        assert_eq!(
+            result["text"]["format"]["description"],
+            "Permission classifier result"
+        );
+        assert_eq!(result["text"]["format"]["strict"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_invalid_anthropic_output_config_does_not_create_responses_text_format() {
+        for format in [
+            json!({"type": "json_schema"}),
+            json!({"type": "json_schema", "schema": "not-an-object"}),
+            json!({"type": "text", "schema": {"type": "object"}}),
+        ] {
+            let input = json!({
+                "model": "gpt-5.4",
+                "output_config": {"format": format},
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert!(result.get("text").is_none());
+        }
     }
 
     #[test]

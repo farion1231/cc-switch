@@ -15,6 +15,7 @@ use super::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
         AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
+    responses_compat::{self, ResponsesRouteKey},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -526,7 +527,7 @@ impl RequestForwarder {
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self
-                .forward(
+                .forward_with_optional_param_fallback(
                     app_type,
                     &method,
                     provider,
@@ -625,7 +626,7 @@ impl RequestForwarder {
                             );
 
                             match self
-                                .forward(
+                                .forward_with_optional_param_fallback(
                                     app_type,
                                     &method,
                                     provider,
@@ -771,7 +772,7 @@ impl RequestForwarder {
 
                                 // 使用同一供应商重试（不计入熔断器）
                                 match self
-                                    .forward(
+                                    .forward_with_optional_param_fallback(
                                         app_type,
                                         &method,
                                         provider,
@@ -937,7 +938,7 @@ impl RequestForwarder {
 
                             // 使用同一供应商重试（不计入熔断器）
                             match self
-                                .forward(
+                                .forward_with_optional_param_fallback(
                                     app_type,
                                     &method,
                                     provider,
@@ -1153,6 +1154,60 @@ impl RequestForwarder {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
         })
+    }
+
+    /// 转发单个请求（使用适配器）
+    ///
+    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
+    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_with_optional_param_fallback(
+        &self,
+        app_type: &AppType,
+        method: &http::Method,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let api_format = super::providers::get_claude_api_format(provider);
+        if adapter.name() != "Claude" || api_format != "openai_responses" {
+            return self
+                .forward(
+                    app_type, method, provider, endpoint, body, headers, extensions, adapter,
+                )
+                .await;
+        }
+
+        let key = ResponsesRouteKey::new(
+            provider.id.clone(),
+            endpoint.to_string(),
+            body.get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            api_format,
+        );
+        responses_compat::with_optional_param_fallback(
+            body.clone(),
+            responses_compat::process_compatibility_cache(),
+            &key,
+            |attempt_body| async move {
+                self.forward(
+                    app_type,
+                    method,
+                    provider,
+                    endpoint,
+                    &attempt_body,
+                    headers,
+                    extensions,
+                    adapter,
+                )
+                .await
+            },
+        )
+        .await
     }
 
     /// 转发单个请求（使用适配器）
