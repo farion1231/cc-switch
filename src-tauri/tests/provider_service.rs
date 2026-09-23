@@ -2864,7 +2864,8 @@ fn switch_codex_syncs_shared_keys_from_live_into_common_config() {
     let _home = ensure_test_home();
 
     // A 激活状态下的 live：A 专属路由 + 已共享的 [tui] + 用户刚加的
-    // disable_response_storage + cc-switch 注入产物 + MCP 同步投影
+    // disable_response_storage + cc-switch 注入产物（带 `# cc-switch:managed`
+    // 行尾标记的 web_search 哨兵；无标记的 "disabled" 属用户所有）+ MCP 同步投影
     // + 顶层 wire_api（无 model_provider 时的 fallback 写法，属 A 的路由语义）
     // + 历史错误格式 [mcp.servers]（sync_all_enabled 清不掉的孤儿形态）
     let live_config = r#"model = "gpt-5.5"
@@ -2872,7 +2873,7 @@ model_provider = "aprov"
 wire_api = "chat"
 experimental_bearer_token = "sk-a-live-secret"
 model_catalog_json = "cc-switch-model-catalog.json"
-web_search = "disabled"
+web_search = "disabled" # cc-switch:managed
 disable_response_storage = true
 
 [tui]

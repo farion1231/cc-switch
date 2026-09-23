@@ -61,11 +61,13 @@ fn codex_web_search_managed_decor() -> String {
 }
 
 /// Whether a top-level `web_search` item is the sentinel cc-switch itself
-/// injected, i.e. the `"disabled"` value whose trailing comment *starts with*
-/// our exact marker comment. Matched as a prefix rather than a substring so a
-/// user's own remark that merely mentions the marker (`# not cc-switch:managed
-/// at all`) is never mistaken for ours. Everything else — including a bare
-/// `"disabled"` — belongs to the user and must be left alone.
+/// injected, i.e. the `"disabled"` value whose trailing comment begins with our
+/// marker comment as a whole token: the trimmed comment either equals the
+/// marker exactly or continues with whitespace (`# cc-switch:managed (note)`).
+/// Neither a substring match (`# not cc-switch:managed at all`) nor a bare
+/// prefix match (`# cc-switch:managed-by-user`) counts, so a user's own remark
+/// is never mistaken for ours. Everything else — including a bare `"disabled"`
+/// — belongs to the user and must be left alone.
 pub(crate) fn codex_web_search_item_is_managed(item: &toml_edit::Item) -> bool {
     let Some(value) = item.as_value() else {
         return false;
@@ -78,7 +80,8 @@ pub(crate) fn codex_web_search_item_is_managed(item: &toml_edit::Item) -> bool {
         .decor()
         .suffix()
         .and_then(|suffix| suffix.as_str())
-        .is_some_and(|suffix| suffix.trim().starts_with(&marker_comment))
+        .and_then(|suffix| suffix.trim().strip_prefix(marker_comment.as_str()))
+        .is_some_and(|rest| rest.chars().next().is_none_or(char::is_whitespace))
 }
 
 /// Native `/responses` gateways whose first-party models do NOT support the Codex
@@ -7790,7 +7793,8 @@ web_search = "disabled" # cc-switch:managed
     fn web_search_ownership_marker_is_matched_as_an_exact_comment_prefix() {
         // A substring match would let a user's own remark that merely mentions
         // the marker hand cc-switch ownership of their line, so the trailing
-        // comment must START with our exact marker comment.
+        // comment must START with our marker comment as a whole token (end of
+        // comment or whitespace right after it).
         let parse = |text: &str| {
             text.parse::<DocumentMut>()
                 .expect("parse config")
@@ -7810,6 +7814,26 @@ web_search = "disabled" # cc-switch:managed
         assert!(
             !parse("web_search = \"disabled\" # not cc-switch:managed at all\n"),
             "a user remark that merely mentions the marker is NOT ours"
+        );
+        assert!(
+            parse("web_search = \"disabled\" # cc-switch:managed\t(tab)\n"),
+            "any whitespace after the marker still ends the token"
+        );
+        assert!(
+            !parse("web_search = \"disabled\" # cc-switch:managed-by-user\n"),
+            "a longer token that merely starts with the marker is NOT ours"
+        );
+        assert!(
+            !parse("web_search = \"disabled\" # cc-switch:managedX\n"),
+            "the marker must not be glued to further characters"
+        );
+        assert!(
+            !parse("web_search = \"disabled\" # cc-switch:manage\n"),
+            "a truncated marker is NOT ours"
+        );
+        assert!(
+            !parse("web_search = \"disabled\" #cc-switch:managed\n"),
+            "the marker comment needs the space after `#` cc-switch itself writes"
         );
         assert!(
             !parse("web_search = \"disabled\" # keep this off\n"),
