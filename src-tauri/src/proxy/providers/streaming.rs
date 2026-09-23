@@ -20,6 +20,8 @@ struct OpenAIStreamChunk {
     choices: Vec<StreamChoice>,
     #[serde(default)]
     usage: Option<Usage>,
+    #[serde(default)]
+    safeguard_results: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,19 +132,27 @@ fn default_anthropic_usage_json() -> Value {
     })
 }
 
-fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Value>) -> Value {
+fn build_message_delta_event(
+    stop_reason: Option<String>,
+    usage_json: Option<Value>,
+    safeguard_results: Option<Value>,
+) -> Value {
     let usage = usage_json
         .filter(|usage| usage.is_object())
         .unwrap_or_else(default_anthropic_usage_json);
 
-    json!({
+    let mut event = json!({
         "type": "message_delta",
         "delta": {
             "stop_reason": stop_reason,
             "stop_sequence": null
         },
         "usage": usage
-    })
+    });
+    if let Some(safeguard_results) = safeguard_results {
+        event["safeguard_results"] = safeguard_results;
+    }
+    event
 }
 
 /// 创建 Anthropic SSE 流
@@ -166,6 +176,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut has_sent_message_stop = false;
         let mut stream_ended_with_error = false;
         let mut latest_usage: Option<Value> = None;
+        let mut latest_safeguard_results: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
@@ -190,7 +201,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
-                                        let event = build_message_delta_event(stop_reason, usage_json);
+                                        let event = build_message_delta_event(
+                                            stop_reason,
+                                            usage_json,
+                                            latest_safeguard_results.clone(),
+                                        );
                                         let sse_data = format!("event: message_delta\ndata: {}\n\n",
                                             serde_json::to_string(&event).unwrap_or_default());
                                         log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (from pending)");
@@ -208,6 +223,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                 if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
                                     log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
+
+                                    if let Some(safeguard_results) = &chunk.safeguard_results {
+                                        latest_safeguard_results = Some(safeguard_results.clone());
+                                    }
 
                                     if message_id.is_none() && !chunk.id.is_empty() {
                                         message_id = Some(chunk.id.clone());
@@ -250,15 +269,21 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 }
                                             }
 
+                                            let mut message = json!({
+                                                "id": message_id.clone().unwrap_or_default(),
+                                                "type": "message",
+                                                "role": "assistant",
+                                                "model": current_model.clone().unwrap_or_default(),
+                                                "usage": start_usage
+                                            });
+                                            if let Some(safeguard_results) =
+                                                &latest_safeguard_results
+                                            {
+                                                message["safeguard_results"] = safeguard_results.clone();
+                                            }
                                             let event = json!({
                                                 "type": "message_start",
-                                                "message": {
-                                                    "id": message_id.clone().unwrap_or_default(),
-                                                    "type": "message",
-                                                    "role": "assistant",
-                                                    "model": current_model.clone().unwrap_or_default(),
-                                                    "usage": start_usage
-                                                }
+                                                "message": message
                                             });
                                             let sse_data = format!("event: message_start\ndata: {}\n\n",
                                                 serde_json::to_string(&event).unwrap_or_default());
@@ -660,7 +685,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
-                let event = build_message_delta_event(stop_reason, usage_json);
+                let event = build_message_delta_event(
+                    stop_reason,
+                    usage_json,
+                    latest_safeguard_results.clone(),
+                );
                 let sse_data = format!("event: message_delta\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
@@ -756,6 +785,42 @@ mod tests {
 
     fn event_type(event: &Value) -> Option<&str> {
         event.get("type").and_then(|v| v.as_str())
+    }
+
+    #[tokio::test]
+    async fn chat_stream_preserves_safeguard_results_and_tool_call_id() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_test\",\"model\":\"glm-test\",\"safeguard_results\":{\"action\":\"allow\"},\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_original\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_start = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_start"))
+            .unwrap();
+        let tool_start = events
+            .iter()
+            .find(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("tool_use")
+            })
+            .unwrap();
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .unwrap();
+
+        assert_eq!(
+            message_start.pointer("/message/safeguard_results/action"),
+            Some(&json!("allow"))
+        );
+        assert_eq!(
+            tool_start.pointer("/content_block/id"),
+            Some(&json!("call_original"))
+        );
+        assert_eq!(message_delta["safeguard_results"]["action"], "allow");
     }
 
     /// 收集某一类 content_block_delta 的文本字段并拼接，用于断言流式增量的最终内容。
