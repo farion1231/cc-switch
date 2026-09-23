@@ -66,6 +66,12 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 /// User-Agent
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
+// Shared by model discovery and generation: ChatGPT gates models by this
+// client identity. gpt-6-astra requires >= 0.153.0 in the rust-v0.153.4 catalog.
+// Bump together when a new model raises its minimal_client_version.
+pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.153.4";
+
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
 pub enum CodexOAuthError {
@@ -81,6 +87,9 @@ pub enum CodexOAuthError {
     #[error("OAuth Token 获取失败: {0}")]
     TokenFetchFailed(String),
 
+    #[error("codex_oauth_duplicate_account")]
+    DuplicateAccount,
+
     #[error("Refresh Token 失效或已过期")]
     RefreshTokenInvalid,
 
@@ -95,6 +104,9 @@ pub enum CodexOAuthError {
 
     #[error("账号不存在: {0}")]
     AccountNotFound(String),
+
+    #[error("绑定的 ChatGPT 账号不可用，请在供应商卡片中点击“选择账号”并重新绑定: {0}")]
+    AccountUnavailable(String),
 }
 
 impl From<reqwest::Error> for CodexOAuthError {
@@ -200,6 +212,39 @@ enum RefreshTokenAdoptionOutcome {
     Ambiguous,
     /// The account is not owned by this manager.
     NotManaged,
+}
+
+/// Keep a deleted account distinct from an existing account with no managed live token.
+pub(crate) enum CodexLiveAuthSwitchGuard {
+    ExistingAccount(Option<String>),
+    MissingAccount,
+}
+
+impl CodexLiveAuthSwitchGuard {
+    pub(crate) fn ensure_unchanged(&self, account_id: &str) -> Result<(), crate::error::AppError> {
+        if let Self::ExistingAccount(Some(token)) = self {
+            crate::codex_config::ensure_codex_live_auth_unchanged_for_managed_account(
+                account_id, token,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_outgoing(&self, account_id: &str) -> Result<(), crate::error::AppError> {
+        match self {
+            Self::ExistingAccount(token) => {
+                crate::codex_config::clear_codex_live_auth_for_managed_account_if_unchanged(
+                    account_id,
+                    token.as_deref(),
+                )
+            }
+            Self::MissingAccount => {
+                crate::codex_config::clear_codex_managed_oauth_live_auth_marker_for_account(
+                    account_id,
+                )
+            }
+        }
+    }
 }
 
 impl RefreshTokenAdoptionOutcome {
@@ -1137,28 +1182,26 @@ impl CodexOAuthManager {
     /// Reconcile the same-account Codex CLI refresh generation before a
     /// provider transaction overwrites or removes live auth.json.
     ///
-    /// Returns the exact refresh token observed on disk. Callers must compare
-    /// it again immediately before their live write/delete; the external Codex
+    /// For an existing account, carries the refresh token observed on disk.
+    /// Callers compare it immediately before their live write/delete; the external Codex
     /// CLI does not participate in cc-switch's switch lock and may refresh in
     /// the adopt-to-write window.
     pub(crate) async fn prepare_live_auth_for_account_switch_away(
         &self,
         account_id: &str,
-    ) -> Result<Option<String>, CodexOAuthError> {
+    ) -> Result<CodexLiveAuthSwitchGuard, CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
         let refresh_lock = self.get_refresh_lock(account_id).await;
         let _guard = refresh_lock.lock().await;
-        {
-            let accounts = self.accounts.read().await;
-            accounts
-                .get(account_id)
-                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
+        if !self.accounts.read().await.contains_key(account_id) {
+            self.ensure_account_absent_from_store(account_id).await?;
+            return Ok(CodexLiveAuthSwitchGuard::MissingAccount);
         }
         let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
             .read_managed_live_auth_refresh_for_account(account_id)
             .await?
         else {
-            return Ok(None);
+            return Ok(CodexLiveAuthSwitchGuard::ExistingAccount(None));
         };
 
         let outcome = self
@@ -1174,7 +1217,9 @@ impl CodexOAuthManager {
         match outcome {
             RefreshTokenAdoptionOutcome::Synchronized { .. }
             | RefreshTokenAdoptionOutcome::Adopted
-            | RefreshTokenAdoptionOutcome::ProvablyOlder => Ok(Some(live_refresh)),
+            | RefreshTokenAdoptionOutcome::ProvablyOlder => Ok(
+                CodexLiveAuthSwitchGuard::ExistingAccount(Some(live_refresh)),
+            ),
             RefreshTokenAdoptionOutcome::Ambiguous => {
                 Err(Self::ambiguous_live_refresh_error(account_id))
             }
@@ -1578,6 +1623,20 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
+    pub(crate) async fn test_cache_access_token(&self, account_id: &str, token: &str) {
+        assert!(self.accounts.read().await.contains_key(account_id));
+        let now = chrono::Utc::now().timestamp_millis();
+        self.access_tokens.write().await.insert(
+            account_id.to_string(),
+            CachedAccessToken {
+                token: token.to_string(),
+                expires_at_ms: now + 3_600_000,
+                obtained_at_ms: now,
+            },
+        );
+    }
+
+    #[cfg(test)]
     pub(crate) async fn test_refresh_token_for_account(&self, account_id: &str) -> Option<String> {
         self.accounts
             .read()
@@ -1619,8 +1678,15 @@ impl CodexOAuthManager {
             .map(str::to_string);
         let replacing_existing = target_account_id.is_some();
         let account_id = target_account_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        let refresh_lock = self.get_refresh_lock(&account_id).await;
-        let _refresh_guard = refresh_lock.lock().await;
+        let refresh_lock = if replacing_existing {
+            Some(self.get_refresh_lock(&account_id).await)
+        } else {
+            None
+        };
+        let _refresh_guard = match refresh_lock.as_ref() {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let now = chrono::Utc::now().timestamp();
         let now_ms = chrono::Utc::now().timestamp_millis();
 
@@ -1730,6 +1796,34 @@ impl CodexOAuthManager {
         // and its access-token cache untouched.
         let _persist = self.storage_lock.lock().await;
         let mut persisted_accounts = self.accounts.read().await.clone();
+        let new_identity = data
+            .id_token
+            .as_deref()
+            .and_then(crate::codex_config::extract_codex_id_token_user_identity);
+        let duplicate_exists = new_identity.as_deref().is_some_and(|new_identity| {
+            persisted_accounts
+                .iter()
+                .filter(|(existing_id, _)| existing_id.as_str() != account_id.as_str())
+                .any(|(_, existing)| {
+                    existing
+                        .chatgpt_account_id
+                        .as_deref()
+                        .unwrap_or(existing.account_id.as_str())
+                        == data
+                            .chatgpt_account_id
+                            .as_deref()
+                            .unwrap_or(data.account_id.as_str())
+                        && existing
+                            .id_token
+                            .as_deref()
+                            .and_then(crate::codex_config::extract_codex_id_token_user_identity)
+                            .as_deref()
+                            == Some(new_identity)
+                })
+        });
+        if duplicate_exists {
+            return Err(CodexOAuthError::DuplicateAccount);
+        }
         persisted_accounts.insert(account_id.clone(), data.clone());
         let persisted_default = self
             .resolve_default_account_id()
@@ -1815,6 +1909,64 @@ impl CodexOAuthManager {
                 .entry(account_id.to_string())
                 .or_insert_with(|| Arc::new(Mutex::new(()))),
         )
+    }
+
+    /// Validate a target binding without refreshing tokens or changing credentials.
+    pub(crate) async fn ensure_account_exists(
+        &self,
+        account_id: &str,
+    ) -> Result<(), CodexOAuthError> {
+        let _lifecycle = self.lifecycle_lock.read().await;
+        if self.accounts.read().await.contains_key(account_id) {
+            return Ok(());
+        }
+        self.ensure_account_absent_from_store(account_id).await?;
+        Err(CodexOAuthError::AccountUnavailable(account_id.to_string()))
+    }
+
+    // A failed load also leaves the manager empty. Only a valid persisted store
+    // can distinguish deletion from unreadable credentials. The caller holds lifecycle_lock.
+    async fn ensure_account_absent_from_store(
+        &self,
+        account_id: &str,
+    ) -> Result<(), CodexOAuthError> {
+        let _persist = self.storage_lock.lock().await;
+        if !self.storage_path.try_exists()? {
+            if self.accounts.read().await.is_empty() {
+                return Ok(());
+            }
+            return Err(CodexOAuthError::TokenFetchFailed(
+                "Codex 账号存储缺失但内存中仍有账号，请重启应用后重试".to_string(),
+            ));
+        }
+        let raw: serde_json::Value = serde_json::from_str(&fs::read_to_string(&self.storage_path)?)
+            .map_err(|error| CodexOAuthError::ParseError(error.to_string()))?;
+        if !raw
+            .get("accounts")
+            .is_some_and(serde_json::Value::is_object)
+        {
+            return Err(CodexOAuthError::ParseError(
+                "Codex 账号存储缺少有效 accounts 字段".to_string(),
+            ));
+        }
+        let store: CodexOAuthStore = serde_json::from_value(raw)
+            .map_err(|error| CodexOAuthError::ParseError(error.to_string()))?;
+        if !matches!(store.version, 1 | 2)
+            || store
+                .accounts
+                .iter()
+                .any(|(key, account)| key.trim().is_empty() || key != &account.account_id)
+        {
+            return Err(CodexOAuthError::ParseError(
+                "Codex 账号存储版本或账号索引无效".to_string(),
+            ));
+        }
+        if store.accounts.contains_key(account_id) {
+            return Err(CodexOAuthError::TokenFetchFailed(
+                "Codex 账号仍在磁盘存储中，请重启应用后重试".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn write_store_atomic(&self, content: &str) -> Result<(), CodexOAuthError> {
@@ -2017,6 +2169,56 @@ fn extract_account_metadata_from_tokens(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn missing_account_recovery_requires_valid_persisted_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        for content in [
+            "{broken",
+            "{}",
+            r#"{"version":2}"#,
+            r#"{"version":3,"accounts":{}}"#,
+        ] {
+            fs::write(&manager.storage_path, content).unwrap();
+            assert!(manager
+                .prepare_live_auth_for_account_switch_away("missing")
+                .await
+                .is_err());
+            assert!(!matches!(
+                manager.ensure_account_exists("missing").await,
+                Err(CodexOAuthError::AccountUnavailable(_))
+            ));
+        }
+        fs::write(&manager.storage_path, r#"{"version":2,"accounts":{}}"#).unwrap();
+        assert!(matches!(
+            manager
+                .prepare_live_auth_for_account_switch_away("missing")
+                .await,
+            Ok(CodexLiveAuthSwitchGuard::MissingAccount)
+        ));
+        assert!(matches!(
+            manager.ensure_account_exists("missing").await,
+            Err(CodexOAuthError::AccountUnavailable(_))
+        ));
+
+        manager
+            .add_test_account_with_access_token("present", "access", None)
+            .await
+            .unwrap();
+        assert!(
+            manager.ensure_account_exists("present").await.is_ok(),
+            "reauth-required is not removed"
+        );
+        manager.accounts.write().await.clear();
+        assert!(
+            manager
+                .prepare_live_auth_for_account_switch_away("present")
+                .await
+                .is_err(),
+            "an account still on disk cannot be treated as deleted"
+        );
+    }
+
     #[test]
     fn test_parse_interval_number() {
         let v = serde_json::Value::Number(serde_json::Number::from(5));
@@ -2167,7 +2369,7 @@ mod tests {
                 "shared-workspace".to_string(),
                 "rt-first".to_string(),
                 Some("first@example.com".to_string()),
-                None,
+                Some(crate::codex_config::test_codex_id_token("user-a")),
                 None,
                 AccountLoginContext::default(),
             )
@@ -2178,7 +2380,7 @@ mod tests {
                 "shared-workspace".to_string(),
                 "rt-second".to_string(),
                 Some("second@example.com".to_string()),
-                None,
+                Some(crate::codex_config::test_codex_id_token("user-b")),
                 None,
                 AccountLoginContext::default(),
             )
@@ -2213,6 +2415,149 @@ mod tests {
         let accounts = manager.accounts.read().await;
         assert_eq!(accounts.get(&first.id).unwrap().refresh_token, "rt-first");
         assert_eq!(accounts.get(&second.id).unwrap().refresh_token, "rt-second");
+    }
+
+    #[tokio::test]
+    async fn concurrent_duplicate_workspace_and_user_identity_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().to_path_buf();
+        let manager = CodexOAuthManager::new(path.clone());
+        let first_token = crate::codex_config::test_codex_id_token("same-user");
+        let second_token = first_token.clone();
+
+        let first = manager.add_account_internal(
+            "shared-workspace".to_string(),
+            "rt-first".to_string(),
+            Some("first@example.com".to_string()),
+            Some(first_token),
+            None,
+            AccountLoginContext::default(),
+        );
+        let second = manager.add_account_internal(
+            "shared-workspace".to_string(),
+            "rt-second".to_string(),
+            Some("second@example.com".to_string()),
+            Some(second_token),
+            None,
+            AccountLoginContext::default(),
+        );
+        let (first_result, second_result) = tokio::join!(first, second);
+
+        assert_eq!(
+            [first_result.is_ok(), second_result.is_ok()]
+                .into_iter()
+                .filter(|success| *success)
+                .count(),
+            1
+        );
+        assert!(
+            matches!(first_result, Err(CodexOAuthError::DuplicateAccount))
+                || matches!(second_result, Err(CodexOAuthError::DuplicateAccount))
+        );
+        assert_eq!(manager.list_accounts().await.len(), 1);
+        assert!(manager.refresh_locks.read().await.is_empty());
+        drop(manager);
+
+        let reloaded = CodexOAuthManager::new(path);
+        assert_eq!(reloaded.list_accounts().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_legacy_workspace_and_user_identity_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().to_path_buf();
+        let manager = CodexOAuthManager::new(path.clone());
+        let id_token = crate::codex_config::test_codex_id_token("same-user");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "accounts": {
+                "shared-workspace": {
+                    "account_id": "shared-workspace",
+                    "email": "legacy@example.com",
+                    "refresh_token": "rt-legacy",
+                    "id_token": id_token,
+                    "authenticated_at": 1
+                }
+            },
+            "default_account_id": "shared-workspace"
+        });
+        manager
+            .write_store_atomic(&serde_json::to_string(&legacy).unwrap())
+            .unwrap();
+        drop(manager);
+
+        let manager = CodexOAuthManager::new(path);
+        assert!(matches!(
+            manager
+                .add_account_internal(
+                    "shared-workspace".to_string(),
+                    "rt-duplicate".to_string(),
+                    Some("current@example.com".to_string()),
+                    Some(crate::codex_config::test_codex_id_token("same-user")),
+                    None,
+                    AccountLoginContext::default(),
+                )
+                .await,
+            Err(CodexOAuthError::DuplicateAccount)
+        ));
+        assert_eq!(manager.list_accounts().await.len(), 1);
+        assert!(manager.refresh_locks.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn targeted_reauth_rechecks_duplicates_outside_the_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        let target = manager
+            .add_account_internal(
+                "shared-workspace".to_string(),
+                "rt-legacy".to_string(),
+                Some("legacy@example.com".to_string()),
+                None,
+                None,
+                AccountLoginContext::default(),
+            )
+            .await
+            .unwrap();
+        let id_token = crate::codex_config::test_codex_id_token("same-user");
+        manager
+            .add_account_internal(
+                "shared-workspace".to_string(),
+                "rt-current".to_string(),
+                Some("current@example.com".to_string()),
+                Some(id_token.clone()),
+                None,
+                AccountLoginContext::default(),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            manager
+                .add_account_internal(
+                    "shared-workspace".to_string(),
+                    "rt-targeted".to_string(),
+                    Some("legacy@example.com".to_string()),
+                    Some(id_token),
+                    None,
+                    AccountLoginContext {
+                        target_account_id: Some(&target.id),
+                        ..Default::default()
+                    },
+                )
+                .await,
+            Err(CodexOAuthError::DuplicateAccount)
+        ));
+        assert_eq!(
+            manager
+                .accounts
+                .read()
+                .await
+                .get(&target.id)
+                .expect("target account remains")
+                .refresh_token,
+            "rt-legacy"
+        );
     }
 
     #[tokio::test]

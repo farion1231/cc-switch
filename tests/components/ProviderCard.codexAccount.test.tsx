@@ -123,6 +123,22 @@ function renderCard(
 }
 
 describe("ProviderCard Codex Official account identity", () => {
+  it("lets the current provider open account selection after its account is deleted", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    const provider = managedProvider("OpenAI Official", "deleted-account");
+    renderCard(provider, {
+      status: authStatus("replacement@example.com"),
+      isCurrent: true,
+      onEdit,
+    });
+
+    expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "选择账号" }));
+    expect(onEdit).toHaveBeenCalledOnce();
+    expect(onEdit).toHaveBeenCalledWith(provider);
+  });
+
   it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
     const user = userEvent.setup();
     const onConfigureUsage = vi.fn();
@@ -287,7 +303,7 @@ describe("ProviderCard Codex Official account identity", () => {
     };
     renderCard(provider, { isCurrent: true });
 
-expect(
+    expect(
       screen.getByText("账号会随 Codex CLI 当前登录变化"),
     ).toBeInTheDocument();
     expect(

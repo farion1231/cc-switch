@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   isWindows,
@@ -63,6 +64,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   contentClassName,
   motionPreset = "fade",
 }) => {
+  const { t } = useTranslation();
   const prefersReducedMotion = useReducedMotion();
   const shouldSlideFromRight =
     motionPreset === "slide-from-right" && !prefersReducedMotion;
@@ -164,6 +166,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
                 variant="outline"
                 size="icon"
                 onClick={onClose}
+                aria-label={t("common.back")}
                 className="rounded-lg select-none"
                 style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
               >

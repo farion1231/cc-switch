@@ -67,7 +67,28 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
     "xiaomimimo.com", // Xiaomi MiMo (api.xiaomimimo.com, token-plan-cn.xiaomimimo.com)
     "longcat.chat",   // Meituan LongCat (api.longcat.chat)
     "minimax.io",     // MiniMax global (api.minimax.io)
-    "minimaxi.com",   // MiniMax CN (api.minimaxi.com)
+    "minimax.cn",     // MiniMax CN (current official endpoint)
+    "minimaxi.com",   // MiniMax CN (legacy endpoint)
+    // StepFun Responses API currently supports only `function` tools:
+    // platform.stepfun.com/docs/zh/api-reference/responses/responses-create
+    "stepfun.com",
+    "stepfun.ai",
+    // Conservative (unverified, not a confirmed reject): Baidu Qianfan's
+    // pay-as-you-go Responses guide documents only `function` / `mcp` tools
+    // (cloud.baidu.com/doc/qianfan-docs/s/4mi400l1m). Host-exact; Qianfan's
+    // Chat plans on the same domain are ProxyChat and never consult this list.
+    "qianfan.baidubce.com",
+    // Conservative (unverified): iFlytek Astron Coding Plan fronts third-party
+    // models behind one Responses gateway with no documented hosted-tool
+    // support (www.xfyun.cn/doc/spark/CodingPlan.html).
+    "xf-yun.com",
+    // Zhipu GLM CN / global (open.bigmodel.cn, api.z.ai): the native Responses
+    // gateway's tool-type enum is `function | web_search_preview |
+    // code_interpreter | mcp` (verbatim from the #6944 400 body) — Codex's
+    // `web_search` hosted tool is not in it. Matched on host labels (see
+    // `codex_url_host_matches_any`), so `xyz.ai` never collides with `z.ai`.
+    "bigmodel.cn",
+    "z.ai",
 ];
 
 /// Brand prefixes of models whose native gateways reject `web_search`, matched
@@ -75,7 +96,41 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
 /// `MiniMaxAI/MiniMax-M3` are caught. Exact brand names (not a fuzzy heuristic),
 /// so a supporting gateway is never wrongly matched.
 const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
-    &["mimo", "longcat", "minimax", "qwen3-coder"];
+    &["mimo", "longcat", "minimax", "qwen3-coder", "glm"];
+
+/// Host component of a base URL (or a bare host), lowercased, without scheme,
+/// userinfo, port, path or query. Tolerates the loose forms users paste into
+/// the provider form (`example.com`, `https://user@Example.com:8443/v1`).
+pub(crate) fn codex_url_host(url_or_host: &str) -> String {
+    let trimmed = url_or_host.trim();
+    let rest = trimmed
+        .split_once("://")
+        .map_or(trimmed, |(_scheme, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(ipv6) = host_port.strip_prefix('[') {
+        ipv6.split(']').next().unwrap_or(ipv6)
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Whether the URL's host IS one of `hosts` or a subdomain of it, matched on
+/// DNS label boundaries. Vendor host lists must go through this rather than a
+/// substring `contains`: a 4-char entry like `z.ai` would otherwise also match
+/// `api.xyz.ai` / `viz.ai` and silently push an unrelated provider onto a
+/// vendor-specific code path.
+pub(crate) fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> bool {
+    let host = codex_url_host(url_or_host);
+    if host.is_empty() {
+        return false;
+    }
+    hosts.iter().any(|candidate| {
+        let candidate = candidate.trim_start_matches('.').to_ascii_lowercase();
+        host == candidate || host.ends_with(&format!(".{candidate}"))
+    })
+}
 
 /// Top-level `model` id from a Codex `config.toml`.
 fn codex_top_level_model(config_text: &str) -> Option<String> {
@@ -92,11 +147,7 @@ fn codex_top_level_model(config_text: &str) -> Option<String> {
 /// the live `config.toml`, so it applies to existing providers without a re-save.
 fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     if let Some(base_url) = extract_codex_base_url(config_text) {
-        let base_url = base_url.to_ascii_lowercase();
-        if CODEX_WEB_SEARCH_REJECT_HOSTS
-            .iter()
-            .any(|host| base_url.contains(host))
-        {
+        if codex_url_host_matches_any(&base_url, CODEX_WEB_SEARCH_REJECT_HOSTS) {
             return true;
         }
     }
@@ -700,7 +751,7 @@ pub(crate) fn codex_live_auth_matches_managed_request(
     Ok(live_access_token == Some(request_access_token.trim()))
 }
 
-fn clear_codex_managed_oauth_live_auth_marker_for_account(
+pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
     account_id: &str,
 ) -> Result<(), AppError> {
     let marker_path = get_codex_managed_oauth_live_auth_marker_path();
@@ -1171,6 +1222,141 @@ pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
     })
 }
 
+/// The auth mode Codex resolves for an `auth.json` payload
+/// (`AuthDotJson::resolved_mode`, `codex-rs/login/src/auth/manager.rs`,
+/// 0.153.2): an explicit `auth_mode` wins outright; otherwise presence
+/// decides in this order — `personal_access_token`, `bedrock_api_key`,
+/// `bedrock_access_keys`, `OPENAI_API_KEY` — and everything else is
+/// ChatGPT. Presence is `Option::is_some`, i.e. any non-null value, even an
+/// empty one; the material itself is checked afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexResolvedAuthMode {
+    ApiKey,
+    Chatgpt,
+    ChatgptAuthTokens,
+    Headers,
+    AgentIdentity,
+    PersonalAccessToken,
+    BedrockApiKey,
+    BedrockAccessKeys,
+    /// An `auth_mode` string Codex's serde rejects (`rename_all =
+    /// "lowercase"` plus explicit camelCase renames, exact match): the whole
+    /// file fails to load, which Codex reports as signed out.
+    Unrecognized,
+}
+
+fn codex_auth_resolved_mode(auth: &serde_json::Map<String, Value>) -> CodexResolvedAuthMode {
+    let present = |key: &str| auth.get(key).is_some_and(|value| !value.is_null());
+
+    // `auth_mode: null` deserializes to `None` (serde default) and falls
+    // through to the implicit precedence below.
+    if let Some(mode) = auth.get("auth_mode").filter(|value| !value.is_null()) {
+        return match mode.as_str() {
+            Some("apikey") => CodexResolvedAuthMode::ApiKey,
+            Some("chatgpt") => CodexResolvedAuthMode::Chatgpt,
+            Some("chatgptAuthTokens") => CodexResolvedAuthMode::ChatgptAuthTokens,
+            Some("headers") => CodexResolvedAuthMode::Headers,
+            Some("agentIdentity") => CodexResolvedAuthMode::AgentIdentity,
+            Some("personalAccessToken") => CodexResolvedAuthMode::PersonalAccessToken,
+            Some("bedrockApiKey") => CodexResolvedAuthMode::BedrockApiKey,
+            Some("bedrockAccessKeys") => CodexResolvedAuthMode::BedrockAccessKeys,
+            _ => CodexResolvedAuthMode::Unrecognized,
+        };
+    }
+    if present("personal_access_token") {
+        return CodexResolvedAuthMode::PersonalAccessToken;
+    }
+    if present("bedrock_api_key") {
+        return CodexResolvedAuthMode::BedrockApiKey;
+    }
+    if present("bedrock_access_keys") {
+        return CodexResolvedAuthMode::BedrockAccessKeys;
+    }
+    if present("OPENAI_API_KEY") {
+        return CodexResolvedAuthMode::ApiKey;
+    }
+    CodexResolvedAuthMode::Chatgpt
+}
+
+/// True when Codex would load `auth` as a signed-in OpenAI account for a
+/// `requires_openai_auth` provider — the state its login screen and
+/// `ConfiguredModelProvider::account_state` (0.149+) go by. The auth mode is
+/// resolved exactly as Codex does (`codex_auth_resolved_mode`) and only then
+/// is the matching credential checked, so a Bedrock credential outranks a
+/// stale `OPENAI_API_KEY` sitting next to it just as it does in Codex, where
+/// that probe returns `UnsupportedBedrockApiKeyAuth` and fails TUI startup.
+/// Modes Codex cannot load from storage (`headers`, unrecognized) are signed
+/// out. The credential must be non-blank (stricter than Codex's `is_some`,
+/// erring toward "signed out"); metadata such as `last_refresh` never counts.
+pub fn codex_auth_has_openai_account_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+
+    let value_present = |value: &Value| match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+    let has = |key: &str| obj.get(key).is_some_and(value_present);
+
+    match codex_auth_resolved_mode(obj) {
+        CodexResolvedAuthMode::ApiKey => extract_codex_auth_api_key(auth).is_some(),
+        CodexResolvedAuthMode::PersonalAccessToken => has("personal_access_token"),
+        CodexResolvedAuthMode::AgentIdentity => has("agent_identity"),
+        CodexResolvedAuthMode::Chatgpt | CodexResolvedAuthMode::ChatgptAuthTokens => obj
+            .get("tokens")
+            .and_then(Value::as_object)
+            .is_some_and(|tokens| {
+                ["id_token", "access_token", "refresh_token"]
+                    .iter()
+                    .any(|key| tokens.get(*key).is_some_and(value_present))
+            }),
+        CodexResolvedAuthMode::Headers
+        | CodexResolvedAuthMode::BedrockApiKey
+        | CodexResolvedAuthMode::BedrockAccessKeys
+        | CodexResolvedAuthMode::Unrecognized => false,
+    }
+}
+
+/// Where Codex keeps CLI auth, per the top-level `cli_auth_credentials_store`
+/// key (`codex-rs/config/src/types.rs`, serde lowercase; unset = `file`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexAuthStoreMode {
+    /// `auth.json` is the only store — the file decides login state.
+    File,
+    /// Keyring only; `auth.json` is never read and is deleted after a save.
+    Keyring,
+    /// Keyring first, `auth.json` as fallback for both load and save.
+    Auto,
+    /// In-process only; nothing on disk is ever a login.
+    Ephemeral,
+    /// Unparsable config or a value Codex would reject.
+    Unknown,
+}
+
+pub(crate) fn codex_config_auth_store_mode(config_text: &str) -> CodexAuthStoreMode {
+    if !config_text.contains("cli_auth_credentials_store") {
+        return CodexAuthStoreMode::File;
+    }
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return CodexAuthStoreMode::Unknown;
+    };
+    match doc
+        .get("cli_auth_credentials_store")
+        .and_then(|item| item.as_str())
+    {
+        None => CodexAuthStoreMode::File,
+        Some("file") => CodexAuthStoreMode::File,
+        Some("keyring") => CodexAuthStoreMode::Keyring,
+        Some("auto") => CodexAuthStoreMode::Auto,
+        Some("ephemeral") => CodexAuthStoreMode::Ephemeral,
+        Some(_) => CodexAuthStoreMode::Unknown,
+    }
+}
+
 /// True only when the auth carries material Codex itself authenticates with
 /// ahead of the API-key fallback: OAuth tokens or another first-class login
 /// carrier. Unlike `codex_auth_has_oauth_login_material`, pure metadata such
@@ -1455,6 +1641,14 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
+    }
+
+    if profile == CodexCatalogToolProfile::ProxyChat {
+        // Codex's `original` image detail (full-resolution) is rejected by
+        // strict Chat gateways with `400 invalid_request_error`, param
+        // `messages.N.content`. Never advertise the capability on the
+        // ProxyChat contract so Codex keeps to auto/high.
+        entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
 
     // Per-model reasoning levels override the template's conservative
@@ -1954,6 +2148,17 @@ fn codex_vendor_catalog_model_entry(
         entry_obj.insert("display_name".to_string(), json!(display_name));
         entry_obj.insert("description".to_string(), json!(display_name));
         entry_obj.insert("priority".to_string(), json!(1000 + priority));
+        // Unknown model: don't inherit the flagship entry's modalities —
+        // resolve from the registry/fail-open logic instead, so a vision
+        // variant (e.g. deepseek-v4-flash-vision-exp) is not declared
+        // text-only merely because the flagship is.
+        entry_obj.insert(
+            "input_modalities".to_string(),
+            json!(codex_catalog_input_modalities(
+                &spec.model,
+                spec.input_modalities.as_deref(),
+            )),
+        );
     }
 
     // Explicit user overrides win over the official entry; absent values keep
@@ -1996,7 +2201,12 @@ fn codex_vendor_catalog_model_entry(
 /// field ..."). `base_instructions` is the other known required field; the
 /// templates always carry it and `codex_catalog_model_entry` handles it.
 /// When Codex requires a new field, add it here AND to the static templates.
-const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &["supports_reasoning_summaries"];
+const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &[
+    "supports_reasoning_summaries",
+    // codex 0.148.0 rejects the catalog without it (#6661); a models_cache.json
+    // written by an older build can lack it.
+    "supports_parallel_tool_calls",
+];
 
 /// `models_cache.json` is shared by every Codex install on the machine (npm
 /// CLI, desktop-bundled binary, ...), and each version serializes its own
@@ -3042,6 +3252,50 @@ fn normalize_codex_legacy_openai_reroute(config_text: &str) -> Result<Option<Str
     Ok(Some(doc.to_string()))
 }
 
+/// Flip a proxy-managed OAuth card's `requires_openai_auth = true` to
+/// `false` on the active custom provider table.
+///
+/// Such cards (xai_oauth, github_copilot, …) are keyless by design — the
+/// local proxy injects the real token per request, and the stored config is
+/// only a snapshot of the upstream shape — yet their presets inherited the
+/// pre-0.149 template's `requires_openai_auth = true`. Left in place, the
+/// keyless safety gate rightly refuses the switch
+/// (`provider.codex.config.official_auth_fallback`), and on disk the flag
+/// would either send a preserved official login to the third-party endpoint
+/// or trap Codex on the login screen. Forcing `false` makes the snapshot
+/// honest about its keyless state: 0.149 resolves the provider as
+/// unauthenticated and never reads auth.json, so the gate passes on its own
+/// merits instead of being exempted. Callers gate on
+/// `Provider::uses_proxy_injected_oauth` — `codex_oauth` cards must never
+/// come through here, the official login IS their credential.
+///
+/// Returns `Some(updated)` only when the flag was an explicit `true`;
+/// absent/false flags, non-custom routing, and unparsable TOML pass through
+/// unchanged (`None`) so downstream validators keep ownership of errors.
+pub fn neutralize_codex_official_auth_fallback_for_proxy_oauth(
+    config_text: &str,
+) -> Option<String> {
+    let mut doc = config_text.parse::<DocumentMut>().ok()?;
+    let provider_id = active_codex_model_provider_id(&doc)?;
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return None;
+    }
+    let provider_table = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|table| table.get_mut(provider_id.as_str()))
+        .and_then(|item| item.as_table_like_mut())?;
+    if provider_table
+        .get("requires_openai_auth")
+        .and_then(|item| item.as_bool())
+        != Some(true)
+    {
+        return None;
+    }
+    provider_table.insert("requires_openai_auth", toml_edit::value(false));
+    Some(doc.to_string())
+}
+
 /// Align the active custom provider table's `requires_openai_auth` with the
 /// login-preservation setting on a third-party switch.
 ///
@@ -3063,7 +3317,15 @@ fn normalize_codex_legacy_openai_reroute(config_text: &str) -> Result<Option<Str
 /// the preserved official OAuth login — the exact leak the safety gates
 /// refuse — and keyless header-auth or local-server tables must keep their
 /// user-authored shape (0.149 keeps them unauthenticated either way).
-fn align_codex_requires_openai_auth_with_login_preservation(
+///
+/// `preserve_official_login` is the post-write login state of `auth.json`.
+/// The direct-switch plan derives it from the preservation setting (which
+/// decides whether the file survives the switch); the takeover writer
+/// derives it from the live file itself — takeover never touches
+/// `auth.json`, but it no longer owns the file's presence (a
+/// preservation-off direct switch deletes it before takeover is enabled),
+/// so the stored card's flag cannot be trusted there either.
+pub(crate) fn align_codex_requires_openai_auth_with_login_preservation(
     config_text: &str,
     preserve_official_login: bool,
 ) -> Result<String, AppError> {
@@ -3861,9 +4123,9 @@ pub fn restore_codex_settings_for_backfill(
 ///
 /// Supported fields:
 /// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///   otherwise falls back to top-level `base_url`.
+///   otherwise uses `openai_base_url` for Codex's default built-in provider.
 /// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
-///   otherwise falls back to top-level `wire_api`.
+///   otherwise leaves the built-in provider's Responses protocol unchanged.
 /// - `"model"` / `"model_catalog_json"`: writes to top-level field.
 ///
 /// Empty value removes the field.
@@ -3879,7 +4141,9 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
             let model_provider = doc
                 .get("model_provider")
                 .and_then(|item| item.as_str())
-                .map(str::to_string);
+                .map(str::to_string)
+                // Codex defaults to openai when the selector is absent.
+                .or_else(|| (!doc.contains_key("model_provider")).then(|| "openai".to_string()));
 
             if let Some(provider_key) = model_provider {
                 // validate_reserved_model_provider_ids（0.148 起）对配置里出现
@@ -4981,6 +5245,48 @@ http_headers = { Authorization = "Bearer explicit-header-token" }
     }
 
     #[test]
+    fn neutralize_proxy_oauth_fallback_flips_only_active_custom_true() {
+        // The managed-OAuth preset snapshot (keyless card carrying the legacy
+        // template flag): flagged by the gate as-is, clean once neutralized.
+        let poisoned = "model_provider = \"custom\"\nmodel = \"grok-4.5\"\n\n[model_providers.custom]\nname = \"xai\"\nbase_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
+        let neutralized = neutralize_codex_official_auth_fallback_for_proxy_oauth(poisoned)
+            .expect("explicit true on the active custom table must be flipped");
+        assert!(neutralized.contains("requires_openai_auth = false"));
+        assert!(codex_config_falls_back_to_official_auth_for_third_party(
+            poisoned
+        ));
+        assert!(!codex_config_falls_back_to_official_auth_for_third_party(
+            &neutralized
+        ));
+        // Idempotent: the neutralized snapshot passes through unchanged.
+        assert!(neutralize_codex_official_auth_fallback_for_proxy_oauth(&neutralized).is_none());
+
+        // Inline-table containers must be reachable too (as_table_like, not
+        // as_table — the recurring 0.149 inline-table lesson).
+        let inline = "model_provider = \"custom\"\nmodel_providers = { custom = { base_url = \"https://api.x.ai/v1\", requires_openai_auth = true } }\n";
+        let inline_neutralized = neutralize_codex_official_auth_fallback_for_proxy_oauth(inline)
+            .expect("inline provider table must be neutralized");
+        assert!(inline_neutralized.contains("requires_openai_auth = false"));
+
+        for untouched in [
+            // absent flag — already the safe keyless shape
+            "model_provider = \"custom\"\n\n[model_providers.custom]\nbase_url = \"https://api.x.ai/v1\"\n",
+            // built-in routing / top-level reroute: the gate keeps ownership
+            // of those shapes, this function only mends the active custom table
+            "model_provider = \"openai\"\nopenai_base_url = \"https://relay.example/v1\"\n",
+            "openai_base_url = \"https://relay.example/v1\"\n",
+            // missing table / unparsable TOML: downstream validators report
+            "model_provider = \"custom\"\n",
+            "model_provider = [",
+        ] {
+            assert!(
+                neutralize_codex_official_auth_fallback_for_proxy_oauth(untouched).is_none(),
+                "shape must pass through unchanged:\n{untouched}"
+            );
+        }
+    }
+
+    #[test]
     fn legacy_openai_reroute_is_normalized_into_a_custom_table() {
         let legacy = r#"# keep me
 model = "gpt-5.4"
@@ -5668,6 +5974,121 @@ base_url = "https://bedrock.example/v1"
     }
 
     #[test]
+    fn openai_account_material_mirrors_codex_account_probe() {
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-test"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "chatgpt",
+            "tokens": { "access_token": "acc" }
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "personal_access_token": "pat"
+        })));
+        // Bedrock credentials make account_state() fail on a
+        // requires_openai_auth provider, so they must not count as a login.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "last_refresh": "2026-09-01T00:00:00Z",
+            "tokens": { "account_id": "acct" }
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "   "
+        })));
+
+        // Precedence mirrors AuthDotJson::resolved_mode: an implicit Bedrock
+        // credential outranks a leftover OPENAI_API_KEY, so the pair is still
+        // Bedrock and must not be promoted to an OpenAI login.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_access_keys": { "access_key_id": "a", "secret_access_key": "s" }
+        })));
+        // An explicit auth_mode wins outright, in both directions.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "bedrockApiKey",
+            "OPENAI_API_KEY": "sk-stale",
+            "bedrock_api_key": "bedrock"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-live",
+            "bedrock_api_key": "bedrock"
+        })));
+        // personal_access_token outranks the API key even when blank: Codex
+        // then attempts PAT auth with nothing and ends up signed out.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "personal_access_token": "",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        // agent_identity only counts under an explicit mode; implicitly the
+        // payload resolves to ChatGPT, which has no tokens here.
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "agent_identity": "jwt"
+        })));
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "agentIdentity",
+            "agent_identity": "jwt"
+        })));
+        // `auth_mode: null` is absent to serde; a string it rejects fails the
+        // whole load (exact-match, so casing matters); headers auth cannot be
+        // loaded from storage at all.
+        assert!(codex_auth_has_openai_account_material(&json!({
+            "auth_mode": null,
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "ApiKey",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+        assert!(!codex_auth_has_openai_account_material(&json!({
+            "auth_mode": "headers",
+            "OPENAI_API_KEY": "sk-live"
+        })));
+    }
+
+    #[test]
+    fn auth_store_mode_reads_top_level_cli_auth_credentials_store() {
+        assert_eq!(
+            codex_config_auth_store_mode("model = \"gpt-5\"\n"),
+            CodexAuthStoreMode::File
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"file\"\n"),
+            CodexAuthStoreMode::File
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"keyring\"\n"),
+            CodexAuthStoreMode::Keyring
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"auto\"\n"),
+            CodexAuthStoreMode::Auto
+        );
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"ephemeral\"\n"),
+            CodexAuthStoreMode::Ephemeral
+        );
+        // Codex's serde is lowercase-only; anything else fails its load.
+        assert_eq!(
+            codex_config_auth_store_mode("cli_auth_credentials_store = \"Keyring\"\n"),
+            CodexAuthStoreMode::Unknown
+        );
+        // Only the top-level key counts.
+        assert_eq!(
+            codex_config_auth_store_mode(
+                "[model_providers.x]\ncli_auth_credentials_store = \"keyring\"\n"
+            ),
+            CodexAuthStoreMode::File
+        );
+    }
+
+    #[test]
     fn requires_openai_auth_stamp_is_a_noop_when_already_aligned() {
         let aligned = "model_provider = \"relay\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-test\"\nrequires_openai_auth = false\n";
         let output = align_codex_requires_openai_auth_with_login_preservation(aligned, false)
@@ -6074,7 +6495,7 @@ model = "gpt-4"
     }
 
     #[test]
-    fn base_url_falls_back_to_top_level_without_model_provider() {
+    fn base_url_uses_openai_override_without_model_provider() {
         let input = r#"model = "gpt-4"
 "#;
 
@@ -6082,10 +6503,18 @@ model = "gpt-4"
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         let base_url = parsed
-            .get("base_url")
+            .get("openai_base_url")
             .and_then(|v| v.as_str())
-            .expect("should set top-level base_url");
+            .expect("should set the built-in provider's URL override");
         assert_eq!(base_url, "https://fallback.api/v1");
+        assert!(parsed.get("base_url").is_none());
+        let responses = update_codex_toml_field(&result, "wire_api", "responses").unwrap();
+        assert_eq!(responses, result);
+        let cleared = update_codex_toml_field(&result, "base_url", "").unwrap();
+        assert_eq!(
+            toml::from_str::<toml::Value>(&cleared).unwrap(),
+            toml::from_str::<toml::Value>(input).unwrap()
+        );
     }
 
     #[test]
@@ -6300,6 +6729,18 @@ base_url = "https://production.api/v1"
         assert!(template.get("supports_search_tool").is_none());
         assert!(template.get("supports_image_detail_original").is_none());
         assert!(template.get("web_search_tool_type").is_none());
+
+        // A cache template missing supports_parallel_tool_calls gets the
+        // static gpt-5.5 default backfilled (codex 0.148.0 rejects the
+        // catalog without it, #6661).
+        let mut stale = json!({ "slug": "gpt-5.5" });
+        fill_template_fields_from_static(&mut stale);
+        assert_eq!(
+            stale
+                .get("supports_parallel_tool_calls")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
@@ -6327,6 +6768,12 @@ base_url = "https://production.api/v1"
         assert_eq!(
             catalog["models"][0]
                 .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            catalog["models"][0]
+                .get("supports_parallel_tool_calls")
                 .and_then(Value::as_bool),
             Some(true)
         );
@@ -6586,6 +7033,107 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn vendor_catalog_unknown_model_does_not_inherit_flagship_modalities() {
+        // A vision variant not in the official DeepSeek catalog must not
+        // inherit the flagship entry's text-only modalities; the registry /
+        // fail-open logic should resolve it as image-capable instead.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash-vision-exp",
+                        "displayName": "DeepSeek V4 Flash Vision Exp"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(
+            modalities,
+            vec!["text", "image"],
+            "unknown vision model must not inherit the flagship's text-only modalities"
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_unknown_model_explicit_modalities_override() {
+        // An explicit user inputModalities declaration must win over the
+        // registry/fail-open resolution even for unmatched models.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash-vision-exp",
+                        "inputModalities": ["text"]
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(modalities, vec!["text"]);
+    }
+
+    #[test]
+    fn vendor_catalog_matched_model_keeps_vendor_modalities() {
+        // A model that IS in the official catalog must keep the vendor's
+        // declared modalities verbatim (deepseek-v4-pro is text-only there).
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-pro",
+                        "displayName": "DeepSeek V4 Pro"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let modalities: Vec<&str> = catalog["models"][0]["input_modalities"]
+            .as_array()
+            .expect("input_modalities array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(modalities, vec!["text"]);
+    }
+
+    #[test]
     fn native_responses_profile_suppresses_apply_patch_and_keeps_shell() {
         // Native (direct) /responses providers must NOT emit a freeform
         // apply_patch (type=="custom") tool — gateways like MiMo reject it.
@@ -6676,8 +7224,8 @@ base_url = "https://production.api/v1"
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
-                model: "deepseek/deepseek-v4-pro".to_string(),
-                display_name: Some("DeepSeek V4 Pro".to_string()),
+                model: "qwen/qwen3-coder-plus".to_string(),
+                display_name: Some("Qwen3 Coder Plus".to_string()),
                 context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
@@ -6734,7 +7282,7 @@ base_url = "https://production.api/v1"
             };
 
             assert_eq!(modalities("gpt-5.4"), json!(["text", "image"]));
-            assert_eq!(modalities("deepseek/deepseek-v4-pro"), json!(["text"]));
+            assert_eq!(modalities("qwen/qwen3-coder-plus"), json!(["text"]));
             assert_eq!(modalities("glm-5.2v"), json!(["text", "image"]));
             assert_eq!(
                 modalities("deepseek-v4-flash"),
@@ -6793,7 +7341,7 @@ wire_api = "responses"
         let settings = json!({
             "modelCatalog": {
                 "models": [
-                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" },
+                    { "model": "deepseek-flash", "displayName": "DeepSeek Flash" },
                     { "model": "deepseek-v4-pro", "contextWindow": 500_000 }
                 ]
             }
@@ -6810,7 +7358,7 @@ wire_api = "responses"
         let flash = &catalog["models"][0];
         assert_eq!(
             flash.get("slug").and_then(|v| v.as_str()),
-            Some("deepseek-v4-flash")
+            Some("deepseek-flash")
         );
         assert_eq!(
             flash.get("apply_patch_tool_type").and_then(|v| v.as_str()),
@@ -6831,7 +7379,9 @@ wire_api = "responses"
             .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
             .collect();
         assert_eq!(efforts, vec!["low", "high", "max"]);
-        assert_eq!(flash.get("supports_search_tool"), Some(&json!(true)));
+        // DeepSeek has no tool_search support; `true` makes Codex defer MCP
+        // tools behind tool search, so none can ever be called (#6647).
+        assert_eq!(flash.get("supports_search_tool"), Some(&json!(false)));
         assert_eq!(
             flash.get("web_search_tool_type").and_then(|v| v.as_str()),
             Some("text")
@@ -6840,7 +7390,13 @@ wire_api = "responses"
             flash.get("supports_reasoning_summaries"),
             Some(&json!(true))
         );
-        assert_eq!(flash.get("input_modalities"), Some(&json!(["text"])));
+        // deepseek-flash accepts image input per the vendor's own catalog and
+        // vision guide (api-docs.deepseek.com/guides/vision); the legacy
+        // deepseek-v4-flash alias routes to it and must not be gated (#7283).
+        assert_eq!(
+            flash.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
         assert!(
             flash.get("model_messages").is_some(),
             "official entries are mirrored verbatim, incl. model_messages"
@@ -6854,7 +7410,7 @@ wire_api = "responses"
         // Explicit user display name still wins over the official one.
         assert_eq!(
             flash.get("display_name").and_then(|v| v.as_str()),
-            Some("DeepSeek V4 Flash")
+            Some("DeepSeek Flash")
         );
 
         let pro = &catalog["models"][1];
@@ -6925,6 +7481,37 @@ wire_api = "responses"
             .get("base_instructions")
             .and_then(|v| v.as_str())
             .is_some_and(|s| !s.trim().is_empty()));
+    }
+
+    #[test]
+    fn deepseek_official_catalog_legacy_flash_alias_stays_image_capable() {
+        // The vendor's catalog now ships `deepseek-flash` only; the legacy
+        // `deepseek-v4-flash` id the preset defaulted to is still accepted by
+        // the API and routes to the same vision-capable Flash model, so it must
+        // clone the flagship and resolve image-capable instead of being gated
+        // text-only (#7283).
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-flash" }] }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "the legacy alias routes to the vision-capable Flash model and must fail open"
+        );
     }
 
     #[test]
@@ -7141,6 +7728,18 @@ web_search = "disabled"
             ("LongCat-2.0", "https://api.longcat.chat/openai/v1"),
             ("MiniMax-M3", "https://api.minimax.io/v1"),
             ("MiniMax-M3", "https://api.minimaxi.com/v1"),
+            // Use an alias to exercise host detection independently of the
+            // MiniMax model-prefix fallback.
+            ("custom-model", "https://api.minimax.cn/v1"),
+            ("step-4-flash", "https://api.stepfun.com/v1"),
+            ("step-4-flash", "https://api.stepfun.ai/v1"),
+            ("deepseek-v4-pro", "https://qianfan.baidubce.com/v2"),
+            (
+                "astron-code-latest",
+                "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+            ),
+            ("glm-5.3", "https://open.bigmodel.cn/api/v1"),
+            ("glm-5.3", "https://api.z.ai/api/v1"),
         ] {
             assert!(
                 codex_native_gateway_rejects_web_search(&cfg(model, host)),
@@ -7154,6 +7753,7 @@ web_search = "disabled"
             ("MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("MiniMaxAI/MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("mimo-v2.5-pro", "https://some-aggregator.example/v1"),
+            ("zai-org/glm-5.3", "https://some-aggregator.example/v1"),
             (
                 "qwen/qwen3-coder-plus",
                 "https://some-aggregator.example/v1",
@@ -7187,12 +7787,47 @@ web_search = "disabled"
                 "https://ark.cn-beijing.volces.com/api/v3",
             ),
             ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),
+            // Host-label matching: `z.ai` / `bigmodel.cn` must not swallow
+            // unrelated domains that merely contain them as a substring.
+            ("gpt-5.5", "https://api.xyz.ai/v1"),
+            ("gpt-5.5", "https://viz.ai/v1"),
+            ("gpt-5.5", "https://notbigmodel.cn/v1"),
+            ("gpt-5.5", "https://z.ai.example.com/v1"),
+            ("gpt-5.5", "https://api.stepfun.com.example.com/v1"),
         ] {
             assert!(
                 !codex_native_gateway_rejects_web_search(&cfg(model, host)),
                 "{model} @ {host} should NOT be blacklisted"
             );
         }
+    }
+
+    #[test]
+    fn url_host_matcher_uses_label_boundaries() {
+        let hosts = &["z.ai", "bigmodel.cn"];
+        for url in [
+            "https://api.z.ai/api/v1",
+            "https://open.bigmodel.cn/api/v1",
+            "https://Open.BigModel.cn/api/coding/paas/v4",
+            "https://user:pw@api.z.ai:8443/api/v1?x=1#f",
+            "z.ai",
+            "api.z.ai.",
+        ] {
+            assert!(codex_url_host_matches_any(url, hosts), "{url}");
+        }
+        for url in [
+            "https://api.xyz.ai/v1",
+            "https://viz.ai/v1",
+            "https://z.ai.example.com/v1",
+            "https://notbigmodel.cn/v1",
+            "https://example.com/z.ai/v1",
+            "https://example.com/?next=https://api.z.ai",
+            "",
+        ] {
+            assert!(!codex_url_host_matches_any(url, hosts), "{url}");
+        }
+        assert_eq!(codex_url_host("https://[::1]:8080/v1"), "::1");
+        assert_eq!(codex_url_host("HTTP://Example.COM:80"), "example.com");
     }
 
     #[test]
@@ -7301,9 +7936,9 @@ web_search = "disabled"
         let catalog = r#"{
             "models": [
                 { "slug": "gpt-5.4", "input_modalities": ["text", "image"] },
-                { "slug": "deepseek-v4-pro", "input_modalities": ["text"] },
+                { "slug": "qwen3-coder-plus", "input_modalities": ["text"] },
                 { "slug": "gpt-text-override", "input_modalities": ["text"] },
-                { "slug": "deepseek-v4-flash", "input_modalities": ["text", "image"] }
+                { "slug": "glm-5.2", "input_modalities": ["text", "image"] }
             ]
         }"#;
 

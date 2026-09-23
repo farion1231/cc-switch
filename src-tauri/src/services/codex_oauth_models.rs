@@ -3,6 +3,9 @@
 //! ChatGPT Codex exposes models through `chatgpt.com/backend-api/codex/models`,
 //! which is not an OpenAI-compatible `/v1/models` endpoint.
 
+use crate::proxy::providers::codex_oauth_auth::{
+    CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR,
+};
 use crate::services::model_fetch::FetchedModel;
 use serde_json::Value;
 use std::time::Duration;
@@ -10,20 +13,13 @@ use std::time::Duration;
 const CODEX_OAUTH_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
 const CODEX_OAUTH_FETCH_TIMEOUT_SECS: u64 = 15;
 const ERROR_BODY_MAX_CHARS: usize = 512;
-const CODEX_OAUTH_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub async fn fetch_models_with_token(
     token: &str,
     account_id: &str,
 ) -> Result<Vec<FetchedModel>, String> {
     let client = crate::proxy::http_client::get();
-    let response = client
-        .get(CODEX_OAUTH_MODELS_URL)
-        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
-        .header("Authorization", format!("Bearer {token}"))
-        .header("originator", "cc-switch")
-        .header("chatgpt-account-id", account_id)
-        .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
+    let response = build_models_request(&client, token, account_id)
         .send()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;
@@ -40,6 +36,21 @@ pub async fn fetch_models_with_token(
         .map_err(|e| format!("Failed to parse response: {e}"))?;
 
     Ok(parse_models(value))
+}
+
+fn build_models_request(
+    client: &reqwest::Client,
+    token: &str,
+    account_id: &str,
+) -> reqwest::RequestBuilder {
+    client
+        .get(CODEX_OAUTH_MODELS_URL)
+        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
+        .header("Authorization", format!("Bearer {token}"))
+        .header("originator", CODEX_OAUTH_ORIGINATOR)
+        .header("version", CODEX_OAUTH_CLIENT_VERSION)
+        .header("chatgpt-account-id", account_id)
+        .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
 }
 
 fn parse_models(value: Value) -> Vec<FetchedModel> {
@@ -130,6 +141,34 @@ fn truncate_body(body: String) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn codex_oauth_model_discovery_uses_gpt6_compatible_identity() {
+        let request = build_models_request(&reqwest::Client::new(), "test-token", "test-account")
+            .build()
+            .unwrap();
+        assert_eq!(request.headers()["authorization"], "Bearer test-token");
+        assert_eq!(request.headers()["chatgpt-account-id"], "test-account");
+        assert_eq!(request.headers()["originator"], "codex_cli_rs");
+        let version = request
+            .url()
+            .query_pairs()
+            .find(|(key, _)| key == "client_version")
+            .unwrap()
+            .1
+            .into_owned();
+        let parts: Vec<u32> = version
+            .split('.')
+            .map(|part| part.parse().unwrap())
+            .collect();
+        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
+        assert!(parts.as_slice() >= [0, 153, 0].as_slice());
+        assert_eq!(request.headers()["version"], version);
+        let models = parse_models(json!({"models": [{
+            "slug": "gpt-6-astra", "minimal_client_version": "0.153.0"
+        }]}));
+        assert_eq!(models[0].id, "gpt-6-astra");
+    }
 
     #[test]
     fn parse_codex_oauth_models_accepts_openai_style_data() {

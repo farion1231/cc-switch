@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use crate::config::derive_wsl_home_dir;
 use crate::config::{atomic_write, get_home_dir, write_json_file_with_contents};
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_dir;
@@ -733,30 +735,53 @@ impl OmoService {
 
     fn find_unified_config_path(
         v: &OmoVariant,
-        home_dir: &Path,
+        home_dirs: &[PathBuf],
     ) -> Result<Option<PathBuf>, AppError> {
         if v.category != STANDARD.category {
             return Ok(None);
         }
 
-        let config_dir = home_dir.join(".omo");
-        for filename in UNIFIED_CONFIG_FILENAMES {
-            let path = config_dir.join(filename);
-            if path.try_exists().map_err(|e| AppError::io(&path, e))? {
-                UnifiedConfigDocument::load(&path)?;
-                return Ok(Some(path));
+        for home_dir in home_dirs {
+            let config_dir = home_dir.join(".omo");
+            for filename in UNIFIED_CONFIG_FILENAMES {
+                let path = config_dir.join(filename);
+                if path.try_exists().map_err(|e| AppError::io(&path, e))? {
+                    UnifiedConfigDocument::load(&path)?;
+                    return Ok(Some(path));
+                }
             }
         }
 
         Ok(None)
     }
 
+    /// Home-directory candidates for unified-config detection, most specific
+    /// first.
+    ///
+    /// `get_home_dir()` is always the OS home of this (Windows) process. When
+    /// the effective OpenCode config directory points into WSL
+    /// (`\\wsl$\<distro>\home\<user>\...`), the WSL-resident OMO keeps its
+    /// unified config in the *WSL* home, so derive that home and probe it
+    /// first — otherwise detection never sees it and silently falls back to
+    /// the legacy per-plugin file that OMO >= 4.19.3 no longer reads (#7363).
+    fn unified_home_candidates(home_dir: &Path, _opencode_dir: &Path) -> Vec<PathBuf> {
+        #[cfg(windows)]
+        let wsl_home = derive_wsl_home_dir(_opencode_dir).filter(|wsl_home| wsl_home != home_dir);
+        #[cfg(not(windows))]
+        let wsl_home: Option<PathBuf> = None;
+
+        wsl_home
+            .into_iter()
+            .chain(std::iter::once(home_dir.to_path_buf()))
+            .collect()
+    }
+
     fn find_config_location(
         v: &OmoVariant,
-        home_dir: &Path,
+        home_dirs: &[PathBuf],
         legacy_dir: &Path,
     ) -> Result<Option<OmoConfigLocation>, AppError> {
-        if let Some(path) = Self::find_unified_config_path(v, home_dir)? {
+        if let Some(path) = Self::find_unified_config_path(v, home_dirs)? {
             return Ok(Some(OmoConfigLocation::Unified(path)));
         }
 
@@ -765,16 +790,17 @@ impl OmoService {
 
     fn config_location(
         v: &OmoVariant,
-        home_dir: &Path,
+        home_dirs: &[PathBuf],
         legacy_dir: &Path,
     ) -> Result<OmoConfigLocation, AppError> {
-        Ok(Self::find_config_location(v, home_dir, legacy_dir)?
+        Ok(Self::find_config_location(v, home_dirs, legacy_dir)?
             .unwrap_or_else(|| OmoConfigLocation::Legacy(legacy_dir.join(v.preferred_filename))))
     }
 
     fn resolve_local_config_location(v: &OmoVariant) -> Result<OmoConfigLocation, AppError> {
-        Self::find_config_location(v, &get_home_dir(), &get_opencode_dir())?
-            .ok_or(AppError::OmoConfigNotFound)
+        let opencode_dir = get_opencode_dir();
+        let home_dirs = Self::unified_home_candidates(&get_home_dir(), &opencode_dir);
+        Self::find_config_location(v, &home_dirs, &opencode_dir)?.ok_or(AppError::OmoConfigNotFound)
     }
 
     fn read_jsonc_object(path: &Path) -> Result<Map<String, Value>, AppError> {
@@ -898,9 +924,9 @@ impl OmoService {
         let legacy_dir = plugin_config_path.parent().ok_or_else(|| {
             AppError::Config("OpenCode config path has no parent directory".to_string())
         })?;
-        let home_dir = get_home_dir();
+        let home_dirs = Self::unified_home_candidates(&get_home_dir(), legacy_dir);
         let merged = Self::build_config(v, profile_data);
-        let location = Self::config_location(v, &home_dir, legacy_dir)?;
+        let location = Self::config_location(v, &home_dirs, legacy_dir)?;
         let config_path = location.path().to_path_buf();
 
         if let Some(parent) = config_path.parent() {
@@ -958,7 +984,8 @@ impl OmoService {
                 AppError::Config("OpenCode config path has no parent directory".to_string())
             })?
             .to_path_buf();
-        let unified_path = Self::find_unified_config_path(v, &get_home_dir())?;
+        let home_dirs = Self::unified_home_candidates(&get_home_dir(), &base_dir);
+        let unified_path = Self::find_unified_config_path(v, &home_dirs)?;
         let mut legacy_paths = Vec::new();
         for path in Self::config_candidates(v, &base_dir) {
             if path.try_exists().map_err(|e| AppError::io(&path, e))? {
@@ -1191,7 +1218,9 @@ mod tests {
         )
         .unwrap();
 
-        let found = OmoService::find_config_location(&STANDARD, home.path(), &legacy_dir).unwrap();
+        let found =
+            OmoService::find_config_location(&STANDARD, &[home.path().to_path_buf()], &legacy_dir)
+                .unwrap();
 
         assert_eq!(found, Some(OmoConfigLocation::Unified(unified_path)));
     }
@@ -1210,7 +1239,9 @@ mod tests {
         )
         .unwrap();
 
-        let found = OmoService::find_config_location(&STANDARD, home.path(), &legacy_dir).unwrap();
+        let found =
+            OmoService::find_config_location(&STANDARD, &[home.path().to_path_buf()], &legacy_dir)
+                .unwrap();
 
         assert_eq!(found, Some(OmoConfigLocation::Unified(unified_path)));
     }
@@ -1229,9 +1260,70 @@ mod tests {
         )
         .unwrap();
 
-        let found = OmoService::find_config_location(&STANDARD, home.path(), &legacy_dir).unwrap();
+        let found =
+            OmoService::find_config_location(&STANDARD, &[home.path().to_path_buf()], &legacy_dir)
+                .unwrap();
 
         assert_eq!(found, Some(OmoConfigLocation::Unified(unified_path)));
+    }
+
+    #[test]
+    fn test_find_config_location_probes_wsl_side_home_candidate() {
+        // #7363: with the OpenCode config dir inside WSL, the OMO unified
+        // config lives in the WSL-side home, not the Windows home. Detection
+        // must probe the derived WSL home candidate, otherwise it misses the
+        // unified file and falls back to the legacy path OMO ignores.
+        let windows_home = tempfile::tempdir().unwrap();
+        let wsl_home = tempfile::tempdir().unwrap();
+        let legacy_dir = windows_home.path().join(".config").join("opencode");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+
+        // The unified config exists only on the WSL side.
+        let unified_path = wsl_home.path().join(".omo").join("omo.jsonc");
+        std::fs::create_dir_all(unified_path.parent().unwrap()).unwrap();
+        std::fs::write(&unified_path, r#"{"[opencode]":{"agents":{}}}"#).unwrap();
+        std::fs::write(
+            legacy_dir.join(STANDARD.preferred_filename),
+            r#"{"agents":{}}"#,
+        )
+        .unwrap();
+
+        let candidates = vec![
+            wsl_home.path().to_path_buf(),
+            windows_home.path().to_path_buf(),
+        ];
+        let found = OmoService::find_config_location(&STANDARD, &candidates, &legacy_dir).unwrap();
+
+        assert_eq!(found, Some(OmoConfigLocation::Unified(unified_path)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_unified_home_candidates_prefers_wsl_side_home() {
+        let os_home = PathBuf::from(r"C:\Users\travis");
+        let opencode_dir =
+            PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\travis\.config\opencode");
+
+        let candidates = OmoService::unified_home_candidates(&os_home, &opencode_dir);
+
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\travis"),
+                os_home
+            ]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_unified_home_candidates_keeps_os_home_for_local_dirs() {
+        let os_home = PathBuf::from(r"C:\Users\travis");
+        let opencode_dir = PathBuf::from(r"C:\Users\travis\.config\opencode");
+
+        let candidates = OmoService::unified_home_candidates(&os_home, &opencode_dir);
+
+        assert_eq!(candidates, vec![os_home]);
     }
 
     #[test]
@@ -1434,7 +1526,8 @@ mod tests {
 
         OmoService::remove_unified_config_section(&unified_path).unwrap();
         let location =
-            OmoService::find_config_location(&STANDARD, home.path(), &legacy_dir).unwrap();
+            OmoService::find_config_location(&STANDARD, &[home.path().to_path_buf()], &legacy_dir)
+                .unwrap();
         assert_eq!(
             location,
             Some(OmoConfigLocation::Unified(unified_path.clone()))

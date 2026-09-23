@@ -66,8 +66,9 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// Supported families:
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
-/// - xAI Grok Build models. `grok-4.5` is the current documented Grok Build
-///   model; retain the previous `grok-build-*` family for saved providers.
+/// - xAI Grok 4.5+ (`grok-4.x` with numeric minor version x ≥ 5,
+///   so future releases like grok-4.10 need no whitelist update); retain the
+///   previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
     is_openai_o_series(&normalized)
@@ -75,23 +76,41 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .strip_prefix("gpt-")
             .and_then(|rest| rest.chars().next())
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
-        || normalized == "grok-4.5"
-        || normalized.starts_with("grok-4.5-")
+        || normalized
+            .strip_prefix("grok-4.")
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|minor| minor.parse::<u32>().ok())
+            .is_some_and(|minor| minor >= 5)
         || normalized.starts_with("grok-build-")
+}
+
+/// Detect models whose OpenAI reasoning effort supports a distinct `max` tier.
+fn supports_max_reasoning_effort(model: &str) -> bool {
+    let normalized = model.to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-6-astra"
+    )
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
 /// 1. Explicit `output_config.effort` — preserves the user's intent directly.
-///    `low`/`medium`/`high` map 1:1; `max` maps to `xhigh`
-///    (supported by mainstream GPT models). Unknown values are ignored.
+///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
+///    `/effort xhigh` sends); `max` stays `max` for models that support a
+///    distinct max tier, otherwise it falls back to `xhigh`. Unknown values are ignored.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
 ///    - `disabled` / absent → `None`
 pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
+    let model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default();
+
     // --- Priority 1: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
@@ -101,8 +120,10 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
-            "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
-            _ => None,              // unknown value — do not inject
+            "xhigh" => Some("xhigh"),
+            "max" if supports_max_reasoning_effort(model) => Some("max"),
+            "max" => Some("xhigh"),
+            _ => None, // unknown value — do not inject
         };
     }
 
@@ -158,14 +179,19 @@ pub fn anthropic_to_openai_with_reasoning_content(
                 messages.push(json!({"role": "system", "content": text}));
             }
         } else if let Some(arr) = system.as_array() {
+            // 顶层 system 数组合并为一条 system 消息（跨轮字节稳定，不影响前缀缓存）
+            let mut parts = Vec::new();
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
                     let text = strip_leading_anthropic_billing_header(text);
                     if text.is_empty() {
                         continue;
                     }
-                    messages.push(json!({"role": "system", "content": text}));
+                    parts.push(text.to_string());
                 }
+            }
+            if !parts.is_empty() {
+                messages.push(json!({"role": "system", "content": parts.join("\n")}));
             }
         }
     }
@@ -180,7 +206,6 @@ pub fn anthropic_to_openai_with_reasoning_content(
         }
     }
 
-    normalize_openai_system_messages(&mut messages);
     result["messages"] = json!(messages);
 
     // 转换参数 — o-series 模型需要 max_completion_tokens
@@ -218,14 +243,18 @@ pub fn anthropic_to_openai_with_reasoning_content(
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                        "description": t.get("description"),
-                        "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
-                    }
-                })
+                let mut function = json!({
+                    "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                });
+                // 缺失的 description 省略而非输出 null：hosted 工具（web_search 等）
+                // 与未填描述的自定义/MCP 工具都不带该字段，严格上游收到 null 会
+                // 拒绝整个请求（400 "expected string, received null"）。
+                if let Some(description) = t.get("description").filter(|d| !d.is_null()) {
+                    function["description"] = description.clone();
+                }
+                function["parameters"] =
+                    clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})));
+                json!({"type": "function", "function": function})
             })
             .collect();
 
@@ -302,57 +331,6 @@ fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
             _ => tool_choice.clone(),
         },
         _ => tool_choice.clone(),
-    }
-}
-
-fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
-    let system_count = messages
-        .iter()
-        .filter(|message| message.get("role").and_then(|value| value.as_str()) == Some("system"))
-        .count();
-
-    if system_count == 0 {
-        return;
-    }
-
-    if system_count == 1 {
-        if let Some(index) = messages.iter().position(|message| {
-            message.get("role").and_then(|value| value.as_str()) == Some("system")
-        }) {
-            if index > 0 {
-                let message = messages.remove(index);
-                messages.insert(0, message);
-            }
-        }
-        return;
-    }
-
-    let mut parts = Vec::new();
-    messages.retain(|message| {
-        if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-            return true;
-        }
-
-        match message.get("content") {
-            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
-            Some(Value::Array(content_parts)) => {
-                let text = content_parts
-                    .iter()
-                    .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    parts.push(text);
-                }
-            }
-            _ => {}
-        }
-
-        false
-    });
-
-    if !parts.is_empty() {
-        messages.insert(0, json!({"role": "system", "content": parts.join("\n")}));
     }
 }
 
@@ -989,6 +967,40 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_openai_preserves_mid_conversation_system_in_place() {
+        // Claude Code 会在对话中间注入 system 消息（如 <total_tokens>），
+        // 必须保持原位，不合并不上提，否则破坏前缀缓存。
+        let input = json!({
+            "model": "claude-3-sonnet",
+            "max_tokens": 1024,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {"role": "system", "content": "<total_tokens>14963538 tokens left</total_tokens>"},
+                {"role": "user", "content": "Continue"}
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // 顶层 system 在最前面
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are Claude Code.");
+
+        // 中途 system 保持原位（第 3 条，index=3），不被合并或上提
+        assert_eq!(messages[3]["role"], "system");
+        assert_eq!(
+            messages[3]["content"],
+            "<total_tokens>14963538 tokens left</total_tokens>"
+        );
+
+        // 总共 5 条消息，没有合并
+        assert_eq!(messages.len(), 5);
+    }
+
+    #[test]
     fn test_anthropic_to_openai_strips_cache_control_from_conflicting_system() {
         let input = json!({
             "model": "claude-3-sonnet",
@@ -1072,6 +1084,35 @@ mod tests {
         assert_eq!(msg["reasoning_content"], "tool call");
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_omits_missing_tool_description() {
+        let input = json!({
+            "model": "claude-opus-5",
+            "max_tokens": 50,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"name": "Bash", "description": "Run a bash command",
+                 "input_schema": {"type": "object"}},
+                {"name": "NoDesc",
+                 "input_schema": {"type": "object"}},
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": 8}
+            ]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 3);
+        // 带 description 的工具原样保留
+        assert_eq!(
+            tools[0]["function"]["description"],
+            json!("Run a bash command")
+        );
+        // 缺 description 的自定义工具与 hosted 工具：省略字段，而不是序列化成 null
+        assert!(tools[1]["function"].get("description").is_none());
+        assert!(tools[2]["function"].get("description").is_none());
+        assert!(tools[1]["function"].get("parameters").is_some());
     }
 
     #[test]
@@ -1749,9 +1790,22 @@ mod tests {
         assert!(supports_reasoning_effort("gpt-5.4"));
         assert!(supports_reasoning_effort("gpt-5-codex"));
         assert!(supports_reasoning_effort("grok-4.5"));
+        assert!(supports_reasoning_effort("grok-4.6"));
+        assert!(supports_reasoning_effort("grok-4.6-build"));
         assert!(supports_reasoning_effort("grok-build-0.1"));
+        // The rule covers the whole grok-4.x (x >= 5) family, so future
+        // releases need no whitelist update.
+        assert!(supports_reasoning_effort("grok-4.7"));
+        assert!(supports_reasoning_effort("grok-4.7-build"));
+        assert!(supports_reasoning_effort("grok-4.10"));
+        assert!(supports_reasoning_effort("grok-4.10-build"));
+        assert!(supports_reasoning_effort("GROK-4.10-BUILD"));
+        assert!(!supports_reasoning_effort("grok-4."));
+        assert!(!supports_reasoning_effort("grok-4.build"));
+        assert!(!supports_reasoning_effort("grok-4.4"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
+        assert!(!supports_reasoning_effort("grok-4"));
     }
 
     // ── resolve_reasoning_effort unit tests ──
@@ -1775,8 +1829,39 @@ mod tests {
     }
 
     #[test]
-    fn test_output_config_max_maps_to_reasoning_effort_xhigh() {
-        let body = json!({"output_config": {"effort": "max"}});
+    fn test_output_config_max_preserved_for_supported_models() {
+        for model in [
+            "gpt-5.6",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-6-astra",
+        ] {
+            let body = json!({
+                "model": model,
+                "output_config": {"effort": "max"}
+            });
+            assert_eq!(
+                resolve_reasoning_effort(&body),
+                Some("max"),
+                "model {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_output_config_max_falls_back_to_xhigh_for_older_model() {
+        let body = json!({
+            "model": "gpt-5.4",
+            "output_config": {"effort": "max"}
+        });
+        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    #[test]
+    fn test_output_config_xhigh_maps_verbatim() {
+        // Claude Code's `/effort xhigh` sends output_config.effort="xhigh"
+        let body = json!({"output_config": {"effort": "xhigh"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
     }
 

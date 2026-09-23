@@ -42,7 +42,8 @@
     "deleting": "刪除中...",
     "auto": "自動",
     "enabled": "已啟用",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "collapse": "收合"
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
@@ -83,7 +84,8 @@
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "啟用 Tool Search",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "停用自動升級"
+    "disableAutoUpgrade": "停用自動升級",
+    "disableArtifact": "停用 Artifact 工具"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上檢視",
@@ -820,6 +822,7 @@
     "viewCurrentReleaseNotes": "檢視目前版本更新日誌",
     "officialWebsite": "官方網站",
     "github": "GitHub",
+    "starPrompt": "如果 CC Switch 幫到了你，請在 GitHub 點個 Star，這對我們意義重大",
     "manualInstallCommands": "手動安裝指令",
     "oneClickInstall": "一鍵安裝",
     "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes / Pi",
@@ -913,7 +916,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "mcode": "MiniMax Code"
   },
   "pi": {
     "empty": {
@@ -979,7 +983,8 @@
       "effectiveApiRequired": "模型 {{id}} 必須直接設定或從供應商繼承 API",
       "effectiveBaseUrlRequired": "模型 {{id}} 必須直接設定或從供應商繼承基礎 URL",
       "duplicateModel": "模型 ID {{id}} 重複",
-      "modelRequired": "請至少新增一個模型"
+      "modelRequired": "請至少新增一個模型",
+      "providerKeyDuplicate": "該供應商識別碼已存在"
     },
     "current": {
       "readFailed": "無法讀取 Pi 供應商設定",
@@ -1205,14 +1210,11 @@
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
       "apikeyfun": "APIKEY.FUN 為 CC Switch 的使用者提供了特別優惠，透過專屬連結註冊，可享受最高儲值永久 95 折優惠。",
       "apinebula": "APINEBULA 為 CC Switch 使用者提供特別優惠：使用專屬連結註冊並在儲值時填寫「ccswitch」優惠碼，可享 9 折優惠。",
-      "atlascloud": "Atlas Cloud 是一個全模態 AI 推理平台，透過單一 API 為開發者提供影片生成、圖像生成及 LLM 接入。立即查看全新「編程計畫」優惠，取得更具性價比的 API 接入。",
       "patewayai": "PatewayAI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊可以獲得 3 美元額度。",
       "claudeapi": "ClaudeAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊可以領取測試額度。",
       "claudecn": "ClaudeCN 是一家實體企業營運的企業級 AI 中繼平台，支援企業採購流程，可對公打款、簽約，服務合規有保障。",
       "runapi": "RunAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊，首次儲值即可享受 9 折優惠。",
-      "minimax_cn": "MiniMax Coding Plan 特惠，Starter 方案 9.9 元起",
-      "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 方案現僅 $2 / 月（2 折優惠！）",
-      "opencode_go": "使用此連結訂閱 OpenCode Go，首月僅需 $5，並可獲得額外的 $5 額度！",
+      "opencode_go": "OpenCode Go 提供多款程式設計模型的訂閱服務，可透過此連結查看方案詳情並訂閱。",
       "dmxapi": "Claude Code 專屬模型 3.4 折優惠進行中！",
       "cubence": "Cubence 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「CCSWITCH」優惠碼，每次儲值均可享受 9 折優惠",
       "aigocode": "AIGoCode 是 CC Switch 的官方合作夥伴，使用此連結註冊首次儲值時可以獲得 10% 額度獎勵！",
@@ -1237,13 +1239,17 @@
       "zetaapi": "ZetaAPI 主打模型不摻水、不降智，價格低至官方價 35 折。CC Switch 使用者專屬福利：透過此連結註冊，首次充值使用優惠碼 CC-SWITCH 即可享受九折優惠！",
       "teamorouter": "TeamoRouter 是企業級 Agentic LLM 閘道，價格最高可達 90% 折扣。為 CC Switch 的使用者提供了特別福利：新使用者透過此連結註冊，首次充值享 10% 折扣！",
       "ppio": "PPIO 是中國領先的獨立 Agentic Cloud 服務商，一個 API Key 調用全部旗艦開源模型。透過此連結註冊並完成實名認證，即可獲得 ¥10 代金券。",
-      "xycai": "XycAi 企業級 Token 工廠：200+ 全球模型一鍵接入，SLA 自動賠付，異常快取 100% 退還！"
+      "xycai": "XycAi 企業級 Token 工廠：200+ 全球模型一鍵接入，SLA 自動賠付，異常快取 100% 退還！",
+      "9527code": "9527 CODE 是企業級滿血 AI 中轉平台，為 Claude Code、Codex 等主流模型提供高速穩定的中轉服務。持續營運一年，服務穩定性達 99.9%，提供 7×24 小時人工技術支援。新人福利聯絡客服贈送體驗額度，推薦返現無上限！",
+      "soleapi": "SoleAPI 是面向開發者與企業的 AI 模型閘道，一個 API Key 直達 Claude、GPT、Gemini 等 30+ 主流模型，原生相容 OpenAI 與 Anthropic 協定，智慧選路毫秒級故障切換，可用性 99.99%，7×24 技術支援。透過專屬連結註冊即送體驗額度，邀請好友儲值持續返現！",
+      "fluxa": "FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 能自主購買、管理和使用模型、API 與工具。內含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，並獲贈 FluxA AgentMarket API 呼叫額度，解鎖搜尋、資料抓取、社群媒體、金融、加密、生圖、影片等 1000+ 付費 API。"
     },
     "presets": {
       "ucloud": "優雲智算",
       "ucloudCoding": "優雲智算 Coding Plan",
       "shengsuanyun": "勝算雲",
       "qiniu": "七牛雲",
+      "doubaoseed": "火山 豆包AI",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
@@ -1344,6 +1350,9 @@
     "searchModelEmpty": "沒有符合的模型",
     "searchModelAriaLabel": "選擇模型",
     "fetchModelsSuccess": "取得 {{count}} 個模型",
+    "fetchedModelsTitle": "可用模型（{{count}}）",
+    "modelAlreadyAdded": "已新增",
+    "addSelectedModels": "新增所選模型（{{count}}）",
     "fetchModelsFailed": "取得模型清單失敗",
     "fetchModelsEmpty": "未找到可用模型",
     "fetchModelsNeedApiKey": "請先填寫 API Key",
@@ -1422,6 +1431,7 @@
     "reauthLogin": "重新登入",
     "reauthSelectHint": "該帳號需重新登入以啟用託管綁定。",
     "reauthNow": "立即重新登入",
+    "duplicateAccount": "該 ChatGPT 帳號已新增，請直接使用現有帳號。",
     "loggedInAccounts": "已登入帳號",
     "defaultAccount": "預設",
     "selected": "已選取",
@@ -1719,7 +1729,8 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2023,7 +2034,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mcode": "MiniMax Code"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -2200,6 +2212,7 @@
     }
   },
   "profiles": {
+    "switcherAriaLabel": "專案：{{name}}",
     "switcherTooltip": {
       "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
       "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
@@ -2883,6 +2896,7 @@
     },
     "switchFailed": "切換失敗：{{error}}",
     "takeover": {
+      "ariaLabel": "{{appLabel}} 本地路由",
       "hint": "選擇要路由的應用程式，啟用後該應用程式的請求將透過本地路由轉發",
       "enabled": "{{app}} 路由已啟用",
       "disabled": "{{app}} 路由已關閉",
@@ -3239,6 +3253,7 @@
     "fiveHour": "5 小時",
     "sevenDay": "7 天",
     "sevenDayOpus": "7 天 (Opus)",
+    "sevenDayFable": "Fable",
     "sevenDaySonnet": "7 天 (Sonnet)",
     "thirtyDay": "30 天",
     "geminiPro": "Pro",

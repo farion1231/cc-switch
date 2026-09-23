@@ -265,6 +265,46 @@ describe("App integration with MSW", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
 
+  it("resets provider view scroll when switching apps", async () => {
+    const { default: App } = await import("@/App");
+    const { container } = renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    const mainScrollContainer = container.querySelector("main") as HTMLElement;
+    const providerScrollContainer = Array.from(
+      container.querySelectorAll<HTMLElement>(".overflow-y-auto"),
+    ).find(
+      (element) =>
+        element !== mainScrollContainer && element.className.includes("pb-12"),
+    );
+
+    expect(mainScrollContainer).not.toBeNull();
+    expect(providerScrollContainer).toBeDefined();
+
+    mainScrollContainer.scrollTop = 320;
+    mainScrollContainer.scrollLeft = 12;
+    providerScrollContainer!.scrollTop = 640;
+    providerScrollContainer!.scrollLeft = 24;
+
+    fireEvent.click(screen.getByText("switch-codex"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-1",
+      ),
+    );
+
+    expect(mainScrollContainer.scrollTop).toBe(0);
+    expect(mainScrollContainer.scrollLeft).toBe(0);
+    expect(providerScrollContainer!.scrollTop).toBe(0);
+    expect(providerScrollContainer!.scrollLeft).toBe(0);
+  }, 10_000);
+
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -347,6 +387,61 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Provider key is required for openclaw"),
+    );
+  });
+
+  it("refreshes MiniMax Code provider membership after removing it from live config", async () => {
+    localStorage.setItem("cc-switch-last-app", "mcode");
+    let liveConfigManaged = true;
+    let providerRequests = 0;
+    server.use(
+      http.post("http://tauri.local/get_providers", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        if (app !== "mcode") return;
+        providerRequests += 1;
+        return HttpResponse.json({
+          custom: {
+            id: "custom",
+            name: "Custom MiniMax Code",
+            settingsConfig: {},
+            meta: { liveConfigManaged },
+          },
+        });
+      }),
+      http.post(
+        "http://tauri.local/remove_provider_from_live_config",
+        async ({ request }) => {
+          expect(await request.json()).toEqual({ id: "custom", app: "mcode" });
+          liveConfigManaged = false;
+          return HttpResponse.json(true);
+        },
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent(
+        '"liveConfigManaged":true',
+      ),
+    );
+    const requestsBeforeRemoval = providerRequests;
+    fireEvent.click(screen.getByText("remove"));
+    fireEvent.click(screen.getByText("confirm-delete"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
+    );
+    expect(liveConfigManaged).toBe(false);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent(
+        '"liveConfigManaged":false',
+      ),
+    );
+    expect(providerRequests).toBeGreaterThan(requestsBeforeRemoval);
+    expect(screen.getByTestId("provider-list")).toHaveTextContent(
+      "Custom MiniMax Code",
     );
   });
 
