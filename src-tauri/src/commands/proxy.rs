@@ -284,6 +284,15 @@ fn parse_list_row(line_no: u64, value: &serde_json::Value) -> Option<ProxyReques
 }
 
 fn resolve_request_log_file(app_type: &str, file_name: &str) -> Result<(String, PathBuf), String> {
+    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
+    resolve_request_log_file_in_dir(&dir, app_type, file_name)
+}
+
+fn resolve_request_log_file_in_dir(
+    dir: &Path,
+    app_type: &str,
+    file_name: &str,
+) -> Result<(String, PathBuf), String> {
     let app = require_request_log_app(app_type)?;
     let file_path = Path::new(file_name);
     if file_path.is_absolute()
@@ -296,7 +305,6 @@ fn resolve_request_log_file(app_type: &str, file_name: &str) -> Result<(String, 
         return Err("无效的日志文件名".to_string());
     }
 
-    let dir = crate::config::get_proxy_request_log_dir().map_err(|e| e.to_string())?;
     let app_dir = dir.join(crate::proxy::request_logger::sanitize_path_component(
         app.as_str(),
     ));
@@ -337,7 +345,20 @@ fn get_file_index(
     }
 
     // 全量扫描一遍（只在文件变化后的首次查询发生）
-    let file = std::fs::File::open(&path).map_err(|e| format!("打开日志文件失败: {e}"))?;
+    let index = build_file_index(&path)?;
+    let mut cache = index_cache().lock().unwrap();
+    // 上限逐出：HashMap 无序，插入序近似用「先移除任一超额项」——遍历移除第一个即可
+    if !cache.contains_key(&cache_key) && cache.len() >= REQUEST_LOG_INDEX_CACHE_MAX_FILES {
+        if let Some(k) = cache.keys().next().cloned() {
+            cache.remove(&k);
+        }
+    }
+    cache.insert(cache_key, (mtime, size, clone_index(&index)));
+    Ok((mtime, size, index))
+}
+
+fn build_file_index(path: &Path) -> Result<RequestLogFileIndex, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("打开日志文件失败: {e}"))?;
     let reader = std::io::BufReader::new(file);
     let mut rows = Vec::new();
     let mut offsets = Vec::new();
@@ -361,17 +382,7 @@ fn get_file_index(
             }
         }
     }
-
-    let index = RequestLogFileIndex { rows, offsets };
-    let mut cache = index_cache().lock().unwrap();
-    // 上限逐出：HashMap 无序，插入序近似用「先移除任一超额项」——遍历移除第一个即可
-    if !cache.contains_key(&cache_key) && cache.len() >= REQUEST_LOG_INDEX_CACHE_MAX_FILES {
-        if let Some(k) = cache.keys().next().cloned() {
-            cache.remove(&k);
-        }
-    }
-    cache.insert(cache_key, (mtime, size, clone_index(&index)));
-    Ok((mtime, size, index))
+    Ok(RequestLogFileIndex { rows, offsets })
 }
 
 /// 行索引会从缓存中 clone 出来（几万条 × 小结构，微秒级），
@@ -544,7 +555,27 @@ fn read_request_log_records(
     after_line_no: Option<u64>,
 ) -> Result<ProxyRequestLogRecordsPage, String> {
     let (_, _, index) = get_file_index(app_type, file_name)?;
+    read_request_log_records_from_index(
+        index,
+        offset,
+        limit,
+        order,
+        search,
+        before_line_no,
+        after_line_no,
+    )
+}
 
+#[allow(clippy::too_many_arguments)]
+fn read_request_log_records_from_index(
+    index: RequestLogFileIndex,
+    offset: u32,
+    limit: u32,
+    order: &str,
+    search: Option<&str>,
+    before_line_no: Option<u64>,
+    after_line_no: Option<u64>,
+) -> Result<ProxyRequestLogRecordsPage, String> {
     // 搜索匹配轻量字段（时间/方法/端点/模型/错误/状态码）；
     // body 内容级搜索不再支持——列表行不携带 body，这是轻量化换来的取舍
     let search_lower = search.map(|s| s.to_lowercase());
@@ -627,13 +658,21 @@ fn read_request_log_record(
     line_no: u64,
 ) -> Result<serde_json::Value, String> {
     let (_, _, index) = get_file_index(app_type, file_name)?;
+    let (_, path) = resolve_request_log_file(app_type, file_name)?;
+    read_request_log_record_from_index(&path, index, line_no)
+}
+
+fn read_request_log_record_from_index(
+    path: &Path,
+    index: RequestLogFileIndex,
+    line_no: u64,
+) -> Result<serde_json::Value, String> {
     let pos = index
         .rows
         .iter()
         .position(|row| row.line_no == line_no)
         .ok_or_else(|| format!("记录不存在: {line_no}"))?;
 
-    let (_, path) = resolve_request_log_file(app_type, file_name)?;
     let mut file = std::fs::File::open(path).map_err(|e| format!("打开日志文件失败: {e}"))?;
 
     use std::io::{BufRead, BufReader, Seek, SeekFrom};
@@ -1013,42 +1052,97 @@ mod request_log_tests {
     use super::*;
     use serde_json::json;
     use std::io::Write;
-    use std::sync::Mutex;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct TestHome {
-        _guard: std::sync::MutexGuard<'static, ()>,
+    struct TestLogRoot {
         _dir: tempfile::TempDir,
+        log_dir: PathBuf,
     }
 
-    impl TestHome {
+    impl TestLogRoot {
         fn new() -> Self {
-            let guard = ENV_LOCK.lock().unwrap();
             let dir = tempfile::tempdir().unwrap();
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            Self {
-                _guard: guard,
-                _dir: dir,
+            let log_dir = dir.path().join("proxy_request_logs");
+            std::fs::create_dir_all(&log_dir).unwrap();
+            Self { _dir: dir, log_dir }
+        }
+
+        fn write_log(&self, app_type: &str, file_name: &str, lines: &[&str]) {
+            let dir = self.log_dir.join(app_type);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut file = std::fs::File::create(dir.join(file_name)).unwrap();
+            for line in lines {
+                writeln!(file, "{line}").unwrap();
             }
         }
-    }
 
-    impl Drop for TestHome {
-        fn drop(&mut self) {
-            std::env::remove_var("CC_SWITCH_TEST_HOME");
+        fn read_records(
+            &self,
+            app_type: &str,
+            file_name: &str,
+            offset: u32,
+            limit: u32,
+            order: &str,
+            search: Option<&str>,
+            before_line_no: Option<u64>,
+            after_line_no: Option<u64>,
+        ) -> Result<ProxyRequestLogRecordsPage, String> {
+            read_request_log_records_from_dir(
+                &self.log_dir,
+                app_type,
+                file_name,
+                offset,
+                limit,
+                order,
+                search,
+                before_line_no,
+                after_line_no,
+            )
+        }
+
+        fn read_record(
+            &self,
+            app_type: &str,
+            file_name: &str,
+            line_no: u64,
+        ) -> Result<serde_json::Value, String> {
+            read_request_log_record_from_dir(&self.log_dir, app_type, file_name, line_no)
         }
     }
 
-    fn write_log(app_type: &str, file_name: &str, lines: &[&str]) {
-        let dir = crate::config::get_proxy_request_log_dir()
-            .unwrap()
-            .join(app_type);
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut file = std::fs::File::create(dir.join(file_name)).unwrap();
-        for line in lines {
-            writeln!(file, "{line}").unwrap();
-        }
+    #[allow(clippy::too_many_arguments)]
+    fn read_request_log_records_from_dir(
+        dir: &Path,
+        app_type: &str,
+        file_name: &str,
+        offset: u32,
+        limit: u32,
+        order: &str,
+        search: Option<&str>,
+        before_line_no: Option<u64>,
+        after_line_no: Option<u64>,
+    ) -> Result<ProxyRequestLogRecordsPage, String> {
+        let (_, path) = resolve_request_log_file_in_dir(dir, app_type, file_name)?;
+        let index = build_file_index(&path)?;
+        read_request_log_records_from_index(
+            index,
+            offset,
+            limit,
+            order,
+            search,
+            before_line_no,
+            after_line_no,
+        )
+    }
+
+    fn read_request_log_record_from_dir(
+        dir: &Path,
+        app_type: &str,
+        file_name: &str,
+        line_no: u64,
+    ) -> Result<serde_json::Value, String> {
+        let (_, path) = resolve_request_log_file_in_dir(dir, app_type, file_name)?;
+        let index = build_file_index(&path)?;
+        read_request_log_record_from_index(&path, index, line_no)
     }
 
     fn record(endpoint: &str, status_code: u16) -> String {
@@ -1068,32 +1162,32 @@ mod request_log_tests {
 
     #[test]
     fn request_log_file_rejects_path_traversal() {
-        let _home = TestHome::new();
-        write_log("claude", "safe.jsonl", &[&record("/v1/messages", 200)]);
+        let root = TestLogRoot::new();
+        root.write_log("claude", "safe.jsonl", &[&record("/v1/messages", 200)]);
 
-        assert!(resolve_request_log_file("claude", "../safe.jsonl").is_err());
-        assert!(resolve_request_log_file("claude", "/tmp/safe.jsonl").is_err());
-        assert!(resolve_request_log_file("claude", "safe.txt").is_err());
+        assert!(resolve_request_log_file_in_dir(&root.log_dir, "claude", "../safe.jsonl").is_err());
+        assert!(
+            resolve_request_log_file_in_dir(&root.log_dir, "claude", "/tmp/safe.jsonl").is_err()
+        );
+        assert!(resolve_request_log_file_in_dir(&root.log_dir, "claude", "safe.txt").is_err());
     }
 
     #[cfg(unix)]
     #[test]
     fn request_log_file_rejects_symlink_escape() {
-        let _home = TestHome::new();
+        let root = TestLogRoot::new();
         let outside = tempfile::NamedTempFile::new().unwrap();
-        let dir = crate::config::get_proxy_request_log_dir()
-            .unwrap()
-            .join("claude");
+        let dir = root.log_dir.join("claude");
         std::fs::create_dir_all(&dir).unwrap();
         std::os::unix::fs::symlink(outside.path(), dir.join("escape.jsonl")).unwrap();
 
-        assert!(resolve_request_log_file("claude", "escape.jsonl").is_err());
+        assert!(resolve_request_log_file_in_dir(&root.log_dir, "claude", "escape.jsonl").is_err());
     }
 
     #[test]
     fn request_log_records_total_ignores_cursor_range() {
-        let _home = TestHome::new();
-        write_log(
+        let root = TestLogRoot::new();
+        root.write_log(
             "claude",
             "session.jsonl",
             &[
@@ -1103,9 +1197,9 @@ mod request_log_tests {
             ],
         );
 
-        let page =
-            read_request_log_records("claude", "session.jsonl", 0, 2, "desc", None, Some(3), None)
-                .unwrap();
+        let page = root
+            .read_records("claude", "session.jsonl", 0, 2, "desc", None, Some(3), None)
+            .unwrap();
 
         assert_eq!(page.total, 3);
         assert_eq!(
@@ -1119,8 +1213,8 @@ mod request_log_tests {
 
     #[test]
     fn request_log_record_lookup_uses_actual_line_number_after_bad_lines() {
-        let _home = TestHome::new();
-        write_log(
+        let root = TestLogRoot::new();
+        root.write_log(
             "claude",
             "session.jsonl",
             &[
@@ -1130,9 +1224,9 @@ mod request_log_tests {
             ],
         );
 
-        let page =
-            read_request_log_records("claude", "session.jsonl", 0, 10, "asc", None, None, None)
-                .unwrap();
+        let page = root
+            .read_records("claude", "session.jsonl", 0, 10, "asc", None, None, None)
+            .unwrap();
         assert_eq!(
             page.records
                 .iter()
@@ -1141,7 +1235,7 @@ mod request_log_tests {
             vec![1, 3]
         );
 
-        let detail = read_request_log_record("claude", "session.jsonl", 3).unwrap();
+        let detail = root.read_record("claude", "session.jsonl", 3).unwrap();
         assert_eq!(
             detail.get("endpoint").and_then(|value| value.as_str()),
             Some("/v1/chat/completions")
@@ -1154,24 +1248,25 @@ mod request_log_tests {
 
     #[test]
     fn request_log_reads_claude_desktop_files() {
-        let _home = TestHome::new();
-        write_log(
+        let root = TestLogRoot::new();
+        root.write_log(
             "claude-desktop",
             "session.jsonl",
             &[&record("/v1/messages", 200)],
         );
 
-        let page = read_request_log_records(
-            "claude-desktop",
-            "session.jsonl",
-            0,
-            10,
-            "desc",
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let page = root
+            .read_records(
+                "claude-desktop",
+                "session.jsonl",
+                0,
+                10,
+                "desc",
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         assert_eq!(page.total, 1);
     }

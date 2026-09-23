@@ -987,10 +987,7 @@ function RecordDetail({
   );
 }
 
-function detailKey(
-  file: ProxyRequestLogFileMeta,
-  lineNo: number,
-): string {
+function detailKey(file: ProxyRequestLogFileMeta, lineNo: number): string {
   return `${file.appType}\u0000${file.fileName}\u0000${lineNo}`;
 }
 
@@ -1204,15 +1201,19 @@ export function RequestLogViewer() {
             lineNo,
           })
           .then((record) => {
-            if (selectedRef.current && fileKey(selectedRef.current) !== currentFileKey) {
+            if (
+              selectedRef.current &&
+              fileKey(selectedRef.current) !== currentFileKey
+            ) {
               return;
             }
-            setDetails((prev) =>
-              new Map(prev).set(key, { ...record, lineNo }),
-            );
+            setDetails((prev) => new Map(prev).set(key, { ...record, lineNo }));
           })
           .catch((error) => {
-            if (selectedRef.current && fileKey(selectedRef.current) !== currentFileKey) {
+            if (
+              selectedRef.current &&
+              fileKey(selectedRef.current) !== currentFileKey
+            ) {
               return;
             }
             toast.error(extractErrorMessage(error));
@@ -1700,9 +1701,14 @@ export function RequestLogViewer() {
                                 }).format(new Date(row.timestamp!))}
                               </div>
                             ) : row.type === "detail" ? (
-                              selected && details.has(detailKey(selected, row.lineNo)) ? (
+                              selected &&
+                              details.has(detailKey(selected, row.lineNo)) ? (
                                 <RecordDetail
-                                  record={details.get(detailKey(selected, row.lineNo))!}
+                                  record={
+                                    details.get(
+                                      detailKey(selected, row.lineNo),
+                                    )!
+                                  }
                                   locale={locale}
                                   onContentHeightChange={
                                     handleContentHeightChange

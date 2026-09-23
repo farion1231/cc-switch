@@ -632,7 +632,7 @@ mod tests {
         assert!(v.get("ts").is_none());
         assert_eq!(v["method"], "POST");
         assert_eq!(v["endpoint"], "/v1/messages");
-        assert!(v.get("url").is_none());
+        assert_eq!(v["url"], "https://api.anthropic.com/v1/messages");
         assert_eq!(v["requestHeaders"], json!([]));
         assert_eq!(v["requestBody"], json!({"model": "claude-opus-4-7"}));
         assert_eq!(v["responseHeaders"], json!([]));
