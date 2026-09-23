@@ -84,12 +84,26 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#111111",
   },
+  fluxa: {
+    name: "fluxa",
+    displayName: "FluxA",
+    category: "ai-provider",
+    keywords: ["fluxa", "fluxapay", "agentmarket", "tokenplan", "marketplace"],
+    defaultColor: "currentColor",
+  },
   soleapi: {
     name: "soleapi",
     displayName: "SoleAPI",
     category: "ai-provider",
     keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "currentColor",
+  },
+  soshow: {
+    name: "soshow",
+    displayName: "Soshow",
+    category: "ai-provider",
+    keywords: ["soshow", "so-show", "model market", "aggregator", "claude"],
+    defaultColor: "#7966FE",
   },
   sudocode: {
     name: "sudocode",
