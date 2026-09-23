@@ -323,10 +323,14 @@ export interface WebDavSyncSettings {
   status?: WebDavSyncStatus;
 }
 
+// S3 URL 风格
+export type S3UrlStyle = "auto" | "virtualHosted" | "pathStyle";
+
 // S3 同步配置
 export interface S3SyncSettings {
   enabled?: boolean;
   autoSync?: boolean;
+  preset?: string;
   region?: string;
   bucket?: string;
   accessKeyId?: string;
@@ -334,6 +338,7 @@ export interface S3SyncSettings {
   endpoint?: string;
   remoteRoot?: string;
   profile?: string;
+  urlStyle?: S3UrlStyle;
   status?: WebDavSyncStatus;
 }
 
