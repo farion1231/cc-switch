@@ -70,7 +70,7 @@ export function SkillCard({
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <CardTitle className="text-base font-semibold truncate">
+            <CardTitle className="text-base font-semibold leading-tight truncate">
               {skill.name}
             </CardTitle>
             <div className="flex items-center gap-2 mt-1.5">
