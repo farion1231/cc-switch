@@ -433,7 +433,6 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         r#"model_provider = "custom"
 model = {model_name}
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = {provider_display_name}
@@ -1169,6 +1168,12 @@ mod tests {
                 .get("base_url")
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
+        );
+        // openai/codex#3212 removed the option; generated configs must not
+        // resurrect it.
+        assert!(
+            parsed.get("disable_response_storage").is_none(),
+            "generated Codex config must not contain the removed disable_response_storage option"
         );
     }
 

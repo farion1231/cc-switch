@@ -157,7 +157,6 @@ export function UniversalProviderFormModal({
     const configToml = `model_provider = "custom"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "NewAPI"
