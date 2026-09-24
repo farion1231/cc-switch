@@ -14,6 +14,7 @@ import {
   setCodexRemoteCompaction,
   setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
+import { parseWindowToken } from "./hooks/useModelState";
 
 interface CodexAuthSectionProps {
   value: string;
@@ -105,6 +106,7 @@ interface CodexConfigSectionProps {
   commonConfigError?: string;
   configError?: string;
   isProxyTakeover?: boolean;
+  commonConfigLoading?: boolean;
 }
 
 /**
@@ -121,6 +123,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   commonConfigError,
   configError,
   isProxyTakeover = false,
+  commonConfigLoading = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -143,16 +146,27 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   // Mirror value prop to local state (same pattern as CommonConfigEditor)
   const [localValue, setLocalValue] = useState(value);
   const localValueRef = useRef(value);
+  // 最近一次 commitTopLevelInt 产生的完整 TOML。value 回流等于它（正常
+  // 回写）时原样串保留；不等（如用户直接编辑 JsonEditor）时清空原样串，
+  // 避免过期 raw 在失焦时覆盖外部修改。
+  const lastCommittedRef = useRef<string | null>(null);
   useEffect(() => {
     setLocalValue(value);
     localValueRef.current = value;
+    if (
+      lastCommittedRef.current !== null &&
+      value !== lastCommittedRef.current
+    ) {
+      setRawTopLevelInt({});
+    }
   }, [value]);
 
   const handleLocalChange = useCallback(
     (newValue: string) => {
-      if (newValue === localValueRef.current) return;
+      const previous = localValueRef.current;
       localValueRef.current = newValue;
       setLocalValue(newValue);
+      if (newValue === previous) return;
       onChange(newValue);
     },
     [onChange],
@@ -176,73 +190,88 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     [handleLocalChange, providerName],
   );
 
-  // Parse toggle states from TOML text
-  const toggleStates = useMemo(() => {
-    const contextWindow = extractCodexTopLevelInt(
-      localValue,
-      "model_context_window",
-    );
-    const compactLimit = extractCodexTopLevelInt(
-      localValue,
-      "model_auto_compact_token_limit",
-    );
-    return {
-      contextWindow1M: contextWindow === 1000000,
-      compactLimit: compactLimit ?? 900000,
-    };
-  }, [localValue]);
+  // 从 config.toml 顶层提取两个独立数字输入值
+  const topLevelIntValues = useMemo(
+    () => ({
+      contextWindow:
+        extractCodexTopLevelInt(localValue, "model_context_window") ?? "",
+      autoCompactLimit:
+        extractCodexTopLevelInt(localValue, "model_auto_compact_token_limit") ??
+        "",
+    }),
+    [localValue],
+  );
 
-  // Debounce timer for compact limit input
-  const compactTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  // 输入过程中保留用户原样字符串（支持 500K / 2m），失焦时才解析写入 TOML；
+  // 未输入时回退到已存 TOML 顶层整数显示。回车只结束编辑状态，不触发表单保存。
+  const [rawTopLevelInt, setRawTopLevelInt] = useState<{
+    contextWindow?: string;
+    autoCompactLimit?: string;
+  }>({});
 
-  const handleContextWindowToggle = useCallback(
-    (checked: boolean) => {
-      let toml = localValueRef.current || "";
-      if (checked) {
-        toml = setCodexTopLevelInt(toml, "model_context_window", 1000000);
-        // Auto-set compact limit if not already present
-        if (
-          extractCodexTopLevelInt(toml, "model_auto_compact_token_limit") ===
-          undefined
-        ) {
-          toml = setCodexTopLevelInt(
-            toml,
-            "model_auto_compact_token_limit",
-            900000,
-          );
-        }
-      } else {
-        toml = removeCodexTopLevelField(toml, "model_context_window");
-        toml = removeCodexTopLevelField(toml, "model_auto_compact_token_limit");
+  const commitTopLevelInt = useCallback(
+    (
+      fieldName: "model_context_window" | "model_auto_compact_token_limit",
+      rawKey: "contextWindow" | "autoCompactLimit",
+      rawValue: string,
+    ) => {
+      const trimmed = rawValue.trim();
+      const numericValue = trimmed ? parseWindowToken(trimmed) : undefined;
+      if (trimmed && numericValue === undefined) {
+        // 非法输入：不动 TOML（避免误删已存值），仅清除原样串，
+        // 输入框回退到已存 TOML 顶层整数显示。
+        setRawTopLevelInt((prev) => {
+          if (prev[rawKey] === undefined) return prev;
+          const next = { ...prev };
+          delete next[rawKey];
+          return next;
+        });
+        return;
       }
+      const toml = numericValue
+        ? setCodexTopLevelInt(
+            localValueRef.current || "",
+            fieldName,
+            numericValue,
+          )
+        : removeCodexTopLevelField(localValueRef.current || "", fieldName);
+      lastCommittedRef.current = toml;
       handleLocalChange(toml);
-    },
-    [handleLocalChange],
-  );
-
-  const handleCompactLimitChange = useCallback(
-    (inputValue: string) => {
-      clearTimeout(compactTimerRef.current);
-      compactTimerRef.current = setTimeout(() => {
-        const num = parseInt(inputValue, 10);
-        if (!Number.isNaN(num) && num > 0) {
-          handleLocalChange(
-            setCodexTopLevelInt(
-              localValueRef.current || "",
-              "model_auto_compact_token_limit",
-              num,
-            ),
-          );
+      setRawTopLevelInt((prev) => {
+        const next = { ...prev };
+        if (numericValue !== undefined) {
+          // 合法 K/M 输入：解析值已写入 TOML，输入框继续原样显示。
+          next[rawKey] = trimmed;
+        } else {
+          // 空输入：已从 TOML 移除该字段，回退到空显示。
+          delete next[rawKey];
         }
-      }, 500);
+        return next;
+      });
     },
     [handleLocalChange],
   );
 
-  // Cleanup debounce timer
-  useEffect(() => {
-    return () => clearTimeout(compactTimerRef.current);
-  }, []);
+  const commitTopLevelIntFromKeyDown = useCallback(
+    (
+      event: React.KeyboardEvent<HTMLInputElement>,
+      rawKey: "contextWindow" | "autoCompactLimit",
+    ) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const fieldName =
+        rawKey === "contextWindow"
+          ? "model_context_window"
+          : "model_auto_compact_token_limit";
+      const raw = rawTopLevelInt[rawKey];
+      if (raw !== undefined) {
+        commitTopLevelInt(fieldName, rawKey, raw);
+      }
+      event.currentTarget.blur();
+    },
+    [commitTopLevelInt, rawTopLevelInt],
+  );
 
   return (
     <div className="space-y-2">
@@ -275,6 +304,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
               type="checkbox"
               checked={useCommonConfig}
               onChange={(e) => onCommonConfigToggle(e.target.checked)}
+              disabled={commonConfigLoading}
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             {t("codexConfig.writeCommonConfig")}
@@ -299,29 +329,76 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={toggleStates.contextWindow1M}
-            onChange={(e) => handleContextWindowToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          <span>{t("codexConfig.contextWindow1M")}</span>
-        </label>
         <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-          <span>{t("codexConfig.autoCompactLimit")}:</span>
+          <span>{t("codexConfig.contextWindow")}</span>
           <input
             type="text"
             inputMode="numeric"
-            pattern="[0-9]*"
-            key={toggleStates.compactLimit}
-            defaultValue={toggleStates.compactLimit}
-            disabled={!toggleStates.contextWindow1M}
-            onChange={(e) => handleCompactLimitChange(e.target.value)}
-            className="w-28 h-7 px-2 text-sm rounded border border-border bg-background text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            pattern="[0-9]*[KkMm]?"
+            aria-label={t("codexConfig.contextWindow")}
+            value={
+              rawTopLevelInt.contextWindow ?? topLevelIntValues.contextWindow
+            }
+            placeholder={t("codexConfig.contextWindowPlaceholder")}
+            onChange={(e) => {
+              // e.currentTarget 在 handler 返回后被置空，updater 于渲染期才执行，
+              // 必须先同步取值再进函数式 setState。
+              const next = e.currentTarget.value;
+              setRawTopLevelInt((prev) => ({ ...prev, contextWindow: next }));
+            }}
+            onBlur={() => {
+              const raw = rawTopLevelInt.contextWindow;
+              if (raw === undefined) return;
+              commitTopLevelInt("model_context_window", "contextWindow", raw);
+            }}
+            onKeyDown={(event) =>
+              commitTopLevelIntFromKeyDown(event, "contextWindow")
+            }
+            className="w-32 h-7 px-2 text-sm rounded border border-border bg-background text-foreground"
+          />
+        </label>
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <span>{t("codexConfig.autoCompactLimit")}</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*[KkMm]?"
+            aria-label={t("codexConfig.autoCompactLimit")}
+            value={
+              rawTopLevelInt.autoCompactLimit ??
+              topLevelIntValues.autoCompactLimit
+            }
+            placeholder={t("codexConfig.autoCompactLimitPlaceholder")}
+            onChange={(e) => {
+              const next = e.currentTarget.value;
+              setRawTopLevelInt((prev) => ({
+                ...prev,
+                autoCompactLimit: next,
+              }));
+            }}
+            onBlur={() => {
+              const raw = rawTopLevelInt.autoCompactLimit;
+              if (raw === undefined) return;
+              commitTopLevelInt(
+                "model_auto_compact_token_limit",
+                "autoCompactLimit",
+                raw,
+              );
+            }}
+            onKeyDown={(event) =>
+              commitTopLevelIntFromKeyDown(event, "autoCompactLimit")
+            }
+            className="w-32 h-7 px-2 text-sm rounded border border-border bg-background text-foreground"
           />
         </label>
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        {t("codexConfig.contextWindowGlobalHint", {
+          defaultValue:
+            "全局上下文大小：填写后所有模型统一使用该长度；不填则以每个模型填写的上下文为准。压缩比例默认 0.95。",
+        })}
+      </p>
 
       <JsonEditor
         value={localValue}
