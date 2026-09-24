@@ -140,3 +140,84 @@ context_window = 500000
     expect(parsed.model).not.toHaveProperty("old-profile");
   });
 });
+
+// #7003: Grok Build resolves [models].session_summary separately from
+// [models].default, so a generated custom-provider config that set only the
+// default sent session-title requests to the client's own fallback model.
+describe("session summary profile", () => {
+  it("points a generated config's summary at the selected profile", () => {
+    const config = buildGrokBuildConfig({
+      model: "custom-model",
+      baseUrl: "https://relay.example.invalid/v1",
+      name: "Custom",
+      apiKey: "key",
+      apiBackend: "responses",
+      contextWindow: 320000,
+    });
+    const parsed = parseToml(config) as any;
+
+    expect(parsed.models.default).toBe("custom-model");
+    expect(parsed.models.session_summary).toBe("custom-model");
+  });
+
+  it("leaves a summary profile the user pointed somewhere else alone", () => {
+    const existing = [
+      "[models]",
+      'default = "old-model"',
+      'session_summary = "cheap-model"',
+      "",
+      '[model."old-model"]',
+      'model = "old-model"',
+      'base_url = "https://a.example.invalid/v1"',
+      'name = "Old"',
+      "",
+      '[model."cheap-model"]',
+      'model = "cheap-model"',
+      'base_url = "https://b.example.invalid/v1"',
+      'name = "Cheap"',
+      "",
+    ].join("\n");
+
+    const updated = updateGrokBuildConfig(existing, {
+      model: "new-model",
+      baseUrl: "https://a.example.invalid/v1",
+      name: "New",
+      apiKey: "key",
+      apiBackend: "responses",
+      contextWindow: 320000,
+    });
+    const parsed = parseToml(updated) as any;
+
+    expect(parsed.models.default).toBe("new-model");
+    expect(parsed.models.session_summary).toBe("cheap-model");
+  });
+
+  it("follows the default profile through a rename when it was tracking it", () => {
+    // Otherwise the summary is left pointing at a [model.*] table that the
+    // rename removed, which is worse than not setting it at all.
+    const existing = [
+      "[models]",
+      'default = "old-model"',
+      'session_summary = "old-model"',
+      "",
+      '[model."old-model"]',
+      'model = "old-model"',
+      'base_url = "https://a.example.invalid/v1"',
+      'name = "Old"',
+      "",
+    ].join("\n");
+
+    const updated = updateGrokBuildConfig(existing, {
+      model: "new-model",
+      baseUrl: "https://a.example.invalid/v1",
+      name: "New",
+      apiKey: "key",
+      apiBackend: "responses",
+      contextWindow: 320000,
+    });
+    const parsed = parseToml(updated) as any;
+
+    expect(parsed.models.default).toBe("new-model");
+    expect(parsed.models.session_summary).toBe("new-model");
+  });
+});
