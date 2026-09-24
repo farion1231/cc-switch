@@ -177,9 +177,6 @@ function DistributionChartCard({
     ? distribution.invalidTokens
     : distribution.invalidCost;
   const isZero = total === 0;
-  const allHidden =
-    distribution.rows.length > 0 &&
-    distribution.rows.every((row) => hiddenModels.has(row.model));
   const lang = getResolvedLang(i18n);
   const locale = getLocaleFromLanguage(lang);
   const totalLabel = isTokens
@@ -341,18 +338,16 @@ function DistributionChartCard({
           </div>
         </div>
 
-        {(hasInvalidData || isZero || allHidden) && (
+        {(hasInvalidData || isZero) && (
           <p
             className="min-h-5 text-center text-xs text-muted-foreground"
             role="status"
           >
             {hasInvalidData
               ? t("usage.modelDistribution.invalidData")
-              : allHidden
-                ? t("usage.modelDistribution.allHidden")
-                : isTokens
-                  ? t("usage.modelDistribution.zeroTokens")
-                  : t("usage.modelDistribution.zeroCost")}
+              : isTokens
+                ? t("usage.modelDistribution.zeroTokens")
+                : t("usage.modelDistribution.zeroCost")}
           </p>
         )}
       </CardContent>
@@ -370,6 +365,9 @@ export function ModelUsageDistribution({
   const hasHiddenModels = distribution.rows.some((row) =>
     hiddenModels.has(row.model),
   );
+  const allHidden =
+    distribution.rows.length > 0 &&
+    distribution.rows.every((row) => hiddenModels.has(row.model));
 
   if (distribution.rows.length === 0) {
     return (
@@ -395,6 +393,11 @@ export function ModelUsageDistribution({
       </div>
 
       <div className="rounded-xl border border-border/50 bg-card/40 p-4">
+        {allHidden && (
+          <p role="status" className="mb-3 text-sm text-muted-foreground">
+            {t("usage.modelDistribution.allHidden")}
+          </p>
+        )}
         {hasHiddenModels && (
           <div className="mb-3 flex justify-end">
             <button

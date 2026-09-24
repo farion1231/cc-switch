@@ -97,6 +97,10 @@ describe("ModelStatsTable distribution", () => {
     expect(
       screen.getByRole("button", { name: "usage.modelDistribution.showAll" }),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^beta,/ }));
+    expect(
+      screen.getAllByText("usage.modelDistribution.allHidden"),
+    ).toHaveLength(1);
 
     rerender(
       <ModelStatsTable range={{ preset: "7d" }} refreshIntervalMs={30000} />,
