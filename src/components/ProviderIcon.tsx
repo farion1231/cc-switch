@@ -100,12 +100,15 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
 
   // Fallback：显示首字母
   if (showFallback) {
-    const initials = name
-      .split(" ")
-      .map((word) => word[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+    const trimmed = (name || "").trim();
+    const initials = trimmed
+      ? trimmed
+          .split(/\s+/)
+          .map((word) => word[0] || "")
+          .join("")
+          .toUpperCase()
+          .slice(0, 2)
+      : "?";
     const fallbackFontSize =
       typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
     return (
