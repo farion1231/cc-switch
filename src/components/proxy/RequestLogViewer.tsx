@@ -274,7 +274,7 @@ function HeaderTable({
   }
   return (
     <div className="rounded-md border border-border overflow-hidden">
-      <div className="flex justify-end bg-muted/30 px-1.5 py-0.5 border-b border-border">
+      <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0.5 border-b border-border">
         <CopyButton
           text={headersToText(headers)}
           label={t("proxy.requestLogViewer.copyAsText")}

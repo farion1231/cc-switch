@@ -27,7 +27,7 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
-  ScrollText,
+  ArrowRightLeft,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -1368,15 +1368,6 @@ function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => setCurrentView("requestLogs")}
-                  title={t("proxy.requestLogViewer.viewLogs")}
-                  className="hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <ScrollText className="w-5 h-5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
                   onClick={() => {
                     setSettingsDefaultTab("general");
                     setCurrentView("settings");
@@ -1714,6 +1705,15 @@ function App() {
                               >
                                 <History className="w-4 h-4" />
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("requestLogs")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("proxy.requestLogViewer.viewLogs")}
+                              >
+                                <ArrowRightLeft className="w-4 h-4" />
+                              </Button>
                             </>
                           ) : (
                             <>
@@ -1755,6 +1755,21 @@ function App() {
                                 title={t("sessionManager.title")}
                               >
                                 <History className="flex-shrink-0 w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("requestLogs")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasSessionSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
+                                title={t("proxy.requestLogViewer.viewLogs")}
+                              >
+                                <ArrowRightLeft className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               {hasMcpSupport && (
                                 <Button
