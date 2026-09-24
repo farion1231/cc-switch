@@ -84,13 +84,13 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
         || normalized.starts_with("grok-build-")
 }
 
-/// Detect models whose OpenAI reasoning effort supports a distinct `max` tier.
+/// Detect model families whose OpenAI reasoning effort supports a distinct `max` tier.
 fn supports_max_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-6-astra"
-    )
+    normalized == "gpt-5.6"
+        || normalized.starts_with("gpt-5.6-")
+        || normalized == "gpt-6"
+        || normalized.starts_with("gpt-6-")
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -1836,6 +1836,8 @@ mod tests {
             "gpt-5.6-terra",
             "gpt-5.6-luna",
             "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
         ] {
             let body = json!({
                 "model": model,
