@@ -110,6 +110,13 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: updateSkillMock,
     isPending: false,
   }),
+  useBatchUpdateSkillSource: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+  useSkillRepos: () => ({
+    data: [],
+  }),
 }));
 
 type InstalledSkillOverrides = Omit<Partial<InstalledSkill>, "apps"> & {
