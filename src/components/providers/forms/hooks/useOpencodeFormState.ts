@@ -113,20 +113,25 @@ export function useOpencodeFormState({
 
   const handleOpencodeNpmChange = useCallback(
     (npm: string) => {
-      const nextBaseUrl = resolveKnownOpencodeBaseUrl(opencodeBaseUrl, npm);
-      setOpencodeNpm(npm);
-      if (nextBaseUrl) {
-        setOpencodeBaseUrl(nextBaseUrl);
-      }
       updateOpencodeSettings((config) => {
+        const currentBaseUrl =
+          typeof config.options?.baseURL === "string"
+            ? config.options.baseURL
+            : "";
+        const nextBaseUrl = resolveKnownOpencodeBaseUrl(currentBaseUrl, npm);
+
         config.npm = npm;
         if (nextBaseUrl) {
-          if (!config.options) config.options = {};
+          if (!config.options || typeof config.options !== "object") {
+            config.options = {};
+          }
           config.options.baseURL = nextBaseUrl;
         }
+        setOpencodeBaseUrl(nextBaseUrl ?? currentBaseUrl);
       });
+      setOpencodeNpm(npm);
     },
-    [opencodeBaseUrl, updateOpencodeSettings],
+    [updateOpencodeSettings],
   );
 
   const handleOpencodeApiKeyChange = useCallback(
