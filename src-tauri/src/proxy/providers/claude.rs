@@ -1154,17 +1154,7 @@ mod tests {
             .collect();
         assert_eq!(headers["authorization"], "Bearer test-token");
         assert_eq!(headers["originator"], "codex_cli_rs");
-        let version: Vec<u32> = headers["version"]
-            .to_str()
-            .unwrap()
-            .split('.')
-            .map(|part| part.parse().unwrap())
-            .collect();
-        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
-        assert!(
-            version.as_slice() >= [0, 153, 0].as_slice(),
-            "gpt-6-astra requires Codex >= 0.153.0; sent {version:?}"
-        );
+        assert_eq!(headers["version"], "0.156.1");
     }
 
     #[test]

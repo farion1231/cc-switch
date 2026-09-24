@@ -157,17 +157,18 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
-        let parts: Vec<u32> = version
-            .split('.')
-            .map(|part| part.parse().unwrap())
-            .collect();
-        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
-        assert!(parts.as_slice() >= [0, 153, 0].as_slice());
-        assert_eq!(request.headers()["version"], version);
-        let models = parse_models(json!({"models": [{
-            "slug": "gpt-6-astra", "minimal_client_version": "0.153.0"
-        }]}));
+        assert_eq!(version, "0.156.1");
+        assert_eq!(request.headers()["version"], "0.156.1");
+        let models = parse_models(json!({
+            "models": [
+                { "slug": "gpt-6-astra", "minimal_client_version": "0.153.0" },
+                { "slug": "gpt-6-sol", "minimal_client_version": "0.155.0" },
+                { "slug": "gpt-6-luna", "minimal_client_version": "0.155.0" }
+            ]
+        }));
         assert_eq!(models[0].id, "gpt-6-astra");
+        assert!(models.iter().any(|model| model.id == "gpt-6-sol"));
+        assert!(models.iter().any(|model| model.id == "gpt-6-luna"));
     }
 
     #[test]

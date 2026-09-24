@@ -23,6 +23,9 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::proxy::providers::codex_oauth_auth::{
+    CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR,
+};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
@@ -2287,6 +2290,12 @@ impl RequestForwarder {
             is_copilot,
         );
 
+        // Codex OAuth：override 与入站透传都可能污染身份头，最终收敛为 canonical 单值。
+        // 该标志仅在 Codex OAuth 认证成功时置位（此时 auth_headers 已含 canonical 身份头）。
+        if should_send_codex_oauth_session_headers {
+            enforce_codex_oauth_identity_headers(&mut ordered_headers);
+        }
+
         // 托管 OAuth 的 workspace 由账号绑定决定，覆盖客户端或本地代理配置的旧值。
         if let Some(ref account_id) = codex_oauth_account_id {
             if let Ok(value) = http::HeaderValue::from_str(account_id) {
@@ -3685,6 +3694,22 @@ fn apply_local_proxy_header_overrides(
     }
 }
 
+/// Codex OAuth：把出站身份头收敛为 canonical 单值。
+/// 入站循环用 `append` 会保留客户端的冲突值形成多值头，且
+/// `local_proxy_request_overrides` 可以改写这两个头（protected 列表不含它们）。
+/// 在全部组装与 override 完成后调用，用 `insert` 保证上游只看到
+/// `codex_cli_rs` 和固定的客户端版本。
+fn enforce_codex_oauth_identity_headers(headers: &mut http::HeaderMap) {
+    headers.insert(
+        http::HeaderName::from_static("originator"),
+        http::HeaderValue::from_static(CODEX_OAUTH_ORIGINATOR),
+    );
+    headers.insert(
+        http::HeaderName::from_static("version"),
+        http::HeaderValue::from_static(CODEX_OAUTH_CLIENT_VERSION),
+    );
+}
+
 fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
     matches!(
         name.as_str(),
@@ -4135,6 +4160,33 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("copilot")
         );
+    }
+
+    #[test]
+    fn codex_oauth_identity_headers_survive_inbound_conflict_and_overrides() {
+        // 模拟 forward 的真实组装顺序：入站冲突头先被 append，auth_headers 再
+        // append canonical 值（同名头出现多值），local proxy override 随后 insert 改写。
+        let mut headers = http::HeaderMap::new();
+        headers.append("originator", http::HeaderValue::from_static("evil-client"));
+        headers.append("version", http::HeaderValue::from_static("999.0.0"));
+        headers.append("originator", http::HeaderValue::from_static("codex_cli_rs"));
+        headers.append("version", http::HeaderValue::from_static("0.156.1"));
+
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::from([("originator".to_string(), "override-client".to_string())]),
+            body: None,
+        };
+        apply_local_proxy_header_overrides(&mut headers, Some(&overrides), false);
+
+        enforce_codex_oauth_identity_headers(&mut headers);
+
+        let originators: Vec<_> = headers.get_all("originator").iter().collect();
+        assert_eq!(originators.len(), 1, "originator 必须收敛为单一值");
+        assert_eq!(originators[0], "codex_cli_rs");
+
+        let versions: Vec<_> = headers.get_all("version").iter().collect();
+        assert_eq!(versions.len(), 1, "version 必须收敛为单一值");
+        assert_eq!(versions[0], "0.156.1");
     }
 
     #[tokio::test]
