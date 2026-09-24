@@ -89,13 +89,10 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
     matches!(
         normalized.as_str(),
-        "gpt-5.6"
-            | "gpt-5.6-sol"
-            | "gpt-5.6-terra"
-            | "gpt-5.6-luna"
-            | "gpt-6-astra"
-            | "gpt-6-sol"
-            | "gpt-6-luna"
+        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+    ) || matches!(
+        normalized.as_str(),
+        "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
     )
 }
 
@@ -1837,13 +1834,8 @@ mod tests {
     #[test]
     fn test_output_config_max_preserved_for_supported_models() {
         for model in [
-            "gpt-5.6",
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "gpt-6-astra",
-            "gpt-6-sol",
-            "gpt-6-luna",
+            "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+            "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
         ] {
             let body = json!({
                 "model": model,
