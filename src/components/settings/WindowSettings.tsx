@@ -4,13 +4,19 @@ import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { AnimatePresence, motion } from "framer-motion";
 import { isLinux } from "@/lib/platform";
+import { AutoLightweightSettings } from "./AutoLightweightSettings";
 
 interface WindowSettingsProps {
   settings: SettingsFormState;
   onChange: (updates: Partial<SettingsFormState>) => void;
+  disabled?: boolean;
 }
 
-export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
+export function WindowSettings({
+  settings,
+  onChange,
+  disabled,
+}: WindowSettingsProps) {
   const { t } = useTranslation();
 
   return (
@@ -75,6 +81,12 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           onCheckedChange={(value) =>
             onChange({ minimizeToTrayOnClose: value })
           }
+        />
+
+        <AutoLightweightSettings
+          settings={settings}
+          onChange={onChange}
+          disabled={disabled}
         />
 
         {isLinux() && (
