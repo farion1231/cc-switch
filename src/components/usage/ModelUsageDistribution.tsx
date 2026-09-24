@@ -415,7 +415,7 @@ export function ModelUsageDistribution({
           </span>
         </div>
         <div
-          className="grid max-h-72 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2"
+          className="grid max-h-72 grid-cols-1 gap-1 overflow-y-auto"
           role="group"
           aria-label={t("usage.model")}
         >
