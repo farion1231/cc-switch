@@ -268,7 +268,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
-pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
     let meta = parse_session(path)
         .ok_or_else(|| format!("Failed to parse Codex session metadata: {}", path.display()))?;
 
@@ -286,7 +286,74 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         )
     })?;
 
+    // Codex lists resumable conversations from `session_index.jsonl`. An entry
+    // that still points at the rollout we just removed makes Codex fail with
+    // "failed to resolve rollout path" when it touches the sidebar entry, so
+    // drop it together with the file.
+    if let Some(index_path) = session_index_path(root) {
+        prune_session_index(&index_path, session_id)?;
+    }
+
     Ok(true)
+}
+
+/// `session_index.jsonl` lives in the Codex home directory, next to `sessions/`
+/// and `archived_sessions/`.
+fn session_index_path(root: &Path) -> Option<PathBuf> {
+    let name = root.file_name()?.to_str()?;
+    if !matches!(name, "sessions" | "archived_sessions") {
+        return None;
+    }
+    Some(root.parent()?.join(CODEX_SESSION_INDEX_FILENAME))
+}
+
+fn prune_session_index(index_path: &Path, thread_id: &str) -> Result<(), String> {
+    let contents = match std::fs::read_to_string(index_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to read Codex session index {}: {error}",
+                index_path.display()
+            ))
+        }
+    };
+
+    let mut kept = String::with_capacity(contents.len());
+    let mut removed = false;
+    for line in contents.lines() {
+        if session_index_line_id(line).as_deref() == Some(thread_id) {
+            removed = true;
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+
+    if !removed {
+        return Ok(());
+    }
+
+    // Codex reads this file while the app is running, so replace it atomically
+    // instead of truncating it in place.
+    let temp_path = index_path.with_extension("jsonl.cc-switch.tmp");
+    if let Err(error) =
+        std::fs::write(&temp_path, kept).and_then(|()| std::fs::rename(&temp_path, index_path))
+    {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!(
+            "Failed to update Codex session index {}: {error}",
+            index_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn session_index_line_id(line: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let id = value.get("id")?.as_str()?.trim();
+    (!id.is_empty()).then(|| id.to_string())
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -561,6 +628,35 @@ mod tests {
 
         assert!(ids.contains(&"active-id".to_string()));
         assert!(ids.contains(&"archived-id".to_string()));
+    }
+
+    #[test]
+    fn delete_session_prunes_sidebar_index_entry() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let path = root
+            .join("2026/03/06")
+            .join("rollout-2026-03-06T21-50-12-019cc369-bd7c-7891-b371-7b20b4fe0b18.jsonl");
+        std::fs::create_dir_all(path.parent().expect("rollout parent")).expect("rollout dir");
+        write_codex_session(&path, "019cc369-bd7c-7891-b371-7b20b4fe0b18", "hello");
+
+        let index = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
+        std::fs::write(
+            &index,
+            concat!(
+                "{\"id\": \"019cc369-bd7c-7891-b371-7b20b4fe0b18\", \"thread_name\": \"hello\"}\n",
+                "{\"id\": \"019cc370-0000-0000-0000-000000000000\", \"thread_name\": \"keep\"}\n"
+            ),
+        )
+        .expect("write index");
+
+        delete_session(&root, &path, "019cc369-bd7c-7891-b371-7b20b4fe0b18")
+            .expect("delete session");
+
+        assert!(!path.exists());
+        let kept = std::fs::read_to_string(&index).expect("read index");
+        assert!(!kept.contains("019cc369-bd7c-7891-b371-7b20b4fe0b18"));
+        assert!(kept.contains("019cc370-0000-0000-0000-000000000000"));
     }
 
     #[test]
