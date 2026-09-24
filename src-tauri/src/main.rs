@@ -7,14 +7,25 @@ fn main() {
     // 参考: https://github.com/tauri-apps/tauri/issues/9394
     #[cfg(target_os = "linux")]
     {
-        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
-        // 禁用 WebKitGTK 合成模式，规避 resize 时 webview 崩溃以及部分 Wayland
-        // 合成器下的 surface 协商问题（整窗 UI 点击无响应、必须最大化-还原才能恢复）。
-        // 参考: https://github.com/tauri-apps/tauri/issues/9394
-        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        // 逃生开关:CC_SWITCH_WEBKIT_HW=1 时保留 WebKitGTK 硬件加速
+        // (DMABUF 渲染器 + 合成模式都不禁用)。软件渲染在 2K/4K 屏上
+        // 重绘跟不上窗口拖动,表现为拖影/残影;较新的 NVIDIA 驱动 +
+        // WebKitGTK 2.52 + Mesa 26 上默认路径已可正常走 GPU。
+        // 默认行为保持不变(零回归),仅在显式设置时生效。
+        let webkit_hw = std::env::var("CC_SWITCH_WEBKIT_HW").as_deref() == Ok("1");
+        if !webkit_hw {
+            // 在 Linux 上设置 WebKit 环境变量以解决 DMA-BUF 渲染问题
+            // 某些 Linux 系统（如 Debian 13.2、Nvidia GPU）上 WebKitGTK 的 DMA-BUF 渲染器可能导致白屏/黑屏
+            // 参考: https://github.com/tauri-apps/tauri/issues/9394
+            if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+            // 禁用 WebKitGTK 合成模式，规避 resize 时 webview 崩溃以及部分 Wayland
+            // 合成器下的 surface 协商问题（整窗 UI 点击无响应、必须最大化-还原才能恢复）。
+            // 参考: https://github.com/tauri-apps/tauri/issues/9394
+            if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
+                std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+            }
         }
 
         // AppImage 的 GTK 启动钩子 (linuxdeploy-plugin-gtk.sh) 会无条件
