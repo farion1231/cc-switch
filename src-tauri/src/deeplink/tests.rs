@@ -1083,6 +1083,40 @@ fn test_claude_desktop_proxy_builds_model_routes() {
 }
 
 #[test]
+fn test_lingshu_console_claude_desktop_proxy_contract() {
+    use super::provider::build_provider_from_request;
+    use crate::provider::ClaudeDesktopMode;
+
+    // Exact URL emitted by the LinShu console's "Import to CC Switch" dialog
+    // when the operator picks Claude Desktop and maps all three roles to real
+    // (non-Claude) upstream ids.
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Lingshu+grok&endpoint=https%3A%2F%2Flingshuhub.com&apiKey=sk-abc123&sonnetModel=grok-4.6&opusModel=grok-4.7&haikuModel=grok-4.5&claudeDesktopMode=proxy&homepage=https%3A%2F%2Flingshuhub.com&enabled=true";
+
+    let request = parse_deeplink_url(url).unwrap();
+    let provider = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap();
+
+    let meta = provider.meta.expect("meta should be present");
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+
+    let routes = meta.claude_desktop_model_routes;
+    assert_eq!(routes.len(), 3, "all three mapped roles produce a route");
+
+    // The desktop menu shows the real upstream id as its label, while the
+    // model actually sent on the wire stays a claude-* id.
+    for (route_id, expected_model) in [
+        ("claude-sonnet-5", "grok-4.6"),
+        ("claude-opus-5", "grok-4.7"),
+        ("claude-haiku-4-5", "grok-4.5"),
+    ] {
+        let route = routes
+            .get(route_id)
+            .unwrap_or_else(|| panic!("missing route {route_id}"));
+        assert_eq!(route.model, expected_model);
+        assert_eq!(route.label_override.as_deref(), Some(expected_model));
+    }
+}
+
+#[test]
 fn test_claude_desktop_proxy_without_model_mapping_is_rejected() {
     use super::provider::build_provider_from_request;
 
