@@ -427,6 +427,10 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let provider_display_name = toml_edit::Value::from(provider_display_name.as_str()).to_string();
     let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
     let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
+    let websocket_capability = request
+        .supports_websockets
+        .map(|enabled| format!("supports_websockets = {enabled}\n"))
+        .unwrap_or_default();
 
     // Build config.toml content
     let config_toml = format!(
@@ -440,6 +444,7 @@ name = {provider_display_name}
 base_url = {endpoint}
 wire_api = "responses"
 requires_openai_auth = true
+{websocket_capability}
 "#
     );
 
@@ -970,6 +975,7 @@ mod tests {
             endpoint: Some("https://api.example.com/v1".to_string()),
             api_key: Some("sk-test".to_string()),
             model: Some("anthropic/claude-opus-4-8".to_string()),
+            supports_websockets: None,
             ..Default::default()
         }
     }
@@ -1119,6 +1125,7 @@ mod tests {
             endpoint: None,
             api_key: None,
             model: None,
+            supports_websockets: None,
             ..Default::default()
         };
         let settings = build_hermes_settings(&request);
@@ -1140,6 +1147,7 @@ mod tests {
             endpoint: Some("https://api.example.com/v1/".to_string()),
             api_key: Some("sk-test".to_string()),
             model: Some("gpt-5-codex".to_string()),
+            supports_websockets: None,
             ..Default::default()
         };
 
@@ -1169,6 +1177,33 @@ mod tests {
                 .get("base_url")
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
+        );
+        assert!(custom_provider.get("supports_websockets").is_none());
+    }
+
+    #[test]
+    fn build_codex_settings_preserves_websocket_capability() {
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("WebSocket Relay".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5-codex".to_string()),
+            supports_websockets: Some(true),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+
+        assert_eq!(
+            parsed["model_providers"]["custom"]["supports_websockets"].as_bool(),
+            Some(true)
         );
     }
 
