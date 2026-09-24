@@ -806,11 +806,29 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           return;
         }
         const needConfirm = reports.filter((r) => r.needs_confirmation);
-        if (needConfirm.length === 0) {
-          await executeRun(toolNames, action);
+        // Store/MSIX 托管的安装没有 CLI 升级动作（update_supported=false，后端也
+        // 不会对它落 npm 兜底）：跳过并引导用户走 Microsoft Store，而不是静默
+        // 跑 `npm i -g` 装出第二份（#7591）。
+        const unsupported = reports.filter((r) => !r.update_supported);
+        const supportedNames = toolNames.filter(
+          (name) => !unsupported.some((report) => report.tool === name),
+        );
+        if (supportedNames.length === 0) {
+          toast.info(t("settings.toolStoreManagedHint"));
           return;
         }
-        setPendingUpgrade({ toolNames, plans: needConfirm, fromBatchEntry });
+        if (unsupported.length > 0) {
+          toast.info(t("settings.toolStoreManagedHint"));
+        }
+        if (needConfirm.length === 0) {
+          await executeRun(supportedNames, action);
+          return;
+        }
+        setPendingUpgrade({
+          toolNames: supportedNames,
+          plans: needConfirm,
+          fromBatchEntry,
+        });
       } finally {
         if (fromBatchEntry) {
           setBatchAction(null);
@@ -822,7 +840,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         });
       }
     },
-    [executeRun, preflightTools, toolActions],
+    [executeRun, preflightTools, toolActions, t],
   );
 
   const handleConfirmUpgrade = useCallback(() => {

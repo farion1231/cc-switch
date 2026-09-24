@@ -855,6 +855,7 @@
     "toolUpgradeWillRun": "Will run:",
     "toolUpgradeConfirmBtn": "Confirm upgrade",
     "toolUpgradeUnanchoredHint": "Can't determine which install your command line uses; will run the default upgrade command (may install to the first npm on PATH).",
+    "toolStoreManagedHint": "Installed from the Microsoft Store — update it via the Microsoft Store app.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",

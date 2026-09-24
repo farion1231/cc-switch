@@ -855,6 +855,7 @@
     "toolUpgradeWillRun": "将执行：",
     "toolUpgradeConfirmBtn": "确认升级",
     "toolUpgradeUnanchoredHint": "无法确定命令行实际使用哪处，将执行默认升级命令（可能装到 PATH 上第一个 npm）。",
+    "toolStoreManagedHint": "该工具来自 Microsoft Store 安装，请在 Microsoft Store 中更新。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
