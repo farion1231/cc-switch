@@ -4866,8 +4866,13 @@ mod tests {
     #[test]
     fn test_responses_max_capable_models_preserve_max() {
         for model in [
-            "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-            "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+            "gpt-5.6",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
         ] {
             let input = json!({
                 "model": model,
