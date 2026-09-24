@@ -873,7 +873,7 @@ export function ClaudeFormFields({
                 })}
               </HelpTip>
             </div>
-            <Select value={apiFormat} onValueChange={onApiFormatChange}>
+            <Select value={apiFormat} onValueChange={handleApiFormatChange}>
               <SelectTrigger id="apiFormat" className="w-full">
                 <SelectValue />
               </SelectTrigger>
