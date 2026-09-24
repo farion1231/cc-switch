@@ -51,6 +51,7 @@ pub(crate) struct ResponsesRouteKey {
     endpoint: String,
     model: String,
     api_format: String,
+    request_variant: String,
 }
 
 impl ResponsesRouteKey {
@@ -59,14 +60,27 @@ impl ResponsesRouteKey {
         endpoint: impl Into<String>,
         model: impl Into<String>,
         api_format: impl Into<String>,
+        request_variant: impl Into<String>,
     ) -> Self {
         Self {
             provider_id: provider_id.into(),
             endpoint: endpoint.into(),
             model: model.into(),
             api_format: api_format.into(),
+            request_variant: request_variant.into(),
         }
     }
+}
+
+/// Caches negotiated omissions only for the request conditions that can affect
+/// parameter support. The reasoning mode is the relevant condition for models
+/// that accept sampling fields only when reasoning is disabled.
+pub(crate) fn request_variant(body: &Value) -> String {
+    let reasoning = body
+        .pointer("/reasoning/effort")
+        .and_then(Value::as_str)
+        .unwrap_or("default");
+    format!("reasoning={reasoning}")
 }
 
 /// Process-local cache of optional parameters rejected by each Responses route.
@@ -125,7 +139,52 @@ pub(crate) fn optional_param_from_error(error: &ProxyError) -> Option<ResponsesO
     }
 
     let parsed: Value = serde_json::from_str(body.as_deref()?).ok()?;
-    ResponsesOptionalParam::from_error_param(parsed.pointer("/error/param")?.as_str()?)
+    let error = parsed.get("error")?;
+    let param = error.get("param")?.as_str()?;
+    let param = ResponsesOptionalParam::from_error_param(param)?;
+    is_unsupported_parameter_error(error, param.field_name()).then_some(param)
+}
+
+fn is_unsupported_parameter_error(error: &Value, param: &str) -> bool {
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(
+        code.as_str(),
+        "invalid_value" | "invalid_parameter_value" | "invalid_enum_value"
+    ) {
+        return false;
+    }
+    if matches!(
+        code.as_str(),
+        "unsupported_parameter" | "unknown_parameter" | "unrecognized_parameter"
+    ) {
+        return true;
+    }
+
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if error_type.contains("unsupported") && error_type.contains("parameter") {
+        return true;
+    }
+
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let param = param.to_ascii_lowercase();
+    message.contains("unsupported parameter")
+        || message.contains("parameter is not supported")
+        || message.contains("parameter not supported")
+        || message.contains("unknown parameter")
+        || (message.contains("does not support") && message.contains(&param))
+        || (message.contains("not supported") && message.contains(&param))
 }
 
 /// Sends an Anthropic→Responses request and performs only the bounded,
@@ -194,12 +253,49 @@ mod tests {
         }
     }
 
+    fn invalid_value_error(param: &str) -> ProxyError {
+        ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                json!({
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "invalid_value",
+                        "param": param,
+                        "message": format!("Invalid value for `{param}`")
+                    }
+                })
+                .to_string(),
+            ),
+        }
+    }
+
+    fn route_key_with_variant(request_variant: &str) -> ResponsesRouteKey {
+        ResponsesRouteKey::new(
+            "provider-1",
+            "https://gateway.example/v1/responses",
+            "model-a",
+            "openai_responses",
+            request_variant,
+        )
+    }
+
     fn route_key() -> ResponsesRouteKey {
-        ResponsesRouteKey::new("provider-1", "/v1/messages", "model-a", "openai_responses")
+        route_key_with_variant("reasoning=default")
     }
 
     fn sent_bodies() -> Arc<StdMutex<Vec<Value>>> {
         Arc::new(StdMutex::new(Vec::new()))
+    }
+
+    #[test]
+    fn request_variant_separates_reasoning_modes() {
+        let high = request_variant(&json!({"reasoning": {"effort": "high"}}));
+        let disabled = request_variant(&json!({"thinking": {"type": "disabled"}}));
+
+        assert_eq!(high, "reasoning=high");
+        assert_eq!(disabled, "reasoning=default");
+        assert_ne!(high, disabled);
     }
 
     #[test]
@@ -210,10 +306,35 @@ mod tests {
 
         assert!(cache.contains(&key, ResponsesOptionalParam::Temperature));
         for other in [
-            ResponsesRouteKey::new("provider-2", "/v1/messages", "model-a", "openai_responses"),
-            ResponsesRouteKey::new("provider-1", "/other", "model-a", "openai_responses"),
-            ResponsesRouteKey::new("provider-1", "/v1/messages", "model-b", "openai_responses"),
-            ResponsesRouteKey::new("provider-1", "/v1/messages", "model-a", "openai_chat"),
+            ResponsesRouteKey::new(
+                "provider-2",
+                "https://gateway.example/v1/responses",
+                "model-a",
+                "openai_responses",
+                "reasoning=default",
+            ),
+            ResponsesRouteKey::new(
+                "provider-1",
+                "https://other.example/v1/responses",
+                "model-a",
+                "openai_responses",
+                "reasoning=default",
+            ),
+            ResponsesRouteKey::new(
+                "provider-1",
+                "https://gateway.example/v1/responses",
+                "model-b",
+                "openai_responses",
+                "reasoning=default",
+            ),
+            ResponsesRouteKey::new(
+                "provider-1",
+                "https://gateway.example/v1/responses",
+                "model-a",
+                "openai_chat",
+                "reasoning=default",
+            ),
+            route_key_with_variant("reasoning=high"),
         ] {
             assert!(!cache.contains(&other, ResponsesOptionalParam::Temperature));
         }
@@ -234,6 +355,7 @@ mod tests {
 
         assert!(optional_param_from_error(&upstream_error(400, "messages")).is_none());
         assert!(optional_param_from_error(&upstream_error(500, "temperature")).is_none());
+        assert!(optional_param_from_error(&invalid_value_error("temperature")).is_none());
         assert!(optional_param_from_error(&ProxyError::UpstreamError {
             status: 400,
             body: Some(
@@ -410,6 +532,7 @@ mod tests {
     async fn non_whitelisted_and_server_errors_are_returned_unchanged() {
         for error in [
             upstream_error(400, "max_output_tokens"),
+            invalid_value_error("temperature"),
             upstream_error(500, "temperature"),
         ] {
             let expected_status = match &error {
