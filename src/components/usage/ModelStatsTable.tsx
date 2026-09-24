@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   Table,
   TableBody,
   TableCell,
@@ -99,12 +105,25 @@ export function ModelStatsTable({
         </p>
       )}
       {distribution.rows.length > 0 && (
-        <ModelUsageDistribution
-          distribution={distribution}
-          hiddenModels={hiddenModels}
-          onToggleModel={toggleModel}
-          onShowAll={() => setHiddenModels(new Set())}
-        />
+        <Accordion type="single" collapsible>
+          <AccordionItem
+            value="distribution"
+            className="overflow-hidden rounded-xl border border-border/50 bg-card/40"
+          >
+            <AccordionTrigger className="px-4 py-3 text-left hover:no-underline">
+              {t("usage.modelDistribution.tokenShare")} /{" "}
+              {t("usage.modelDistribution.costShare")}
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pt-1">
+              <ModelUsageDistribution
+                distribution={distribution}
+                hiddenModels={hiddenModels}
+                onToggleModel={toggleModel}
+                onShowAll={() => setHiddenModels(new Set())}
+              />
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       )}
       <div className="overflow-x-auto rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm">
         <Table>

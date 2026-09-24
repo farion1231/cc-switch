@@ -75,7 +75,14 @@ describe("ModelStatsTable distribution", () => {
       { appType: "codex", providerName: "source", model: "gpt" },
       { refetchInterval: false },
     );
+    const expand = screen.getByRole("button", {
+      name: "usage.modelDistribution.tokenShare / usage.modelDistribution.costShare",
+    });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /^alpha,/ })).toBeNull();
+
     const rows = within(screen.getByRole("table")).getAllByRole("row");
+    expect(within(rows[1]).getByText("alpha")).toBeInTheDocument();
     expect(within(rows[1]).getByText("75.0%")).toBeInTheDocument();
     expect(within(rows[1]).getByText("25.0%")).toBeInTheDocument();
     expect(within(rows[2]).getByText("25.0%")).toBeInTheDocument();
@@ -86,11 +93,23 @@ describe("ModelStatsTable distribution", () => {
     const { rerender } = render(
       <ModelStatsTable range={{ preset: "today" }} refreshIntervalMs={30000} />,
     );
+    const expand = screen.getByRole("button", {
+      name: "usage.modelDistribution.tokenShare / usage.modelDistribution.costShare",
+    });
+    fireEvent.click(expand);
+    expect(expand).toHaveAttribute("aria-expanded", "true");
     const alpha = screen.getByRole("button", { name: /^alpha,/ });
     expect(alpha).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(alpha);
     expect(alpha).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(expand);
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expand);
+    expect(screen.getByRole("button", { name: /^alpha,/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     expect(
       within(screen.getByRole("table")).getByText("alpha"),
     ).toBeInTheDocument();
