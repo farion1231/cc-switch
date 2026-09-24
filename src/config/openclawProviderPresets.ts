@@ -4560,4 +4560,41 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    settingsConfig: {
+      baseUrl: "https://microquickjs.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 262144,
+          maxTokens: 32768,
+          cost: { input: 2.1, output: 10.5, cacheRead: 0.3 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ainetcafe/Kimi-K3" },
+      modelCatalog: {
+        "ainetcafe/Kimi-K3": { alias: "Kimi K3" },
+      },
+    },
+  },
 ];

@@ -1961,4 +1961,24 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "ainetcafe",
+    websiteUrl: "https://ainetcafe.com/k3/?utm_source=cc-switch",
+    apiKeyUrl: "https://microquickjs.com/register?aff=qjpC&lng=en",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://microquickjs.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "Kimi-K3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Kimi-K3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Kimi-K3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Kimi-K3",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://microquickjs.com"],
+    modelsUrl: "https://microquickjs.com/v1/models",
+    icon: "ainetcafe",
+    iconColor: "#32FEA5",
+  },
 ];
