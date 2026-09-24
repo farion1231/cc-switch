@@ -247,7 +247,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     }
 
     if let Some(input) = body.get("input") {
-        collect_tool_search_output_tools(input, &mut context);
+        collect_input_declared_tools(input, &mut context);
     }
 
     context
@@ -771,6 +771,13 @@ fn append_responses_item_as_chat_message(
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
+        // An `additional_tools` carrier declares tools for this request; its
+        // nested tools are lifted via `build_codex_tool_context_from_request`
+        // and the carrier itself is not a message. It carries a `role` but no
+        // `content`, so letting it fall through the generic message arm used
+        // to fabricate a `content: null` system message that strict chat
+        // gateways reject with `messages[N]: missing field "content"`.
+        Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
                 messages,
@@ -888,6 +895,20 @@ fn flush_pending_tool_calls(
         return;
     }
 
+    // One Responses model turn can contain an assistant commentary message
+    // directly followed by function-call items. Keep them on the same Chat
+    // assistant message: a standalone text-only assistant turn teaches Chat
+    // models to stop after a progress update instead of emitting the expected
+    // tool call.
+    if merge_pending_tool_calls_into_adjacent_assistant(
+        messages,
+        pending_tool_calls,
+        pending_reasoning,
+    ) {
+        *last_assistant_index = Some(messages.len() - 1);
+        return;
+    }
+
     // Media from the preceding tool-result batch must be presented before a
     // new assistant tool-call turn. Consecutive outputs do not enter here
     // because `pending_tool_calls` is empty after the first output.
@@ -900,6 +921,83 @@ fn flush_pending_tool_calls(
     attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
     *last_assistant_index = Some(messages.len());
     messages.push(message);
+}
+
+/// Merge pending Chat tool calls into a directly adjacent assistant message
+/// that does not carry tool calls yet. The Responses input preserves both the
+/// commentary text and the calls as separate items of the same model turn;
+/// serializing them as two consecutive assistant messages lets Chat models
+/// imitate the first text-only message as a complete turn.
+fn merge_pending_tool_calls_into_adjacent_assistant(
+    messages: &mut [Value],
+    pending_tool_calls: &mut Vec<Value>,
+    pending_reasoning: &mut Option<String>,
+) -> bool {
+    let Some(message) = messages.last_mut() else {
+        return false;
+    };
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+    let has_tool_calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty());
+    if has_tool_calls {
+        return false;
+    }
+
+    let Some(obj) = message.as_object_mut() else {
+        return false;
+    };
+    obj.insert(
+        "tool_calls".to_string(),
+        Value::Array(std::mem::take(pending_tool_calls)),
+    );
+    attach_pending_reasoning_to_assistant_unique(message, pending_reasoning);
+    true
+}
+
+fn attach_pending_reasoning_to_assistant_unique(
+    message: &mut Value,
+    pending_reasoning: &mut Option<String>,
+) {
+    let Some(reasoning) = pending_reasoning.take() else {
+        return;
+    };
+    let reasoning = reasoning.trim();
+    if reasoning.is_empty() {
+        return;
+    }
+
+    let existing_text = message
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let existing_segments: Vec<&str> = existing_text
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let missing_segments: Vec<&str> = reasoning
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty() && !existing_segments.contains(segment))
+        .collect();
+    if missing_segments.is_empty() {
+        return;
+    }
+
+    let merged = if existing_segments.is_empty() {
+        missing_segments.join("\n\n")
+    } else {
+        let existing = existing_segments.join("\n\n");
+        let missing = missing_segments.join("\n\n");
+        format!("{existing}\n\n{missing}")
+    };
+    if let Some(obj) = message.as_object_mut() {
+        obj.insert("reasoning_content".to_string(), Value::String(merged));
+    }
 }
 
 fn responses_message_item_to_chat_message(
@@ -1197,15 +1295,25 @@ fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
 }
 
-fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
+/// Collect tools declared inline in the request `input` instead of top-level
+/// `tools`: `tool_search_output` items (dynamically loaded tool groups) and
+/// `additional_tools` carriers (Codex 0.154+ ships extra tools — the
+/// `functions`/`collaboration` exec sandbox, plugins — in this Responses
+/// private-extension carrier). The xAI Responses passthrough already promotes
+/// the same carriers (`promote_additional_tools`); the Chat and Anthropic
+/// converters go through this registry so they keep the carried tools too.
+fn collect_input_declared_tools(value: &Value, context: &mut CodexToolContext) {
     match value {
         Value::Array(items) => {
             for item in items {
-                collect_tool_search_output_tools(item, context);
+                collect_input_declared_tools(item, context);
             }
         }
         Value::Object(obj) => {
-            if obj.get("type").and_then(|v| v.as_str()) == Some("tool_search_output") {
+            if matches!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("tool_search_output" | "additional_tools")
+            ) {
                 if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
                     for tool in tools {
                         context.add_response_tool(tool);
@@ -1213,7 +1321,7 @@ fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContex
                 }
             }
             for value in obj.values() {
-                collect_tool_search_output_tools(value, context);
+                collect_input_declared_tools(value, context);
             }
         }
         _ => {}
@@ -1313,9 +1421,18 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
 
     let mut function = json!({
         "name": chat_name,
-        "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
+    // Omit a missing description instead of serializing null — hosted tools
+    // and undescribed custom tools reach this branch without the field, and
+    // strict OpenAI-compatible upstreams reject the whole request on a null
+    // value (400 "expected string, received null"). Same treatment as the
+    // anthropic→chat/responses converters; insertion keeps the original
+    // name→description→parameters key order for byte-identical output when
+    // the description is present.
+    if let Some(description) = tool.get("description").filter(|d| !d.is_null()) {
+        function["description"] = description.clone();
+    }
+    function["parameters"] = normalize_function_parameters(tool.get("parameters"));
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
     }
@@ -2311,6 +2428,29 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_omits_missing_tool_description() {
+        // A missing description must be omitted, not serialized as null —
+        // strict OpenAI-compatible upstreams reject the whole request on a
+        // null value (400 "expected string, received null").
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ],
+            "tools": [
+                {"type": "function", "name": "no_desc", "parameters": {"type": "object"}},
+                {"type": "function", "name": "with_desc", "description": "Has one", "parameters": {"type": "object"}}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools[0]["function"].get("description").is_none());
+        assert_eq!(tools[1]["function"]["description"], "Has one");
+    }
+
+    #[test]
     fn responses_request_to_chat_defaults_null_tool_parameters() {
         let input = json!({
             "model": "gpt-5.4",
@@ -2991,6 +3131,127 @@ mod tests {
         assert!(head_content.contains("You are Codex."));
         assert!(head_content.contains("Permissions block"));
         assert!(head_content.contains("Collaboration Mode: Default"));
+    }
+
+    #[test]
+    fn additional_tools_carrier_is_lifted_not_converted_to_a_message() {
+        // Shape from #7451: Codex 0.154+ ships extra tools in an
+        // `additional_tools` input carrier (role `developer`, no `content`).
+        let input = json!({
+            "model": "agnes-3.0-flash",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "id": "at_a8d5b9f5",
+                    "role": "developer",
+                    "tools": [
+                        {
+                            "type": "namespace",
+                            "name": "functions",
+                            "description": "",
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "name": "exec_command",
+                                    "description": "Run a shell command.",
+                                    "strict": false,
+                                    "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function",
+                            "name": "wait",
+                            "description": "Waits on a yielded exec cell.",
+                            "strict": false,
+                            "parameters": {"type": "object", "properties": {"cell_id": {"type": "string"}}, "required": ["cell_id"]}
+                        }
+                    ]
+                },
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "You are Codex, a coding agent."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "你好"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // The carrier is not a message: every emitted message must carry
+        // real content, and the developer instruction must remain the only
+        // system head.
+        for (idx, message) in messages.iter().enumerate() {
+            assert!(
+                !matches!(message.get("content"), None | Some(Value::Null)),
+                "messages[{idx}] lost its content: {message}"
+            );
+        }
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are Codex, a coding agent.");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "你好");
+
+        // The carried tools survive as flattened chat tools.
+        let tool_names: Vec<&str> = result["tools"]
+            .as_array()
+            .expect("carried tools must be lifted into top-level tools")
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(
+            tool_names.contains(&"functions__exec_command"),
+            "{tool_names:?}"
+        );
+        assert!(tool_names.contains(&"wait"), "{tool_names:?}");
+    }
+
+    #[test]
+    fn additional_tools_carrier_tools_dedup_against_top_level_tools() {
+        let input = json!({
+            "model": "m",
+            "tools": [
+                {"type": "function", "name": "wait", "description": "Top-level wait.", "parameters": {"type": "object", "properties": {}}}
+            ],
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [
+                        {"type": "function", "name": "wait", "description": "Carried wait.", "parameters": {"type": "object", "properties": {}}}
+                    ]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1, "duplicate carried tool must be dropped");
+        assert_eq!(tools[0]["function"]["name"], "wait");
+        assert_eq!(tools[0]["function"]["description"], "Top-level wait.");
+    }
+
+    #[test]
+    fn plain_developer_messages_convert_without_additional_tools_carrier() {
+        // No carrier present: developer messages keep mapping to system and
+        // no tools array is fabricated.
+        let input = json!({
+            "model": "m",
+            "input": [
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Instructions."}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "Instructions.");
+        assert_eq!(messages[1]["role"], "user");
+        assert!(result.get("tools").is_none());
     }
 
     #[test]
@@ -3999,6 +4260,316 @@ mod tests {
         assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
         assert_eq!(messages[1]["tool_calls"][0]["id"], "call_2");
         assert_eq!(messages[1]["reasoning_content"], "second batch reasoning");
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_adjacent_commentary_with_tool_calls() {
+        let mut call = test_function_call("call_1");
+        call["reasoning_content"] = json!("need to update the file");
+
+        let result = convert_test_input(vec![
+            json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "need to update the file"}
+                ]
+            }),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Part 1 written. Appending sections 4-5."}
+                ]
+            }),
+            call,
+            test_function_output("call_1", json!("Success")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(
+            messages[0]["content"],
+            "Part 1 written. Appending sections 4-5."
+        );
+        let calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "need to update the file");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn responses_request_to_chat_deduplicates_repeated_call_reasoning_segments() {
+        let mut call_1 = test_function_call("call_1");
+        call_1["reasoning_content"] = json!("need to update the file");
+        let mut call_2 = test_function_call("call_2");
+        call_2["reasoning_content"] = json!("second section planning");
+
+        let result = convert_test_input(vec![
+            json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "need to update the file"}
+                ]
+            }),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Part 1 written. Appending sections 4-5."}
+                ]
+            }),
+            call_1,
+            call_2,
+            test_function_output("call_1", json!("Success 1")),
+            test_function_output("call_2", json!("Success 2")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "tool"]);
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "need to update the file\n\nsecond section planning"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_user_boundary_before_tool_call_turn() {
+        let result = convert_test_input(vec![
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Done for now."}
+                ]
+            }),
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": "Continue with the next file."
+            }),
+            test_function_call("call_next"),
+            test_function_output("call_next", json!("Next result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "user", "assistant", "tool"]
+        );
+        assert!(messages[0].get("tool_calls").is_none());
+        assert_eq!(messages[0]["content"], "Done for now.");
+        assert_eq!(messages[2]["content"], Value::Null);
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_next");
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_when_reasoning_sits_between_commentary_and_call() {
+        let mut call = test_function_call("call_1");
+        call["reasoning_content"] = json!("need to update the file");
+
+        let result = convert_test_input(vec![
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Part 1 written. Appending sections 4-5."}
+                ]
+            }),
+            json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": "need to update the file"}
+                ]
+            }),
+            call,
+            test_function_output("call_1", json!("Success")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(
+            messages[0]["content"],
+            "Part 1 written. Appending sections 4-5."
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "need to update the file");
+    }
+
+    #[test]
+    fn responses_request_to_chat_backfills_reasoning_placeholder_for_coalesced_call() {
+        let result = convert_test_input(vec![
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Running the build now."}
+                ]
+            }),
+            test_function_call("call_build"),
+            test_function_output("call_build", json!("Build succeeded")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(messages[0]["content"], "Running the build now.");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_build");
+        assert_eq!(messages[0]["reasoning_content"], "tool call");
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_custom_tool_call_with_commentary() {
+        let input = json!({
+            "model": "kimi-k3",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Apply a patch to files."
+            }],
+            "input": [
+                json!({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "Applying the next patch."}
+                    ]
+                }),
+                json!({
+                    "type": "custom_tool_call",
+                    "id": "ctc_1",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** End Patch"
+                }),
+                json!({
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": {"text": "Success"}
+                })
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(messages[0]["content"], "Applying the next patch.");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_patch");
+        assert_eq!(messages[1]["tool_call_id"], "call_patch");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_media_before_coalesced_commentary_tool_call() {
+        let data_url = large_test_image_data_url();
+        let result = convert_test_input(vec![
+            test_function_call("call_media"),
+            test_function_output(
+                "call_media",
+                json!({
+                    "content": [{
+                        "type": "input_image",
+                        "image_url": data_url
+                    }]
+                }),
+            ),
+            json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Viewing the image now."}
+                ]
+            }),
+            test_function_call("call_next"),
+            test_function_output("call_next", json!("Next result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "tool", "user", "assistant", "tool"]
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_media");
+        let media_content = messages[2]["content"].as_array().unwrap();
+        assert!(media_content.iter().any(|part| part
+            .get("image_url")
+            .and_then(|value| value.get("url"))
+            .and_then(Value::as_str)
+            .is_some_and(|url| url == &data_url)));
+        assert_eq!(messages[3]["content"], "Viewing the image now.");
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
+        assert_eq!(messages[4]["tool_call_id"], "call_next");
+    }
+
+    #[test]
+    fn responses_request_to_chat_multi_round_history_has_no_text_only_assistant_turns() {
+        let mut items = vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": "Fix the failing build."
+        })];
+        for index in 1..=3 {
+            let call_id = format!("call_round_{index}");
+            items.push(json!({
+                "type": "reasoning",
+                "summary": [
+                    {"type": "summary_text", "text": format!("round {index} reasoning")}
+                ]
+            }));
+            items.push(json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": format!("Step {index}: checking the logs.")}
+                ]
+            }));
+            let mut call = test_function_call(&call_id);
+            call["reasoning_content"] = json!(format!("round {index} reasoning"));
+            items.push(call);
+            items.push(test_function_output(
+                &call_id,
+                json!(format!("round {index} result")),
+            ));
+        }
+        items.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "Build fixed."}
+            ]
+        }));
+
+        let result = convert_test_input(items);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec![
+                "user",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant",
+                "tool",
+                "assistant"
+            ]
+        );
+        for (index, message) in messages.iter().enumerate() {
+            if message["role"] == "assistant" && index + 1 < messages.len() {
+                assert!(
+                    message["tool_calls"]
+                        .as_array()
+                        .is_some_and(|calls| !calls.is_empty()),
+                    "assistant at index {index} must carry tool calls"
+                );
+            }
+        }
+        assert_eq!(messages[1]["content"], "Step 1: checking the logs.");
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_round_1");
+        assert_eq!(messages[1]["reasoning_content"], "round 1 reasoning");
+        assert_eq!(messages[7]["content"], "Build fixed.");
+        assert!(messages[7].get("tool_calls").is_none());
     }
 
     #[test]

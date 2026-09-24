@@ -135,6 +135,24 @@ export const piModelCatalog = {
       maxTokens: 384_000,
     },
   },
+  "deepseek/deepseek-v3.2": {
+    capabilities: {
+      name: "DeepSeek V3.2",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131_072,
+      maxTokens: 32_768,
+    },
+  },
+  "deepseek/deepseek-v4-flash-vision-exp": {
+    capabilities: {
+      name: "DeepSeek V4 Flash Vision Exp",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 384_000,
+    },
+  },
   "google/gemini-2.5-flash": {
     capabilities: {
       name: "Gemini 2.5 Flash",
@@ -180,13 +198,13 @@ export const piModelCatalog = {
       maxTokens: 65_536,
     },
   },
-  "inclusionai/ling-2.5-1t": {
+  "inclusionai/ling-2.6-1t": {
     capabilities: {
-      name: "Ling 2.5-1T",
+      name: "Ling 2.6-1T",
       reasoning: false,
       input: ["text"],
-      contextWindow: 1_000_000,
-      maxTokens: 16_384,
+      contextWindow: 262_144,
+      maxTokens: 32_768,
     },
   },
   "longcat/longcat-2.0": {
@@ -246,6 +264,15 @@ export const piModelCatalog = {
   "moonshotai/kimi-k2.7-code": {
     capabilities: {
       name: "Kimi K2.7 Code",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262_144,
+      maxTokens: 262_144,
+    },
+  },
+  "moonshotai/kimi-k2.7-code-highspeed": {
+    capabilities: {
+      name: "Kimi K2.7 Code HighSpeed",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 262_144,
@@ -432,6 +459,35 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "qwen/qwen3.7-plus": {
+    capabilities: {
+      name: "Qwen3.7 Plus",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 65_536,
+    },
+  },
+  "qwen/qwen3.8-max": {
+    capabilities: {
+      name: "Qwen3.8 Max",
+      reasoning: true,
+      input: ["text", "image"],
+      // 983_616 而非 1M：QwenCloud 官方 Codex catalog 与 OpenClaw 配置同值
+      contextWindow: 983_616,
+      maxTokens: 131_072,
+    },
+  },
+  "qwen/qwen3.8-flash": {
+    capabilities: {
+      name: "Qwen3.8 Flash",
+      reasoning: true,
+      // 官方 Codex catalog 未单列 flash 的输入模态，按同族 3.8-max 处理
+      input: ["text", "image"],
+      contextWindow: 983_616,
+      maxTokens: 131_072,
+    },
+  },
   "qwen/qwen3.8-max-preview": {
     capabilities: {
       name: "Qwen3.8 Max Preview",
@@ -513,6 +569,15 @@ export const piModelCatalog = {
       maxTokens: 131_072,
     },
   },
+  "zai/glm-5": {
+    capabilities: {
+      name: "GLM-5",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 200_000,
+      maxTokens: 131_072,
+    },
+  },
   "zai/glm-5.1": {
     capabilities: {
       name: "GLM-5.1",
@@ -529,6 +594,186 @@ export const piModelCatalog = {
       input: ["text"],
       contextWindow: 1_000_000,
       maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5.3": {
+    capabilities: {
+      name: "GLM-5.3",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5.3-flash": {
+    capabilities: {
+      name: "GLM-5.3 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5-turbo": {
+    capabilities: {
+      name: "GLM-5 Turbo",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 200_000,
+      maxTokens: 131_072,
+    },
+  },
+  "zai/glm-5v-turbo": {
+    capabilities: {
+      name: "GLM-5V Turbo",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 200_000,
+      maxTokens: 131_072,
+    },
+  },
+  "tencent/hy4-preview": {
+    capabilities: {
+      name: "Hy4 Preview",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+    },
+  },
+  "tencent/hy3": {
+    capabilities: {
+      name: "Hy3",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 256_000,
+      maxTokens: 128_000,
+    },
+  },
+  "tencent/hy3-preview": {
+    capabilities: {
+      name: "Hy3 Preview",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 256_000,
+      maxTokens: 128_000,
+    },
+  },
+  "tencent/tokenplan-auto": {
+    capabilities: {
+      name: "Auto",
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 196_608,
+      maxTokens: 32_768,
+    },
+  },
+  "deepseek/deepseek-flash": {
+    capabilities: {
+      name: "DeepSeek V4.1 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 384000,
+    },
+  },
+  "stepfun/step-5-preview": {
+    capabilities: {
+      name: "Step 5 Preview",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 64000,
+    },
+  },
+  "stepfun/step-3.7-flash": {
+    capabilities: {
+      name: "Step 3.7 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 256000,
+      maxTokens: 256000,
+    },
+  },
+  "anthropic/claude-opus-5.5": {
+    capabilities: {
+      name: "Claude Opus 5.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "anthropic/claude-fable-5.1": {
+    capabilities: {
+      name: "Claude Fable 5.1",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6-sol": {
+    capabilities: {
+      name: "GPT-6 Sol",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1050000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6-luna": {
+    capabilities: {
+      name: "GPT-6 Luna",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1050000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6-astra": {
+    capabilities: {
+      name: "GPT-6 Astra",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1050000,
+      maxTokens: 128000,
+    },
+  },
+  "google/gemini-3.8-flash": {
+    capabilities: {
+      name: "Gemini 3.8 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 65536,
+    },
+  },
+  "xiaomi/mimo-v2.6-pro": {
+    capabilities: {
+      name: "MiMo V2.6 Pro",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
+  "xiaomi/mimo-v2.6-flash": {
+    capabilities: {
+      name: "MiMo V2.6 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
+  "xiaomi/mimo-v2.6-pro-ultraspeed": {
+    capabilities: {
+      name: "MiMo V2.6 Pro UltraSpeed",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
     },
   },
 } as const satisfies Record<string, PiModelCatalogEntry>;
