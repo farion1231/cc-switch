@@ -1988,8 +1988,8 @@ impl RequestForwarder {
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
         let is_claude_adapter = adapter.name() == "Claude";
-        let should_send_anthropic_headers = is_claude_adapter
-            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+        let should_send_anthropic_headers =
+            is_claude_adapter && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
         let anthropic_beta_value = forwarded_anthropic_beta(
             &headers,
