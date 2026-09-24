@@ -140,6 +140,12 @@ pub struct LiveBackup {
     pub original_config: String,
     /// 备份时间
     pub backed_up_at: String,
+    /// 备份归属的供应商 id（备份写入时的当前供应商）
+    ///
+    /// None 表示旧版本写入的备份（未记录归属）。恢复路径据此判断备份内容
+    /// 是否仍属于当前供应商：current 在接管期间被外部切换（如无头脚本直写
+    /// 数据库）后，旧备份还原出的 Token 不能再归到新供应商名下。
+    pub provider_id: Option<String>,
 }
 
 /// 全局代理配置（统一字段，三行镜像）

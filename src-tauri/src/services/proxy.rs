@@ -855,8 +855,15 @@ impl ProxyService {
 
         let rollback_result = match previous_backup {
             Some(backup) => {
+                // 保留备份原记录的归属（而非回滚目标的 current）：残留备份的
+                // 内容属于其原 owner，重打 previous_provider_id 会把「内容与
+                // 归属不符」洗白，让后续恢复重新接受外供应商凭据。
                 self.db
-                    .save_live_backup(app_type.as_str(), &backup.original_config)
+                    .save_live_backup(
+                        app_type.as_str(),
+                        &backup.original_config,
+                        backup.provider_id.as_deref(),
+                    )
                     .await
             }
             None => self.db.delete_live_backup(app_type.as_str()).await,
@@ -1858,7 +1865,13 @@ impl ProxyService {
                 let json_str = serde_json::to_string(&config)
                     .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?;
                 self.db
-                    .save_live_backup("claude", &json_str)
+                    .save_live_backup(
+                        "claude",
+                        &json_str,
+                        self.current_provider_id_for_backup(&AppType::Claude)
+                            .await
+                            .as_deref(),
+                    )
                     .await
                     .map_err(|e| format!("备份 Claude 配置失败: {e}"))?;
             }
@@ -1873,7 +1886,13 @@ impl ProxyService {
                 let json_str = serde_json::to_string(&config)
                     .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
                 self.db
-                    .save_live_backup("codex", &json_str)
+                    .save_live_backup(
+                        "codex",
+                        &json_str,
+                        self.current_provider_id_for_backup(&AppType::Codex)
+                            .await
+                            .as_deref(),
+                    )
                     .await
                     .map_err(|e| format!("备份 Codex 配置失败: {e}"))?;
             }
@@ -1887,7 +1906,13 @@ impl ProxyService {
                 let json_str = serde_json::to_string(&config)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?;
                 self.db
-                    .save_live_backup("gemini", &json_str)
+                    .save_live_backup(
+                        "gemini",
+                        &json_str,
+                        self.current_provider_id_for_backup(&AppType::Gemini)
+                            .await
+                            .as_deref(),
+                    )
                     .await
                     .map_err(|e| format!("备份 Gemini 配置失败: {e}"))?;
             }
@@ -1901,7 +1926,13 @@ impl ProxyService {
                 let json_str = serde_json::to_string(&config)
                     .map_err(|e| format!("序列化 Grok Build 配置失败: {e}"))?;
                 self.db
-                    .save_live_backup("grokbuild", &json_str)
+                    .save_live_backup(
+                        "grokbuild",
+                        &json_str,
+                        self.current_provider_id_for_backup(&AppType::GrokBuild)
+                            .await
+                            .as_deref(),
+                    )
                     .await
                     .map_err(|e| format!("备份 Grok Build 配置失败: {e}"))?;
             }
@@ -1909,6 +1940,23 @@ impl ProxyService {
 
         log::info!("已备份所有应用的 Live 配置");
         Ok(())
+    }
+
+    /// 备份写入时应记录的归属供应商（当时的当前供应商）
+    ///
+    /// 读取失败时返回 None（记录为"归属未知"），恢复路径对归属未知的备份
+    /// 维持旧行为（照常还原），不因设置读取失败而破坏备份。
+    async fn current_provider_id_for_backup(&self, app_type: &AppType) -> Option<String> {
+        match crate::settings::get_effective_current_provider(&self.db, app_type) {
+            Ok(provider_id) => provider_id,
+            Err(e) => {
+                log::warn!(
+                    "读取 {} 当前供应商失败，备份将以未知归属落盘: {e}",
+                    app_type.as_str()
+                );
+                None
+            }
+        }
     }
 
     /// 备份指定应用的 Live 配置（严格模式：目标配置不存在则返回错误）
@@ -1937,7 +1985,13 @@ impl ProxyService {
         let json_str = serde_json::to_string(&config)
             .map_err(|e| format!("序列化 {app_type_str} 配置失败: {e}"))?;
         self.db
-            .save_live_backup(app_type_str, &json_str)
+            .save_live_backup(
+                app_type_str,
+                &json_str,
+                self.current_provider_id_for_backup(app_type)
+                    .await
+                    .as_deref(),
+            )
             .await
             .map_err(|e| format!("备份 {app_type_str} 配置失败: {e}"))?;
 
@@ -2332,6 +2386,19 @@ impl ProxyService {
                 log::warn!(
                     "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
                 );
+            } else if self
+                .backup_owner_differs_from_current_provider(&backup, app_type)
+                .await
+            {
+                // 备份归属的不是当前供应商：current 在接管期间被外部切换（如无头
+                // 脚本直写数据库后重启服务）的典型残留。此时备份里是上一个供应商
+                // 的真实 Token，若照常还原，随后的重新接管会把这份 Token「同步」进
+                // 当前供应商的配置，静默互换各家的 Key（#6886）。备份内容在其归属
+                // 供应商的记录里仍有 SSOT 副本，丢弃还原是安全的；落到下面的 SSOT
+                // 兜底，用当前供应商的配置重建 Live。
+                log::warn!(
+                    "{app_type_str} 备份归属于其它供应商（接管期间 current 被外部切换的残留），跳过备份还原，改走 SSOT 重建 Live"
+                );
             } else {
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
@@ -2366,6 +2433,24 @@ impl ProxyService {
         self.cleanup_takeover_placeholders_in_live_for_app(app_type)?;
         log::info!("{app_type_str} Live 接管占位符已清理（无备份兜底）");
         Ok(())
+    }
+
+    /// 备份归属的供应商是否已不是当前供应商
+    ///
+    /// 归属未知（旧版本写入的备份，provider_id 为 NULL）或当前供应商无法确定时，
+    /// 视为仍归属当前供应商（维持原有还原行为，不因信息缺失而拒绝恢复）。
+    async fn backup_owner_differs_from_current_provider(
+        &self,
+        backup: &LiveBackup,
+        app_type: &AppType,
+    ) -> bool {
+        let Some(backup_provider_id) = backup.provider_id.as_deref() else {
+            return false;
+        };
+        match crate::settings::get_effective_current_provider(&self.db, app_type) {
+            Ok(Some(current_provider_id)) => current_provider_id != backup_provider_id,
+            Ok(None) | Err(_) => false,
+        }
     }
 
     fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
@@ -2951,7 +3036,7 @@ impl ProxyService {
         };
 
         self.db
-            .save_live_backup(app_type, &backup_json)
+            .save_live_backup(app_type, &backup_json, Some(&provider.id))
             .await
             .map_err(|e| format!("更新 {app_type} 备份失败: {e}"))?;
 
@@ -4258,6 +4343,197 @@ mod tests {
         assert!(service.switch_proxy_target("pi", "missing").await.is_err());
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn crash_restore_skips_backup_of_externally_switched_away_provider() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-provider-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example"
+                }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-provider-b",
+                    "ANTHROPIC_BASE_URL": "https://api.b.example"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+
+        // A 接管中服务异常退出：备份槽记录 A 的真实配置及其归属，
+        // live 文件停留在代理占位符状态。
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            Some("a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed taken-over live file");
+
+        // current 在接管期间被外部（无头脚本直写数据库）切到 B，随后服务重启恢复。
+        db.set_current_provider("claude", "b")
+            .expect("switch current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("b"))
+            .expect("switch local current provider");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore live config");
+
+        let live = service.read_claude_live().expect("read live config");
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(|v| v.as_str()),
+            Some("sk-provider-b"),
+            "live 应从当前供应商的配置重建，而不是还原上一个供应商的旧备份"
+        );
+        let stored_b = db
+            .get_provider_by_id("b", "claude")
+            .expect("read provider b")
+            .expect("provider b exists");
+        assert_eq!(
+            stored_b.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            json!("sk-provider-b"),
+            "上一个供应商的 Token 不得被归到当前供应商名下 (#6886)"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn crash_restore_still_restores_backup_of_unchanged_current_provider() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-provider-a",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            Some("a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed taken-over live file");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore live config");
+
+        let live = service.read_claude_live().expect("read live config");
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(|v| v.as_str()),
+            Some("sk-provider-a"),
+            "归属未变的备份应照常还原（不能因归属校验而过度拦截）"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_rollback_preserves_backup_owner_stamp() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // 残留态：备份内容属于 a，但热切换前的 current 是 b；切换失败回滚时
+        // 备份槽重存的内容必须保留其原归属 a，而不是被洗白成 b。
+        let stale_backup = crate::proxy::types::LiveBackup {
+            app_type: "claude".to_string(),
+            original_config: serde_json::to_string(&json!({
+                "env": { "ANTHROPIC_AUTH_TOKEN": "sk-provider-a" }
+            }))
+            .expect("serialize stale backup"),
+            backed_up_at: "2026-08-28T00:00:00Z".to_string(),
+            provider_id: Some("a".to_string()),
+        };
+
+        service
+            .rollback_hot_switch_preparation(
+                &AppType::Claude,
+                Some(&stale_backup),
+                Some("b"),
+                true,
+                false,
+                None,
+            )
+            .await;
+
+        let restored = db
+            .get_live_backup("claude")
+            .await
+            .expect("read live backup")
+            .expect("backup exists");
+        assert_eq!(
+            restored.provider_id.as_deref(),
+            Some("a"),
+            "回滚重存的备份必须保留原归属，不能改打成回滚目标的 current"
+        );
+        assert!(
+            restored.original_config.contains("sk-provider-a"),
+            "备份内容应原样保留"
+        );
+    }
+
     async fn running_codex_base_url(service: &ProxyService) -> String {
         let status = service.get_status().await.expect("get proxy status");
         format!("http://127.0.0.1:{}/v1", status.port)
@@ -4874,6 +5150,7 @@ mod tests {
         db.save_live_backup(
             AppType::Codex.as_str(),
             &serde_json::to_string(&provider.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed takeover backup");
@@ -5645,6 +5922,7 @@ wire_api = "responses"
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&previous.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed backup without live takeover marker");
@@ -6253,6 +6531,7 @@ wire_api = "responses"
                 "config": original_deepseek_config
             }))
             .expect("serialize original backup"),
+            None,
         )
         .await
         .expect("seed original live backup");
@@ -7603,7 +7882,7 @@ model = "gpt-5.1-codex"
             .expect("set current provider");
 
         // 模拟"已接管"状态：存在 Live 备份（内容不重要，会被热切换更新）
-        db.save_live_backup("claude", "{\"env\":{}}")
+        db.save_live_backup("claude", "{\"env\":{}}", None)
             .await
             .expect("seed live backup");
 
@@ -7681,6 +7960,7 @@ model = "gpt-5.1-codex"
         db.save_live_backup(
             "claude",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -7831,7 +8111,7 @@ model = "gpt-5.1-codex"
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("a"))
             .expect("set local current provider");
-        db.save_live_backup("claude", "{\"env\":{}}")
+        db.save_live_backup("claude", "{\"env\":{}}", None)
             .await
             .expect("seed live backup");
 
@@ -7919,6 +8199,7 @@ model = "gpt-5.1-codex"
         db.save_live_backup(
             "claude",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -8118,6 +8399,7 @@ base_url = "https://codex.example/v1"
                 "config": ""
             }))
             .expect("serialize seed backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -8335,6 +8617,7 @@ base_url = "https://codex.example/v1"
                 "config": "model = \"gpt-5.4\"\n"
             }))
             .expect("serialize stale backup"),
+            None,
         )
         .await
         .expect("save stale backup");
@@ -8517,6 +8800,7 @@ wire_api = "responses"
                 "config": ""
             }))
             .expect("serialize seed backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -8578,6 +8862,7 @@ args = ["echo-server"]
 "#
             }))
             .expect("serialize seed backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -8685,6 +8970,7 @@ requires_openai_auth = true
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -8860,6 +9146,7 @@ requires_openai_auth = true
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -8947,6 +9234,7 @@ command = "legacy-command"
 "#
             }))
             .expect("serialize seed backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -9116,6 +9404,7 @@ requires_openai_auth = true
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed restored backup");
@@ -9252,6 +9541,7 @@ requires_openai_auth = true
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed restored backup");
@@ -9329,6 +9619,7 @@ requires_openai_auth = true
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed restored backup");
@@ -9526,7 +9817,7 @@ requires_openai_auth = true
             "config": backup_config,
         }))
         .expect("serialize backup");
-        db.save_live_backup("codex", &backup_json)
+        db.save_live_backup("codex", &backup_json, None)
             .await
             .expect("seed live backup");
 
@@ -9584,7 +9875,7 @@ requires_openai_auth = true
             }
         }))
         .expect("serialize backup");
-        db.save_live_backup("codex", &backup_json)
+        db.save_live_backup("codex", &backup_json, None)
             .await
             .expect("seed live backup");
         write_json_file(
@@ -9659,7 +9950,7 @@ requires_openai_auth = true
             }
         }))
         .expect("serialize backup");
-        db.save_live_backup("codex", &backup_json)
+        db.save_live_backup("codex", &backup_json, None)
             .await
             .expect("seed live backup");
 
@@ -9723,7 +10014,7 @@ requires_openai_auth = true
             }
         }))
         .expect("serialize corrupted backup");
-        db.save_live_backup("claude", &corrupted_backup)
+        db.save_live_backup("claude", &corrupted_backup, None)
             .await
             .expect("seed corrupted backup");
 
@@ -9812,6 +10103,7 @@ base_url = "https://third.example/v1"
 "#
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -9885,6 +10177,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -9942,6 +10235,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -9989,6 +10283,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -10078,6 +10373,7 @@ base_url = "https://third.example/v1"
                 "config": null
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -10274,6 +10570,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -10332,6 +10629,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -10387,6 +10685,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -10435,6 +10734,7 @@ base_url = "https://third.example/v1"
                 "config": "model_provider = \"any\"\n"
             }))
             .expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed live backup");
@@ -10492,7 +10792,7 @@ base_url = "https://third.example/v1"
             }
         }))
         .expect("serialize good backup");
-        db.save_live_backup("claude", &good_backup)
+        db.save_live_backup("claude", &good_backup, None)
             .await
             .expect("seed good backup");
 
@@ -10544,7 +10844,7 @@ base_url = "https://third.example/v1"
             }
         }))
         .expect("serialize good backup");
-        db.save_live_backup("claude", &good_backup)
+        db.save_live_backup("claude", &good_backup, None)
             .await
             .expect("seed claude backup");
 
@@ -10552,7 +10852,7 @@ base_url = "https://third.example/v1"
             "auth": { "OPENAI_API_KEY": "real-codex-token" }
         }))
         .expect("serialize codex good backup");
-        db.save_live_backup("codex", &codex_good_backup)
+        db.save_live_backup("codex", &codex_good_backup, None)
             .await
             .expect("seed codex backup");
 
@@ -10560,7 +10860,7 @@ base_url = "https://third.example/v1"
             "env": { "GEMINI_API_KEY": "real-gemini-key" }
         }))
         .expect("serialize gemini good backup");
-        db.save_live_backup("gemini", &gemini_good_backup)
+        db.save_live_backup("gemini", &gemini_good_backup, None)
             .await
             .expect("seed gemini backup");
 
@@ -10669,6 +10969,7 @@ experimental_bearer_token = "PROXY_MANAGED"
         db.save_live_backup(
             "grokbuild",
             &serde_json::to_string(&original_settings).expect("serialize backup"),
+            None,
         )
         .await
         .expect("seed backup");
@@ -10729,7 +11030,7 @@ experimental_bearer_token = "PROXY_MANAGED"
 
         let original_backup =
             serde_json::to_string(&provider_a.settings_config).expect("serialize backup");
-        db.save_live_backup("grokbuild", &original_backup)
+        db.save_live_backup("grokbuild", &original_backup, None)
             .await
             .expect("seed backup");
         let takeover = crate::grok_config::apply_proxy_takeover(
