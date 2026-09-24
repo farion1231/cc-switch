@@ -96,7 +96,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 <tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 1,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
+<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
 </tr>
 
 <tr>
