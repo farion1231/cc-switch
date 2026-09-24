@@ -39,6 +39,65 @@ fn valid_responses_json_schema_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
 }
 
+/// OpenAI's strict structured-output subset requires every object property to be
+/// listed in `required` and `additionalProperties` to be false, recursively.
+/// Anthropic schemas allow optional properties, so only opt into strict mode when
+/// the schema can be represented without changing those semantics.
+fn is_responses_strict_schema(schema: &Value) -> bool {
+    let Some(object) = schema.as_object() else {
+        return false;
+    };
+
+    if let Some(properties) = object.get("properties") {
+        let Some(properties) = properties.as_object() else {
+            return false;
+        };
+        if object.get("additionalProperties").and_then(Value::as_bool) != Some(false) {
+            return false;
+        }
+
+        let required = object.get("required").and_then(Value::as_array);
+        for (name, property_schema) in properties {
+            if !required.is_some_and(|required| {
+                required
+                    .iter()
+                    .any(|required_name| required_name.as_str() == Some(name))
+            }) || !is_responses_strict_schema(property_schema)
+            {
+                return false;
+            }
+        }
+    }
+
+    if let Some(items) = object.get("items") {
+        if !is_responses_strict_schema(items) {
+            return false;
+        }
+    }
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if let Some(branches) = object.get(keyword) {
+            let Some(branches) = branches.as_array() else {
+                return false;
+            };
+            if !branches.iter().all(is_responses_strict_schema) {
+                return false;
+            }
+        }
+    }
+    for keyword in ["$defs", "definitions"] {
+        if let Some(definitions) = object.get(keyword) {
+            let Some(definitions) = definitions.as_object() else {
+                return false;
+            };
+            if !definitions.values().all(is_responses_strict_schema) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// Anthropic's structured-output contract uses a top-level schema. Responses
 /// expects the same schema inside `text.format`, with a required format name and
 /// explicit strictness. Anthropic structured outputs are strict by definition,
@@ -57,10 +116,11 @@ fn anthropic_output_format_to_responses(format: &Value) -> Option<Value> {
         .and_then(Value::as_str)
         .filter(|name| valid_responses_json_schema_name(name))
         .unwrap_or(DEFAULT_RESPONSES_JSON_SCHEMA_NAME);
-    let strict = format
+    let requested_strict = format
         .get("strict")
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let strict = requested_strict && is_responses_strict_schema(schema);
 
     let mut mapped = json!({
         "type": "json_schema",
@@ -4936,6 +4996,74 @@ mod tests {
         );
         assert_eq!(result["text"]["format"]["schema"], schema);
         assert_eq!(result["text"]["format"]["strict"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_anthropic_optional_schema_properties_disable_responses_strict_mode() {
+        for schema in [
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "notes": {"type": "string"}
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+            json!({
+                "type": "object",
+                "properties": {
+                    "profile": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "notes": {"type": "string"}
+                        },
+                        "required": ["name"],
+                        "additionalProperties": false
+                    }
+                },
+                "required": ["profile"],
+                "additionalProperties": false
+            }),
+        ] {
+            let input = json!({
+                "model": "gpt-5.4",
+                "output_config": {
+                    "format": {
+                        "type": "json_schema",
+                        "schema": schema
+                    }
+                },
+                "messages": [{"role": "user", "content": "Classify this action"}]
+            });
+
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
+            assert_eq!(result["text"]["format"]["strict"].as_bool(), Some(false));
+        }
+
+        let input = json!({
+            "model": "gpt-5.4",
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "strict": true,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "notes": {"type": "string"}
+                        },
+                        "required": ["name"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "messages": [{"role": "user", "content": "Classify this action"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["text"]["format"]["strict"].as_bool(), Some(false));
     }
 
     #[test]
