@@ -228,6 +228,12 @@ pub fn record_models_dev_sync_result(
     crate::services::model_pricing::record_models_dev_sync_result(&state.db, synced_at, error)
 }
 
+/// 拉取 models.dev 定价数据，走后端代理感知 HTTP 客户端，避免 WebView 直连在代理环境下超时
+#[tauri::command]
+pub async fn fetch_models_dev_pricing() -> Result<String, String> {
+    crate::services::model_pricing::fetch_models_dev_pricing().await
+}
+
 /// 检查 Provider 使用限额
 #[tauri::command]
 pub fn check_provider_limits(
