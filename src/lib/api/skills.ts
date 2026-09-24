@@ -57,6 +57,16 @@ export interface SkillBackupEntry {
   skill: InstalledSkill;
 }
 
+export interface SkillSyncFailure {
+  app: string;
+  error: string;
+}
+
+export interface SkillSyncResult {
+  succeeded: string[];
+  failed: SkillSyncFailure[];
+}
+
 /** 可发现的 Skill（来自仓库） */
 export interface DiscoverableSkill {
   key: string;
@@ -152,6 +162,21 @@ export const skillsApi = {
   /** 获取可恢复的 Skill 备份列表 */
   async getBackups(): Promise<SkillBackupEntry[]> {
     return await invoke("get_skill_backups");
+  },
+
+  /** 在系统文件管理器中打开已安装 Skill 的托管目录 */
+  async openInstalledFolder(id: string): Promise<void> {
+    await invoke("open_installed_skill_folder", { id });
+  },
+
+  /** 完成外部编辑后创建备份、更新内容哈希并触发云自动同步 */
+  async finishExternalEdit(id: string): Promise<SkillBackupEntry> {
+    return await invoke("finish_external_skill_edit", { id });
+  },
+
+  /** 将最新 Skill 内容重新部署到所有当前已启用的 agent */
+  async syncToEnabledApps(id: string): Promise<SkillSyncResult> {
+    return await invoke("sync_skill_to_enabled_apps", { id });
   },
 
   /** 删除 Skill 备份 */

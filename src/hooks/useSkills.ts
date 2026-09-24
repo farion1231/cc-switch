@@ -10,6 +10,7 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillSyncResult,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -53,6 +54,33 @@ export function useDeleteSkillBackup() {
     // returning an error, so reconcile the authoritative list either way.
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+  });
+}
+
+export function useOpenInstalledSkillFolder() {
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.openInstalledFolder(id),
+  });
+}
+
+export function useFinishExternalSkillEdit() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.finishExternalEdit(id),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+      ]),
+  });
+}
+
+export function useSyncSkillToEnabledApps() {
+  const queryClient = useQueryClient();
+  return useMutation<SkillSyncResult, Error, string>({
+    mutationFn: (id) => skillsApi.syncToEnabledApps(id),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });
 }
 

@@ -8,13 +8,14 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
+    SkillService, SkillStorageLocation, SkillSyncResult, SkillUninstallResult, SkillUpdateInfo,
     SkillsShSearchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
@@ -35,6 +36,45 @@ pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<Instal
 #[tauri::command]
 pub fn get_skill_backups() -> Result<Vec<SkillBackupEntry>, String> {
     SkillService::list_backups().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_installed_skill_folder(
+    handle: AppHandle,
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let path = SkillService::installed_skill_dir(&app_state.db, &id)
+        .map_err(|e| e.to_string())?;
+    handle
+        .opener()
+        .open_path(path.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开 Skill 文件夹失败: {e}"))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn finish_external_skill_edit(
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<SkillBackupEntry, String> {
+    let db = Arc::clone(&app_state.db);
+    tauri::async_runtime::spawn_blocking(move || SkillService::finish_external_edit(&db, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sync_skill_to_enabled_apps(
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<SkillSyncResult, String> {
+    let db = Arc::clone(&app_state.db);
+    tauri::async_runtime::spawn_blocking(move || SkillService::sync_to_enabled_apps(&db, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

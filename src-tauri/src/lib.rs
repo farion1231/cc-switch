@@ -1545,6 +1545,9 @@ pub fn run() {
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,
+            commands::open_installed_skill_folder,
+            commands::finish_external_skill_edit,
+            commands::sync_skill_to_enabled_apps,
             commands::delete_skill_backup,
             commands::install_skill_unified,
             commands::uninstall_skill_unified,

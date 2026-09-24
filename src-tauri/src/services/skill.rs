@@ -298,6 +298,20 @@ pub struct SkillBackupEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillSyncFailure {
+    pub app: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSyncResult {
+    pub succeeded: Vec<String>,
+    pub failed: Vec<SkillSyncFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SkillBackupMetadata {
     skill: InstalledSkill,
     backup_created_at: i64,
@@ -715,6 +729,79 @@ impl SkillService {
             skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
         }
         Ok(skills.into_values().collect())
+    }
+
+    /// Resolve an installed Skill's managed source directory from its database id.
+    pub fn installed_skill_dir(db: &Arc<Database>, id: &str) -> Result<PathBuf> {
+        let _state_guard = skill_state_read_guard();
+        let skill = db
+            .get_installed_skill(id)?
+            .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
+        let directory = Self::require_valid_directory(&skill.directory)?;
+        let path = Self::get_ssot_dir()?.join(directory);
+        Self::validate_sync_source_dir(&path, &skill.directory)?;
+        Ok(path)
+    }
+
+    /// Back up the current externally edited contents and update its hash. The
+    /// database change hook will enqueue cloud auto-sync when enabled.
+    pub fn finish_external_edit(db: &Arc<Database>, id: &str) -> Result<SkillBackupEntry> {
+        let _state_guard = skill_state_write_guard();
+        let mut skill = db
+            .get_installed_skill(id)?
+            .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
+        let directory = Self::require_valid_directory(&skill.directory)?;
+        let source_path = Self::get_ssot_dir()?.join(directory);
+        Self::validate_sync_source_dir(&source_path, &skill.directory)?;
+
+        skill.content_hash = Some(Self::compute_dir_hash(&source_path)?);
+        skill.updated_at = Utc::now().timestamp();
+        let backup_path = Self::create_skill_backup_from_source(&skill, &source_path)?;
+        if !db.update_skill_hash(
+            &skill.id,
+            skill.content_hash.as_deref().unwrap_or_default(),
+            skill.updated_at,
+        )? {
+            return Err(anyhow!("Skill no longer exists: {}", skill.id));
+        }
+
+        Ok(SkillBackupEntry {
+            backup_id: backup_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            backup_path: backup_path.to_string_lossy().to_string(),
+            created_at: Utc::now().timestamp(),
+            skill,
+        })
+    }
+
+    /// Redeploy the latest SSOT contents to each currently enabled app. One
+    /// failed destination does not prevent the remaining apps from syncing.
+    pub fn sync_to_enabled_apps(db: &Arc<Database>, id: &str) -> Result<SkillSyncResult> {
+        let _state_guard = skill_state_write_guard();
+        let mut skill = db
+            .get_installed_skill(id)?
+            .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
+        let directory = Self::require_valid_directory(&skill.directory)?;
+        skill.apps.pi = Self::skill_exists_in_app(&directory, &AppType::Pi);
+
+        let mut result = SkillSyncResult {
+            succeeded: Vec::new(),
+            failed: Vec::new(),
+        };
+        for app in skill.apps.enabled_apps() {
+            match Self::sync_to_app_dir(&directory, &app) {
+                Ok(()) => result.succeeded.push(app.as_str().to_string()),
+                Err(error) => result.failed.push(SkillSyncFailure {
+                    app: app.as_str().to_string(),
+                    error: error.to_string(),
+                }),
+            }
+        }
+
+        Ok(result)
     }
 
     /// Reuse an existing installation or reject a directory owned by another repo.
@@ -3776,24 +3863,10 @@ impl SkillService {
             .with_context(|| format!("failed to parse {}", metadata_path.display()))
     }
 
-    fn create_uninstall_backup(skill: &InstalledSkill) -> Result<Option<PathBuf>> {
-        Self::create_uninstall_backup_excluding(skill, None)
-    }
-
-    fn create_uninstall_backup_excluding(
+    fn create_skill_backup_from_source(
         skill: &InstalledSkill,
-        excluded_path: Option<&Path>,
-    ) -> Result<Option<PathBuf>> {
-        let Some(source_path) =
-            Self::resolve_uninstall_backup_source_excluding(skill, excluded_path)?
-        else {
-            log::warn!(
-                "Skill {} 卸载前未找到可备份的目录，将跳过备份",
-                skill.directory
-            );
-            return Ok(None);
-        };
-
+        source_path: &Path,
+    ) -> Result<PathBuf> {
         let backup_root = Self::get_backup_dir()?;
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let slug = Self::sanitize_backup_segment(&skill.directory);
@@ -3806,7 +3879,7 @@ impl SkillService {
 
         let write_backup = || -> Result<()> {
             let skill_backup_dir = backup_path.join("skill");
-            Self::copy_dir_recursive(&source_path, &skill_backup_dir)?;
+            Self::copy_dir_recursive(source_path, &skill_backup_dir)?;
 
             let metadata = SkillBackupMetadata {
                 skill: skill.clone(),
@@ -3829,6 +3902,29 @@ impl SkillService {
         if let Err(err) = Self::cleanup_old_skill_backups(&backup_root) {
             log::warn!("清理旧 Skill 备份失败: {err:#}");
         }
+
+        Ok(backup_path)
+    }
+
+    fn create_uninstall_backup(skill: &InstalledSkill) -> Result<Option<PathBuf>> {
+        Self::create_uninstall_backup_excluding(skill, None)
+    }
+
+    fn create_uninstall_backup_excluding(
+        skill: &InstalledSkill,
+        excluded_path: Option<&Path>,
+    ) -> Result<Option<PathBuf>> {
+        let Some(source_path) =
+            Self::resolve_uninstall_backup_source_excluding(skill, excluded_path)?
+        else {
+            log::warn!(
+                "Skill {} 卸载前未找到可备份的目录，将跳过备份",
+                skill.directory
+            );
+            return Ok(None);
+        };
+
+        let backup_path = Self::create_skill_backup_from_source(skill, &source_path)?;
 
         log::info!(
             "Skill {} 已在卸载前备份到 {}",

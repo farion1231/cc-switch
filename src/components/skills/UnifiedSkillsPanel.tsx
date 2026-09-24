@@ -4,6 +4,8 @@ import {
   Sparkles,
   Trash2,
   ExternalLink,
+  FolderOpen,
+  Archive,
   RefreshCw,
   Loader2,
   Search,
@@ -15,6 +17,9 @@ import {
   type ImportSkillSelection,
   type SkillBackupEntry,
   useDeleteSkillBackup,
+  useOpenInstalledSkillFolder,
+  useFinishExternalSkillEdit,
+  useSyncSkillToEnabledApps,
   useInstalledSkills,
   useSkillBackups,
   useRestoreSkillBackup,
@@ -113,6 +118,9 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isFetchingSkillBackups,
   } = useSkillBackups();
   const deleteBackupMutation = useDeleteSkillBackup();
+  const openSkillFolderMutation = useOpenInstalledSkillFolder();
+  const finishEditMutation = useFinishExternalSkillEdit();
+  const syncEnabledAppsMutation = useSyncSkillToEnabledApps();
   const toggleAppMutation = useToggleSkillApp();
   const bulkToggleAppMutation = useBulkToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
@@ -134,6 +142,9 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   const mutationPending =
     deleteBackupMutation.isPending ||
+    openSkillFolderMutation.isPending ||
+    finishEditMutation.isPending ||
+    syncEnabledAppsMutation.isPending ||
     toggleAppMutation.isPending ||
     bulkToggleAppMutation.isPending ||
     uninstallMutation.isPending ||
@@ -273,6 +284,70 @@ const UnifiedSkillsPanel = React.forwardRef<
       await toggleAppMutation.mutateAsync({ id, app, enabled });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
+    }
+  };
+
+  const handleOpenSkillFolder = async (skill: InstalledSkill) => {
+    if (!beginWrite()) return;
+    try {
+      await openSkillFolderMutation.mutateAsync(skill.id);
+    } catch (error) {
+      toast.error(t("skills.openFolderFailed"), {
+        description: String(error),
+      });
+    } finally {
+      endWrite();
+    }
+  };
+
+  const handleFinishExternalEdit = async (skill: InstalledSkill) => {
+    if (!beginWrite()) return;
+    try {
+      const backup = await finishEditMutation.mutateAsync(skill.id);
+      toast.success(t("skills.finishEditSuccess", { name: skill.name }), {
+        description: t("skills.backup.location", { path: backup.backupPath }),
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("skills.finishEditFailed"), {
+        description: String(error),
+      });
+    } finally {
+      endWrite();
+    }
+  };
+
+  const handleSyncEnabledApps = async (skill: InstalledSkill) => {
+    if (!beginWrite()) return;
+    try {
+      const result = await syncEnabledAppsMutation.mutateAsync(skill.id);
+      if (result.succeeded.length === 0 && result.failed.length === 0) {
+        toast.info(t("skills.noEnabledAgents"));
+      } else if (result.failed.length > 0) {
+        const failures = result.failed
+          .map(({ app, error }) => `${app}: ${error}`)
+          .join("\n");
+        toast.error(
+          t("skills.syncAgentsPartialFailure", {
+            succeeded: result.succeeded.length,
+            failed: result.failed.length,
+          }),
+          { description: failures, closeButton: true },
+        );
+      } else {
+        toast.success(
+          t("skills.syncAgentsSuccess", {
+            count: result.succeeded.length,
+          }),
+          { closeButton: true },
+        );
+      }
+    } catch (error) {
+      toast.error(t("skills.syncAgentsFailed"), {
+        description: String(error),
+      });
     } finally {
       endWrite();
     }
@@ -706,9 +781,20 @@ const UnifiedSkillsPanel = React.forwardRef<
                       updateSkillMutation.isPending &&
                       updateSkillMutation.variables === skill.id
                     }
+                    isFinishingEdit={
+                      finishEditMutation.isPending &&
+                      finishEditMutation.variables === skill.id
+                    }
+                    isSyncingApps={
+                      syncEnabledAppsMutation.isPending &&
+                      syncEnabledAppsMutation.variables === skill.id
+                    }
                     actionsDisabled={interactionBlocked}
                     appIds={visibleSkillAppIds}
                     onToggleApp={handleToggleApp}
+                    onOpenFolder={() => handleOpenSkillFolder(skill)}
+                    onFinishEdit={() => handleFinishExternalEdit(skill)}
+                    onSyncEnabledApps={() => handleSyncEnabledApps(skill)}
                     onUninstall={() => handleUninstall(skill)}
                     onUpdate={() => handleUpdateSkill(skill)}
                     isLast={index === filteredSkills.length - 1}
@@ -764,8 +850,13 @@ interface InstalledSkillListItemProps {
   appIds: AppId[];
   hasUpdate?: boolean;
   isUpdating?: boolean;
+  isFinishingEdit?: boolean;
+  isSyncingApps?: boolean;
   actionsDisabled?: boolean;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
+  onOpenFolder: () => void;
+  onFinishEdit: () => void;
+  onSyncEnabledApps: () => void;
   onUninstall: () => void;
   onUpdate?: () => void;
   isLast?: boolean;
@@ -776,8 +867,13 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   appIds,
   hasUpdate,
   isUpdating,
+  isFinishingEdit,
+  isSyncingApps,
   actionsDisabled,
   onToggleApp,
+  onOpenFolder,
+  onFinishEdit,
+  onSyncEnabledApps,
   onUninstall,
   onUpdate,
   isLast,
@@ -849,6 +945,50 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
         style={hasUpdate ? { opacity: 1 } : undefined}
       >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 hover:text-primary hover:bg-primary/10"
+          onClick={onOpenFolder}
+          disabled={actionsDisabled}
+          title={t("skills.openFolder")}
+          aria-label={t("skills.openFolder")}
+        >
+          <FolderOpen size={14} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 hover:text-primary hover:bg-primary/10"
+          onClick={onFinishEdit}
+          disabled={actionsDisabled}
+          title={t("skills.finishEdit")}
+          aria-label={t("skills.finishEdit")}
+        >
+          {isFinishingEdit ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Archive size={14} />
+          )}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 hover:text-primary hover:bg-primary/10"
+          onClick={onSyncEnabledApps}
+          disabled={actionsDisabled}
+          title={t("skills.syncEnabledAgents")}
+          aria-label={t("skills.syncEnabledAgents")}
+        >
+          {isSyncingApps ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+        </Button>
         {hasUpdate && onUpdate && (
           <Button
             type="button"
