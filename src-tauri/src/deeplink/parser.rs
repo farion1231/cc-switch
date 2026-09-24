@@ -81,10 +81,17 @@ fn parse_provider_deeplink(
     // Validate app type
     if !matches!(
         app.as_str(),
-        "claude" | "codex" | "gemini" | "grokbuild" | "opencode" | "openclaw" | "hermes"
+        "claude"
+            | "claude-desktop"
+            | "codex"
+            | "gemini"
+            | "grokbuild"
+            | "opencode"
+            | "openclaw"
+            | "hermes"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid provider app type: '{app}'"
+            "Invalid provider app type: '{app}'. Expected one of: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes"
         )));
     }
 
@@ -120,6 +127,12 @@ fn parse_provider_deeplink(
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
     let opus_model = params.get("opusModel").cloned();
+    // Claude Desktop write mode. Normalised here; semantic validation happens in
+    // build_provider_from_request so that other apps can ignore it silently.
+    let claude_desktop_mode = params
+        .get("claudeDesktopMode")
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty());
     let icon = params
         .get("icon")
         .map(|v| v.trim().to_lowercase())
@@ -157,6 +170,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        claude_desktop_mode,
         content: None,
         description: None,
         apps: None,
@@ -229,6 +243,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         apps: None,
         repo: None,
         directory: None,
@@ -302,6 +317,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         content: None,
         description: None,
         repo: None,
@@ -357,6 +373,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         content: None,
         description: None,
         apps: None,

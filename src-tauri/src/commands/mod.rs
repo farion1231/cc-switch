@@ -21,7 +21,7 @@ mod pi;
 mod plugin;
 mod profile;
 mod prompt;
-mod provider;
+pub(crate) mod provider;
 mod proxy;
 mod session_manager;
 mod settings;

@@ -9,6 +9,7 @@ export interface DeepLinkImportRequest {
   // Common fields
   app?:
     | "claude"
+    | "claude-desktop"
     | "codex"
     | "gemini"
     | "grokbuild"
@@ -29,6 +30,12 @@ export interface DeepLinkImportRequest {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  /**
+   * Claude Desktop 3P write mode. Under `proxy` the haiku/sonnet/opus model
+   * params above are read as upstream model mappings instead of plain env
+   * values. Only meaningful when app is "claude-desktop".
+   */
+  claudeDesktopMode?: "direct" | "proxy";
 
   // Prompt fields
   content?: string;

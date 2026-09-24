@@ -908,6 +908,7 @@
                     <label>应用类型 *</label>
                     <select id="app" onchange="updateModelFields()">
                         <option value="claude">Claude Code</option>
+                        <option value="claude-desktop">Claude Desktop</option>
                         <option value="codex">Codex</option>
                         <option value="gemini">Gemini</option>
                     </select>
@@ -1003,13 +1004,27 @@
                     </small>
                 </div>
 
+                <!-- Claude Desktop 专用字段 -->
+                <div id="claudeDesktopModeGroup" style="display: none;">
+                    <div class="form-group">
+                        <label>写入模式</label>
+                        <select id="claudeDesktopMode" onchange="updateModelFields()">
+                            <option value="direct">直连（direct）</option>
+                            <option value="proxy">本地路由（proxy）</option>
+                        </select>
+                        <small style="color: #7f8c8d; font-size: 11px; display: block; margin-top: 4px;">
+                            直连：上游需暴露 Claude 原生 Messages API，模型名须为 claude-* 角色名｜本地路由：由 CC Switch 转发并做模型映射，可用非 Claude 模型
+                        </small>
+                    </div>
+                </div>
+
                 <!-- Claude 专用字段 -->
                 <div id="claudeFields" style="display: block;">
                     <div style="background: #e8f4f8; padding: 16px; border-radius: 8px; margin: 16px 0;">
                         <h4 style="color: #2c3e50; margin-bottom: 12px; font-size: 14px;">
                             📋 Claude 专用模型字段（可选）
                         </h4>
-                        <p style="color: #7f8c8d; font-size: 12px; margin-bottom: 12px;">
+                        <p id="claudeFieldsHint" style="color: #7f8c8d; font-size: 12px; margin-bottom: 12px;">
                             可以根据需要设置特定的模型字段，这些字段仅在 Claude 应用中生效
                         </p>
 
@@ -1202,7 +1217,7 @@
 
             let template = '';
 
-            if (app === 'claude') {
+            if (app === 'claude' || app === 'claude-desktop') {
                 template = `{
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "sk-ant-your-api-key-here",
@@ -1245,15 +1260,33 @@ requires_openai_auth = true`;
         function updateModelFields() {
             const app = document.getElementById('app').value;
             const claudeFields = document.getElementById('claudeFields');
+            const claudeDesktopModeGroup = document.getElementById('claudeDesktopModeGroup');
+            const claudeFieldsHint = document.getElementById('claudeFieldsHint');
             const generalConfigGroup = document.getElementById('generalConfigGroup');
             const codexConfigGroup = document.getElementById('codexConfigGroup');
             const mode = document.getElementById('importMode').value;
 
-            // Claude 字段显示控制
-            if (app === 'claude') {
+            // Claude 字段显示控制：Claude Desktop 与 Claude Code 共用同一组模型字段，
+            // 但在 proxy 模式下语义是「上游模型映射」而非普通 env 值。
+            if (app === 'claude' || app === 'claude-desktop') {
                 claudeFields.style.display = 'block';
             } else {
                 claudeFields.style.display = 'none';
+            }
+
+            // Claude Desktop 写入模式选择器
+            claudeDesktopModeGroup.style.display =
+                app === 'claude-desktop' ? 'block' : 'none';
+
+            // 模型字段语义提示随写入模式变化
+            const desktopMode = document.getElementById('claudeDesktopMode').value;
+            if (app === 'claude-desktop') {
+                claudeFieldsHint.textContent = desktopMode === 'proxy'
+                    ? '本地路由模式下，这三个字段是各角色实际请求的上游模型（如 grok-4.6），CC Switch 会把 Claude 的 Sonnet/Opus/Haiku 映射过去；至少要填一个。'
+                    : '直连模式下这三个字段写入 Desktop 的模型配置，模型名需符合 claude-* 角色名。';
+            } else {
+                claudeFieldsHint.textContent =
+                    '可以根据需要设置特定的模型字段，这些字段仅在 Claude 应用中生效';
             }
 
             // 配置文件输入框控制
@@ -1286,6 +1319,11 @@ requires_openai_auth = true`;
                 app: app,
                 name: name
             });
+
+            // Claude Desktop 写入模式（仅该应用使用；缺省为 direct）
+            if (app === 'claude-desktop') {
+                params.append('claudeDesktopMode', document.getElementById('claudeDesktopMode').value);
+            }
 
             if (mode === 'url') {
                 // URL 参数模式
@@ -1345,8 +1383,10 @@ requires_openai_auth = true`;
                 if (enabled) params.append('enabled', enabled);
                 if (notes) params.append('notes', notes);
 
-                // 添加 Claude 专用模型字段
-                if (app === 'claude') {
+                // 添加 Claude / Claude Desktop 专用模型字段
+                // Claude Desktop 的 proxy 模式下，这三个参数表示各角色实际请求的
+                // 上游模型；direct 模式下则是 Desktop 自己的模型配置。
+                if (app === 'claude' || app === 'claude-desktop') {
                     if (haikuModel) params.append('haikuModel', haikuModel);
                     if (sonnetModel) params.append('sonnetModel', sonnetModel);
                     if (opusModel) params.append('opusModel', opusModel);
@@ -1431,8 +1471,8 @@ requires_openai_auth = true`;
                 if (enabled) params.append('enabled', enabled);
                 if (notes) params.append('notes', notes);
 
-                // 添加 Claude 专用模型字段
-                if (app === 'claude') {
+                // 添加 Claude / Claude Desktop 专用模型字段
+                if (app === 'claude' || app === 'claude-desktop') {
                     if (haikuModel) params.append('haikuModel', haikuModel);
                     if (sonnetModel) params.append('sonnetModel', sonnetModel);
                     if (opusModel) params.append('opusModel', opusModel);
