@@ -194,7 +194,8 @@ pub fn anthropic_to_commandcode(
             if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
                 for call in calls {
                     let id = call.get("id").and_then(Value::as_str).unwrap_or("");
-                    let function = call.get("function").unwrap_or(&Value::Null);
+                    let empty_function = json!({});
+                    let function = call.get("function").unwrap_or(&empty_function);
                     let name = function
                         .get("name")
                         .and_then(Value::as_str)
@@ -288,7 +289,7 @@ pub fn anthropic_to_commandcode(
         "config": {
             "workingDir": ".",
             "date": chrono::Utc::now().format("%Y-%m-%d").to_string(),
-            "environment": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            "environment": "cli",
             "structure": [],
             "isGitRepo": false,
             "currentBranch": "",
