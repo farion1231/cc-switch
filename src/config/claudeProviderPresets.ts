@@ -1961,4 +1961,21 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "Cheaper Inference",
+    websiteUrl: "https://cheaperinference.com",
+    apiKeyUrl: "https://cheaperinference.com/signup",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.cheaperinference.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.cheaperinference.com"],
+  },
 ];
