@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RELEASE_TAG: v3.20.4-commandcode-go.1
-  RELEASE_NAME: CC Switch v3.20.4 - Command Code Go
+  RELEASE_TAG: v3.20.4-commandcode-go.2
+  RELEASE_NAME: CC Switch v3.20.4 - Command Code Go + Token Plan
 
 jobs:
   build-windows:
@@ -103,8 +103,12 @@ jobs:
           Custom CC Switch based on official v3.20.4.
 
           - Native Command Code Go /alpha/generate support for Claude Code
+          - Native Command Code Token Plan quota: 5h / weekly / monthly
+          - Reuses the provider API key; canonical api.commandcode.ai only
+          - Go monthly cap $10; GOAT monthly cap $70; live 5h/weekly caps from API
           - Real streaming token usage accounting
           - Official Command Code provider icon
+          - Yellow-star sponsored presets hidden from Add Provider
           - UI app set reduced to Claude Code / Claude Desktop / Codex
           - Windows x64 MSI only
           - Keeps the official CC Switch product identity / UpgradeCode so it can replace an existing MSI installation
