@@ -198,7 +198,7 @@ export function ProviderActions({
           "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         icon: <Plus className="h-4 w-4" />,
         text:
-          appId === "pi"
+          appId === "pi" || appId === "ohmypi"
             ? t("provider.enable", { defaultValue: "启用" })
             : t("provider.addToConfig", { defaultValue: "添加" }),
       };
@@ -261,7 +261,7 @@ export function ProviderActions({
   const buttonState = getMainButtonState();
   const canDelete =
     !isReadOnly &&
-    (appId === "pi"
+    (appId === "pi" || appId === "ohmypi"
       ? !isStateChangeProtected
       : isOmo || isAdditiveMode
         ? true
@@ -270,7 +270,7 @@ export function ProviderActions({
     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
   });
   const deleteHint =
-    appId === "pi" && isStateChangeProtected
+    (appId === "pi" || appId === "ohmypi") && isStateChangeProtected
       ? piStateChangeHint
       : isReadOnly
         ? readOnlyHint

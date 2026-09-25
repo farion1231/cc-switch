@@ -35,6 +35,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     openclaw: "AGENTS.md",
     hermes: "SOUL.md",
     pi: "AGENTS.md",
+    ohmypi: "AGENTS.md",
     mcode: "~/.minimax/AGENTS.md",
   };
   const filename = filenameMap[appId];

@@ -295,6 +295,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: root.apiKey,
             baseUrl: firstModel?.baseUrl || root.baseUrl,
           };
+        } else if (appId === "ohmypi") {
+          // Oh My Pi: same camelCase layout as Pi; a model may override baseUrl.
+          const root = config as any;
+          const firstModel = Array.isArray(root.models)
+            ? root.models[0]
+            : undefined;
+          return {
+            apiKey: root.apiKey,
+            baseUrl: firstModel?.baseUrl || root.baseUrl,
+          };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
           return {

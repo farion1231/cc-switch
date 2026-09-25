@@ -149,6 +149,9 @@ importers:
       tailwind-merge:
         specifier: ^3.3.1
         version: 3.3.1
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^4.1.12
         version: 4.1.12
@@ -176,7 +179,7 @@ importers:
         version: 18.3.7(@types/react@18.3.23)
       '@vitejs/plugin-react':
         specifier: ^4.2.0
-        version: 4.7.0(vite@7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1))
+        version: 4.7.0(vite@7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)(yaml@2.9.0))
       autoprefixer:
         specifier: ^10.4.20
         version: 10.4.22(postcss@8.5.6)
@@ -200,13 +203,13 @@ importers:
         version: 3.6.2
       tailwindcss:
         specifier: ^3.4.17
-        version: 3.4.18
+        version: 3.4.18(yaml@2.9.0)
       typescript:
         specifier: ^5.3.0
         version: 5.9.2
       vite:
         specifier: ^7.3.0
-        version: 7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)
+        version: 7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)(yaml@2.9.0)
       vitest:
         specifier: ^2.0.5
         version: 2.1.9(@types/node@20.19.9)(jsdom@25.0.1)(lightningcss@1.30.1)(msw@2.11.6(@types/node@20.19.9)(typescript@5.9.2))
@@ -3062,6 +3065,11 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
@@ -4423,7 +4431,7 @@ snapshots:
 
   '@types/use-sync-external-store@0.0.6': {}
 
-  '@vitejs/plugin-react@4.7.0(vite@7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1))':
+  '@vitejs/plugin-react@4.7.0(vite@7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 7.28.0
       '@babel/plugin-transform-react-jsx-self': 7.27.1(@babel/core@7.28.0)
@@ -4431,7 +4439,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-beta.27
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
-      vite: 7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)
+      vite: 7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -5248,12 +5256,13 @@ snapshots:
       camelcase-css: 2.0.1
       postcss: 8.5.6
 
-  postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.6):
+  postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.6)(yaml@2.9.0):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 1.21.7
       postcss: 8.5.6
+      yaml: 2.9.0
 
   postcss-nested@6.2.0(postcss@8.5.6):
     dependencies:
@@ -5505,7 +5514,7 @@ snapshots:
 
   tailwind-merge@3.3.1: {}
 
-  tailwindcss@3.4.18:
+  tailwindcss@3.4.18(yaml@2.9.0):
     dependencies:
       '@alloc/quick-lru': 5.2.0
       arg: 5.0.2
@@ -5524,7 +5533,7 @@ snapshots:
       postcss: 8.5.6
       postcss-import: 15.1.0(postcss@8.5.6)
       postcss-js: 4.1.0(postcss@8.5.6)
-      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.6)
+      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.6)(yaml@2.9.0)
       postcss-nested: 6.2.0(postcss@8.5.6)
       postcss-selector-parser: 6.1.2
       resolve: 1.22.11
@@ -5678,7 +5687,7 @@ snapshots:
       fsevents: 2.3.3
       lightningcss: 1.30.1
 
-  vite@7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1):
+  vite@7.3.0(@types/node@20.19.9)(jiti@1.21.7)(lightningcss@1.30.1)(yaml@2.9.0):
     dependencies:
       esbuild: 0.27.2
       fdir: 6.5.0(picomatch@4.0.3)
@@ -5691,6 +5700,7 @@ snapshots:
       fsevents: 2.3.3
       jiti: 1.21.7
       lightningcss: 1.30.1
+      yaml: 2.9.0
 
   vitest@2.1.9(@types/node@20.19.9)(jsdom@25.0.1)(lightningcss@1.30.1)(msw@2.11.6(@types/node@20.19.9)(typescript@5.9.2)):
     dependencies:
@@ -5782,6 +5792,8 @@ snapshots:
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
+
+  yaml@2.9.0: {}
 
   yargs-parser@21.1.1: {}
 

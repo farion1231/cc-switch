@@ -59,6 +59,30 @@ export const translatePiProviderMutationError = (
   return "";
 };
 
+export const translateOhMyPiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+
+  if (
+    message.includes("changed outside CC Switch") ||
+    message.includes("no longer present in models.yml") ||
+    message.includes("another value now owns the key")
+  ) {
+    return t("ohmypi.provider.writeConflict");
+  }
+
+  if (
+    message.includes("Oh My Pi provider") &&
+    message.includes("already exists")
+  ) {
+    return t("ohmypi.form.providerKeyDuplicate");
+  }
+
+  return "";
+};
+
 /**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。

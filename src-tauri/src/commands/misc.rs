@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 8] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
+const VALID_TOOLS: [&str; 9] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "ohmypi",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -434,6 +434,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "ohmypi" => "Oh My Pi",
         _ => "Unknown",
     }
 }
@@ -506,6 +507,14 @@ enum LifecycleCommandShell {
     WindowsBatch,
 }
 
+/// Map a tool id to its CLI binary name. Most tools share the same name;
+fn tool_binary_name(tool: &str) -> &str {
+    match tool {
+        "ohmypi" => "omp",
+        _ => tool,
+    }
+}
+
 fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some("npm i -g @anthropic-ai/claude-code@latest"),
@@ -515,6 +524,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "ohmypi" => Some("bun install -g @oh-my-pi/pi-coding-agent@latest"),
         _ => None,
     }
 }
@@ -824,6 +834,9 @@ async fn get_single_tool_version_impl(
         "hermes" => fetch_hermes_latest_version(&client, local).await,
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
+        }
+        "ohmypi" => {
+            fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await
         }
         _ => None,
     };
@@ -1159,7 +1172,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
         let flag = default_flag_for_shell(&shell);
         Command::new(shell)
             .arg(flag)
-            .arg(format!("{tool} --version"))
+            .arg(format!("{} --version", tool_binary_name(tool)))
             .output()
     };
 
@@ -2083,7 +2096,7 @@ fn run_windows_tool_version_command(
 /// install elsewhere cannot mask a broken default.
 #[cfg(target_os = "windows")]
 fn probe_path_default_version(tool: &str) -> ShellProbe {
-    let path_default = match resolve_path_default(tool, None) {
+    let path_default = match resolve_path_default(tool_binary_name(tool), None) {
         Ok(Some(p)) => p,
         _ => return ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     };
@@ -2135,7 +2148,7 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
         #[cfg(not(target_os = "windows"))]
         let new_path = prepend_search_dir_to_path(path, &current_path);
 
-        for tool_path in tool_executable_candidates(tool, path) {
+        for tool_path in tool_executable_candidates(tool_binary_name(tool), path) {
             if !tool_path.exists() {
                 continue;
             }
@@ -2476,6 +2489,7 @@ fn run_probe_version_command(
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
 fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+    let bin = tool_binary_name(tool);
     let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
@@ -2485,7 +2499,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
     let path_default = resolve_path_default(
-        tool,
+        bin,
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
     )
     .ok()
@@ -2500,7 +2514,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         #[cfg(not(target_os = "windows"))]
         let new_path = prepend_search_dir_to_path(dir, &current_path);
 
-        for tool_path in tool_executable_candidates(tool, dir) {
+        for tool_path in tool_executable_candidates(bin, dir) {
             if !tool_path.exists() {
                 continue;
             }
@@ -2569,6 +2583,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
+        "ohmypi" => Some("@oh-my-pi/pi-coding-agent"),
         _ => None,
     }
 }
@@ -3104,12 +3119,13 @@ fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::path::PathBuf, String> {
-    let path_default = resolve_path_default(tool, deadline)?;
+    let bin = tool_binary_name(tool);
+    let path_default = resolve_path_default(bin, deadline)?;
 
     let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
     for dir in build_tool_search_paths(tool) {
-        for candidate in tool_executable_candidates(tool, &dir) {
+        for candidate in tool_executable_candidates(bin, &dir) {
             if !candidate.exists() {
                 continue;
             }
@@ -3764,6 +3780,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
+        "ohmypi" => crate::settings::get_ohmypi_override_dir(),
         _ => None,
     }?;
 

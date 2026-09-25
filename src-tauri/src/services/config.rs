@@ -142,6 +142,10 @@ impl ConfigService {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }
+            AppType::OhMyPi => {
+                // Oh My Pi owns its models.yml/config.yml documents; this legacy
+                // single-provider live-sync path must not rewrite them.
+            }
         }
 
         Ok(())

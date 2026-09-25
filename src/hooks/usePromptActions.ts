@@ -5,6 +5,12 @@ import { promptsApi, type Prompt, type AppId } from "@/lib/api";
 
 const EMPTY_PROMPTS: Record<string, Prompt> = {};
 
+/** i18n namespace for apps whose global prompt lives in a native file (pi / ohmypi). */
+const nativePromptsI18nKey = (
+  appId: AppId,
+): "pi.prompts" | "ohmypi.prompts" | null =>
+  appId === "pi" ? "pi.prompts" : appId === "ohmypi" ? "ohmypi.prompts" : null;
+
 export function usePromptActions(appId: AppId) {
   const { t } = useTranslation();
   const [prompts, setPrompts] = useState<Record<string, Prompt>>({});
@@ -97,11 +103,12 @@ export function usePromptActions(appId: AppId) {
         }));
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
+        const i18nKey = nativePromptsI18nKey(appId);
         toast.success(t("prompts.saveSuccess"), {
           closeButton: true,
           description:
-            appId === "pi" && prompt.enabled
-              ? t("pi.prompts.reloadNotice")
+            i18nKey && prompt.enabled
+              ? t(`${i18nKey}.reloadNotice`)
               : undefined,
         });
         return refreshed;
@@ -160,7 +167,8 @@ export function usePromptActions(appId: AppId) {
 
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      if (appId === "pi") {
+      if (appId === "pi" || appId === "ohmypi") {
+        const i18nKey = nativePromptsI18nKey(appId)!;
         setTogglingId(id);
         try {
           if (enabled) {
@@ -180,12 +188,12 @@ export function usePromptActions(appId: AppId) {
           toast.success(
             t(
               enabled
-                ? "pi.prompts.usePromptSuccess"
-                : "pi.prompts.stopUsingSuccess",
+                ? `${i18nKey}.usePromptSuccess`
+                : `${i18nKey}.stopUsingSuccess`,
             ),
             {
               closeButton: true,
-              description: t("pi.prompts.reloadNotice"),
+              description: t(`${i18nKey}.reloadNotice`),
             },
           );
           return refreshed;

@@ -159,6 +159,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         grokbuild: false,
         opencode: false,
         hermes: false,
+        ohmypi: false,
         mcode: false,
     };
 
@@ -174,6 +175,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");
             }
             "hermes" => apps.hermes = true,
+            "ohmypi" => apps.ohmypi = true,
             "mcode" => apps.mcode = true,
             other => {
                 return Err(AppError::InvalidInput(format!(

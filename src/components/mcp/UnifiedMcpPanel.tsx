@@ -142,6 +142,7 @@ const UnifiedMcpPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      ohmypi: 0,
       mcode: 0,
     };
     serverEntries.forEach(([_, server]) => {
