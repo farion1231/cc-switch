@@ -785,13 +785,13 @@ async fn commandcode_billing_json(
         .map_err(|e| CommandCodeBillingError::Parse(format!("Failed to parse response: {e}")))
 }
 
-fn commandcode_plan_info(plan_id: Option<&str>) -> Option<(&'static str, f64)> {
+fn commandcode_monthly_cap(plan_id: Option<&str>) -> Option<f64> {
     match plan_id
         .map(|value| value.trim().to_ascii_lowercase())
         .as_deref()
     {
-        Some("individual-go") => Some(("Command Code · Go", 10.0)),
-        Some("individual-goat") => Some(("Command Code · GOAT", 70.0)),
+        Some("individual-go") => Some(10.0),
+        Some("individual-goat") => Some(70.0),
         _ => None,
     }
 }
@@ -813,15 +813,15 @@ fn commandcode_window_tier(node: Option<&serde_json::Value>, name: &str) -> Opti
         name: name.to_string(),
         utilization,
         resets_at: node.get("resetAt").and_then(extract_reset_time),
-        used_value_usd: Some(used),
-        max_value_usd: Some(cap),
+        used_value_usd: None,
+        max_value_usd: None,
     })
 }
 
 fn parse_commandcode_tiers(
     credits_body: &serde_json::Value,
     subscription_body: &serde_json::Value,
-) -> (Vec<QuotaTier>, Option<String>) {
+) -> Vec<QuotaTier> {
     let mut tiers = Vec::new();
     let limits = credits_body.get("windowLimits");
 
@@ -851,10 +851,7 @@ fn parse_commandcode_tiers(
                 .and_then(|value| value.as_str())
         });
 
-    let plan = commandcode_plan_info(plan_id);
-    let plan_label = plan.map(|(label, _)| label.to_string());
-
-    if let Some((_, monthly_cap)) = plan {
+    if let Some(monthly_cap) = commandcode_monthly_cap(plan_id) {
         if let Some(monthly_remaining) = credits_body
             .pointer("/credits/monthlyCredits")
             .and_then(parse_f64)
@@ -872,13 +869,13 @@ fn parse_commandcode_tiers(
                 resets_at: subscription
                     .get("currentPeriodEnd")
                     .and_then(extract_reset_time),
-                used_value_usd: Some(used),
-                max_value_usd: Some(monthly_cap),
+                used_value_usd: None,
+                max_value_usd: None,
             });
         }
     }
 
-    (tiers, plan_label)
+    tiers
 }
 
 fn commandcode_error_to_quota(error: CommandCodeBillingError) -> Result<SubscriptionQuota, String> {
@@ -914,7 +911,7 @@ async fn query_commandcode(api_key: &str) -> Result<SubscriptionQuota, String> {
         Err(error) => return commandcode_error_to_quota(error),
     };
 
-    let (tiers, plan_label) = parse_commandcode_tiers(&credits, &subscription);
+    let tiers = parse_commandcode_tiers(&credits, &subscription);
     if tiers.is_empty() {
         return Ok(make_error(
             "Unexpected Command Code billing response shape".to_string(),
@@ -924,7 +921,7 @@ async fn query_commandcode(api_key: &str) -> Result<SubscriptionQuota, String> {
     Ok(SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
-        credential_message: plan_label,
+        credential_message: None,
         success: true,
         tiers,
         extra_usage: None,
@@ -1757,22 +1754,22 @@ mod tests {
             }
         });
 
-        let (tiers, label) = parse_commandcode_tiers(&credits, &subscription);
-        assert_eq!(label.as_deref(), Some("Command Code · GOAT"));
+        let tiers = parse_commandcode_tiers(&credits, &subscription);
         assert_eq!(tiers.len(), 3);
 
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
-        assert_eq!(tiers[0].used_value_usd, Some(3.5));
-        assert_eq!(tiers[0].max_value_usd, Some(14.0));
+        assert_eq!(tiers[0].used_value_usd, None);
+        assert_eq!(tiers[0].max_value_usd, None);
         assert!((tiers[0].utilization - 25.0).abs() < f64::EPSILON);
 
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
-        assert_eq!(tiers[1].max_value_usd, Some(35.0));
+        assert_eq!(tiers[1].used_value_usd, None);
+        assert_eq!(tiers[1].max_value_usd, None);
         assert!((tiers[1].utilization - 20.0).abs() < f64::EPSILON);
 
         assert_eq!(tiers[2].name, TIER_MONTHLY);
-        assert_eq!(tiers[2].used_value_usd, Some(17.5));
-        assert_eq!(tiers[2].max_value_usd, Some(70.0));
+        assert_eq!(tiers[2].used_value_usd, None);
+        assert_eq!(tiers[2].max_value_usd, None);
         assert!((tiers[2].utilization - 25.0).abs() < f64::EPSILON);
         assert_eq!(
             tiers[2].resets_at.as_deref(),
@@ -1795,19 +1792,17 @@ mod tests {
                 "currentPeriodEnd": "2026-10-25T00:00:00Z"
             }
         });
-        let (go_tiers, go_label) = parse_commandcode_tiers(&credits, &go_subscription);
-        assert_eq!(go_label.as_deref(), Some("Command Code · Go"));
+        let go_tiers = parse_commandcode_tiers(&credits, &go_subscription);
         let monthly = go_tiers
             .iter()
             .find(|tier| tier.name == TIER_MONTHLY)
             .expect("Go plan should expose monthly tier");
-        assert_eq!(monthly.max_value_usd, Some(10.0));
-        assert_eq!(monthly.used_value_usd, Some(2.5));
+        assert_eq!(monthly.max_value_usd, None);
+        assert_eq!(monthly.used_value_usd, None);
+        assert!((monthly.utilization - 25.0).abs() < f64::EPSILON);
 
         let unknown_subscription = json!({"data": {"planId": "individual-pro"}});
-        let (unknown_tiers, unknown_label) =
-            parse_commandcode_tiers(&credits, &unknown_subscription);
-        assert!(unknown_label.is_none());
+        let unknown_tiers = parse_commandcode_tiers(&credits, &unknown_subscription);
         assert_eq!(unknown_tiers.len(), 2);
         assert!(unknown_tiers.iter().all(|tier| tier.name != TIER_MONTHLY));
     }
