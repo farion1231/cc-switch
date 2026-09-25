@@ -113,7 +113,6 @@ export function DirectorySettings({
           onReset={() => onResetDirectory("codex")}
         />
 
-
       </section>
     </div>
   );
