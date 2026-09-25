@@ -13,6 +13,8 @@ export interface DeepLinkImportRequest {
     | "gemini"
     | "grokbuild"
     | "opencode"
+    | "copilot-byok"
+    | "copilot-cli"
     | "openclaw"
     | "hermes"
     | "pi";
