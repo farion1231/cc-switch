@@ -71,7 +71,7 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // Command Code Go：只认官方 canonical API host。刻意不匹配 localhost、
     // 127.0.0.1 或其它本地/第三方代理，额度查询直接复用当前 provider API Key。
     id: "commandcode",
-    label: "Command Code Go",
+    label: "Command Code",
     pattern: /^https:\/\/api\.commandcode\.ai(?:\/|$)/i,
   },
   {
