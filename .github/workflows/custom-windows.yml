@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/commandcode-go
+      - feat/commandcode
 
 permissions:
   contents: write
@@ -14,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RELEASE_TAG: v3.20.4-commandcode-go.3
+  RELEASE_TAG: v3.20.4-commandcode.1
   RELEASE_NAME: CC Switch v3.20.4 - Command Code
 
 jobs:
@@ -90,7 +91,7 @@ jobs:
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CC-Switch-CommandCode-Go-v3.20.4-Windows-x64-MSI
+          name: CC-Switch-CommandCode-v3.20.4-Windows-x64-MSI
           path: artifacts/CC-Switch-CommandCode-v3.20.4-x64.msi
           if-no-files-found: error
 
@@ -105,8 +106,8 @@ jobs:
           $notes = @"
           Custom CC Switch based on official v3.20.4.
 
-          - Native Command Code Go /alpha/generate support for Claude Code
-          - Native Command Code Token Plan quota: 5h / weekly / monthly
+          - Native Command Code /alpha/generate support for Claude Code
+          - Command Code Token Plan quota: 5h / weekly / monthly
           - Reuses the provider API key; canonical api.commandcode.ai only
           - Go monthly cap $10; GOAT monthly cap $70
           - 5h/weekly caps use the live API-returned cap; monthly reset uses currentPeriodEnd
