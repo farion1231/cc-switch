@@ -52,7 +52,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
                 "gemini_native" => "gemini_native",
-                "commandcode_go" => "commandcode_go",
+                "commandcode" | "commandcode_go" => "commandcode",
                 _ => "anthropic",
             };
         }
@@ -68,7 +68,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
             "openai_chat" => "openai_chat",
             "openai_responses" => "openai_responses",
             "gemini_native" => "gemini_native",
-            "commandcode_go" => "commandcode_go",
+            "commandcode" | "commandcode_go" => "commandcode",
             _ => "anthropic",
         };
     }
@@ -95,7 +95,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     matches!(
         api_format,
-        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode_go"
+        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode" | "commandcode_go"
     )
 }
 
@@ -460,7 +460,9 @@ pub fn transform_claude_request_for_api_format(
             Some(&provider.id),
             session_id,
         ),
-        "commandcode_go" => super::commandcode::anthropic_to_commandcode(body, session_id),
+        "commandcode" | "commandcode_go" => {
+            super::commandcode::anthropic_to_commandcode(body, session_id)
+        },
         _ => Ok(body),
     }
 }
@@ -483,8 +485,8 @@ impl ClaudeAdapter {
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
-        // Command Code Go /alpha/generate only accepts Bearer authentication.
-        if self.get_api_format(provider) == "commandcode_go" {
+        // Command Code /alpha/generate only accepts Bearer authentication.
+        if self.get_api_format(provider) == "commandcode" {
             return ProviderType::ClaudeAuth;
         }
 
@@ -997,7 +999,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode_go"
+            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode" | "commandcode_go"
         )
     }
 
