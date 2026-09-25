@@ -112,7 +112,6 @@ export function DirectorySettings({
           onBrowse={() => onBrowseDirectory("codex")}
           onReset={() => onResetDirectory("codex")}
         />
-
       </section>
     </div>
   );
