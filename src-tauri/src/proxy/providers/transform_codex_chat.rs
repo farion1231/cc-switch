@@ -829,14 +829,15 @@ fn append_responses_item_as_chat_message(
                     last_assistant_index,
                 );
                 flush_pending_chat_tool_media(messages, pending_media);
-                let message = responses_message_item_to_chat_message(
+                if let Some(message) = responses_message_item_to_chat_message(
                     item,
                     pending_reasoning,
                     messages,
                     *last_assistant_index,
-                );
-                update_last_assistant_index(messages, &message, last_assistant_index);
-                messages.push(message);
+                ) {
+                    update_last_assistant_index(messages, &message, last_assistant_index);
+                    messages.push(message);
+                }
             } else if pending_media.is_empty() {
                 // Preserve legacy no-media ordering: inert message-like items
                 // used to close a pending tool-call batch.
@@ -859,14 +860,15 @@ fn append_responses_item_as_chat_message(
                     last_assistant_index,
                 );
                 flush_pending_chat_tool_media(messages, pending_media);
-                let message = responses_message_item_to_chat_message(
+                if let Some(message) = responses_message_item_to_chat_message(
                     item,
                     pending_reasoning,
                     messages,
                     *last_assistant_index,
-                );
-                update_last_assistant_index(messages, &message, last_assistant_index);
-                messages.push(message);
+                ) {
+                    update_last_assistant_index(messages, &message, last_assistant_index);
+                    messages.push(message);
+                }
             } else if pending_media.is_empty() {
                 // Preserve legacy no-media ordering without letting an inert
                 // unknown item flush a media-bearing result batch.
@@ -1005,7 +1007,7 @@ fn responses_message_item_to_chat_message(
     pending_reasoning: &mut Option<String>,
     messages: &mut [Value],
     last_assistant_index: Option<usize>,
-) -> Value {
+) -> Option<Value> {
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
     let content = item
@@ -1013,26 +1015,39 @@ fn responses_message_item_to_chat_message(
         .map(|value| responses_content_to_chat_content(chat_role, value))
         .unwrap_or(Value::Null);
 
-    let mut message = json!({
-        "role": chat_role,
-        "content": content
-    });
-
     if chat_role == "assistant" {
+        let mut message = json!({
+            "role": chat_role,
+            "content": content
+        });
         append_pending_reasoning(pending_reasoning, responses_message_reasoning_text(item));
         attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
-    } else {
-        // 非 assistant 的回合边界消息（user 等）：pending reasoning 不再直接丢弃，
-        // 回溯附挂到上一条 assistant；其已有 reasoning_content 时追加尾部
-        // reasoning，同时防止 reasoning 跨 user 回合泄漏到之后的 assistant 消息。
-        attach_pending_reasoning_to_previous_assistant(
-            messages,
-            last_assistant_index,
-            pending_reasoning,
-        );
+        return Some(message);
     }
 
-    message
+    // 非 assistant 的回合边界消息（user 等）：pending reasoning 不再直接丢弃，
+    // 回溯附挂到上一条 assistant；其已有 reasoning_content 时追加尾部
+    // reasoning，同时防止 reasoning 跨 user 回合泄漏到之后的 assistant 消息。
+    attach_pending_reasoning_to_previous_assistant(
+        messages,
+        last_assistant_index,
+        pending_reasoning,
+    );
+
+    // Chat Completions 要求 system / user / tool 消息必须携带非空 content，只有带
+    // tool_calls 的 assistant 才允许 `content: null`。Codex 的输入项可能不带
+    // content（或 content 为空数组），此时原样透传会写出非法消息，严格的上游会以
+    // `400 invalid_request_error: messages.N.content` 拒绝整条请求——Codex 的自动
+    // 审批（approvals_reviewer = "auto_review"）请求正是这种形态。这类消息本身
+    // 不携带任何信息，直接丢弃，避免打断整个会话。
+    if content.is_null() || content.as_str().is_some_and(str::is_empty) {
+        return None;
+    }
+
+    Some(json!({
+        "role": chat_role,
+        "content": content
+    }))
 }
 
 fn responses_role_to_chat_role(role: &str) -> &'static str {
@@ -2188,6 +2203,57 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    #[test]
+    fn drops_contentless_non_assistant_messages_instead_of_emitting_null_content() {
+        // Codex 会发出不带 content 的 message 项。原样透传会写成
+        // `{"role": "system", "content": null}`；只有带 tool_calls 的 assistant 才
+        // 允许 null，严格的上游（GLM / Kimi 等 Chat 上游）会整条请求以
+        // `400 invalid_request_error: messages.N.content` 拒绝——Codex 的自动审批
+        // 请求就是这种形态。这类消息不携带任何信息，应丢弃而不是发出去。
+        let result = convert_test_input(vec![
+            json!({"type": "message", "role": "system", "content": "review prompt"}),
+            json!({"type": "message", "role": "system"}),
+            json!({"type": "message", "role": "user", "content": null}),
+            json!({"type": "message", "role": "user", "content": []}),
+            json!({"type": "message", "role": "user", "content": "hi"}),
+        ]);
+
+        for message in result_messages(&result) {
+            if message.get("role").and_then(Value::as_str) == Some("assistant") {
+                continue;
+            }
+            let content = message
+                .get("content")
+                .unwrap_or_else(|| panic!("non-assistant message must carry content: {message}"));
+            assert!(
+                !content.is_null(),
+                "non-assistant message must not carry null content: {message}"
+            );
+            assert_ne!(
+                content.as_str(),
+                Some(""),
+                "non-assistant message must not carry empty content: {message}"
+            );
+        }
+        assert_eq!(message_roles(&result), vec!["system", "user"]);
+    }
+
+    #[test]
+    fn keeps_assistant_tool_call_messages_with_null_content() {
+        // 带 tool_calls 的 assistant 允许 `content: null`，不能被上面的丢弃逻辑误伤。
+        let result = convert_test_input(vec![
+            json!({"type": "message", "role": "user", "content": "run it"}),
+            test_function_call("call_1"),
+            test_function_output("call_1", json!("ok")),
+        ]);
+        let with_calls: Vec<&Value> = result_messages(&result)
+            .iter()
+            .filter(|message| message.get("tool_calls").is_some())
+            .collect();
+        assert_eq!(with_calls.len(), 1, "tool call must survive: {result}");
+        assert!(with_calls[0].get("content").is_some_and(Value::is_null));
     }
 
     #[test]
