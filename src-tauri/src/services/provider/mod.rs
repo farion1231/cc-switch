@@ -114,7 +114,7 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
@@ -122,7 +122,7 @@ mod tests {
         AuthBinding, AuthBindingSource, ClaudeModelConfig, ProviderMeta, UniversalProvider,
         UsageScript,
     };
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
@@ -142,6 +142,8 @@ mod tests {
         original_local_app_data: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
+        #[cfg(target_os = "linux")]
+        original_xdg_config_home: Option<std::ffi::OsString>,
     }
 
     impl TempHome {
@@ -152,12 +154,17 @@ mod tests {
             let original_local_app_data = env::var("LOCALAPPDATA").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
             let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            #[cfg(target_os = "linux")]
+            let original_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
 
             env::set_var("HOME", dir.path());
             #[cfg(windows)]
             env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            // Claude Desktop Linux paths follow XDG_CONFIG_HOME; pin them under the temp home.
+            #[cfg(target_os = "linux")]
+            env::remove_var("XDG_CONFIG_HOME");
 
             Self {
                 dir,
@@ -166,6 +173,8 @@ mod tests {
                 original_local_app_data,
                 original_userprofile,
                 original_test_home,
+                #[cfg(target_os = "linux")]
+                original_xdg_config_home,
             }
         }
     }
@@ -194,6 +203,14 @@ mod tests {
                 Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
+
+            #[cfg(target_os = "linux")]
+            {
+                match &self.original_xdg_config_home {
+                    Some(value) => env::set_var("XDG_CONFIG_HOME", value),
+                    None => env::remove_var("XDG_CONFIG_HOME"),
+                }
+            }
         }
     }
 
@@ -210,6 +227,14 @@ mod tests {
     fn claude_desktop_profile_path(home: &Path) -> PathBuf {
         home.join("Library")
             .join("Application Support")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join(".config")
             .join("Claude-3p")
             .join("configLibrary")
             .join(format!("{PROFILE_ID}.json"))
@@ -2001,7 +2026,7 @@ requires_openai_auth = true
             .expect("stop proxy service");
     }
 
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     #[tokio::test]
     #[serial]
     async fn update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active() {

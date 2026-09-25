@@ -15,6 +15,7 @@ import _code0 from "./code0.png";
 import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
 import _fenno from "./fenno-icon.webp";
+import _fluxa from "./fluxa.png";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
 import _nekocode from "./nekocode-icon.png";
@@ -24,6 +25,8 @@ import _qiniu from "./qiniu.png";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
+import _soshow from "./soshow.png";
+import _sub2api from "./sub2api.svg?url";
 import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
 import _sudocodeUs from "./sudocode-us.png";
@@ -129,6 +132,7 @@ export const iconUrls: Record<string, string> = {
   eflowcode: _eflowcode,
   etok: _etok,
   fenno: _fenno,
+  fluxa: _fluxa,
   hermes: _hermes,
   huoshan: _huoshan,
   nekocode: _nekocode,
@@ -138,6 +142,8 @@ export const iconUrls: Record<string, string> = {
   relaxcode: _relaxcode,
   runapi: _runapi,
   shengsuanyun: _shengsuanyun,
+  soshow: _soshow,
+  sub2api: _sub2api,
   subrouter: _subrouter,
   sudocode: _sudocode,
   "sudocode-us": _sudocodeUs,
