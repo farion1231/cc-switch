@@ -253,7 +253,8 @@ export type ClaudeApiFormat =
   | "anthropic"
   | "openai_chat"
   | "openai_responses"
-  | "gemini_native";
+  | "gemini_native"
+  | "commandcode_go";
 
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
