@@ -1,4 +1,4 @@
-name: Custom Windows Build
+name: Custom Windows EXE
 
 on:
   workflow_dispatch:
@@ -7,11 +7,15 @@ on:
       - feat/commandcode-go
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: custom-windows-${{ github.ref }}
+  group: custom-windows-exe-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  RELEASE_TAG: v3.20.4-commandcode-go.1
+  RELEASE_NAME: CC Switch v3.20.4 - Command Code Go
 
 jobs:
   build-windows:
@@ -50,29 +54,58 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --all -- --check
 
-      - name: Rust tests
+      - name: Command Code bridge tests
         working-directory: src-tauri
-        run: cargo test --lib
+        run: cargo test commandcode --lib
 
-      - name: Build unsigned Windows x64
+      - name: Build Windows x64 EXE only
         shell: pwsh
         run: |
-          $override = Join-Path $env:RUNNER_TEMP "tauri-ci.json"
-          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Path $override -Encoding utf8
-          pnpm tauri build --bundles msi --config $override
+          pnpm tauri build --no-bundle
 
-      - name: Collect artifacts
+      - name: Stage EXE
+        id: stage
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Copy-Item "src-tauri\target\release\cc-switch.exe" "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.exe"
-          Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | ForEach-Object {
-            Copy-Item $_.FullName "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.msi"
-          }
+          $src = "src-tauri\target\release\cc-switch.exe"
+          $dst = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.exe"
+          Copy-Item $src $dst
+          $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "SHA256: $hash"
 
-      - name: Upload Windows artifacts
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: CC-Switch-CommandCode-Go-v3.20.4-Windows-x64
-          path: artifacts/*
+          path: artifacts/CC-Switch-CommandCode-Go-v3.20.4-x64.exe
           if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.event.head_commit.message, 'release:')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXE_SHA256: ${{ steps.stage.outputs.sha256 }}
+        run: |
+          $asset = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.exe"
+          $notes = @"
+          Custom CC Switch based on v3.20.4.
+
+          - Native Command Code Go /alpha/generate support for Claude Code
+          - Real streaming token usage accounting
+          - Official Command Code provider icon
+          - UI app set reduced to Claude Code / Claude Desktop / Codex
+          - Windows x64 standalone EXE only
+
+          SHA-256:
+          `$env:EXE_SHA256`
+          "@
+
+          if (gh release view $env:RELEASE_TAG --repo "${{ github.repository }}" 2>$null) {
+            gh release upload $env:RELEASE_TAG $asset --clobber --repo "${{ github.repository }}"
+            gh release edit $env:RELEASE_TAG --title $env:RELEASE_NAME --notes $notes --repo "${{ github.repository }}"
+          } else {
+            gh release create $env:RELEASE_TAG $asset --target "${{ github.sha }}" --title $env:RELEASE_NAME --notes $notes --repo "${{ github.repository }}"
+          }
