@@ -1702,6 +1702,7 @@ impl RequestForwarder {
         if let Some(m) = filtered_body
             .get("model")
             .and_then(|m| m.as_str())
+            .or_else(|| filtered_body.pointer("/params/model").and_then(|m| m.as_str()))
             .filter(|m| !m.is_empty())
         {
             outbound_model = Some(m.to_string());
@@ -1990,6 +1991,9 @@ impl RequestForwarder {
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
+        let is_commandcode_go =
+            matches!(resolved_claude_api_format.as_deref(), Some("commandcode_go"));
+
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
@@ -2119,7 +2123,17 @@ impl RequestForwarder {
                 continue;
             }
 
-            // --- accept — force application/json on the Codex→Anthropic path ---
+            // --- accept — normalize protocol-specific response framing ---
+            if is_commandcode_go && key_str.eq_ignore_ascii_case("accept") {
+                if !saw_accept {
+                    saw_accept = true;
+                    ordered_headers.append(
+                        http::header::ACCEPT,
+                        http::HeaderValue::from_static("text/event-stream"),
+                    );
+                }
+                continue;
+            }
             // The Codex CLI sends `Accept: text/event-stream`, whereas a native
             // Anthropic client sends `application/json` (streaming is driven by
             // the body's stream:true). Strict Anthropic gateways return 406 Not
@@ -2213,6 +2227,13 @@ impl RequestForwarder {
             );
         }
 
+        if is_commandcode_go && !saw_accept {
+            ordered_headers.append(
+                http::header::ACCEPT,
+                http::HeaderValue::from_static("text/event-stream"),
+            );
+        }
+
         // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
         if codex_responses_to_anthropic && !saw_accept {
             ordered_headers.append(
@@ -2251,6 +2272,17 @@ impl RequestForwarder {
             ordered_headers.append(
                 "anthropic-version",
                 http::HeaderValue::from_static("2023-06-01"),
+            );
+        }
+
+        if is_commandcode_go {
+            ordered_headers.insert(
+                http::HeaderName::from_static("x-command-code-version"),
+                http::HeaderValue::from_static(super::providers::commandcode::COMMAND_CODE_VERSION),
+            );
+            ordered_headers.insert(
+                http::HeaderName::from_static("x-cli-environment"),
+                http::HeaderValue::from_static("production"),
             );
         }
 
@@ -2312,6 +2344,7 @@ impl RequestForwarder {
         let request_model = filtered_body
             .get("model")
             .and_then(|v| v.as_str())
+            .or_else(|| filtered_body.pointer("/params/model").and_then(|v| v.as_str()))
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
         log::debug!(
@@ -3267,6 +3300,15 @@ fn rewrite_claude_transform_endpoint(
         return (rewritten, rewritten_query);
     }
 
+    if api_format == "commandcode_go" {
+        let target_path = "/alpha/generate";
+        let rewritten = match passthrough_query.as_deref() {
+            Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+            _ => target_path.to_string(),
+        };
+        return (rewritten, passthrough_query);
+    }
+
     let target_path = if is_copilot && api_format == "openai_responses" {
         "/v1/responses"
     } else if is_copilot {
@@ -3538,6 +3580,7 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
     if body
         .get("stream")
         .and_then(|value| value.as_bool())
+        .or_else(|| body.pointer("/params/stream").and_then(|value| value.as_bool()))
         .unwrap_or(false)
     {
         return true;
