@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RELEASE_TAG: v3.20.4-commandcode-go.2
-  RELEASE_NAME: CC Switch v3.20.4 - Command Code Go + Token Plan
+  RELEASE_TAG: v3.20.4-commandcode-go.3
+  RELEASE_NAME: CC Switch v3.20.4 - Command Code
 
 jobs:
   build-windows:
@@ -80,7 +80,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
           if (-not $msi) { throw "MSI not found" }
-          $dst = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.msi"
+          $dst = "artifacts\CC-Switch-CommandCode-v3.20.4-x64.msi"
           Copy-Item $msi.FullName $dst
           $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
           "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -91,7 +91,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CC-Switch-CommandCode-Go-v3.20.4-Windows-x64-MSI
-          path: artifacts/CC-Switch-CommandCode-Go-v3.20.4-x64.msi
+          path: artifacts/CC-Switch-CommandCode-v3.20.4-x64.msi
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -101,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           MSI_SHA256: ${{ steps.stage.outputs.sha256 }}
         run: |
-          $asset = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.msi"
+          $asset = "artifacts\CC-Switch-CommandCode-v3.20.4-x64.msi"
           $notes = @"
           Custom CC Switch based on official v3.20.4.
 
