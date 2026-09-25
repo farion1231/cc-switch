@@ -1025,7 +1025,7 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#1E88E5",
   },
   {
-    name: "Command Code Go",
+    name: "Command Code",
     websiteUrl: "https://commandcode.ai",
     apiKeyUrl: "https://commandcode.ai",
     apiKeyField: "ANTHROPIC_AUTH_TOKEN",
