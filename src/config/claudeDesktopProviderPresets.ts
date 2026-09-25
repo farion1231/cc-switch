@@ -1616,4 +1616,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "Cheaper Inference",
+    websiteUrl: "https://cheaperinference.com",
+    apiKeyUrl: "https://cheaperinference.com/signup",
+    category: "aggregator",
+    baseUrl: "https://api.cheaperinference.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+        upstreamModel: "claude-sonnet-5",
+        supports1m: false,
+      },
+    ],
+    endpointCandidates: ["https://api.cheaperinference.com"],
+  },
 ];
