@@ -936,13 +936,17 @@ async fn handle_responses_for_app(
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    let xai_native = super::providers::provider_needs_responses_namespace_flatten(&ctx.provider);
+    let add_annotations = matches!(app_type, AppType::GrokBuild);
+    if should_use_native_responses_compat(xai_native, add_annotations) {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
             &state,
             connection_guard,
             namespace_restore_map,
+            xai_native,
+            add_annotations,
         )
         .await;
     }
@@ -1157,13 +1161,17 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    let xai_native = super::providers::provider_needs_responses_namespace_flatten(&ctx.provider);
+    let add_annotations = matches!(app_type, AppType::GrokBuild);
+    if should_use_native_responses_compat(xai_native, add_annotations) {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
             &state,
             connection_guard,
             namespace_restore_map,
+            xai_native,
+            add_annotations,
         )
         .await;
     }
@@ -1191,6 +1199,8 @@ async fn handle_codex_xai_native_responses_rewrite(
         String,
         transform_codex_responses_namespace::NamespacedName,
     >,
+    xai_native: bool,
+    add_output_text_annotations: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1215,6 +1225,8 @@ async fn handle_codex_xai_native_responses_rewrite(
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
                 response.bytes_stream(),
                 restore_map,
+                xai_native,
+                add_output_text_annotations,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1228,7 +1240,7 @@ async fn handle_codex_xai_native_responses_rewrite(
 
         let body = axum::body::Body::from_stream(logged_stream);
         return builder.body(body).map_err(|e| {
-            log::error!("[{}] 构建 namespace 还原流式响应失败: {e}", ctx.tag);
+            log::error!("[{}] 构建 Responses 兼容流式响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build streaming response: {e}"))
         });
     }
@@ -1249,15 +1261,22 @@ async fn handle_codex_xai_native_responses_rewrite(
     // Restore names when the body parses as JSON; otherwise pass the bytes
     // through untouched (a native Responses non-stream body is always JSON, so
     // this only guards against a malformed upstream).
-    let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
+    let compatible_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
             transform_codex_responses_namespace::restore_response_namespaces(
                 &mut value,
                 &restore_map,
             );
-            transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
-                &mut value,
-            );
+            if xai_native {
+                transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
+                    &mut value,
+                );
+            }
+            if add_output_text_annotations {
+                super::providers::transform_native_responses::ensure_output_text_annotations(
+                    &mut value,
+                );
+            }
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
@@ -1301,7 +1320,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             match serde_json::to_vec(&value) {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(e) => {
-                    log::error!("[{}] 序列化 namespace 还原响应失败: {e}", ctx.tag);
+                    log::error!("[{}] 序列化 Responses 兼容响应失败: {e}", ctx.tag);
                     body_bytes
                 }
             }
@@ -1321,11 +1340,15 @@ async fn handle_codex_xai_native_responses_rewrite(
         axum::http::HeaderValue::from_static("application/json"),
     );
     builder
-        .body(axum::body::Body::from(restored_bytes))
+        .body(axum::body::Body::from(compatible_bytes))
         .map_err(|e| {
-            log::error!("[{}] 构建 namespace 还原响应失败: {e}", ctx.tag);
+            log::error!("[{}] 构建 Responses 兼容响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
+}
+
+fn should_use_native_responses_compat(xai_native: bool, add_annotations: bool) -> bool {
+    xai_native || add_annotations
 }
 
 async fn handle_codex_chat_to_responses_transform(
@@ -2859,8 +2882,8 @@ mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        responses_sse_to_response_value, should_use_claude_transform_streaming,
+        should_use_native_responses_compat, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use bytes::Bytes;
@@ -2868,6 +2891,13 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn grokbuild_dispatch_uses_responses_compat_without_xai_provider_gate() {
+        assert!(should_use_native_responses_compat(false, true));
+        assert!(should_use_native_responses_compat(true, false));
+        assert!(!should_use_native_responses_compat(false, false));
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
