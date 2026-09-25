@@ -1042,6 +1042,7 @@ export const providerPresets: ProviderPreset[] = [
     category: "third_party",
     apiFormat: "commandcode_go",
     endpointCandidates: ["https://api.commandcode.ai"],
+    modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     icon: "commandcode",
   },
   {
