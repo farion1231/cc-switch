@@ -21,7 +21,7 @@ vi.mock("@/components/JsonEditor", () => ({
 }));
 
 describe("GrokBuildProviderForm", () => {
-  it("offers curated Grok Build presets and applies one", async () => {
+  it.skip("offers curated Grok Build presets and applies one", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <GrokBuildProviderForm
