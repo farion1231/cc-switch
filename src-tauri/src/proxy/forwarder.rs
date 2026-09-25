@@ -1995,9 +1995,9 @@ impl RequestForwarder {
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
-        let is_commandcode_go = matches!(
+        let is_commandcode = matches!(
             resolved_claude_api_format.as_deref(),
-            Some("commandcode_go")
+            Some("commandcode") | Some("commandcode_go")
         );
 
         // 预计算 anthropic-beta 值（仅 Claude）
@@ -2130,7 +2130,7 @@ impl RequestForwarder {
             }
 
             // --- accept — normalize protocol-specific response framing ---
-            if is_commandcode_go && key_str.eq_ignore_ascii_case("accept") {
+            if is_commandcode && key_str.eq_ignore_ascii_case("accept") {
                 if !saw_accept {
                     saw_accept = true;
                     ordered_headers.append(
@@ -2233,7 +2233,7 @@ impl RequestForwarder {
             );
         }
 
-        if is_commandcode_go && !saw_accept {
+        if is_commandcode && !saw_accept {
             ordered_headers.append(
                 http::header::ACCEPT,
                 http::HeaderValue::from_static("text/event-stream"),
@@ -2281,7 +2281,7 @@ impl RequestForwarder {
             );
         }
 
-        if is_commandcode_go {
+        if is_commandcode {
             ordered_headers.insert(
                 http::HeaderName::from_static("x-command-code-version"),
                 http::HeaderValue::from_static(super::providers::commandcode::COMMAND_CODE_VERSION),
@@ -3310,7 +3310,7 @@ fn rewrite_claude_transform_endpoint(
         return (rewritten, rewritten_query);
     }
 
-    if api_format == "commandcode_go" {
+    if matches!(api_format, "commandcode" | "commandcode_go") {
         let target_path = "/alpha/generate";
         let rewritten = match passthrough_query.as_deref() {
             Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
