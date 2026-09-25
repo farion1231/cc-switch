@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 8] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
+const VALID_TOOLS: [&str; 9] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -434,6 +434,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "mcode" => "MiniMax Code",
         _ => "Unknown",
     }
 }
@@ -449,6 +450,10 @@ const OPENCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const GROK_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+/// MiniMax Code 官方 installer：用 npm `--prefix` 装进 `~/.minimax-code`（`MCODE_INSTALL_DIR`
+/// 可改），系统 Node 不达标时自带隔离 Node；重跑即升级（已是最新则跳过），全程无交互提示。
+const MCODE_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://filecdn.minimax.chat/public/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
 /// Hermes 官方安装器会自带/选择合适的 Python 运行时。不要再用
 /// `python3 -m pip ... || python -m pip ...`:Hermes PyPI 包要求 Python >=3.11,
@@ -464,6 +469,9 @@ const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
 #[cfg(target_os = "windows")]
 const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
+    "irm https://filecdn.minimax.chat/public/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
 fn powershell_encoded_command(script: &str) -> String {
@@ -493,6 +501,37 @@ fn grok_install_windows_command() -> String {
 }
 
 #[cfg(target_os = "windows")]
+fn mcode_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+/// 重跑官方 installer 升级「脚本安装」那一处。显式传 `MCODE_INSTALL_DIR`，保证写回
+/// 探测到的那个目录，而不是 installer 的默认目录。
+#[cfg(not(target_os = "windows"))]
+fn mcode_installer_update_command(install_root: &str) -> String {
+    format!(
+        "MCODE_INSTALL_DIR={} {MCODE_INSTALL_UNIX}",
+        shell_single_quote(install_root)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn mcode_installer_update_command(install_root: &str) -> String {
+    // PowerShell 单引号字面量里 `'` 写作 `''`；整段经 EncodedCommand 传入，不经 cmd 解析。
+    let script = format!(
+        "$env:MCODE_INSTALL_DIR = '{}'; {MCODE_INSTALL_WINDOWS_SCRIPT}",
+        install_root.replace('\'', "''")
+    );
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(&script)
+    )
+}
+
+#[cfg(target_os = "windows")]
 fn hermes_update_windows_command() -> String {
     // fallback 是 powershell.exe，不是 .cmd/.bat；这里不需要 `call`。PowerShell 的
     // `irm | iex` 已被 EncodedCommand 收进单一参数,避免 `cmd.exe` 解析管道符。
@@ -515,10 +554,33 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "mcode" => Some(
+            "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
+        ),
         _ => None,
     }
 }
 
+/// `npm i -g` 时须追加的参数（前导空格已含），与 `npm_install_command_for` 的静态命令
+/// 保持一致，供锚定到某处 npm 的升级命令复用。
+///
+/// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
+/// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
+/// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
+/// npm 10/11 上这串参数无副作用（实测 exit 0、脚本照常执行）。整段 `--allow-scripts=…`
+/// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
+fn npm_install_extra_args(tool: &str) -> &'static str {
+    match tool {
+        "mcode" => {
+            " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
+        }
+        _ => "",
+    }
+}
+
+// MiniMax Code 虽有 `mcode update`，却刻意不列在这里：它在 stdin/stdout 非 TTY 时只打印
+// "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
+// `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "grok" | "hermes" => Some("update"),
@@ -553,18 +615,24 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
-    // xAI's primary Windows distribution is the native PowerShell installer.
-    // Keep npm as the network/policy fallback, matching the POSIX installer chain.
+    // xAI's and MiniMax's primary Windows distribution is the official PowerShell
+    // installer. Keep npm as the network/policy fallback, matching the POSIX installer chain.
     #[cfg(target_os = "windows")]
-    if tool == "grok"
-        && matches!(action, ToolLifecycleAction::Install)
+    if matches!(action, ToolLifecycleAction::Install)
         && matches!(shell, LifecycleCommandShell::WindowsBatch)
     {
-        return Some(chain_update_commands(
-            grok_install_windows_command(),
-            npm_install_command_for(tool)?.to_string(),
-            shell,
-        ));
+        let installer = match tool {
+            "grok" => Some(grok_install_windows_command()),
+            "mcode" => Some(mcode_install_windows_command()),
+            _ => None,
+        };
+        if let Some(installer) = installer {
+            return Some(chain_update_commands(
+                installer,
+                npm_install_command_for(tool)?.to_string(),
+                shell,
+            ));
+        }
     }
 
     if tool == "hermes" {
@@ -825,6 +893,7 @@ async fn get_single_tool_version_impl(
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
+        "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         _ => None,
     };
 
@@ -1632,6 +1701,31 @@ fn grok_extra_search_paths(
     paths
 }
 
+/// MiniMax Code 官方 installer 的入口：POSIX 在 `<root>/bin/mcode`，Windows 的
+/// `mcode.cmd` / `mcode.ps1` 直接放在 `<root>` 下（不在 `bin`）。root 默认
+/// `~/.minimax-code`，可由 `MCODE_INSTALL_DIR` 改。installer 只改 shell rc / 用户 PATH，
+/// GUI 进程继承的旧 PATH 看不到，所以同 Grok 一样显式排在通用 npm/Node 目录前面。
+fn mcode_extra_search_paths(
+    home: &Path,
+    mcode_install_dir: Option<std::ffi::OsString>,
+) -> Vec<std::path::PathBuf> {
+    let launcher_dir = |root: std::path::PathBuf| {
+        if cfg!(target_os = "windows") {
+            root
+        } else {
+            root.join("bin")
+        }
+    };
+    let mut paths = Vec::new();
+    if let Some(root) = mcode_install_dir.filter(|value| !value.is_empty()) {
+        push_unique_path(&mut paths, launcher_dir(std::path::PathBuf::from(root)));
+    }
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut paths, launcher_dir(home.join(".minimax-code")));
+    }
+    paths
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -1812,6 +1906,12 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
+        for path in extra_paths {
+            push_unique_path(&mut search_paths, path);
+        }
+    }
+    if tool == "mcode" {
+        let extra_paths = mcode_extra_search_paths(&home, std::env::var_os("MCODE_INSTALL_DIR"));
         for path in extra_paths {
             push_unique_path(&mut search_paths, path);
         }
@@ -2586,6 +2686,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
+        "mcode" => Some("@minimax-ai/code"),
         _ => None,
     }
 }
@@ -2657,6 +2758,80 @@ fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
         let normalized = path.replace('\\', "/").to_ascii_lowercase();
         normalized.contains("/.grok/bin/") || normalized.contains("/.grok/downloads/grok-")
     })
+}
+
+fn last_path_segment_lower(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// MiniMax Code 官方 installer 的入口布局（见 `mcode_extra_search_paths`）：POSIX 为
+/// `<root>/bin/mcode`（读 `<root>/current` 再转发的 sh launcher，不是软链），Windows 的
+/// `mcode.cmd` 直接放在 `<root>` 下。显式传参而不是在函数里 `cfg`，两种布局都能在任一
+/// 平台上单测。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McodeLayout {
+    Posix,
+    Windows,
+}
+
+impl McodeLayout {
+    const NATIVE: Self = if cfg!(target_os = "windows") {
+        Self::Windows
+    } else {
+        Self::Posix
+    };
+}
+
+/// 从入口路径推出安装根目录候选（installer 的 `MCODE_INSTALL_DIR`）。只是候选，是否真
+/// 属于 installer 由调用方判定。只有 POSIX 布局才去掉入口所在的那层 `bin`：Windows 的
+/// 根目录本身可以叫 `bin`（如 `MCODE_INSTALL_DIR=C:\Users\me\bin`），不能再上跳一级。
+fn mcode_install_root_candidate(path: &str, layout: McodeLayout) -> String {
+    let dir = parent_dir(path);
+    if layout == McodeLayout::Posix && last_path_segment_lower(&dir) == "bin" {
+        parent_dir(&dir)
+    } else {
+        dir
+    }
+}
+
+/// 若入口位于默认安装目录 `.minimax-code`，返回该目录。纯字符串、不碰 fs（与 POSIX
+/// 锚定的纯函数约定一致）；自定义 `MCODE_INSTALL_DIR` 由 `installs_anchored_command`
+/// 里的 `mcode_receipt_install_root` 按回执认领，这里只兜底回执缺失的情况。
+/// 先看 `bin_path`：Windows 的 `real` 是 canonicalize 出的 `\\?\` verbatim 路径，
+/// 不宜原样交给 installer；`real_target` 覆盖用户自建软链指向 launcher 的情况。
+fn mcode_script_install_root(
+    bin_path: &str,
+    real_target: &str,
+    layout: McodeLayout,
+) -> Option<String> {
+    [bin_path, real_target].iter().find_map(|path| {
+        let root = mcode_install_root_candidate(path, layout);
+        (last_path_segment_lower(&root) == ".minimax-code").then_some(root)
+    })
+}
+
+/// 按 installer 写在 `<root>/install.json` 的回执认领安装目录——自定义
+/// `MCODE_INSTALL_DIR` 的目录名不固定，只能靠它（schema 1/2 都有 `product` /
+/// `updateOwner` / `prefix`）。返回回执里的 `prefix` 原值：installer 以
+/// `path.resolve(prefix) === path.resolve(MCODE_INSTALL_DIR)` 判定归属，传原值才会
+/// 原地升级而非走 repair 迁移。要求 `prefix` 与回执所在目录是同一目录，挡住拷贝来的回执。
+fn mcode_receipt_install_root(entry: &str, layout: McodeLayout) -> Option<String> {
+    let root = std::path::PathBuf::from(mcode_install_root_candidate(entry, layout));
+    let text = std::fs::read_to_string(root.join("install.json")).ok()?;
+    // install.ps1 用 `Set-Content -Encoding UTF8` 写回执，Windows PowerShell 5.1 会带
+    // UTF-8 BOM；serde_json 不跳过 BOM，不剥掉就在第 1 列报错、退回全局 npm。
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let receipt: serde_json::Value = serde_json::from_str(text).ok()?;
+    let field = |key: &str| receipt.get(key).and_then(serde_json::Value::as_str);
+    if field("product")? != "minimax-code" || field("updateOwner")? != "npm-prefix" {
+        return None;
+    }
+    let prefix = field("prefix")?;
+    let same_dir = std::fs::canonicalize(prefix).ok()? == std::fs::canonicalize(&root).ok()?;
+    same_dir.then(|| prefix.to_string())
 }
 
 /// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
@@ -2992,7 +3167,10 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))
+    anchored_npm_command(
+        bin_path,
+        &format!("i -g {pkg}@latest{}", npm_install_extra_args(tool)),
+    )
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -3017,6 +3195,8 @@ fn package_manager_anchored_command_from_paths(
 /// ② Claude / Grok 原生安装器 → `<bin_path 绝对> update`；
 ///    bin_path 指向 launcher,launcher 内部 dispatch update 子命令。它不归 npm 管,
 ///    且在 PATH 里比 nvm/homebrew 更靠前,用 npm 升级会装到别处且被原生那份遮蔽。
+///    MiniMax Code 的脚本安装同理不归全局 npm 管,但 `mcode update` 非 TTY 下不安装
+///    (见 `official_update_args` 上方注释),改为带 `MCODE_INSTALL_DIR` 重跑官方 installer。
 /// ③ Homebrew formula / cask（真身在 `Cellar/<formula>/` 或 `Caskroom/<token>/`）
 ///    → `<bin_path 同目录>/brew upgrade [--cask] <name>`；由 Homebrew 拥有,避免
 ///    self-update 或 sibling npm 改动包管理器管理的安装。
@@ -3041,6 +3221,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return Some(grok_native_update_command(
             anchored_official_update_command(tool, bin_path)?,
         ));
+    }
+    if tool == "mcode" {
+        if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Posix) {
+            return Some(mcode_installer_update_command(&root));
+        }
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
     if is_brew_managed_path(real_target) {
@@ -3080,8 +3265,9 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
         _ => {
             let npm = sibling_bin_with_ext(bin_path, "npm", &["cmd", "exe"])?;
             Some(format!(
-                "{} i -g {pkg}@latest",
-                win_quote_path_for_batch(&npm)
+                "{} i -g {pkg}@latest{}",
+                win_quote_path_for_batch(&npm),
+                npm_install_extra_args(tool)
             ))
         }
     }
@@ -3107,6 +3293,7 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 ///
 /// 判定顺序(命中即返回):
 /// ① hermes / Grok native → `<bin_path> update`;CLI 自己处理安装环境。
+///    MiniMax Code 脚本安装 → 带 `MCODE_INSTALL_DIR` 重跑官方 PowerShell installer。
 /// ② 支持官方自升级且 Windows 可安全静默执行的工具 → `<bin_path> update/upgrade || call <包管理器 fallback>`。
 /// ③ 其余 npm 工具 → sibling `npm.cmd`/`.exe` i -g <pkg>@latest。
 ///
@@ -3122,6 +3309,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return Some(grok_native_update_command(
             anchored_official_update_command(tool, bin_path)?,
         ));
+    }
+    if tool == "mcode" {
+        if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Windows) {
+            return Some(mcode_installer_update_command(&root));
+        }
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
     if prefers_official_update(tool, LifecycleCommandShell::WindowsBatch) {
@@ -3648,6 +3840,17 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
             return Some(cmd);
         }
     }
+    // MiniMax Code 脚本安装按回执认领（读 fs，故不放进纯函数 `anchored_command_from_paths`）。
+    // 否则自定义 `MCODE_INSTALL_DIR` 会退到全局 `npm i -g`：单处安装不弹确认，静默升级了
+    // 别处，命令行实际用的那处版本不变。
+    if tool == "mcode" {
+        if let Some(root) = [inst.path.as_str(), real.as_ref()]
+            .into_iter()
+            .find_map(|entry| mcode_receipt_install_root(entry, McodeLayout::NATIVE))
+        {
+            return Some(mcode_installer_update_command(&root));
+        }
+    }
     anchored_command_from_paths(tool, &inst.path, &real)
 }
 
@@ -3674,11 +3877,11 @@ fn static_fallback_command(tool: &str) -> String {
 /// - Hermes 使用官方 installer,避免用系统 Python/pip 安装时踩 Python >=3.11 与 pyenv
 ///   `python` shim 问题;更新路径若能锚定已安装 CLI,则走 `<hermes> update`。
 ///   **Hermes 没有 npm 包,install 端不享受 `||` 降级**——上游 installer 不可达就只能等。
-/// - 对**有 npm 包**的工具(claude/grok/opencode),短路链(POSIX `||`)保证官方脚本不可达/
+/// - 对**有 npm 包**的工具(claude/grok/opencode/mcode),短路链(POSIX `||`)保证官方脚本不可达/
 ///   防火墙拦截时仍能装上,降级到裸 `npm i -g`。官方脚本本身不用 pipe,
 ///   所以这条路径在 WSL 的 `sh -c` 子 shell 中也不依赖外层 `pipefail`。
 /// - Windows 上 Claude/OpenCode 原生不启用（对应 installer 都是 bash 脚本）；Grok
-///   使用官方 PowerShell installer，并同样保留 npm fallback。WSL 作为 Linux 环境
+///   与 MiniMax Code 使用官方 PowerShell installer，并同样保留 npm fallback。WSL 作为 Linux 环境
 ///   复用这套 POSIX 安装优先级。
 fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
     match npm_install_command_for(tool) {
@@ -3701,6 +3904,7 @@ fn posix_install_command_for(tool: &str) -> String {
         // 会在 npm 路径出问题时把 `installer` 覆写回 `internal`（见该函数 doc 的实测记录）。
         "grok" => installer_with_npm_fallback(GROK_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
+        "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -5226,6 +5430,223 @@ mod tests {
     }
 
     #[test]
+    fn mcode_lifecycle_metadata_skips_non_tty_self_update() {
+        let requested = vec!["unsupported".to_string(), "mcode".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["mcode"]);
+        assert_eq!(tool_display_name("mcode"), "MiniMax Code");
+        // npm 上同名的 `mcode` 是无关项目，官方包是 scoped 的 @minimax-ai/code。
+        assert_eq!(npm_package_for("mcode"), Some("@minimax-ai/code"));
+        let npm = npm_install_command_for("mcode").unwrap();
+        assert_eq!(
+            npm,
+            format!(
+                "npm i -g @minimax-ai/code@latest{}",
+                npm_install_extra_args("mcode")
+            )
+        );
+        assert!(
+            npm.contains("\"--allow-scripts=@minimax-ai/code,better-sqlite3\""),
+            "npm 12 blocks better-sqlite3's install script without it: {npm}"
+        );
+        assert_eq!(npm_install_extra_args("codex"), "");
+
+        // `mcode update` exits 0 without installing when stdin/stdout are not a
+        // TTY, which is exactly how silent lifecycle actions run it.
+        assert_eq!(official_update_args("mcode"), None);
+        for shell in [
+            LifecycleCommandShell::Posix,
+            LifecycleCommandShell::WindowsBatch,
+        ] {
+            assert_eq!(
+                tool_action_shell_command_for_shell("mcode", ToolLifecycleAction::Update, shell)
+                    .as_deref(),
+                Some(npm)
+            );
+        }
+    }
+
+    #[test]
+    fn mcode_install_root_candidate_follows_platform_layout() {
+        assert_eq!(
+            mcode_install_root_candidate("/opt/mcode/bin/mcode", McodeLayout::Posix),
+            "/opt/mcode"
+        );
+        // 根目录本身叫 bin：POSIX 只去掉入口所在的那一层 bin。
+        assert_eq!(
+            mcode_install_root_candidate("/opt/bin/bin/mcode", McodeLayout::Posix),
+            "/opt/bin"
+        );
+        // Windows 入口直接在根目录，根目录叫 bin 也不能再上跳一级。
+        assert_eq!(
+            mcode_install_root_candidate("C:\\Users\\me\\bin\\mcode.cmd", McodeLayout::Windows),
+            "C:\\Users\\me\\bin"
+        );
+    }
+
+    #[test]
+    fn mcode_script_install_root_matches_only_installer_layout() {
+        assert_eq!(
+            mcode_script_install_root(
+                "/Users/me/.minimax-code/bin/mcode",
+                "/Users/me/.minimax-code/bin/mcode",
+                McodeLayout::Posix,
+            )
+            .as_deref(),
+            Some("/Users/me/.minimax-code")
+        );
+        assert_eq!(
+            mcode_script_install_root(
+                "C:\\Users\\me\\.minimax-code\\mcode.cmd",
+                "C:\\Users\\me\\.minimax-code\\mcode.cmd",
+                McodeLayout::Windows,
+            )
+            .as_deref(),
+            Some("C:\\Users\\me\\.minimax-code")
+        );
+        // 用户自建软链：入口不在安装目录，但真身是 launcher。
+        assert_eq!(
+            mcode_script_install_root(
+                "/Users/me/.local/bin/mcode",
+                "/Users/me/.minimax-code/bin/mcode",
+                McodeLayout::Posix,
+            )
+            .as_deref(),
+            Some("/Users/me/.minimax-code")
+        );
+        // 全局 npm 安装、以及同名数据目录 `~/.minimax` 都不是 installer 布局。
+        assert_eq!(
+            mcode_script_install_root(
+                "/opt/homebrew/bin/mcode",
+                "/opt/homebrew/lib/node_modules/@minimax-ai/code/cli.js",
+                McodeLayout::Posix,
+            ),
+            None
+        );
+        assert_eq!(
+            mcode_script_install_root(
+                "/Users/me/.minimax/bin/mcode",
+                "/Users/me/.minimax/bin/mcode",
+                McodeLayout::Posix,
+            ),
+            None
+        );
+    }
+
+    /// 在 tempdir 下按 `layout` 搭一个自定义 `MCODE_INSTALL_DIR`（`<tmp>/apps/<root_name>`，
+    /// 目录名不是 `.minimax-code`）的 installer 布局，返回 `(TempDir, root, 入口路径)`。
+    fn mcode_custom_install(
+        root_name: &str,
+        layout: McodeLayout,
+    ) -> (tempfile::TempDir, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("apps").join(root_name);
+        let entry = match layout {
+            McodeLayout::Posix => root.join("bin").join("mcode"),
+            McodeLayout::Windows => root.join("mcode.cmd"),
+        };
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "").unwrap();
+        (
+            dir,
+            root.to_string_lossy().to_string(),
+            entry.to_string_lossy().to_string(),
+        )
+    }
+
+    fn write_mcode_receipt(root: &str, product: &str, owner: &str, prefix: &str, bom: bool) {
+        let json = serde_json::json!({
+            "schemaVersion": 2,
+            "product": product,
+            "updateOwner": owner,
+            "prefix": prefix,
+        })
+        .to_string();
+        let text = if bom { format!("\u{feff}{json}") } else { json };
+        std::fs::write(Path::new(root).join("install.json"), text).unwrap();
+    }
+
+    #[test]
+    fn mcode_receipt_claims_custom_install_dir() {
+        for (root_name, layout) in [
+            ("mcode", McodeLayout::Posix),
+            ("bin", McodeLayout::Posix),
+            ("mcode", McodeLayout::Windows),
+            // MCODE_INSTALL_DIR=C:\Users\me\bin：入口 `<root>\mcode.cmd` 的父目录名就是 bin。
+            ("bin", McodeLayout::Windows),
+        ] {
+            let (_dir, root, entry) = mcode_custom_install(root_name, layout);
+            write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, false);
+            assert_eq!(
+                mcode_receipt_install_root(&entry, layout).as_deref(),
+                Some(root.as_str()),
+                "{root_name} / {layout:?}"
+            );
+        }
+
+        // 端到端：单处安装也必须原地重跑 installer，不能退到全局 `npm i -g`。
+        let (_dir, root, entry) = mcode_custom_install("mcode", McodeLayout::NATIVE);
+        write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, false);
+        let installs = vec![ToolInstallation {
+            path: entry.clone(),
+            version: Some("0.5.3".to_string()),
+            runnable: true,
+            error: None,
+            source: infer_install_source(Path::new(&entry)).to_string(),
+            is_path_default: false,
+            real: PathBuf::from(&entry),
+        }];
+        assert_eq!(
+            installs_anchored_command("mcode", &installs),
+            Some(mcode_installer_update_command(&root))
+        );
+    }
+
+    #[test]
+    fn mcode_receipt_tolerates_utf8_bom() {
+        // install.ps1 在 Windows PowerShell 5.1 下用 `Set-Content -Encoding UTF8` 写回执，带 BOM。
+        let (_dir, root, entry) = mcode_custom_install("mcode", McodeLayout::Windows);
+        write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, true);
+        assert_eq!(
+            mcode_receipt_install_root(&entry, McodeLayout::Windows).as_deref(),
+            Some(root.as_str())
+        );
+    }
+
+    #[test]
+    fn mcode_receipt_rejects_foreign_or_mismatched_receipts() {
+        let layout = McodeLayout::NATIVE;
+        // 没有回执：不认领。
+        let (_dir, _root, entry) = mcode_custom_install("mcode", layout);
+        assert_eq!(mcode_receipt_install_root(&entry, layout), None);
+
+        // 不是 MiniMax Code 的回执、或不归 npm-prefix 管：不认领。
+        for (product, owner) in [
+            ("other", "npm-prefix"),
+            ("minimax-code", "managed-installer"),
+        ] {
+            let (_dir, root, entry) = mcode_custom_install("mcode", layout);
+            write_mcode_receipt(&root, product, owner, &root, false);
+            assert_eq!(
+                mcode_receipt_install_root(&entry, layout),
+                None,
+                "{product}/{owner}"
+            );
+        }
+
+        // prefix 指向别的目录（拷贝来的回执）：不认领。
+        let elsewhere = tempfile::tempdir().unwrap();
+        let (_dir, root, entry) = mcode_custom_install("mcode", layout);
+        write_mcode_receipt(
+            &root,
+            "minimax-code",
+            "npm-prefix",
+            &elsewhere.path().to_string_lossy(),
+            false,
+        );
+        assert_eq!(mcode_receipt_install_root(&entry, layout), None);
+    }
+
+    #[test]
     fn test_compare_semver() {
         use std::cmp::Ordering;
         assert_eq!(
@@ -5513,6 +5934,62 @@ mod tests {
                 "powershell needs no `call`: {cmd}"
             );
             assert!(!cmd.contains("npm"), "npm must not be the fallback: {cmd}");
+        }
+
+        #[test]
+        fn mcode_script_install_windows_reruns_installer_in_place() {
+            // sibling 有 npm.cmd 也不能用：脚本安装不归全局 npm 管，npm 会装到另一处。
+            let (_dir, sub, bin_path) =
+                setup_sibling(".minimax-code", "mcode.cmd", &["mcode.ps1", "npm.cmd"]);
+            let cmd = anchored_command_from_paths("mcode", &bin_path, &bin_path).unwrap();
+            assert_eq!(cmd, mcode_installer_update_command(&sub.to_string_lossy()));
+            assert!(!cmd.contains("npm"), "npm must not be used: {cmd}");
+        }
+
+        #[test]
+        fn mcode_windows_installer_update_pins_install_root() {
+            let cmd = mcode_installer_update_command("C:\\Users\\o'brien\\.minimax-code");
+            let expected = powershell_encoded_command(
+                "$env:MCODE_INSTALL_DIR = 'C:\\Users\\o''brien\\.minimax-code'; irm https://filecdn.minimax.chat/public/install.ps1 | iex",
+            );
+            assert_eq!(
+                cmd.split_once("-EncodedCommand ")
+                    .map(|(_, encoded)| encoded),
+                Some(expected.as_str())
+            );
+        }
+
+        #[test]
+        fn mcode_windows_npm_install_keeps_allow_scripts() {
+            let (_dir, sub, bin_path) = setup_sibling("v22.19.0", "mcode.cmd", &["npm.cmd"]);
+            let cmd = anchored_command_from_paths("mcode", &bin_path, &bin_path);
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} i -g @minimax-ai/code@latest{}",
+                expect_quoted_path(&npm_full),
+                npm_install_extra_args("mcode")
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn mcode_windows_install_prefers_powershell_with_npm_fallback() {
+            let install = static_fallback_command_for("mcode", ToolLifecycleAction::Install);
+            let native = mcode_install_windows_command();
+            assert_eq!(
+                install,
+                format!(
+                    "{native} || call {}",
+                    npm_install_command_for("mcode").unwrap()
+                )
+            );
+            let expected_encoded = powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT);
+            assert_eq!(
+                native
+                    .split_once("-EncodedCommand ")
+                    .map(|(_, encoded)| encoded),
+                Some(expected_encoded.as_str())
+            );
         }
 
         #[test]
@@ -6155,6 +6632,40 @@ mod tests {
         }
 
         #[test]
+        fn mcode_script_install_reruns_official_installer_in_place() {
+            // `~/.minimax-code/bin/mcode` 是官方 installer 的 sh launcher，不归全局 npm 管；
+            // `mcode update` 非 TTY 下不安装，所以改为带 MCODE_INSTALL_DIR 重跑 installer。
+            let expected =
+                format!("MCODE_INSTALL_DIR='/Users/me/.minimax-code' {MCODE_INSTALL_UNIX}");
+            for bin_path in [
+                "/Users/me/.minimax-code/bin/mcode",
+                "/Users/me/.local/bin/mcode",
+            ] {
+                let cmd = anchored_command_from_paths(
+                    "mcode",
+                    bin_path,
+                    "/Users/me/.minimax-code/bin/mcode",
+                );
+                assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+            }
+        }
+
+        #[test]
+        fn mcode_nvm_anchors_to_npm_with_allow_scripts() {
+            let cmd = anchored_command_from_paths(
+                "mcode",
+                "/Users/me/.nvm/versions/node/v22.19.0/bin/mcode",
+                "/Users/me/.nvm/versions/node/v22.19.0/lib/node_modules/@minimax-ai/code/cli.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "PATH='/Users/me/.nvm/versions/node/v22.19.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.19.0/bin/npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
+                )
+            );
+        }
+
+        #[test]
         fn codex_nvm_anchors_to_that_npm() {
             // Codex 不走 self-update（`codex update` 在 npm 安装上只是裸 `npm install -g`，
             // 却会假成功掩盖平台二进制漏装）——直接锚定到同一个 node 的 npm，而非 PATH
@@ -6770,6 +7281,23 @@ mod tests {
         }
 
         #[test]
+        fn mcode_install_prefers_official_installer_with_npm_fallback() {
+            let cmd = install_command_for("mcode");
+            let (installer, fallback) = cmd
+                .split_once(" || ")
+                .expect("install should chain an npm fallback");
+            assert!(
+                installer.contains("https://filecdn.minimax.chat/public/install.sh"),
+                "official installer first: {cmd}"
+            );
+            assert!(
+                !installer.contains('|'),
+                "native installer should avoid pipe: {cmd}"
+            );
+            assert_eq!(Some(fallback), npm_install_command_for("mcode"));
+        }
+
+        #[test]
         fn openclaw_install_keeps_static_npm() {
             let cmd = install_command_for("openclaw");
             assert_eq!(cmd, "npm i -g openclaw@latest");
@@ -6816,6 +7344,11 @@ mod tests {
                 "npm i -g @earendil-works/pi-coding-agent@latest"
             );
             assert!(!static_fallback_command("pi").contains("pi update"));
+            assert_eq!(
+                Some(static_fallback_command("mcode").as_str()),
+                npm_install_command_for("mcode")
+            );
+            assert!(!static_fallback_command("mcode").contains("mcode update"));
         }
 
         #[test]
@@ -6958,6 +7491,32 @@ mod tests {
 
         assert_eq!(paths[0], PathBuf::from("/custom/grok/bin"));
         assert_eq!(paths[1], PathBuf::from("/home/tester/.grok/bin"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn mcode_extra_search_paths_use_installer_bin_dir() {
+        let home = PathBuf::from("/home/tester");
+        let paths = mcode_extra_search_paths(&home, Some(std::ffi::OsString::from("/opt/mcode")));
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("/opt/mcode/bin"),
+                PathBuf::from("/home/tester/.minimax-code/bin"),
+            ]
+        );
+        // 空的 MCODE_INSTALL_DIR 视同未设置（installer 同样回退默认目录）。
+        let paths = mcode_extra_search_paths(&home, Some(std::ffi::OsString::new()));
+        assert_eq!(paths, vec![PathBuf::from("/home/tester/.minimax-code/bin")]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn mcode_extra_search_paths_use_installer_root_on_windows() {
+        // Windows installer 把 mcode.cmd / mcode.ps1 放在安装根目录，不在 bin 下。
+        let home = PathBuf::from("C:\\Users\\tester");
+        let paths = mcode_extra_search_paths(&home, None);
+        assert_eq!(paths, vec![home.join(".minimax-code")]);
     }
 
     #[test]
