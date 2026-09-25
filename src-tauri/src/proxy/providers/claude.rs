@@ -483,6 +483,11 @@ impl ClaudeAdapter {
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
+        // Command Code Go /alpha/generate only accepts Bearer authentication.
+        if self.get_api_format(provider) == "commandcode_go" {
+            return ProviderType::ClaudeAuth;
+        }
+
         // 检测 Gemini Native 格式
         if self.get_api_format(provider) == "gemini_native" {
             return match self.extract_key(provider) {
