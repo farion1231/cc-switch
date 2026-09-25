@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { isAdditiveAppId } from "@/config/appConfig";
+import {
+  ADDITIVE_APP_IDS,
+  APP_IDS,
+  isAdditiveAppId,
+} from "@/config/appConfig";
 
-describe("appConfig provider lifecycle", () => {
-  it.each(["opencode", "openclaw", "hermes", "pi", "mcode"])(
-    "classifies %s as additive",
-    (appId) => {
-      expect(isAdditiveAppId(appId)).toBe(true);
-    },
-  );
+describe("custom slim app set", () => {
+  it("exposes only Claude Code, Claude Desktop, and Codex", () => {
+    expect(APP_IDS).toEqual(["claude", "claude-desktop", "codex"]);
+  });
 
-  it.each(["claude", "claude-desktop", "codex", "gemini", "grokbuild"])(
-    "does not classify %s as additive",
-    (appId) => {
+  it("does not expose additive upstream apps", () => {
+    expect(ADDITIVE_APP_IDS).toEqual([]);
+    for (const appId of ["opencode", "openclaw", "hermes", "pi", "mcode"]) {
       expect(isAdditiveAppId(appId)).toBe(false);
-    },
-  );
+    }
+  });
 });
