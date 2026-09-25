@@ -5045,11 +5045,13 @@ impl ProviderService {
         // Backward-compatible display normalization for providers created by
         // earlier custom builds before the shorter "Command Code" label.
         for provider in providers.values_mut() {
-            let is_commandcode = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.api_format.as_deref())
-                == Some("commandcode_go");
+            let is_commandcode = matches!(
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.api_format.as_deref()),
+                Some("commandcode") | Some("commandcode_go")
+            );
             if is_commandcode && provider.name == "Command Code Go" {
                 provider.name = "Command Code".to_string();
             }
