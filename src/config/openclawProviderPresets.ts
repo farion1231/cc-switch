@@ -4560,4 +4560,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "Cheaper Inference",
+    websiteUrl: "https://cheaperinference.com",
+    apiKeyUrl: "https://cheaperinference.com/signup",
+    settingsConfig: {
+      baseUrl: "https://api.cheaperinference.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.4",
+          name: "GPT-5.4",
+          input: ["text", "image"],
+          contextWindow: 1000000,
+        },
+        {
+          id: "gpt-5.4-mini",
+          name: "GPT-5.4 mini",
+          input: ["text", "image"],
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "ci_live_...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "cheaperinference/gpt-5.4" },
+      modelCatalog: {
+        "cheaperinference/gpt-5.4": { alias: "GPT-5.4" },
+      },
+    },
+  },
 ];
