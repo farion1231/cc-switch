@@ -1702,7 +1702,11 @@ impl RequestForwarder {
         if let Some(m) = filtered_body
             .get("model")
             .and_then(|m| m.as_str())
-            .or_else(|| filtered_body.pointer("/params/model").and_then(|m| m.as_str()))
+            .or_else(|| {
+                filtered_body
+                    .pointer("/params/model")
+                    .and_then(|m| m.as_str())
+            })
             .filter(|m| !m.is_empty())
         {
             outbound_model = Some(m.to_string());
@@ -1991,8 +1995,10 @@ impl RequestForwarder {
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
-        let is_commandcode_go =
-            matches!(resolved_claude_api_format.as_deref(), Some("commandcode_go"));
+        let is_commandcode_go = matches!(
+            resolved_claude_api_format.as_deref(),
+            Some("commandcode_go")
+        );
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
@@ -2344,7 +2350,11 @@ impl RequestForwarder {
         let request_model = filtered_body
             .get("model")
             .and_then(|v| v.as_str())
-            .or_else(|| filtered_body.pointer("/params/model").and_then(|v| v.as_str()))
+            .or_else(|| {
+                filtered_body
+                    .pointer("/params/model")
+                    .and_then(|v| v.as_str())
+            })
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
         log::debug!(
@@ -3580,7 +3590,10 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
     if body
         .get("stream")
         .and_then(|value| value.as_bool())
-        .or_else(|| body.pointer("/params/stream").and_then(|value| value.as_bool()))
+        .or_else(|| {
+            body.pointer("/params/stream")
+                .and_then(|value| value.as_bool())
+        })
         .unwrap_or(false)
     {
         return true;
