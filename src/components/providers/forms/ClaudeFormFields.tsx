@@ -748,8 +748,8 @@ export function ClaudeFormFields({
                 ? t("providerForm.apiHintOAI")
                 : apiFormat === "gemini_native"
                   ? t("providerForm.apiHintGeminiNative")
-                  : apiFormat === "commandcode_go"
-                    ? t("providerForm.apiHintCommandCodeGo", {
+                  : apiFormat === "commandcode" || apiFormat === "commandcode_go"
+                    ? t("providerForm.apiHintCommandCode", {
                         defaultValue:
                           "Command Code 使用原生适配，需开启路由接管。",
                       })
@@ -844,8 +844,8 @@ export function ClaudeFormFields({
                         defaultValue: "Gemini Native",
                       })}
                     </SelectItem>
-                    <SelectItem value="commandcode_go">
-                      {t("providerForm.apiFormatCommandCodeGo", {
+                    <SelectItem value="commandcode">
+                      {t("providerForm.apiFormatCommandCode", {
                         defaultValue: "Command Code",
                       })}
                     </SelectItem>
