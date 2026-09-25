@@ -52,6 +52,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
                 "gemini_native" => "gemini_native",
+                "commandcode_go" => "commandcode_go",
                 _ => "anthropic",
             };
         }
@@ -67,6 +68,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
             "openai_chat" => "openai_chat",
             "openai_responses" => "openai_responses",
             "gemini_native" => "gemini_native",
+            "commandcode_go" => "commandcode_go",
             _ => "anthropic",
         };
     }
@@ -93,7 +95,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     matches!(
         api_format,
-        "openai_chat" | "openai_responses" | "gemini_native"
+        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode_go"
     )
 }
 
@@ -458,6 +460,7 @@ pub fn transform_claude_request_for_api_format(
             Some(&provider.id),
             session_id,
         ),
+        "commandcode_go" => super::commandcode::anthropic_to_commandcode(body, session_id),
         _ => Ok(body),
     }
 }
@@ -989,7 +992,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses" | "gemini_native"
+            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode_go"
         )
     }
 
