@@ -300,6 +300,7 @@ mod tests {
             name: id.to_string(),
             vendor: "anthropic".to_string(),
             model_picker_enabled: true,
+            supported_endpoints: vec![],
         }
     }
 
