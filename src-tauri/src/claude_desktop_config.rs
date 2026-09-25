@@ -411,9 +411,13 @@ pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
         if let Some(api_format) = meta.api_format.as_deref() {
             if !matches!(
                 api_format,
-                "" | "anthropic" | "openai_chat" | "openai_responses" | "gemini_native"
-            ) && !crate::proxy::providers::claude::is_commandcode_api_format(api_format)
-            {
+                ""
+                    | "anthropic"
+                    | "openai_chat"
+                    | "openai_responses"
+                    | "gemini_native"
+                    | "commandcode"
+            ) {
                 return Err(AppError::localized(
                     "claude_desktop.provider.api_format_unsupported",
                     format!("Claude Desktop 本地路由模式不支持 API 格式: {api_format}"),
