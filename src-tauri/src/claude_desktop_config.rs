@@ -415,6 +415,7 @@ pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
                     | "openai_chat"
                     | "openai_responses"
                     | "gemini_native"
+                    | "commandcode"
                     | "commandcode_go"
             ) {
                 return Err(AppError::localized(
