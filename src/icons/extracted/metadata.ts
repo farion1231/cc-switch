@@ -153,6 +153,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["amux", "amuxapi", "aggregator", "relay", "gateway", "gpt"],
     defaultColor: "#000000",
   },
+  commandcode: {
+    name: "commandcode",
+    displayName: "Command Code",
+    category: "ai-provider",
+    keywords: ["command code", "commandcode", "go", "coding agent"],
+    defaultColor: "currentColor",
+  },
   anthropic: {
     name: "anthropic",
     displayName: "Anthropic",
