@@ -753,7 +753,10 @@ async fn commandcode_billing_json(
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .header("x-command-code-version", crate::proxy::providers::commandcode::COMMAND_CODE_VERSION)
+        .header(
+            "x-command-code-version",
+            crate::proxy::providers::commandcode::COMMAND_CODE_VERSION,
+        )
         .header("x-cli-environment", "production")
         .timeout(std::time::Duration::from_secs(15))
         .send()
@@ -783,17 +786,17 @@ async fn commandcode_billing_json(
 }
 
 fn commandcode_plan_info(plan_id: Option<&str>) -> Option<(&'static str, f64)> {
-    match plan_id.map(|value| value.trim().to_ascii_lowercase()).as_deref() {
+    match plan_id
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
         Some("individual-go") => Some(("Command Code · Go", 10.0)),
         Some("individual-goat") => Some(("Command Code · GOAT", 70.0)),
         _ => None,
     }
 }
 
-fn commandcode_window_tier(
-    node: Option<&serde_json::Value>,
-    name: &str,
-) -> Option<QuotaTier> {
+fn commandcode_window_tier(node: Option<&serde_json::Value>, name: &str) -> Option<QuotaTier> {
     let node = node?;
     let cap = node.get("cap").and_then(parse_f64)?;
     if !cap.is_finite() || cap <= 0.0 {
@@ -905,11 +908,11 @@ async fn query_commandcode(api_key: &str) -> Result<SubscriptionQuota, String> {
         Ok(value) => value,
         Err(error) => return commandcode_error_to_quota(error),
     };
-    let subscription =
-        match commandcode_billing_json(api_key, "/alpha/billing/subscriptions").await {
-            Ok(value) => value,
-            Err(error) => return commandcode_error_to_quota(error),
-        };
+    let subscription = match commandcode_billing_json(api_key, "/alpha/billing/subscriptions").await
+    {
+        Ok(value) => value,
+        Err(error) => return commandcode_error_to_quota(error),
+    };
 
     let (tiers, plan_label) = parse_commandcode_tiers(&credits, &subscription);
     if tiers.is_empty() {
@@ -1695,12 +1698,12 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        commandcode_is_canonical_base, detect_provider, parse_afp_tiers,
-        parse_coding_plan_tiers, parse_commandcode_tiers, parse_minimax_tiers,
-        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_zhipu_team_at,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        commandcode_is_canonical_base, detect_provider, parse_afp_tiers, parse_coding_plan_tiers,
+        parse_commandcode_tiers, parse_minimax_tiers, parse_opencode_go_tiers,
+        parse_zhipu_token_tiers, query_zhipu_team_at, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_quota_base, CodingPlanProvider, TIER_FIVE_HOUR, TIER_MONTHLY,
+        TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
