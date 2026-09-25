@@ -11,7 +11,9 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { queryClient } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { FloatingUsageWindow } from "./components/usage/FloatingUsageWindow";
 import { message } from "@tauri-apps/plugin-dialog";
 import { exit } from "@tauri-apps/plugin-process";
 import { FrontendErrorBoundary } from "./components/FrontendErrorBoundary";
@@ -113,6 +115,34 @@ async function bootstrap() {
   } catch (e) {
     // 忽略拉取错误，继续渲染
     reportFrontendError("get_init_error", e);
+  }
+
+  // 检查是否是悬浮窗窗口
+  let isFloatingWindow = false;
+  if (isTauri()) {
+    try {
+      isFloatingWindow = getCurrentWindow().label === "floating_usage";
+    } catch (e) {
+      console.error("Failed to check window label", e);
+    }
+  }
+
+  if (isFloatingWindow) {
+    document.body.classList.add("floating-usage-window");
+    document.body.style.backgroundColor = "transparent";
+    document.documentElement.style.backgroundColor = "transparent";
+    ReactDOM.createRoot(document.getElementById("root")!).render(
+      <React.StrictMode>
+        <FrontendErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
+              <FloatingUsageWindow />
+            </ThemeProvider>
+          </QueryClientProvider>
+        </FrontendErrorBoundary>
+      </React.StrictMode>,
+    );
+    return;
   }
 
   initializeWindowActivity();
