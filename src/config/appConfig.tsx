@@ -16,43 +16,26 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const APP_IDS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "mcode",
-];
+// DOVEGUO custom build: keep only the applications used in this distribution.
+// Backend compatibility code for other upstream apps remains compiled so rebasing
+// onto future CC Switch releases stays low-risk, but those apps are not exposed.
+export const APP_IDS: AppId[] = ["claude", "claude-desktop", "codex"];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   claude: true,
   "claude-desktop": true,
   codex: true,
-  gemini: true,
-  grokbuild: true,
-  opencode: true,
-  openclaw: true,
-  hermes: true,
-  pi: true,
-  mcode: true,
+  gemini: false,
+  grokbuild: false,
+  opencode: false,
+  openclaw: false,
+  hermes: false,
+  pi: false,
+  mcode: false,
 };
 
 /** App IDs shown in Skills panels. */
-export const SKILLS_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
-];
+export const SKILLS_APP_IDS: AppId[] = ["claude", "codex"];
 
 export type ProxyAppId = Extract<
   AppId,
@@ -60,12 +43,7 @@ export type ProxyAppId = Extract<
 >;
 
 /** Apps with a complete local gateway + failover data plane. */
-export const PROXY_APP_IDS: ProxyAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-];
+export const PROXY_APP_IDS: ProxyAppId[] = ["claude", "codex"];
 
 export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
@@ -76,13 +54,7 @@ export type AdditiveAppId = Extract<
   "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
 >;
 
-export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
-  "mcode",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-];
+export const ADDITIVE_APP_IDS: AdditiveAppId[] = [];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
@@ -90,15 +62,7 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
 
 /** Pi has no native MCP registry; do not manufacture a disabled mirror. */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
-export const MCP_APP_IDS: McpAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "mcode",
-];
+export const MCP_APP_IDS: McpAppId[] = ["claude", "codex"];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
   return (MCP_APP_IDS as string[]).includes(appId);
