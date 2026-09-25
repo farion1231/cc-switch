@@ -5041,7 +5041,20 @@ impl ProviderService {
             }
             return Ok(saved);
         }
-        state.db.get_all_providers(app_type.as_str())
+        let mut providers = state.db.get_all_providers(app_type.as_str())?;
+        // Backward-compatible display normalization for providers created by
+        // earlier custom builds before the shorter "Command Code" label.
+        for provider in providers.values_mut() {
+            let is_commandcode = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref())
+                == Some("commandcode_go");
+            if is_commandcode && provider.name == "Command Code Go" {
+                provider.name = "Command Code".to_string();
+            }
+        }
+        Ok(providers)
     }
 
     /// Get current provider ID
