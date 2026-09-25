@@ -35,6 +35,11 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
       - name: Setup pnpm
         shell: pwsh
         env:
@@ -87,6 +92,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create GitHub Release
+        if: startsWith(github.event.head_commit.message, 'release:')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
