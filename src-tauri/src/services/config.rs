@@ -138,9 +138,10 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
-            AppType::Pi | AppType::Mcode => {
+            AppType::Pi | AppType::Mcode | AppType::DevEco => {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
+                // Mcode and DevEco are additive-mode apps for the same reason.
             }
         }
 

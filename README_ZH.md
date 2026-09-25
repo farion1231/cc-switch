@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code 的全方位管理工具
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、DevEco Code 的全方位管理工具
 
 **一键切换 API 供应商，统一管理 MCP、Skills 与提示词，不用再手改 JSON / TOML / YAML 配置文件。**
 
@@ -221,7 +221,7 @@ Claude Code、Codex、Gemini CLI 等 AI 编程工具各有各的配置格式。�
 
 **CC Switch** 把这些工作集中到一个桌面应用里：选一个预设、填入 Key，一键即可切换，原有配置不会丢失。
 
-- **一个应用，十个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **一个应用，十一个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、DevEco Code
 - **告别手动编辑** — 90+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务
 - **在 Claude Code 里用 GPT，在 Codex 里用 Claude** — 内置本地路由，自动转换 Anthropic、OpenAI、Gemini 的接口格式，并支持自动故障转移
 - **MCP、Skills 与提示词集中管理** — MCP 和 Skills 添加一次，按工具勾选同步；提示词按工具分别维护
@@ -290,7 +290,7 @@ paru -S cc-switch-bin
 
 1. **添加供应商**：点击工具栏的“添加新供应商”（+ 按钮）→ 选择预设或创建自定义配置
 2. **切换供应商**：
-   - 主界面：选择供应商 → 点击“启用”（OpenCode、OpenClaw、Hermes、MiniMax Code 的按钮为“添加”；这四个工具和 Pi 是共存式工具，可以同时添加多个供应商）
+   - 主界面：选择供应商 → 点击“启用”（OpenCode、OpenClaw、Hermes、MiniMax Code、DevEco Code 的按钮为“添加”；这五个工具和 Pi 是共存式工具，可以同时添加多个供应商）
    - 系统托盘：直接点击供应商名称（支持 Claude Code、Codex、Gemini CLI、Grok Build）
 3. **生效方式**：Claude Code 无需重启；Codex、Gemini CLI、Grok Build 需重启终端或对应的 CLI 工具；Claude Desktop 需重启应用本身（详见常见问题）
 4. **恢复官方登录**：切换到列表中自带的官方供应商（如“Claude Official”），重启工具后按照其登录/OAuth 流程操作
@@ -326,6 +326,7 @@ paru -S cc-switch-bin
 | Hermes | 共存 | – | – | ✓ | ✓ | 记忆管理 | ✓ | – |
 | Pi | 共存 | – | – | – | ✓ | AGENTS.md、SYSTEM.md、提示词模板 | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| DevEco Code | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 
 - **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。
 - **本地路由**：由 CC Switch 在本机转发请求并转换接口格式，见下方[本地路由与故障转移](#本地路由与故障转移)。Claude Desktop 的供应商可选“直连”或“模型映射”，选“模型映射”时经本地路由转发。
@@ -383,7 +384,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
+CC Switch 支持十一个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**DevEco Code**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
 
 </details>
 
@@ -395,7 +396,7 @@ CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**�
 - **Claude Code**：支持供应商数据的热切换，无需重启。
 - **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（Codex 和 Grok Build 切换成功后会有提示）。开启本地路由后，请求会立即转发到新供应商；但如果切换改变了模型，Codex 和 Grok Build 仍可能需要重启。
 - **Claude Desktop**：需要完全退出并重新打开 Claude Desktop；使用“模型映射”时，还需要保持 CC Switch 运行。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、DevEco Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
 
 </details>
 
@@ -411,7 +412,7 @@ CC Switch 使用“通用配置片段”功能（Claude Code、Codex、Gemini CL
 
 本软件的设计原则是“最小侵入性”，即使卸载本软件，也不会影响应用的正常使用。
 
-所以对于同一时间只启用一个供应商的工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build），系统总会保留一个正在激活中的配置，因为如果将所有配置全部删除，该应用将无法正常使用。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 等共存式工具不受此限制，可以直接删除任意供应商。如果你不常用某个工具，可以在设置中关掉它的显示。如果你想切换回官方登录，可以参考下条。
+所以对于同一时间只启用一个供应商的工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build），系统总会保留一个正在激活中的配置，因为如果将所有配置全部删除，该应用将无法正常使用。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、DevEco Code 等共存式工具不受此限制，可以直接删除任意供应商。如果你不常用某个工具，可以在设置中关掉它的显示。如果你想切换回官方登录，可以参考下条。
 
 </details>
 

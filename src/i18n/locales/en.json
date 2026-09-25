@@ -795,6 +795,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "devecoConfigDir": "DevEco Code Configuration Directory",
+    "devecoConfigDirDescription": "Override the DevEco Code configuration directory (deveco.jsonc).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -803,6 +805,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderDeveco": "e.g., /home/<your-username>/.config/deveco",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -918,7 +921,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "deveco": "DevEco Code"
   },
   "mcode": {
     "empty": {
@@ -1737,7 +1741,8 @@
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
-      "mcode": "MiniMax Code"
+      "mcode": "MiniMax Code",
+      "deveco": "DevEco Code"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {
@@ -2042,7 +2047,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "deveco": "DevEco Code"
       }
     },
     "userLevelPath": "User-level MCP path",

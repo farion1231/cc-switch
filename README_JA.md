@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、DevEco Code のオールインワン管理ツール
 
 **ワンクリックで API プロバイダを切り替え、MCP・Skills・プロンプトを一元管理。JSON / TOML / YAML の設定ファイルを手作業で編集する必要はもうありません。**
 
@@ -220,7 +220,7 @@ Claude Code、Codex、Gemini CLI などの AI コーディングツールは、�
 
 **CC Switch** は、こうした作業を 1 つのデスクトップアプリに集約します。プリセットを選んでキーを入力すれば、ワンクリックで切り替えられます。既存の設定が失われることもありません。
 
-- **1 つのアプリで 10 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **1 つのアプリで 11 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、DevEco Code
 - **手動編集は不要** — AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 90 以上のプロバイダプリセットを内蔵
 - **Claude Code で GPT を、Codex で Claude を使う** — ローカルルーティングを内蔵し、Anthropic、OpenAI、Gemini の API 形式を自動で変換。自動フェイルオーバーにも対応
 - **MCP・Skills・プロンプトを一元管理** — MCP と Skills は一度追加すれば、ツールごとにチェックを入れて同期。プロンプトはツールごとに個別に管理
@@ -289,7 +289,7 @@ paru -S cc-switch-bin
 
 1. **プロバイダ追加**: ツールバーの「新しいプロバイダーを追加」（+ ボタン）をクリック → プリセットを選ぶかカスタム設定を作成
 2. **プロバイダ切り替え**:
-   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code ではボタンが「追加」になります。この 4 つのツールと Pi は共存型のツールで、複数のプロバイダを同時に追加できます）
+   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code、DevEco Code ではボタンが「追加」になります。この 5 つのツールと Pi は共存型のツールで、複数のプロバイダを同時に追加できます）
    - システムトレイ: プロバイダ名をクリック（Claude Code、Codex、Gemini CLI、Grok Build に対応）
 3. **反映**: Claude Code は再起動不要。Codex、Gemini CLI、Grok Build はターミナルまたは CLI ツールを再起動、Claude Desktop はアプリ自体を再起動（詳しくはよくある質問を参照）
 4. **公式ログインに戻す**: リストに含まれている公式プロバイダ（例：「Claude Official」）に切り替え、ツールを再起動してログイン/OAuth フローを実行
@@ -325,6 +325,7 @@ paru -S cc-switch-bin
 | Hermes | 共存 | – | – | ✓ | ✓ | メモリ | ✓ | – |
 | Pi | 共存 | – | – | – | ✓ | AGENTS.md、SYSTEM.md、プロンプトテンプレート | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| DevEco Code | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 
 - **切り替え**：同時に有効にできるプロバイダは 1 つだけです。**共存**：複数のプロバイダを同時にツール自身の設定に書き込み、ツール内で選んで使用します。
 - **ローカルルーティング**：CC Switch がローカルでリクエストを転送し、API 形式を変換します。詳しくは下記の[ローカルルーティング & フェイルオーバー](#ローカルルーティング--フェイルオーバー)をご覧ください。Claude Desktop のプロバイダでは「直接接続」か「モデルマッピング」を選択でき、「モデルマッピング」を選ぶとローカルルーティング経由で転送されます。
@@ -382,7 +383,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code** の 10 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**DevEco Code** の 11 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
 
 </details>
 
@@ -394,7 +395,7 @@ CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**�
 - **Claude Code**：プロバイダデータのホットスイッチに対応しており、再起動は不要です。
 - **Codex、Gemini CLI、Grok Build**：変更を反映するにはターミナルまたは CLI ツールを再起動してください（Codex と Grok Build は切り替え後に通知が表示されます）。ローカルルーティングを有効にしている場合、リクエストは即座に新しいプロバイダへ転送されますが、切り替えでモデルが変わる場合は Codex と Grok Build の再起動が必要になることがあります。
 - **Claude Desktop**：Claude Desktop を完全に終了してから再度開いてください。「モデルマッピング」を使用する場合は、CC Switch を起動したままにしておく必要もあります。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：これらは共存型のツールです。「追加」（Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、DevEco Code**：これらは共存型のツールです。「追加」（Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。
 
 </details>
 
@@ -410,7 +411,7 @@ CC Switch には「共通設定スニペット」機能（Claude Code、Codex、
 
 CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、各ツールは正常に動作し続けます。
 
-そのため、同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。あまり使わないツールがある場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
+そのため、同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、DevEco Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。あまり使わないツールがある場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
 
 </details>
 

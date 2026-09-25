@@ -24,8 +24,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_default_config, import_deveco_providers_from_live, import_hermes_providers_from_live,
+    import_openclaw_providers_from_live, import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
     update_toml_common_config_snippet,
 };
@@ -4698,6 +4698,157 @@ wire_api = "responses"
             );
         });
     }
+
+    /// 通过真实服务入口移出被引用的 DevEco 供应商必须被拒绝。
+    ///
+    /// 引用保护此前只在 `delete` 里，`remove_from_live_config`（UI 卡片上的
+    /// 移出配置）没有，于是正常操作就能留下悬空的 `<provider-id>/<model-id>`
+    /// 引用并让 DevEco Code 启动失败。
+    #[test]
+    #[serial]
+    fn deveco_remove_from_live_refuses_referenced_provider() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload settings");
+            let config_dir = home.join(".config").join("deveco");
+            fs::create_dir_all(&config_dir).expect("create deveco config dir");
+            fs::write(
+                config_dir.join("deveco.jsonc"),
+                r#"{
+  "model": "referenced/MiniMax-M3",
+  "provider": {
+    "referenced": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "https://example.com/v1", "apiKey": "sk-x" },
+      "models": { "MiniMax-M3": { "name": "MiniMax M3" } }
+    },
+    "free": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "https://example.org/v1", "apiKey": "sk-y" },
+      "models": { "MiniMax-M3": { "name": "MiniMax M3" } }
+    }
+  }
+}"#,
+            )
+            .expect("seed deveco.jsonc");
+
+            let provider = |id: &str| {
+                let mut provider = Provider::with_id(
+                    id.to_string(),
+                    id.to_string(),
+                    json!({
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": { "baseURL": "https://example.com/v1", "apiKey": "sk-x" },
+                        "models": { "MiniMax-M3": { "name": "MiniMax M3" } }
+                    }),
+                    None,
+                );
+                ProviderService::set_provider_live_config_managed(&mut provider, true);
+                provider
+            };
+
+            for id in ["referenced", "free"] {
+                state.db.save_provider("deveco", &provider(id)).unwrap();
+            }
+
+            // 被顶层 model 引用 → 拒绝，且原生配置保持不变
+            let err =
+                ProviderService::remove_from_live_config(state, AppType::DevEco, "referenced")
+                    .expect_err("被引用的供应商不得从 live 移除");
+            let message = err.to_string();
+            assert!(
+                message.contains("referenced") && message.contains("DevEco Code"),
+                "错误信息应指出被引用的供应商: {message}"
+            );
+            assert!(
+                crate::deveco_config::get_providers()
+                    .unwrap()
+                    .contains_key("referenced"),
+                "拒绝后原生配置必须原样保留"
+            );
+
+            // 未被引用 → 正常移除
+            ProviderService::remove_from_live_config(state, AppType::DevEco, "free")
+                .expect("未被引用的供应商应可移除");
+            assert!(!crate::deveco_config::get_providers()
+                .unwrap()
+                .contains_key("free"));
+        });
+    }
+
+    /// 写回 live 必须无损：`DevEcoProviderConfig` 只建模 npm/name/options/models，
+    /// 其余字段靠 flatten 的 `extra` 保留。缺了它，`provider.api`、`env`、
+    /// `whitelist`/`blacklist` 与 `limit.input` 会在类型化往返里被静默删除——而未知
+    /// 字段不会让 Serde 报错，raw JSON 兜底因此也不会触发。
+    #[test]
+    #[serial]
+    fn deveco_live_write_preserves_unmodeled_provider_fields() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload settings");
+            fs::create_dir_all(home.join(".config").join("deveco"))
+                .expect("create deveco config dir");
+
+            let settings = json!({
+                "npm": "@ai-sdk/anthropic",
+                "name": "acme",
+                // 前端表单自己保存的字段
+                "kind": "custom",
+                "enabled": true,
+                // DevEco 原生字段
+                "env": { "SOME_FLAG": "1" },
+                "whitelist": ["MiniMax-M3"],
+                "blacklist": ["other"],
+                "provider": { "type": "anthropic" },
+                "options": { "baseURL": "https://example.com/v1", "apiKey": "sk-x" },
+                "models": {
+                    "MiniMax-M3": {
+                        "name": "MiniMax M3",
+                        "tool_call": true,
+                        "limit": { "context": 1000000, "output": 128000, "input": 64000 }
+                    }
+                }
+            });
+
+            let mut provider =
+                Provider::with_id("acme".to_string(), "acme".into(), settings.clone(), None);
+            ProviderService::set_provider_live_config_managed(&mut provider, true);
+            state.db.save_provider("deveco", &provider).unwrap();
+
+            ProviderService::switch(state, AppType::DevEco, "acme")
+                .expect("switch writes live config");
+
+            let written = crate::deveco_config::get_providers()
+                .expect("read live providers")
+                .remove("acme")
+                .expect("acme must be written to live");
+
+            for field in [
+                "npm",
+                "name",
+                "kind",
+                "enabled",
+                "env",
+                "whitelist",
+                "blacklist",
+                "provider",
+            ] {
+                assert_eq!(
+                    written.get(field),
+                    settings.get(field),
+                    "写回不得丢失 '{field}'"
+                );
+            }
+            assert_eq!(
+                written.pointer("/models/MiniMax-M3/limit/input"),
+                Some(&json!(64000)),
+                "limit.input 必须保留"
+            );
+            assert_eq!(
+                written.pointer("/models/MiniMax-M3/tool_call"),
+                Some(&json!(true)),
+                "模型的未知字段必须保留"
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -5041,6 +5192,32 @@ impl ProviderService {
             }
             return Ok(saved);
         }
+        if app_type == AppType::DevEco {
+            // DevEco Code is additive mode: the native deveco.jsonc is the source of
+            // truth for which providers are live, so merge it into the DB catalog.
+            let native = crate::deveco_config::get_providers()?;
+            let mut saved = state.db.get_all_providers("deveco")?;
+            for (id, config) in &native {
+                if !saved.contains_key(id) {
+                    let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
+                    saved.insert(
+                        id.clone(),
+                        Provider::with_id(id.clone(), name.into(), config.clone(), None),
+                    );
+                }
+            }
+            for (id, provider) in &mut saved {
+                if let Some(config) = native.get(id) {
+                    if let Some(name) = config.get("name").and_then(Value::as_str) {
+                        provider.name = name.into();
+                    }
+                    provider.settings_config = config.clone();
+                }
+                Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                state.db.save_provider("deveco", provider)?;
+            }
+            return Ok(saved);
+        }
         state.db.get_all_providers(app_type.as_str())
     }
 
@@ -5074,6 +5251,97 @@ impl ProviderService {
                 match previous {
                     Some(previous) => state.db.save_provider("mcode", &previous)?,
                     None => state.db.delete_provider("mcode", &provider.id)?,
+                }
+                return Err(error);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Reject removing a whole DevEco Code provider that the native config still
+    /// refers to.
+    ///
+    /// Shared by `delete` and `remove_from_live_config` so the UI card's "remove
+    /// from config" action cannot bypass the protection that `delete` applies.
+    fn guard_deveco_referenced_provider(id: &str) -> Result<(), AppError> {
+        if !crate::deveco_config::referenced_by_config(id, None)? {
+            return Ok(());
+        }
+        Err(AppError::localized(
+            "provider.deveco.referenced",
+            format!(
+                "DevEco Code 仍在使用供应商 '{id}'（model / agent 配置引用了它）。请先在 DevEco Code 中改用其它模型，再删除。"
+            ),
+            format!(
+                "DevEco Code still uses provider '{id}' (referenced by its model or agent config). Switch that reference in DevEco Code before deleting."
+            ),
+        ))
+    }
+
+    /// Reject an edit that removes a model DevEco Code still refers to.
+    ///
+    /// DevEco Code stores the selected model as `<provider-id>/<model-id>` in its
+    /// top-level `model` / `small_model` and in `agent.*.model`. Dropping such a model
+    /// (or the whole provider) leaves a dangling reference that breaks startup, so the
+    /// edit is refused rather than silently persisted.
+    fn guard_deveco_referenced_models(
+        existing: Option<&Provider>,
+        updated: &Provider,
+    ) -> Result<(), AppError> {
+        let Some(existing) = existing else {
+            return Ok(());
+        };
+
+        let models_of = |provider: &Provider| -> Vec<String> {
+            provider
+                .settings_config
+                .get("models")
+                .and_then(Value::as_object)
+                .map(|models| models.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+
+        let remaining = models_of(updated);
+        for model_id in models_of(existing) {
+            if remaining.contains(&model_id) {
+                continue;
+            }
+            if crate::deveco_config::referenced_by_config(&updated.id, Some(&model_id))? {
+                return Err(AppError::localized(
+                    "provider.deveco.model_referenced",
+                    format!(
+                        "DevEco Code 仍在使用 {}/{}。请先在 DevEco Code 中改用其它模型，再移除它。",
+                        updated.id, model_id
+                    ),
+                    format!(
+                        "DevEco Code still uses {}/{}. Switch that reference in DevEco Code before removing it.",
+                        updated.id, model_id
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Persist a DevEco Code provider: DB first, then the native `deveco.jsonc`.
+    ///
+    /// The native write can fail on a hand-edited config; when it does, the DB row
+    /// is rolled back to its previous state so the catalog never claims a provider
+    /// the native file doesn't have.
+    fn save_deveco_provider(
+        state: &AppState,
+        provider: &Provider,
+        write_live: bool,
+    ) -> Result<bool, AppError> {
+        let previous = state.db.get_provider_by_id(&provider.id, "deveco")?;
+        state.db.save_provider("deveco", provider)?;
+        if write_live {
+            if let Err(error) =
+                crate::deveco_config::set_provider(&provider.id, provider.settings_config.clone())
+            {
+                match previous {
+                    Some(previous) => state.db.save_provider("deveco", &previous)?,
+                    None => state.db.delete_provider("deveco", &provider.id)?,
                 }
                 return Err(error);
             }
@@ -5167,6 +5435,10 @@ impl ProviderService {
 
         if app_type == AppType::Mcode {
             return Self::save_mcode_provider(state, &provider, add_to_live);
+        }
+
+        if app_type == AppType::DevEco {
+            return Self::save_deveco_provider(state, &provider, add_to_live);
         }
 
         // Save to database
@@ -5365,6 +5637,11 @@ impl ProviderService {
 
             if app_type == AppType::Mcode {
                 return Self::save_mcode_provider(state, &provider, live_config_managed);
+            }
+
+            if app_type == AppType::DevEco {
+                Self::guard_deveco_referenced_models(existing_provider.as_ref(), &provider)?;
+                return Self::save_deveco_provider(state, &provider, live_config_managed);
             }
 
             // Save to database after live-config presence is resolved so parse errors
@@ -5574,6 +5851,14 @@ impl ProviderService {
             // Single DB read shared across all additive-mode sub-paths below.
             let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
 
+            // DevEco Code refers to models as `<provider-id>/<model-id>` from its top-level
+            // `model` / `small_model` and from `agent.*.model`. Deleting a referenced
+            // provider would leave those dangling and break startup, so refuse and let the
+            // user repoint the reference in DevEco Code first.
+            if app_type == AppType::DevEco {
+                Self::guard_deveco_referenced_provider(id)?;
+            }
+
             if matches!(app_type, AppType::OpenCode) {
                 let provider_category = existing.as_ref().and_then(|p| p.category.clone());
                 let omo_variant = match provider_category.as_deref() {
@@ -5611,6 +5896,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::DevEco => crate::deveco_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -5681,6 +5967,14 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::DevEco => {
+                // Reference protection mirrors `delete`: the native config may point
+                // at `<provider-id>/<model-id>` with no way back. Removing a
+                // referenced provider from live leaves that reference dangling, and
+                // nothing stops the user from doing it from the UI card.
+                Self::guard_deveco_referenced_provider(id)?;
+                crate::deveco_config::remove_provider(id)?
+            }
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6050,6 +6344,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
+                    AppType::DevEco => crate::deveco_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -6314,7 +6609,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::DevEco => Ok(String::new()),
         }
     }
 
@@ -6332,7 +6627,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::DevEco => Ok(String::new()),
         }
     }
 
@@ -7101,6 +7396,9 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::DevEco => {
+                crate::deveco_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -7274,8 +7572,9 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenCode => {
-                // OpenCode uses options.apiKey and options.baseURL
+            // OpenCode and DevEco Code share the SDK-options shape: credentials
+            // live under `options.{apiKey,baseURL}`.
+            AppType::OpenCode | AppType::DevEco => {
                 let options = provider
                     .settings_config
                     .get("options")

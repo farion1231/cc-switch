@@ -9,6 +9,7 @@
 //! - `codex` - Codex MCP 同步和导入（含 TOML 转换）
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
+//! - `deveco` - DevEco Code MCP 同步和导入（复用 OpenCode 的格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
 
 mod claude;
@@ -39,4 +40,5 @@ pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
 
+pub(crate) mod deveco;
 pub(crate) mod mcode;

@@ -10,6 +10,7 @@ import _byteplus from "./byteplus.png";
 import _ccsub from "./ccsub.svg?url";
 import _claudecn from "./claudecn.png";
 import _cherryin from "./cherryin.png";
+import _deveco from "./deveco.png";
 import _code0 from "./code0.png";
 import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
@@ -126,6 +127,7 @@ export const iconUrls: Record<string, string> = {
   claudeapi: _claudeapi,
   claudecn: _claudecn,
   cherryin: _cherryin,
+  deveco: _deveco,
   code0: _code0,
   eflowcode: _eflowcode,
   etok: _etok,

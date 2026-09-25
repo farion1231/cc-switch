@@ -959,6 +959,19 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn import_deveco_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
+    crate::services::provider::import_deveco_providers_from_live(state.inner())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_deveco_live_provider_ids() -> Result<Vec<String>, String> {
+    crate::deveco_config::get_providers()
+        .map(|providers| providers.keys().cloned().collect())
+        .map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================

@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+const VALID_TOOLS: [&str; 10] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "deveco",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -435,6 +435,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "hermes" => "Hermes",
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
+        "deveco" => "DevEco Code",
         _ => "Unknown",
     }
 }
@@ -650,6 +651,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "deveco" => Some("npm i -g @deveco/deveco-code@latest"),
         _ => None,
     }
 }
@@ -678,7 +680,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "grok" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
-        "opencode" => Some("upgrade"),
+        "opencode" | "deveco" => Some("upgrade"),
         _ => None,
     }
 }
@@ -2788,6 +2790,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "deveco" => Some("@deveco/deveco-code"),
         _ => None,
     }
 }

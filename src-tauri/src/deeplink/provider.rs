@@ -157,6 +157,11 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::DevEco => {
+            return Err(AppError::InvalidInput(
+                "Add DevEco Code providers from the DevEco Code page".into(),
+            ))
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers must be added from the Pi provider page".to_string(),

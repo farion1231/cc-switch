@@ -196,7 +196,8 @@ export type AppType =
   | "grokbuild"
   | "opencode"
   | "pi"
-  | "mcode";
+  | "mcode"
+  | "deveco";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -208,6 +209,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "opencode",
   "pi",
   "mcode",
+  "deveco",
 ];
 
 /**
@@ -234,6 +236,7 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
 const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
   "mcode",
+  // DevEco reports cache writes natively, so it is not partial.
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

@@ -55,6 +55,7 @@ export function AddProviderDialog({
     appId !== "pi" &&
     appId !== "mcode" &&
     appId !== "grokbuild" &&
+    appId !== "deveco" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
@@ -199,7 +200,8 @@ export function AddProviderDialog({
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "pi" ||
-          appId === "mcode") &&
+          appId === "mcode" ||
+          appId === "deveco") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

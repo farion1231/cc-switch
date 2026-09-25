@@ -795,6 +795,8 @@
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
+    "devecoConfigDir": "DevEco Code 設定目錄",
+    "devecoConfigDirDescription": "覆寫 DevEco Code 設定目錄（deveco.jsonc）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -803,6 +805,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
+    "browsePlaceholderDeveco": "例如：/home/<您的帳號>/.config/deveco",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -919,7 +922,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "deveco": "DevEco Code"
   },
   "mcode": {
     "empty": {
@@ -1738,7 +1742,8 @@
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
-      "mcode": "MiniMax Code"
+      "mcode": "MiniMax Code",
+      "deveco": "DevEco Code"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -2043,7 +2048,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "deveco": "DevEco Code"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",

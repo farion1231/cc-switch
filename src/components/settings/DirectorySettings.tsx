@@ -22,6 +22,7 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   piDir?: string;
+  devecoDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -41,6 +42,7 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   piDir,
+  devecoDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -183,6 +185,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("pi", val)}
           onBrowse={() => onBrowseDirectory("pi")}
           onReset={() => onResetDirectory("pi")}
+        />
+
+        <DirectoryInput
+          label={t("settings.devecoConfigDir")}
+          description={undefined}
+          value={devecoDir}
+          resolvedValue={resolvedDirs.deveco}
+          placeholder={t("settings.browsePlaceholderDeveco")}
+          onChange={(val) => onDirectoryChange("deveco", val)}
+          onBrowse={() => onBrowseDirectory("deveco")}
+          onReset={() => onResetDirectory("deveco")}
         />
       </section>
     </div>

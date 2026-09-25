@@ -86,6 +86,7 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { McodeProviderForm } from "./McodeProviderForm";
+import { DevEcoProviderForm } from "./DevEcoProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -275,6 +276,7 @@ export interface ProviderFormProps {
 
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "mcode") return <McodeProviderForm {...props} />;
+  if (props.appId === "deveco") return <DevEcoProviderForm {...props} />;
   if (props.appId === "pi") {
     return <PiProviderForm {...props} />;
   }
