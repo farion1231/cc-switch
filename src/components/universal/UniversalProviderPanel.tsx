@@ -234,7 +234,7 @@ export function UniversalProviderPanel() {
       <p className="text-sm text-muted-foreground">
         {t("universalProvider.description", {
           defaultValue:
-            "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
+            "统一供应商可以同时管理 Claude 和 Codex 的配置。修改后会自动同步到所有启用的应用。",
         })}
       </p>
 
@@ -306,7 +306,7 @@ export function UniversalProviderPanel() {
           defaultValue: "同步统一供应商",
         })}
         message={t("universalProvider.syncConfirmDescription", {
-          defaultValue: `同步 "${syncConfirm.name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
+          defaultValue: `同步 "${syncConfirm.name}" 将会覆盖 Claude 和 Codex 中关联的供应商配置。确定要继续吗？`,
           name: syncConfirm.name,
         })}
         confirmText={t("universalProvider.syncConfirm", {
