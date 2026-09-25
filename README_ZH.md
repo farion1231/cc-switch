@@ -2,7 +2,9 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、MiniMax Code 的全方位管理工具
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code 的全方位管理工具
+
+**一键切换 API 供应商，统一管理 MCP、Skills 与提示词，不用再手改 JSON / TOML / YAML 配置文件。**
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -15,6 +17,8 @@
 ### 🌐 唯一官方网站：**[ccswitch.io](https://ccswitch.io)**
 
 [English](README.md) | 中文 | [日本語](README_JA.md) | [Deutsch](README_DE.md) | [更新日志](CHANGELOG.md)
+
+**[下载安装](#下载安装) · [快速开始](#快速开始) · [功能特性](#功能特性) · [常见问题](#常见问题) · [用户手册](docs/user-manual/zh/README.md)**
 
 </div>
 
@@ -167,8 +171,8 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
-<td>感谢 SSSAiCode 赞助了本项目！SSSAiCode 是一家稳定可靠的API中转站，致力于提供稳定、可靠、平价的Claude、CodeX模型服务，支持当日快速开票，SSSAiCode为本软件的用户提供特别优惠，使用<a href="https://www.sssaicode.com/register?ref=DCP0SM">此链接</a>注册每次充值均可享受10$的额外奖励！</td>
+<td width="180"><a href="https://sssaicodeapi.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
+<td>感谢 SSSAiCode 赞助了本项目！SSSAiCode 是一家稳定可靠的API中转站，致力于提供稳定、可靠、平价的Claude、CodeX模型服务，支持当日快速开票，SSSAiCode为本软件的用户提供特别优惠，使用<a href="https://sssaicodeapi.com/register?ref=DCP0SM">此链接</a>注册每次充值均可享受10$的额外奖励！</td>
 </tr>
 
 <tr>
@@ -213,17 +217,17 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 ## 为什么选择 CC Switch？
 
-现代 AI 编程依赖于 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code 等工具——但每个工具都有自己的配置格式。切换 API 供应商意味着手动编辑 JSON、TOML 或 `.env` 文件，而在多个工具之间缺乏一个统一管理 MCP, SKILLS 的方式。
+现代 AI 编程依赖于 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 等工具——但每个工具都有自己的配置格式。切换 API 供应商意味着手动编辑 JSON、TOML、YAML 或 `.env` 文件，而在多个工具之间缺乏一个统一管理 MCP 与 Skills 的方式。
 
-**CC Switch** 为你提供一个桌面应用来管理所有支持的 AI 工具。无需手动编辑配置文件，你将获得一个可视化界面，一键将供应商导入应用，一键在不同的供应商之间进行切换，内置 50+ 供应商预设、统一的 MCP, SKILLS 管理以及系统托盘即时切换功能——所有操作都基于可靠的 SQLite 数据库和原子写入机制，保护你的配置不被损坏。
+**CC Switch** 为你提供一个桌面应用来管理所有支持的 AI 工具。无需手动编辑配置文件，你将获得一个可视化界面，一键将供应商导入应用，一键在不同的供应商之间进行切换，内置 90+ 供应商预设、统一的 MCP 与 Skills 管理以及系统托盘快速切换功能——所有操作都基于可靠的 SQLite 数据库和原子写入机制，保护你的配置不被损坏。
 
-- **一个应用，九个工具** — 在单一界面中管理 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code
-- **告别手动编辑** — 50+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务；一键即可切换
-- **统一 MCP, SKILLS 管理** — 一个面板管理 Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code 的 MCP, SKILLS, 支持双向同步
-- **系统托盘快速切换** — 从托盘菜单即时切换供应商，无需打开完整应用
+- **一个应用，十个工具** — 在单一界面中管理 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **告别手动编辑** — 90+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务；一键即可切换
+- **统一 MCP 与 Skills 管理** — 一个面板管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、MiniMax Code 的 MCP 服务器，以及这些工具和 Pi 的 Skills，支持双向同步
+- **系统托盘快速切换** — 从托盘菜单直接切换 Claude Code、Codex、Gemini CLI、Grok Build 的供应商，无需打开完整应用
 - **云同步** — 通过 Dropbox、OneDrive、iCloud 或 WebDAV 服务器在不同设备之间同步供应商数据
 - **跨平台** — 基于 Tauri 2 构建的原生桌面应用，支持 Windows、macOS 和 Linux
-- **小工具** - 内置了多种小工具来解决首次安装登录确认、禁止签名、插件拓展同步等多种功能
+- **小工具** — 内置跳过 Claude Code 初次安装确认、隐藏 AI 署名、让 VS Code 的 Claude Code 插件随本软件切换供应商等多种功能
 
 ## 界面预览
 
@@ -233,13 +237,14 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 ## 功能特性
 
-[完整更新日志](CHANGELOG.md) | [发布说明](docs/release-notes/v3.16.1-zh.md)
+[完整更新日志](CHANGELOG.md) | [发布说明](docs/release-notes/v3.20.4-zh.md)
 
 ### 供应商管理
 
-- **9 个支持工具，50+ 预设** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code；复制 key 即可一键导入
+- **10 个支持工具，90+ 预设** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code；复制 key 即可一键导入
+- **切换与并存两种模式** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build 同一时间只启用一个供应商；OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 可以把多个供应商同时添加到工具自身的配置中，在工具里选择使用
 - **通用供应商** — 一份配置同步到 Claude Code、Codex 和 Gemini CLI
-- 一键切换、系统托盘快速访问、拖拽排序、导入导出
+- 一键切换、系统托盘快速访问（Claude Code、Codex、Gemini CLI、Grok Build）、拖拽排序、导入导出
 
 ### 代理与故障转移
 
@@ -250,7 +255,7 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 - **统一 MCP 面板** — 管理 Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code 的 MCP 服务器，双向同步，支持 Deep Link 导入
 - **Prompts** — Markdown 编辑器，跨应用同步（CLAUDE.md / AGENTS.md / GEMINI.md），回填保护
-- **Skills** — 从 GitHub 仓库或 ZIP 文件一键安装，自定义仓库管理，支持软连接和文件复制
+- **Skills** — 从 GitHub 仓库或 ZIP 文件一键安装到 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code，自定义仓库管理，支持软连接和文件复制
 
 ### 用量与成本追踪
 
@@ -258,7 +263,7 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 ### 会话管理器与工作区
 
-- 浏览、搜索和恢复支持的会话来源
+- 浏览、搜索和恢复各支持来源的会话历史
 - **工作区编辑器**（OpenClaw）— 编辑 Agent 文件（AGENTS.md、SOUL.md 等），支持 Markdown 预览
 
 ### 系统与平台
@@ -272,21 +277,26 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持九个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**MiniMax Code**。每个工具都有专属的供应商预设和配置管理。
+CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**。每个工具都有专属的供应商预设和配置管理。
 
 </details>
 
 <details>
 <summary><strong>切换供应商后需要重启终端吗？</strong></summary>
 
-大多数工具需要重启终端或 CLI 工具才能使更改生效。例外的是 **Claude Code**，它目前支持供应商数据的热切换，无需重启。
+视工具而定：
+
+- **Claude Code**：支持供应商数据的热切换，无需重启。
+- **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（Codex 和 Grok Build 切换成功后会有提示）。开启代理接管后，请求会立即转发到新供应商；但如果切换改变了模型，Codex 和 Grok Build 仍可能需要重启。
+- **Claude Desktop**：需要完全退出并重新打开 Claude Desktop；使用本地路由模式时，还需要保持 CC Switch 运行。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：这些工具是累加式的，点击“添加”会把供应商写入工具自身的配置、与其他供应商并存，之后在工具里选择要使用的模型即可。
 
 </details>
 
 <details>
 <summary><strong>切换供应商之后我的插件配置怎么不见了？</strong></summary>
 
-CC Switch 使用“通用配置片段”功能，在不同的供应商之间传递 Key 和请求地址之外的通用数据，您可以在“编辑供应商”菜单的“通用配置面板”里，点击“从当前供应商提取”，把所有的通用数据提取到通用配置中，之后在新建“供应商”的时候，只要勾选“应用通用配置”（默认勾选），就会把插件等数据写入到新的供应商配置中。您的所有配置项都会保存在运行本软件的时候，第一次导入的默认供应商里面，不会丢失。
+CC Switch 使用“通用配置片段”功能（Claude Code、Codex、Gemini CLI 均支持），在不同的供应商之间共享 Key、请求地址和模型之外的配置，例如插件、Hook、环境变量。编辑供应商时点击“编辑通用配置”→“从编辑内容提取”，即可把这些通用部分保存到通用配置片段中；新建供应商时保持勾选“应用通用配置”（默认勾选），片段就会合并到新的供应商配置中。对于勾选了“应用通用配置”的 Claude Code 和 Codex 供应商，切走时 CC Switch 会自动从当前配置重新提取通用部分，您在工具里新装的插件会自动带到下一个供应商。您的原始配置都保存在第一次运行本软件时导入的默认供应商里，不会丢失。
 
 </details>
 
@@ -302,14 +312,18 @@ CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接下载安
 
 本软件的设计原则是“最小侵入性”，即使卸载本软件，也不会影响应用的正常使用。
 
-所以系统总会保留一个正在激活中的配置，因为如果将所有配置全部删除，该应用将无法正常使用。如果你不经常使用某个对应的应用，可以在设置中关掉该应用的显示。如果你想切换回官方登录，可以参考下条。
+所以对于同一时间只启用一个供应商的工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build），系统总会保留一个正在激活中的配置，因为如果将所有配置全部删除，该应用将无法正常使用。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 等累加式工具不受此限制，可以直接移除任意供应商。如果你不经常使用某个对应的应用，可以在设置中关掉该应用的显示。如果你想切换回官方登录，可以参考下条。
 
 </details>
 
 <details>
 <summary><strong>如何切换回官方登录？</strong></summary>
 
-可以在预设供应商里面添加一个官方供应商。切换过去之后，执行一遍 Log out / Log in 流程，之后便可以在官方供应商和第三方供应商之间随意切换。CodeX 可以在不同官方供应商之间进行切换，方便多个 Plus 或者 Team 账号之间切换。
+Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build 的供应商列表里都自带一个官方供应商（**Claude Official**、**Claude Desktop Official**、**OpenAI Official**、**Google Official**、**Grok Official**），如果删掉了，可以从预设里重新添加。切换到官方供应商后，按照工具自身的登录流程操作（如 Claude Code 的 `/login`、Codex 的 `codex login`），之后便可以在官方供应商和第三方供应商之间随意切换。
+
+Codex 还可以在 CC Switch 里用“使用 ChatGPT 登录”登录多个 ChatGPT 账号，再为每张 **OpenAI Official** 卡片选择“使用的账号”，多个 Plus、Pro 或 Team 账号之间一键切换；选择“跟随 Codex 登录”的卡片则沿用 Codex CLI 自己的登录。
+
+注意：开启代理接管时不能切换到官方供应商，Codex 的 OpenAI Official 卡片除外。
 
 </details>
 
@@ -345,21 +359,21 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 
 ### 基本使用
 
-1. **添加供应商**：点击"添加供应商" → 选择预设或创建自定义配置
+1. **添加供应商**：点击工具栏的“添加新供应商”（+ 按钮）→ 选择预设或创建自定义配置
 2. **切换供应商**：
-   - 主界面：选择供应商 → 点击"启用"
-   - 系统托盘：直接点击供应商名称（立即生效）
-3. **生效方式**：重启终端或对应的 CLI 工具以应用更改（Claude Code 无需重启）
-4. **恢复官方登录**：添加"官方登录"预设，重启 CLI 工具后按照其登录/OAuth 流程操作
+   - 主界面：选择供应商 → 点击“启用”（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 为点击“添加”，可同时添加多个）
+   - 系统托盘：直接点击供应商名称（支持 Claude Code、Codex、Gemini CLI、Grok Build）
+3. **生效方式**：Claude Code 无需重启；Codex、Gemini CLI、Grok Build 需重启终端或对应的 CLI 工具；Claude Desktop 需重启应用本身（详见常见问题）
+4. **恢复官方登录**：切换到列表中自带的官方供应商（如“Claude Official”），重启工具后按照其登录/OAuth 流程操作
 
 ### MCP、Prompts、Skills 与会话
 
-- **MCP**：点击"MCP"按钮 → 通过模板或自定义配置添加服务器 → 切换各应用同步开关
-- **Prompts**：点击"Prompts" → 使用 Markdown 编辑器创建预设 → 激活后同步到 live 文件
-- **Skills**：点击"Skills" → 浏览 GitHub 仓库 → 一键安装到支持的应用
-- **会话**：点击"Sessions" → 浏览、搜索和恢复支持的会话来源
+- **MCP**：点击“MCP 管理”按钮 → 通过模板或自定义配置添加服务器 → 切换各应用同步开关
+- **Prompts**：点击“提示词” → 使用 Markdown 编辑器创建预设 → 激活后同步到 live 文件
+- **Skills**：点击“Skills” → 浏览 GitHub 仓库 → 一键安装到支持的应用
+- **会话**：点击“会话管理” → 浏览、搜索和恢复各支持来源的会话历史
 
-> **注意**：首次启动可以手动导入现有 CLI 工具配置作为默认供应商。
+> **注意**：首次启动时，CC Switch 会自动把 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build 的现有配置导入为名为 `default` 的供应商，并添加各工具的官方供应商，原有配置不会丢失。
 
 ## 下载安装
 
@@ -367,11 +381,11 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 
 - **Windows**：Windows 10 及以上
 - **macOS**：macOS 12 (Monterey) 及以上
-- **Linux**：Ubuntu 22.04+ / Debian 11+ / Fedora 34+ 等主流发行版
+- **Linux**：x86_64 或 ARM64，需要 glibc 2.35+ 和 WebKitGTK 4.1，例如 Ubuntu 22.04+、Debian 12+ 及较新的 Fedora；RHEL / Rocky / Alma 8–9 暂不支持
 
 ### Windows 用户
 
-从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Windows.msi` 安装包或 `CC-Switch-v{版本号}-Windows-Portable.zip` 绿色版。
+从 [Releases](../../releases) 页面下载最新版本的 `CC-Switch-v{版本号}-Windows.msi` 安装包或 `CC-Switch-v{版本号}-Windows-Portable.zip` 绿色版。ARM 版 Windows 请下载 `CC-Switch-v{版本号}-Windows-arm64.msi` 或 `CC-Switch-v{版本号}-Windows-arm64-Portable.zip`。
 
 ### macOS 用户
 
@@ -389,7 +403,7 @@ brew upgrade --cask cc-switch
 
 **方式二：手动下载**
 
-从 [Releases](../../releases) 页面下载 `CC-Switch-v{版本号}-macOS.dmg`（推荐）或 `.zip`。
+从 [Releases](../../releases) 页面下载 `CC-Switch-v{版本号}-macOS.dmg`（推荐）或 `.zip`。这是 Universal 通用包，Apple Silicon 和 Intel Mac 均可原生运行。
 
 > **注意**：CC Switch macOS 版本已通过 Apple 代码签名和公证，可直接安装打开。
 
@@ -405,9 +419,9 @@ paru -S cc-switch-bin
 
 从 [Releases](../../releases) 页面下载最新版本的 Linux 安装包：
 
-- `CC-Switch-v{版本号}-Linux.deb`（Debian/Ubuntu）
-- `CC-Switch-v{版本号}-Linux.rpm`（Fedora/RHEL/openSUSE）
-- `CC-Switch-v{版本号}-Linux.AppImage`（通用）
+- `CC-Switch-v{版本号}-Linux-x86_64.deb` / `-Linux-arm64.deb`（Debian/Ubuntu）
+- `CC-Switch-v{版本号}-Linux-x86_64.rpm` / `-Linux-arm64.rpm`（Fedora 等提供 WebKitGTK 4.1 的 RPM 发行版）
+- `CC-Switch-v{版本号}-Linux-x86_64.AppImage` / `-Linux-arm64.AppImage`（满足上述系统要求的发行版）
 
 > **Flatpak**：官方 Release 不包含 Flatpak 包。如需使用，可从 `.deb` 自行构建 — 参见 [`flatpak/README.md`](flatpak/README.md)。
 
@@ -459,10 +473,11 @@ paru -S cc-switch-bin
 
 ### 环境要求
 
-- Node.js 18+
-- pnpm 8+
-- Rust 1.85+
-- Tauri CLI 2.8+
+- Node.js 20.19+ 或 22.12+（见 `.node-version`）
+- pnpm 10（由 `package.json` 的 `packageManager` 字段固定，执行 `corepack enable` 即可自动使用）
+- Rust 1.95（由 `rust-toolchain.toml` 固定，rustup 会在首次构建时自动安装）
+- 各平台的 [Tauri 2 前置依赖](https://v2.tauri.app/zh-cn/start/prerequisites/)（Windows 需 WebView2，macOS 需 Xcode Command Line Tools，Linux 需 webkit2gtk、libsoup 等）
+- Tauri CLI 已作为开发依赖随 `pnpm install` 安装，无需全局安装
 
 ### 开发命令
 
@@ -532,9 +547,6 @@ pnpm test:unit
 
 # 监听模式（自动重跑）
 pnpm test:unit:watch
-
-# 带覆盖率报告
-pnpm test:unit --coverage
 ```
 
 ### 技术栈

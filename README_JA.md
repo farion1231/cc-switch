@@ -2,7 +2,9 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、MiniMax Code のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code のオールインワン管理ツール
+
+**ワンクリックで API プロバイダを切り替え、MCP・Skills・プロンプトを一元管理。JSON / TOML / YAML の設定ファイルを手作業で編集する必要はもうありません。**
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -15,6 +17,8 @@
 ### 🌐 唯一の公式サイト：**[ccswitch.io](https://ccswitch.io)**
 
 [English](README.md) | [中文](README_ZH.md) | 日本語 | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
+
+**[ダウンロード](#ダウンロード--インストール) · [クイックスタート](#クイックスタート) · [特長](#特長) · [よくある質問](#よくある質問) · [ユーザーマニュアル](docs/user-manual/ja/README.md)**
 
 </div>
 
@@ -167,8 +171,8 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
-<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
+<td width="180"><a href="https://sssaicodeapi.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
+<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://sssaicodeapi.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
 </tr>
 
 <tr>
@@ -212,17 +216,17 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ## CC Switch を選ぶ理由
 
-最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
+最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、YAML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
 
-**CC Switch** は、対応する AI ツールを 1 つのデスクトップアプリで一元管理できます。設定ファイルを手作業で編集する代わりに、ワンクリックでプロバイダをインポートし、瞬時に切り替えられるビジュアルインターフェースを提供します。50 以上の組み込みプリセット、統一 MCP・Skills 管理、システムトレイからの即時切り替え機能を搭載。すべてはアトミック書き込みによる信頼性の高い SQLite データベースに支えられており、設定の破損を防ぎます。
+**CC Switch** は、対応する AI ツールを 1 つのデスクトップアプリで一元管理できます。設定ファイルを手作業で編集する代わりに、ワンクリックでプロバイダをインポートし、瞬時に切り替えられるビジュアルインターフェースを提供します。90 以上の組み込みプリセット、統一 MCP・Skills 管理、システムトレイからのクイック切り替え機能を搭載。すべてはアトミック書き込みによる信頼性の高い SQLite データベースに支えられており、設定の破損を防ぎます。
 
-- **1 つのアプリで 9 つのツール** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code を単一インターフェースで管理
-- **手動編集は不要** -- AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 50 以上のプロバイダプリセットを内蔵。選んで切り替えるだけ
-- **統一 MCP・Skills 管理** -- 1 つのパネルで Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code の MCP サーバーと Skills を双方向同期で管理
-- **システムトレイでクイック切り替え** -- トレイメニューから即座にプロバイダを切り替え。アプリを開く必要なし
-- **クラウド同期** -- Dropbox、OneDrive、iCloud、または WebDAV サーバー経由でデバイス間のプロバイダデータを同期
-- **クロスプラットフォーム** -- Tauri 2 で構築された Windows、macOS、Linux 対応のネイティブデスクトップアプリ
-- **便利ツール内蔵** -- 初回起動時のログイン確認、署名バイパス、プラグイン拡張の同期など、さまざまなユーティリティを搭載
+- **1 つのアプリで 10 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code を単一インターフェースで管理
+- **手動編集は不要** — AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 90 以上のプロバイダプリセットを内蔵。選んで切り替えるだけ
+- **統一 MCP・Skills 管理** — 1 つのパネルで Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、MiniMax Code の MCP サーバーと、これらのツールおよび Pi の Skills を双方向同期で管理
+- **システムトレイでクイック切り替え** — トレイメニューから Claude Code、Codex、Gemini CLI、Grok Build のプロバイダを直接切り替え。アプリを開く必要なし
+- **クラウド同期** — Dropbox、OneDrive、iCloud、または WebDAV サーバー経由でデバイス間のプロバイダデータを同期
+- **クロスプラットフォーム** — Tauri 2 で構築された Windows、macOS、Linux 対応のネイティブデスクトップアプリ
+- **便利ツール内蔵** — Claude Code の初回確認のスキップ、AI 署名の非表示、VS Code の Claude Code 拡張を CC Switch のプロバイダ切り替えに追従させる機能など、さまざまなユーティリティを搭載
 
 ## スクリーンショット
 
@@ -232,38 +236,39 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ## 特長
 
-[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.16.1-ja.md)
+[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.20.4-ja.md)
 
 ### プロバイダ管理
 
-- **9 つの対応ツール、50 以上のプリセット** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、MiniMax Code。キーをコピーしてワンクリックでインポート
-- **ユニバーサルプロバイダ** -- 1 つの設定を Claude Code、Codex、Gemini CLI に同期
-- ワンクリック切り替え、システムトレイクイックアクセス、ドラッグ＆ドロップ並び替え、インポート/エクスポート
+- **10 の対応ツール、90 以上のプリセット** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code。キーをコピーしてワンクリックでインポート
+- **切り替えと共存の 2 つのモード** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build は同時に 1 つのプロバイダのみ有効。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code は複数のプロバイダをツール自身の設定に同時に追加でき、ツール内で選んで使用
+- **ユニバーサルプロバイダ** — 1 つの設定を Claude Code、Codex、Gemini CLI に同期
+- ワンクリック切り替え、システムトレイクイックアクセス（Claude Code、Codex、Gemini CLI、Grok Build）、ドラッグ＆ドロップ並び替え、インポート/エクスポート
 
 ### プロキシ & フェイルオーバー
 
-- **ローカルプロキシのホットスイッチ** -- フォーマット変換、自動フェイルオーバー、サーキットブレーカー、プロバイダヘルスモニタリング、リクエストレクティファイア
-- **アプリレベルのテイクオーバー** -- Claude、Codex、Gemini、Grok Build を個別にプロキシ経由でルーティング、プロバイダ単位で設定可能
+- **ローカルプロキシのホットスイッチ** — フォーマット変換、自動フェイルオーバー、サーキットブレーカー、プロバイダヘルスモニタリング、リクエストレクティファイア
+- **アプリレベルのテイクオーバー** — Claude、Codex、Gemini、Grok Build を個別にプロキシ経由でルーティング、プロバイダ単位で設定可能
 
 ### MCP、Prompts & Skills
 
-- **統一 MCP パネル** -- Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code の MCP サーバーを管理、双方向同期、Deep Link インポート対応
-- **Prompts** -- Markdown エディタ、クロスアプリ同期（CLAUDE.md / AGENTS.md / GEMINI.md）、バックフィル保護
-- **Skills** -- GitHub リポジトリまたは ZIP ファイルからワンクリックインストール、カスタムリポジトリ管理、シンボリックリンクとファイルコピーに対応
+- **統一 MCP パネル** — Claude、Codex、Gemini、Grok Build、OpenCode、Hermes、MiniMax Code の MCP サーバーを管理、双方向同期、Deep Link インポート対応
+- **Prompts** — Markdown エディタ、クロスアプリ同期（CLAUDE.md / AGENTS.md / GEMINI.md）、バックフィル保護
+- **Skills** — GitHub リポジトリまたは ZIP ファイルから Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code へワンクリックインストール、カスタムリポジトリ管理、シンボリックリンクとファイルコピーに対応
 
 ### 使用量 & コストトラッキング
 
-- **使用量ダッシュボード** -- プロバイダ横断で支出・リクエスト数・トークン使用量を追跡、トレンドチャート、詳細リクエストログ、カスタムモデル価格設定
+- **使用量ダッシュボード** — プロバイダ横断で支出・リクエスト数・トークン使用量を追跡、トレンドチャート、詳細リクエストログ、カスタムモデル価格設定
 
 ### Session Manager & ワークスペース
 
 - 対応するセッションソースの会話履歴を閲覧・検索・復元
-- **ワークスペースエディタ**（OpenClaw）-- エージェントファイル（AGENTS.md、SOUL.md など）を Markdown プレビュー付きで編集
+- **ワークスペースエディタ**（OpenClaw）— エージェントファイル（AGENTS.md、SOUL.md など）を Markdown プレビュー付きで編集
 
 ### システム & プラットフォーム
 
-- **クラウド同期** -- カスタム設定ディレクトリ（Dropbox、OneDrive、iCloud、NAS）および WebDAV サーバー同期
-- **Deep Link** (`ccswitch://`) -- URL 経由でプロバイダ、MCP サーバー、Prompts、Skills をワンクリックインポート
+- **クラウド同期** — カスタム設定ディレクトリ（Dropbox、OneDrive、iCloud、NAS）および WebDAV サーバー同期
+- **Deep Link** (`ccswitch://`) — URL 経由でプロバイダ、MCP サーバー、Prompts、Skills をワンクリックインポート
 - ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ、多言語対応（簡体中文/繁體中文/英/日）
 
 ## よくある質問
@@ -271,21 +276,26 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**MiniMax Code** の 9 つのツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code** の 10 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。
 
 </details>
 
 <details>
 <summary><strong>プロバイダを切り替えた後、ターミナルの再起動は必要ですか？</strong></summary>
 
-ほとんどのツールでは、はい。変更を反映するにはターミナルまたは CLI ツールを再起動してください。ただし **Claude Code** は例外で、現在プロバイダデータのホットスイッチに対応しており、再起動は不要です。
+ツールによって異なります：
+
+- **Claude Code**：プロバイダデータのホットスイッチに対応しており、再起動は不要です。
+- **Codex、Gemini CLI、Grok Build**：変更を反映するにはターミナルまたは CLI ツールを再起動してください（Codex と Grok Build は切り替え後に通知が表示されます）。プロキシのテイクオーバーを有効にしている場合、リクエストは即座に新しいプロバイダへ転送されますが、切り替えでモデルが変わる場合は Codex と Grok Build の再起動が必要になることがあります。
+- **Claude Desktop**：Claude Desktop を完全に終了してから再度開いてください。ローカルルーティングモードでは、CC Switch を起動したままにしておく必要もあります。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：これらは共存型のツールです。「追加」をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。
 
 </details>
 
 <details>
 <summary><strong>プロバイダを切り替えた後、プラグイン設定が消えてしまいました。どうすればよいですか？</strong></summary>
 
-CC Switch には「共有設定スニペット」機能があり、APIキーやエンドポイント以外の共通データをプロバイダ間で引き継ぐことができます。「プロバイダ編集」→「共有設定パネル」→「現在のプロバイダから抽出」をクリックして、すべての共通データを保存してください。新しいプロバイダを作成する際に「共有設定を適用」にチェック（デフォルトで有効）を入れれば、プラグインなどのデータが新しいプロバイダ設定に含まれます。すべての設定項目は、アプリ初回起動時にインポートされたデフォルトプロバイダに保存されており、失われることはありません。
+CC Switch には「共通設定スニペット」機能（Claude Code、Codex、Gemini CLI に対応）があり、API キー・エンドポイント・モデル以外の設定（プラグイン、フック、環境変数など）をプロバイダ間で共有できます。プロバイダを編集し、「共通設定を編集」→「編集内容から抽出」をクリックすると、これらの共通部分がスニペットに保存されます。新しいプロバイダを作成する際は「共通設定を適用」にチェックを入れたまま（デフォルトで有効）にしておけば、スニペットが新しいプロバイダの設定にマージされます。「共通設定を適用」が有効な Claude Code と Codex のプロバイダでは、別のプロバイダへ切り替える際に CC Switch が現在の設定から共通部分を自動で再抽出するため、ツール内で新たにインストールしたプラグインも次のプロバイダに引き継がれます。元の設定は、アプリ初回起動時にインポートされたデフォルトプロバイダに保存されており、失われることはありません。
 
 </details>
 
@@ -299,21 +309,25 @@ CC Switch の macOS 版は Apple によるコード署名と公証が完了し�
 <details>
 <summary><strong>現在アクティブなプロバイダを削除できないのはなぜですか？</strong></summary>
 
-CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、CLI ツールは正常に動作し続けます。すべての設定を削除すると対応する CLI ツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。特定の CLI ツールをあまり使用しない場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
+CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、CLI ツールは正常に動作し続けます。同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。特定の CLI ツールをあまり使用しない場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
 
 </details>
 
 <details>
 <summary><strong>公式ログインに戻すにはどうすればよいですか？</strong></summary>
 
-プリセットリストから公式プロバイダを追加してください。切り替え後、ログアウト／ログインのフローを実行すれば、以降は公式プロバイダとサードパーティプロバイダを自由に切り替えられます。Codex では異なる公式プロバイダ間の切り替えに対応しており、複数の Plus アカウントや Team アカウントの切り替えに便利です。
+Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build のプロバイダリストには、公式プロバイダ（**Claude Official**、**Claude Desktop Official**、**OpenAI Official**、**Google Official**、**Grok Official**）があらかじめ含まれています。削除してしまった場合は、プリセットから追加し直してください。公式プロバイダに切り替えた後、ツール自身のログインフロー（Claude Code の `/login`、Codex の `codex login` など）を実行すれば、以降は公式プロバイダとサードパーティプロバイダを自由に切り替えられます。
+
+Codex では、CC Switch 内の「ChatGPT でログイン」から複数の ChatGPT アカウントにログインし、**OpenAI Official** カードごとに「使用するアカウント」を選べるため、複数の Plus、Pro、Team アカウントをワンクリックで切り替えられます。「Codex のログインに追従」を選んだカードは、Codex CLI 自身のログインをそのまま使用します。
+
+注意：プロキシのテイクオーバー中は公式プロバイダに切り替えられません（Codex の OpenAI Official カードを除く）。
 
 </details>
 
 <details>
 <summary><strong>データはどこに保存されますか？</strong></summary>
 
-- **データベース**: `~/.cc-switch/cc-switch.db`（SQLite -- プロバイダ、MCP、Prompts、Skills）
+- **データベース**: `~/.cc-switch/cc-switch.db`（SQLite — プロバイダ、MCP、Prompts、Skills）
 - **ローカル設定**: `~/.cc-switch/settings.json`（デバイスレベルの UI 設定）
 - **バックアップ**: `~/.cc-switch/backups/`（自動ローテーション、最新 10 件を保持）
 - **Skills**: `~/.cc-switch/skills/`（デフォルトでシンボリックリンクにより対応アプリに接続）
@@ -342,21 +356,21 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 
 ### 基本的な使い方
 
-1. **プロバイダ追加**: 「Add Provider」をクリック → プリセットを選ぶかカスタム設定を作成
+1. **プロバイダ追加**: ツールバーの「新しいプロバイダーを追加」（+ ボタン）をクリック → プリセットを選ぶかカスタム設定を作成
 2. **プロバイダ切り替え**:
-   - メイン UI: プロバイダを選択 → 「Enable」をクリック
-   - システムトレイ: プロバイダ名をクリック（即時反映）
-3. **反映**: ターミナルまたは対応する CLI ツールを再起動して適用（Claude Code は再起動不要）
-4. **公式設定に戻す**: 「Official Login」プリセットを追加し、CLI ツールを再起動してログイン/OAuth フローを実行
+   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code では「追加」をクリック。複数追加可能）
+   - システムトレイ: プロバイダ名をクリック（Claude Code、Codex、Gemini CLI、Grok Build に対応）
+3. **反映**: Claude Code は再起動不要。Codex、Gemini CLI、Grok Build はターミナルまたは CLI ツールを再起動、Claude Desktop はアプリ自体を再起動（詳しくはよくある質問を参照）
+4. **公式設定に戻す**: リストに含まれている公式プロバイダ（例：「Claude Official」）に切り替え、ツールを再起動してログイン/OAuth フローを実行
 
 ### MCP、Prompts、Skills & Sessions
 
-- **MCP**: 「MCP」ボタンをクリック → テンプレートまたはカスタム設定でサーバーを追加 → アプリごとの同期をトグルで切り替え
-- **Prompts**: 「Prompts」をクリック → Markdown エディタでプリセットを作成 → 有効化してライブファイルに同期
+- **MCP**: 「MCP 管理」ボタンをクリック → テンプレートまたはカスタム設定でサーバーを追加 → アプリごとの同期をトグルで切り替え
+- **Prompts**: 「プロンプト」をクリック → Markdown エディタでプリセットを作成 → 有効化してライブファイルに同期
 - **Skills**: 「Skills」をクリック → GitHub リポジトリを閲覧 → 対応アプリへワンクリックでインストール
-- **Sessions**: 「Sessions」をクリック → 対応するセッションソースの会話履歴を閲覧・検索・復元
+- **Sessions**: 「セッション管理」をクリック → 対応するセッションソースの会話履歴を閲覧・検索・復元
 
-> **補足**: 初回起動時に、既存の CLI ツール設定を手動でインポートしてデフォルトプロバイダとして使用できます。
+> **補足**: 初回起動時、CC Switch は Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build の既存設定を `default` という名前のプロバイダとして自動でインポートし、各ツールの公式プロバイダも追加します。既存の設定が失われることはありません。
 
 ## ダウンロード & インストール
 
@@ -364,11 +378,11 @@ CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
 
 - **Windows**: Windows 10 以上
 - **macOS**: macOS 12 (Monterey) 以上
-- **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ など主要ディストリビューション
+- **Linux**: x86_64 または ARM64、glibc 2.35 以上と WebKitGTK 4.1 が必要（例：Ubuntu 22.04+、Debian 12+、最近の Fedora）。RHEL / Rocky / Alma 8–9 は現在未対応
 
 ### Windows ユーザー
 
-[Releases](../../releases) ページから最新版の `CC-Switch-v{version}-Windows.msi` インストーラー、またはポータブル版 `CC-Switch-v{version}-Windows-Portable.zip` をダウンロード。
+[Releases](../../releases) ページから最新版の `CC-Switch-v{version}-Windows.msi` インストーラー、またはポータブル版 `CC-Switch-v{version}-Windows-Portable.zip` をダウンロード。ARM 版 Windows では `CC-Switch-v{version}-Windows-arm64.msi` または `CC-Switch-v{version}-Windows-arm64-Portable.zip` をダウンロードしてください。
 
 ### macOS ユーザー
 
@@ -386,9 +400,9 @@ brew upgrade --cask cc-switch
 
 **方法 2: 手動ダウンロード**
 
-[Releases](../../releases) から `CC-Switch-v{version}-macOS.zip` をダウンロードして展開。
+[Releases](../../releases) から `CC-Switch-v{version}-macOS.dmg`（推奨）または `.zip` をダウンロード。Apple Silicon と Intel Mac の両方でネイティブに動作する Universal ビルドです。
 
-> **注意**: 開発者アカウント未登録のため、初回起動時に「開発元を確認できません」と表示される場合があります。一度閉じてから「システム設定」→「プライバシーとセキュリティ」→「このまま開く」をクリックしてください。以降は通常通り起動できます。
+> **注意**: CC Switch の macOS 版は Apple によるコード署名と公証が完了しているため、そのままインストールして開けます。
 
 ### Arch Linux ユーザー
 
@@ -402,9 +416,9 @@ paru -S cc-switch-bin
 
 [Releases](../../releases) から最新版の Linux ビルドをダウンロード：
 
-- `CC-Switch-v{version}-Linux.deb`（Debian/Ubuntu）
-- `CC-Switch-v{version}-Linux.rpm`（Fedora/RHEL/openSUSE）
-- `CC-Switch-v{version}-Linux.AppImage`（汎用）
+- `CC-Switch-v{version}-Linux-x86_64.deb` / `-Linux-arm64.deb`（Debian/Ubuntu）
+- `CC-Switch-v{version}-Linux-x86_64.rpm` / `-Linux-arm64.rpm`（WebKitGTK 4.1 を提供する Fedora などの RPM 系ディストリビューション）
+- `CC-Switch-v{version}-Linux-x86_64.AppImage` / `-Linux-arm64.AppImage`（上記のシステム要件を満たすディストリビューション）
 
 > **Flatpak**：公式リリースには含まれていません。`.deb` から自分でビルドできます — 手順は [`flatpak/README.md`](flatpak/README.md) を参照してください。
 
@@ -456,10 +470,11 @@ paru -S cc-switch-bin
 
 ### 開発環境
 
-- Node.js 18+
-- pnpm 8+
-- Rust 1.85+
-- Tauri CLI 2.8+
+- Node.js 20.19+ または 22.12+（`.node-version` を参照）
+- pnpm 10（`package.json` の `packageManager` フィールドで固定。`corepack enable` を実行すると自動的に使用されます）
+- Rust 1.95（`rust-toolchain.toml` で固定。初回ビルド時に rustup が自動でインストールします）
+- 各プラットフォームの [Tauri 2 の前提条件](https://v2.tauri.app/ja/start/prerequisites/)（Windows は WebView2、macOS は Xcode Command Line Tools、Linux は webkit2gtk、libsoup など）
+- Tauri CLI は開発依存関係として `pnpm install` でインストールされるため、グローバルインストールは不要
 
 ### 開発コマンド
 
@@ -529,9 +544,6 @@ pnpm test:unit
 
 # ウォッチモード（自動再実行）
 pnpm test:unit:watch
-
-# カバレッジレポート付き
-pnpm test:unit --coverage
 ```
 
 ### 技術スタック
