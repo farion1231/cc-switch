@@ -634,4 +634,45 @@ describe("ProviderPresetSelector", () => {
       screen.getByRole("button", { name: "preset.gamma" }),
     ).toBeInTheDocument();
   });
+
+  it("点击同表单内的字段仅收起搜索框、保留搜索词", async () => {
+    const user = userEvent.setup();
+    const Wrapper = () => {
+      const form = useForm();
+      return (
+        <Form {...form}>
+          <form onSubmit={(e) => e.preventDefault()}>
+            <ProviderPresetSelector
+              selectedPresetId="custom"
+              presetEntries={presetEntries}
+              presetCategoryLabels={presetCategoryLabels}
+              onPresetChange={vi.fn()}
+            />
+            <input aria-label="api key" />
+          </form>
+        </Form>
+      );
+    };
+    render(<Wrapper />);
+
+    await user.click(getSearchButton());
+    await user.type(getSearchInput(), "gateway");
+    // 过滤生效后点击下方 API Key 输入框(同表单内)
+    await user.click(screen.getByLabelText("api key"));
+    expect(
+      screen.queryByRole("textbox", {
+        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
+      }),
+    ).not.toBeInTheDocument();
+
+    // 重新打开搜索:搜索词保留,过滤仍生效
+    await user.click(getSearchButton());
+    expect(getSearchInput()).toHaveValue("gateway");
+    expect(
+      screen.queryByRole("button", { name: "preset.gamma" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Beta Gateway" }),
+    ).toBeInTheDocument();
+  });
 });
