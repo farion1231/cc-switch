@@ -3248,4 +3248,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "Cheaper Inference",
+    websiteUrl: "https://cheaperinference.com",
+    apiKeyUrl: "https://cheaperinference.com/signup",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Cheaper Inference",
+      options: {
+        baseURL: "https://api.cheaperinference.com/v1",
+        apiKey: "",
+      },
+      models: {
+        "gpt-5.4": { name: "GPT-5.4" },
+        "gpt-5.4-mini": { name: "GPT-5.4 mini" },
+        "claude-sonnet-5": {
+          name: "Claude Sonnet 5",
+          limit: { context: 1000000, output: 64000 },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "ci_live_...",
+        editorValue: "",
+      },
+    },
+  },
 ];
