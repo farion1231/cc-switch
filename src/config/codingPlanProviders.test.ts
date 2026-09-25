@@ -33,6 +33,30 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
   });
 });
 
+describe("detectCodingPlanProvider (Command Code)", () => {
+  it("matches only the canonical https://api.commandcode.ai host", () => {
+    expect(detectCodingPlanProvider("https://api.commandcode.ai")).toBe(
+      "commandcode",
+    );
+    expect(detectCodingPlanProvider("https://api.commandcode.ai/")).toBe(
+      "commandcode",
+    );
+    expect(detectCodingPlanProvider("https://api.commandcode.ai/v1")).toBe(
+      "commandcode",
+    );
+  });
+
+  it.each([
+    "http://api.commandcode.ai",
+    "http://127.0.0.1:55990",
+    "http://localhost:55990",
+    "https://api.commandcode.ai.example.com",
+    "https://proxy.example.com/api.commandcode.ai",
+  ])("does not treat local/look-alike endpoint %s as Command Code", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
+});
+
 describe("detectCodingPlanProvider (MiniMax)", () => {
   it.each([
     "https://api.minimax.cn/v1",
@@ -143,6 +167,24 @@ describe("injectCodingPlanUsageScript", () => {
         settingsConfig: { baseUrl: "https://opencode.ai/zen/go/v1" },
       }),
     );
+  });
+
+  it("injects native Command Code Token Plan without separate credentials", () => {
+    const injected = inject("claude", {
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.commandcode.ai",
+          ANTHROPIC_AUTH_TOKEN: "user-test",
+        },
+      },
+    });
+    expect(injected.meta?.usage_script).toMatchObject({
+      enabled: true,
+      templateType: "token_plan",
+      codingPlanProvider: "commandcode",
+    });
+    expect(injected.meta?.usage_script?.apiKey).toBeUndefined();
+    expect(injected.meta?.usage_script?.baseUrl).toBeUndefined();
   });
 
   it("keeps the existing claude behavior for other coding plans", () => {
