@@ -5041,25 +5041,7 @@ impl ProviderService {
             }
             return Ok(saved);
         }
-        let mut providers = state.db.get_all_providers(app_type.as_str())?;
-        // Backward-compatible display normalization for providers created by
-        // earlier custom builds before the shorter "Command Code" label.
-        for provider in providers.values_mut() {
-            let is_commandcode = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.api_format.as_deref())
-                .is_some_and(crate::proxy::providers::claude::is_commandcode_api_format);
-            if is_commandcode {
-                if let Some(meta) = provider.meta.as_mut() {
-                    meta.api_format = Some("commandcode".to_string());
-                }
-                if provider.name.starts_with("Command Code") {
-                    provider.name = "Command Code".to_string();
-                }
-            }
-        }
-        Ok(providers)
+        state.db.get_all_providers(app_type.as_str())
     }
 
     /// Get current provider ID
