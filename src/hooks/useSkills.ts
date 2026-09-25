@@ -197,6 +197,7 @@ export function useToggleSkillApp() {
       id,
       app,
       enabled,
+      overwriteExisting,
     }: {
       id: string;
       app: AppId;
