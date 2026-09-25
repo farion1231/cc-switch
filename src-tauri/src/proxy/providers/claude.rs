@@ -1160,10 +1160,10 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
+        // Sol and Luna require the newer Codex client identity on ChatGPT accounts.
         assert!(
-            version.as_slice() >= [0, 153, 0].as_slice(),
-            "gpt-6-astra requires Codex >= 0.153.0; sent {version:?}"
+            version.as_slice() >= [0, 155, 0].as_slice(),
+            "gpt-6-sol and gpt-6-luna require Codex >= 0.155.0; sent {version:?}"
         );
     }
 
