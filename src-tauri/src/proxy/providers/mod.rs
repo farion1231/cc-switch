@@ -134,6 +134,9 @@ impl ProviderType {
     pub fn from_app_type_and_config(app_type: &AppType, provider: &Provider) -> Option<Self> {
         let provider_type = match app_type {
             AppType::Claude | AppType::ClaudeDesktop => {
+                if get_claude_api_format(provider) == "commandcode_go" {
+                    return Some(ProviderType::ClaudeAuth);
+                }
                 if get_claude_api_format(provider) == "gemini_native" {
                     let adapter = ClaudeAdapter::new();
                     return Some(
