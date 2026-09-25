@@ -846,7 +846,7 @@ export function ClaudeFormFields({
                     </SelectItem>
                     <SelectItem value="commandcode">
                       {t("providerForm.apiFormatCommandCode", {
-                        defaultValue: "Command Code",
+                        defaultValue: "Command Code Go（需开启路由）",
                       })}
                     </SelectItem>
                   </SelectContent>
