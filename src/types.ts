@@ -203,6 +203,7 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native"
+    | "commandcode"
     | "commandcode_go";
   // 通用认证绑定
   authBinding?: AuthBinding;
@@ -255,6 +256,7 @@ export type ClaudeApiFormat =
   | "openai_chat"
   | "openai_responses"
   | "gemini_native"
+  | "commandcode"
   | "commandcode_go";
 
 // Codex API 格式类型
