@@ -1,4 +1,4 @@
-name: Custom Windows EXE
+name: Custom Windows MSI
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: custom-windows-exe-${{ github.ref }}
+  group: custom-windows-msi-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -33,7 +33,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
 
       - name: Setup pnpm
         shell: pwsh
@@ -58,49 +58,54 @@ jobs:
         working-directory: src-tauri
         run: cargo test commandcode --lib
 
-      - name: Build Windows x64 EXE only
+      - name: Build Windows x64 MSI
         shell: pwsh
         run: |
-          pnpm tauri build --no-bundle
+          $override = Join-Path $env:RUNNER_TEMP "tauri-msi.json"
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Path $override -Encoding utf8
+          pnpm tauri build --bundles msi --config $override
 
-      - name: Stage EXE
+      - name: Stage MSI
         id: stage
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          $src = "src-tauri\target\release\cc-switch.exe"
-          $dst = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.exe"
-          Copy-Item $src $dst
+          $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
+          if (-not $msi) { throw "MSI not found" }
+          $dst = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.msi"
+          Copy-Item $msi.FullName $dst
           $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
           "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "MSI: $dst"
           Write-Host "SHA256: $hash"
 
-      - name: Upload EXE artifact
+      - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CC-Switch-CommandCode-Go-v3.20.4-Windows-x64
-          path: artifacts/CC-Switch-CommandCode-Go-v3.20.4-x64.exe
+          name: CC-Switch-CommandCode-Go-v3.20.4-Windows-x64-MSI
+          path: artifacts/CC-Switch-CommandCode-Go-v3.20.4-x64.msi
           if-no-files-found: error
 
       - name: Create GitHub Release
-        if: startsWith(github.event.head_commit.message, 'release:')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          EXE_SHA256: ${{ steps.stage.outputs.sha256 }}
+          MSI_SHA256: ${{ steps.stage.outputs.sha256 }}
         run: |
-          $asset = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.exe"
+          $asset = "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.msi"
           $notes = @"
-          Custom CC Switch based on v3.20.4.
+          Custom CC Switch based on official v3.20.4.
 
           - Native Command Code Go /alpha/generate support for Claude Code
           - Real streaming token usage accounting
           - Official Command Code provider icon
           - UI app set reduced to Claude Code / Claude Desktop / Codex
-          - Windows x64 standalone EXE only
+          - Windows x64 MSI only
+          - Keeps the official CC Switch product identity / UpgradeCode so it can replace an existing MSI installation
+          - Same-version MSI upgrades are supported by the existing WiX template
 
           SHA-256:
-          `$env:EXE_SHA256`
+          `$env:MSI_SHA256`
           "@
 
           if (gh release view $env:RELEASE_TAG --repo "${{ github.repository }}" 2>$null) {
