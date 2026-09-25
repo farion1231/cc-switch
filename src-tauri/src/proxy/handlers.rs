@@ -447,7 +447,7 @@ async fn handle_claude_transform(
                 Some(ctx.session_id.clone()),
                 tool_schema_hints.clone(),
             )))
-        } else if matches!(api_format, "commandcode" | "commandcode_go") {
+        } else if api_format == "commandcode" {
             let model = ctx
                 .outbound_model
                 .clone()
@@ -579,7 +579,7 @@ async fn handle_claude_transform(
             let (response_headers, _status, body_bytes) =
                 read_decoded_body(response, ctx.tag, body_timeout).await?;
             let body_str = String::from_utf8_lossy(&body_bytes);
-            let upstream_response = if matches!(api_format, "commandcode" | "commandcode_go") {
+            let upstream_response = if api_format == "commandcode" {
                 let model = ctx
                     .outbound_model
                     .as_deref()
