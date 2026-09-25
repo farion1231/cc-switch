@@ -15,7 +15,10 @@ export function ProviderEmptyState({
   onImport,
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
-  const isPi = appId === "pi";
+  // Pi / MiniMax Code 的"当前供应商"可以是原生应用自管的内置账号（不在可管理的
+  // live 节点里），没有可导入的内容，列表也不提供导入按钮，因此不能沿用
+  // "请点击导入当前配置"的通用文案。
+  const emptyCopyNs = appId === "pi" || appId === "mcode" ? appId : null;
   const showSnippetHint =
     appId === "claude" || appId === "codex" || appId === "gemini";
 
@@ -25,11 +28,13 @@ export function ProviderEmptyState({
         <Users className="h-7 w-7 text-muted-foreground" />
       </div>
       <h3 className="text-lg font-semibold">
-        {isPi ? t("pi.empty.title") : t("provider.noProviders")}
+        {emptyCopyNs
+          ? t(`${emptyCopyNs}.empty.title`)
+          : t("provider.noProviders")}
       </h3>
       <p className="mt-2 max-w-lg text-sm text-muted-foreground">
-        {isPi
-          ? t("pi.empty.description")
+        {emptyCopyNs
+          ? t(`${emptyCopyNs}.empty.description`)
           : t("provider.noProvidersDescription")}
       </p>
       {showSnippetHint && (
