@@ -564,7 +564,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     {t("mcp.unifiedPanel.apps.codex")}
                   </label>
                 </div>
-
               </div>
             </div>
 
