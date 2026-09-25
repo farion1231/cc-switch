@@ -918,6 +918,12 @@
     "pi": "Pi",
     "mcode": "MiniMax Code"
   },
+  "mcode": {
+    "empty": {
+      "title": "No custom providers yet",
+      "description": "Your MiniMax account sign-in is managed by MiniMax Code itself, so there is nothing to import. Custom providers already in config.yaml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    }
+  },
   "pi": {
     "empty": {
       "title": "No API key providers yet",

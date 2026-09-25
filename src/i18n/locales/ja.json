@@ -918,6 +918,12 @@
     "pi": "Pi",
     "mcode": "MiniMax Code"
   },
+  "mcode": {
+    "empty": {
+      "title": "カスタムプロバイダーはまだありません",
+      "description": "MiniMax アカウントのログインは MiniMax Code 自身が管理するため、インポートは不要です。config.yaml に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    }
+  },
   "pi": {
     "empty": {
       "title": "API キープロバイダーはまだありません",

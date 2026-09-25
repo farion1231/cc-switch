@@ -918,6 +918,12 @@
     "pi": "Pi",
     "mcode": "MiniMax Code"
   },
+  "mcode": {
+    "empty": {
+      "title": "还没有添加自定义供应商",
+      "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    }
+  },
   "pi": {
     "empty": {
       "title": "还没有添加 API Key 供应商",

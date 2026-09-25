@@ -919,6 +919,12 @@
     "pi": "Pi",
     "mcode": "MiniMax Code"
   },
+  "mcode": {
+    "empty": {
+      "title": "尚未新增自訂供應商",
+      "description": "MiniMax 官方帳號登入由 MiniMax Code 自行管理，無需匯入；config.yaml 中已有的自訂供應商會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增供應商。"
+    }
+  },
   "pi": {
     "empty": {
       "title": "尚未新增 API Key 供應商",
