@@ -95,10 +95,7 @@ fn resolve_commandcode_effort(body: &Value) -> Option<&'static str> {
         };
     }
 
-    match body
-        .pointer("/thinking/type")
-        .and_then(Value::as_str)
-    {
+    match body.pointer("/thinking/type").and_then(Value::as_str) {
         Some("adaptive") => Some("xhigh"),
         Some("enabled") => {
             let budget = body
@@ -122,10 +119,9 @@ pub fn anthropic_to_commandcode(
     let effort = resolve_commandcode_effort(&body);
     let chat = super::transform::anthropic_to_openai_with_reasoning_content(body, true)?;
 
-    let model = chat
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ProxyError::TransformError("Command Code request is missing model".into()))?;
+    let model = chat.get("model").and_then(Value::as_str).ok_or_else(|| {
+        ProxyError::TransformError("Command Code request is missing model".into())
+    })?;
     let model = strip_one_m_suffix_for_upstream(model).to_string();
 
     let mut system_parts = Vec::new();
@@ -196,10 +192,7 @@ pub fn anthropic_to_commandcode(
                     let id = call.get("id").and_then(Value::as_str).unwrap_or("");
                     let empty_function = json!({});
                     let function = call.get("function").unwrap_or(&empty_function);
-                    let name = function
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
+                    let name = function.get("name").and_then(Value::as_str).unwrap_or("");
                     let args = function
                         .get("arguments")
                         .and_then(Value::as_str)
@@ -457,10 +450,7 @@ fn event_to_openai_sse(
                 .and_then(Value::as_str)
                 .or_else(|| event.get("toolCallId").and_then(Value::as_str))
                 .unwrap_or("");
-            let name = event
-                .get("toolName")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let name = event.get("toolName").and_then(Value::as_str).unwrap_or("");
             let index = *state
                 .tool_indexes
                 .entry(call_id.to_string())
@@ -519,10 +509,7 @@ fn event_to_openai_sse(
                 let index = state.next_tool_index;
                 state.next_tool_index += 1;
                 state.tool_indexes.insert(call_id.to_string(), index);
-                let name = event
-                    .get("toolName")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let name = event.get("toolName").and_then(Value::as_str).unwrap_or("");
                 let input = event
                     .get("input")
                     .or_else(|| event.get("args"))
