@@ -2630,6 +2630,11 @@
     "syncAgentsPartialFailure": "Synced to {{succeeded}} agent(s); {{failed}} failed",
     "syncAgentsFailed": "Failed to sync Skill",
     "noEnabledAgents": "This Skill has no enabled agents",
+    "overwriteConflict": {
+      "title": "Replace the Skill in {{app}}?",
+      "message": "{{app}} already has a different version of “{{name}}”. Continuing will replace that agent's Skill with the version managed by CC Switch. The existing destination contents will be deleted and cannot be restored automatically.",
+      "confirm": "Replace and Continue"
+    },
     "uninstallConfirm": "Are you sure you want to uninstall \"{{name}}\"? This will remove the skill from all apps and create a local backup first.",
     "uninstallInMainPanel": "Please uninstall skills from the main panel",
     "notFound": "Skill not found",
@@ -2659,7 +2664,9 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "installFromZip": {
       "button": "Install from ZIP",

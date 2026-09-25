@@ -84,6 +84,14 @@ function formatSkillBackupDate(unixSeconds: number): string {
     : date.toLocaleString();
 }
 
+function isSkillDeploymentConflict(error: unknown): boolean {
+  return String(error).includes("目标 agent 中已存在同名但内容不同的 Skill");
+}
+
+function getSkillConflictApp(app: string): AppId | null {
+  return app === "pi" || app === "mcode" ? app : null;
+}
+
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
   UnifiedSkillsPanelProps
@@ -283,6 +291,45 @@ const UnifiedSkillsPanel = React.forwardRef<
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
     } catch (error) {
+      const skill = skills?.find((item) => item.id === id);
+      if (
+        (app === "pi" || app === "mcode") &&
+        enabled &&
+        skill &&
+        isSkillDeploymentConflict(error)
+      ) {
+        const appName = t(`skills.apps.${app}`);
+        setConfirmDialog({
+          isOpen: true,
+          title: t("skills.overwriteConflict.title", { app: appName }),
+          message: t("skills.overwriteConflict.message", {
+            name: skill.name,
+            app: appName,
+          }),
+          confirmText: t("skills.overwriteConflict.confirm"),
+          variant: "destructive",
+          onConfirm: async () => {
+            if (!beginWrite(true)) return;
+            try {
+              await toggleAppMutation.mutateAsync({
+                id,
+                app,
+                enabled,
+                overwriteExisting: true,
+              });
+              setConfirmDialog(null);
+            } catch (overwriteError) {
+              setConfirmDialog(null);
+              toast.error(t("common.error"), {
+                description: String(overwriteError),
+              });
+            } finally {
+              endWrite();
+            }
+          },
+        });
+        return;
+      }
       toast.error(t("common.error"), { description: String(error) });
     } finally {
       endWrite();
@@ -322,7 +369,62 @@ const UnifiedSkillsPanel = React.forwardRef<
   const handleSyncEnabledApps = async (skill: InstalledSkill) => {
     if (!beginWrite()) return;
     try {
-      const result = await syncEnabledAppsMutation.mutateAsync(skill.id);
+      const result = await syncEnabledAppsMutation.mutateAsync({ id: skill.id });
+      const conflictApp = result.failed
+        .map(({ app, error }) =>
+          isSkillDeploymentConflict(error) ? getSkillConflictApp(app) : null,
+        )
+        .find((app): app is AppId => app !== null);
+      if (conflictApp) {
+        const appName = t(`skills.apps.${conflictApp}`);
+        setConfirmDialog({
+          isOpen: true,
+          title: t("skills.overwriteConflict.title", { app: appName }),
+          message: t("skills.overwriteConflict.message", {
+            name: skill.name,
+            app: appName,
+          }),
+          confirmText: t("skills.overwriteConflict.confirm"),
+          variant: "destructive",
+          onConfirm: async () => {
+            if (!beginWrite(true)) return;
+            try {
+              const overwriteResult = await syncEnabledAppsMutation.mutateAsync({
+                id: skill.id,
+                overwriteApp: conflictApp,
+              });
+              setConfirmDialog(null);
+              if (overwriteResult.failed.length > 0) {
+                const failures = overwriteResult.failed
+                  .map(({ app, error }) => `${app}: ${error}`)
+                  .join("\n");
+                toast.error(
+                  t("skills.syncAgentsPartialFailure", {
+                    succeeded: overwriteResult.succeeded.length,
+                    failed: overwriteResult.failed.length,
+                  }),
+                  { description: failures, closeButton: true },
+                );
+              } else {
+                toast.success(
+                  t("skills.syncAgentsSuccess", {
+                    count: overwriteResult.succeeded.length,
+                  }),
+                  { closeButton: true },
+                );
+              }
+            } catch (error) {
+              setConfirmDialog(null);
+              toast.error(t("skills.syncAgentsFailed"), {
+                description: String(error),
+              });
+            } finally {
+              endWrite();
+            }
+          },
+        });
+        return;
+      }
       if (result.succeeded.length === 0 && result.failed.length === 0) {
         toast.info(t("skills.noEnabledAgents"));
       } else if (result.failed.length > 0) {
@@ -787,7 +889,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                     }
                     isSyncingApps={
                       syncEnabledAppsMutation.isPending &&
-                      syncEnabledAppsMutation.variables === skill.id
+                      syncEnabledAppsMutation.variables?.id === skill.id
                     }
                     actionsDisabled={interactionBlocked}
                     appIds={visibleSkillAppIds}

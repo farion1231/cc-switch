@@ -2630,6 +2630,11 @@
     "syncAgentsPartialFailure": "{{succeeded}} 個の agent に同期し、{{failed}} 個で失敗しました",
     "syncAgentsFailed": "Skill の同期に失敗しました",
     "noEnabledAgents": "この Skill が有効な agent はありません",
+    "overwriteConflict": {
+      "title": "{{app}} の同名 Skill を上書きしますか？",
+      "message": "{{app}} には内容の異なる「{{name}}」がすでに存在します。続行すると、{{app}} の Skill は CC Switch で管理されているバージョンに置き換わります。既存の内容は削除され、自動では復元できません。",
+      "confirm": "上書きして続行"
+    },
     "uninstallConfirm": "「{{name}}」をアンインストールしますか？すべてのアプリからこのスキルが削除され、削除前にローカルバックアップが自動作成されます。",
     "uninstallInMainPanel": "メインパネルからスキルをアンインストールしてください",
     "notFound": "スキルが見つかりません",
@@ -2659,7 +2664,9 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "installFromZip": {
       "button": "ZIP からインストール",

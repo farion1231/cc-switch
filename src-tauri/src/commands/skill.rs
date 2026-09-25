@@ -68,10 +68,14 @@ pub async fn finish_external_skill_edit(
 #[tauri::command]
 pub async fn sync_skill_to_enabled_apps(
     id: String,
+    overwrite_app: Option<String>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillSyncResult, String> {
+    let overwrite_app = overwrite_app.map(|app| parse_app_type(&app)).transpose()?;
     let db = Arc::clone(&app_state.db);
-    tauri::async_runtime::spawn_blocking(move || SkillService::sync_to_enabled_apps(&db, &id))
+    tauri::async_runtime::spawn_blocking(move || {
+        SkillService::sync_to_enabled_apps_with_overwrite(&db, &id, overwrite_app)
+    })
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
@@ -130,10 +134,18 @@ pub fn toggle_skill_app(
     id: String,
     app: String,
     enabled: bool,
+    overwrite_existing: Option<bool>,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let app_type = parse_app_type(&app)?;
-    SkillService::toggle_app(&app_state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
+    SkillService::toggle_app_with_overwrite(
+        &app_state.db,
+        &id,
+        &app_type,
+        enabled,
+        overwrite_existing.unwrap_or(false),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(true)
 }
 

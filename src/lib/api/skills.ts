@@ -175,8 +175,14 @@ export const skillsApi = {
   },
 
   /** 将最新 Skill 内容重新部署到所有当前已启用的 agent */
-  async syncToEnabledApps(id: string): Promise<SkillSyncResult> {
-    return await invoke("sync_skill_to_enabled_apps", { id });
+  async syncToEnabledApps(
+    id: string,
+    overwriteApp?: AppId,
+  ): Promise<SkillSyncResult> {
+    return await invoke("sync_skill_to_enabled_apps", {
+      id,
+      overwriteApp,
+    });
   },
 
   /** 删除 Skill 备份 */
@@ -206,8 +212,18 @@ export const skillsApi = {
   },
 
   /** 切换 Skill 的应用启用状态 */
-  async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
-    return await invoke("toggle_skill_app", { id, app, enabled });
+  async toggleApp(
+    id: string,
+    app: AppId,
+    enabled: boolean,
+    overwriteExisting = false,
+  ): Promise<boolean> {
+    return await invoke("toggle_skill_app", {
+      id,
+      app,
+      enabled,
+      overwriteExisting,
+    });
   },
 
   /** 扫描未管理的 Skills */

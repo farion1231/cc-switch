@@ -258,13 +258,63 @@ describe("UnifiedSkillsPanel", () => {
       .setup()
       .click(screen.getByTitle("skills.syncEnabledAgents"));
 
-    expect(syncEnabledAppsMock).toHaveBeenCalledWith("owner/repo:alpha-skill");
+    expect(syncEnabledAppsMock).toHaveBeenCalledWith({
+      id: "owner/repo:alpha-skill",
+    });
     expect(toastErrorMock).toHaveBeenCalledWith(
       "skills.syncAgentsPartialFailure",
       expect.objectContaining({
         description: "pi: destination changed",
         closeButton: true,
       }),
+    );
+  });
+
+  it("asks before replacing a conflicting MiniMax Code Skill during sync", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        apps: { mcode: true },
+      }),
+    ];
+    syncEnabledAppsMock
+      .mockResolvedValueOnce({
+        succeeded: ["claude"],
+        failed: [
+          {
+            app: "mcode",
+            error:
+              "目标 agent 中已存在同名但内容不同的 Skill，拒绝覆盖或删除: alpha-skill",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ succeeded: ["claude", "mcode"], failed: [] });
+    render(<UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="mcode" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("skills.syncEnabledAgents"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("skills.overwriteConflict.title"),
+    ).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "skills.overwriteConflict.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(syncEnabledAppsMock).toHaveBeenNthCalledWith(1, {
+        id: "owner/repo:alpha-skill",
+      });
+      expect(syncEnabledAppsMock).toHaveBeenNthCalledWith(2, {
+        id: "owner/repo:alpha-skill",
+        overwriteApp: "mcode",
+      });
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "skills.syncAgentsSuccess",
+      { closeButton: true },
     );
   });
 

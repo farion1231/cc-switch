@@ -815,19 +815,46 @@ impl SkillService {
     /// Redeploy the latest SSOT contents to each currently enabled app. One
     /// failed destination does not prevent the remaining apps from syncing.
     pub fn sync_to_enabled_apps(db: &Arc<Database>, id: &str) -> Result<SkillSyncResult> {
+        Self::sync_to_enabled_apps_with_overwrite(db, id, None)
+    }
+
+    pub fn sync_to_enabled_apps_with_overwrite(
+        db: &Arc<Database>,
+        id: &str,
+        overwrite_conflict_app: Option<AppType>,
+    ) -> Result<SkillSyncResult> {
         let _state_guard = skill_state_write_guard();
+        if overwrite_conflict_app
+            .as_ref()
+            .is_some_and(|app| !matches!(app, AppType::Pi | AppType::Mcode))
+        {
+            return Err(anyhow!("Skill overwrite is only supported for Pi and MiniMax Code"));
+        }
         let mut skill = db
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
         let directory = Self::require_valid_directory(&skill.directory)?;
         skill.apps.pi = Self::skill_exists_in_app(&directory, &AppType::Pi);
+        if overwrite_conflict_app.as_ref().is_some_and(|app| {
+            !skill.apps.is_enabled_for(app)
+                && !Self::skill_exists_in_app(&directory, app)
+        }) {
+            return Err(anyhow!(
+                "Skill overwrite is only valid for an enabled agent Skill"
+            ));
+        }
 
         let mut result = SkillSyncResult {
             succeeded: Vec::new(),
             failed: Vec::new(),
         };
         for app in skill.apps.enabled_apps() {
-            match Self::sync_installed_skill_to_app(db, &skill, &app) {
+            let sync_result = if overwrite_conflict_app.as_ref() == Some(&app) {
+                Self::sync_installed_skill_to_app_overwriting_conflict(db, &skill, &app)
+            } else {
+                Self::sync_installed_skill_to_app(db, &skill, &app)
+            };
+            match sync_result {
                 Ok(()) => result.succeeded.push(app.as_str().to_string()),
                 Err(error) => result.failed.push(SkillSyncFailure {
                     app: app.as_str().to_string(),
@@ -2191,7 +2218,26 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
+        Self::toggle_app_with_overwrite(db, id, app, enabled, false)
+    }
+
+    /// Toggle an app deployment, optionally replacing a conflicting native Pi or
+    /// MiniMax Code Skill after an explicit user confirmation.
+    pub fn toggle_app_with_overwrite(
+        db: &Arc<Database>,
+        id: &str,
+        app: &AppType,
+        enabled: bool,
+        overwrite_conflict: bool,
+    ) -> Result<()> {
         let _state_guard = skill_state_write_guard();
+        if overwrite_conflict
+            && (!matches!(app, AppType::Pi | AppType::Mcode) || !enabled)
+        {
+            return Err(anyhow!(
+                "Skill overwrite is only valid when enabling Pi or MiniMax Code"
+            ));
+        }
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
@@ -2202,7 +2248,11 @@ impl SkillService {
 
         // 同步文件
         if enabled {
-            Self::sync_installed_skill_to_app(db, &skill, app)?;
+            if overwrite_conflict {
+                Self::sync_installed_skill_to_app_overwriting_conflict(db, &skill, app)?;
+            } else {
+                Self::sync_installed_skill_to_app(db, &skill, app)?;
+            }
         } else {
             Self::remove_from_app(&skill.directory, app)?;
             if matches!(app, AppType::Pi | AppType::Mcode) {
@@ -2219,6 +2269,39 @@ impl SkillService {
         log::info!("Skill {} 的 {:?} 状态已更新为 {}", skill.name, app, enabled);
 
         Ok(())
+    }
+
+    fn sync_installed_skill_to_app_overwriting_conflict(
+        db: &Arc<Database>,
+        skill: &InstalledSkill,
+        app: &AppType,
+    ) -> Result<()> {
+        if !matches!(app, AppType::Pi | AppType::Mcode) {
+            return Err(anyhow!("Skill overwrite is only supported for Pi and MiniMax Code"));
+        }
+        let directory = Self::require_valid_directory(&skill.directory)?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let source = ssot_dir.join(&directory);
+        Self::validate_sync_source_dir(&source, &directory)?;
+        let destination = Self::get_distinct_app_skills_dir(&ssot_dir, app)?.join(&directory);
+
+        if destination.exists() || Self::is_symlink(&destination) {
+            match Self::inspect_pi_skill_destination(&source, &destination, &directory) {
+                Ok(_) => {}
+                Err(error)
+                    if error
+                        .to_string()
+                        .starts_with("目标 agent 中已存在同名但内容不同的 Skill") =>
+                {
+                    // This path is reachable only through the explicitly confirmed command.
+                    // remove_path removes a destination symlink itself, never its target.
+                    Self::remove_path(&destination)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Self::sync_installed_skill_to_app(db, skill, app)
     }
 
     /// 扫描未管理的 Skills
@@ -2572,7 +2655,7 @@ impl SkillService {
         }
 
         Err(anyhow!(
-            "Pi 中已存在同名但内容不同的 Skill，拒绝覆盖或删除: {directory}"
+            "目标 agent 中已存在同名但内容不同的 Skill，拒绝覆盖或删除: {directory}"
         ))
     }
 
@@ -5518,6 +5601,45 @@ mod tests {
         assert!(fs::read_to_string(pi_skill.join("SKILL.md"))
             .expect("read external skill")
             .contains("external"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn confirmed_mcode_toggle_replaces_a_conflicting_native_skill() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.mcode = true;
+        db.save_skill(&skill).expect("save skill");
+
+        let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+        let native = SkillService::get_app_skills_dir(&AppType::Mcode)
+            .unwrap()
+            .join(&skill.directory);
+        write_skill(&source, "managed");
+        write_skill(&native, "external");
+        fs::write(native.join("local-only.txt"), "external contents")
+            .expect("write external-only file");
+
+        assert!(SkillService::toggle_app(&db, &skill.id, &AppType::Mcode, true).is_err());
+        assert!(native.join("local-only.txt").exists());
+
+        SkillService::toggle_app_with_overwrite(
+            &db,
+            &skill.id,
+            &AppType::Mcode,
+            true,
+            true,
+        )
+        .expect("confirmed overwrite should deploy the managed Skill");
+
+        assert!(!native.join("local-only.txt").exists());
+        assert!(fs::read_to_string(native.join("SKILL.md"))
+            .expect("read deployed Skill")
+            .contains("name: managed"));
     }
 
     #[test]

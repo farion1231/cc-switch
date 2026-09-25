@@ -77,8 +77,13 @@ export function useFinishExternalSkillEdit() {
 
 export function useSyncSkillToEnabledApps() {
   const queryClient = useQueryClient();
-  return useMutation<SkillSyncResult, Error, string>({
-    mutationFn: (id) => skillsApi.syncToEnabledApps(id),
+  return useMutation<
+    SkillSyncResult,
+    Error,
+    { id: string; overwriteApp?: AppId }
+  >({
+    mutationFn: ({ id, overwriteApp }) =>
+      skillsApi.syncToEnabledApps(id, overwriteApp),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });
@@ -196,7 +201,9 @@ export function useToggleSkillApp() {
       id: string;
       app: AppId;
       enabled: boolean;
-    }) => skillsApi.toggleApp(id, app, enabled),
+      overwriteExisting?: boolean;
+    }) =>
+      skillsApi.toggleApp(id, app, enabled, overwriteExisting),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });

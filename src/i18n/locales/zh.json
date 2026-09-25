@@ -2630,6 +2630,11 @@
     "syncAgentsPartialFailure": "已同步 {{succeeded}} 个 agent，{{failed}} 个失败",
     "syncAgentsFailed": "同步 Skill 失败",
     "noEnabledAgents": "此 Skill 没有启用的 agent",
+    "overwriteConflict": {
+      "title": "覆盖 {{app}} 中的同名 Skill？",
+      "message": "{{app}} 中已存在内容不同的「{{name}}」。继续后，该 agent 中的 Skill 将被 CC Switch 中的版本替换。此操作会删除目标目录中的现有内容，且无法自动恢复。",
+      "confirm": "覆盖并继续"
+    },
     "uninstallConfirm": "确定要卸载技能 \"{{name}}\" 吗？这将从所有应用中移除该技能，并在删除前自动创建本地备份。",
     "uninstallInMainPanel": "请在主面板中卸载技能",
     "notFound": "未找到技能",
@@ -2659,7 +2664,9 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "pi": "Pi",
+      "mcode": "MiniMax Code"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",
