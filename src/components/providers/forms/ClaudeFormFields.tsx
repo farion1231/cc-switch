@@ -748,7 +748,12 @@ export function ClaudeFormFields({
                 ? t("providerForm.apiHintOAI")
                 : apiFormat === "gemini_native"
                   ? t("providerForm.apiHintGeminiNative")
-                  : t("providerForm.apiHint")
+                  : apiFormat === "commandcode_go"
+                    ? t("providerForm.apiHintCommandCodeGo", {
+                        defaultValue:
+                          "Command Code Go 通过 /alpha/generate 直连，需开启路由接管。",
+                      })
+                    : t("providerForm.apiHint")
           }
           fullUrlHint={
             apiFormat === "gemini_native"
@@ -839,12 +844,17 @@ export function ClaudeFormFields({
                         defaultValue: "Gemini Native generateContent (需转换)",
                       })}
                     </SelectItem>
+                    <SelectItem value="commandcode_go">
+                      {t("providerForm.apiFormatCommandCodeGo", {
+                        defaultValue: "Command Code Go /alpha/generate (原生适配)",
+                      })}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("providerForm.apiFormatHint", {
                     defaultValue:
-                      "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
+                      "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native；Command Code Go 请选择 /alpha/generate 原生适配。Chat、Responses、Gemini Native 与 Command Code Go 均需开启路由接管。",
                   })}
                 </p>
               </div>
