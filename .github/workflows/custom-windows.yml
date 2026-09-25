@@ -1,0 +1,78 @@
+name: Custom Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/commandcode-go
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup pnpm
+        shell: pwsh
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          pnpm --version
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend type check
+        run: pnpm typecheck
+
+      - name: Rust format check
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: Build unsigned Windows x64
+        shell: pwsh
+        run: |
+          $override = Join-Path $env:RUNNER_TEMP "tauri-ci.json"
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Path $override -Encoding utf8
+          pnpm tauri build --bundles msi --config $override
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item "src-tauri\target\release\cc-switch.exe" "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.exe"
+          Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | ForEach-Object {
+            Copy-Item $_.FullName "artifacts\CC-Switch-CommandCode-Go-v3.20.4-x64.msi"
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CC-Switch-CommandCode-Go-v3.20.4-Windows-x64
+          path: artifacts/*
+          if-no-files-found: error
