@@ -200,15 +200,9 @@ export type AppType =
 
 export type AppTypeFilter = "all" | AppType;
 
-export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "pi",
-  "mcode",
-];
+// DOVEGUO custom build: usage filters follow the same slim UI app set.
+// claude-desktop continues to fold into claude at the backend layer.
+export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = ["claude", "codex"];
 
 /**
  * App types whose proxy uses an OpenAI-style protocol. Two consequences:
