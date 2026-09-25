@@ -447,6 +447,16 @@ async fn handle_claude_transform(
                 Some(ctx.session_id.clone()),
                 tool_schema_hints.clone(),
             )))
+        } else if api_format == "commandcode_go" {
+            let model = ctx
+                .outbound_model
+                .clone()
+                .unwrap_or_else(|| ctx.request_model.clone());
+            let openai_stream =
+                super::providers::commandcode::create_openai_sse_stream_from_commandcode(
+                    stream, model,
+                );
+            Box::new(Box::pin(create_anthropic_sse_stream(openai_stream)))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -569,7 +579,13 @@ async fn handle_claude_transform(
             let (response_headers, _status, body_bytes) =
                 read_decoded_body(response, ctx.tag, body_timeout).await?;
             let body_str = String::from_utf8_lossy(&body_bytes);
-            let upstream_response = if aggregate_codex_oauth_responses_sse {
+            let upstream_response = if api_format == "commandcode_go" {
+                let model = ctx
+                    .outbound_model
+                    .as_deref()
+                    .unwrap_or(ctx.request_model.as_str());
+                super::providers::commandcode::ndjson_to_openai_response(&body_str, model)?
+            } else if aggregate_codex_oauth_responses_sse {
                 responses_sse_to_response_value(&body_str)?
             } else {
                 match serde_json::from_slice(&body_bytes) {
