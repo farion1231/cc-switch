@@ -25,6 +25,18 @@ enum CodingPlanProvider {
     /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
     /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
     OpencodeGo,
+    /// Command Code Go。只允许 canonical `https://api.commandcode.ai`，
+    /// 不探测 localhost / 本地代理 / 第三方镜像。
+    CommandCode,
+}
+
+fn commandcode_is_canonical_base(base_url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(base_url) else {
+        return false;
+    };
+    parsed.scheme().eq_ignore_ascii_case("https")
+        && parsed.host_str() == Some("api.commandcode.ai")
+        && parsed.port_or_known_default() == Some(443)
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -44,6 +56,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
+    } else if commandcode_is_canonical_base(base_url) {
+        Some(CodingPlanProvider::CommandCode)
     } else if url.contains("opencode.ai/zen/go") {
         // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
@@ -710,6 +724,210 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     }
 
     tiers
+}
+
+// ── Command Code Go ─────────────────────────────────────────
+//
+// Billing endpoints are private /alpha routes used by Command Code clients.
+// The provider is only auto-detected for the canonical api.commandcode.ai host;
+// credentials are the existing provider API key (Bearer), never a separate
+// usage-only credential.
+
+const COMMANDCODE_BASE_URL: &str = "https://api.commandcode.ai";
+
+#[derive(Debug)]
+enum CommandCodeBillingError {
+    Auth(reqwest::StatusCode),
+    Http(reqwest::StatusCode, String),
+    Transport(String),
+    Parse(String),
+}
+
+async fn commandcode_billing_json(
+    api_key: &str,
+    path: &str,
+) -> Result<serde_json::Value, CommandCodeBillingError> {
+    let client = crate::proxy::http_client::get();
+    let url = format!("{COMMANDCODE_BASE_URL}{path}");
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .header("x-command-code-version", crate::proxy::providers::commandcode::COMMAND_CODE_VERSION)
+        .header("x-cli-environment", "production")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| CommandCodeBillingError::Transport(format!("Network error: {e}")))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(CommandCodeBillingError::Auth(status));
+    }
+
+    let raw = resp
+        .bytes()
+        .await
+        .map_err(|e| CommandCodeBillingError::Transport(format!("Failed to read response: {e}")))?;
+
+    if !status.is_success() {
+        let body = String::from_utf8_lossy(&raw);
+        return Err(CommandCodeBillingError::Http(
+            status,
+            body.chars().take(500).collect(),
+        ));
+    }
+
+    serde_json::from_slice(&raw)
+        .map_err(|e| CommandCodeBillingError::Parse(format!("Failed to parse response: {e}")))
+}
+
+fn commandcode_plan_info(plan_id: Option<&str>) -> Option<(&'static str, f64)> {
+    match plan_id.map(|value| value.trim().to_ascii_lowercase()).as_deref() {
+        Some("individual-go") => Some(("Command Code · Go", 10.0)),
+        Some("individual-goat") => Some(("Command Code · GOAT", 70.0)),
+        _ => None,
+    }
+}
+
+fn commandcode_window_tier(
+    node: Option<&serde_json::Value>,
+    name: &str,
+) -> Option<QuotaTier> {
+    let node = node?;
+    let cap = node.get("cap").and_then(parse_f64)?;
+    if !cap.is_finite() || cap <= 0.0 {
+        return None;
+    }
+    let used = node
+        .get("used")
+        .and_then(parse_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .max(0.0);
+    let utilization = ((used / cap) * 100.0).clamp(0.0, 100.0);
+    Some(QuotaTier {
+        name: name.to_string(),
+        utilization,
+        resets_at: node.get("resetAt").and_then(extract_reset_time),
+        used_value_usd: Some(used),
+        max_value_usd: Some(cap),
+    })
+}
+
+fn parse_commandcode_tiers(
+    credits_body: &serde_json::Value,
+    subscription_body: &serde_json::Value,
+) -> (Vec<QuotaTier>, Option<String>) {
+    let mut tiers = Vec::new();
+    let limits = credits_body.get("windowLimits");
+
+    if let Some(tier) = commandcode_window_tier(
+        limits.and_then(|value| value.get("fiveHour")),
+        TIER_FIVE_HOUR,
+    ) {
+        tiers.push(tier);
+    }
+    if let Some(tier) = commandcode_window_tier(
+        limits.and_then(|value| value.get("weekly")),
+        TIER_WEEKLY_LIMIT,
+    ) {
+        tiers.push(tier);
+    }
+
+    let subscription = subscription_body
+        .get("data")
+        .filter(|value| value.is_object())
+        .unwrap_or(subscription_body);
+    let plan_id = subscription
+        .get("planId")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            credits_body
+                .pointer("/credits/planId")
+                .and_then(|value| value.as_str())
+        });
+
+    let plan = commandcode_plan_info(plan_id);
+    let plan_label = plan.map(|(label, _)| label.to_string());
+
+    if let Some((_, monthly_cap)) = plan {
+        if let Some(monthly_remaining) = credits_body
+            .pointer("/credits/monthlyCredits")
+            .and_then(parse_f64)
+            .filter(|value| value.is_finite())
+        {
+            // monthlyCredits is the subscription allowance remaining for the
+            // current period. Purchased/free rollover credits are intentionally
+            // excluded from this standard monthly subscription tier.
+            let remaining = monthly_remaining.clamp(0.0, monthly_cap);
+            let used = (monthly_cap - remaining).max(0.0);
+            let utilization = ((used / monthly_cap) * 100.0).clamp(0.0, 100.0);
+            tiers.push(QuotaTier {
+                name: TIER_MONTHLY.to_string(),
+                utilization,
+                resets_at: subscription
+                    .get("currentPeriodEnd")
+                    .and_then(extract_reset_time),
+                used_value_usd: Some(used),
+                max_value_usd: Some(monthly_cap),
+            });
+        }
+    }
+
+    (tiers, plan_label)
+}
+
+fn commandcode_error_to_quota(error: CommandCodeBillingError) -> Result<SubscriptionQuota, String> {
+    match error {
+        CommandCodeBillingError::Auth(status) => Ok(SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid Command Code API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        }),
+        CommandCodeBillingError::Http(status, body) => {
+            Ok(make_error(format!("API error (HTTP {status}): {body}")))
+        }
+        // Preserve transport failures as Err so the frontend keep-last-good
+        // path can retry without replacing a valid cached quota snapshot.
+        CommandCodeBillingError::Transport(message) => Err(message),
+        CommandCodeBillingError::Parse(message) => Ok(make_error(message)),
+    }
+}
+
+async fn query_commandcode(api_key: &str) -> Result<SubscriptionQuota, String> {
+    let credits = match commandcode_billing_json(api_key, "/alpha/billing/credits").await {
+        Ok(value) => value,
+        Err(error) => return commandcode_error_to_quota(error),
+    };
+    let subscription =
+        match commandcode_billing_json(api_key, "/alpha/billing/subscriptions").await {
+            Ok(value) => value,
+            Err(error) => return commandcode_error_to_quota(error),
+        };
+
+    let (tiers, plan_label) = parse_commandcode_tiers(&credits, &subscription);
+    if tiers.is_empty() {
+        return Ok(make_error(
+            "Unexpected Command Code billing response shape".to_string(),
+        ));
+    }
+
+    Ok(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: plan_label,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
 }
 
 // ── OpenCode Go ─────────────────────────────────────────────
@@ -1466,6 +1684,7 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
+        CodingPlanProvider::CommandCode => query_commandcode(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1476,13 +1695,119 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
+        commandcode_is_canonical_base, detect_provider, parse_afp_tiers,
+        parse_coding_plan_tiers, parse_commandcode_tiers, parse_minimax_tiers,
         parse_opencode_go_tiers, parse_zhipu_token_tiers, query_zhipu_team_at,
         volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
         volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
         TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    #[test]
+    fn commandcode_detects_only_canonical_https_host() {
+        for base_url in [
+            "https://api.commandcode.ai",
+            "https://api.commandcode.ai/",
+            "https://api.commandcode.ai/v1",
+        ] {
+            assert!(commandcode_is_canonical_base(base_url));
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::CommandCode)
+            ));
+        }
+
+        for base_url in [
+            "http://api.commandcode.ai",
+            "http://127.0.0.1:55990",
+            "http://localhost:55990",
+            "https://api.commandcode.ai.example.com",
+            "https://proxy.example.com/api.commandcode.ai",
+        ] {
+            assert!(!commandcode_is_canonical_base(base_url));
+            assert!(!matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::CommandCode)
+            ));
+        }
+    }
+
+    #[test]
+    fn commandcode_goat_maps_live_caps_and_monthly_remaining() {
+        let credits = json!({
+            "credits": {
+                "monthlyCredits": 52.5,
+                "purchasedCredits": 99,
+                "freeCredits": 50,
+                "planId": "individual-goat"
+            },
+            "windowLimits": {
+                "fiveHour": {"used": 3.5, "cap": 14, "resetAt": 1_800_000_000_000_i64},
+                "weekly": {"used": 7, "cap": 35, "resetAt": 1_800_100_000_000_i64}
+            }
+        });
+        let subscription = json!({
+            "data": {
+                "planId": "individual-goat",
+                "currentPeriodEnd": "2026-10-25T00:00:00.000Z"
+            }
+        });
+
+        let (tiers, label) = parse_commandcode_tiers(&credits, &subscription);
+        assert_eq!(label.as_deref(), Some("Command Code · GOAT"));
+        assert_eq!(tiers.len(), 3);
+
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].used_value_usd, Some(3.5));
+        assert_eq!(tiers[0].max_value_usd, Some(14.0));
+        assert!((tiers[0].utilization - 25.0).abs() < f64::EPSILON);
+
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].max_value_usd, Some(35.0));
+        assert!((tiers[1].utilization - 20.0).abs() < f64::EPSILON);
+
+        assert_eq!(tiers[2].name, TIER_MONTHLY);
+        assert_eq!(tiers[2].used_value_usd, Some(17.5));
+        assert_eq!(tiers[2].max_value_usd, Some(70.0));
+        assert!((tiers[2].utilization - 25.0).abs() < f64::EPSILON);
+        assert_eq!(
+            tiers[2].resets_at.as_deref(),
+            Some("2026-10-25T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn commandcode_go_monthly_cap_is_ten_and_unknown_plan_omits_monthly() {
+        let credits = json!({
+            "credits": {"monthlyCredits": 7.5},
+            "windowLimits": {
+                "fiveHour": {"used": 2, "cap": 8, "resetAt": 1_800_000_000_000_i64},
+                "weekly": {"used": 4, "cap": 20, "resetAt": 1_800_100_000_000_i64}
+            }
+        });
+        let go_subscription = json!({
+            "data": {
+                "planId": "individual-go",
+                "currentPeriodEnd": "2026-10-25T00:00:00Z"
+            }
+        });
+        let (go_tiers, go_label) = parse_commandcode_tiers(&credits, &go_subscription);
+        assert_eq!(go_label.as_deref(), Some("Command Code · Go"));
+        let monthly = go_tiers
+            .iter()
+            .find(|tier| tier.name == TIER_MONTHLY)
+            .expect("Go plan should expose monthly tier");
+        assert_eq!(monthly.max_value_usd, Some(10.0));
+        assert_eq!(monthly.used_value_usd, Some(2.5));
+
+        let unknown_subscription = json!({"data": {"planId": "individual-pro"}});
+        let (unknown_tiers, unknown_label) =
+            parse_commandcode_tiers(&credits, &unknown_subscription);
+        assert!(unknown_label.is_none());
+        assert_eq!(unknown_tiers.len(), 2);
+        assert!(unknown_tiers.iter().all(|tier| tier.name != TIER_MONTHLY));
+    }
 
     #[test]
     fn minimax_cn_detects_current_and_legacy_hosts() {
