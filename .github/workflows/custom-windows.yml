@@ -105,7 +105,8 @@ jobs:
           - Native Command Code Go /alpha/generate support for Claude Code
           - Native Command Code Token Plan quota: 5h / weekly / monthly
           - Reuses the provider API key; canonical api.commandcode.ai only
-          - Go monthly cap $10; GOAT monthly cap $70; live 5h/weekly caps from API
+          - Go monthly cap $10; GOAT monthly cap $70
+          - 5h/weekly caps use the live API-returned cap; monthly reset uses currentPeriodEnd
           - Real streaming token usage accounting
           - Official Command Code provider icon
           - Yellow-star sponsored presets hidden from Add Provider
