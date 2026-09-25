@@ -392,6 +392,52 @@ describe("ProviderPresetSelector", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("隐藏黄色星标 isPartner 预设，但保留 heart/primePartner 预设", () => {
+    const entries: TestPresetEntry[] = [
+      {
+        id: "starred",
+        preset: {
+          name: "Starred Partner",
+          websiteUrl: "https://starred.example.com",
+          settingsConfig: {},
+          category: "third_party",
+          isPartner: true,
+        },
+      },
+      {
+        id: "prime",
+        preset: {
+          name: "Prime Partner",
+          websiteUrl: "https://prime.example.com",
+          settingsConfig: {},
+          category: "cn_official",
+          primePartner: true,
+        },
+      },
+      {
+        id: "normal",
+        preset: {
+          name: "Normal Provider",
+          websiteUrl: "https://normal.example.com",
+          settingsConfig: {},
+          category: "third_party",
+        },
+      },
+    ];
+
+    renderSelector({ entries });
+
+    expect(
+      screen.queryByRole("button", { name: "Starred Partner" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Prime Partner" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Normal Provider" }),
+    ).toBeInTheDocument();
+  });
+
   it("搜索无普通 preset 结果时保留自定义配置并显示空状态", async () => {
     const user = userEvent.setup();
     renderSelector();
