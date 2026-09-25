@@ -1110,7 +1110,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         <div className="grid gap-3 px-1 sm:grid-cols-2 xl:grid-cols-3">
           {(autoCheckToolVersions || toolVersions.length > 0 || isLoadingTools
             ? TOOL_NAMES
-            : []
+            : TOOL_NAMES.filter((toolName) => toolDiagnostics[toolName]?.length)
           ).map((toolName, index) => {
             const tool = toolVersionByName.get(toolName);
             const appConfig = APP_ICON_MAP[TOOL_APP_IDS[toolName]];
@@ -1130,9 +1130,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // 已安装却跑不起来（如 Node 版本不达标）：用它区分卡片文案与按钮，避免把
             // "装了跑不起来"误判成"未安装"而给出无用的安装按钮（重装同一版本解决不了）。
             const installedButBroken = Boolean(tool?.installed_but_broken);
-            // loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
+            // 未检测、loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
             const action: ToolLifecycleAction | null =
-              isToolVersionLoading || installedButBroken
+              isToolVersionLoading || installedButBroken || !tool
                 ? null
                 : !tool?.version
                   ? "install"
@@ -1196,11 +1196,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     >
                       {isToolVersionLoading
                         ? t("common.loading")
-                        : tool?.version
-                          ? tool.version
-                          : installedButBroken
-                            ? t("settings.installedNotRunnable")
-                            : t("common.notInstalled")}
+                        : !tool
+                          ? t("common.unknown")
+                          : tool.version
+                            ? tool.version
+                            : installedButBroken
+                              ? t("settings.installedNotRunnable")
+                              : t("common.notInstalled")}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
@@ -1285,7 +1287,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <span className="text-xs text-muted-foreground">
                       {t("common.loading")}
                     </span>
-                  ) : installedButBroken ? (
+                  ) : !tool ? null : installedButBroken ? (
                     // 已安装但跑不起来：重装无济于事，不给按钮，给一句指向环境的提示。
                     <span className="text-xs text-yellow-600 dark:text-yellow-400">
                       {t("settings.toolCheckEnv")}
