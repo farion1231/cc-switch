@@ -52,9 +52,12 @@ describe("detectCodingPlanProvider (Command Code)", () => {
     "http://localhost:55990",
     "https://api.commandcode.ai.example.com",
     "https://proxy.example.com/api.commandcode.ai",
-  ])("does not treat local/look-alike endpoint %s as Command Code", (baseUrl) => {
-    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
-  });
+  ])(
+    "does not treat local/look-alike endpoint %s as Command Code",
+    (baseUrl) => {
+      expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+    },
+  );
 });
 
 describe("detectCodingPlanProvider (MiniMax)", () => {
