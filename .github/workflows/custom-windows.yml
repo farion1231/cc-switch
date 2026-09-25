@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/commandcode-go
       - feat/commandcode
 
 permissions:
