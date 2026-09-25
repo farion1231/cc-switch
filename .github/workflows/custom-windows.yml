@@ -129,14 +129,3 @@ jobs:
             gh release create $env:RELEASE_TAG $asset --target "${{ github.sha }}" --title $env:RELEASE_NAME --notes $notes --repo "${{ github.repository }}"
           }
 
-
-      - name: Remove legacy named release
-        if: startsWith(github.event.head_commit.message, 'release:')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $legacy = "v3.20.4-commandcode-go.3"
-          if (gh release view $legacy --repo "${{ github.repository }}" 2>$null) {
-            gh release delete $legacy --yes --cleanup-tag --repo "${{ github.repository }}"
-          }
