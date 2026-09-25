@@ -28,11 +28,6 @@ const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // require thinking replay on tool-call turns, and injected placeholders
 // disrupt the model's chain of thought. Do not re-add without re-confirming.
 const REASONING_VENDOR_HINTS: &[&str] = &["deepseek", "mimo", "xiaomimimo"];
-const LEGACY_COMMAND_CODE_API_FORMAT: &str = concat!("commandcode", "_go");
-
-pub(crate) fn is_commandcode_api_format(value: &str) -> bool {
-    value == "commandcode" || value == LEGACY_COMMAND_CODE_API_FORMAT
-}
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -58,7 +53,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
                 "gemini_native" => "gemini_native",
-                value if is_commandcode_api_format(value) => "commandcode",
+                "commandcode" => "commandcode",
                 _ => "anthropic",
             };
         }
@@ -101,8 +96,8 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     matches!(
         api_format,
-        "openai_chat" | "openai_responses" | "gemini_native"
-    ) || is_commandcode_api_format(api_format)
+        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode"
+    )
 }
 
 fn is_reasoning_vendor_identifier(value: &str) -> bool {
@@ -466,9 +461,7 @@ pub fn transform_claude_request_for_api_format(
             Some(&provider.id),
             session_id,
         ),
-        value if is_commandcode_api_format(value) => {
-            super::commandcode::anthropic_to_commandcode(body, session_id)
-        },
+        "commandcode" => super::commandcode::anthropic_to_commandcode(body, session_id),
         _ => Ok(body),
     }
 }
