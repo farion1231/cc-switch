@@ -55,6 +55,9 @@ jobs:
       - name: Frontend type check
         run: pnpm typecheck
 
+      - name: Frontend format check
+        run: pnpm format:check
+
       - name: Normalize Rust formatting
         working-directory: src-tauri
         run: cargo fmt --all
