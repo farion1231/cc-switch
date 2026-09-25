@@ -11,7 +11,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::services::skill::SkillRepo;
 use indexmap::IndexMap;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 impl Database {
     // ========== InstalledSkill CRUD ==========
@@ -113,11 +113,29 @@ impl Database {
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skills
+            "INSERT INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at, enabled_mcode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                directory = excluded.directory,
+                repo_owner = excluded.repo_owner,
+                repo_name = excluded.repo_name,
+                repo_branch = excluded.repo_branch,
+                readme_url = excluded.readme_url,
+                enabled_claude = excluded.enabled_claude,
+                enabled_codex = excluded.enabled_codex,
+                enabled_gemini = excluded.enabled_gemini,
+                enabled_grokbuild = excluded.enabled_grokbuild,
+                enabled_opencode = excluded.enabled_opencode,
+                enabled_hermes = excluded.enabled_hermes,
+                installed_at = excluded.installed_at,
+                content_hash = excluded.content_hash,
+                updated_at = excluded.updated_at,
+                enabled_mcode = excluded.enabled_mcode",
             params![
                 skill.id,
                 skill.name,
@@ -227,6 +245,51 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
+    }
+
+    /// Read the last known managed copy fingerprint for a Skill deployment.
+    pub fn get_skill_deployment_hash(
+        &self,
+        id: &str,
+        app_type: &str,
+    ) -> Result<Option<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT deployment_hash FROM skill_deployments WHERE skill_id = ?1 AND app_type = ?2",
+            params![id, app_type],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// Record a successfully written managed copy fingerprint.
+    pub fn set_skill_deployment_hash(
+        &self,
+        id: &str,
+        app_type: &str,
+        deployment_hash: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "INSERT INTO skill_deployments (skill_id, app_type, deployment_hash)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(skill_id, app_type) DO UPDATE SET deployment_hash = excluded.deployment_hash",
+            params![id, app_type, deployment_hash],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Remove copy tracking when a managed deployment changes to a symlink.
+    pub fn delete_skill_deployment_hash(&self, id: &str, app_type: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "DELETE FROM skill_deployments WHERE skill_id = ?1 AND app_type = ?2",
+            params![id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     // ========== SkillRepo CRUD（保持原有） ==========
@@ -405,5 +468,44 @@ mod tests {
         assert_eq!(stored.name, reinstalled.name);
         assert_eq!(stored.installed_at, reinstalled.installed_at);
         assert_eq!(stored.apps, reinstalled.apps);
+    }
+
+    #[test]
+    fn skill_deployment_hash_round_trips_and_can_be_cleared() {
+        let db = Database::memory().expect("memory db");
+        let installed = skill(
+            "owner/repo:skill",
+            "skill",
+            SkillApps::only(&crate::app_config::AppType::Pi),
+        );
+        db.save_skill(&installed).expect("save skill");
+
+        db.set_skill_deployment_hash(&installed.id, "pi", "fingerprint")
+            .expect("save deployment fingerprint");
+        assert_eq!(
+            db.get_skill_deployment_hash(&installed.id, "pi")
+                .expect("read deployment fingerprint")
+                .as_deref(),
+            Some("fingerprint")
+        );
+
+        let mut updated = installed.clone();
+        updated.name = "renamed".to_string();
+        db.save_skill(&updated)
+            .expect("update skill without replacing its row");
+        assert_eq!(
+            db.get_skill_deployment_hash(&installed.id, "pi")
+                .expect("fingerprint survives skill update")
+                .as_deref(),
+            Some("fingerprint")
+        );
+
+        db.delete_skill_deployment_hash(&installed.id, "pi")
+            .expect("clear deployment fingerprint");
+        assert_eq!(
+            db.get_skill_deployment_hash(&installed.id, "pi")
+                .expect("read cleared fingerprint"),
+            None
+        );
     }
 }

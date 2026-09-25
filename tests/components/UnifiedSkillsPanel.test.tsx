@@ -23,6 +23,9 @@ const bulkToggleSkillAppMock = vi.fn();
 const checkUpdatesMock = vi.fn();
 const updateSkillMock = vi.fn();
 const refetchSkillBackupsMock = vi.fn();
+const openSkillFolderMock = vi.fn();
+const finishExternalEditMock = vi.fn();
+const syncEnabledAppsMock = vi.fn();
 const { toastErrorMock, toastSuccessMock, toastWarningMock } = vi.hoisted(
   () => ({
     toastErrorMock: vi.fn(),
@@ -42,6 +45,9 @@ let bulkToggleSkillAppPending = false;
 let bulkToggleSkillAppVariables:
   | { ids: string[]; app: "claude"; enabled: boolean }
   | undefined;
+let openSkillFolderPending = false;
+let finishExternalEditPending = false;
+let syncEnabledAppsPending = false;
 
 vi.mock("sonner", () => ({
   toast: {
@@ -110,6 +116,18 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: updateSkillMock,
     isPending: false,
   }),
+  useOpenInstalledSkillFolder: () => ({
+    mutateAsync: openSkillFolderMock,
+    isPending: openSkillFolderPending,
+  }),
+  useFinishExternalSkillEdit: () => ({
+    mutateAsync: finishExternalEditMock,
+    isPending: finishExternalEditPending,
+  }),
+  useSyncSkillToEnabledApps: () => ({
+    mutateAsync: syncEnabledAppsMock,
+    isPending: syncEnabledAppsPending,
+  }),
 }));
 
 type InstalledSkillOverrides = Omit<Partial<InstalledSkill>, "apps"> & {
@@ -159,6 +177,9 @@ describe("UnifiedSkillsPanel", () => {
     toggleSkillAppVariables = undefined;
     bulkToggleSkillAppPending = false;
     bulkToggleSkillAppVariables = undefined;
+    openSkillFolderPending = false;
+    finishExternalEditPending = false;
+    syncEnabledAppsPending = false;
     scanUnmanagedMock.mockReset();
     scanUnmanagedMock.mockResolvedValue({
       data: [
@@ -191,7 +212,82 @@ describe("UnifiedSkillsPanel", () => {
     updateSkillMock.mockImplementation(async (id: string) =>
       makeInstalledSkill({ id }),
     );
+    openSkillFolderMock.mockReset();
+    openSkillFolderMock.mockResolvedValue(undefined);
+    finishExternalEditMock.mockReset();
+    finishExternalEditMock.mockResolvedValue({ backupPath: "/backups/alpha" });
+    syncEnabledAppsMock.mockReset();
+    syncEnabledAppsMock.mockResolvedValue({ succeeded: [], failed: [] });
   });
+
+  it("opens the installed Skill folder", async () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    renderPanel();
+
+    await userEvent.setup().click(screen.getByTitle("skills.openFolder"));
+
+    expect(openSkillFolderMock).toHaveBeenCalledWith("owner/repo:alpha-skill");
+  });
+
+  it("backs up a completed external edit", async () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    renderPanel();
+
+    await userEvent.setup().click(screen.getByTitle("skills.finishEdit"));
+
+    expect(finishExternalEditMock).toHaveBeenCalledWith(
+      "owner/repo:alpha-skill",
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "skills.finishEditSuccess",
+      expect.objectContaining({
+        description: "skills.backup.location",
+      }),
+    );
+  });
+
+  it("reports partial failures when syncing enabled apps", async () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    syncEnabledAppsMock.mockResolvedValue({
+      succeeded: ["claude"],
+      failed: [{ app: "pi", error: "destination changed" }],
+    });
+    renderPanel();
+
+    await userEvent
+      .setup()
+      .click(screen.getByTitle("skills.syncEnabledAgents"));
+
+    expect(syncEnabledAppsMock).toHaveBeenCalledWith("owner/repo:alpha-skill");
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "skills.syncAgentsPartialFailure",
+      expect.objectContaining({
+        description: "pi: destination changed",
+        closeButton: true,
+      }),
+    );
+  });
+
+  it.each([
+    ["openFolder", "skills.openFolder"],
+    ["finishEdit", "skills.finishEdit"],
+    ["syncEnabledApps", "skills.syncEnabledAgents"],
+  ] as const)(
+    "disables row actions while %s is pending",
+    async (action, title) => {
+      installedSkillsMock = [makeInstalledSkill()];
+      if (action === "openFolder") openSkillFolderPending = true;
+      if (action === "finishEdit") finishExternalEditPending = true;
+      if (action === "syncEnabledApps") syncEnabledAppsPending = true;
+      renderPanel();
+
+      expect(screen.getByTitle(title)).toBeDisabled();
+      await userEvent.setup().click(screen.getByTitle(title));
+      expect(openSkillFolderMock).not.toHaveBeenCalled();
+      expect(finishExternalEditMock).not.toHaveBeenCalled();
+      expect(syncEnabledAppsMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("opens the import dialog without crashing when app toggles render", async () => {
     const ref = createRef<UnifiedSkillsPanelHandle>();

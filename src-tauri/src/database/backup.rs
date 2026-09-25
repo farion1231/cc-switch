@@ -91,6 +91,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "skill_deployments",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +103,7 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "skill_deployments",
 ];
 
 /// A database backup entry for the UI
@@ -313,6 +315,34 @@ impl Database {
             if columns.is_empty() {
                 continue;
             }
+            let valid_skill_ids = if *table == "skill_deployments"
+                && Self::table_exists(&tx, "skills")?
+            {
+                let mut stmt = tx
+                    .prepare("SELECT id FROM skills")
+                    .map_err(|e| AppError::Database(format!("读取本机 Skill 标识失败: {e}")))?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|e| AppError::Database(format!("查询本机 Skill 标识失败: {e}")))?;
+                Some(
+                    rows.collect::<Result<std::collections::HashSet<_>, _>>()
+                        .map_err(|e| AppError::Database(format!("读取本机 Skill 标识失败: {e}")))?,
+                )
+            } else {
+                None
+            };
+            let skill_id_column = if valid_skill_ids.is_some() {
+                Some(
+                    columns
+                        .iter()
+                        .position(|column| column == "skill_id")
+                        .ok_or_else(|| {
+                            AppError::Database("skill_deployments 表缺少 skill_id 列".to_string())
+                        })?,
+                )
+            } else {
+                None
+            };
 
             let quoted_table = Self::quote_identifier(table);
             let quoted_columns = columns
@@ -344,6 +374,17 @@ impl Database {
                 .map_err(|e| AppError::Database(format!("查询表 {table} 数据失败: {e}")))?;
 
             while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+                if let (Some(valid_ids), Some(skill_id_column)) =
+                    (&valid_skill_ids, skill_id_column)
+                {
+                    let skill_id = row
+                        .get::<_, String>(skill_id_column)
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    if !valid_ids.contains(&skill_id) {
+                        continue;
+                    }
+                }
+
                 let mut values = Vec::with_capacity(columns.len());
                 for idx in 0..columns.len() {
                     values.push(
@@ -356,6 +397,21 @@ impl Database {
                     .execute(rusqlite::params_from_iter(values.iter()))
                     .map_err(|e| AppError::Database(format!("恢复表 {table} 数据失败: {e}")))?;
             }
+        }
+
+        // Deployment fingerprints are machine-local even though the Skill
+        // records themselves are synchronized. Drop preserved fingerprints for
+        // Skills removed by the incoming database to avoid orphaned ownership.
+        if tables.contains(&"skill_deployments")
+            && Self::table_exists(&tx, "skill_deployments")?
+            && Self::table_exists(&tx, "skills")?
+        {
+            tx.execute(
+                "DELETE FROM skill_deployments
+                 WHERE skill_id NOT IN (SELECT id FROM skills)",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("清理孤立的 Skill 部署指纹失败: {e}")))?;
         }
 
         Self::restore_sqlite_sequences(source_conn, &tx, tables)?;
@@ -2191,20 +2247,25 @@ mod tests {
                  ) VALUES ('remote-provider', 'claude', 0, 9, '2099-01-01');
                  INSERT INTO session_log_sync (
                      file_path, last_modified, last_line_offset, last_synced_at
-                 ) VALUES ('/remote/sessions/one.jsonl', 9, 99, 999);",
+                 ) VALUES ('/remote/sessions/one.jsonl', 9, 99, 999);
+                 INSERT INTO skills (id, name, directory, installed_at)
+                 VALUES ('shared-skill', 'Remote Skill', 'shared-skill', 1);
+                 INSERT INTO skill_deployments (skill_id, app_type, deployment_hash)
+                 VALUES ('shared-skill', 'pi', 'remote-fingerprint');",
             )?;
         }
         let remote_sql = remote_db.export_sql_string_for_sync()?;
         let exported = Connection::open_in_memory()?;
         exported.execute_batch(&remote_sql)?;
-        let skipped_counts: (i64, i64, i64, i64, i64, i64) = exported.query_row(
+        let skipped_counts: (i64, i64, i64, i64, i64, i64, i64) = exported.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs),
                 (SELECT COUNT(*) FROM stream_check_logs),
                 (SELECT COUNT(*) FROM provider_health),
                 (SELECT COUNT(*) FROM proxy_live_backup),
                 (SELECT COUNT(*) FROM usage_daily_rollups),
-                (SELECT COUNT(*) FROM session_log_sync)",
+                (SELECT COUNT(*) FROM session_log_sync),
+                (SELECT COUNT(*) FROM skill_deployments)",
             [],
             |row| {
                 Ok((
@@ -2214,10 +2275,11 @@ mod tests {
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )?;
-        assert_eq!(skipped_counts, (0, 0, 0, 0, 0, 0));
+        assert_eq!(skipped_counts, (0, 0, 0, 0, 0, 0, 0));
 
         let local_db = Database::memory()?;
         {
@@ -2246,7 +2308,15 @@ mod tests {
                  ) VALUES ('local-provider', 'claude', 1, 0, '2026-03-01');
                  INSERT INTO session_log_sync (
                      file_path, last_modified, last_line_offset, last_synced_at
-                 ) VALUES ('/local/sessions/one.jsonl', 10, 123, 456);",
+                 ) VALUES ('/local/sessions/one.jsonl', 10, 123, 456);
+                 INSERT INTO skills (id, name, directory, installed_at)
+                 VALUES ('shared-skill', 'Local Skill', 'shared-skill', 1);
+                 INSERT INTO skill_deployments (skill_id, app_type, deployment_hash)
+                 VALUES ('shared-skill', 'pi', 'local-fingerprint');
+                 INSERT INTO skills (id, name, directory, installed_at)
+                 VALUES ('removed-skill', 'Removed Skill', 'removed-skill', 1);
+                 INSERT INTO skill_deployments (skill_id, app_type, deployment_hash)
+                 VALUES ('removed-skill', 'mcode', 'orphan-fingerprint');",
             )?;
         }
 
@@ -2259,13 +2329,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(providers, vec!["remote-provider"]);
 
-        let preserved_counts: (i64, i64, i64, i64, i64) = conn.query_row(
+        let preserved_counts: (i64, i64, i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs),
                 (SELECT COUNT(*) FROM stream_check_logs),
                 (SELECT COUNT(*) FROM proxy_live_backup),
                 (SELECT COUNT(*) FROM usage_daily_rollups),
-                (SELECT COUNT(*) FROM session_log_sync)",
+                (SELECT COUNT(*) FROM session_log_sync),
+                (SELECT COUNT(*) FROM skill_deployments WHERE skill_id = 'shared-skill')",
             [],
             |row| {
                 Ok((
@@ -2274,14 +2345,27 @@ mod tests {
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )?;
         assert_eq!(
             preserved_counts,
-            (1, 1, 1, 1, 1),
-            "同步导入必须替换配置，同时保留本机日志、Live 备份与会话游标"
+            (1, 1, 1, 1, 1, 1),
+            "同步导入必须替换配置，同时保留本机日志、Live 备份、会话游标和部署指纹"
         );
+        let deployment_hash: String = conn.query_row(
+            "SELECT deployment_hash FROM skill_deployments WHERE skill_id = 'shared-skill' AND app_type = 'pi'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(deployment_hash, "local-fingerprint");
+        let orphan_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM skill_deployments WHERE skill_id = 'removed-skill'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(orphan_count, 0);
 
         let preserved_values: (String, String, i64, String, i64, String, i64) = conn.query_row(
             "SELECT

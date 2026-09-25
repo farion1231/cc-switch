@@ -751,12 +751,47 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
         let directory = Self::require_valid_directory(&skill.directory)?;
-        let source_path = Self::get_ssot_dir()?.join(directory);
+        let ssot_dir = Self::get_ssot_dir()?;
+        let source_path = ssot_dir.join(&directory);
         Self::validate_sync_source_dir(&source_path, &skill.directory)?;
 
+        let previous_content_hash = skill.content_hash.clone();
         skill.content_hash = Some(Self::compute_dir_hash(&source_path)?);
         skill.updated_at = Utc::now().timestamp();
         let backup_path = Self::create_skill_backup_from_source(&skill, &source_path)?;
+
+        // Older versions did not persist copy deployment fingerprints. Adopt a
+        // legacy copy only when its saved pre-edit SSOT hash matches and every
+        // item is represented by that hash; otherwise keep treating it as
+        // unowned so hidden files, symlinks, and empty directories stay protected.
+        if let Some(previous_hash) = previous_content_hash.as_deref() {
+            for app in [AppType::Pi, AppType::Mcode] {
+                let enabled = match app {
+                    AppType::Pi => Self::skill_exists_in_app(&directory, &app),
+                    AppType::Mcode => skill.apps.mcode,
+                    _ => false,
+                };
+                if !enabled
+                    || db
+                        .get_skill_deployment_hash(&skill.id, app.as_str())?
+                        .is_some()
+                {
+                    continue;
+                }
+
+                let destination =
+                    Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&directory);
+                if destination.is_dir()
+                    && !Self::is_symlink(&destination)
+                    && Self::is_legacy_copy_safe_to_adopt(&destination)?
+                    && Self::compute_dir_hash(&destination).ok().as_deref() == Some(previous_hash)
+                {
+                    let deployment_hash = Self::compute_pi_deployment_hash(&destination)?;
+                    db.set_skill_deployment_hash(&skill.id, app.as_str(), &deployment_hash)?;
+                }
+            }
+        }
+
         if !db.update_skill_hash(
             &skill.id,
             skill.content_hash.as_deref().unwrap_or_default(),
@@ -792,7 +827,7 @@ impl SkillService {
             failed: Vec::new(),
         };
         for app in skill.apps.enabled_apps() {
-            match Self::sync_to_app_dir(&directory, &app) {
+            match Self::sync_installed_skill_to_app(db, &skill, &app) {
                 Ok(()) => result.succeeded.push(app.as_str().to_string()),
                 Err(error) => result.failed.push(SkillSyncFailure {
                     app: app.as_str().to_string(),
@@ -802,6 +837,39 @@ impl SkillService {
         }
 
         Ok(result)
+    }
+
+    fn sync_installed_skill_to_app(
+        db: &Arc<Database>,
+        skill: &InstalledSkill,
+        app: &AppType,
+    ) -> Result<()> {
+        let tracked_app = matches!(app, AppType::Pi | AppType::Mcode);
+        let previous_hash = if tracked_app {
+            db.get_skill_deployment_hash(&skill.id, app.as_str())?
+        } else {
+            None
+        };
+
+        Self::sync_to_app_dir_with_deployment_hash(
+            &skill.directory,
+            app,
+            previous_hash.as_deref(),
+        )?;
+
+        if tracked_app {
+            let ssot_dir = Self::get_ssot_dir()?;
+            let destination = Self::get_distinct_app_skills_dir(&ssot_dir, app)?
+                .join(Self::require_valid_directory(&skill.directory)?);
+            if destination.is_dir() && !Self::is_symlink(&destination) {
+                let hash = Self::compute_pi_deployment_hash(&destination)?;
+                db.set_skill_deployment_hash(&skill.id, app.as_str(), &hash)?;
+            } else {
+                db.delete_skill_deployment_hash(&skill.id, app.as_str())?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Reuse an existing installation or reject a directory owned by another repo.
@@ -825,7 +893,7 @@ impl SkillService {
                 let mut updated = existing.clone();
                 updated.apps.set_enabled_for(current_app, true);
                 db.save_skill(&updated)?;
-                Self::sync_to_app_dir(&updated.directory, current_app)?;
+                Self::sync_installed_skill_to_app(db, &updated, current_app)?;
                 log::info!(
                     "Skill {} 已存在，更新 {:?} 启用状态",
                     updated.name,
@@ -1289,6 +1357,31 @@ impl SkillService {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
+    fn is_legacy_copy_safe_to_adopt(dir: &Path) -> Result<bool> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                return Ok(false);
+            }
+
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                return Ok(false);
+            }
+            if file_type.is_dir() {
+                let mut children = fs::read_dir(entry.path())?;
+                if children.next().is_none() || !Self::is_legacy_copy_safe_to_adopt(&entry.path())?
+                {
+                    return Ok(false);
+                }
+            } else if !file_type.is_file() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn collect_tree_entries(current: &Path, entries: &mut Vec<PathBuf>) -> Result<()> {
         for entry in
             fs::read_dir(current).with_context(|| format!("读取目录失败: {}", current.display()))?
@@ -1657,10 +1750,7 @@ impl SkillService {
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
-            if matches!(app, AppType::Pi | AppType::Mcode) {
-                continue;
-            }
-            if let Err(e) = Self::sync_to_app_dir(&updated_skill.directory, &app) {
+            if let Err(e) = Self::sync_installed_skill_to_app(db, &updated_skill, &app) {
                 log::warn!("同步更新后的 skill 到 {:?} 失败: {e}", app);
             }
         }
@@ -1930,8 +2020,29 @@ impl SkillService {
                 result.errors.push(format!("{directory}: {err}"));
             }
         }
+
+        // Managed copy fingerprints survive SSOT relocation because they describe
+        // the deployed tree, not the source path. Refresh them after safe migration.
+        for skill in db.get_all_installed_skills()?.values() {
+            for app in [AppType::Pi, AppType::Mcode] {
+                if skill.apps.is_enabled_for(&app) {
+                    if let Err(err) = Self::sync_installed_skill_to_app(db, skill, &app) {
+                        result
+                            .errors
+                            .push(format!("{} ({app:?}): {err}", skill.directory));
+                    }
+                }
+            }
+        }
         for directory in pi_native_sources {
-            if let Err(err) = Self::sync_to_app_dir(&directory, &AppType::Pi) {
+            let sync = db
+                .get_all_installed_skills()?
+                .values()
+                .find(|skill| skill.directory.eq_ignore_ascii_case(&directory))
+                .cloned()
+                .map(|skill| Self::sync_installed_skill_to_app(db, &skill, &AppType::Pi))
+                .unwrap_or_else(|| Self::sync_to_app_dir(&directory, &AppType::Pi));
+            if let Err(err) = sync {
                 result.errors.push(format!("{directory}: {err}"));
             }
         }
@@ -2059,7 +2170,7 @@ impl SkillService {
         }
 
         if !restored_skill.apps.is_empty() {
-            if let Err(err) = Self::sync_to_app_dir(&restored_skill.directory, current_app) {
+            if let Err(err) = Self::sync_installed_skill_to_app(db, &restored_skill, current_app) {
                 let _ = db.delete_skill(&restored_skill.id);
                 let _ = fs::remove_dir_all(&restore_path);
                 return Err(err);
@@ -2091,9 +2202,12 @@ impl SkillService {
 
         // 同步文件
         if enabled {
-            Self::sync_to_app_dir(&skill.directory, app)?;
+            Self::sync_installed_skill_to_app(db, &skill, app)?;
         } else {
             Self::remove_from_app(&skill.directory, app)?;
+            if matches!(app, AppType::Pi | AppType::Mcode) {
+                db.delete_skill_deployment_hash(id, app.as_str())?;
+            }
         }
 
         // Pi follows its native exists=active rule; other apps keep their
@@ -2319,6 +2433,12 @@ impl SkillService {
             // 保存到数据库
             db.save_skill(&skill)?;
 
+            for app in [AppType::Pi, AppType::Mcode] {
+                if skill.apps.is_enabled_for(&app) {
+                    Self::sync_installed_skill_to_app(db, &skill, &app)?;
+                }
+            }
+
             imported.push(skill);
         }
 
@@ -2391,7 +2511,7 @@ impl SkillService {
         let source = Self::get_ssot_dir()?.join(&skill.directory);
         Self::preflight_install_destination(&source, &skill.directory, app)?;
         db.save_skill(skill)?;
-        if let Err(error) = Self::sync_to_app_dir(&skill.directory, app) {
+        if let Err(error) = Self::sync_installed_skill_to_app(db, skill, app) {
             if let Err(rollback_error) = db.delete_skill(&skill.id) {
                 log::error!(
                     "Failed to roll back Skill {} after sync error: {rollback_error}",
@@ -2530,6 +2650,14 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
+        Self::sync_to_app_dir_with_deployment_hash(directory, app, None)
+    }
+
+    fn sync_to_app_dir_with_deployment_hash(
+        directory: &str,
+        app: &AppType,
+        previous_copy_hash: Option<&str>,
+    ) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
@@ -2549,7 +2677,26 @@ impl SkillService {
 
         if matches!(app, AppType::Pi | AppType::Mcode) && (dest.exists() || Self::is_symlink(&dest))
         {
-            Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
+            if dest.is_dir() && !Self::is_symlink(&dest) {
+                let current_hash = Self::compute_pi_deployment_hash(&dest)?;
+                let source_hash = Self::compute_pi_deployment_hash(&source)?;
+                if current_hash != source_hash {
+                    if previous_copy_hash == Some(current_hash.as_str()) {
+                        Self::refresh_pi_skill_destination(
+                            &source,
+                            &dest,
+                            &directory,
+                            &PiSkillDeployment::Copy {
+                                expected_hash: current_hash,
+                            },
+                        )?;
+                        return Ok(());
+                    }
+                    Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
+                }
+            } else {
+                Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
+            }
         }
 
         let sync_method = Self::get_sync_method();
@@ -2749,11 +2896,12 @@ impl SkillService {
 
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
-        let _state_guard = skill_state_read_guard();
+        let _state_guard = skill_state_write_guard();
         Self::sync_to_app_unlocked(db, app)
     }
 
-    /// Caller must hold either the Skills state read or write guard.
+    /// Caller must hold the Skills state write guard because successful copy
+    /// deployments update their persisted ownership fingerprints.
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
             return Ok(());
@@ -2798,7 +2946,7 @@ impl SkillService {
                 // 逐条容错而非 `?` 传播：本函数在切换供应商时被调用，一条脏
                 // directory（存量点开头目录、或同步导入灌进来的行）不得让整个
                 // 应用的 skill 同步全部失效。
-                if let Err(err) = Self::sync_to_app_dir(&skill.directory, app) {
+                if let Err(err) = Self::sync_installed_skill_to_app(db, skill, app) {
                     log::warn!(
                         "同步 skill {} 到 {app:?} 失败，跳过该条: {err}",
                         skill.directory
@@ -5796,6 +5944,188 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn external_edit_sync_refreshes_tracked_pi_and_mcode_copies() {
+        for app in [AppType::Pi, AppType::Mcode] {
+            for sync_method in [SyncMethod::Copy, SyncMethod::Auto] {
+                let temp = tempdir().expect("tempdir");
+                let _home = TestHomeGuard::set(temp.path());
+                let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+                let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+                let _sync_method = SyncMethodGuard::set(sync_method);
+                let db = Arc::new(Database::memory().expect("memory db"));
+                let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+                skill.apps.set_enabled_for(&app, true);
+                let source = SkillService::get_ssot_dir()
+                    .expect("SSOT")
+                    .join(&skill.directory);
+                write_skill(&source, "old");
+                skill.content_hash = Some(SkillService::compute_dir_hash(&source).unwrap());
+                db.save_skill(&skill).expect("save skill");
+
+                // Seed a regular destination so Auto exercises its copy branch.
+                let destination = SkillService::get_distinct_app_skills_dir(
+                    &SkillService::get_ssot_dir().unwrap(),
+                    &app,
+                )
+                .unwrap()
+                .join(&skill.directory);
+                SkillService::copy_dir_recursive(&source, &destination)
+                    .expect("seed destination copy");
+                SkillService::sync_installed_skill_to_app(&db, &skill, &app)
+                    .expect("record initial managed copy");
+                assert!(db
+                    .get_skill_deployment_hash(&skill.id, app.as_str())
+                    .unwrap()
+                    .is_some());
+
+                write_skill(&source, "edited");
+                SkillService::finish_external_edit(&db, &skill.id).expect("finish external edit");
+                let sync =
+                    SkillService::sync_to_enabled_apps(&db, &skill.id).expect("sync enabled apps");
+                assert_eq!(sync.succeeded, vec![app.as_str().to_string()]);
+                assert!(sync.failed.is_empty());
+                assert!(fs::read_to_string(destination.join("SKILL.md"))
+                    .unwrap()
+                    .contains("name: edited"));
+                let updated_deployment_hash =
+                    SkillService::compute_pi_deployment_hash(&destination).unwrap();
+                assert_eq!(
+                    db.get_skill_deployment_hash(&skill.id, app.as_str())
+                        .unwrap()
+                        .as_deref(),
+                    Some(updated_deployment_hash.as_str())
+                );
+
+                fs::write(destination.join(".local-note"), "keep me")
+                    .expect("simulate independent destination edit");
+                write_skill(&source, "later");
+                SkillService::finish_external_edit(&db, &skill.id)
+                    .expect("finish second external edit");
+                let sync = SkillService::sync_to_enabled_apps(&db, &skill.id)
+                    .expect("report per-app sync result");
+                assert!(sync.succeeded.is_empty());
+                assert_eq!(sync.failed.len(), 1);
+                assert_eq!(sync.failed[0].app, app.as_str());
+                assert_eq!(
+                    fs::read_to_string(destination.join(".local-note")).unwrap(),
+                    "keep me"
+                );
+                assert!(fs::read_to_string(destination.join("SKILL.md"))
+                    .unwrap()
+                    .contains("name: edited"));
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn external_edit_sync_rejects_legacy_copy_with_unhashed_changes() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let _sync_method = SyncMethodGuard::set(SyncMethod::Copy);
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.pi = true;
+        let source = SkillService::get_ssot_dir()
+            .expect("SSOT")
+            .join(&skill.directory);
+        write_skill(&source, "old");
+        skill.content_hash = Some(SkillService::compute_dir_hash(&source).unwrap());
+        db.save_skill(&skill).expect("save skill");
+        let destination = SkillService::get_app_skills_dir(&AppType::Pi)
+            .unwrap()
+            .join(&skill.directory);
+        SkillService::copy_dir_recursive(&source, &destination).expect("seed old copy");
+        fs::write(destination.join(".legacy-note"), "keep me")
+            .expect("add content excluded by the legacy hash");
+
+        write_skill(&source, "edited");
+        SkillService::finish_external_edit(&db, &skill.id).expect("finish edit");
+        let sync = SkillService::sync_to_enabled_apps(&db, &skill.id).expect("sync result");
+
+        assert!(sync.succeeded.is_empty());
+        assert_eq!(sync.failed.len(), 1);
+        assert!(fs::read_to_string(destination.join("SKILL.md"))
+            .unwrap()
+            .contains("name: old"));
+        assert_eq!(
+            fs::read_to_string(destination.join(".legacy-note")).unwrap(),
+            "keep me"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn external_edit_sync_adopts_unchanged_legacy_copies() {
+        for app in [AppType::Pi, AppType::Mcode] {
+            let temp = tempdir().expect("tempdir");
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+            let _sync_method = SyncMethodGuard::set(SyncMethod::Copy);
+            let db = Arc::new(Database::memory().expect("memory db"));
+            let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+            skill.apps.set_enabled_for(&app, true);
+            let ssot_dir = SkillService::get_ssot_dir().expect("SSOT");
+            let source = ssot_dir.join(&skill.directory);
+            write_skill(&source, "old");
+            skill.content_hash = Some(SkillService::compute_dir_hash(&source).unwrap());
+            db.save_skill(&skill).expect("save skill");
+            let destination = SkillService::get_distinct_app_skills_dir(&ssot_dir, &app)
+                .unwrap()
+                .join(&skill.directory);
+            SkillService::copy_dir_recursive(&source, &destination).expect("seed legacy copy");
+
+            write_skill(&source, "edited");
+            SkillService::finish_external_edit(&db, &skill.id).expect("finish edit");
+            assert!(db
+                .get_skill_deployment_hash(&skill.id, app.as_str())
+                .unwrap()
+                .is_some());
+            let sync = SkillService::sync_to_enabled_apps(&db, &skill.id).expect("sync result");
+
+            assert_eq!(sync.succeeded, vec![app.as_str().to_string()]);
+            assert!(sync.failed.is_empty());
+            assert!(fs::read_to_string(destination.join("SKILL.md"))
+                .unwrap()
+                .contains("name: edited"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn external_edit_sync_keeps_symlink_deployments_untracked() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let _sync_method = SyncMethodGuard::set(SyncMethod::Symlink);
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.pi = true;
+        let source = SkillService::get_ssot_dir()
+            .expect("SSOT")
+            .join(&skill.directory);
+        write_skill(&source, "old");
+        db.save_skill(&skill).expect("save skill");
+        SkillService::sync_installed_skill_to_app(&db, &skill, &AppType::Pi)
+            .expect("create symlink deployment");
+
+        write_skill(&source, "edited");
+        let sync = SkillService::sync_to_enabled_apps(&db, &skill.id).expect("sync result");
+
+        assert_eq!(sync.succeeded, vec!["pi"]);
+        assert!(db
+            .get_skill_deployment_hash(&skill.id, "pi")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn importing_a_native_pi_skill_returns_its_derived_active_state() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
@@ -6124,6 +6454,24 @@ mod tests {
             crate::settings::set_skill_storage_location(location)
                 .expect("set test skill storage location");
             Self(previous)
+        }
+    }
+
+    struct SyncMethodGuard(SyncMethod);
+    impl SyncMethodGuard {
+        fn set(method: SyncMethod) -> Self {
+            let mut settings = crate::settings::get_settings();
+            let previous = settings.skill_sync_method;
+            settings.skill_sync_method = method;
+            crate::settings::update_settings(settings).expect("set test skill sync method");
+            Self(previous)
+        }
+    }
+    impl Drop for SyncMethodGuard {
+        fn drop(&mut self) {
+            let mut settings = crate::settings::get_settings();
+            settings.skill_sync_method = self.0;
+            let _ = crate::settings::update_settings(settings);
         }
     }
     impl Drop for StorageLocationGuard {

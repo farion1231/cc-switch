@@ -107,6 +107,17 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_deployments (
+                skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+                app_type TEXT NOT NULL,
+                deployment_hash TEXT NOT NULL,
+                PRIMARY KEY (skill_id, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 6. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
@@ -564,6 +575,10 @@ impl Database {
                         }
                         Self::set_user_version(conn, 19)?;
                     }
+                    19 => {
+                        Self::create_skill_deployments_table(conn)?;
+                        Self::set_user_version(conn, 20)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -587,6 +602,20 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    fn create_skill_deployments_table(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_deployments (
+                skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+                app_type TEXT NOT NULL,
+                deployment_hash TEXT NOT NULL,
+                PRIMARY KEY (skill_id, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -3921,6 +3950,34 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_creates_skill_deployment_ledger() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("PRAGMA foreign_keys = ON", [])?;
+        conn.execute_batch(
+            "CREATE TABLE skills (id TEXT PRIMARY KEY);
+             INSERT INTO skills (id) VALUES ('owner/repo:skill');",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, 20);
+        assert!(Database::table_exists(&conn, "skill_deployments")?);
+        conn.execute(
+            "INSERT INTO skill_deployments (skill_id, app_type, deployment_hash)
+             VALUES ('owner/repo:skill', 'pi', 'fingerprint')",
+            [],
+        )?;
+        conn.execute("DELETE FROM skills WHERE id = 'owner/repo:skill'", [])?;
+        let remaining: i64 =
+            conn.query_row("SELECT COUNT(*) FROM skill_deployments", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(remaining, 0);
         Ok(())
     }
 }
