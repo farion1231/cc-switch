@@ -748,7 +748,7 @@ export function ClaudeFormFields({
                 ? t("providerForm.apiHintOAI")
                 : apiFormat === "gemini_native"
                   ? t("providerForm.apiHintGeminiNative")
-                  : apiFormat === "commandcode" || apiFormat === "commandcode_go"
+                  : apiFormat === "commandcode"
                     ? t("providerForm.apiHintCommandCode", {
                         defaultValue:
                           "Command Code 使用原生适配，需开启路由接管。",
