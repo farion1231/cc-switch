@@ -565,7 +565,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   </label>
                 </div>
 
-
               </div>
             </div>
 
