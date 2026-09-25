@@ -454,6 +454,14 @@ const GROK_INSTALL_UNIX: &str =
 /// 可改），系统 Node 不达标时自带隔离 Node；重跑即升级（已是最新则跳过），全程无交互提示。
 const MCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://filecdn.minimax.chat/public/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+/// Codex 官方独立安装器（POSIX sh 脚本）。独立安装版的 `codex update` 内部跑的正是
+/// `curl ... | sh` 且没开 pipefail——实测断网时 curl 失败、sh 读到空脚本 exit 0，
+/// `codex update` 仍打印 "Update ran successfully" 并 exit 0。所以不走 `codex update`，
+/// 由这里下载到临时文件再执行，curl 失败会如实变成整条命令失败。
+/// 只用于锚定升级（Windows 用 `CODEX_INSTALL_WINDOWS_SCRIPT`；WSL 不锚定），故按平台 gate。
+#[cfg(not(target_os = "windows"))]
+const CODEX_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://chatgpt.com/codex/install.sh -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
 
 /// Hermes 官方安装器会自带/选择合适的 Python 运行时。不要再用
 /// `python3 -m pip ... || python -m pip ...`:Hermes PyPI 包要求 Python >=3.11,
@@ -472,6 +480,8 @@ const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | ie
 #[cfg(target_os = "windows")]
 const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://filecdn.minimax.chat/public/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
 fn powershell_encoded_command(script: &str) -> String {
@@ -525,6 +535,89 @@ fn mcode_installer_update_command(install_root: &str) -> String {
         "$env:MCODE_INSTALL_DIR = '{}'; {MCODE_INSTALL_WINDOWS_SCRIPT}",
         install_root.replace('\'', "''")
     );
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(&script)
+    )
+}
+
+/// Codex 官方独立安装器（`install.sh` / `install.ps1`）装出的一处安装。
+///
+/// 布局（2026-09 实测 install.sh、读 install.ps1）：发布包在
+/// `<CODEX_HOME>/packages/standalone/releases/<ver>-<target>/`，`current` 指向当前版本；
+/// PATH 上的入口放在 `CODEX_INSTALL_DIR`（POSIX 默认 `~/.local/bin` 下的软链，Windows 默认
+/// `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` 这个 junction），真身都解析到发布包里。
+/// 它既不归 npm 管，也不在 `prefers_official_update` 里，此前锚定落空、退回裸
+/// `npm i -g` 另装一份 npm 版（#7650）。
+#[derive(Debug, PartialEq, Eq)]
+struct CodexStandaloneInstall {
+    /// 入口所在目录，重跑 installer 时作为 `CODEX_INSTALL_DIR` 写回同一处。
+    install_dir: String,
+    /// 从真身路径截出的 `CODEX_HOME`；GUI 进程拿不到用户 shell 里设的 `CODEX_HOME`，
+    /// 不显式传会装进默认的 `~/.codex`，入口指向的那份原地不动。
+    codex_home: Option<String>,
+}
+
+/// 纯字符串判定、不碰 fs，POSIX / Windows 路径都能在任一平台单测。
+fn codex_standalone_install(bin_path: &str, real_target: &str) -> Option<CodexStandaloneInstall> {
+    let install_dir = parent_dir(bin_path);
+    if install_dir.is_empty() {
+        return None;
+    }
+    let normalized_real = real_target.replace('\\', "/").to_ascii_lowercase();
+    if let Some(idx) = normalized_real.find("/packages/standalone/") {
+        // `replace` 与 `to_ascii_lowercase` 都不改字节长度，下标可直接用于原串。
+        // Windows 的 real 是 canonicalize 出的 `\\?\` verbatim 路径，交给 installer 前还原。
+        let home = &real_target[..idx];
+        let home = match home.strip_prefix(r"\\?\UNC\") {
+            Some(unc) => format!(r"\\{unc}"),
+            None => home.strip_prefix(r"\\?\").unwrap_or(home).to_string(),
+        };
+        if !home.is_empty() {
+            return Some(CodexStandaloneInstall {
+                install_dir,
+                codex_home: Some(home),
+            });
+        }
+    }
+    // canonicalize 失败时 real 就是入口本身；Windows 默认入口目录仍能认出来，
+    // 只是拿不到 CODEX_HOME，交给 installer 用默认值。
+    let normalized_bin = bin_path.replace('\\', "/").to_ascii_lowercase();
+    normalized_bin
+        .contains("/programs/openai/codex/bin/")
+        .then_some(CodexStandaloneInstall {
+            install_dir,
+            codex_home: None,
+        })
+}
+
+/// 重跑官方 installer 升级独立安装那一处。显式传 `CODEX_INSTALL_DIR` / `CODEX_HOME`
+/// 写回探测到的位置（实测自定义目录时会原地升级、不在默认目录多装一份）；
+/// `CODEX_NON_INTERACTIVE=1` 与 `codex update` 自己重跑 installer 时的做法一致。
+#[cfg(not(target_os = "windows"))]
+fn codex_installer_update_command(install: &CodexStandaloneInstall) -> String {
+    let mut env = format!(
+        "CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR={}",
+        shell_single_quote(&install.install_dir)
+    );
+    if let Some(home) = &install.codex_home {
+        env.push_str(&format!(" CODEX_HOME={}", shell_single_quote(home)));
+    }
+    format!("{env} {CODEX_INSTALL_UNIX}")
+}
+
+#[cfg(target_os = "windows")]
+fn codex_installer_update_command(install: &CodexStandaloneInstall) -> String {
+    // PowerShell 单引号字面量里 `'` 写作 `''`；整段经 EncodedCommand 传入，不经 cmd 解析。
+    let quote = |value: &str| value.replace('\'', "''");
+    let mut script = format!(
+        "$env:CODEX_NON_INTERACTIVE = '1'; $env:CODEX_INSTALL_DIR = '{}'; ",
+        quote(&install.install_dir)
+    );
+    if let Some(home) = &install.codex_home {
+        script.push_str(&format!("$env:CODEX_HOME = '{}'; ", quote(home)));
+    }
+    script.push_str(CODEX_INSTALL_WINDOWS_SCRIPT);
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(&script)
@@ -726,8 +819,12 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                installs_anchored_command(tool, &installs)
-                    .unwrap_or_else(|| static_fallback_command(tool))
+                match resolve_update_command(tool, &installs) {
+                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
+                    UpdateCommand::Unmanaged => {
+                        return Err(unmanaged_update_error(tool, &installs));
+                    }
+                }
             }
             ToolLifecycleAction::Install => {
                 static_fallback_command_for(tool, ToolLifecycleAction::Install)
@@ -753,8 +850,12 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                installs_anchored_command(tool, &installs)
-                    .unwrap_or_else(|| static_fallback_command(tool))
+                match resolve_update_command(tool, &installs) {
+                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
+                    UpdateCommand::Unmanaged => {
+                        return Err(unmanaged_update_error(tool, &installs));
+                    }
+                }
             }
             ToolLifecycleAction::Install => install_command_for(tool),
         };
@@ -3105,7 +3206,9 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
     // brew formula / cask（real 在 Cellar 或 Caskroom）→ 不归 npm 管，交回 anchored 走 brew upgrade。
-    if is_brew_managed_path(real) {
+    // 官方独立安装同理：`CODEX_INSTALL_DIR` 可以指到 Homebrew / nvm 的 bin 目录，入口来源
+    // 会被判成 homebrew / nvm，但真身在 standalone 发布包里，交回 anchored 重跑 installer。
+    if is_brew_managed_path(real) || codex_standalone_install(bin_path, real).is_some() {
         return None;
     }
     // 只认会落到 sibling npm 的 node 管理器来源；volta/bun/system/未知交回 anchored。
@@ -3197,6 +3300,8 @@ fn package_manager_anchored_command_from_paths(
 ///    且在 PATH 里比 nvm/homebrew 更靠前,用 npm 升级会装到别处且被原生那份遮蔽。
 ///    MiniMax Code 的脚本安装同理不归全局 npm 管,但 `mcode update` 非 TTY 下不安装
 ///    (见 `official_update_args` 上方注释),改为带 `MCODE_INSTALL_DIR` 重跑官方 installer。
+///    Codex 独立安装器同理:`codex update` 断网时假成功(见 `CODEX_INSTALL_UNIX`),
+///    改为带 `CODEX_INSTALL_DIR` / `CODEX_HOME` 重跑官方 installer。
 /// ③ Homebrew formula / cask（真身在 `Cellar/<formula>/` 或 `Caskroom/<token>/`）
 ///    → `<bin_path 同目录>/brew upgrade [--cask] <name>`；由 Homebrew 拥有,避免
 ///    self-update 或 sibling npm 改动包管理器管理的安装。
@@ -3225,6 +3330,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     if tool == "mcode" {
         if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Posix) {
             return Some(mcode_installer_update_command(&root));
+        }
+    }
+    if tool == "codex" {
+        if let Some(install) = codex_standalone_install(bin_path, real_target) {
+            return Some(codex_installer_update_command(&install));
         }
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
@@ -3294,6 +3404,7 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 /// 判定顺序(命中即返回):
 /// ① hermes / Grok native → `<bin_path> update`;CLI 自己处理安装环境。
 ///    MiniMax Code 脚本安装 → 带 `MCODE_INSTALL_DIR` 重跑官方 PowerShell installer。
+///    Codex 独立安装 → 带 `CODEX_INSTALL_DIR` / `CODEX_HOME` 重跑官方 PowerShell installer。
 /// ② 支持官方自升级且 Windows 可安全静默执行的工具 → `<bin_path> update/upgrade || call <包管理器 fallback>`。
 /// ③ 其余 npm 工具 → sibling `npm.cmd`/`.exe` i -g <pkg>@latest。
 ///
@@ -3313,6 +3424,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     if tool == "mcode" {
         if let Some(root) = mcode_script_install_root(bin_path, real_target, McodeLayout::Windows) {
             return Some(mcode_installer_update_command(&root));
+        }
+    }
+    if tool == "codex" {
+        if let Some(install) = codex_standalone_install(bin_path, real_target) {
+            return Some(codex_installer_update_command(&install));
         }
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
@@ -3865,6 +3981,77 @@ fn static_fallback_command(tool: &str) -> String {
     static_fallback_command_for(tool, ToolLifecycleAction::Update)
 }
 
+/// 升级命令的解析结果。plan（前端确认 / 展示）与 execute（真正执行）共用
+/// `resolve_update_command`，保证两边判定一致。
+#[derive(Debug, PartialEq, Eq)]
+enum UpdateCommand {
+    /// 锚定到命令行实际命中的那处。
+    Anchored(String),
+    /// 定位不到默认那处，或那处认不出渠道但可能归 npm 管（asdf/nodenv shim 等脚本）
+    /// → 静态命令，保持旧行为。
+    Static(String),
+    /// 默认那处是原生可执行文件且不在 `node_modules` 里：不归 npm 管，也认不出是哪个
+    /// 安装器装的（winget、Scoop、Nix、手动下载的二进制……）。退回裸 `npm i -g` 只会
+    /// 另装一份 npm 版——要么被原生那份遮蔽、版本号不动，要么反过来顶替它（#7650），
+    /// 所以不执行，由前端提示用户用原来的安装方式升级。
+    Unmanaged,
+}
+
+fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
+    if let Some(command) = installs_anchored_command(tool, installs) {
+        return UpdateCommand::Anchored(command);
+    }
+    if default_install(installs).is_some_and(is_unmanaged_native_install) {
+        return UpdateCommand::Unmanaged;
+    }
+    UpdateCommand::Static(static_fallback_command(tool))
+}
+
+/// 只认「原生可执行文件 + 真身不在 `node_modules` 里」。npm 全局包的真身都在
+/// `node_modules/<pkg>/` 下（多为 JS 入口，个别包把原生二进制放在包内）；asdf / nodenv
+/// 的 shim、Windows npm 的 `.cmd` 是文本脚本，都不算——它们背后可能正是 npm 全局包，
+/// 拒绝会误伤，保持旧的静态命令。
+fn is_unmanaged_native_install(inst: &ToolInstallation) -> bool {
+    let real = inst
+        .real
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    !real.contains("/node_modules/") && is_native_executable(&inst.real)
+}
+
+/// 按文件头识别原生可执行文件：ELF、Mach-O（单架构 / universal）、Windows PE。
+fn is_native_executable(path: &Path) -> bool {
+    use std::io::Read;
+
+    let mut magic = [0u8; 4];
+    let read = std::fs::File::open(path).and_then(|mut file| file.read_exact(&mut magic));
+    if read.is_err() {
+        return false;
+    }
+    matches!(
+        magic,
+        [0x7f, b'E', b'L', b'F']
+            | [0xcf, 0xfa, 0xed, 0xfe]
+            | [0xce, 0xfa, 0xed, 0xfe]
+            | [0xfe, 0xed, 0xfa, 0xcf]
+            | [0xfe, 0xed, 0xfa, 0xce]
+            | [0xca, 0xfe, 0xba, 0xbe]
+    ) || magic.starts_with(b"MZ")
+}
+
+/// 执行路径的兜底报错。正常流程里前端已按 probe 的 `unmanaged` 跳过该工具并给出
+/// 本地化提示；只有 probe 失败、前端直接执行时才会走到这里。
+fn unmanaged_update_error(tool: &str, installs: &[ToolInstallation]) -> String {
+    let path = default_install(installs)
+        .map(|inst| inst.path.as_str())
+        .unwrap_or_default();
+    format!(
+        "{} at {path} was not installed by npm or a recognized installer; update it the way it was installed",
+        tool_display_name(tool)
+    )
+}
+
 /// 新装(install)的命令:对有官方 installer 的工具走「上游推荐 || npm 兜底」短路链,
 /// 其余工具透传到 install 静态命令。update fallback 会在平台可安全静默执行时
 /// 优先跑官方 CLI 自升级,但 install 端不能先跑 `tool update`,
@@ -3925,22 +4112,20 @@ fn install_command_for(tool: &str) -> String {
 ///   ——后者读 `tool_action_shell_command`,Windows target 给 hermes 返回 PowerShell
 ///   installer,跨 wsl.exe 后不适用;`build_tool_action_line` 的 WSL 分支也用同一 wrapper,
 ///   保证 plan 展示给前端的命令与实际执行落 .bat 的命令一致。
-/// - 其他平台与 Windows 原生工具走 `installs_anchored_command`:命中 → 锚定;
+/// - 其他平台与 Windows 原生工具走 `resolve_update_command`:命中 → 锚定;
 ///   None(无默认 / sibling 不存在等)→ 静态兜底、`anchored=false`,
-///   前端据此给"默认入口无法确定"诚实文案。
-fn plan_command_for(tool: &str, installs: &[ToolInstallation]) -> (String, bool, bool) {
+///   前端据此给"默认入口无法确定"诚实文案;默认那处是认不出渠道的原生可执行文件
+///   → `Unmanaged`,前端跳过并提示用原安装方式升级。
+fn plan_command_for(tool: &str, installs: &[ToolInstallation]) -> (UpdateCommand, bool) {
     #[cfg(target_os = "windows")]
     {
         if wsl_distro_for_tool(tool).is_some() {
             let cmd = wsl_tool_action_shell_command(tool, ToolLifecycleAction::Update)
                 .unwrap_or_default();
-            return (cmd, false, false);
+            return (UpdateCommand::Static(cmd), false);
         }
     }
-    match installs_anchored_command(tool, installs) {
-        Some(command) => (command, installs.len() >= 2, true),
-        None => (static_fallback_command(tool), installs.len() >= 2, false),
-    }
+    (resolve_update_command(tool, installs), installs.len() >= 2)
 }
 
 /// 多处安装是否构成"真冲突"：≥2 处，且(版本分歧 或 有的能跑有的跑不起来)。
@@ -3973,6 +4158,9 @@ pub struct ToolInstallationReport {
     /// 是否成功锚定到某处具体安装。false = 退到裸 fallback 命令（无法确定命令行实际
     /// 命中哪处，或该处无同级 npm）；前端据此给出"默认入口无法确定"的诚实文案。
     anchored: bool,
+    /// 默认那处是认不出安装渠道的原生可执行文件（见 `UpdateCommand::Unmanaged`）：
+    /// 不会执行升级，此时 `command` 为空；前端跳过该工具并提示用原安装方式升级。
+    unmanaged: bool,
 }
 
 /// 探测各工具的安装分布：枚举所有安装、标记冲突、生成锚定升级命令。只读、无副作用。
@@ -3991,7 +4179,12 @@ pub async fn probe_tool_installations(
             .into_iter()
             .map(|tool| {
                 let installs = enumerate_tool_installations(tool);
-                let (command, needs_confirmation, anchored) = plan_command_for(tool, &installs);
+                let (update, needs_confirmation) = plan_command_for(tool, &installs);
+                let (command, anchored, unmanaged) = match update {
+                    UpdateCommand::Anchored(command) => (command, true, false),
+                    UpdateCommand::Static(command) => (command, false, false),
+                    UpdateCommand::Unmanaged => (String::new(), false, true),
+                };
                 let is_conflict = is_conflicting(&installs);
                 ToolInstallationReport {
                     tool: tool.to_string(),
@@ -4000,6 +4193,7 @@ pub async fn probe_tool_installations(
                     needs_confirmation,
                     command,
                     anchored,
+                    unmanaged,
                 }
             })
             .collect()
@@ -5787,6 +5981,191 @@ mod tests {
         }
     }
 
+    /// Codex 官方独立安装器的识别是纯字符串判定,POSIX / Windows 布局都在这里固化。
+    mod codex_standalone_detection {
+        use super::super::*;
+
+        #[test]
+        fn posix_default_layout() {
+            assert_eq!(
+                codex_standalone_install(
+                    "/Users/me/.local/bin/codex",
+                    "/Users/me/.codex/packages/standalone/releases/0.157.0-aarch64-apple-darwin/bin/codex",
+                ),
+                Some(CodexStandaloneInstall {
+                    install_dir: "/Users/me/.local/bin".to_string(),
+                    codex_home: Some("/Users/me/.codex".to_string()),
+                })
+            );
+        }
+
+        #[test]
+        fn windows_verbatim_real_is_restored() {
+            // canonicalize 出的 `\\?\` 前缀要剥掉再交给 installer;大小写保持原样。
+            assert_eq!(
+                codex_standalone_install(
+                    r"C:\Users\Me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+                    r"\\?\C:\Users\Me\.Codex\Packages\Standalone\releases\0.157.0-x86_64-pc-windows-msvc\bin\codex.exe",
+                ),
+                Some(CodexStandaloneInstall {
+                    install_dir: r"C:\Users\Me\AppData\Local\Programs\OpenAI\Codex\bin".to_string(),
+                    codex_home: Some(r"C:\Users\Me\.Codex".to_string()),
+                })
+            );
+            assert_eq!(
+                codex_standalone_install(
+                    r"\\server\share\bin\codex.exe",
+                    r"\\?\UNC\server\share\cx\packages\standalone\current\bin\codex.exe",
+                )
+                .and_then(|install| install.codex_home),
+                Some(r"\\server\share\cx".to_string())
+            );
+        }
+
+        #[test]
+        fn windows_default_entry_without_resolved_real() {
+            // canonicalize 失败时 real 就是入口本身:仍按默认入口目录认出,只是不传 CODEX_HOME。
+            let bin = r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe";
+            assert_eq!(
+                codex_standalone_install(bin, bin),
+                Some(CodexStandaloneInstall {
+                    install_dir: r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin".to_string(),
+                    codex_home: None,
+                })
+            );
+        }
+
+        #[test]
+        fn other_install_channels_are_not_standalone() {
+            for (bin, real) in [
+                (
+                    "/Users/me/.nvm/versions/node/v22.19.0/bin/codex",
+                    "/Users/me/.nvm/versions/node/v22.19.0/lib/node_modules/@openai/codex/bin/codex.js",
+                ),
+                (
+                    "/opt/homebrew/bin/codex",
+                    "/opt/homebrew/Caskroom/codex/0.157.0/bin/codex",
+                ),
+                // app-server 守护进程的发布包不是 PATH 上的 CLI。
+                (
+                    "/Users/me/.local/bin/codex",
+                    "/Users/me/.codex/packages/app-server-daemon/current/bin/codex",
+                ),
+                (r"C:\Users\me\AppData\Roaming\npm\codex.cmd", r"C:\Users\me\AppData\Roaming\npm\codex.cmd"),
+            ] {
+                assert_eq!(codex_standalone_install(bin, real), None, "{bin}");
+            }
+        }
+    }
+
+    /// 锚定落空后的兜底:认不出渠道的原生可执行文件不再退回裸 `npm i -g`(#7650),
+    /// 脚本 shim / node_modules 里的入口 / 定位不到默认那处仍保持旧的静态命令。
+    mod unmanaged_native_update {
+        use super::super::*;
+
+        const MACH_O_64: [u8; 4] = [0xcf, 0xfa, 0xed, 0xfe];
+
+        /// 在 tempdir 的 `rel` 位置写入 `bytes`,返回指向它的安装记录。TempDir 须保活。
+        fn installed(
+            dir: &tempfile::TempDir,
+            rel: &str,
+            bytes: &[u8],
+            is_default: bool,
+        ) -> ToolInstallation {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bytes).unwrap();
+            ToolInstallation {
+                path: path.to_string_lossy().to_string(),
+                version: Some("1.0.0".to_string()),
+                runnable: true,
+                error: None,
+                source: infer_install_source(&path).to_string(),
+                is_path_default: is_default,
+                real: path,
+            }
+        }
+
+        #[test]
+        fn native_binary_outside_node_modules_is_unmanaged() {
+            let dir = tempfile::tempdir().unwrap();
+            let gemini = installed(&dir, "nix-profile/bin/gemini", &MACH_O_64, true);
+            assert_eq!(
+                resolve_update_command("gemini", &[gemini]),
+                UpdateCommand::Unmanaged
+            );
+            let pi = installed(&dir, "bin/pi", b"\x7fELF\x02\x01\x01", true);
+            assert_eq!(
+                resolve_update_command("pi", &[pi]),
+                UpdateCommand::Unmanaged
+            );
+        }
+
+        #[test]
+        fn script_shim_keeps_static_npm_command() {
+            // asdf / nodenv 的 shim 是脚本,背后可能正是 npm 全局包,不能拒绝。
+            let dir = tempfile::tempdir().unwrap();
+            let shim = installed(
+                &dir,
+                ".asdf/shims/gemini",
+                b"#!/usr/bin/env bash\nexec asdf exec gemini \"$@\"\n",
+                true,
+            );
+            assert_eq!(
+                resolve_update_command("gemini", &[shim]),
+                UpdateCommand::Static(static_fallback_command("gemini"))
+            );
+        }
+
+        #[test]
+        fn native_binary_inside_node_modules_keeps_static_npm_command() {
+            // 有的 npm 包把原生二进制放在包内,真身仍在 node_modules 下,归 npm 管。
+            let dir = tempfile::tempdir().unwrap();
+            let bundled = installed(
+                &dir,
+                "prefix/lib/node_modules/@google/gemini-cli/bin/gemini",
+                &MACH_O_64,
+                true,
+            );
+            assert_eq!(
+                resolve_update_command("gemini", &[bundled]),
+                UpdateCommand::Static(static_fallback_command("gemini"))
+            );
+        }
+
+        #[test]
+        fn unknown_default_keeps_static_command() {
+            // 多处安装又定位不到默认那处:不知道命令行用的是哪份,维持旧行为(前端会弹确认)。
+            let dir = tempfile::tempdir().unwrap();
+            let a = installed(&dir, "a/bin/gemini", &MACH_O_64, false);
+            let b = installed(&dir, "b/bin/gemini", &MACH_O_64, false);
+            assert_eq!(
+                resolve_update_command("gemini", &[a, b]),
+                UpdateCommand::Static(static_fallback_command("gemini"))
+            );
+        }
+
+        #[test]
+        fn native_executable_magic() {
+            let dir = tempfile::tempdir().unwrap();
+            let cases: [(&str, &[u8], bool); 7] = [
+                ("elf", b"\x7fELF\x02", true),
+                ("macho", &MACH_O_64, true),
+                ("fat", &[0xca, 0xfe, 0xba, 0xbe], true),
+                ("pe.exe", b"MZ\x90\x00", true),
+                ("script", b"#!/bin/sh\n", false),
+                ("cmd-shim.cmd", b"@ECHO off\r\n", false),
+                ("short", b"MZ", false),
+            ];
+            for (name, bytes, expected) in cases {
+                let path = dir.path().join(name);
+                std::fs::write(&path, bytes).unwrap();
+                assert_eq!(is_native_executable(&path), expected, "{name}");
+            }
+            assert!(!is_native_executable(&dir.path().join("missing")));
+        }
+    }
+
     /// Windows-only 锚定升级回归(等价类压缩到 3 种 idiom:volta/pnpm/npm)。整块通过
     /// `cfg(target_os = "windows")` gate,在 macOS/Linux 上不参与 cargo test;Windows
     /// CI 跑全套验证。tempdir 模拟 sibling 入口存在/不存在,锁定"扩展名顺序优先级 +
@@ -5957,6 +6336,24 @@ mod tests {
                     .map(|(_, encoded)| encoded),
                 Some(expected.as_str())
             );
+        }
+
+        #[test]
+        fn codex_standalone_windows_reruns_installer_in_place() {
+            // #7650:独立安装的 codex.exe 旁边没有 npm.cmd,此前退回 `call npm i -g`
+            // 另装一份 npm 版。
+            let bin = r"C:\Users\o'brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe";
+            let real = r"\\?\C:\Users\o'brien\.codex\packages\standalone\releases\0.157.0-x86_64-pc-windows-msvc\bin\codex.exe";
+            let cmd = anchored_command_from_paths("codex", bin, real).unwrap();
+            let expected = powershell_encoded_command(
+                "$env:CODEX_NON_INTERACTIVE = '1'; $env:CODEX_INSTALL_DIR = 'C:\\Users\\o''brien\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin'; $env:CODEX_HOME = 'C:\\Users\\o''brien\\.codex'; irm https://chatgpt.com/codex/install.ps1 | iex",
+            );
+            assert_eq!(
+                cmd.split_once("-EncodedCommand ")
+                    .map(|(_, encoded)| encoded),
+                Some(expected.as_str())
+            );
+            assert!(!cmd.contains("npm"), "npm must not be used: {cmd}");
         }
 
         #[test]
@@ -7115,6 +7512,107 @@ mod tests {
                 Some("/Users/me/.bun/bin/bun add -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("npm"));
+        }
+
+        #[test]
+        fn codex_standalone_reruns_official_installer_in_place() {
+            // #7650:官方独立安装器装的 codex 此前被判 system 来源、锚定落空,退回裸
+            // `npm i -g` 另装一份 npm 版。现在带 CODEX_INSTALL_DIR / CODEX_HOME 重跑官方
+            // installer;不用 `codex update`——它断网时 exit 0 假成功。
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/Users/me/.local/bin/codex",
+                "/Users/me/.codex/packages/standalone/releases/0.157.0-aarch64-apple-darwin/bin/codex",
+            )
+            .unwrap();
+            assert_eq!(
+                cmd,
+                format!(
+                    "CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR='/Users/me/.local/bin' CODEX_HOME='/Users/me/.codex' {CODEX_INSTALL_UNIX}"
+                )
+            );
+            assert!(!cmd.contains("npm"), "npm must not be used: {cmd}");
+            assert!(
+                !cmd.contains("codex update"),
+                "codex update fakes success: {cmd}"
+            );
+        }
+
+        #[test]
+        fn codex_standalone_custom_dirs_are_written_back() {
+            // 自定义 CODEX_INSTALL_DIR / CODEX_HOME 装的一处:不显式传回去,installer 会装进
+            // 默认的 ~/.local/bin 与 ~/.codex,命令行实际在用的那份原地不动。
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/opt/tools/codex bin/codex",
+                "/data/codex-home/packages/standalone/releases/0.157.0-x86_64-unknown-linux-musl/bin/codex",
+            );
+            assert_eq!(
+                cmd,
+                Some(format!(
+                    "CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR='/opt/tools/codex bin' CODEX_HOME='/data/codex-home' {CODEX_INSTALL_UNIX}"
+                ))
+            );
+        }
+
+        #[test]
+        fn codex_broken_standalone_reinstalls_via_installer_not_npm_repair() {
+            // 跑不起来的独立安装版:npm 自愈门控只放行 nvm/fnm/mise/homebrew,这里交回锚定,
+            // 由官方 installer 重装同一处。
+            let broken = ToolInstallation {
+                path: "/Users/me/.local/bin/codex".to_string(),
+                version: None,
+                runnable: false,
+                error: None,
+                source: "system".to_string(),
+                is_path_default: true,
+                real: std::path::PathBuf::from(
+                    "/Users/me/.codex/packages/standalone/releases/0.157.0-aarch64-apple-darwin/bin/codex",
+                ),
+            };
+            let cmd = installs_anchored_command("codex", &[broken]).unwrap();
+            assert!(cmd.ends_with(CODEX_INSTALL_UNIX), "{cmd}");
+            assert!(!cmd.contains("npm"), "{cmd}");
+        }
+
+        #[test]
+        fn codex_broken_standalone_in_node_manager_dir_skips_npm_repair() {
+            // CODEX_INSTALL_DIR 指到 Homebrew / nvm 的 bin 目录时,入口路径会被判成
+            // homebrew / nvm 来源;npm 自愈门控只看入口来源的话会抢先返回 npm 重装,
+            // 把独立安装版换成 npm 版。真身仍在 standalone 发布包里,必须交回 installer。
+            for bin in [
+                "/opt/homebrew/bin/codex",
+                "/Users/me/.nvm/versions/node/v22.19.0/bin/codex",
+            ] {
+                let broken = ToolInstallation {
+                    path: bin.to_string(),
+                    version: None,
+                    runnable: false,
+                    error: None,
+                    source: infer_install_source(Path::new(bin)).to_string(),
+                    is_path_default: true,
+                    real: std::path::PathBuf::from(
+                        "/Users/me/.codex/packages/standalone/releases/0.157.0-aarch64-apple-darwin/bin/codex",
+                    ),
+                };
+                let cmd = installs_anchored_command("codex", &[broken]).unwrap();
+                assert!(cmd.ends_with(CODEX_INSTALL_UNIX), "{bin}: {cmd}");
+                assert!(!cmd.contains("npm"), "{bin}: {cmd}");
+            }
+        }
+
+        #[test]
+        fn claude_homebrew_cask_uses_brew_not_self_update_or_npm() {
+            // cask 归 brew 管:与 formula 一样不先跑 `claude update`,也不挂 npm fallback。
+            let cmd = anchored_command_from_paths(
+                "claude",
+                "/opt/homebrew/bin/claude",
+                "/opt/homebrew/Caskroom/claude-code/2.1.274/claude",
+            )
+            .unwrap();
+            assert_eq!(cmd, "/opt/homebrew/bin/brew upgrade --cask claude-code");
+            assert!(!cmd.contains("claude update"));
+            assert!(!cmd.contains("npm"));
         }
 
         #[test]

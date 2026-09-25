@@ -821,12 +821,40 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           await executeRun(toolNames, action);
           return;
         }
-        const needConfirm = reports.filter((r) => r.needs_confirmation);
+        // 认不出安装渠道的原生安装（winget / Scoop / 手动下载的二进制等）不执行升级：
+        // 退回 npm 只会另装一份 npm 版（#7650）。跳过并提示用原安装方式升级，其余照常。
+        const unmanaged = reports.filter((r) => r.unmanaged);
+        if (unmanaged.length > 0) {
+          toast.warning(t("settings.toolUpgradeUnmanagedTitle"), {
+            description: unmanaged
+              .map((r) =>
+                t("settings.toolUpgradeUnmanagedDetail", {
+                  tool: toolDisplayName(r.tool),
+                  path:
+                    (r.installs.find((i) => i.is_path_default) ?? r.installs[0])
+                      ?.path ?? "",
+                }),
+              )
+              .join("\n"),
+            closeButton: true,
+          });
+        }
+        const runnableTools = toolNames.filter(
+          (name) => !unmanaged.some((r) => r.tool === name),
+        );
+        if (runnableTools.length === 0) return;
+        const needConfirm = reports.filter(
+          (r) => r.needs_confirmation && !r.unmanaged,
+        );
         if (needConfirm.length === 0) {
-          await executeRun(toolNames, action);
+          await executeRun(runnableTools, action);
           return;
         }
-        setPendingUpgrade({ toolNames, plans: needConfirm, fromBatchEntry });
+        setPendingUpgrade({
+          toolNames: runnableTools,
+          plans: needConfirm,
+          fromBatchEntry,
+        });
       } finally {
         if (fromBatchEntry) {
           setBatchAction(null);
@@ -838,7 +866,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         });
       }
     },
-    [executeRun, preflightTools, toolActions],
+    [executeRun, preflightTools, toolActions, t],
   );
 
   const handleConfirmUpgrade = useCallback(() => {
