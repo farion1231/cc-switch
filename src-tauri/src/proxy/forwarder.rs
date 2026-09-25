@@ -1997,7 +1997,7 @@ impl RequestForwarder {
 
         let is_commandcode = matches!(
             resolved_claude_api_format.as_deref(),
-            Some("commandcode") | Some("commandcode_go")
+            Some("commandcode")
         );
 
         // 预计算 anthropic-beta 值（仅 Claude）
@@ -3310,7 +3310,7 @@ fn rewrite_claude_transform_endpoint(
         return (rewritten, rewritten_query);
     }
 
-    if matches!(api_format, "commandcode" | "commandcode_go") {
+    if api_format == "commandcode" {
         let target_path = "/alpha/generate";
         let rewritten = match passthrough_query.as_deref() {
             Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
