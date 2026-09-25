@@ -350,6 +350,8 @@ fn parse_session(path: &Path) -> Result<SessionMeta, String> {
         created_at: header.timestamp,
         last_active_at: summary.last_active_at.or(header.timestamp),
         source_path: Some(source_path.clone()),
+        profile_name: None,
+        profile_config_dir: None,
         resume_command: Some(format!(
             "pi --session {}",
             crate::session_manager::terminal::shell_escape(&source_path)

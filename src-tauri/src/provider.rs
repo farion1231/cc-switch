@@ -433,6 +433,33 @@ pub struct LocalProxyRequestOverrides {
     pub body: Option<serde_json::Value>,
 }
 
+/// Claude 模型路由配置（VS Code 网关的确定性 provider/model 路由）。
+///
+/// 持久化于 `ProviderMeta.claude_router`（JSON key `claudeRouter`）；
+/// 缺省（None）即未启用，存量供应商行无需迁移。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ClaudeRouterConfig {
+    /// 是否对该供应商启用 Claude 模型路由
+    #[serde(default)]
+    pub enabled: bool,
+    /// 暴露给网关模型选择器的模型列表（有序，选择器按此顺序展示）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<ClaudeRouterModel>,
+}
+
+/// Claude 网关路由模型：公开别名 → 真实上游模型。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClaudeRouterModel {
+    /// 路由别名（公开模型 ID 的最后一段，供应商内唯一）
+    pub alias: String,
+    /// 实际发往上游的模型名（请求时改写 body.model 为该值）
+    #[serde(rename = "upstreamModel")]
+    pub upstream_model: String,
+    /// 选择器显示名（与供应商名拼成 "<Provider> / <displayName>"）
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
 impl LocalProxyRequestOverrides {
     pub fn is_empty(&self) -> bool {
         self.headers.is_empty() && self.body.is_none()
@@ -562,6 +589,9 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// Claude 模型路由（VS Code 网关）配置；None 表示未启用
+    #[serde(rename = "claudeRouter", skip_serializing_if = "Option::is_none")]
+    pub claude_router: Option<ClaudeRouterConfig>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
