@@ -504,7 +504,6 @@ requires_openai_auth = true`;
                 onCheckedChange={setCodexEnabled}
               />
             </div>
-
           </div>
         </div>
 
