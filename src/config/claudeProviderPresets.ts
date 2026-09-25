@@ -55,7 +55,8 @@ export interface ProviderPreset {
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
-    | "gemini_native";
+    | "gemini_native"
+    | "commandcode_go";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
@@ -1022,6 +1023,26 @@ export const providerPresets: ProviderPreset[] = [
     modelsUrl: "https://api.deepseek.com/models",
     icon: "deepseek",
     iconColor: "#1E88E5",
+  },
+  {
+    name: "Command Code Go",
+    websiteUrl: "https://commandcode.ai",
+    apiKeyUrl: "https://commandcode.ai",
+    apiKeyField: "ANTHROPIC_AUTH_TOKEN",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.commandcode.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash",
+      },
+    },
+    category: "third_party",
+    apiFormat: "commandcode_go",
+    endpointCandidates: ["https://api.commandcode.ai"],
+    icon: "commandcode",
   },
   {
     name: "OpenCode Go",
