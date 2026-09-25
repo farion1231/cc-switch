@@ -1,4 +1,4 @@
-//! Native Command Code Go-plan bridge.
+//! Native Command Code bridge.
 //!
 //! Claude requests are converted to Command Code's private \`/alpha/generate\`
 //! envelope. The upstream NDJSON stream is normalized to OpenAI Chat SSE so
