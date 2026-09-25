@@ -335,14 +335,16 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
 
 /// Vendors whose OFFICIAL Codex integration is a native `/responses` gateway that
 /// rejects Codex's freeform custom tools (`apply_patch` with `type: "custom"`,
-/// #6944). Same vendor set as `CODEX_WEB_SEARCH_REJECT_HOSTS` in `codex_config`
-/// (kept separate: that list also gates aggregators by model brand). Matched on
+/// #6944). This is intentionally separate from `CODEX_WEB_SEARCH_REJECT_HOSTS`:
+/// web-search compatibility alone must not change a stored Chat provider's
+/// protocol or catalog. Matched on
 /// host labels via `codex_url_host_matches_any`, never by substring.
 const CODEX_NATIVE_RESPONSES_HOSTS: &[&str] = &[
     "bigmodel.cn",
     "z.ai",
     "xiaomimimo.com",
     "minimaxi.com",
+    "minimax.cn",
     "minimax.io",
     "longcat.chat",
 ];
@@ -1622,6 +1624,7 @@ wire_api = "anthropic"
             "https://api.xiaomimimo.com/v1",
             "https://token-plan-cn.xiaomimimo.com/v1",
             "https://api.minimaxi.com/v1",
+            "https://api.minimax.cn/v1",
             "https://api.minimax.io/v1",
             "https://api.longcat.chat/openai/v1",
         ] {
@@ -1632,11 +1635,42 @@ wire_api = "anthropic"
             "https://api.z.ai/api/coding/paas/v4",
             "https://open.bigmodel.cn/api/paas/v4",
             "https://api.minimaxi.com/v1/chat/completions",
+            "https://api.minimax.cn/v1/chat/completions",
+            "https://api.minimax.cn.example.com/v1",
             "https://api.xyz.ai/v1",
             "https://api.deepseek.com",
             "",
         ] {
             assert!(!is_codex_native_responses_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn new_native_presets_respect_explicit_format_without_reclassifying_chat() {
+        use crate::codex_config::CodexCatalogToolProfile;
+
+        for base_url in [
+            "https://api.stepfun.com/v1",
+            "https://api.stepfun.ai/v1",
+            "https://api.stepfun.com/step_plan/v1",
+            "https://qianfan.baidubce.com/v2",
+            "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+            "https://tokenhub.tencentmaas.com/plan/v3",
+        ] {
+            for (api_format, expected) in [
+                ("openai_responses", CodexCatalogToolProfile::NativeResponses),
+                ("openai_chat", CodexCatalogToolProfile::ProxyChat),
+            ] {
+                let provider = create_provider(json!({
+                    "apiFormat": api_format,
+                    "baseURL": base_url,
+                }));
+                assert_eq!(
+                    resolve_codex_catalog_tool_profile(&provider),
+                    expected,
+                    "{api_format} @ {base_url}",
+                );
+            }
         }
     }
 

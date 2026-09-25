@@ -17,6 +17,7 @@ import {
   type ManagedAuthProvider,
 } from "@/lib/api";
 import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
+import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -44,6 +45,17 @@ const hasAuthMaterial = (value: unknown): boolean => {
 };
 
 /**
+ * Whether an auth payload actually carries a credential, ignoring the bare
+ * `auth_mode` marker — the frontend twin of the backend
+ * `codex_auth_has_login_material`.
+ */
+const hasCodexAuthMaterial = (auth: Record<string, unknown> | null): boolean =>
+  auth !== null &&
+  Object.entries(auth).some(
+    ([key, value]) => key !== "auth_mode" && hasAuthMaterial(value),
+  );
+
+/**
  * Rebuild the provider auth only for a current Codex provider's live snapshot.
  *
  * In official-auth-preservation mode, live config.toml owns the active
@@ -56,17 +68,33 @@ const hasAuthMaterial = (value: unknown): boolean => {
 const reconcileCodexLiveAuth = (
   liveSettings: Record<string, unknown>,
   storedSettings: Record<string, unknown> | null,
-  category: string | undefined,
+  isOfficialProvider: boolean,
 ): Record<string, unknown> => {
-  if (category === "official") return liveSettings;
+  if (isOfficialProvider) return liveSettings;
 
   const configText =
     typeof liveSettings.config === "string" ? liveSettings.config : "";
   const bearer = extractCodexExperimentalBearerToken(configText);
-  if (!bearer) return liveSettings;
-
+  const liveAuth = asRecord(liveSettings.auth);
   const storedAuth = asRecord(storedSettings?.auth);
-  const authTemplate = storedAuth ?? asRecord(liveSettings.auth) ?? {};
+
+  if (!bearer) {
+    // Live auth.json is a single shared slot with no provider identity, and a
+    // third-party Codex route never reads it: the switch deletes the file in
+    // default mode and injects the key into config.toml instead — an injection
+    // that is skipped entirely when the provider table declares its own
+    // credential source (`env_key`, `auth`/`aws`, an explicit Authorization
+    // header). A credential-less live auth (missing file, or the bare
+    // `auth_mode` logout marker) is therefore an absent field, not an emptied
+    // one: keep the stored template so saving the form cannot silently erase
+    // the only remaining copy of the provider's key.
+    if (!hasCodexAuthMaterial(liveAuth) && hasCodexAuthMaterial(storedAuth)) {
+      return { ...liveSettings, auth: storedAuth };
+    }
+    return liveSettings;
+  }
+
+  const authTemplate = storedAuth ?? liveAuth ?? {};
   const hasProviderApiKey =
     typeof authTemplate.OPENAI_API_KEY === "string" &&
     authTemplate.OPENAI_API_KEY.trim().length > 0;
@@ -239,6 +267,13 @@ export function EditProviderDialog({
     };
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
+  // Legacy official cards may have no category; their live logout still owns auth.
+  const isCodexOfficialProvider =
+    appId === "codex" &&
+    provider !== null &&
+    (provider.category === "official" ||
+      resolveCodexOfficialIdentity(appId, provider) !== null);
+
   const initialSettingsConfig = useMemo(() => {
     const storedSettings = asRecord(provider?.settingsConfig);
     const base =
@@ -246,7 +281,7 @@ export function EditProviderDialog({
         ? reconcileCodexLiveAuth(
             liveSettings,
             storedSettings,
-            provider?.category,
+            isCodexOfficialProvider,
           )
         : (liveSettings ?? storedSettings ?? {});
 
@@ -269,7 +304,7 @@ export function EditProviderDialog({
     }
 
     return base;
-  }, [liveSettings, provider?.settingsConfig, provider?.category, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
+  }, [liveSettings, provider?.settingsConfig, isCodexOfficialProvider, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {

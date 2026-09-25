@@ -65,7 +65,7 @@ const expectedChatPresets = new Map<
   [
     "BaiLing",
     {
-      baseUrl: "https://api.tbox.cn/api/llm/v1",
+      baseUrl: "https://api.ant-ling.com/v1",
       contextWindows: { "Ling-2.6-1T": 262144 },
     },
   ],
@@ -121,6 +121,32 @@ const expectedChatPresets = new Map<
 ]);
 
 describe("Codex Chat provider presets", () => {
+  it.each([
+    ["StepFun API", "https://api.stepfun.com/v1", "step-3.7-flash"],
+    ["StepFun API en", "https://api.stepfun.ai/v1", "step-3.7-flash"],
+    ["Baidu Qianfan", "https://qianfan.baidubce.com/v2", "deepseek-v4-pro"],
+    [
+      "Astron Coding Plan",
+      "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+      "astron-code-latest",
+    ],
+  ])(
+    "connects %s to its native Responses endpoint",
+    (name, baseUrl, modelId) => {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+
+      expect(preset, `${name} preset`).toBeDefined();
+      expect(preset?.apiFormat).toBe("openai_responses");
+      expect(extractCodexBaseUrl(preset?.config)).toBe(baseUrl);
+      expect(extractCodexWireApi(preset?.config)).toBe("responses");
+      expect(extractCodexModelName(preset?.config)).toBe(modelId);
+      expect(preset?.endpointCandidates).toContain(baseUrl);
+      expect(preset?.modelCatalog?.[0]?.model).toBe(modelId);
+      expect(preset?.codexChatReasoning).toBeUndefined();
+      expect(preset?.promptCacheRouting).toBeUndefined();
+    },
+  );
+
   it("drops prompt cache routing once Kimi Coding is direct-connect", () => {
     // promptCacheRouting 只被 Responses→Chat 转换层消费（forwarder 在转换后
     // 重注入 prompt_cache_key）。原生直连由 Codex 自己发 prompt_cache_key，
@@ -131,6 +157,32 @@ describe("Codex Chat provider presets", () => {
 
     expect(preset?.apiFormat).toBe("openai_responses");
     expect(preset?.promptCacheRouting).toBeUndefined();
+  });
+
+  it("keeps open-weight Qwen models scoped to pay-as-you-go catalogs", () => {
+    for (const name of ["千问AI平台", "QwenCloud"]) {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+      expect(preset, name).toBeDefined();
+      expect(preset?.modelCatalog).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            model: "qwen3.8-2.4t-a95b",
+            inputModalities: ["text"],
+          }),
+          expect.objectContaining({
+            model: "qwen3.8-27b",
+            inputModalities: ["text", "image"],
+          }),
+        ]),
+      );
+    }
+    for (const name of ["千问AI平台 Token Plan", "QwenCloud Token Plan"]) {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+      expect(preset, name).toBeDefined();
+      const models = preset?.modelCatalog?.map((row) => row.model) ?? [];
+      expect(models).not.toContain("qwen3.8-2.4t-a95b");
+      expect(models).not.toContain("qwen3.8-27b");
+    }
   });
 
   it("marks migrated Chat Completions presets for local routing", () => {
@@ -172,25 +224,46 @@ describe("Codex Chat provider presets", () => {
         "Volcengine Doubao",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
       ],
-      ["千问AI平台", { contextWindows: { "qwen3.8-max": 983616 } }],
+      [
+        "千问AI平台",
+        {
+          contextWindows: {
+            "qwen3.8-max": 983616,
+            "qwen3.8-2.4t-a95b": 983616,
+            "qwen3.8-27b": 983616,
+          },
+        },
+      ],
       // 腾讯 TokenHub 官方 Codex 文档确认 hy3 原生 Responses（2026-07-14）
       [
         "Tencent Hunyuan",
-        { contextWindows: { hy3: 256000, "hy3-preview": 256000 } },
+        {
+          contextWindows: {
+            hy3: 256000,
+            "hy3-preview": 256000,
+            "hy4-preview": 960000,
+          },
+        },
       ],
-      // DeepSeek 官方 Codex 文档确认 deepseek-v4-flash 原生 Responses；
+      // DeepSeek 官方 Codex 文档的 V4.1 Flash 使用 deepseek-flash；
       // catalog 由后端按 deepseek.com host 镜像官方 models.json 生成
       [
         "DeepSeek",
         {
           contextWindows: {
-            "deepseek-v4-flash": 1048576,
+            "deepseek-flash": 1048576,
             "deepseek-v4-pro": 1048576,
           },
         },
       ],
       ["Longcat", { contextWindows: { "LongCat-2.0": 1048576 } }],
-      ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "MiniMax",
+        {
+          baseUrl: "https://api.minimax.cn/v1",
+          contextWindows: { "MiniMax-M3": 1000000 },
+        },
+      ],
       ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
       [
         "Xiaomi MiMo",
@@ -198,6 +271,9 @@ describe("Codex Chat provider presets", () => {
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
             "mimo-v2.5": 1048576,
+            "mimo-v2.6-pro": 1048576,
+            "mimo-v2.6-flash": 1048576,
+            "mimo-v2.6-pro-ultraspeed": 1048576,
           },
         },
       ],
@@ -207,6 +283,8 @@ describe("Codex Chat provider presets", () => {
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
             "mimo-v2.5": 1048576,
+            "mimo-v2.6-pro": 1048576,
+            "mimo-v2.6-flash": 1048576,
           },
         },
       ],
@@ -245,7 +323,7 @@ describe("Codex Chat provider presets", () => {
         {
           baseUrl: "https://api.kimi.com/coding/v1",
           contextWindows: {
-            "kimi-for-coding": 262144,
+            "kimi-for-coding": 1048576,
             "kimi-for-coding-highspeed": 262144,
             k3: 1048576,
             "k3-256k": 262144,
