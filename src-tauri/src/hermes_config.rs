@@ -808,6 +808,16 @@ pub fn set_provider(
     let mut normalized = provider_config;
     sanitize_hermes_provider_keys(&mut normalized);
 
+    // Inject default api_mode when missing (e.g. UI custom provider w/o explicit selection).
+    if let Some(obj) = normalized.as_object_mut() {
+        if !obj.contains_key("api_mode") {
+            obj.insert(
+                "api_mode".to_string(),
+                serde_json::Value::String("chat_completions".to_string()),
+            );
+        }
+    }
+
     // Normalize `models` from UI array to Hermes YAML dict before serializing.
     normalize_provider_models_for_write(&mut normalized);
 
