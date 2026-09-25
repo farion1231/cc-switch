@@ -7,14 +7,14 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { VisibleApps } from "@/types";
 import type { AppId } from "@/lib/api";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import { APP_IDS, DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 
 interface AppVisibilitySettingsProps {
   settings: SettingsFormState;
   onChange: (updates: Partial<SettingsFormState>) => void;
 }
 
-const APP_CONFIG: Array<{
+const ALL_APP_CONFIG: Array<{
   id: AppId;
   icon: string;
   nameKey: string;
@@ -35,6 +35,8 @@ const APP_CONFIG: Array<{
   { id: "mcode", icon: "minimax", nameKey: "apps.mcode" },
 ];
 
+const APP_CONFIG = ALL_APP_CONFIG.filter((app) => APP_IDS.includes(app.id));
+
 export function AppVisibilitySettings({
   settings,
   onChange,
@@ -44,7 +46,7 @@ export function AppVisibilitySettings({
   const visibleApps: VisibleApps = settings.visibleApps ?? DEFAULT_VISIBLE_APPS;
 
   // Count how many apps are currently visible
-  const visibleCount = Object.values(visibleApps).filter(Boolean).length;
+  const visibleCount = APP_IDS.filter((appId) => visibleApps[appId]).length;
 
   const handleToggle = (appId: AppId) => {
     const isCurrentlyVisible = visibleApps[appId];
