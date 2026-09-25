@@ -124,25 +124,31 @@ describe("UsageDashboard", () => {
     expect(screen.getByTestId("select-5000")).toBeInTheDocument();
   });
 
-  it("filters usage queries to Pi", async () => {
+  it("filters usage queries to Codex and hides unsupported app filters", async () => {
     renderDashboard();
 
-    fireEvent.click(screen.getByRole("button", { name: "usage.appFilter.pi" }));
+    expect(
+      screen.queryByRole("button", { name: "usage.appFilter.pi" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.appFilter.codex" }),
+    );
 
     await waitFor(() =>
       expect(useProviderStatsMock).toHaveBeenLastCalledWith(
         expect.anything(),
-        { appType: "pi" },
+        { appType: "codex" },
         expect.anything(),
       ),
     );
     expect(useModelStatsMock).toHaveBeenLastCalledWith(
       expect.anything(),
-      { appType: "pi", providerName: undefined },
+      { appType: "codex", providerName: undefined },
       expect.anything(),
     );
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appType: "pi" }),
+      expect.objectContaining({ appType: "codex" }),
     );
   });
 
