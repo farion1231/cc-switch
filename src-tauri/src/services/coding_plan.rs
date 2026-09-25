@@ -25,7 +25,7 @@ enum CodingPlanProvider {
     /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
     /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
     OpencodeGo,
-    /// Command Code Go。只允许 canonical `https://api.commandcode.ai`，
+    /// Command Code。只允许 canonical `https://api.commandcode.ai`，
     /// 不探测 localhost / 本地代理 / 第三方镜像。
     CommandCode,
 }
@@ -726,7 +726,7 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     tiers
 }
 
-// ── Command Code Go ─────────────────────────────────────────
+// ── Command Code ─────────────────────────────────────────────
 //
 // Billing endpoints are private /alpha routes used by Command Code clients.
 // The provider is only auto-detected for the canonical api.commandcode.ai host;
