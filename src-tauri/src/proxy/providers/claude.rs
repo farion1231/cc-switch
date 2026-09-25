@@ -69,7 +69,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
             "openai_chat" => "openai_chat",
             "openai_responses" => "openai_responses",
             "gemini_native" => "gemini_native",
-            value if is_commandcode_api_format(value) => "commandcode",
+            "commandcode" => "commandcode",
             _ => "anthropic",
         };
     }
