@@ -7,6 +7,7 @@
 //! - **openai_chat**: OpenAI Chat Completions 格式，需要 Anthropic ↔ OpenAI 转换
 //! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
 //! - **gemini_native**: Google Gemini Native generateContent 格式，需要 Anthropic ↔ Gemini 转换
+//! - **commandcode**: Command Code /alpha/generate 原生适配
 //!
 //! ## 认证模式
 //! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
@@ -27,6 +28,11 @@ const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // require thinking replay on tool-call turns, and injected placeholders
 // disrupt the model's chain of thought. Do not re-add without re-confirming.
 const REASONING_VENDOR_HINTS: &[&str] = &["deepseek", "mimo", "xiaomimimo"];
+const LEGACY_COMMAND_CODE_API_FORMAT: &str = concat!("commandcode", "_go");
+
+pub(crate) fn is_commandcode_api_format(value: &str) -> bool {
+    value == "commandcode" || value == LEGACY_COMMAND_CODE_API_FORMAT
+}
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -52,7 +58,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
                 "openai_chat" => "openai_chat",
                 "openai_responses" => "openai_responses",
                 "gemini_native" => "gemini_native",
-                "commandcode" | "commandcode_go" => "commandcode",
+                value if is_commandcode_api_format(value) => "commandcode",
                 _ => "anthropic",
             };
         }
@@ -95,8 +101,8 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     matches!(
         api_format,
-        "openai_chat" | "openai_responses" | "gemini_native" | "commandcode" | "commandcode_go"
-    )
+        "openai_chat" | "openai_responses" | "gemini_native"
+    ) || is_commandcode_api_format(api_format)
 }
 
 fn is_reasoning_vendor_identifier(value: &str) -> bool {
@@ -460,7 +466,7 @@ pub fn transform_claude_request_for_api_format(
             Some(&provider.id),
             session_id,
         ),
-        "commandcode" | "commandcode_go" => {
+        value if is_commandcode_api_format(value) => {
             super::commandcode::anthropic_to_commandcode(body, session_id)
         },
         _ => Ok(body),
@@ -999,7 +1005,7 @@ impl ProviderAdapter for ClaudeAdapter {
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode" | "commandcode_go"
+            "openai_chat" | "openai_responses" | "gemini_native" | "commandcode"
         )
     }
 
