@@ -633,17 +633,24 @@ async fn query_provider_usage_inner(
             });
         }
 
-        // ZenMux 的 tier 携带 USD 额度信息，需要编码为 JSON extra
+        // Token Plan 的 tier 可携带 USD 额度信息，需要编码为 JSON extra。
+        // Command Code 直接沿用 service 给出的套餐标签；ZenMux 保持旧格式。
         let has_usd = quota
             .tiers
             .first()
             .map(|t| t.used_value_usd.is_some())
             .unwrap_or(false);
-        let plan_label = quota
-            .credential_message
-            .as_deref()
-            .and_then(|msg| msg.split(' ').next())
-            .map(|tier| format!("ZenMux·{}", tier.to_uppercase()));
+        let plan_label = match coding_plan_provider.as_deref() {
+            Some(provider) if provider.eq_ignore_ascii_case("commandcode") => {
+                quota.credential_message.clone()
+            }
+            Some(provider) if provider.eq_ignore_ascii_case("zenmux") => quota
+                .credential_message
+                .as_deref()
+                .and_then(|msg| msg.split(' ').next())
+                .map(|tier| format!("ZenMux·{}", tier.to_uppercase())),
+            _ => None,
+        };
         let mut first_tier = true;
 
         let data: Vec<crate::provider::UsageData> = quota
