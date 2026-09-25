@@ -56,6 +56,7 @@ export interface ProviderPreset {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native"
+    | "commandcode"
     | "commandcode_go";
 
   // 供应商类型标识（用于特殊供应商检测）
@@ -1040,7 +1041,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "third_party",
-    apiFormat: "commandcode_go",
+    apiFormat: "commandcode",
     endpointCandidates: ["https://api.commandcode.ai"],
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     icon: "commandcode",
