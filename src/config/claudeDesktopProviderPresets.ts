@@ -15,7 +15,8 @@ export type ClaudeDesktopApiFormat =
   | "anthropic"
   | "openai_chat"
   | "openai_responses"
-  | "gemini_native";
+  | "gemini_native"
+  | "commandcode_go";
 
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
