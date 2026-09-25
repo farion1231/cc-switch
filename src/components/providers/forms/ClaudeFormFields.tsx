@@ -751,7 +751,7 @@ export function ClaudeFormFields({
                   : apiFormat === "commandcode_go"
                     ? t("providerForm.apiHintCommandCodeGo", {
                         defaultValue:
-                          "Command Code Go 通过 /alpha/generate 直连，需开启路由接管。",
+                          "Command Code 使用原生适配，需开启路由接管。",
                       })
                     : t("providerForm.apiHint")
           }
@@ -826,28 +826,27 @@ export function ClaudeFormFields({
                   <SelectContent>
                     <SelectItem value="anthropic">
                       {t("providerForm.apiFormatAnthropic", {
-                        defaultValue: "Anthropic Messages (原生)",
+                        defaultValue: "Anthropic",
                       })}
                     </SelectItem>
                     <SelectItem value="openai_chat">
                       {t("providerForm.apiFormatOpenAIChat", {
-                        defaultValue: "OpenAI Chat Completions (需转换)",
+                        defaultValue: "OpenAI Chat",
                       })}
                     </SelectItem>
                     <SelectItem value="openai_responses">
                       {t("providerForm.apiFormatOpenAIResponses", {
-                        defaultValue: "OpenAI Responses API (需转换)",
+                        defaultValue: "OpenAI Responses",
                       })}
                     </SelectItem>
                     <SelectItem value="gemini_native">
                       {t("providerForm.apiFormatGeminiNative", {
-                        defaultValue: "Gemini Native generateContent (需转换)",
+                        defaultValue: "Gemini Native",
                       })}
                     </SelectItem>
                     <SelectItem value="commandcode_go">
                       {t("providerForm.apiFormatCommandCodeGo", {
-                        defaultValue:
-                          "Command Code Go /alpha/generate (原生适配)",
+                        defaultValue: "Command Code",
                       })}
                     </SelectItem>
                   </SelectContent>
@@ -855,7 +854,7 @@ export function ClaudeFormFields({
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("providerForm.apiFormatHint", {
                     defaultValue:
-                      "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native；Command Code Go 请选择 /alpha/generate 原生适配。Chat、Responses、Gemini Native 与 Command Code Go 均需开启路由接管。",
+                      "Anthropic 可直连；OpenAI Chat、OpenAI Responses、Gemini Native 与 Command Code 由路由接管完成格式转换或原生适配。",
                   })}
                 </p>
               </div>
