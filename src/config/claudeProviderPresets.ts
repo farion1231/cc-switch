@@ -56,8 +56,7 @@ export interface ProviderPreset {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native"
-    | "commandcode"
-    | "commandcode_go";
+    | "commandcode";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
