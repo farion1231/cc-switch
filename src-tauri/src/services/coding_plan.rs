@@ -1734,7 +1734,7 @@ mod tests {
     }
 
     #[test]
-    fn commandcode_goat_maps_live_caps_and_monthly_remaining() {
+    fn goat_plan_maps_live_caps_and_monthly_remaining() {
         let credits = json!({
             "credits": {
                 "monthlyCredits": 52.5,
@@ -1778,7 +1778,7 @@ mod tests {
     }
 
     #[test]
-    fn commandcode_go_monthly_cap_is_ten_and_unknown_plan_omits_monthly() {
+    fn basic_plan_monthly_cap_is_ten_and_unknown_plan_omits_monthly() {
         let credits = json!({
             "credits": {"monthlyCredits": 7.5},
             "windowLimits": {
