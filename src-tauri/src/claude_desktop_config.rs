@@ -1029,6 +1029,7 @@ fn build_gateway_profile(
     model_specs: Option<&[InferenceModelSpec]>,
 ) -> Value {
     let mut profile = json!({
+        "autoModeEnabled": true,
         "coworkEgressAllowedHosts": ["*"],
         "disableDeploymentModeChooser": true,
         "inferenceGatewayApiKey": api_key,
@@ -1594,6 +1595,7 @@ mod tests {
         assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
+        assert_eq!(profile["autoModeEnabled"], json!(true));
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
         assert!(profile.get("inferenceModels").is_none());
         assert_eq!(meta["appliedId"], json!(PROFILE_ID));
