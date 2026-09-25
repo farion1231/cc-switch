@@ -3348,4 +3348,17 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "Cheaper Inference",
+    websiteUrl: "https://cheaperinference.com",
+    apiKeyUrl: "https://cheaperinference.com/signup",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "cheaperinference",
+      "https://api.cheaperinference.com/v1",
+      "gpt-5.4",
+    ),
+    endpointCandidates: ["https://api.cheaperinference.com/v1"],
+    category: "aggregator",
+  },
 ];
