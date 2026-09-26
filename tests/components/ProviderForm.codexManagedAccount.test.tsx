@@ -196,6 +196,45 @@ describe("ProviderForm Codex Official managed account", () => {
     toastMocks.error.mockReset();
   });
 
+  it("offers to add a default model when the custom catalog is empty", async () => {
+    const queryClient = createTestQueryClient();
+    const onSubmit = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderForm
+          appId="codex"
+          providerId="custom-relay"
+          submitLabel="save-provider"
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+          initialData={{
+            name: "Custom relay",
+            category: "third_party",
+            settingsConfig: {
+              auth: { OPENAI_API_KEY: "test-key" },
+              config:
+                'model = "gpt-6-sol"\nmodel_provider = "custom"\n[model_providers.custom]\nbase_url = "https://example.com/v1"\nwire_api = "responses"',
+            },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      screen.getByText(
+        "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "加入映射" }));
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(settings.modelCatalog.models).toEqual([
+      { model: "gpt-6-sol", displayName: "gpt-6-sol" },
+    ]);
+  });
+
   it("persists the selected managed account while stripping OAuth secrets", async () => {
     const onSubmit = vi.fn();
     renderCodexForm(onSubmit);
