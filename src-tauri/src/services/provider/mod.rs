@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::codex_config::CodexLiveWritePlan;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
@@ -4737,9 +4738,14 @@ impl ProviderService {
         app_type: &AppType,
         provider: &Provider,
         preflighted_provider: Option<&Provider>,
+        preflighted_codex_plan: Option<CodexLiveWritePlan>,
     ) -> Result<(), AppError> {
         if let Some(effective_provider) = preflighted_provider {
-            live::write_live_snapshot(app_type, effective_provider)
+            live::write_live_snapshot_with_codex_plan(
+                app_type,
+                effective_provider,
+                preflighted_codex_plan,
+            )
         } else {
             write_live_with_common_config_for_state(state, app_type, provider)
         }
@@ -5134,6 +5140,14 @@ impl ProviderService {
             let preflighted_provider =
                 Self::preflight_managed_codex_live(state, &app_type, &provider)?;
             let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()?;
+            let live_config_snapshot = snapshot.config_snapshot()?;
+            let preflighted_codex_plan = match preflighted_provider.as_ref() {
+                Some(effective_provider) => Some(live::plan_codex_live_write_for_provider(
+                    effective_provider,
+                    &live_config_snapshot,
+                )?),
+                None => None,
+            };
             let mut provider_saved = false;
             let commit_result = (|| {
                 Self::write_preflighted_or_current_live(
@@ -5141,6 +5155,7 @@ impl ProviderService {
                     &app_type,
                     &provider,
                     preflighted_provider.as_ref(),
+                    preflighted_codex_plan,
                 )?;
                 state.db.save_provider(app_type.as_str(), &provider)?;
                 provider_saved = true;
@@ -5425,6 +5440,14 @@ impl ProviderService {
             // Capture after preflight: a legitimate refresh may have advanced
             // auth.json, and rollback must never restore the older generation.
             let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()?;
+            let live_config_snapshot = snapshot.config_snapshot()?;
+            let preflighted_codex_plan = match preflighted_provider.as_ref() {
+                Some(effective_provider) => Some(live::plan_codex_live_write_for_provider(
+                    effective_provider,
+                    &live_config_snapshot,
+                )?),
+                None => None,
+            };
 
             if !has_live_backup && !live_taken_over {
                 let commit_result = (|| {
@@ -5437,6 +5460,7 @@ impl ProviderService {
                         &app_type,
                         &provider,
                         preflighted_provider.as_ref(),
+                        preflighted_codex_plan,
                     )?;
                     Self::clear_outgoing_managed_codex_live_auth(
                         outgoing_managed_codex_account_id.as_deref(),
@@ -5502,6 +5526,7 @@ impl ProviderService {
                         &app_type,
                         &provider,
                         preflighted_provider.as_ref(),
+                        preflighted_codex_plan,
                     )?;
                 }
 
@@ -5894,7 +5919,16 @@ impl ProviderService {
         )?;
 
         // 提交 current 前预检托管 Codex token（见 preflight_managed_codex_live）。
-        let preflighted_provider = Self::preflight_managed_codex_live(state, &app_type, provider)?;
+        let mut preflighted_provider =
+            Self::preflight_managed_codex_live(state, &app_type, provider)?;
+        let mut preflighted_codex_plan = None;
+        if matches!(app_type, AppType::Codex) && preflighted_provider.is_none() {
+            let live_snapshot = crate::codex_config::CodexLiveConfigSnapshot::capture()?;
+            let (effective_provider, plan) =
+                live::preflight_codex_live_write_for_state(state, provider, &live_snapshot)?;
+            preflighted_provider = Some(effective_provider);
+            preflighted_codex_plan = Some(plan);
+        }
         let use_managed_codex_transaction = matches!(app_type, AppType::Codex)
             && (current_managed_codex_account_id.is_some()
                 || target_managed_codex_account_id.is_some());
@@ -5905,6 +5939,14 @@ impl ProviderService {
             // failure so native logins and CLI-rotated tokens are not reconstructed
             // from a stale provider row.
             let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()?;
+            let live_config_snapshot = snapshot.config_snapshot()?;
+            let effective_provider = preflighted_provider.as_ref().ok_or_else(|| {
+                AppError::Config("托管 Codex 预检未生成有效 provider".to_string())
+            })?;
+            let preflighted_codex_plan = live::plan_codex_live_write_for_provider(
+                effective_provider,
+                &live_config_snapshot,
+            )?;
             let live_result = (|| {
                 Self::ensure_outgoing_managed_codex_live_auth_unchanged(
                     outgoing_managed_codex_account_id.as_deref(),
@@ -5915,6 +5957,7 @@ impl ProviderService {
                     &app_type,
                     provider,
                     preflighted_provider.as_ref(),
+                    Some(preflighted_codex_plan),
                 )?;
                 Self::clear_outgoing_managed_codex_live_auth(
                     outgoing_managed_codex_account_id.as_deref(),
@@ -5949,15 +5992,6 @@ impl ProviderService {
                 ));
             }
         } else {
-            // Codex: validate the live projection before committing current —
-            // the write-layer safety gates can refuse the switch, and a
-            // refusal after current moved would let the next switch backfill
-            // the old live config into the new provider's DB row. (The
-            // managed branch above has its own snapshot rollback instead.)
-            if matches!(app_type, AppType::Codex) && preflighted_provider.is_none() {
-                live::preflight_codex_live_write_for_state(state, provider)?;
-            }
-
             // Additive mode apps skip setting is_current (no such concept).
             if !app_type.is_additive_mode() {
                 crate::settings::set_current_provider(&app_type, Some(id))?;
@@ -5970,6 +6004,7 @@ impl ProviderService {
                 &app_type,
                 provider,
                 preflighted_provider.as_ref(),
+                preflighted_codex_plan,
             )?;
         }
 

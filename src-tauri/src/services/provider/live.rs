@@ -9,7 +9,10 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+use crate::codex_config::{
+    get_codex_auth_path, get_codex_config_path, write_codex_live_plan, CodexLiveConfigSnapshot,
+    CodexLiveWritePlan,
+};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
@@ -719,23 +722,11 @@ pub(crate) fn write_live_with_common_config_for_state(
     )
 }
 
-/// Validate the target provider's Codex live projection without writing:
-/// build the effective settings exactly like the live write would, then run
-/// the write-layer plan (legacy normalization, safety gates, token
-/// injection, TOML parsing). Called before `current` is committed — a
-/// write-layer refusal after `current` moved would let the next switch
-/// backfill the old live config into the new provider's DB row.
-pub(crate) fn preflight_codex_live_write_for_state(
-    state: &AppState,
+pub(crate) fn plan_codex_live_write_for_provider(
     provider: &Provider,
-) -> Result<(), AppError> {
-    let effective = build_effective_provider_for_live_with_codex_oauth_manager(
-        state.db.as_ref(),
-        &AppType::Codex,
-        provider,
-        &state.codex_oauth_manager,
-    )?;
-    let obj = effective
+    live_snapshot: &CodexLiveConfigSnapshot,
+) -> Result<CodexLiveWritePlan, AppError> {
+    let obj = provider
         .settings_config
         .as_object()
         .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
@@ -743,7 +734,42 @@ pub(crate) fn preflight_codex_live_write_for_state(
         .get("auth")
         .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
     let config_str = obj.get("config").and_then(|v| v.as_str());
-    crate::codex_config::preflight_codex_live_write(effective.category.as_deref(), auth, config_str)
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+    let (prepared_config, catalog) = if let Some(text) = config_str {
+        let (prepared, catalog) =
+            crate::codex_config::prepare_codex_config_text_with_model_catalog_for_plan(
+                &provider.settings_config,
+                text,
+                profile,
+            )?;
+        (Some(prepared), catalog)
+    } else {
+        (None, None)
+    };
+
+    crate::codex_config::plan_codex_live_write_with_snapshot_and_catalog(
+        provider.category.as_deref(),
+        auth,
+        prepared_config.as_deref(),
+        crate::settings::preserve_codex_official_auth_on_switch(),
+        live_snapshot,
+        catalog,
+    )
+}
+
+pub(crate) fn preflight_codex_live_write_for_state(
+    state: &AppState,
+    provider: &Provider,
+    live_snapshot: &CodexLiveConfigSnapshot,
+) -> Result<(Provider, CodexLiveWritePlan), AppError> {
+    let effective = build_effective_provider_for_live_with_codex_oauth_manager(
+        state.db.as_ref(),
+        &AppType::Codex,
+        provider,
+        &state.codex_oauth_manager,
+    )?;
+    let plan = plan_codex_live_write_for_provider(&effective, live_snapshot)?;
+    Ok((effective, plan))
 }
 
 pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
@@ -1310,6 +1336,14 @@ impl LiveSnapshot {
 
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    write_live_snapshot_with_codex_plan(app_type, provider, None)
+}
+
+pub(crate) fn write_live_snapshot_with_codex_plan(
+    app_type: &AppType,
+    provider: &Provider,
+    codex_plan: Option<CodexLiveWritePlan>,
+) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
@@ -1333,19 +1367,20 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
             let config_str = obj.get("config").and_then(|v| v.as_str());
 
-            // Native (direct) Responses and Anthropic providers must suppress Codex's
-            // freeform apply_patch custom tool via the generated catalog; chat/proxy
-            // providers keep the default tool set. Uses the same Anthropic detection as
-            // the proxy router (apiFormat meta/settings + TOML wire_api).
-            let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
-
-            crate::codex_config::write_codex_provider_live_with_catalog(
-                &provider.settings_config,
-                provider.category.as_deref(),
-                auth,
-                config_str,
-                profile,
-            )?;
+            if let Some(plan) = codex_plan {
+                write_codex_live_plan(auth, plan)?;
+            } else {
+                let live_snapshot = CodexLiveConfigSnapshot::capture()?;
+                let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+                crate::codex_config::write_codex_provider_live_with_catalog_and_snapshot(
+                    &provider.settings_config,
+                    provider.category.as_deref(),
+                    auth,
+                    config_str,
+                    profile,
+                    &live_snapshot,
+                )?;
+            }
             if let Some(account_id) = provider
                 .meta
                 .as_ref()
@@ -2422,6 +2457,7 @@ mod tests {
     #[test]
     fn proxy_oauth_codex_snapshot_neutralizes_official_auth_fallback() {
         let poisoned_config = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"xai\"\nbase_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
+        let empty_snapshot = crate::codex_config::CodexLiveConfigSnapshot::from_text(None);
         let settings = json!({
             "auth": { "OPENAI_API_KEY": "" },
             "config": poisoned_config,
@@ -2429,12 +2465,15 @@ mod tests {
 
         // The raw managed-OAuth snapshot is exactly what the keyless safety
         // gate refuses — the switch regression this neutralization fixes.
-        assert!(crate::codex_config::preflight_codex_live_write(
-            None,
-            &settings["auth"],
-            Some(poisoned_config)
-        )
-        .is_err());
+        assert!(
+            crate::codex_config::preflight_codex_live_write_with_snapshot(
+                None,
+                &settings["auth"],
+                Some(poisoned_config),
+                &empty_snapshot,
+            )
+            .is_err()
+        );
 
         let mut provider = Provider::with_id(
             "grok-oauth".to_string(),
@@ -2449,12 +2488,15 @@ mod tests {
         neutralize_codex_proxy_oauth_fallback(&AppType::Codex, &mut provider);
         let config = provider.settings_config["config"].as_str().expect("config");
         assert!(config.contains("requires_openai_auth = false"));
-        assert!(crate::codex_config::preflight_codex_live_write(
-            None,
-            &provider.settings_config["auth"],
-            Some(config)
-        )
-        .is_ok());
+        assert!(
+            crate::codex_config::preflight_codex_live_write_with_snapshot(
+                None,
+                &provider.settings_config["auth"],
+                Some(config),
+                &empty_snapshot,
+            )
+            .is_ok()
+        );
 
         // codex_oauth keeps its fallback shape — the official login IS its
         // credential — and non-Codex app types are untouched entirely.

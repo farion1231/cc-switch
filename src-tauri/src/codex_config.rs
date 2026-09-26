@@ -282,6 +282,16 @@ impl CodexLiveStateSnapshot {
         })
     }
 
+    pub(crate) fn config_snapshot(&self) -> Result<CodexLiveConfigSnapshot, AppError> {
+        let text = match self.config.contents.as_deref() {
+            Some(bytes) => Some(String::from_utf8(bytes.to_vec()).map_err(|error| {
+                AppError::Message(format!("Invalid UTF-8 in Codex config.toml: {error}"))
+            })?),
+            None => None,
+        };
+        Ok(CodexLiveConfigSnapshot::from_text(text))
+    }
+
     /// Roll back config/catalog exactly while retaining a demonstrably newer
     /// ChatGPT auth generation for the same account. OAuth refresh can advance
     /// auth.json after a provider transaction captures its snapshot; restoring
@@ -2418,11 +2428,11 @@ fn set_codex_native_web_search_field(config_text: &str, disable: bool) -> Result
 
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
-pub fn prepare_codex_config_text_with_model_catalog(
+pub(crate) fn prepare_codex_config_text_with_model_catalog_for_plan(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
-) -> Result<String, AppError> {
+) -> Result<(String, Option<Value>), AppError> {
     let catalog_path = get_codex_model_catalog_path();
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
@@ -2441,16 +2451,29 @@ pub fn prepare_codex_config_text_with_model_catalog(
             CodexCatalogToolProfile::ProxyChat => false,
         };
         let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
-        write_json_file(&catalog_path, &catalog)?;
-        Ok(config_text)
+        Ok((config_text, Some(catalog)))
     } else {
         let config_text = set_codex_model_catalog_json_field(config_text, None)?;
         // Even without a generated catalog, the Responses→Anthropic transform drops the
         // Codex web_search hosted tool, so keep the invariant that an Anthropic provider
         // never presents it as a dead tool.
         let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
-        set_codex_native_web_search_field(&config_text, disable_web_search)
+        let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
+        Ok((config_text, None))
     }
+}
+
+pub fn prepare_codex_config_text_with_model_catalog(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<String, AppError> {
+    let (config_text, catalog) =
+        prepare_codex_config_text_with_model_catalog_for_plan(settings, config_text, profile)?;
+    if let Some(catalog) = catalog {
+        write_json_file(&get_codex_model_catalog_path(), &catalog)?;
+    }
+    Ok(config_text)
 }
 
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
@@ -2717,11 +2740,41 @@ pub fn write_codex_provider_live_with_catalog(
     config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
 ) -> Result<(), AppError> {
-    let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
-        .transpose()?;
+    let live_snapshot = CodexLiveConfigSnapshot::capture()?;
+    write_codex_provider_live_with_catalog_and_snapshot(
+        settings,
+        category,
+        auth,
+        config_text,
+        profile,
+        &live_snapshot,
+    )
+}
 
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+pub(crate) fn write_codex_provider_live_with_catalog_and_snapshot(
+    settings: &Value,
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    profile: CodexCatalogToolProfile,
+    live_snapshot: &CodexLiveConfigSnapshot,
+) -> Result<(), AppError> {
+    let (prepared_config, catalog) = if let Some(text) = config_text {
+        let (prepared, catalog) =
+            prepare_codex_config_text_with_model_catalog_for_plan(settings, text, profile)?;
+        (Some(prepared), catalog)
+    } else {
+        (None, None)
+    };
+    let plan = plan_codex_live_write_with_snapshot_and_catalog(
+        category,
+        auth,
+        prepared_config.as_deref(),
+        crate::settings::preserve_codex_official_auth_on_switch(),
+        live_snapshot,
+        catalog,
+    )?;
+    write_codex_live_plan(auth, plan)
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -3116,6 +3169,20 @@ fn preflight_codex_provider_table_conflicts(config_text: &str) -> Result<(), App
             continue;
         };
         let is_bedrock = matches!(id, "amazon-bedrock" | "amazon-bedrock-runtime");
+        if table
+            .get("wire_api")
+            .is_some_and(|item| item.as_str() != Some("responses"))
+        {
+            return Err(AppError::localized(
+                "provider.codex.config.invalid_provider_table",
+                format!(
+                    "Codex 0.149 拒绝加载该配置：[model_providers.{id}] 的 `wire_api` 必须是 `responses`，请移除该字段或改用受支持的协议"
+                ),
+                format!(
+                    "Codex 0.149 refuses to load this config: `wire_api` on [model_providers.{id}] must be `responses`; remove it or use a supported protocol"
+                ),
+            ));
+        }
         if !is_bedrock && table.get("aws").is_some() {
             return Err(AppError::localized(
                 "provider.codex.config.invalid_provider_table",
@@ -3829,27 +3896,100 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 /// committing any state, then execute the same computation for the real
 /// write. Keeping validation and execution in one builder makes it
 /// impossible for the two to drift apart.
-struct CodexLiveWritePlan {
+///
+/// Preserve unmanaged `[model_providers.*]` sections from the live
+/// `config.toml` (issue #6860). The DB-stored config only contains the
+/// active CC Switch-managed provider (`custom`); live file may carry
+/// manually added aliases like `proxy` / `kimi3` that old Codex threads
+/// still reference. Without merging, a restart or failover strips those
+/// aliases and breaks the threads.
+#[derive(Debug, Clone)]
+pub(crate) struct CodexLiveConfigSnapshot {
+    text: Option<String>,
+}
+
+impl CodexLiveConfigSnapshot {
+    pub(crate) fn capture() -> Result<Self, AppError> {
+        let path = get_codex_config_path();
+        if !path.exists() {
+            return Ok(Self { text: None });
+        }
+        let text = fs::read_to_string(&path).map_err(|error| AppError::io(&path, error))?;
+        Ok(Self { text: Some(text) })
+    }
+
+    pub(crate) fn from_text(text: Option<String>) -> Self {
+        Self { text }
+    }
+
+    fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+}
+
+fn merge_preserve_unmanaged_model_providers(
+    new_config: String,
+    live_snapshot: &CodexLiveConfigSnapshot,
+) -> String {
+    let Some(live_text) = live_snapshot.text() else {
+        return new_config;
+    };
+    if live_text.trim().is_empty() {
+        return new_config;
+    }
+    let Ok(mut new_doc) = new_config.parse::<DocumentMut>() else {
+        return new_config;
+    };
+    let active_provider_id =
+        active_codex_model_provider_id(&new_doc).unwrap_or_else(|| "openai".to_string());
+    let Ok(live_doc) = live_text.parse::<DocumentMut>() else {
+        return new_config;
+    };
+    let Some(live_providers) = live_doc
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+    else {
+        return new_config;
+    };
+    let new_providers_entry = new_doc
+        .entry("model_providers")
+        .or_insert(toml_edit::table());
+    let Some(new_providers) = new_providers_entry.as_table_like_mut() else {
+        return new_config;
+    };
+    for (key, item) in live_providers.iter() {
+        if key != active_provider_id && !new_providers.contains_key(key) {
+            new_providers.insert(key, item.clone());
+        }
+    }
+    new_doc.to_string()
+}
+
+pub(crate) struct CodexLiveWritePlan {
     write_full_auth: bool,
     config_text: Option<String>,
     remove_auth_file: bool,
+    catalog: Option<Value>,
 }
 
-fn plan_codex_live_write(
+pub(crate) fn plan_codex_live_write_with_snapshot(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
     preserve_official_login: bool,
+    live_snapshot: &CodexLiveConfigSnapshot,
 ) -> Result<CodexLiveWritePlan, AppError> {
-    // Semantic preflight over EVERY provider table (official and
-    // third-party alike, idle tables included): field combinations 0.149
-    // rejects at load can't be normalized away, so refuse the switch with
-    // an actionable error instead of writing a config Codex won't start on.
-    // Independent of the two auth-safety gates below — those only judge the
-    // active route and are skipped when a key is carried.
-    if let Some(text) = config_text {
-        preflight_codex_provider_table_conflicts(text)?;
-    }
+    let merged_config = merge_preserve_unmanaged_model_providers(
+        config_text.unwrap_or_default().to_string(),
+        live_snapshot,
+    );
+    let config_text = if config_text.is_none() && merged_config.trim().is_empty() {
+        None
+    } else {
+        Some(merged_config)
+    };
+    let config_text = config_text.as_deref();
+
     if category == Some("official") {
         // Official configs seeded by older cc-switch versions can carry
         // stale reserved tables too — Codex refuses those at load, so
@@ -3877,6 +4017,9 @@ fn plan_codex_live_write(
             None
         };
         let config_text = unified_official_config.as_deref().or(config_text);
+        if let Some(text) = config_text {
+            preflight_codex_provider_table_conflicts(text)?;
+        }
         // Official cards own auth.json: a material-carrying login is written
         // in full, a material-less card follows the live login and only
         // writes config. Official auth never travels through config.toml.
@@ -3884,6 +4027,7 @@ fn plan_codex_live_write(
             write_full_auth: codex_auth_has_login_material(auth),
             config_text: config_text.map(str::to_string),
             remove_auth_file: false,
+            catalog: None,
         });
     }
 
@@ -3967,30 +4111,117 @@ fn plan_codex_live_write(
         &live_config,
         preserve_official_login,
     )?;
+    preflight_codex_provider_table_conflicts(&live_config)?;
 
     Ok(CodexLiveWritePlan {
         write_full_auth: false,
         config_text: Some(live_config),
         remove_auth_file,
+        catalog: None,
     })
 }
 
-/// Validate a Codex live write without touching the filesystem. Callers use
-/// this to fail a provider switch BEFORE committing `current`: a write-layer
-/// refusal after `current` moved would let the next switch backfill the old
-/// live config into the new provider's DB row.
+pub(crate) fn plan_codex_live_write_with_snapshot_and_catalog(
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    preserve_official_login: bool,
+    live_snapshot: &CodexLiveConfigSnapshot,
+    catalog: Option<Value>,
+) -> Result<CodexLiveWritePlan, AppError> {
+    let mut plan = plan_codex_live_write_with_snapshot(
+        category,
+        auth,
+        config_text,
+        preserve_official_login,
+        live_snapshot,
+    )?;
+    plan.catalog = catalog;
+    Ok(plan)
+}
+
+#[cfg(test)]
+fn plan_codex_live_write(
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    preserve_official_login: bool,
+) -> Result<CodexLiveWritePlan, AppError> {
+    let live_snapshot = CodexLiveConfigSnapshot::from_text(None);
+    plan_codex_live_write_with_snapshot(
+        category,
+        auth,
+        config_text,
+        preserve_official_login,
+        &live_snapshot,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn preflight_codex_live_write_with_snapshot(
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    live_snapshot: &CodexLiveConfigSnapshot,
+) -> Result<(), AppError> {
+    plan_codex_live_write_with_snapshot(
+        category,
+        auth,
+        config_text,
+        crate::settings::preserve_codex_official_auth_on_switch(),
+        live_snapshot,
+    )
+    .map(|_| ())
+}
+
+#[allow(dead_code)]
 pub fn preflight_codex_live_write(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    plan_codex_live_write(
+    let live_snapshot = CodexLiveConfigSnapshot::capture()?;
+    plan_codex_live_write_with_snapshot(
         category,
         auth,
         config_text,
         crate::settings::preserve_codex_official_auth_on_switch(),
+        &live_snapshot,
     )
     .map(|_| ())
+}
+
+pub(crate) fn write_codex_live_plan(
+    auth: &Value,
+    plan: CodexLiveWritePlan,
+) -> Result<(), AppError> {
+    if let Some(catalog) = &plan.catalog {
+        write_json_file(&get_codex_model_catalog_path(), catalog)?;
+    }
+    if plan.write_full_auth {
+        return write_codex_live_atomic(auth, plan.config_text.as_deref());
+    }
+    write_codex_live_config_atomic(plan.config_text.as_deref())?;
+    if plan.remove_auth_file {
+        remove_codex_live_auth_after_third_party_switch();
+    }
+    Ok(())
+}
+
+pub(crate) fn write_codex_live_for_provider_with_snapshot(
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    live_snapshot: &CodexLiveConfigSnapshot,
+) -> Result<(), AppError> {
+    let plan = plan_codex_live_write_with_snapshot(
+        category,
+        auth,
+        config_text,
+        crate::settings::preserve_codex_official_auth_on_switch(),
+        live_snapshot,
+    )?;
+    write_codex_live_plan(auth, plan)
 }
 
 pub fn write_codex_live_for_provider(
@@ -3998,22 +4229,8 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let plan = plan_codex_live_write(
-        category,
-        auth,
-        config_text,
-        crate::settings::preserve_codex_official_auth_on_switch(),
-    )?;
-    if plan.write_full_auth {
-        return write_codex_live_atomic(auth, plan.config_text.as_deref());
-    }
-    write_codex_live_config_atomic(plan.config_text.as_deref())?;
-    // Config is already committed at this point, so a cleanup failure
-    // degrades to a warning instead of reporting an unswitched state.
-    if plan.remove_auth_file {
-        remove_codex_live_auth_after_third_party_switch();
-    }
-    Ok(())
+    let live_snapshot = CodexLiveConfigSnapshot::capture()?;
+    write_codex_live_for_provider_with_snapshot(category, auth, config_text, &live_snapshot)
 }
 
 fn remove_codex_live_auth_after_third_party_switch() {
@@ -6106,6 +6323,355 @@ base_url = "https://bedrock.example/v1"
     }
 
     #[test]
+    fn preserved_unmanaged_aliases_are_normalized_like_managed_tables() {
+        let managed = r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://managed.example/v1"
+wire_api = "responses"
+"#;
+        let cases = [
+            (
+                r#"
+[model_providers.proxy]
+base_url = "https://proxy.example/v1"
+wire_api = "responses"
+http_headers = { x-team = "42" }
+"#,
+                "proxy",
+                "proxy",
+            ),
+            (
+                r#"
+[model_providers.openai]
+base_url = "https://legacy.example/v1"
+http_headers = { x-team = "42" }
+"#,
+                "cc-switch",
+                "Custom",
+            ),
+        ];
+
+        for (unmanaged, normalized_id, normalized_name) in cases {
+            let live_snapshot =
+                CodexLiveConfigSnapshot::from_text(Some(format!("{managed}{unmanaged}")));
+            let preserved = plan_codex_live_write_with_snapshot(
+                None,
+                &json!({"OPENAI_API_KEY": "sk-test"}),
+                Some(managed),
+                true,
+                &live_snapshot,
+            )
+            .expect("plan preserved providers")
+            .config_text
+            .expect("preserved config");
+            let directly_managed = plan_codex_live_write_with_snapshot(
+                None,
+                &json!({"OPENAI_API_KEY": "sk-test"}),
+                Some(&format!("{managed}{unmanaged}")),
+                true,
+                &CodexLiveConfigSnapshot::from_text(None),
+            )
+            .expect("plan directly managed providers")
+            .config_text
+            .expect("directly managed config");
+            let preserved_value: toml::Value =
+                toml::from_str(&preserved).expect("parse preserved config");
+            let directly_managed_value: toml::Value =
+                toml::from_str(&directly_managed).expect("parse directly managed config");
+
+            assert_eq!(
+                preserved_value, directly_managed_value,
+                "preserved and directly managed aliases must be semantically equivalent"
+            );
+            let normalized = preserved_value
+                .get("model_providers")
+                .and_then(|providers| providers.get(normalized_id))
+                .expect("normalized unmanaged provider table");
+            assert_eq!(
+                normalized.get("name").and_then(toml::Value::as_str),
+                Some(normalized_name)
+            );
+            assert_eq!(
+                normalized
+                    .get("http_headers")
+                    .and_then(|headers| headers.get("x-team"))
+                    .and_then(toml::Value::as_str),
+                Some("42")
+            );
+            assert!(
+                !normalized_id.eq_ignore_ascii_case("openai")
+                    && preserved_value
+                        .get("model_providers")
+                        .and_then(|providers| providers.get("openai"))
+                        .is_none(),
+                "reserved provider aliases must be migrated"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_rejects_and_accepts_preserved_unmanaged_provider_tables() {
+        let managed = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://managed.example/v1"
+wire_api = "responses"
+"#;
+        let invalid_unmanaged = r#"
+[model_providers.unmanaged]
+name = "Unmanaged"
+base_url = "https://unmanaged.example/v1"
+wire_api = "responses"
+auth = { command = "unmanaged-auth" }
+experimental_bearer_token = "unmanaged-token"
+"#;
+        let invalid_snapshot =
+            CodexLiveConfigSnapshot::from_text(Some(format!("{managed}{invalid_unmanaged}")));
+
+        for (category, auth) in [
+            (None, json!({"OPENAI_API_KEY": "sk-test"})),
+            (Some("official"), json!({})),
+        ] {
+            assert!(
+                preflight_codex_live_write_with_snapshot(
+                    category,
+                    &auth,
+                    Some(managed),
+                    &invalid_snapshot,
+                )
+                .is_err(),
+                "unmanaged provider conflicts must fail the same preflight as managed conflicts"
+            );
+        }
+
+        let valid_unmanaged = r#"
+[model_providers.unmanaged]
+name = "Unmanaged"
+base_url = "https://unmanaged.example/v1"
+wire_api = "responses"
+auth = { command = "unmanaged-auth" }
+"#;
+        let valid_snapshot =
+            CodexLiveConfigSnapshot::from_text(Some(format!("{managed}{valid_unmanaged}")));
+
+        for (category, auth) in [
+            (None, json!({"OPENAI_API_KEY": "sk-test"})),
+            (Some("official"), json!({})),
+        ] {
+            preflight_codex_live_write_with_snapshot(
+                category,
+                &auth,
+                Some(managed),
+                &valid_snapshot,
+            )
+            .expect("loadable unmanaged provider table must pass preflight");
+        }
+
+        let plan = plan_codex_live_write_with_snapshot(
+            None,
+            &json!({"OPENAI_API_KEY": "sk-test"}),
+            Some(managed),
+            true,
+            &valid_snapshot,
+        )
+        .expect("plan valid unmanaged provider table");
+        let planned: toml::Value =
+            toml::from_str(plan.config_text.as_deref().expect("planned config text"))
+                .expect("parse planned config");
+        assert!(
+            planned
+                .get("model_providers")
+                .and_then(|providers| providers.get("unmanaged"))
+                .is_some(),
+            "successful preflight must not delete unmanaged provider data"
+        );
+    }
+
+    #[test]
+    fn live_snapshot_does_not_supply_missing_active_provider_table() {
+        let managed = "model_provider = \"custom\"\nmodel = \"gpt-5.4\"\n";
+        let live_snapshot = CodexLiveConfigSnapshot::from_text(Some(
+            r#"[model_providers.custom]
+name = "Stale Custom"
+base_url = "https://stale.example/v1"
+wire_api = "responses"
+
+[model_providers.proxy]
+name = "Proxy"
+base_url = "https://proxy.example/v1"
+wire_api = "responses"
+"#
+            .to_string(),
+        ));
+        let merged = merge_preserve_unmanaged_model_providers(managed.to_string(), &live_snapshot);
+        let merged_value: toml::Value = toml::from_str(&merged).expect("parse merged config");
+        let providers = merged_value
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .expect("merged providers");
+        assert!(!providers.contains_key("custom"));
+        assert!(providers.contains_key("proxy"));
+        assert!(plan_codex_live_write_with_snapshot(
+            None,
+            &json!({"OPENAI_API_KEY": "new-token"}),
+            Some(managed),
+            true,
+            &live_snapshot,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn live_snapshot_does_not_import_top_level_provider_route() {
+        let managed = r#"model_provider = "managed"
+
+[model_providers.managed]
+name = "Managed"
+base_url = "https://managed.example/v1"
+wire_api = "responses"
+"#;
+        let live_snapshot = CodexLiveConfigSnapshot::from_text(Some(
+            r#"model_provider = "proxy"
+
+[model_providers.proxy]
+name = "Proxy"
+base_url = "https://proxy.example/v1"
+wire_api = "responses"
+"#
+            .to_string(),
+        ));
+        let plan = plan_codex_live_write_with_snapshot(
+            None,
+            &json!({"OPENAI_API_KEY": "sk-test"}),
+            Some(managed),
+            true,
+            &live_snapshot,
+        )
+        .expect("plan without a live route");
+        let planned: toml::Value =
+            toml::from_str(plan.config_text.as_deref().expect("planned config"))
+                .expect("parse planned config");
+        assert_eq!(
+            planned.get("model_provider").and_then(toml::Value::as_str),
+            Some("managed")
+        );
+        assert!(planned
+            .get("model_providers")
+            .and_then(|providers| providers.get("proxy"))
+            .is_some());
+    }
+
+    #[test]
+    fn official_empty_config_preserves_unmanaged_provider_tables() {
+        let live_snapshot = CodexLiveConfigSnapshot::from_text(Some(
+            r#"model_provider = "proxy"
+
+[model_providers.proxy]
+name = "Proxy"
+base_url = "https://proxy.example/v1"
+wire_api = "responses"
+"#
+            .to_string(),
+        ));
+        for config in [None, Some("")] {
+            let plan = plan_codex_live_write_with_snapshot(
+                Some("official"),
+                &json!({}),
+                config,
+                true,
+                &live_snapshot,
+            )
+            .expect("official config plan");
+            let planned: toml::Value =
+                toml::from_str(plan.config_text.as_deref().expect("planned config"))
+                    .expect("parse planned config");
+            assert!(planned
+                .get("model_providers")
+                .and_then(|providers| providers.get("proxy"))
+                .is_some());
+        }
+    }
+
+    #[test]
+    fn preflight_rejects_preserved_chat_wire_api() {
+        let managed = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://custom.example/v1"
+wire_api = "responses"
+"#;
+        let live_snapshot = CodexLiveConfigSnapshot::from_text(Some(
+            r#"[model_providers.unmanaged]
+name = "Unmanaged"
+base_url = "https://unmanaged.example/v1"
+wire_api = "chat"
+"#
+            .to_string(),
+        ));
+        for (category, auth) in [
+            (None, json!({"OPENAI_API_KEY": "sk-test"})),
+            (Some("official"), json!({})),
+        ] {
+            assert!(preflight_codex_live_write_with_snapshot(
+                category,
+                &auth,
+                Some(managed),
+                &live_snapshot,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn live_snapshot_is_explicitly_bound_to_each_plan() {
+        let first = CodexLiveConfigSnapshot::from_text(Some(
+            r#"[model_providers.first]
+name = "First"
+base_url = "https://first.example/v1"
+wire_api = "responses"
+"#
+            .to_string(),
+        ));
+        let second = CodexLiveConfigSnapshot::from_text(Some(
+            r#"[model_providers.second]
+name = "Second"
+base_url = "https://second.example/v1"
+wire_api = "responses"
+"#
+            .to_string(),
+        ));
+        let first_plan = plan_codex_live_write_with_snapshot(
+            Some("official"),
+            &json!({}),
+            Some("model = \"gpt-5\"\n"),
+            true,
+            &first,
+        )
+        .expect("first plan")
+        .config_text
+        .expect("first config");
+        let second_plan = plan_codex_live_write_with_snapshot(
+            Some("official"),
+            &json!({}),
+            Some("model = \"gpt-5\"\n"),
+            true,
+            &second,
+        )
+        .expect("second plan")
+        .config_text
+        .expect("second config");
+        assert!(first_plan.contains("[model_providers.first]"));
+        assert!(!first_plan.contains("[model_providers.second]"));
+        assert!(second_plan.contains("[model_providers.second]"));
+        assert!(!second_plan.contains("[model_providers.first]"));
+    }
+
+    #[test]
     fn preflight_rejects_provider_table_conflicts_codex_refuses_to_load() {
         // 0.149 validates EVERY provider table (idle ones included) and
         // rejects: aws outside the Bedrock built-ins, and auth combined with
@@ -6113,6 +6679,7 @@ base_url = "https://bedrock.example/v1"
         // can't be normalized away, so the switch must refuse up front —
         // with or without a carried key, official or third-party.
         let with_key = json!({"OPENAI_API_KEY": "sk-test"});
+        let empty_snapshot = CodexLiveConfigSnapshot::from_text(None);
         let rejected = [
             // bare aws on a custom table, no requires_openai_auth anywhere
             "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"Custom\"\nbase_url = \"https://relay.example/v1\"\naws = { region = \"us-east-1\" }\n",
@@ -6127,11 +6694,23 @@ base_url = "https://bedrock.example/v1"
         ] ;
         for config in rejected {
             assert!(
-                preflight_codex_live_write(None, &with_key, Some(config)).is_err(),
+                preflight_codex_live_write_with_snapshot(
+                    None,
+                    &with_key,
+                    Some(config),
+                    &empty_snapshot,
+                )
+                .is_err(),
                 "third-party preflight must refuse:\n{config}"
             );
             assert!(
-                preflight_codex_live_write(Some("official"), &json!({}), Some(config)).is_err(),
+                preflight_codex_live_write_with_snapshot(
+                    Some("official"),
+                    &json!({}),
+                    Some(config),
+                    &empty_snapshot,
+                )
+                .is_err(),
                 "official preflight must refuse the same shapes:\n{config}"
             );
         }
@@ -6144,7 +6723,13 @@ base_url = "https://bedrock.example/v1"
         ];
         for config in accepted {
             assert!(
-                preflight_codex_live_write(None, &with_key, Some(config)).is_ok(),
+                preflight_codex_live_write_with_snapshot(
+                    None,
+                    &with_key,
+                    Some(config),
+                    &empty_snapshot,
+                )
+                .is_ok(),
                 "loadable shape must pass the preflight:\n{config}"
             );
         }
