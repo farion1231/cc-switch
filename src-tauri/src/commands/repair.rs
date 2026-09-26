@@ -1,8 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::codex_repair::{
-    CodexAuthRepairResult, CodexRepairStatus, CodexStoreRepairResult,
-};
+use crate::codex_repair::{CodexAuthRepairResult, CodexRepairStatus, CodexStoreRepairResult};
 
 /// Codex 修复工具：整体诊断（商店 / config.toml / auth.json）。
 #[tauri::command]

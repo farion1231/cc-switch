@@ -265,12 +265,16 @@ fn curated_store_status(home: &Path) -> CuratedStoreStatus {
 
 /// 读取并校验 `root/.agents/plugins/marketplace.json`，返回插件数。
 fn read_marketplace_plugin_count(root: &Path) -> Result<usize, AppError> {
-    let marketplace_path = root.join(".agents").join("plugins").join("marketplace.json");
+    let marketplace_path = root
+        .join(".agents")
+        .join("plugins")
+        .join("marketplace.json");
     let text = std::fs::read_to_string(&marketplace_path)
         .map_err(|e| AppError::io(&marketplace_path, e))?;
     let marketplace: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| AppError::json(&marketplace_path, e))?;
-    if marketplace.get("name").and_then(serde_json::Value::as_str) != Some(OPENAI_CURATED_MARKETPLACE_NAME)
+    if marketplace.get("name").and_then(serde_json::Value::as_str)
+        != Some(OPENAI_CURATED_MARKETPLACE_NAME)
     {
         return Err(AppError::Message(format!(
             "{} 不是 openai-curated 市场（name={:?}）",
@@ -396,11 +400,7 @@ fn cleanup_blocked_marketplace_configs(home: &Path) -> Result<bool, AppError> {
     let text = existing.trim_start_matches('\u{feff}');
     let mut doc = match text.parse::<toml_edit::DocumentMut>() {
         Ok(doc) => doc,
-        Err(error) => {
-            return Err(AppError::Message(format!(
-                "config.toml 无法解析: {error}"
-            )))
-        }
+        Err(error) => return Err(AppError::Message(format!("config.toml 无法解析: {error}"))),
     };
     let blocked_names = blocked_marketplace_entries(home, &doc)
         .into_iter()
@@ -410,7 +410,10 @@ fn cleanup_blocked_marketplace_configs(home: &Path) -> Result<bool, AppError> {
         return Ok(false);
     }
     let mut changed = false;
-    if let Some(marketplaces) = doc.get_mut("marketplaces").and_then(toml_edit::Item::as_table_mut) {
+    if let Some(marketplaces) = doc
+        .get_mut("marketplaces")
+        .and_then(toml_edit::Item::as_table_mut)
+    {
         for name in blocked_names {
             marketplaces.remove(&name);
             changed = true;
@@ -604,9 +607,7 @@ fn replace_directory(source: &Path, destination: &Path) -> Result<(), AppError> 
             if backup.exists() {
                 let _ = std::fs::rename(&backup, destination);
             }
-            Err(AppError::Message(format!(
-                "安装新商店目录失败: {error}"
-            )))
+            Err(AppError::Message(format!("安装新商店目录失败: {error}")))
         }
     }
 }
@@ -649,9 +650,7 @@ fn backup_broken_auth_json(auth_path: &Path) -> Result<PathBuf, AppError> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let backup_path = auth_path.with_file_name(format!(
-        "auth.json.bak-{timestamp}"
-    ));
+    let backup_path = auth_path.with_file_name(format!("auth.json.bak-{timestamp}"));
     std::fs::rename(auth_path, &backup_path).map_err(|e| AppError::io(auth_path, e))?;
     Ok(backup_path)
 }
@@ -700,7 +699,9 @@ mod tests {
         std::fs::create_dir_all(root.join(".agents").join("plugins")).unwrap();
         std::fs::create_dir_all(root.join("plugins").join("gmail")).unwrap();
         std::fs::write(
-            root.join(".agents").join("plugins").join("marketplace.json"),
+            root.join(".agents")
+                .join("plugins")
+                .join("marketplace.json"),
             marketplace_json(&["gmail", "slack"]),
         )
         .unwrap();
@@ -731,7 +732,9 @@ mod tests {
         let root = home.join(".tmp").join("plugins");
         std::fs::create_dir_all(root.join(".agents").join("plugins")).unwrap();
         std::fs::write(
-            root.join(".agents").join("plugins").join("marketplace.json"),
+            root.join(".agents")
+                .join("plugins")
+                .join("marketplace.json"),
             "{not json",
         )
         .unwrap();
@@ -749,7 +752,9 @@ mod tests {
         let root = home.join(".tmp").join("plugins");
         std::fs::create_dir_all(root.join(".agents").join("plugins")).unwrap();
         std::fs::write(
-            root.join(".agents").join("plugins").join("marketplace.json"),
+            root.join(".agents")
+                .join("plugins")
+                .join("marketplace.json"),
             r#"{"name":"other-market","plugins":[{"name":"x"}]}"#,
         )
         .unwrap();
@@ -844,7 +849,13 @@ source = "/tmp/my-marketplace"
 
         let text = std::fs::read_to_string(&config_path).unwrap();
         let doc = text.parse::<toml_edit::DocumentMut>().unwrap();
-        assert!(doc.get("marketplaces").unwrap().as_table().unwrap().get("openai-curated").is_none());
+        assert!(doc
+            .get("marketplaces")
+            .unwrap()
+            .as_table()
+            .unwrap()
+            .get("openai-curated")
+            .is_none());
         assert_eq!(
             doc["marketplaces"]["my-marketplace"]["source"].as_str(),
             Some("/tmp/my-marketplace")
@@ -877,7 +888,10 @@ source = "/tmp/wrong-path"
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path();
         let zip_bytes = build_plugins_zip(&[
-            (".agents/plugins/marketplace.json", &marketplace_json(&["gmail", "slack"])),
+            (
+                ".agents/plugins/marketplace.json",
+                &marketplace_json(&["gmail", "slack"]),
+            ),
             ("plugins/gmail/", b""),
             ("plugins/gmail/.gitkeep", b""),
             ("plugins/slack/", b""),
@@ -889,7 +903,11 @@ source = "/tmp/wrong-path"
         let status = curated_store_status(home);
         assert!(status.valid);
         assert_eq!(status.plugin_count, 2);
-        assert!(home.join(".tmp").join("plugins").join("plugins/gmail").is_dir());
+        assert!(home
+            .join(".tmp")
+            .join("plugins")
+            .join("plugins/gmail")
+            .is_dir());
     }
 
     #[test]
@@ -898,7 +916,10 @@ source = "/tmp/wrong-path"
         let home = temp.path();
         // 逃逸条目被跳过后 marketplace.json 缺失，安装必须失败且不留半成品。
         let zip_bytes = build_plugins_zip(&[
-            ("../.agents/plugins/marketplace.json", &marketplace_json(&["gmail"])),
+            (
+                "../.agents/plugins/marketplace.json",
+                &marketplace_json(&["gmail"]),
+            ),
             ("../escape.txt", b"boom"),
             ("plugins/gmail/", b""),
         ]);
@@ -926,7 +947,9 @@ source = "/tmp/wrong-path"
         let repaired = std::fs::read_to_string(&auth_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
         assert_eq!(parsed["OPENAI_API_KEY"].as_str(), Some(""));
-        assert!(std::fs::read(result.backup_path.unwrap()).unwrap().is_empty());
+        assert!(std::fs::read(result.backup_path.unwrap())
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

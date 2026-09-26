@@ -52,7 +52,9 @@ export function CodexRepairSettings() {
     try {
       const result: CodexStoreRepairResult =
         await settingsApi.repairCodexPluginStore();
-      toast.success(result.message || t("settings.codexRepair.repairStoreDone"));
+      toast.success(
+        result.message || t("settings.codexRepair.repairStoreDone"),
+      );
       setStatus(await settingsApi.codexRepairStatus());
     } catch (error) {
       console.error("Failed to repair Codex plugin store:", error);
@@ -135,7 +137,9 @@ export function CodexRepairSettings() {
     <section className="space-y-4">
       <div className="flex items-center gap-2 pb-2 border-b border-border/40">
         <Wrench className="h-4 w-4 text-primary" />
-        <h3 className="text-sm font-medium">{t("settings.codexRepair.title")}</h3>
+        <h3 className="text-sm font-medium">
+          {t("settings.codexRepair.title")}
+        </h3>
         {status &&
           (status.needsRepair ? (
             <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
