@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { Check, Loader2, Search } from "lucide-react";
 import {
   Dialog,
@@ -21,7 +20,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useUpdateModelPricing } from "@/lib/query/usage";
 import {
   fetchModelsDevPricing,
   flattenModels,
@@ -45,17 +43,16 @@ const MAX_VISIBLE_ROWS = 200;
 interface ModelsDevPickerDialogProps {
   open: boolean;
   onClose: () => void;
-  /** 导入成功后调用（此时定价列表已刷新） */
-  onImported: () => void;
+  /** 用户选中某个模型后回调（由父级把数据填入表单，不在此处保存） */
+  onSelect: (entry: ModelsDevEntry) => void;
 }
 
 export function ModelsDevPickerDialog({
   open,
   onClose,
-  onImported,
+  onSelect,
 }: ModelsDevPickerDialogProps) {
   const { t } = useTranslation();
-  const updatePricing = useUpdateModelPricing();
 
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
@@ -115,35 +112,14 @@ export function ModelsDevPickerDialog({
   );
 
   // 单选：点击未选中的行替换选择，点击已选中的行取消选择。
-  // 限制单选是为了避免批量导入时每条都触发一次全量零成本回填扫描（见 update_model_pricing）。
+  // 表单每次只填一个模型，保持单选。
   const toggleEntry = (entry: ModelsDevEntry) => {
     setSelected((prev) => (prev?.key === entry.key ? null : entry));
   };
 
-  const handleImport = async () => {
+  const handleSelect = () => {
     if (!selected) return;
-
-    try {
-      await updatePricing.mutateAsync({
-        modelId: selected.normalizedId,
-        displayName: selected.modelName,
-        inputCost: formatPrice(selected.input),
-        outputCost: formatPrice(selected.output),
-        cacheReadCost: formatPrice(selected.cacheRead),
-        cacheCreationCost: formatPrice(selected.cacheWrite),
-      });
-
-      toast.success(
-        t("usage.modelsDevImported", {
-          name: selected.modelName,
-          defaultValue: "已导入 {{name}} 的定价",
-        }),
-        { closeButton: true },
-      );
-      onImported();
-    } catch (error) {
-      toast.error(String(error));
-    }
+    onSelect(selected);
   };
 
   const priceColumns = (entry: ModelsDevEntry) =>
@@ -161,7 +137,7 @@ export function ModelsDevPickerDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !updatePricing.isPending) {
+        if (!nextOpen) {
           onClose();
         }
       }}
@@ -178,12 +154,12 @@ export function ModelsDevPickerDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            {t("usage.modelsDevPickerTitle", "从 models.dev 导入定价")}
+            {t("usage.modelsDevPickerTitle", "从 models.dev 引用定价")}
           </DialogTitle>
           <DialogDescription>
             {t(
               "usage.modelsDevPickerDesc",
-              "选择要导入的模型（价格单位：USD / 百万 tokens），每次导入一个",
+              "选择要填入表单的模型（价格单位：USD / 百万 tokens），每次填入一个",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -331,25 +307,11 @@ export function ModelsDevPickerDialog({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={onClose}
-            disabled={updatePricing.isPending}
-          >
+          <Button variant="outline" onClick={onClose}>
             {t("common.cancel", "取消")}
           </Button>
-          <Button
-            onClick={handleImport}
-            disabled={!selected || updatePricing.isPending}
-          >
-            {updatePricing.isPending ? (
-              <>
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                {t("usage.modelsDevImporting", "导入中...")}
-              </>
-            ) : (
-              t("usage.modelsDevImportButton", "导入")
-            )}
+          <Button onClick={handleSelect} disabled={!selected}>
+            {t("usage.modelsDevImportButton", "填入表单")}
           </Button>
         </DialogFooter>
       </DialogContent>
