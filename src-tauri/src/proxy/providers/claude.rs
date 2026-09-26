@@ -2359,6 +2359,75 @@ mod tests {
     }
 
     #[test]
+    fn test_codex_anthropic_conversion_output_gets_vendor_history_heal() {
+        // #7525 的 codex 半边：responses→anthropic 转换只回放经加密信封往返的
+        // thinking，裸 reasoning 项（无 encrypted_content）被静默丢弃，带 tool_use
+        // 的 assistant 轮因此缺 thinking 块，DeepSeek 官方 Anthropic 端点会 400。
+        // forwarder 在转换后套用与 Claude 适配器相同的厂商门控归一化（见
+        // codex_responses_to_anthropic 分支），这里锁住组合语义：转换产物缺
+        // thinking 时，归一化必须补出占位块。
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_output_tokens": 40000,
+            "reasoning": { "effort": "high" },
+            "input": [
+                { "role": "user", "content": "hi" },
+                { "type": "reasoning", "summary": [] },
+                { "type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Tokyo\"}" },
+                { "type": "function_call_output", "call_id": "call_1", "output": "sunny" }
+            ]
+        });
+
+        let mut body =
+            super::super::transform_codex_anthropic::responses_request_to_anthropic(input, 4096)
+                .unwrap();
+
+        // 转换本身不回放裸 reasoning 项：assistant 工具轮此刻没有 thinking 块。
+        let tool_turn = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| {
+                message["content"].as_array().is_some_and(|blocks| {
+                    blocks
+                        .iter()
+                        .any(|block| block["type"] == json!("tool_use"))
+                })
+            })
+            .expect("assistant tool turn survives the conversion");
+        assert!(!tool_turn["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|block| block["type"] == json!("thinking")));
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+        assert!(changed);
+
+        let tool_turn = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| {
+                message["content"].as_array().is_some_and(|blocks| {
+                    blocks
+                        .iter()
+                        .any(|block| block["type"] == json!("tool_use"))
+                })
+            })
+            .unwrap();
+        let content = tool_turn["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+    }
+
+    #[test]
     fn test_anthropic_messages_no_longer_hoists_system_role_messages() {
         // After reverting #3775, role=system messages are left in `messages[]`
         // (DeepSeek's endpoint accepts them natively) and the top-level `system`
