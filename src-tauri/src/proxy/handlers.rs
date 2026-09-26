@@ -36,8 +36,8 @@ use super::{
         transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        create_logged_passthrough_stream, create_usage_collector, prepare_streaming_mask,
+        process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
         strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
@@ -381,6 +381,14 @@ fn spawn_claude_usage_log(
         write_claude_usage_log(&state, log).await;
     });
 }
+/// Restore values that were replaced in the outbound request before serializing a
+/// transformed JSON response. The generic passthrough path performs this in
+/// `response_processor`; each format-conversion path must do it after conversion.
+fn restore_masked_json_response(ctx: &RequestContext, response: &mut Value) {
+    if let Some(session) = ctx.mask_restorer() {
+        session.restore_json_value(response);
+    }
+}
 
 async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
@@ -521,6 +529,7 @@ async fn handle_claude_transform(
             usage_collector,
             timeout_config,
             connection_guard,
+            ctx.mask_restorer(),
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -654,7 +663,7 @@ async fn handle_claude_transform(
             "Missing upstream response after Claude format conversion".to_string(),
         )),
     };
-    let anthropic_response = match transform_result {
+    let mut anthropic_response = match transform_result {
         Ok(response) => response,
         Err(error) => {
             log::error!("[Claude] 转换响应失败: {error}");
@@ -670,6 +679,7 @@ async fn handle_claude_transform(
             return Err(error);
         }
     };
+    restore_masked_json_response(ctx, &mut anthropic_response);
 
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
@@ -1204,8 +1214,9 @@ async fn handle_codex_xai_native_responses_rewrite(
 
     if response.is_sse() {
         let mut response_headers = response.headers().clone();
+        let mask_session =
+            prepare_streaming_mask(&mut response_headers, ctx.tag, ctx.mask_restorer());
         strip_hop_by_hop_response_headers(&mut response_headers);
-
         let mut builder = axum::response::Response::builder().status(status);
         for (key, value) in &response_headers {
             builder = builder.header(key, value);
@@ -1224,6 +1235,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            mask_session,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1258,6 +1270,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
                 &mut value,
             );
+            restore_masked_json_response(ctx, &mut value);
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
@@ -1420,6 +1433,7 @@ async fn handle_codex_chat_to_responses_transform(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            ctx.mask_restorer(),
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1474,7 +1488,7 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
-    let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
+    let mut responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
     )
@@ -1482,6 +1496,7 @@ async fn handle_codex_chat_to_responses_transform(
         log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
         e
     })?;
+    restore_masked_json_response(ctx, &mut responses_response);
     state
         .codex_chat_history
         .record_response(&responses_response)
@@ -1646,7 +1661,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     }
 
     let _connection_guard = connection_guard;
-    let responses_response =
+    let mut responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
             &codex_tool_context,
@@ -1655,6 +1670,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             log::error!("[Codex] Failed to convert Anthropic response to Responses: {e}");
             e
         })?;
+    restore_masked_json_response(ctx, &mut responses_response);
 
     if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response)
         .filter(TokenUsage::has_billable_tokens)
@@ -1793,6 +1809,7 @@ fn build_codex_anthropic_sse_response(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        ctx.mask_restorer(),
     );
 
     let mut headers = axum::http::HeaderMap::new();
