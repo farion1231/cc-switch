@@ -19,6 +19,8 @@ pub mod http_client;
 pub mod hyper_client;
 pub(crate) mod json_canonical;
 pub mod log_codes;
+#[cfg(all(test, feature = "test-hooks"))]
+mod loopback_upstream_tests;
 pub mod media_sanitizer;
 pub mod model_mapper;
 pub mod provider_router;
@@ -28,6 +30,9 @@ pub(crate) mod server;
 pub mod session;
 pub(crate) mod sse;
 pub(crate) mod switch_lock;
+#[cfg(feature = "test-hooks")]
+#[allow(dead_code)]
+pub(crate) mod test_hooks;
 pub mod thinking_budget_rectifier;
 pub mod thinking_optimizer;
 pub mod thinking_rectifier;
