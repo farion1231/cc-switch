@@ -9,6 +9,7 @@ export interface DeepLinkImportRequest {
   // Common fields
   app?:
     | "claude"
+    | "claude-desktop"
     | "codex"
     | "gemini"
     | "grokbuild"
