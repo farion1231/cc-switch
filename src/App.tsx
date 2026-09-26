@@ -175,6 +175,7 @@ const getInitialView = (): View => {
 
 function App() {
   const { t } = useTranslation();
+  const usageShortcutLabel = t("usage.title", { defaultValue: "使用统计" });
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
@@ -1375,22 +1376,19 @@ function App() {
                     setCurrentView("settings");
                   }}
                 />
-                {isCurrentAppTakeoverActive && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setSettingsDefaultTab("usage");
-                      setCurrentView("settings");
-                    }}
-                    title={t("usage.title", {
-                      defaultValue: "使用统计",
-                    })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                  </Button>
-                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setSettingsDefaultTab("usage");
+                    setCurrentView("settings");
+                  }}
+                  title={usageShortcutLabel}
+                  aria-label={usageShortcutLabel}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <BarChart2 className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>
