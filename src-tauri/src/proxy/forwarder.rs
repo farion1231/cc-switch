@@ -15,6 +15,7 @@ use super::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
         AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
+    responses_compat::{self, ResponsesRouteKey},
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -2260,16 +2261,6 @@ impl RequestForwarder {
             ordered_headers.insert(name, value);
         }
 
-        // 序列化请求体。GET/HEAD 是 idempotent/safe 方法，按 HTTP 语义不应携带 body；
-        // 强行附带 JSON body 会让某些上游（如 Google Gemini 的 models.list）拒绝请求。
-        let body_bytes = if matches!(method, &http::Method::GET | &http::Method::HEAD) {
-            Vec::new()
-        } else {
-            serde_json::to_vec(&filtered_body).map_err(|e| {
-                ProxyError::Internal(format!("Failed to serialize request body: {e}"))
-            })?
-        };
-
         // 确保 content-type 存在
         if !ordered_headers.contains_key(http::header::CONTENT_TYPE) {
             ordered_headers.insert(
@@ -2307,18 +2298,20 @@ impl RequestForwarder {
             crate::redact_url_for_log_with_secrets(&url, &log_secrets)
         };
 
-        // 输出请求信息日志
-        let tag = adapter.name();
-        let request_model = filtered_body
-            .get("model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("<none>");
-        log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
-        log::debug!(
-            "[{tag}] >>> 请求体已准备: bytes={}, hash={} (content omitted)",
-            body_bytes.len(),
-            short_value_hash(Some(&filtered_body))
-        );
+        let responses_compat_key = (adapter.name() == "Claude"
+            && resolved_claude_api_format.as_deref() == Some("openai_responses"))
+        .then(|| {
+            ResponsesRouteKey::new(
+                provider.id.clone(),
+                url.clone(),
+                filtered_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                "openai_responses",
+                responses_compat::request_variant(&filtered_body),
+            )
+        });
 
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -2343,60 +2336,57 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        // 发送请求
-        let response = if is_socks_proxy || !preserve_exact_header_case {
-            // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
-            // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
-            log::debug!(
-                "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
-            );
-            let client = super::http_client::get();
-            let mut request = client.request(method.clone(), &url);
-            if request_is_streaming {
-                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
-                // 的首包/静默期超时控制，避免长流被总时长误杀。
-                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
-            }
-            for (key, value) in &ordered_headers {
-                request = request.header(key, value);
-            }
-            let send = request.body(body_bytes).send();
-            let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
-                } else {
-                    self.streaming_first_byte_timeout
-                };
-                tokio::time::timeout(header_timeout, send)
-                    .await
-                    .map_err(|_| {
-                        ProxyError::Timeout(format!(
-                            "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
-                        ))
-                    })?
-            } else {
-                send.await
-            };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
-            ProxyResponse::Reqwest(reqwest_resp)
+        let tag = adapter.name();
+        let response = if let Some(key) = responses_compat_key.as_ref() {
+            responses_compat::with_optional_param_fallback(
+                filtered_body.clone(),
+                responses_compat::process_compatibility_cache(),
+                key,
+                |attempt_body| {
+                    let url = url.clone();
+                    let target_for_log = target_for_log.clone();
+                    let ordered_headers = ordered_headers.clone();
+                    let upstream_proxy_url = upstream_proxy_url.clone();
+                    async move {
+                        let response = self
+                            .send_prepared_request(
+                                method,
+                                &url,
+                                &target_for_log,
+                                tag,
+                                &ordered_headers,
+                                extensions,
+                                &attempt_body,
+                                request_is_streaming,
+                                timeout,
+                                upstream_proxy_url.as_deref(),
+                                is_socks_proxy,
+                                preserve_exact_header_case,
+                            )
+                            .await?;
+                        if matches!(response.status().as_u16(), 400 | 422) {
+                            Err(Self::upstream_error_from_response(response).await?)
+                        } else {
+                            Ok(response)
+                        }
+                    }
+                },
+            )
+            .await?
         } else {
-            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
-            // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url.parse().map_err(|e| {
-                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
-            })?;
-            super::hyper_client::send_request(
-                uri,
+            self.send_prepared_request(
+                method,
+                &url,
                 &target_for_log,
-                method.clone(),
-                ordered_headers,
-                extensions.clone(),
-                body_bytes,
+                tag,
+                &ordered_headers,
+                extensions,
+                &filtered_body,
+                request_is_streaming,
                 timeout,
                 upstream_proxy_url.as_deref(),
+                is_socks_proxy,
+                preserve_exact_header_case,
             )
             .await?
         };
@@ -2434,30 +2424,129 @@ impl RequestForwarder {
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
-            let status_code = status.as_u16();
-            // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
-            // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
-            // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
-            let encoding = get_content_encoding(response.headers());
-            let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
-            let decoded = match encoding {
-                Some(encoding) => {
-                    match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
-                        Ok(Some(decompressed)) => decompressed,
-                        // 不支持的编码 / 解压失败 / 解压后超限：退回（已有上限的）
-                        // 原始字节，尽量保留可读信息
-                        _ => raw.to_vec(),
-                    }
-                }
-                None => raw.to_vec(),
-            };
-            let body_text = String::from_utf8(decoded).ok();
-
-            Err(ProxyError::UpstreamError {
-                status: status_code,
-                body: body_text,
-            })
+            Err(Self::upstream_error_from_response(response).await?)
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_prepared_request(
+        &self,
+        method: &http::Method,
+        url: &str,
+        target_for_log: &str,
+        tag: &str,
+        ordered_headers: &http::HeaderMap,
+        extensions: &Extensions,
+        body: &Value,
+        request_is_streaming: bool,
+        timeout: std::time::Duration,
+        upstream_proxy_url: Option<&str>,
+        is_socks_proxy: bool,
+        preserve_exact_header_case: bool,
+    ) -> Result<ProxyResponse, ProxyError> {
+        // GET/HEAD are idempotent/safe methods, so they must not carry a body.
+        let body_bytes = if matches!(method, &http::Method::GET | &http::Method::HEAD) {
+            Vec::new()
+        } else {
+            serde_json::to_vec(body).map_err(|e| {
+                ProxyError::Internal(format!("Failed to serialize request body: {e}"))
+            })?
+        };
+
+        let request_model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("<none>");
+        log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
+        log::debug!(
+            "[{tag}] >>> 请求体已准备: bytes={}, hash={} (content omitted)",
+            body_bytes.len(),
+            short_value_hash(Some(body))
+        );
+
+        if is_socks_proxy || !preserve_exact_header_case {
+            // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
+            // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
+            log::debug!(
+                "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
+            );
+            let client = super::http_client::get();
+            let mut request = client.request(method.clone(), url);
+            if request_is_streaming {
+                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
+                // 的首包/静默期超时控制，避免长流被总时长误杀。
+                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
+            } else if !self.non_streaming_timeout.is_zero() {
+                request = request.timeout(self.non_streaming_timeout);
+            }
+            for (key, value) in ordered_headers {
+                request = request.header(key, value);
+            }
+            let send = request.body(body_bytes).send();
+            let send_result = if request_is_streaming {
+                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
+                    timeout
+                } else {
+                    self.streaming_first_byte_timeout
+                };
+                tokio::time::timeout(header_timeout, send)
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout(format!(
+                            "流式响应首包超时: {}s（上游未返回响应头）",
+                            header_timeout.as_secs()
+                        ))
+                    })?
+            } else {
+                send.await
+            };
+            let response = send_result.map_err(map_reqwest_send_error)?;
+            Ok(ProxyResponse::Reqwest(response))
+        } else {
+            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
+            // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
+            let uri: http::Uri = url.parse().map_err(|e| {
+                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
+            })?;
+            super::hyper_client::send_request(
+                uri,
+                target_for_log,
+                method.clone(),
+                ordered_headers.clone(),
+                extensions.clone(),
+                body_bytes,
+                timeout,
+                upstream_proxy_url,
+            )
+            .await
+        }
+    }
+
+    async fn upstream_error_from_response(
+        response: ProxyResponse,
+    ) -> Result<ProxyError, ProxyError> {
+        let status_code = response.status().as_u16();
+        // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
+        // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
+        // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
+        let encoding = get_content_encoding(response.headers());
+        let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
+        let decoded = match encoding {
+            Some(encoding) => {
+                match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                    Ok(Some(decompressed)) => decompressed,
+                    // 不支持的编码 / 解压失败 / 解压后超限：退回（已有上限的）
+                    // 原始字节，尽量保留可读信息
+                    _ => raw.to_vec(),
+                }
+            }
+            None => raw.to_vec(),
+        };
+        let body_text = String::from_utf8(decoded).ok();
+        Ok(ProxyError::UpstreamError {
+            status: status_code,
+            body: body_text,
+        })
     }
 
     /// 故障转移开启时，成功不能只看上游响应头。
