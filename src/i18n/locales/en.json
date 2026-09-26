@@ -367,6 +367,9 @@
         "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
+        "autoRestoreOnStartup": "Auto-resume Routing on Startup",
+        "autoRestoreOnStartupDescription": "When enabled, CC Switch automatically restores the previous routing takeover on launch (requires Launch on Startup). When disabled, exiting the app restores the original client configs, leaving no stale routing address behind.",
+        "autoRestoreOnStartupNeedsAutostart": "Launch on Startup is currently off; auto-resume only takes effect when CC Switch starts with the system",
         "running": "Running",
         "stopped": "Stopped"
       },
