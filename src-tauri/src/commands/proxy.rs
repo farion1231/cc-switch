@@ -115,10 +115,7 @@ pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    let db = &state.db;
-    db.update_global_proxy_config(config)
-        .await
-        .map_err(|e| e.to_string())
+    state.proxy_service.update_global_config(config).await
 }
 
 /// 获取指定应用的代理配置

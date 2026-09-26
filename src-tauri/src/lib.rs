@@ -1930,10 +1930,10 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
         // 非接管模式：代理在运行则仅停止代理
         if proxy_service.is_running().await {
             log::info!("检测到代理服务器正在运行，开始停止...");
-            if let Err(e) = proxy_service.stop().await {
+            if let Err(e) = proxy_service.stop_keep_enabled_state().await {
                 log::error!("退出时停止代理失败: {e}");
             }
-            log::info!("代理服务器清理完成");
+            log::info!("代理服务器清理完成（保留启用状态，下次启动将自动恢复）");
         }
     }
 }
@@ -1985,8 +1985,15 @@ async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static 
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
+    let restore_standalone_proxy = match state.db.get_global_proxy_config().await {
+        Ok(config) => config.proxy_enabled,
+        Err(error) => {
+            log::warn!("启动时读取代理总开关失败: {error}");
+            false
+        }
+    };
 
-    if apps_to_restore.is_empty() {
+    if apps_to_restore.is_empty() && !restore_standalone_proxy {
         log::debug!("启动时无需恢复代理状态");
         return;
     }
@@ -2014,6 +2021,14 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
                     log::error!("清除 {app_type} 代理状态失败: {clear_err}");
                 }
             }
+        }
+    }
+
+    // Failed takeover cleanup can stop the listener and clear its enabled flag.
+    if restore_standalone_proxy && !state.proxy_service.is_running().await {
+        match state.proxy_service.start().await {
+            Ok(info) => log::info!("✓ 已恢复本地代理服务: {}:{}", info.address, info.port),
+            Err(error) => log::error!("✗ 恢复本地代理服务失败: {error}"),
         }
     }
 }
@@ -2304,10 +2319,12 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 mod tests {
     use super::{
         classify_exit_request, enabled_proxy_apps_on_startup, redact_url_for_log,
-        redact_url_for_log_with_secrets, redact_url_origin_for_log, runtime_log_level_allows,
-        ExitRequestAction,
+        redact_url_for_log_with_secrets, redact_url_origin_for_log, restore_proxy_state_on_startup,
+        runtime_log_level_allows, ExitRequestAction,
     };
     use crate::database::Database;
+    use crate::store::AppState;
+    use std::sync::Arc;
 
     #[test]
     fn log_url_redaction_strips_credentials_and_query_keeps_path() {
@@ -2430,5 +2447,103 @@ mod tests {
         let apps = enabled_proxy_apps_on_startup(&db).await;
 
         assert_eq!(apps, vec!["grokbuild"]);
+    }
+
+    #[tokio::test]
+    async fn startup_restores_standalone_proxy_enabled_at_shutdown() {
+        let db = Arc::new(Database::memory().expect("initialize database"));
+        let mut config = db
+            .get_global_proxy_config()
+            .await
+            .expect("read global proxy config");
+        config.proxy_enabled = true;
+        config.listen_port = 0;
+        db.update_global_proxy_config(config)
+            .await
+            .expect("enable standalone proxy");
+        let state = AppState::new(db.clone());
+
+        restore_proxy_state_on_startup(&state).await;
+        assert!(state.proxy_service.is_running().await);
+
+        state
+            .proxy_service
+            .stop_keep_enabled_state()
+            .await
+            .expect("stop for shutdown");
+        assert!(
+            db.get_global_proxy_config()
+                .await
+                .expect("read preserved state")
+                .proxy_enabled
+        );
+
+        restore_proxy_state_on_startup(&state).await;
+        assert!(state.proxy_service.is_running().await);
+        state.proxy_service.stop().await.expect("manual stop");
+        assert!(
+            !db.get_global_proxy_config()
+                .await
+                .expect("read stopped state")
+                .proxy_enabled
+        );
+        restore_proxy_state_on_startup(&state).await;
+        assert!(!state.proxy_service.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn stale_global_config_save_preserves_startup_restore_intent() {
+        // Exercise stale snapshots from both before start and before manual stop.
+        for manually_stopped in [false, true] {
+            let db = Arc::new(Database::memory().expect("initialize database"));
+            let mut config = db.get_global_proxy_config().await.expect("read config");
+            config.listen_port = 0;
+            db.update_global_proxy_config(config)
+                .await
+                .expect("set ephemeral port");
+            let state = AppState::new(db.clone());
+            let mut stale = db
+                .get_global_proxy_config()
+                .await
+                .expect("snapshot while stopped");
+            state.proxy_service.start().await.expect("start");
+            if manually_stopped {
+                stale = db
+                    .get_global_proxy_config()
+                    .await
+                    .expect("snapshot while running");
+                state.proxy_service.stop().await.expect("manual stop");
+            }
+            stale.listen_port = 0;
+            stale.enable_logging = !stale.enable_logging;
+            state
+                .proxy_service
+                .update_global_config(stale.clone())
+                .await
+                .expect("save stale settings");
+            let saved = db
+                .get_global_proxy_config()
+                .await
+                .expect("read saved config");
+            assert_eq!(saved.proxy_enabled, !manually_stopped);
+            assert_eq!(saved.listen_port, stale.listen_port);
+            assert_eq!(saved.enable_logging, stale.enable_logging);
+            if !manually_stopped {
+                state
+                    .proxy_service
+                    .stop_keep_enabled_state()
+                    .await
+                    .expect("shutdown");
+            }
+            restore_proxy_state_on_startup(&state).await;
+            let running = state.proxy_service.is_running().await;
+            if running {
+                state.proxy_service.stop().await.expect("cleanup");
+            }
+            assert_eq!(
+                running, !manually_stopped,
+                "stale settings must not change startup intent"
+            );
+        }
     }
 }
