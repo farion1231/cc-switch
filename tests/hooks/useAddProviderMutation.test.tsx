@@ -3,11 +3,13 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAddProviderMutation } from "@/lib/query/mutations";
+import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { Provider } from "@/types";
 
 const apiMocks = vi.hoisted(() => ({
   add: vi.fn(),
   ensureClaudeDesktopOfficialProvider: vi.fn(),
+  ensureGrokBuildOfficialProvider: vi.fn(),
   getAll: vi.fn(),
   updateTrayMenu: vi.fn(),
 }));
@@ -20,6 +22,7 @@ const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
   warning: vi.fn(),
+  info: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -27,6 +30,8 @@ vi.mock("@/lib/api", () => ({
     add: (...args: unknown[]) => apiMocks.add(...args),
     ensureClaudeDesktopOfficialProvider: (...args: unknown[]) =>
       apiMocks.ensureClaudeDesktopOfficialProvider(...args),
+    ensureGrokBuildOfficialProvider: (...args: unknown[]) =>
+      apiMocks.ensureGrokBuildOfficialProvider(...args),
     getAll: (...args: unknown[]) => apiMocks.getAll(...args),
     updateTrayMenu: (...args: unknown[]) => apiMocks.updateTrayMenu(...args),
   },
@@ -62,12 +67,14 @@ beforeEach(() => {
   apiMocks.ensureClaudeDesktopOfficialProvider
     .mockReset()
     .mockResolvedValue(true);
+  apiMocks.ensureGrokBuildOfficialProvider.mockReset().mockResolvedValue(true);
   apiMocks.getAll.mockReset().mockResolvedValue({});
   apiMocks.updateTrayMenu.mockReset().mockResolvedValue(true);
   uuidMocks.generateUUID.mockReset().mockReturnValue("generated-uuid");
   toastMocks.success.mockReset();
   toastMocks.error.mockReset();
   toastMocks.warning.mockReset();
+  toastMocks.info.mockReset();
 });
 
 describe("useAddProviderMutation", () => {
@@ -78,7 +85,7 @@ describe("useAddProviderMutation", () => {
       { wrapper },
     );
 
-    const duplicatedProvider = await act(async () =>
+    const added = await act(async () =>
       result.current.mutateAsync({
         name: "Claude Desktop Official copy",
         settingsConfig: { env: {} },
@@ -97,8 +104,11 @@ describe("useAddProviderMutation", () => {
       "claude-desktop",
       undefined,
     );
-    expect(duplicatedProvider.id).toBe("generated-uuid");
-    expect(duplicatedProvider.id).not.toBe("claude-desktop-official");
+    expect(added.provider.id).toBe("generated-uuid");
+    expect(added.provider.id).not.toBe("claude-desktop-official");
+    expect(added.alreadyExisted).toBe(false);
+    expect(toastMocks.success).toHaveBeenCalledTimes(1);
+    expect(toastMocks.info).not.toHaveBeenCalled();
   });
 
   it("returns the persisted seed row for the Claude Desktop official preset", async () => {
@@ -121,7 +131,7 @@ describe("useAddProviderMutation", () => {
       { wrapper },
     );
 
-    const persistedProvider = await act(async () =>
+    const added = await act(async () =>
       result.current.mutateAsync({
         name: "Renamed by form",
         settingsConfig: { env: { ignored: true } },
@@ -137,7 +147,78 @@ describe("useAddProviderMutation", () => {
     );
     expect(apiMocks.getAll).toHaveBeenCalledWith("claude-desktop");
     expect(apiMocks.add).not.toHaveBeenCalled();
-    expect(persistedProvider).toEqual(seedProvider);
+    expect(added.provider).toEqual(seedProvider);
+    expect(added.alreadyExisted).toBe(false);
+    expect(toastMocks.success).toHaveBeenCalledTimes(1);
+    expect(toastMocks.info).not.toHaveBeenCalled();
+  });
+
+  it("reports the existing Claude Desktop official provider instead of a false 'added'", async () => {
+    // The official provider is seeded once per database, so ensure* returns
+    // false (no new row inserted). Adding it again must NOT claim success.
+    apiMocks.ensureClaudeDesktopOfficialProvider.mockResolvedValueOnce(false);
+    const seedProvider: Provider = {
+      id: "claude-desktop-official",
+      name: "Claude Desktop Official",
+      settingsConfig: { env: {} },
+      category: "official",
+    };
+    apiMocks.getAll.mockResolvedValueOnce({
+      "claude-desktop-official": seedProvider,
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(
+      () => useAddProviderMutation("claude-desktop"),
+      { wrapper },
+    );
+
+    const added = await act(async () =>
+      result.current.mutateAsync({
+        name: "Claude Desktop Official",
+        settingsConfig: { env: {} },
+        category: "official",
+        ensureClaudeDesktopOfficialSeed: true,
+      }),
+    );
+
+    expect(apiMocks.add).not.toHaveBeenCalled();
+    expect(added.provider).toEqual(seedProvider);
+    expect(added.alreadyExisted).toBe(true);
+    expect(toastMocks.success).not.toHaveBeenCalled();
+    expect(toastMocks.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the existing Grok Build official provider instead of a false 'added'", async () => {
+    apiMocks.ensureGrokBuildOfficialProvider.mockResolvedValueOnce(false);
+    const seedProvider: Provider = {
+      id: GROKBUILD_OFFICIAL_PROVIDER_ID,
+      name: "Grok Build Official",
+      settingsConfig: {},
+      category: "official",
+    };
+    apiMocks.getAll.mockResolvedValueOnce({
+      [GROKBUILD_OFFICIAL_PROVIDER_ID]: seedProvider,
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("grokbuild"), {
+      wrapper,
+    });
+
+    const added = await act(async () =>
+      result.current.mutateAsync({
+        name: "Grok Build Official",
+        settingsConfig: {},
+        category: "official",
+        ensureGrokBuildOfficialSeed: true,
+      }),
+    );
+
+    expect(apiMocks.ensureGrokBuildOfficialProvider).toHaveBeenCalledTimes(1);
+    expect(apiMocks.add).not.toHaveBeenCalled();
+    expect(added.provider).toEqual(seedProvider);
+    expect(added.alreadyExisted).toBe(true);
+    expect(toastMocks.success).not.toHaveBeenCalled();
+    expect(toastMocks.info).toHaveBeenCalledTimes(1);
   });
 
   it("adds a managed Codex account as a separate official card", async () => {
@@ -146,7 +227,7 @@ describe("useAddProviderMutation", () => {
       wrapper,
     });
 
-    const persistedProvider = await act(async () =>
+    const added = await act(async () =>
       result.current.mutateAsync({
         name: "OpenAI Official",
         settingsConfig: { auth: {}, config: "" },
@@ -179,7 +260,7 @@ describe("useAddProviderMutation", () => {
       "codex",
       undefined,
     );
-    expect(persistedProvider).toEqual(
+    expect(added.provider).toEqual(
       expect.objectContaining({
         id: "generated-uuid",
         meta: expect.objectContaining({
@@ -189,6 +270,7 @@ describe("useAddProviderMutation", () => {
         }),
       }),
     );
+    expect(added.alreadyExisted).toBe(false);
   });
 
   it("adds every unbound Codex Official as an independent provider", async () => {
@@ -201,7 +283,7 @@ describe("useAddProviderMutation", () => {
       wrapper,
     });
 
-    const firstProvider = await act(async () =>
+    const first = await act(async () =>
       result.current.mutateAsync({
         name: "OpenAI Official 1",
         settingsConfig: { auth: {}, config: "" },
@@ -209,7 +291,7 @@ describe("useAddProviderMutation", () => {
         meta: { providerType: "codex_oauth" },
       }),
     );
-    const secondProvider = await act(async () =>
+    const second = await act(async () =>
       result.current.mutateAsync({
         name: "OpenAI Official 2",
         settingsConfig: { auth: {}, config: "" },
@@ -237,8 +319,8 @@ describe("useAddProviderMutation", () => {
       "codex",
       undefined,
     );
-    expect(firstProvider.id).toBe("unbound-official-1");
-    expect(secondProvider.id).toBe("unbound-official-2");
+    expect(first.provider.id).toBe("unbound-official-1");
+    expect(second.provider.id).toBe("unbound-official-2");
   });
 
   it("adds a Pi provider without a separate default-model command", async () => {
@@ -247,7 +329,7 @@ describe("useAddProviderMutation", () => {
       wrapper,
     });
 
-    const provider = await act(async () =>
+    const added = await act(async () =>
       result.current.mutateAsync({
         name: "Pi Provider",
         providerKey: "pi-provider",
@@ -265,7 +347,7 @@ describe("useAddProviderMutation", () => {
       "pi",
       undefined,
     );
-    expect(provider.id).toBe("pi-provider");
+    expect(added.provider.id).toBe("pi-provider");
   });
 
   it("reports a Pi provider add failure", async () => {
