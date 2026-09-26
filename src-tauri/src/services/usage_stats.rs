@@ -214,6 +214,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
+         WHEN '_gemini_antigravity_session' THEN 'Antigravity (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
@@ -311,7 +312,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session', 'antigravity_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -326,7 +327,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session', 'antigravity_session')
                       )
                   )
                   AND proxy_dedup.created_at BETWEEN
@@ -2095,7 +2096,79 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
 
 pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
     let normalized = model_id.trim().to_ascii_lowercase();
-    normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
+    normalized.is_empty()
+        || matches!(normalized.as_str(), "unknown" | "null" | "none")
+        || normalized.starts_with("model_placeholder_")
+}
+
+/// Maps Antigravity placeholders and physical model aliases to billable model IDs.
+pub(crate) fn resolve_antigravity_pricing_placeholder(normalized: &str) -> Option<String> {
+    let without_thinking = normalized.strip_suffix("-thinking").unwrap_or(normalized);
+    match without_thinking {
+        "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
+            Some("gemini-3.5-flash".to_string())
+        }
+        "model_placeholder_m132" | "gemini-3-flash-a" => Some("gemini-3.5-flash".to_string()),
+        "model_placeholder_m36"
+        | "gemini-3.1-pro-low"
+        | "model_placeholder_m16"
+        | "gemini-pro-default" => Some("gemini-3.1-pro-preview".to_string()),
+        "gemini-3.8-flash"
+        | "gemini-3.8-flash-a"
+        | "gemini-3.8-flash-b"
+        | "gemini-3.8-flash-exp-a"
+        | "gemini-3.8-flash-exp-b"
+        | "gemini-3.8-flash-low"
+        | "gemini-3.8-flash-medium"
+        | "gemini-3.8-flash-high"
+        | "gemini-3.8-flash-preview"
+        | "gemini-3.8-flash-tiered"
+        | "gemini-3.8"
+        | "3.8"
+        | "3.8flash"
+        | "3.8-flash"
+        | "flash-3.8" => Some("gemini-3.8-flash".to_string()),
+        "gemini-3.7-flash"
+        | "gemini-3.7-flash-a"
+        | "gemini-3.7-flash-b"
+        | "gemini-3.7-flash-exp-a"
+        | "gemini-3.7-flash-exp-b"
+        | "gemini-3.7-flash-low"
+        | "gemini-3.7-flash-medium"
+        | "gemini-3.7-flash-high"
+        | "gemini-3.7-flash-preview"
+        | "gemini-3.7-flash-tiered"
+        | "gemini-3.7"
+        | "3.7"
+        | "3.7flash"
+        | "3.7-flash"
+        | "flash-3.7" => Some("gemini-3.7-flash".to_string()),
+        "gemini-3.6-flash"
+        | "gemini-3.6-flash-a"
+        | "gemini-3.6-flash-b"
+        | "gemini-3.6-flash-exp-a"
+        | "gemini-3.6-flash-exp-b"
+        | "gemini-3.6-flash-low"
+        | "gemini-3.6-flash-medium"
+        | "gemini-3.6-flash-high"
+        | "gemini-3.6-flash-preview"
+        | "gemini-3.6-flash-tiered"
+        | "gemini-3.6"
+        | "3.6"
+        | "3.6flash"
+        | "3.6-flash"
+        | "flash-3.6" => Some("gemini-3.6-flash".to_string()),
+        // Antigravity's placeholders and bare Claude 4.6 IDs use the dated
+        // canonical rows below; both seeded rows intentionally share pricing.
+        "model_placeholder_m35" | "claude-sonnet-4-6" => {
+            Some("claude-sonnet-4-6-20260217".to_string())
+        }
+        "model_placeholder_m26" | "claude-opus-4-6" => Some("claude-opus-4-6-20260206".to_string()),
+        "gpt-oss-120b-medium" => Some("gpt-oss-120b-medium".to_string()),
+        "unknown" | "null" | "none" | "" => Some("unknown".to_string()),
+        other if other.starts_with("model_placeholder_") => Some("unknown".to_string()),
+        _ => None,
+    }
 }
 
 fn query_model_pricing_exact(
@@ -2148,7 +2221,9 @@ fn query_model_pricing_prefix(
 }
 
 fn model_pricing_candidates(model_id: &str) -> Vec<String> {
-    let cleaned = clean_model_id_for_pricing(model_id);
+    let resolved = resolve_antigravity_pricing_placeholder(&model_id.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| model_id.to_string());
+    let cleaned = clean_model_id_for_pricing(&resolved);
     if is_placeholder_pricing_model(&cleaned) {
         return Vec::new();
     }
@@ -3976,6 +4051,42 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "_opencode_session");
         assert_eq!(stats[0].provider_name, "OpenCode (Session)");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_labels_gemini_antigravity_session_provider() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "gemini-agy-session",
+                "gemini",
+                "_gemini_antigravity_session",
+                "gemini-2.5-pro",
+                "antigravity_session",
+                1000,
+                100,
+                50,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("gemini"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider_id, "_gemini_antigravity_session");
+        assert_eq!(stats[0].provider_name, "Antigravity (Session)");
+
+        let summary =
+            db.get_usage_summary(None, None, None, Some("Antigravity (Session)"), None)?;
+        assert_eq!(summary.total_requests, 1);
 
         Ok(())
     }

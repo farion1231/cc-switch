@@ -1180,7 +1180,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   name="gemini"
                                   size={14}
                                 />
-                                <span>Gemini CLI</span>
+                                <span>Antigravity</span>
                               </div>
                             </SelectItem>
                             <SelectItem value="mcode">MiniMax Code</SelectItem>

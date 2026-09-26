@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "CC Switch",
-    "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+    "description": "All-in-One Assistant for Claude Code, Codex & Antigravity"
   },
   "common": {
     "add": "Add",
@@ -47,7 +47,7 @@
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
-    "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
+    "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Antigravity providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
     "bodyOfficial": "An “Official” preset is also included in the list — click it any time you want to switch back to the official default. CC Switch automatically backs up your current config to “default” before switching, so you can move back and forth freely. That's how CC Switch works 😊",
     "confirm": "Got it"
   },
@@ -124,7 +124,7 @@
     "addFooterHint": "💡 After choosing a preset, fill in the fields below (e.g. API Key)",
     "addClaudeProvider": "Add Claude Code Provider",
     "addCodexProvider": "Add Codex Provider",
-    "addGeminiProvider": "Add Gemini Provider",
+    "addGeminiProvider": "Add Antigravity Provider",
     "addOpenCodeProvider": "Add OpenCode Provider",
     "addToConfig": "Add",
     "removeFromConfig": "Remove",
@@ -169,8 +169,8 @@
     "sortUpdated": "Sort order updated",
     "usageSaved": "Usage query configuration saved",
     "usageSaveFailed": "Failed to save usage query configuration",
-    "geminiConfig": "Gemini Configuration",
-    "geminiConfigHint": "Use .env format to configure Gemini",
+    "geminiConfig": "Antigravity Configuration",
+    "geminiConfigHint": "Use .env format to configure Antigravity",
     "form": {
       "gemini": {
         "model": "Model",
@@ -719,7 +719,7 @@
       "description": "Choose which apps to show on the homepage",
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
+      "geminiDesc": "Antigravity (compatible with Gemini CLI configs and history)",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Show project switcher",
       "showProfileSwitcherDescription": "Show the project switcher in the main page header"
@@ -730,7 +730,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "Skills are stored in ~/.cc-switch/skills/ and synced to each app via symlink or copy.",
-      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (Claude Code, Codex, Gemini CLI, etc.) discover skills here natively.",
+      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (Claude Code, Codex, Antigravity, etc.) discover skills here natively.",
       "confirmTitle": "Migrate Skill Storage",
       "confirmMessage": "{{count}} skill(s) will be moved to the new location. Continue?",
       "migrationSuccess": "Successfully migrated {{count}} skill(s)",
@@ -783,8 +783,8 @@
     "claudeConfigDirDescription": "Override Claude configuration directory (settings.json). Custom directories store .claude.json (MCP) inside the directory; the default ~/.claude directory keeps Claude Code's split ~/.claude.json path.",
     "codexConfigDir": "Codex Configuration Directory",
     "codexConfigDirDescription": "Override Codex configuration directory.",
-    "geminiConfigDir": "Gemini Configuration Directory",
-    "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
+    "geminiConfigDir": "Antigravity Configuration Directory",
+    "geminiConfigDirDescription": "Override Antigravity configuration directory (.env).",
     "grokConfigDir": "Grok Build Configuration Directory",
     "grokConfigDirDescription": "Override Grok Build configuration directory (config.toml).",
     "opencodeConfigDir": "OpenCode Configuration Directory",
@@ -912,7 +912,7 @@
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
-    "gemini": "Gemini",
+    "gemini": "Antigravity",
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
@@ -1085,7 +1085,7 @@
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and Pi sessions",
+    "subtitle": "Manage Claude Code, Codex, Antigravity, Grok Build, OpenCode, OpenClaw, Hermes, and Pi sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -1600,13 +1600,13 @@
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
-    "envFileHint": "Configure Gemini environment variables in .env format",
+    "envFileHint": "Configure Antigravity environment variables in .env format",
     "configJson": "Configuration File (config.json)",
-    "configJsonHint": "Configure Gemini extended parameters in JSON format (optional)",
+    "configJsonHint": "Configure Antigravity extended parameters in JSON format (optional)",
     "writeCommonConfig": "Apply Common Config",
     "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "This snippet writes to Gemini .env when 'Apply Common Config' is checked (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
+    "editCommonConfigTitle": "Edit Antigravity Common Config Snippet",
+    "commonConfigHint": "This snippet writes to Antigravity .env when 'Apply Common Config' is checked (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
@@ -1733,7 +1733,7 @@
       "all": "All",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
@@ -2020,7 +2020,7 @@
     "addMcp": "Add MCP",
     "claudeTitle": "Claude Code MCP Management",
     "codexTitle": "Codex MCP Management",
-    "geminiTitle": "Gemini MCP Management",
+    "geminiTitle": "Antigravity MCP Management",
     "unifiedPanel": {
       "title": "MCP Server Management",
       "addServer": "Add Server",
@@ -2037,7 +2037,7 @@
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
-        "gemini": "Gemini",
+        "gemini": "Antigravity",
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
@@ -2501,7 +2501,7 @@
   "skills": {
     "manage": "Skills",
     "title": "Skills Management",
-    "description": "Discover and install skills from popular repositories to extend Claude Code/Codex/Gemini capabilities",
+    "description": "Discover and install skills from popular repositories to extend Claude Code/Codex/Antigravity capabilities",
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "repoManager": "Repository Management",
@@ -2655,7 +2655,7 @@
     "apps": {
       "claude": "Claude",
       "codex": "Codex",
-      "gemini": "Gemini",
+      "gemini": "Antigravity",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
     },
@@ -3022,7 +3022,7 @@
     "duplicatedAndSynced": "Universal provider duplicated and synced",
     "duplicateError": "Failed to duplicate universal provider",
     "title": "Universal Provider",
-    "description": "Universal providers manage Claude, Codex, and Gemini configurations simultaneously. Changes are automatically synced to all enabled apps.",
+    "description": "Universal providers manage Claude, Codex, and Antigravity configurations simultaneously. Changes are automatically synced to all enabled apps.",
     "add": "Add Universal Provider",
     "edit": "Edit Universal Provider",
     "empty": "No universal providers yet",
@@ -3049,7 +3049,7 @@
     "updated": "Universal provider updated",
     "deleted": "Universal provider deleted",
     "addFailed": "Failed to add universal provider",
-    "hint": "Cross-app unified config, auto-sync to Claude/Codex/Gemini",
+    "hint": "Cross-app unified config, auto-sync to Claude/Codex/Antigravity",
     "manage": "Manage",
     "loadError": "Failed to load universal providers",
     "saveError": "Failed to save universal provider",
@@ -3057,7 +3057,7 @@
     "deleteConfirmTitle": "Delete Universal Provider",
     "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This will also delete its generated provider configurations in each app.",
     "syncConfirmTitle": "Sync Universal Provider",
-    "syncConfirmDescription": "Syncing \"{{name}}\" will overwrite the associated provider configurations in Claude, Codex, and Gemini. Do you want to continue?",
+    "syncConfirmDescription": "Syncing \"{{name}}\" will overwrite the associated provider configurations in Claude, Codex, and Antigravity. Do you want to continue?",
     "syncConfirm": "Sync",
     "saveAndSync": "Save & Sync",
     "savedAndSynced": "Saved and synced to all apps",
