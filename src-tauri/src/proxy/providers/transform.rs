@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use super::codex_chat_common::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::canonical_json_string,
@@ -558,7 +559,19 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     if let Some(msg_content) = message.get("content") {
         if let Some(text) = msg_content.as_str() {
             if !text.is_empty() {
-                content.push(json!({"type": "text", "text": text}));
+                // MiniMax M3 等 Chat 兼容上游会把思考内容内联成 content 里的
+                // `<think>...</think>`（无独立 reasoning_content），此处剥离为
+                // thinking + text，与流式路径 create_anthropic_sse_stream 一致。
+                if let Some((reasoning, answer)) = split_leading_think_block(text) {
+                    if !reasoning.is_empty() {
+                        content.push(json!({"type": "thinking", "thinking": reasoning}));
+                    }
+                    if !answer.is_empty() {
+                        content.push(json!({"type": "text", "text": answer}));
+                    }
+                } else {
+                    content.push(json!({"type": "text", "text": text}));
+                }
             }
         } else if let Some(parts) = msg_content.as_array() {
             for part in parts {
@@ -1377,6 +1390,51 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_splits_inline_think_block() {
+        // MiniMax M3 等 Chat 兼容上游把思考内容内联在 content 里
+        let input = json!({
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "minimax-m3",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "<think>the ball costs 0.05</think>\nThe ball is $0.05"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "the ball costs 0.05");
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "The ball is $0.05");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_unclosed_think_kept_as_text() {
+        // 非流式路径只剥离成对的 <think>...</think>；未闭合时保持原文，
+        // 避免吞掉用户可见内容。
+        let input = json!({
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "minimax-m3",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "<think>no closing tag"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "<think>no closing tag");
     }
 
     #[test]

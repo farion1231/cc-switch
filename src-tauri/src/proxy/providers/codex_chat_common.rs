@@ -237,3 +237,38 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
 fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }
+
+/// 流式转换里 inline `<think>` 剥离的状态机所处阶段。
+/// 只识别流首的 `<think>` 块（与 Codex Chat 路径语义一致）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum InlineThinkMode {
+    #[default]
+    Detecting,
+    Reasoning,
+    Text,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThinkPrefixDecision {
+    NeedMore,
+    Reasoning,
+    Text,
+}
+
+/// 判断缓冲区开头是否最终会构成 `<think>` 前缀。
+pub(crate) fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
+    let trimmed = buffer.trim_start();
+    if trimmed.is_empty() {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    if trimmed.starts_with(THINK_OPEN_TAG) {
+        return ThinkPrefixDecision::Reasoning;
+    }
+
+    if THINK_OPEN_TAG.starts_with(trimmed) {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    ThinkPrefixDecision::Text
+}

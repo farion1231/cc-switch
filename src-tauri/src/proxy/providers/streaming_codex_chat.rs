@@ -3,7 +3,8 @@
 use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
+        extract_reasoning_field_text, leading_think_prefix_decision, split_leading_think_block,
+        strip_leading_think_open_tag, InlineThinkMode, ThinkPrefixDecision,
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
@@ -35,14 +36,6 @@ struct ReasoningItemState {
     text: String,
     added: bool,
     done: bool,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum InlineThinkMode {
-    #[default]
-    Detecting,
-    Reasoning,
-    Text,
 }
 
 #[derive(Debug, Default)]
@@ -773,29 +766,6 @@ impl ChatToResponsesState {
 
 fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
-}
-
-enum ThinkPrefixDecision {
-    NeedMore,
-    Reasoning,
-    Text,
-}
-
-fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
-    let trimmed = buffer.trim_start();
-    if trimmed.is_empty() {
-        return ThinkPrefixDecision::NeedMore;
-    }
-
-    if trimmed.starts_with("<think>") {
-        return ThinkPrefixDecision::Reasoning;
-    }
-
-    if "<think>".starts_with(trimmed) {
-        return ThinkPrefixDecision::NeedMore;
-    }
-
-    ThinkPrefixDecision::Text
 }
 
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
