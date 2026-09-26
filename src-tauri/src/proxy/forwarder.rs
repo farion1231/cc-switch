@@ -1527,6 +1527,17 @@ impl RequestForwarder {
         // suffix and add the context-1m beta header.
         let mut codex_anthropic_one_m = false;
 
+        // Capture the client-side reasoning intent before a generic protocol
+        // converter can collapse a tiered control into a plain on/off switch.
+        // The intent is consumed only after body overrides establish the final
+        // outbound model, and only for the GLM-5.3 family on direct Zhipu.
+        let glm_5_3_reasoning_intent =
+            if super::providers::glm_reasoning::is_direct_zhipu_gateway(&base_url) {
+                super::providers::glm_reasoning::capture_glm_5_3_reasoning_intent(&mapped_body)
+            } else {
+                None
+            };
+
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
@@ -1684,19 +1695,25 @@ impl RequestForwarder {
             self.apply_media_prevention(&mut request_body, provider);
         }
 
-        // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
-        // 默认使用空白名单，过滤所有 _ 前缀字段
-        let mut filtered_body = prepare_upstream_request_body(request_body);
-        if !is_copilot {
-            if let Some(overrides) = provider
+        // Filter private fields, apply body overrides, then normalize against
+        // the actual final model. This ordering prevents a model override away
+        // from GLM from inheriting GLM-only fields and lets an override to GLM
+        // recover reasoning intent that a protocol converter discarded.
+        let (filtered_body, glm_5_3_reasoning_normalized) = prepare_final_upstream_request_body(
+            request_body,
+            provider
                 .meta
                 .as_ref()
-                .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
-            {
-                if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
-                    filtered_body = prepare_upstream_request_body(filtered_body);
-                }
-            }
+                .and_then(|meta| meta.local_proxy_request_overrides.as_ref()),
+            is_copilot,
+            &base_url,
+            glm_5_3_reasoning_intent,
+        );
+        if glm_5_3_reasoning_normalized {
+            log::debug!(
+                "[GLM-5.3 family] Normalized final reasoning controls for direct Zhipu upstream (provider={})",
+                provider.id
+            );
         }
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
@@ -3586,6 +3603,53 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
+fn prepare_final_upstream_request_body(
+    request_body: Value,
+    overrides: Option<&LocalProxyRequestOverrides>,
+    is_copilot: bool,
+    base_url: &str,
+    glm_5_3_reasoning_intent: Option<super::providers::glm_reasoning::Glm53ReasoningIntent>,
+) -> (Value, bool) {
+    // Model is an allowed local body override, so the final capability guard
+    // must run after overrides rather than mutating an intermediate model.
+    let mut filtered_body = prepare_upstream_request_body(request_body);
+    let final_override_body = if is_copilot {
+        None
+    } else {
+        overrides
+            .and_then(|overrides| overrides.body.as_ref())
+            .filter(|body| body.is_object())
+    };
+    if !is_copilot {
+        if let Some(overrides) = overrides {
+            if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
+                filtered_body = prepare_upstream_request_body(filtered_body);
+            }
+        }
+    }
+
+    let normalized = if let Some(final_override_body) = final_override_body {
+        super::providers::glm_reasoning::normalize_direct_zhipu_glm_5_3_request_with_override(
+            base_url,
+            &mut filtered_body,
+            glm_5_3_reasoning_intent,
+            Some(final_override_body),
+        )
+    } else {
+        super::providers::glm_reasoning::normalize_direct_zhipu_glm_5_3_request(
+            base_url,
+            &mut filtered_body,
+            glm_5_3_reasoning_intent,
+        )
+    };
+    if normalized {
+        // Keep the same deterministic ordering guarantee after the normalizer
+        // inserts or removes fields from the final body.
+        filtered_body = prepare_upstream_request_body(filtered_body);
+    }
+    (filtered_body, normalized)
+}
+
 fn apply_local_proxy_body_overrides(
     body: &mut Value,
     overrides: &LocalProxyRequestOverrides,
@@ -4059,6 +4123,92 @@ mod tests {
         assert_eq!(body["metadata"]["temperature"], 0.2);
         assert_eq!(body["metadata"]["top_p"], 0.9);
         assert_eq!(body["messages"], json!([]));
+    }
+
+    #[test]
+    fn final_model_override_away_from_glm_does_not_leak_glm_reasoning_fields() {
+        let intent = crate::proxy::providers::glm_reasoning::capture_glm_5_3_reasoning_intent(
+            &json!({ "thinking": { "type": "disabled" } }),
+        );
+        let request_body = json!({
+            "model": "glm-5.3",
+            "messages": [{ "role": "user", "content": "hi" }]
+        });
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::new(),
+            body: Some(json!({ "model": "glm-5.2" })),
+        };
+
+        let (body, normalized) = prepare_final_upstream_request_body(
+            request_body,
+            Some(&overrides),
+            false,
+            "https://open.bigmodel.cn/api/anthropic",
+            intent,
+        );
+
+        assert!(!normalized);
+        assert_eq!(body["model"], "glm-5.2");
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn final_model_override_to_glm_restores_preconversion_disabled_intent() {
+        let intent = crate::proxy::providers::glm_reasoning::capture_glm_5_3_reasoning_intent(
+            &json!({ "thinking": { "type": "disabled" } }),
+        );
+        // Simulate a converter that retained only the on/off shape and lost the
+        // original disabled tier before the final model override is applied.
+        let request_body = json!({
+            "model": "glm-5.2",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "enabled" }
+        });
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::new(),
+            body: Some(json!({ "model": "glm-5.3-flash" })),
+        };
+
+        let (body, normalized) = prepare_final_upstream_request_body(
+            request_body,
+            Some(&overrides),
+            false,
+            "https://open.bigmodel.cn/api/anthropic",
+            intent,
+        );
+
+        assert!(normalized);
+        assert_eq!(body["model"], "glm-5.3-flash");
+        assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+        assert_eq!(body["reasoning_effort"], "low");
+    }
+
+    #[test]
+    fn final_glm_effort_override_wins_over_stale_disabled_toggle() {
+        let request_body = json!({
+            "model": "glm-5.3-flash",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "disabled" }
+        });
+        let intent =
+            crate::proxy::providers::glm_reasoning::capture_glm_5_3_reasoning_intent(&request_body);
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::new(),
+            body: Some(json!({ "reasoning_effort": "max" })),
+        };
+
+        let (body, normalized) = prepare_final_upstream_request_body(
+            request_body,
+            Some(&overrides),
+            false,
+            "https://open.bigmodel.cn/api/anthropic",
+            intent,
+        );
+
+        assert!(normalized);
+        assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+        assert_eq!(body["reasoning_effort"], "max");
     }
 
     #[test]
