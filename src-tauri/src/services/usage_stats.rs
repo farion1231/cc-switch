@@ -304,11 +304,46 @@ fn push_provider_model_filters(
     }
 }
 
+/// 跨来源去重的模型匹配条件。
+///
+/// 常规路径按上游回显模型匹配。仅 Codex 会话允许再匹配代理记录的请求模型：
+/// Codex rollout 保留客户端别名，而代理 `model` 可能已被映射为实际上游模型。
+/// 空白或 `unknown` 请求模型不能放宽匹配，避免无有效别名时扩大启发式去重范围。
+fn session_proxy_model_match_sql(
+    proxy_model: &str,
+    proxy_request_model: &str,
+    session_model: &str,
+    session_app_type: &str,
+    session_data_source: &str,
+) -> String {
+    format!(
+        "(
+            LOWER({proxy_model}) = LOWER({session_model})
+            OR LOWER({proxy_model}) = 'unknown'
+            OR LOWER({session_model}) = 'unknown'
+            OR (
+                {session_app_type} = 'codex'
+                AND {session_data_source} = 'codex_session'
+                AND NULLIF(TRIM({proxy_request_model}), '') IS NOT NULL
+                AND LOWER(TRIM({proxy_request_model})) <> 'unknown'
+                AND LOWER(TRIM({proxy_request_model})) = LOWER(TRIM({session_model}))
+            )
+        )"
+    )
+}
+
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
     let app_type_match =
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
+    let model_match = session_proxy_model_match_sql(
+        "proxy_dedup.model",
+        "proxy_dedup.request_model",
+        &format!("{log_alias}.model"),
+        &format!("{log_alias}.app_type"),
+        &data_source,
+    );
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
@@ -332,11 +367,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                   AND proxy_dedup.created_at BETWEEN
                       {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                       AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
-                  AND (
-                      LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
-                      OR LOWER(proxy_dedup.model) = 'unknown'
-                      OR LOWER({log_alias}.model) = 'unknown'
-                  )
+                  AND {model_match}
             )
         )"
     )
@@ -344,11 +375,14 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
 
 /// 跨源去重指纹键。
 ///
+/// `data_source`：会话记录的实际来源；别名匹配只对
+/// `app_type = codex` 且 `data_source = codex_session` 生效。
 /// `cache_creation_tokens`：Codex/Gemini session 日志不暴露该字段，调用方传 0
 /// 表示"未知"，匹配器会放行 proxy 侧任意 cache_creation_tokens 值。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DedupKey<'a> {
     pub app_type: &'a str,
+    pub data_source: &'a str,
     pub model: &'a str,
     pub input_tokens: u32,
     pub output_tokens: u32,
@@ -383,6 +417,8 @@ fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, 
 static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     let l_data_source = data_source_expr("l");
     let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    let model_match =
+        session_proxy_model_match_sql("l.model", "l.request_model", "?2", "?1", "?10");
     format!(
         "SELECT EXISTS (
             SELECT 1
@@ -396,11 +432,7 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
               AND l.cache_read_tokens = ?5
               AND (l.cache_creation_tokens = ?6 OR ?9 = 1)
               AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
-              AND (
-                  LOWER(l.model) = LOWER(?2)
-                  OR LOWER(l.model) = 'unknown'
-                  OR LOWER(?2) = 'unknown'
-              )
+              AND {model_match}
         )"
     )
 });
@@ -425,6 +457,7 @@ pub(crate) fn has_matching_proxy_usage_log(
                     key.created_at,
                     SESSION_PROXY_DEDUP_WINDOW_SECONDS,
                     allow_missing_cache_creation as i64,
+                    key.data_source,
                 ],
                 |row| row.get::<_, bool>(0),
             )
@@ -2424,6 +2457,7 @@ mod tests {
                 request_id TEXT PRIMARY KEY,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
+                request_model TEXT,
                 input_tokens INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL,
                 cache_read_tokens INTEGER NOT NULL,
@@ -2471,6 +2505,7 @@ mod tests {
 
         let key = DedupKey {
             app_type: "codex",
+            data_source: "codex_session",
             model: "gpt-5.5",
             input_tokens: 10,
             output_tokens: 2,
@@ -2479,6 +2514,197 @@ mod tests {
             created_at: 1000,
         };
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_matches_codex_request_model_alias() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-alias",
+            "codex",
+            "provider-1",
+            "gpt-5.6-sol",
+            "proxy",
+            1_000,
+            100,
+            20,
+            10,
+            0,
+            200,
+            "0.10",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["gpt-5.6-sol-joybuilder", "codex-proxy-alias"],
+        )?;
+
+        let key = DedupKey {
+            app_type: "codex",
+            data_source: "codex_session",
+            model: "GPT-5.6-Sol-JoyBuilder",
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 0,
+            created_at: 1_060,
+        };
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-alias",
+            &key
+        )?);
+
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params![" gpt-5.6-sol-joybuilder ", "codex-proxy-alias"],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["gpt-5.6-sol-joybuilder", "codex-proxy-alias"],
+        )?;
+
+        let mut outside_window = key;
+        outside_window.created_at = 1_601;
+        assert!(!has_matching_proxy_usage_log(&conn, &outside_window)?);
+
+        let mut different_tokens = key;
+        different_tokens.input_tokens += 1;
+        assert!(!has_matching_proxy_usage_log(&conn, &different_tokens)?);
+
+        let mut different_app = key;
+        different_app.app_type = "gemini";
+        assert!(!has_matching_proxy_usage_log(&conn, &different_app)?);
+
+        let mut mismatched_codex_source = key;
+        mismatched_codex_source.app_type = "gemini";
+        mismatched_codex_source.data_source = "codex_session";
+        assert!(!has_matching_proxy_usage_log(
+            &conn,
+            &mismatched_codex_source
+        )?);
+
+        let mut non_codex_session = key;
+        non_codex_session.data_source = "session_log";
+        assert!(!has_matching_proxy_usage_log(&conn, &non_codex_session)?);
+
+        for invalid_request_model in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("unknown"),
+            Some(" UNKNOWN "),
+        ] {
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+                params![invalid_request_model, "codex-proxy-alias"],
+            )?;
+            assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+        }
+
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1, status_code = 400 WHERE request_id = ?2",
+            params!["gpt-5.6-sol-joybuilder", "codex-proxy-alias"],
+        )?;
+        assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_only_codex_request_model_alias() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-alias",
+            "codex",
+            "provider-1",
+            "gpt-5.6-sol",
+            "proxy",
+            1_000,
+            100,
+            20,
+            10,
+            0,
+            200,
+            "0.10",
+        )?;
+        insert_usage_log(
+            &conn,
+            "codex-session-alias",
+            "codex",
+            "_codex_session",
+            "gpt-5.6-sol-joybuilder",
+            "codex_session",
+            1_060,
+            100,
+            20,
+            10,
+            0,
+            200,
+            "0.10",
+        )?;
+        insert_usage_log(
+            &conn,
+            "gemini-proxy-alias",
+            "gemini",
+            "provider-2",
+            "gemini-2.5-pro",
+            "proxy",
+            2_000,
+            200,
+            40,
+            30,
+            0,
+            200,
+            "0.20",
+        )?;
+        insert_usage_log(
+            &conn,
+            "gemini-session-alias",
+            "gemini",
+            "_gemini_session",
+            "gemini-logical-alias",
+            "gemini_session",
+            2_060,
+            200,
+            40,
+            30,
+            0,
+            200,
+            "0.20",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params![" gpt-5.6-sol-joybuilder ", "codex-proxy-alias"],
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["gemini-logical-alias", "gemini-proxy-alias"],
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            request_ids,
+            vec![
+                "codex-proxy-alias".to_string(),
+                "gemini-proxy-alias".to_string(),
+                "gemini-session-alias".to_string(),
+            ]
+        );
 
         Ok(())
     }
@@ -2497,6 +2723,7 @@ mod tests {
 
         let key = DedupKey {
             app_type: "claude",
+            data_source: "session_log",
             model: "claude-sonnet-4-5",
             input_tokens: 100,
             output_tokens: 20,
