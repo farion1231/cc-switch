@@ -1961,4 +1961,24 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      env: {
+        // 官方文档（CC Switch 快速配置）指定 Claude Code 走 Anthropic 原生入口
+        ANTHROPIC_BASE_URL: "https://moark.com/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash-0731",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash-0731",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "true",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://moark.com/anthropic"],
+    icon: "moark",
+  },
 ];

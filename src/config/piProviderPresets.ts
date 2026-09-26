@@ -2376,6 +2376,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "tencent",
     iconColor: "#00A4FF",
   },
+  {
+    name: "模力方舟",
+    providerKey: "cc-switch-moark",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      name: "模力方舟",
+      baseUrl: "https://api.moark.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      // 聚合网关，上游思考档位语义未逐一核对，交给 Pi 原生默认行为（{}）
+      models: [
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4-flash-0731",
+        }),
+        piModel("deepseek/deepseek-v4-pro", { id: "DeepSeek-V4-Pro" }),
+        piModel("zai/glm-5.3", { id: "GLM-5.3" }),
+        piModel("moonshotai/kimi-k2.7-code", { id: "Kimi-K2.7-Code" }),
+        piModel("qwen/qwen3-coder-plus", { id: "qwen3-coder-plus" }),
+      ],
+    },
+    category: "aggregator",
+    icon: "moark",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

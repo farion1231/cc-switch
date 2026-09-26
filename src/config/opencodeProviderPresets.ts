@@ -3248,4 +3248,51 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "模力方舟",
+      options: {
+        baseURL: "https://api.moark.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        // OpenCode 以 limit.context 判断自动压缩；缺失会被当成 0 而跳过压缩，
+        // 故显式声明容量，取值与本 PR 的 Pi / OpenClaw 预设一致
+        "deepseek-v4-flash-0731": {
+          name: "DeepSeek V4 Flash",
+          limit: { context: 1000000, output: 384000 },
+        },
+        "DeepSeek-V4-Pro": {
+          name: "DeepSeek V4 Pro",
+          limit: { context: 1000000, output: 384000 },
+        },
+        "GLM-5.3": {
+          name: "GLM-5.3",
+          limit: { context: 1048576, output: 131072 },
+        },
+        "Kimi-K2.7-Code": {
+          name: "Kimi K2.7 Code",
+          limit: { context: 262144, output: 262144 },
+        },
+        "qwen3-coder-plus": {
+          name: "Qwen3 Coder Plus",
+          limit: { context: 1000000, output: 65536 },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "moark",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 ];

@@ -791,6 +791,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["jiekou", "jiekou ai", "interface ai", "aggregator"],
     defaultColor: "#000000",
   },
+  moark: {
+    name: "moark",
+    displayName: "MoArk",
+    category: "ai-provider",
+    keywords: [
+      "moark",
+      "模力方舟",
+      "魔力方舟",
+      "gitee ai",
+      "aggregator",
+      "token",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "currentColor",
+  },
   xycai: {
     name: "xycai",
     displayName: "XycAi",
