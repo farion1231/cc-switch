@@ -854,7 +854,7 @@ impl SkillService {
 
             // 复制到 SSOT
             let source =
-                Self::resolve_skill_source_dir(temp_dir, &skill.directory).ok_or_else(|| {
+                Self::resolve_skill_source_dir(temp_dir, &skill.directory)?.ok_or_else(|| {
                     let missing = temp_dir.join(&source_rel).display().to_string();
                     anyhow!(format_skill_error(
                         "SKILL_DIR_NOT_FOUND",
@@ -1321,17 +1321,20 @@ impl SkillService {
             let _state_guard = skill_state_read_guard();
 
             for skill in group_skills {
-                let remote_match = Self::find_remote_skill_for_install(
+                let remote_match = Self::resolve_remote_skill_source_dir(
+                    temp_dir,
+                    &repo,
                     &remote_skills,
                     &skill.directory,
                     skill.readme_url.as_deref(),
                 );
                 let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
-                        Some(path) => path,
-                        None => continue,
-                    },
-                    None => continue,
+                    Ok(Some(path)) => path,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        log::warn!("Cannot resolve remote skill {}: {error}", skill.id);
+                        continue;
+                    }
                 };
 
                 let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
@@ -1442,11 +1445,13 @@ impl SkillService {
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
         let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
-        let remote_match = Self::find_remote_skill_for_install(
+        let source = Self::resolve_remote_skill_source_dir(
+            temp_dir,
+            &repo,
             &remote_skills,
             &skill.directory,
             skill.readme_url.as_deref(),
-        )
+        )?
         .ok_or_else(|| {
             anyhow!(format_skill_error(
                 "SKILL_DIR_NOT_FOUND",
@@ -1454,16 +1459,6 @@ impl SkillService {
                 Some("checkRepoUrl"),
             ))
         })?;
-
-        let source =
-            Self::resolve_skill_source_dir(temp_dir, &remote_match.directory).ok_or_else(|| {
-                let missing = temp_dir.join(&remote_match.directory).display().to_string();
-                anyhow!(format_skill_error(
-                    "SKILL_DIR_NOT_FOUND",
-                    &[("path", &missing)],
-                    Some("checkRepoUrl"),
-                ))
-            })?;
 
         let canonical_temp = temp_dir
             .canonicalize()
@@ -3184,15 +3179,30 @@ impl SkillService {
         walk(root, target_name, 0)
     }
 
+    fn unique_metadata_match<T>(
+        mut matches: impl Iterator<Item = T>,
+        name: &str,
+    ) -> Result<Option<T>> {
+        let first = matches.next();
+        if matches.next().is_some() {
+            return Err(anyhow!(format_skill_error(
+                "AMBIGUOUS_SKILL_NAME",
+                &[("name", name)],
+                None,
+            )));
+        }
+        Ok(first)
+    }
+
     /// 在仓库扫描结果中定位已安装的技能：已保存的源路径优先，其次目录名，
     /// metadata name 仅作唯一兜底。
     fn find_remote_skill_for_install<'a>(
         remote_skills: &'a [DiscoverableSkill],
         install_name: &str,
         stored_readme_url: Option<&str>,
-    ) -> Option<&'a DiscoverableSkill> {
+    ) -> Result<Option<&'a DiscoverableSkill>> {
         let stored_doc_path = stored_readme_url.and_then(Self::extract_doc_path_from_url);
-        stored_doc_path
+        let path_match = stored_doc_path
             .as_deref()
             .and_then(|doc_path| {
                 remote_skills.iter().find(|skill| {
@@ -3213,14 +3223,77 @@ impl SkillService {
                         .unwrap_or(&skill.directory)
                         .eq_ignore_ascii_case(install_name)
                 })
+            });
+        if path_match.is_some() {
+            return Ok(path_match);
+        }
+        Self::unique_metadata_match(
+            remote_skills
+                .iter()
+                .filter(|skill| skill.name.trim().eq_ignore_ascii_case(install_name)),
+            install_name,
+        )
+    }
+
+    fn resolve_skill_doc_source(root: &Path, doc_path: &str) -> Option<PathBuf> {
+        Self::sanitize_skill_source_path(doc_path)?;
+        // Keep literal directory names (including spaces); sanitize only validates.
+        let path = Path::new(doc_path);
+        let relative_source = if path.file_name()? == "SKILL.md" {
+            path.parent()?
+        } else {
+            path // Legacy tree URLs may point to the skill directory itself.
+        };
+        let canonical_root = root.canonicalize().ok()?;
+        let source = root.join(relative_source).canonicalize().ok()?;
+        if !source.starts_with(&canonical_root) || !source.is_dir() {
+            return None;
+        }
+        let document = source.join("SKILL.md").canonicalize().ok()?;
+        (document.starts_with(&canonical_root) && document.is_file()).then_some(source)
+    }
+
+    fn resolve_remote_skill_source_dir(
+        root: &Path,
+        repo: &SkillRepo,
+        remote_skills: &[DiscoverableSkill],
+        install_name: &str,
+        stored_readme_url: Option<&str>,
+    ) -> Result<Option<PathBuf>> {
+        // A root skill stops discovery, but must not hide an installed child.
+        // Strip the known repo/ref, not one path segment: refs may contain '/'.
+        let stored_doc_path = stored_readme_url.and_then(|url| {
+            ["blob", "tree"].into_iter().find_map(|kind| {
+                let prefix = format!(
+                    "https://github.com/{}/{}/{kind}/{}/",
+                    repo.owner, repo.name, repo.branch
+                );
+                url.strip_prefix(&prefix)
             })
-            .or_else(|| {
-                let mut matches = remote_skills
-                    .iter()
-                    .filter(|skill| skill.name.trim().eq_ignore_ascii_case(install_name));
-                let found = matches.next()?;
-                matches.next().is_none().then_some(found)
-            })
+        });
+        if let Some(source) =
+            stored_doc_path.and_then(|path| Self::resolve_skill_doc_source(root, path))
+        {
+            return Ok(Some(source));
+        }
+        let Some(skill) =
+            Self::find_remote_skill_for_install(remote_skills, install_name, stored_readme_url)?
+        else {
+            return Ok(None);
+        };
+        // The scanner stops at a root SKILL.md and uses the repo name as its
+        // display directory. Do not reinterpret that alias as a child path.
+        let doc_path = if root.join("SKILL.md").is_file() {
+            // A missing saved source can move to the root only by metadata name,
+            // not just because the root's display alias matches the repo name.
+            if stored_doc_path.is_some() && !skill.name.trim().eq_ignore_ascii_case(install_name) {
+                return Ok(None);
+            }
+            "SKILL.md".to_string()
+        } else {
+            format!("{}/SKILL.md", skill.directory)
+        };
+        Ok(Self::resolve_skill_doc_source(root, &doc_path))
     }
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
@@ -3230,17 +3303,22 @@ impl SkillService {
     /// 2. 按安装名递归查找名字匹配 **且** 含 `SKILL.md` 的目录；
     /// 3. 按 `SKILL.md` 的 metadata name 查找唯一匹配；
     /// 4. 兜底：仓库根本身含 `SKILL.md`。
-    fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Option<PathBuf> {
-        let source_rel = Self::sanitize_skill_source_path(raw_directory)?;
-        let install_name = source_rel
+    fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Result<Option<PathBuf>> {
+        let Some(source_rel) = Self::sanitize_skill_source_path(raw_directory) else {
+            return Ok(None);
+        };
+        let Some(install_name) = source_rel
             .file_name()
-            .map(|n| n.to_string_lossy().to_string())?;
+            .map(|n| n.to_string_lossy().to_string())
+        else {
+            return Ok(None);
+        };
 
         // 1. 直接相对路径命中（明确路径优先）——必须校验 SKILL.md，否则同名空壳目录
         //    （如 ast-grep/agent-skill 根下的 plugin 包目录 ast-grep/）会被误判为源目录。
         let direct = root.join(&source_rel);
         if direct.is_dir() && direct.join("SKILL.md").is_file() {
-            return Some(direct);
+            return Ok(Some(direct));
         }
 
         // 2. 按名字递归查找（find_skill_dir_by_name 已校验 SKILL.md）
@@ -3250,32 +3328,25 @@ impl SkillService {
                 install_name,
                 found.display()
             );
-            return Some(found);
+            return Ok(Some(found));
         }
 
         // 3. skills.sh 的 skillId 可能与目录名不同；仅接受唯一 metadata 匹配，
         //    避免同名 skill 因文件系统遍历顺序不同而随机安装。
         if let Ok(skill_dirs) = Self::scan_skills_in_dir(root) {
-            let mut metadata_matches = skill_dirs.into_iter().filter(|path| {
+            let metadata_matches = skill_dirs.into_iter().filter(|path| {
                 Self::parse_skill_metadata_static(&path.join("SKILL.md"))
                     .ok()
                     .and_then(|metadata| metadata.name)
                     .is_some_and(|name| name.trim().eq_ignore_ascii_case(install_name.as_str()))
             });
-            if let Some(found) = metadata_matches.next() {
-                if metadata_matches.next().is_some() {
-                    log::warn!(
-                        "Multiple skill directories declare metadata name '{}'; refusing ambiguous install",
-                        install_name
-                    );
-                    return None;
-                }
+            if let Some(found) = Self::unique_metadata_match(metadata_matches, &install_name)? {
                 log::info!(
                     "Skill directory '{}' resolved from SKILL.md metadata: {}",
                     install_name,
                     found.display()
                 );
-                return Some(found);
+                return Ok(Some(found));
             }
         }
 
@@ -3285,10 +3356,10 @@ impl SkillService {
                 "Skill directory '{}' not found, but SKILL.md exists at root, using repo root",
                 install_name,
             );
-            return Some(root.to_path_buf());
+            return Ok(Some(root.to_path_buf()));
         }
 
-        None
+        Ok(None)
     }
 
     /// 由真实解析出的源目录推导 SKILL.md 在仓库内的相对文档路径（正斜杠）。
@@ -6582,6 +6653,7 @@ mod tests {
         write_skill(temp.path(), "Root Skill");
 
         let resolved = SkillService::resolve_skill_source_dir(temp.path(), "last30days-skill-cn")
+            .unwrap()
             .expect("root-level skill should resolve to the extracted repo root");
 
         assert_eq!(resolved, temp.path());
@@ -6594,6 +6666,7 @@ mod tests {
         write_skill(&nested, "Nested Skill");
 
         let resolved = SkillService::resolve_skill_source_dir(temp.path(), "skills/nested-skill")
+            .unwrap()
             .expect("nested skill should resolve from its relative source path");
 
         assert_eq!(resolved, nested);
@@ -6606,6 +6679,7 @@ mod tests {
         write_skill(&nested, "Nested Skill");
 
         let resolved = SkillService::resolve_skill_source_dir(temp.path(), "nested-skill")
+            .unwrap()
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
@@ -6620,6 +6694,7 @@ mod tests {
         write_skill(&skill_dir, "weread-skills");
 
         let resolved = SkillService::resolve_skill_source_dir(temp.path(), "weread-skills")
+            .unwrap()
             .expect("skillId should resolve through the SKILL.md metadata name");
 
         assert_eq!(resolved, skill_dir);
@@ -6629,13 +6704,16 @@ mod tests {
     fn resolve_skill_source_dir_rejects_duplicate_metadata_names() {
         let temp = tempdir().expect("tempdir");
         write_skill(&temp.path().join("skills-a"), "duplicate-skill");
-        write_skill(&temp.path().join("skills-b"), "duplicate-skill");
+        write_skill(&temp.path().join("skills-b"), "DUPLICATE-SKILL");
 
-        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "duplicate-skill");
+        let error = SkillService::resolve_skill_source_dir(temp.path(), "duplicate-skill")
+            .expect_err("ambiguous names must not select an arbitrary directory");
+        assert!(error.to_string().contains("AMBIGUOUS_SKILL_NAME"));
 
-        assert!(
-            resolved.is_none(),
-            "ambiguous metadata names must not select an arbitrary skill directory"
+        assert_eq!(
+            SkillService::resolve_skill_source_dir(temp.path(), "skills-a").unwrap(),
+            Some(temp.path().join("skills-a")),
+            "an explicit path must still disambiguate duplicate metadata names"
         );
     }
 
@@ -6660,19 +6738,24 @@ mod tests {
         let skills = scan();
         assert_eq!(
             SkillService::find_remote_skill_for_install(&skills, "weread-skills", None)
+                .unwrap()
                 .map(|skill| skill.directory.as_str()),
             Some("skills")
         );
 
         write_skill(&temp.path().join("other"), "weread-skills");
         assert!(
-            SkillService::find_remote_skill_for_install(&scan(), "weread-skills", None).is_none(),
+            SkillService::find_remote_skill_for_install(&scan(), "weread-skills", None)
+                .unwrap_err()
+                .to_string()
+                .contains("AMBIGUOUS_SKILL_NAME"),
             "duplicate metadata names must remain ambiguous during updates"
         );
 
         write_skill(&temp.path().join("weread-skills"), "Other Skill");
         assert_eq!(
             SkillService::find_remote_skill_for_install(&scan(), "weread-skills", None)
+                .unwrap()
                 .map(|skill| skill.directory.as_str()),
             Some("weread-skills"),
             "an exact directory match must keep its original priority"
@@ -6686,6 +6769,7 @@ mod tests {
             .expect("scan root skill");
         assert!(
             SkillService::find_remote_skill_for_install(&root_skills, "removed-child", None)
+                .unwrap()
                 .is_none(),
             "a removed child skill must not fall back to an unrelated root skill"
         );
@@ -6714,10 +6798,349 @@ mod tests {
                 "weread-skills",
                 Some(stored_url),
             )
+            .unwrap()
             .map(|skill| skill.directory.as_str()),
             Some("skills"),
             "persisted source path should survive metadata changes and competing matches"
         );
+    }
+
+    #[test]
+    fn update_lookup_resolves_saved_paths_hidden_by_root_skill() {
+        let temp = tempdir().unwrap();
+        write_skill(temp.path(), "unrelated-root");
+        write_skill(&temp.path().join("catalog/ group/skills"), "renamed-child");
+        for branch in ["main", "feature/blob/skills"] {
+            let repo = SkillRepo {
+                owner: "owner".into(),
+                name: "repo".into(),
+                branch: branch.into(),
+                enabled: true,
+            };
+            let mut skills = Vec::new();
+            SkillService::new()
+                .scan_dir_recursive(temp.path(), temp.path(), &repo, &mut skills)
+                .unwrap();
+            assert_eq!(skills.len(), 1, "the scanner only discovers the root");
+            for suffix in [
+                "blob/{branch}/catalog/ group/skills/SKILL.md",
+                "tree/{branch}/catalog/ group/skills/SKILL.md",
+                "tree/{branch}/catalog/ group/skills",
+            ] {
+                let url = format!(
+                    "https://github.com/owner/repo/{}",
+                    suffix.replace("{branch}", branch)
+                );
+                let source = SkillService::resolve_remote_skill_source_dir(
+                    temp.path(),
+                    &repo,
+                    &skills,
+                    "old-child-name",
+                    Some(&url),
+                )
+                .unwrap();
+                assert_eq!(
+                    source,
+                    Some(
+                        temp.path()
+                            .join("catalog/ group/skills")
+                            .canonicalize()
+                            .unwrap()
+                    )
+                );
+            }
+            let missing_url =
+                format!("https://github.com/owner/repo/blob/{branch}/missing/SKILL.md");
+            assert!(
+                SkillService::resolve_remote_skill_source_dir(
+                    temp.path(),
+                    &repo,
+                    &skills,
+                    "repo",
+                    Some(&missing_url),
+                )
+                .unwrap()
+                .is_none(),
+                "a removed child must not turn into the unrelated root alias"
+            );
+            for url in [
+                "https://example.com/owner/repo/blob/main/catalog/ group/skills/SKILL.md",
+                "https://github.com/other/repo/blob/main/catalog/ group/skills/SKILL.md",
+            ] {
+                assert!(SkillService::resolve_remote_skill_source_dir(
+                    temp.path(),
+                    &repo,
+                    &skills,
+                    "old-child-name",
+                    Some(url),
+                )
+                .unwrap()
+                .is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn saved_skill_source_rejects_invalid_or_missing_paths() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        write_skill(&root, "root");
+        write_skill(&temp.path().join("outside"), "outside");
+        fs::create_dir(root.join("empty")).unwrap();
+        fs::write(root.join("README.md"), "not a skill").unwrap();
+        for path in [
+            "",
+            "../outside/SKILL.md",
+            "/SKILL.md",
+            "missing/SKILL.md",
+            "empty/SKILL.md",
+            "README.md",
+            "%2e%2e/outside/SKILL.md",
+        ] {
+            assert!(
+                SkillService::resolve_skill_doc_source(&root, path).is_none(),
+                "{path}"
+            );
+        }
+        assert!(SkillService::resolve_skill_doc_source(
+            &root,
+            &temp.path().join("outside/SKILL.md").to_string_lossy(),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn saved_skill_source_rejects_link_escape() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let outside = temp.path().join("outside");
+        write_skill(&outside, "outside");
+        fs::create_dir_all(root.join("child")).unwrap();
+        #[cfg(unix)]
+        {
+            SkillService::create_symlink(&outside, &root.join("linked"))
+                .expect("create directory symlink");
+            std::os::unix::fs::symlink(outside.join("SKILL.md"), root.join("child/SKILL.md"))
+                .expect("create file symlink");
+            assert!(SkillService::resolve_skill_doc_source(&root, "child/SKILL.md").is_none());
+        }
+        #[cfg(windows)]
+        {
+            // Directory junctions exercise canonical containment without symlink privileges.
+            let output = std::process::Command::new("cmd")
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(root.join("linked"))
+                .arg(&outside)
+                .output()
+                .expect("create directory junction");
+            assert!(output.status.success(), "{output:?}");
+        }
+        assert!(SkillService::resolve_skill_doc_source(&root, "linked/SKILL.md").is_none());
+        let repo = SkillRepo {
+            owner: "owner".into(),
+            name: "repo".into(),
+            branch: "main".into(),
+            enabled: true,
+        };
+        let mut skills = Vec::new();
+        SkillService::new()
+            .scan_dir_recursive(&root, &root, &repo, &mut skills)
+            .unwrap();
+        for url in [
+            None,
+            Some("https://github.com/owner/repo/blob/main/linked/SKILL.md"),
+        ] {
+            assert!(
+                SkillService::resolve_remote_skill_source_dir(&root, &repo, &skills, "linked", url)
+                    .unwrap()
+                    .is_none(),
+                "fallback matching must not bypass containment checks"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn skill_updates_preserve_source_with_root_and_repo_named_child() {
+        for location in [
+            SkillStorageLocation::CcSwitch,
+            SkillStorageLocation::Unified,
+        ] {
+            for (install_name, source_path, original_name, branch) in [
+                ("root-alias", ".", "root-alias", "main"),
+                ("repo", "repo", "different-child", "main"),
+                ("root-alias", ".", "root-alias", "feature/skills"),
+                ("repo", "repo", "different-child", "feature/skills"),
+            ] {
+                let home = tempdir().unwrap();
+                let config_dir = home.path().join(".cc-switch");
+                fs::create_dir_all(&config_dir).unwrap();
+                fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+                let _home = TestHomeGuard::set(home.path());
+                assert_eq!(crate::config::get_app_config_dir(), config_dir);
+                let _storage = StorageLocationGuard::set(location);
+                let _pi = crate::pi_config::test_support::TestAgentDir::new();
+                let remote = tempdir().unwrap();
+                write_skill(remote.path(), "root-alias");
+                write_skill(&remote.path().join("repo"), "different-child");
+                let service = SkillService {
+                    repo_fixture: Some(remote.path().to_path_buf()),
+                };
+                let db = Arc::new(Database::memory().unwrap());
+                let request = DiscoverableSkill {
+                    key: format!("owner/repo:{install_name}"),
+                    name: original_name.into(),
+                    description: String::new(),
+                    directory: install_name.into(),
+                    readme_url: None,
+                    repo_owner: "owner".into(),
+                    repo_name: "repo".into(),
+                    repo_branch: branch.into(),
+                };
+                let installed = service
+                    .install(&db, &request, &AppType::Claude)
+                    .await
+                    .unwrap();
+                let source = remote.path().join(source_path);
+                let doc_path = if source_path == "." {
+                    "SKILL.md"
+                } else {
+                    "repo/SKILL.md"
+                };
+                let expected_url =
+                    SkillService::build_skill_doc_url("owner", "repo", branch, doc_path);
+                assert_eq!(installed.readme_url, expected_url);
+                assert_eq!(installed.name, original_name);
+                let local = SkillService::get_ssot_dir()
+                    .unwrap()
+                    .join(&installed.directory);
+                let app = SkillService::get_app_skills_dir(&AppType::Claude)
+                    .unwrap()
+                    .join(&installed.directory);
+                assert!(local.starts_with(home.path()));
+                assert!(app.starts_with(home.path()));
+                let updates = service.check_updates(&db).await.unwrap();
+                let updated = service.update_skill(&db, &installed.id).await.unwrap();
+                assert_eq!(
+                    updated.name, original_name,
+                    "update must preserve the installed source: {source_path}"
+                );
+                assert!(
+                    updates.is_empty(),
+                    "an unchanged repository must not report an update"
+                );
+                assert_eq!(updated.readme_url, expected_url);
+
+                if source_path != "." {
+                    write_skill(remote.path(), "changed-root");
+                    assert!(service.check_updates(&db).await.unwrap().is_empty());
+                }
+                write_skill(&source, "renamed-skill");
+                let updates = service.check_updates(&db).await.unwrap();
+                assert_eq!(updates.len(), 1);
+                assert_eq!(updates[0].id, installed.id);
+                let updated = service.update_skill(&db, &installed.id).await.unwrap();
+                assert_eq!(updated.name, "renamed-skill");
+                assert_eq!(updated.readme_url, expected_url);
+                assert_eq!(updated.directory, installed.directory);
+                assert_eq!(updated.apps, installed.apps);
+                let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+                assert_eq!(saved.readme_url, expected_url);
+                assert_eq!(
+                    saved.content_hash,
+                    Some(SkillService::compute_dir_hash(&local).unwrap())
+                );
+                for directory in [&local, &app] {
+                    assert_eq!(
+                        fs::read(directory.join("SKILL.md")).unwrap(),
+                        fs::read(source.join("SKILL.md")).unwrap()
+                    );
+                    assert_eq!(
+                        directory.join("repo/SKILL.md").is_file(),
+                        source_path == ".",
+                        "only the root skill contains the repository-named child"
+                    );
+                }
+                assert!(service.check_updates(&db).await.unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn ambiguous_metadata_reports_conflict_without_mutating_installed_skill() {
+        let home = tempdir().unwrap();
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        assert_eq!(crate::config::get_app_config_dir(), config_dir);
+        let _storage = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let remote = tempdir().unwrap();
+        // Mirror tencent/browserskill: the shallowest match is still ambiguous.
+        for directory in ["skill", "crates/bsk-cli/skill", "packages/plugin/skill"] {
+            write_skill(&remote.path().join(directory), "browser-skill");
+        }
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+        let db = Arc::new(Database::memory().unwrap());
+        let candidate = DiscoverableSkill {
+            key: "owner/repo:browser-skill".into(),
+            name: "browser-skill".into(),
+            description: String::new(),
+            directory: "browser-skill".into(),
+            readme_url: None,
+            repo_owner: "owner".into(),
+            repo_name: "repo".into(),
+            repo_branch: "main".into(),
+        };
+        let assert_conflict = |error: anyhow::Error| {
+            let payload: serde_json::Value = serde_json::from_str(&error.to_string()).unwrap();
+            assert_eq!(payload["code"], "AMBIGUOUS_SKILL_NAME");
+            assert_eq!(payload["context"]["name"], "browser-skill");
+        };
+        assert_conflict(
+            service
+                .install(&db, &candidate, &AppType::Claude)
+                .await
+                .unwrap_err(),
+        );
+        assert!(db.get_installed_skill(&candidate.key).unwrap().is_none());
+        let local = SkillService::get_ssot_dir().unwrap().join("browser-skill");
+        assert!(local.starts_with(home.path()));
+        assert!(!local.exists());
+
+        let mut installed = poisoned_skill(&candidate.key, "browser-skill");
+        installed.repo_owner = Some("owner".into());
+        installed.repo_name = Some("repo".into());
+        installed.repo_branch = Some("main".into());
+        write_skill(&local, "original-content");
+        installed.content_hash = Some(SkillService::compute_dir_hash(&local).unwrap());
+        db.save_skill(&installed).unwrap();
+        let before = serde_json::to_value(&installed).unwrap();
+        assert_conflict(service.update_skill(&db, &installed.id).await.unwrap_err());
+        assert_eq!(
+            serde_json::to_value(db.get_installed_skill(&installed.id).unwrap().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(
+            Some(SkillService::compute_dir_hash(&local).unwrap()),
+            installed.content_hash
+        );
+
+        // A conflict must not prevent unrelated skills in the same repo from being checked.
+        let mut healthy = installed.clone();
+        healthy.id = "owner/repo:healthy".into();
+        healthy.directory = "healthy".into();
+        healthy.content_hash = None;
+        write_skill(&local.with_file_name("healthy"), "old");
+        write_skill(&remote.path().join("healthy"), "new");
+        db.save_skill(&healthy).unwrap();
+        let updates = service.check_updates(&db).await.unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].id, healthy.id);
     }
 
     #[tokio::test]
@@ -6731,6 +7154,7 @@ mod tests {
                 ("weread-skills", "skills", "new-location"),
                 ("ordinary-skill", "old/ordinary-skill", "new/ordinary-skill"),
                 ("weread-skills", "skills", "."),
+                ("weread-skills", "skills", "catalog/ group/skills"),
             ] {
                 let home = tempdir().expect("home");
                 let config_dir = home.path().join(".cc-switch");
@@ -6860,6 +7284,7 @@ mod tests {
 
         // directory 只给了 skill 名 "ast-grep"（skills.sh API 的语义），不能命中空壳 wrapper。
         let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep")
+            .unwrap()
             .expect("should resolve to the inner skill dir, not the same-name wrapper");
 
         assert_eq!(resolved, real_skill);
@@ -6874,6 +7299,7 @@ mod tests {
         write_skill(&catalog_skill, "Foo Skill");
 
         let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo")
+            .unwrap()
             .expect("should resolve the two-level catalog skill by name");
 
         assert_eq!(resolved, catalog_skill);
@@ -6892,7 +7318,7 @@ mod tests {
         )
         .expect("write plugin.json");
 
-        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep");
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep").unwrap();
         assert!(
             resolved.is_none(),
             "wrapper dir without SKILL.md and no inner skill must resolve to None, got {:?}",
@@ -6906,7 +7332,7 @@ mod tests {
         fs::create_dir_all(temp.path().join("skills").join("foo")).expect("create empty skill dir");
         fs::write(temp.path().join("README.md"), "no skills here").expect("write README");
 
-        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo");
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo").unwrap();
         assert!(
             resolved.is_none(),
             "no SKILL.md anywhere must resolve to None"

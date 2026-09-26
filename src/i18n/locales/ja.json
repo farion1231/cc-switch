@@ -2543,6 +2543,7 @@
       "downloadTimeoutHint": "ネットワークを確認するか、時間をおいて再試行してください",
       "skillPathNotFound": "リポジトリ {{owner}}/{{name}} にスキルパス '{{path}}' がありません",
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
+      "ambiguousSkillName": "リポジトリ内の複数の SKILL.md が名前 '{{name}}' を宣言しているため、スキルを特定できません。リポジトリのスキル一覧から対象のディレクトリを選択して再試行してください。",
       "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
       "invalidRepoRef": "リポジトリの指定が不正です：{{owner}}/{{name}}",
