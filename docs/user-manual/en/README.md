@@ -1,11 +1,11 @@
 # CC Switch User Manual
 
-> All-in-One Assistant for Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes
+> All-in-One Assistant for Claude Code / Claude Desktop / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code
 
 ## Table of Contents
 
 ```
-CC Switch User Manual
+📚 CC Switch User Manual
 │
 ├── 1. Getting Started
 │   ├── 1.1 Introduction
@@ -29,12 +29,12 @@ CC Switch User Manual
 │   ├── 3.4 Session Manager
 │   └── 3.5 Workspace & Memory
 │
-├── 4. Proxy & High Availability
-│   ├── 4.1 Proxy Service
-│   ├── 4.2 App Takeover
+├── 4. Local Routing & High Availability
+│   ├── 4.1 Local Routing Service
+│   ├── 4.2 App Routing
 │   ├── 4.3 Failover
 │   ├── 4.4 Usage Statistics
-│   └── 4.5 Model Test
+│   └── 4.5 Connectivity Check
 │
 └── 5. FAQ
     ├── 5.1 Configuration Files
@@ -76,15 +76,15 @@ CC Switch User Manual
 | [3.4-sessions.md](./3-extensions/3.4-sessions.md) | Session Manager: browse, search, resume, delete sessions |
 | [3.5-workspace.md](./3-extensions/3.5-workspace.md) | Workspace files and daily memory (OpenClaw) |
 
-### 4. Proxy & High Availability
+### 4. Local Routing & High Availability
 
 | File | Description |
 |------|-------------|
-| [4.1-service.md](./4-proxy/4.1-service.md) | Start proxy, configuration, running status |
+| [4.1-service.md](./4-proxy/4.1-service.md) | Start local routing, configuration, API format conversion |
 | [4.2-routing.md](./4-proxy/4.2-routing.md) | App routing, configuration changes, status indicators |
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | Failover queue, circuit breaker, health status |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | Usage statistics, trend charts, pricing configuration |
-| [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Model test, health check, latency testing |
+| [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Connectivity check, check parameters |
 
 ### 5. FAQ
 
@@ -101,30 +101,24 @@ CC Switch User Manual
 - **Installation issues**: See [1.2 Installation Guide](./1-getting-started/1.2-installation.md)
 - **Configure providers**: See [2.1 Add Provider](./2-providers/2.1-add.md)
 - **Use Claude Desktop**: See [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
-- **Using proxy**: See [4.1 Proxy Service](./4-proxy/4.1-service.md)
+- **Use local routing**: See [4.1 Local Routing Service](./4-proxy/4.1-service.md)
 - **Having trouble**: See [5.2 FAQ](./5-faq/5.2-questions.md)
 
 ## Version Information
 
-- Documentation version: v3.16.0
-- Last updated: 2026-05-29
-- Applicable to CC Switch v3.16.0+
+- Documentation version: v3.20.4
+- Last updated: 2026-09-26
+- Applicable to CC Switch v3.20.4+
 
-### v3.16.0 Highlights
+### Recent Major Changes
 
-- **Codex Chat Completions routing**: route Chat-only providers such as Baidu Qianfan Coding Plan, StepFun Step Plan, and SiliconFlow through Codex. See [2.1 Add Provider](./2-providers/2.1-add.md)
-- **Managed CLI tool lifecycle**: install, update, update all, and diagnose Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes from Settings / About. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
-- **Provider and model refresh**: new partner presets, refreshed default models and pricing, Claude Opus 4.8 defaults, and GPT 5.5 defaults where applicable
-- **Routing support badges**: Claude Code / Codex provider cards indicate whether a provider can be served through Local Routing
-- **Codex OAuth live model discovery**: ChatGPT Codex providers fetch available models from the ChatGPT backend on demand
-- **Filter-driven Usage Hero**: shows cache-normalized real total tokens and cache hit rate, updating with date / provider / model filters — see [4.4 Usage Statistics](./4-proxy/4.4-usage.md)
-- **Lightweight Mode**: Destroys the main window when minimizing to tray — near-zero idle footprint. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
-- **Quota & Balance Display**: Official subscriptions (Claude/Codex/Gemini/Copilot/Codex OAuth) auto-display quotas; Token Plan and third-party balances use built-in templates with one-click enable — see [2.5 Usage Query](./2-providers/2.5-usage-query.md)
-- **Codex OAuth Reverse Proxy**: Reuse your ChatGPT account's Codex service inside Claude Code — see [2.1 Add Provider](./2-providers/2.1-add.md)
-- **Per-App Tray Submenus**: Claude / Codex / Gemini submenus show the current provider and available usage summaries — see [2.2 Switch Provider](./2-providers/2.2-switch.md)
-- **Skills Discovery & Batch Updates**: SHA-256 update detection, batch updates, skills.sh public registry search — see [3.3 Skills Management](./3-extensions/3.3-skills.md)
-- **Full URL Endpoint Mode**: Advanced option to treat `base_url` as the full upstream endpoint — see [2.1 Add Provider](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw / Hermes Stream Check Coverage**: Stream Check covers Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes — see [4.5 Model Test](./4-proxy/4.5-model-test.md)
+- **New managed apps**: Grok Build (v3.18.0), Pi (v3.20.0), and MiniMax Code (v3.20.4), bringing the total to 10 managed apps — see [1.1 Introduction](./1-getting-started/1.1-introduction.md)
+- **Official Codex presets now connect directly via native Responses**: DeepSeek, Zhipu GLM (v3.20.2), Kimi (v3.20.3), and others no longer need local routing for protocol conversion — see [2.1 Add Provider](./2-providers/2.1-add.md)
+- **Codex switching writes only config.toml**: third-party API keys are no longer written to `auth.json` (v3.20.1) — see [1.5 Personalization → Codex App Enhancements](./1-getting-started/1.5-settings.md#codex-app-enhancements)
+- **"Upstream Format" replaces the "Needs Local Routing" toggle** (v3.16.5) — see [2.1 Add Provider](./2-providers/2.1-add.md#upstream-format-and-model-mapping-for-codex--grok-build)
+- **Connectivity check replaces model test**: it only checks whether the address is reachable and no longer sends real model requests (v3.16.3) — see [4.5 Connectivity Check](./4-proxy/4.5-model-test.md)
+- **Usage statistics without local routing**: usage is imported from each tool's local session logs — see [4.4 Usage Statistics](./4-proxy/4.4-usage.md)
+- **Cloud sync supports S3-compatible storage** — see [1.5 Personalization](./1-getting-started/1.5-settings.md)
 
 ## Contributing
 

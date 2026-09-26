@@ -1,11 +1,11 @@
 # CC Switch ユーザーマニュアル
 
-> Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes オールインワンアシスタント
+> Claude Code / Claude Desktop / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code オールインワンアシスタント
 
 ## 目次構成
 
 ```
-CC Switch ユーザーマニュアル
+📚 CC Switch ユーザーマニュアル
 │
 ├── 1. はじめに
 │   ├── 1.1 ソフトウェア紹介
@@ -29,12 +29,12 @@ CC Switch ユーザーマニュアル
 │   ├── 3.4 セッションマネージャー
 │   └── 3.5 ワークスペースとメモリー
 │
-├── 4. プロキシと高可用性
-│   ├── 4.1 プロキシサービス
-│   ├── 4.2 アプリケーション接管
+├── 4. ローカルルーティングと高可用性
+│   ├── 4.1 ローカルルーティングサービス
+│   ├── 4.2 アプリケーションルーティング
 │   ├── 4.3 フェイルオーバー
 │   ├── 4.4 使用量統計
-│   └── 4.5 モデルテスト
+│   └── 4.5 接続チェック
 │
 └── 5. よくある質問
     ├── 5.1 設定ファイルの説明
@@ -76,15 +76,15 @@ CC Switch ユーザーマニュアル
 | [3.4-sessions.md](./3-extensions/3.4-sessions.md) | セッションマネージャー：閲覧、検索、再開、削除 |
 | [3.5-workspace.md](./3-extensions/3.5-workspace.md) | ワークスペースファイルとデイリーメモリー（OpenClaw） |
 
-### 4. プロキシと高可用性
+### 4. ローカルルーティングと高可用性
 
 | ファイル | 内容 |
 |------|------|
-| [4.1-service.md](./4-proxy/4.1-service.md) | プロキシの起動、設定項目、実行状態 |
+| [4.1-service.md](./4-proxy/4.1-service.md) | ローカルルーティングの起動、設定項目、API フォーマット変換 |
 | [4.2-routing.md](./4-proxy/4.2-routing.md) | アプリケーションルーティング、設定変更、ステータス表示 |
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | フェイルオーバーキュー、サーキットブレーカー、ヘルスステータス |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | 使用量統計、トレンドグラフ、料金設定 |
-| [4.5-model-test.md](./4-proxy/4.5-model-test.md) | モデルテスト、ヘルスチェック、レイテンシテスト |
+| [4.5-model-test.md](./4-proxy/4.5-model-test.md) | 接続チェック、チェックパラメータ |
 
 ### 5. よくある質問
 
@@ -101,30 +101,24 @@ CC Switch ユーザーマニュアル
 - **インストールの問題**：[1.2 インストールガイド](./1-getting-started/1.2-installation.md) をご確認ください
 - **プロバイダーの設定**：[2.1 プロバイダーの追加](./2-providers/2.1-add.md) をご確認ください
 - **Claude Desktop の利用**：[2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md) をご確認ください
-- **プロキシの使用**：[4.1 プロキシサービス](./4-proxy/4.1-service.md) をご確認ください
+- **ローカルルーティングの使用**：[4.1 ローカルルーティングサービス](./4-proxy/4.1-service.md) をご確認ください
 - **お困りの方**：[5.2 FAQ](./5-faq/5.2-questions.md) をご確認ください
 
 ## バージョン情報
 
-- ドキュメントバージョン：v3.16.0
-- 最終更新：2026-05-29
-- CC Switch v3.16.0+ 対応
+- ドキュメントバージョン：v3.20.4
+- 最終更新：2026-09-26
+- CC Switch v3.20.4+ 対応
 
-### v3.16.0 の注目機能
+### 最近の主な変更
 
-- **Codex Chat Completions ルーティング**：Baidu Qianfan Coding Plan、StepFun Step Plan、SiliconFlow など Chat 専用プロバイダーを Codex で利用可能 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
-- **管理対象 CLI ツールのライフサイクル**：設定 / About で Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes のインストール、更新、一括更新、診断に対応 — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
-- **プロバイダーとモデルマトリクス更新**：提携プリセットを追加し、既定モデルと価格表を更新。Claude Opus は 4.8、該当する GPT 既定値は 5.5 に更新
-- **ルーティング対応バッジ**：Claude Code / Codex のプロバイダーカードで Local Routing 対応可否を確認可能
-- **Codex OAuth ライブモデル検出**：ChatGPT Codex 系プロバイダーは必要に応じて ChatGPT バックエンドから利用可能モデルを取得
-- **フィルター連動 Usage Hero**：キャッシュ正規化後の実消費 Token とキャッシュヒット率を表示し、日付 / プロバイダー / モデルフィルターに追従 — 詳細は [4.4 使用量統計](./4-proxy/4.4-usage.md)
-- **軽量モード**：トレイへ最小化時にメインウィンドウを破棄、アイドル時のリソース使用量をほぼゼロに — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
-- **クォータ・残高表示**：公式サブスクリプション系（Claude/Codex/Gemini/Copilot/Codex OAuth）はカードに自動表示、Token Plan および第三者残高は内蔵テンプレートでワンクリック有効化 — 詳細は [2.5 使用量クエリ](./2-providers/2.5-usage-query.md)
-- **Codex OAuth リバースプロキシ**：ChatGPT アカウントで Claude Code 内から Codex サービスを再利用 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
-- **アプリ別トレイサブメニュー**：Claude / Codex / Gemini のサブメニューで現在のプロバイダーと使用量サマリーを確認可能 — 詳細は [2.2 プロバイダーの切り替え](./2-providers/2.2-switch.md)
-- **Skills の発見と一括更新**：SHA-256 ハッシュによる更新検出、一括更新、skills.sh 公式レジストリ検索 — 詳細は [3.3 Skills スキル管理](./3-extensions/3.3-skills.md)
-- **完全URLエンドポイントモード**：高度なオプションで `base_url` を完全なアップストリームエンドポイントとして扱う — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw / Hermes ストリームチェック対応**：Stream Check は Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes をカバー — 詳細は [4.5 モデルテスト](./4-proxy/4.5-model-test.md)
+- **管理対象アプリの追加**：Grok Build（v3.18.0）、Pi（v3.20.0）、MiniMax Code（v3.20.4）が加わり、管理対象アプリは計 10 個になりました — 詳細は [1.1 ソフトウェア紹介](./1-getting-started/1.1-introduction.md)
+- **Codex 公式プリセットがネイティブ Responses 直結に**：DeepSeek、Zhipu GLM（v3.20.2）、Kimi（v3.20.3）などは、プロトコル変換のためにローカルルーティングを有効にする必要がなくなりました — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
+- **Codex の切り替えは config.toml のみに書き込み**：サードパーティの API Key は `auth.json` に書き込まれなくなりました（v3.20.1）— 詳細は [1.5 個人設定 → Codex アプリ拡張](./1-getting-started/1.5-settings.md#codex-アプリ拡張)
+- **「上流フォーマット」が「ローカルルーティングが必要」トグルに代わりました**（v3.16.5）— 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md#codex--grok-build-の上流フォーマットとモデルマッピング)
+- **接続チェックがモデルテストに代わりました**：アドレスに到達できるかだけを確認し、実際のモデルリクエストは送信しません（v3.16.3）— 詳細は [4.5 接続チェック](./4-proxy/4.5-model-test.md)
+- **ローカルルーティングなしでも使用量を集計**：各ツールのローカルセッションログからインポートします — 詳細は [4.4 使用量統計](./4-proxy/4.4-usage.md)
+- **クラウド同期が S3 互換ストレージに対応** — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
 
 ## コントリビュート
 
