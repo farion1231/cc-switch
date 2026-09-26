@@ -16,6 +16,8 @@ import {
   Stethoscope,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -215,6 +217,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
 // 手动「刷新」才强制重查。at = 最近一次「全量加载」完成时刻；单工具刷新（切 shell / 升级
 // 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
 const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
+const AUTO_CHECK_TOOL_VERSIONS_KEY = "ccswitch:about:autoCheckToolVersions";
 let toolVersionsCache: { data: ToolVersion[]; at: number } | null = null;
 // 应用自身版本（getVersion，本地毫秒级、无网络）也缓存一份，纯为重挂时免去 loading 闪烁。
 let appVersionCache: string | null = null;
@@ -238,6 +241,9 @@ function mergeToolVersions(
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
   const { t } = useTranslation();
+  const [autoCheckToolVersions, setAutoCheckToolVersions] = useState(
+    () => localStorage.getItem(AUTO_CHECK_TOOL_VERSIONS_KEY) !== "false",
+  );
   // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
   // 为空则回退到原始初值（null / loading）。
   const [version, setVersion] = useState<string | null>(() => appVersionCache);
@@ -251,7 +257,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
   // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
   const [isLoadingTools, setIsLoadingTools] = useState(
-    () => toolVersionsCache === null,
+    () => toolVersionsCache === null && autoCheckToolVersions,
   );
   const [toolActions, setToolActions] = useState<
     Partial<Record<ToolName, ToolLifecycleAction>>
@@ -440,7 +446,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     };
 
     void loadAppVersion();
-    void loadAllToolVersions();
+    if (autoCheckToolVersions) void loadAllToolVersions();
     return () => {
       active = false;
     };
@@ -1114,8 +1120,42 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           </div>
         </div>
 
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border-default px-3 py-2">
+          <div className="space-y-0.5">
+            <Label htmlFor="auto-check-tool-versions">
+              {t("settings.autoCheckToolVersions")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.autoCheckToolVersionsDescription")}
+            </p>
+          </div>
+          <Switch
+            id="auto-check-tool-versions"
+            checked={autoCheckToolVersions}
+            disabled={isLoadingTools}
+            onCheckedChange={(checked) => {
+              localStorage.setItem(
+                AUTO_CHECK_TOOL_VERSIONS_KEY,
+                String(checked),
+              );
+              setAutoCheckToolVersions(checked);
+              if (checked) void loadAllToolVersions();
+            }}
+          />
+        </div>
+
+        {!autoCheckToolVersions &&
+        toolVersions.length === 0 &&
+        !isLoadingTools ? (
+          <p className="px-1 text-sm text-muted-foreground">
+            {t("settings.toolVersionsNotChecked")}
+          </p>
+        ) : null}
         <div className="grid gap-3 px-1 sm:grid-cols-2 xl:grid-cols-3">
-          {TOOL_NAMES.map((toolName, index) => {
+          {(autoCheckToolVersions || toolVersions.length > 0 || isLoadingTools
+            ? TOOL_NAMES
+            : TOOL_NAMES.filter((toolName) => toolDiagnostics[toolName]?.length)
+          ).map((toolName, index) => {
             const tool = toolVersionByName.get(toolName);
             const appConfig = APP_ICON_MAP[TOOL_APP_IDS[toolName]];
             const displayName = TOOL_DISPLAY_NAMES[toolName];
@@ -1134,9 +1174,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // 已安装却跑不起来（如 Node 版本不达标）：用它区分卡片文案与按钮，避免把
             // "装了跑不起来"误判成"未安装"而给出无用的安装按钮（重装同一版本解决不了）。
             const installedButBroken = Boolean(tool?.installed_but_broken);
-            // loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
+            // 未检测、loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
             const action: ToolLifecycleAction | null =
-              isToolVersionLoading || installedButBroken
+              isToolVersionLoading || installedButBroken || !tool
                 ? null
                 : !tool?.version
                   ? "install"
@@ -1200,11 +1240,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     >
                       {isToolVersionLoading
                         ? t("common.loading")
-                        : tool?.version
-                          ? tool.version
-                          : installedButBroken
-                            ? t("settings.installedNotRunnable")
-                            : t("common.notInstalled")}
+                        : !tool
+                          ? t("common.unknown")
+                          : tool.version
+                            ? tool.version
+                            : installedButBroken
+                              ? t("settings.installedNotRunnable")
+                              : t("common.notInstalled")}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
@@ -1289,7 +1331,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <span className="text-xs text-muted-foreground">
                       {t("common.loading")}
                     </span>
-                  ) : installedButBroken ? (
+                  ) : !tool ? null : installedButBroken ? (
                     // 已安装但跑不起来：重装无济于事，不给按钮，给一句指向环境的提示。
                     <span className="text-xs text-yellow-600 dark:text-yellow-400">
                       {t("settings.toolCheckEnv")}
