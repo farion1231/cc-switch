@@ -19,10 +19,16 @@ const renderOpencodeFormState = (
     }),
   );
 
+  const setSettingsConfig = (nextConfig: Record<string, unknown>) => {
+    settingsConfig = JSON.stringify(nextConfig);
+    hook.rerender();
+  };
+
   return {
     ...hook,
     onSettingsConfigChange,
     getSettingsConfig: () => settingsConfig,
+    setSettingsConfig,
   };
 };
 
@@ -129,4 +135,109 @@ describe("useOpencodeFormState", () => {
       timeout: 200,
     });
   });
+
+  it("syncs a known MiniMax base URL when switching to Anthropic", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://api.minimax.cn/v1" },
+      models: {},
+    });
+
+    act(() => {
+      result.current.handleOpencodeNpmChange("@ai-sdk/anthropic");
+    });
+
+    expect(result.current.opencodeNpm).toBe("@ai-sdk/anthropic");
+    expect(result.current.opencodeBaseUrl).toBe(
+      "https://api.minimax.cn/anthropic",
+    );
+    expect(JSON.parse(getSettingsConfig())).toMatchObject({
+      npm: "@ai-sdk/anthropic",
+      options: { baseURL: "https://api.minimax.cn/anthropic" },
+    });
+  });
+
+  it("syncs a known MiniMax base URL back to the OpenAI path", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/anthropic",
+      options: { baseURL: "https://api.minimax.io/anthropic" },
+      models: {},
+    });
+
+    act(() => {
+      result.current.handleOpencodeNpmChange("@ai-sdk/openai-compatible");
+    });
+
+    expect(result.current.opencodeNpm).toBe("@ai-sdk/openai-compatible");
+    expect(result.current.opencodeBaseUrl).toBe("https://api.minimax.io/v1");
+    expect(JSON.parse(getSettingsConfig())).toMatchObject({
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://api.minimax.io/v1" },
+    });
+  });
+
+  it("never overwrites a custom base URL when changing API format", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://relay.example.com/v1" },
+      models: {},
+    });
+
+    act(() => {
+      result.current.handleOpencodeNpmChange("@ai-sdk/anthropic");
+    });
+
+    expect(result.current.opencodeNpm).toBe("@ai-sdk/anthropic");
+    expect(result.current.opencodeBaseUrl).toBe("https://relay.example.com/v1");
+    expect(JSON.parse(getSettingsConfig())).toMatchObject({
+      npm: "@ai-sdk/anthropic",
+      options: { baseURL: "https://relay.example.com/v1" },
+    });
+  });
+
+  it.each([
+    [
+      "custom relay",
+      "https://relay.example.com/anthropic",
+      "https://relay.example.com/anthropic",
+    ],
+    [
+      "URL with query",
+      "https://api.minimax.cn/v1?tenant=example",
+      "https://api.minimax.cn/v1?tenant=example",
+    ],
+    [
+      "international MiniMax endpoint",
+      "https://api.minimax.io/anthropic",
+      "https://api.minimax.io/anthropic",
+    ],
+  ] as const)(
+    "uses the latest JSON-edited base URL for %s",
+    (_caseName, editedBaseUrl, expectedBaseUrl) => {
+      const { result, getSettingsConfig, setSettingsConfig } =
+        renderOpencodeFormState({
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "https://api.minimax.cn/v1" },
+          models: {},
+        });
+
+      act(() => {
+        setSettingsConfig({
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: editedBaseUrl },
+          models: {},
+        });
+      });
+
+      act(() => {
+        result.current.handleOpencodeNpmChange("@ai-sdk/anthropic");
+      });
+
+      expect(result.current.opencodeBaseUrl).toBe(expectedBaseUrl);
+      expect(JSON.parse(getSettingsConfig())).toMatchObject({
+        npm: "@ai-sdk/anthropic",
+        options: { baseURL: expectedBaseUrl },
+      });
+    },
+  );
 });
