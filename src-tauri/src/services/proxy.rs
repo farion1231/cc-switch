@@ -6,6 +6,7 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
+use crate::proxy::plugins::{init_registry, PluginRegistry};
 use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexOAuthManager};
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
@@ -393,6 +394,9 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// 插件注册表（服务层构造一次并长期持有；
+    /// 代理服务器重启/热重载路径复用同一实例，避免运行时开关状态丢失）
+    plugins: Arc<PluginRegistry>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -413,12 +417,18 @@ impl ProxyService {
         codex_oauth_manager: Arc<CodexOAuthManager>,
     ) -> Self {
         Self {
+            plugins: init_registry(db.clone()),
             db,
             codex_oauth_manager,
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
         }
+    }
+
+    /// 插件注册表（与代理服务器共享同一实例；供 Tauri 命令层 / AppState 访问）
+    pub fn plugins(&self) -> Arc<PluginRegistry> {
+        self.plugins.clone()
     }
 
     #[cfg(test)]
@@ -966,7 +976,12 @@ impl ProxyService {
 
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let server = ProxyServer::new(
+            config.clone(),
+            self.db.clone(),
+            app_handle,
+            self.plugins.clone(),
+        );
         let info = server
             .start()
             .await
@@ -3998,7 +4013,13 @@ impl ProxyService {
             }
 
             let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle);
+            // 热重载路径：复用同一插件注册表，不得重建（否则运行时开关/覆盖状态丢失）
+            let new_server = ProxyServer::new(
+                new_config.clone(),
+                self.db.clone(),
+                app_handle,
+                self.plugins.clone(),
+            );
             let info = new_server
                 .start()
                 .await

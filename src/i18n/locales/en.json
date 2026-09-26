@@ -445,6 +445,39 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "plugins": {
+        "title": "Plugin System",
+        "description": "Manage proxy plugins: toggle plugins, adjust execution order, reload user plugins",
+        "globalEnabled": "Enable plugins",
+        "globalEnabledDescription": "Master switch. When off, all plugins are disabled and the proxy behaves as the baseline",
+        "reload": "Reload",
+        "openDir": "Open Plugin Directory",
+        "import": "Import Plugin",
+        "importDialogTitle": "Select the plugin directory",
+        "importSuccess": "Imported plugin {{name}} ({{id}}); click Reload if it does not appear",
+        "reloadSuccess": "Reloaded {{loaded}} plugins",
+        "reloadErrorsTitle": "The following plugins failed to load:",
+        "badgeBuiltin": "Built-in",
+        "badgeUser": "User",
+        "loadFailed": "Load failed",
+        "priority": "Priority",
+        "priorityHint": "Lower runs earlier; may be negative",
+        "enabledLabel": "Enabled",
+        "stageHint": "Pipeline stages this plugin participates in",
+        "empty": "No plugins",
+        "config": {
+          "open": "Settings",
+          "title": "{{name}} configuration",
+          "description": "On save the plugin validates and persists; hot reload applies",
+          "save": "Save configuration",
+          "saved": "Configuration saved (plugin hot-reloads)",
+          "failed": "Save failed: {{error}}",
+          "cancel": "Cancel",
+          "loading": "Loading configuration…",
+          "addRow": "＋ Add row",
+          "noSchema": "Plugin returned no configuration definition"
+        }
       }
     },
     "language": "Language",

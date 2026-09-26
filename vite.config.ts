@@ -18,6 +18,9 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
   },
   server: {
+    // 固定 IPv4：Node 在部分 Windows 机器上把 localhost 绑到 [::1]（仅 IPv6），
+    // 而 WebView2 访问 devUrl 时走 127.0.0.1，协议族不一致会报"localhost 拒绝连接"
+    host: "127.0.0.1",
     port: 3000,
     strictPort: true,
   },

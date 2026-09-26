@@ -445,6 +445,39 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "plugins": {
+        "title": "插件系统",
+        "description": "管理代理插件：开关插件、调整执行顺序、重载用户插件",
+        "globalEnabled": "启用插件",
+        "globalEnabledDescription": "总开关，关闭后所有插件停用，代理行为与主线一致",
+        "reload": "重新加载",
+        "openDir": "打开插件目录",
+        "import": "导入插件",
+        "importDialogTitle": "选择插件所在目录",
+        "importSuccess": "已导入插件 {{name}}（{{id}}），如未出现请点击重新加载",
+        "reloadSuccess": "重载完成：已加载 {{loaded}} 个插件",
+        "reloadErrorsTitle": "以下插件加载失败：",
+        "badgeBuiltin": "内置",
+        "badgeUser": "用户",
+        "loadFailed": "加载失败",
+        "priority": "优先级",
+        "priorityHint": "数字越小越先执行，可为负数",
+        "enabledLabel": "启用",
+        "stageHint": "插件参与的执行时机",
+        "empty": "暂无插件",
+        "config": {
+          "open": "设置",
+          "title": "{{name}} 配置",
+          "description": "修改保存后由插件校验并落盘，热重载生效",
+          "save": "保存配置",
+          "saved": "配置已保存（插件热重载生效）",
+          "failed": "保存失败：{{error}}",
+          "cancel": "取消",
+          "loading": "读取配置中…",
+          "addRow": "＋ 添加一行",
+          "noSchema": "该插件未返回配置定义"
+        }
       }
     },
     "language": "界面语言",

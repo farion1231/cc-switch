@@ -10,6 +10,9 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
+    plugins::{
+        run_request_pipeline, PluginProviderInfo, PluginRegistry, PluginRequestContext, PluginStage,
+    },
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -176,6 +179,8 @@ pub struct RequestForwarder {
     rectifier_config: RectifierConfig,
     /// 优化器配置
     optimizer_config: OptimizerConfig,
+    /// 插件注册表（PreSend 挂点执行插件管线；与 ProxyState 共享同一实例）
+    plugins: Arc<PluginRegistry>,
     /// Copilot 优化器配置
     copilot_optimizer_config: CopilotOptimizerConfig,
     /// 非流式请求超时（秒）
@@ -191,6 +196,41 @@ pub struct RequestForwarder {
 }
 
 impl RequestForwarder {
+    /// PreSend 插件挂点：对即将发往当前 provider 的请求体执行插件管线。
+    ///
+    /// fail-open：插件错误/panic 由管线内部 log::warn 并跳过，不影响转发；
+    /// 无启用的 PreSend 插件时为 no-op。
+    fn run_pre_send_plugins(
+        &self,
+        app_type_str: &str,
+        provider: &Provider,
+        body: &Value,
+        provider_body: &mut Value,
+    ) {
+        let plugin_ctx = PluginRequestContext {
+            app_type: app_type_str.to_string(),
+            session_id: self.session_id.clone(),
+            request_model: body
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            stage: PluginStage::PreSend,
+            provider: Some(PluginProviderInfo {
+                id: provider.id.clone(),
+                name: provider.name.clone(),
+                is_bedrock: is_bedrock_provider(provider),
+            }),
+        };
+        let _changed = run_request_pipeline(
+            &self.plugins,
+            PluginStage::PreSend,
+            &plugin_ctx,
+            provider_body,
+            |p, c, b| p.transform_request(c, b),
+        );
+    }
+
     /// 预防式 media 降级：发送前对 text-only 模型把图片块替换为标记。
     ///
     /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
@@ -253,6 +293,7 @@ impl RequestForwarder {
         _streaming_idle_timeout: u64,
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
+        plugins: Arc<PluginRegistry>,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
     ) -> Self {
@@ -272,6 +313,7 @@ impl RequestForwarder {
             session_client_provided,
             rectifier_config,
             optimizer_config,
+            plugins,
             copilot_optimizer_config,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
@@ -495,21 +537,12 @@ impl RequestForwarder {
                 continue;
             }
 
-            // PRE-SEND 优化器：每个 provider 独立决定是否优化
-            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
-            let mut provider_body =
-                if self.optimizer_config.enabled && is_bedrock_provider(provider) {
-                    let mut b = body.clone();
-                    if self.optimizer_config.thinking_optimizer {
-                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
-                    }
-                    if self.optimizer_config.cache_injection {
-                        super::cache_injector::inject(&mut b, &self.optimizer_config);
-                    }
-                    b
-                } else {
-                    body.clone()
-                };
+            // PRE-SEND 插件管线：每个 provider 独立执行（故障转移时每个供应商重跑）。
+            // clone 总是发生，避免插件改写的字段泄漏到故障转移链上的其他 provider
+            //（管线为 no-op 时 provider_body 等价于原样 clone）。
+            // Bedrock 门已下沉到内置优化器插件内部（ctx.provider.is_bedrock）。
+            let mut provider_body = body.clone();
+            self.run_pre_send_plugins(app_type_str, provider, &body, &mut provider_body);
 
             attempted_providers += 1;
 
@@ -2833,7 +2866,7 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
 }
 
 /// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
-fn is_bedrock_provider(provider: &Provider) -> bool {
+pub(crate) fn is_bedrock_provider(provider: &Provider) -> bool {
     provider
         .settings_config
         .get("env")
@@ -3869,9 +3902,10 @@ mod tests {
         }
     }
 
-    fn test_forwarder(
+    fn test_forwarder_with_plugins(
         non_streaming_timeout: Duration,
         streaming_first_byte_timeout: Duration,
+        plugins: Arc<PluginRegistry>,
     ) -> RequestForwarder {
         let db = Arc::new(Database::memory().expect("memory db"));
 
@@ -3888,11 +3922,107 @@ mod tests {
             session_client_provided: false,
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
+            plugins,
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    fn test_forwarder(
+        non_streaming_timeout: Duration,
+        streaming_first_byte_timeout: Duration,
+    ) -> RequestForwarder {
+        test_forwarder_with_plugins(
+            non_streaming_timeout,
+            streaming_first_byte_timeout,
+            Arc::new(PluginRegistry::new()),
+        )
+    }
+
+    /// PreSend 挂点：插件管线被调用，且 ctx 携带 provider 信息（含 Bedrock 门标记）
+    #[test]
+    fn pre_send_pipeline_invokes_plugin_with_provider_info() {
+        use crate::proxy::plugins::{PluginError, PluginRequestContext, ProxyPlugin};
+
+        struct RecordingPlugin {
+            seen: std::sync::Mutex<Vec<(String, bool, String)>>,
+        }
+
+        impl ProxyPlugin for RecordingPlugin {
+            fn id(&self) -> &str {
+                "test:recorder"
+            }
+            fn display_name(&self) -> &str {
+                "recorder"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn is_builtin(&self) -> bool {
+                true
+            }
+            fn stages(&self) -> &'static [PluginStage] {
+                &[PluginStage::PreSend]
+            }
+            fn default_priority(&self) -> i32 {
+                100
+            }
+            fn transform_request(
+                &self,
+                ctx: &PluginRequestContext,
+                body: &mut Value,
+            ) -> Result<bool, PluginError> {
+                let provider = ctx.provider.as_ref().expect("PreSend 应携带 provider 信息");
+                self.seen.lock().unwrap().push((
+                    provider.id.clone(),
+                    provider.is_bedrock,
+                    ctx.session_id.clone(),
+                ));
+                body["plugin_touched"] = json!(true);
+                Ok(true)
+            }
+        }
+
+        let plugin = Arc::new(RecordingPlugin {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let registry = PluginRegistry::new();
+        registry.register(plugin.clone() as Arc<dyn ProxyPlugin>);
+        let forwarder =
+            test_forwarder_with_plugins(Duration::ZERO, Duration::ZERO, Arc::new(registry));
+
+        let mut bedrock_provider = test_provider_with_type(Some("claude"));
+        bedrock_provider.id = "bedrock-1".to_string();
+        bedrock_provider.name = "Bedrock Provider".to_string();
+        bedrock_provider.settings_config = json!({"env": {"CLAUDE_CODE_USE_BEDROCK": "1"}});
+
+        let body = json!({"model": "claude-sonnet-4"});
+        let mut provider_body = body.clone();
+        forwarder.run_pre_send_plugins("claude", &bedrock_provider, &body, &mut provider_body);
+
+        // 插件被调用并改写了 provider_body；原 body 不受影响
+        assert_eq!(provider_body["plugin_touched"], json!(true));
+        assert!(body.get("plugin_touched").is_none());
+        let seen = plugin.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "bedrock-1");
+        assert!(
+            seen[0].1,
+            "Bedrock provider 应在 ctx 中标记 is_bedrock=true"
+        );
+        assert_eq!(seen[0].2, "", "session_id 来自 forwarder");
+    }
+
+    #[test]
+    fn pre_send_pipeline_noop_with_empty_registry_keeps_body() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("claude"));
+        let body = json!({"model": "claude-sonnet-4"});
+        let mut provider_body = body.clone();
+        forwarder.run_pre_send_plugins("claude", &provider, &body, &mut provider_body);
+        assert_eq!(provider_body, body);
     }
 
     #[test]

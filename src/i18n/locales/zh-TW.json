@@ -445,6 +445,39 @@
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
         }
+      },
+      "plugins": {
+        "title": "外掛系統",
+        "description": "管理代理外掛：開關外掛、調整執行順序、重新載入使用者外掛",
+        "globalEnabled": "啟用外掛",
+        "globalEnabledDescription": "總開關，關閉後所有外掛停用，代理行為與主線一致",
+        "reload": "重新載入",
+        "openDir": "開啟外掛目錄",
+        "import": "匯入外掛",
+        "importDialogTitle": "選擇外掛所在目錄",
+        "importSuccess": "已匯入外掛 {{name}}（{{id}}），如未出現請點擊重新載入",
+        "reloadSuccess": "重新載入完成：已載入 {{loaded}} 個外掛",
+        "reloadErrorsTitle": "以下外掛載入失敗：",
+        "badgeBuiltin": "內建",
+        "badgeUser": "使用者",
+        "loadFailed": "載入失敗",
+        "priority": "優先順序",
+        "priorityHint": "數字越小越先執行，可為負數",
+        "enabledLabel": "啟用",
+        "stageHint": "插件參與的執行時機",
+        "empty": "暫無外掛",
+        "config": {
+          "open": "設定",
+          "title": "{{name}} 設定",
+          "description": "儲存後由外掛驗證並寫入，熱重載生效",
+          "save": "儲存設定",
+          "saved": "設定已儲存（外掛熱重載生效）",
+          "failed": "儲存失敗：{{error}}",
+          "cancel": "取消",
+          "loading": "讀取設定中…",
+          "addRow": "＋ 新增一列",
+          "noSchema": "該外掛未回傳設定定義"
+        }
       }
     },
     "language": "介面語言",

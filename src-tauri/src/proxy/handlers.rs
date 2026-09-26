@@ -15,7 +15,7 @@ use super::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
         CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
-    handler_context::RequestContext,
+    handler_context::{run_pre_request_plugins, RequestContext},
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
@@ -36,9 +36,10 @@ use super::{
         transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
-        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
+        apply_plugin_sse_transform_if_needed, apply_post_response_plugin_transform_if_needed,
+        create_usage_collector, process_response, read_decoded_body,
+        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
+        usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -181,8 +182,11 @@ async fn handle_messages_for_app(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    // PreRequest 插件挂点：解析成功后、构造 RequestContext 之前（fail-open）
+    run_pre_request_plugins(&state, &headers, &mut body, app_type_str);
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
@@ -512,15 +516,17 @@ async fn handle_claude_transform(
             None
         };
 
-        // 获取流式超时配置
-        let timeout_config = ctx.streaming_timeout_config();
-
-        let logged_stream = create_logged_passthrough_stream(
+        // 转换路径的 SseChunk 插件挂点：插件流接在"转换完成后的最终输出"
+        // （anthropic 形状 SSE）上，text / partial_json 还原白名单才能命中。
+        // 本流由转换器自建、未压缩（恒传 false），压缩绕过仅适用于透传流。
+        let logged_stream = apply_plugin_sse_transform_if_needed(
             sse_stream,
-            "Claude/OpenRouter",
+            ctx,
+            state,
             usage_collector,
-            timeout_config,
+            "Claude/OpenRouter",
             connection_guard,
+            false,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -654,7 +660,7 @@ async fn handle_claude_transform(
             "Missing upstream response after Claude format conversion".to_string(),
         )),
     };
-    let anthropic_response = match transform_result {
+    let mut anthropic_response = match transform_result {
         Ok(response) => response,
         Err(error) => {
             log::error!("[Claude] 转换响应失败: {error}");
@@ -675,6 +681,10 @@ async fn handle_claude_transform(
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
     // 在上游缺 stream_options.include_usage 时没有 usage，写入只会产生无意义空行
     spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
+
+    // PostResponse 插件挂点：非流式转换路径在序列化返回前执行还原管线（fail-open）。
+    // usage 日志已在上方基于插件改写前的响应统计（与 handle_non_streaming 一致）。
+    apply_post_response_plugin_transform_if_needed(ctx, state, status, &mut anthropic_response);
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -774,8 +784,11 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    // PreRequest 插件挂点：解析成功后、构造 RequestContext 之前（fail-open）
+    run_pre_request_plugins(&state, &headers, &mut body, "codex");
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
@@ -864,8 +877,11 @@ async fn handle_responses_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    // PreRequest 插件挂点：解析成功后、构造 RequestContext 之前（fail-open）
+    run_pre_request_plugins(&state, &headers, &mut body, app_type_str);
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
@@ -1015,8 +1031,11 @@ async fn handle_codex_standalone_passthrough(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
+
+    // PreRequest 插件挂点：解析成功后、构造 RequestContext 之前（fail-open）
+    run_pre_request_plugins(&state, &headers, &mut body, "codex");
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
@@ -1091,8 +1110,11 @@ async fn handle_responses_compact_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    // PreRequest 插件挂点：解析成功后、构造 RequestContext 之前（fail-open）
+    run_pre_request_plugins(&state, &headers, &mut body, app_type_str);
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
@@ -1218,12 +1240,15 @@ async fn handle_codex_xai_native_responses_rewrite(
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-        let logged_stream = create_logged_passthrough_stream(
+        // 转换路径的 SseChunk 插件挂点：插件流接在 namespace 还原后的最终输出上。
+        let logged_stream = apply_plugin_sse_transform_if_needed(
             restore_stream,
-            ctx.tag,
+            ctx,
+            state,
             usage_collector,
-            ctx.streaming_timeout_config(),
+            ctx.tag,
             connection_guard,
+            false,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1298,6 +1323,9 @@ async fn handle_codex_xai_native_responses_rewrite(
                     }
                 });
             }
+            // PostResponse 插件挂点：非流式转换路径在序列化返回前执行还原管线
+            // （fail-open）。usage 日志已在上方基于插件改写前的响应统计。
+            apply_post_response_plugin_transform_if_needed(ctx, state, status, &mut value);
             match serde_json::to_vec(&value) {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(e) => {
@@ -1414,12 +1442,16 @@ async fn handle_codex_chat_to_responses_transform(
             None
         };
 
-        let logged_stream = create_logged_passthrough_stream(
+        // 转换路径的 SseChunk 插件挂点：插件流接在"转换完成后的最终输出"
+        // （responses 形状 SSE）上，text / partial_json 还原白名单才能命中。
+        let logged_stream = apply_plugin_sse_transform_if_needed(
             sse_stream,
-            ctx.tag,
+            ctx,
+            state,
             usage_collector,
-            ctx.streaming_timeout_config(),
+            ctx.tag,
             connection_guard,
+            false,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1531,6 +1563,11 @@ async fn handle_codex_chat_to_responses_transform(
             }
         });
     }
+
+    // PostResponse 插件挂点：非流式转换路径在序列化返回前执行还原管线（fail-open）。
+    // usage 日志已在上方基于插件改写前的响应统计（与 handle_non_streaming 一致）。
+    let mut responses_response = responses_response;
+    apply_post_response_plugin_transform_if_needed(ctx, state, status, &mut responses_response);
 
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
@@ -1646,7 +1683,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     }
 
     let _connection_guard = connection_guard;
-    let responses_response =
+    let mut responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
             &codex_tool_context,
@@ -1696,6 +1733,10 @@ async fn handle_codex_anthropic_to_responses_transform(
             }
         });
     }
+
+    // PostResponse 插件挂点：非流式转换路径在序列化返回前执行还原管线（fail-open）。
+    // usage 日志已在上方基于插件改写前的响应统计（与 handle_non_streaming 一致）。
+    apply_post_response_plugin_transform_if_needed(ctx, state, status, &mut responses_response);
 
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
@@ -1787,12 +1828,16 @@ fn build_codex_anthropic_sse_response(
         None
     };
 
-    let logged_stream = create_logged_passthrough_stream(
+    // 转换路径的 SseChunk 插件挂点：插件流接在"转换完成后的最终输出"
+    // （responses 形状 SSE）上，text / partial_json 还原白名单才能命中。
+    let logged_stream = apply_plugin_sse_transform_if_needed(
         sse_stream,
-        ctx.tag,
+        ctx,
+        state,
         usage_collector,
-        ctx.streaming_timeout_config(),
+        ctx.tag,
         connection_guard,
+        false,
     );
 
     let mut headers = axum::http::HeaderMap::new();
@@ -2091,12 +2136,18 @@ pub async fn handle_gemini(
         .to_bytes();
     // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
     // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
-    let body: Value = if body_bytes.is_empty() {
+    let mut body: Value = if body_bytes.is_empty() {
         Value::Null
     } else {
         serde_json::from_slice(&body_bytes)
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
+
+    // PreRequest 插件挂点：解析成功后、构造 RequestContext 之前（fail-open）。
+    // GET 只读请求没有请求体可改写（body 为 Null），跳过插件管线。
+    if body.is_object() {
+        run_pre_request_plugins(&state, &headers, &mut body, "gemini");
+    }
 
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
@@ -3603,5 +3654,336 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+}
+
+// ============================================================================
+// 测试：格式转换路径的插件响应侧挂点（SseChunk / PostResponse）
+// ============================================================================
+// 用户实测缺陷回归：needs_transform 的 provider（api_format=openai_chat 等）走
+// handle_claude_transform / codex 转换链路时，响应流由转换器自行构建，此前完全
+// 绕过了插件挂点。本模块用最小探针插件（哨兵 token 替换）钉住"转换路径必须
+// 调用插件挂点"这一行为。
+
+#[cfg(test)]
+mod transform_hook_e2e_tests {
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::proxy::plugins::{
+        PluginError, PluginRegistry, PluginRequestContext, PluginStage, ProxyPlugin,
+    };
+    use crate::proxy::server::ProxyServer;
+    use crate::proxy::types::ProxyConfig;
+    use axum::http::{header, StatusCode};
+    use axum::routing::post;
+    use axum::Router;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+
+    /// 哨兵 token：探针插件将其替换为 [`PROBE_REPLACEMENT`]
+    const PROBE_SENTINEL: &str = "HOOK_PROBE_SECRET";
+    /// 哨兵替换结果
+    const PROBE_REPLACEMENT: &str = "HOOK_PROBE_REDACTED";
+
+    /// 挂点探针插件：PostResponse 深走查替换 + SseChunk 事件级子串替换。
+    /// 只为验证挂点接线，不做任何真实业务。
+    struct TransformHookProbePlugin;
+
+    /// 递归走查 JSON，对每个字符串叶子调用 f
+    fn walk_strings(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
+        match value {
+            Value::String(s) => f(s),
+            Value::Array(items) => items.iter_mut().for_each(|v| walk_strings(v, f)),
+            Value::Object(map) => map.values_mut().for_each(|v| walk_strings(v, f)),
+            _ => {}
+        }
+    }
+
+    impl ProxyPlugin for TransformHookProbePlugin {
+        fn id(&self) -> &str {
+            "builtin:transform-hook-probe"
+        }
+        fn display_name(&self) -> &str {
+            "Transform Hook Probe"
+        }
+        fn description(&self) -> &str {
+            "test-only probe pinning transform-path plugin hooks"
+        }
+        fn is_builtin(&self) -> bool {
+            true
+        }
+        fn stages(&self) -> &'static [PluginStage] {
+            &[PluginStage::PostResponse, PluginStage::SseChunk]
+        }
+        fn default_priority(&self) -> i32 {
+            100
+        }
+
+        fn transform_response(
+            &self,
+            _ctx: &PluginRequestContext,
+            body: &mut Value,
+        ) -> Result<bool, PluginError> {
+            let mut changed = false;
+            walk_strings(body, &mut |s| {
+                if s.contains(PROBE_SENTINEL) {
+                    *s = s.replace(PROBE_SENTINEL, PROBE_REPLACEMENT);
+                    changed = true;
+                }
+            });
+            Ok(changed)
+        }
+
+        fn new_sse_state(&self) -> Option<Box<dyn std::any::Any + Send>> {
+            Some(Box::new(()))
+        }
+
+        fn transform_sse_event(
+            &self,
+            _ctx: &PluginRequestContext,
+            _event_name: Option<&str>,
+            data: &mut String,
+            _state: &mut dyn std::any::Any,
+        ) -> Result<bool, PluginError> {
+            if data.contains(PROBE_SENTINEL) {
+                *data = data.replace(PROBE_SENTINEL, PROBE_REPLACEMENT);
+                return Ok(true);
+            }
+            Ok(false)
+        }
+    }
+
+    /// 搭建 mock 上游 + claude 供应商（settings_config.api_format="openai_chat"，
+    /// 触发 needs_transform → handle_claude_transform）+ 真实代理 + 探针注册表。
+    async fn start_transform_proxy(
+        mock_app: Router,
+        registry: Arc<PluginRegistry>,
+    ) -> (ProxyServer, u16, tokio::task::JoinHandle<()>) {
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "transform-upstream".to_string(),
+            "Transform Upstream".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "upstream-secret",
+                    "ANTHROPIC_BASE_URL": format!("http://{mock_addr}")
+                },
+                // legacy settings_config.api_format 通道：get_claude_api_format → "openai_chat"
+                "api_format": "openai_chat"
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save test provider");
+        db.set_current_provider("claude", &provider.id)
+            .expect("select test provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: true,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+            registry,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        (proxy, proxy_info.port, mock_handle)
+    }
+
+    async fn post_messages(port: u16, body: Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/v1/messages"))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&body)
+            .send()
+            .await
+            .expect("send claude request")
+    }
+
+    /// 上游 openai chat SSE：tool_calls 的 arguments 增量携带哨兵 token
+    /// （Write 工具 file_path 参数，与用户实测场景一致）。
+    fn chat_tool_call_sse(sentinel: &str) -> String {
+        let arguments = json!({"file_path": sentinel}).to_string();
+        let first = json!({
+            "id": "c1", "model": "gpt-x",
+            "choices": [{"index": 0, "delta": {"role": "assistant"}}]
+        });
+        let tool = json!({
+            "id": "c1", "model": "gpt-x",
+            "choices": [{"index": 0, "delta": {"tool_calls": [{
+                "index": 0, "id": "call_1", "type": "function",
+                "function": {"name": "Write", "arguments": arguments}
+            }]}}]
+        });
+        let finish = json!({
+            "id": "c1", "model": "gpt-x",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+        });
+        format!(
+            "data: {}\n\ndata: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            first, tool, finish
+        )
+    }
+
+    /// 上游 openai chat 非流式 JSON：message.content 携带哨兵 token
+    fn chat_content_json(sentinel: &str) -> Value {
+        json!({
+            "id": "c1",
+            "model": "gpt-x",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": format!("saved to {sentinel}")},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+        })
+    }
+
+    /// 流式回归：claude 请求 → openai chat SSE 上游 → anthropic SSE，
+    /// tool_calls arguments 中的哨兵在转换后的最终输出上被探针替换。
+    #[tokio::test]
+    async fn probe_token_replaced_in_claude_transform_streaming() {
+        let mock_app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    chat_tool_call_sse(PROBE_SENTINEL),
+                )
+            }),
+        );
+
+        let registry = Arc::new(PluginRegistry::new());
+        registry.register(Arc::new(TransformHookProbePlugin));
+        let (proxy, port, mock_handle) = start_transform_proxy(mock_app, registry).await;
+
+        let response = post_messages(
+            port,
+            json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 128,
+                "stream": true,
+                "messages": [{"role": "user", "content": "write the notes file"}]
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response.text().await.expect("read anthropic sse body");
+
+        // anthropic 形状的最终输出：input_json_delta.partial_json 携带 tool 参数
+        assert!(
+            text.contains("input_json_delta"),
+            "应含工具参数 delta: {text}"
+        );
+        // 哨兵已在 SseChunk 挂点上替换
+        assert!(!text.contains(PROBE_SENTINEL), "流中不得残留哨兵: {text}");
+        assert!(text.contains(PROBE_REPLACEMENT), "应含替换结果: {text}");
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    /// 非流式回归：claude 请求 → openai chat JSON 上游 → anthropic JSON，
+    /// message.content 中的哨兵在 PostResponse 管线中被探针替换。
+    #[tokio::test]
+    async fn probe_token_replaced_in_claude_transform_non_streaming() {
+        let mock_app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    chat_content_json(PROBE_SENTINEL).to_string(),
+                )
+            }),
+        );
+
+        let registry = Arc::new(PluginRegistry::new());
+        registry.register(Arc::new(TransformHookProbePlugin));
+        let (proxy, port, mock_handle) = start_transform_proxy(mock_app, registry).await;
+
+        let response = post_messages(
+            port,
+            json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 128,
+                "stream": false,
+                "messages": [{"role": "user", "content": "write the notes file"}]
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.expect("parse anthropic json body");
+
+        let text = body["content"][0]["text"].as_str().expect("content text");
+        assert_eq!(
+            text,
+            format!("saved to {PROBE_REPLACEMENT}"),
+            "哨兵应被替换: {body}"
+        );
+        assert!(
+            !body.to_string().contains(PROBE_SENTINEL),
+            "不得残留哨兵: {body}"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    /// 对照回归：空注册表（无插件）时转换路径保持原行为——哨兵原样透传给客户端，
+    /// 不因挂点重构而改变。
+    #[tokio::test]
+    async fn claude_transform_passthrough_without_plugins_keeps_sentinel() {
+        let mock_app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    chat_tool_call_sse(PROBE_SENTINEL),
+                )
+            }),
+        );
+
+        // 空注册表：与主线行为一致（不加载真实插件目录）
+        let (proxy, port, mock_handle) =
+            start_transform_proxy(mock_app, Arc::new(PluginRegistry::new())).await;
+
+        let response = post_messages(
+            port,
+            json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 128,
+                "stream": true,
+                "messages": [{"role": "user", "content": "write the notes file"}]
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response.text().await.expect("read anthropic sse body");
+
+        // 无插件：哨兵字节级原样透传
+        assert!(
+            text.contains(PROBE_SENTINEL),
+            "无插件时哨兵应原样透传: {text}"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
     }
 }
