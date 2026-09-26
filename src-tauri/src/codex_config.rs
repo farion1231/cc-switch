@@ -917,7 +917,16 @@ pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
         return Ok(None);
     }
     let auth: Value = read_json_file(&auth_path)?;
-    migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, account_id, managed_id_token)?;
+    match migrate_legacy_codex_managed_oauth_live_auth_marker(&auth, account_id, managed_id_token) {
+        Ok(()) => {}
+        Err(error @ AppError::Json { .. }) => {
+            // A malformed marker cannot prove ownership. Do not adopt live
+            // tokens, but do not prevent an explicit provider switch either.
+            log::warn!("Skipping Codex live refresh with malformed ownership marker: {error}");
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    }
     if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
         return Ok(None);
     }
@@ -4876,6 +4885,49 @@ base_url = "https://single.example.com/v1"
             &api_key_auth,
             "local-account-a"
         ));
+    }
+
+    #[test]
+    #[serial]
+    fn malformed_managed_marker_does_not_authorize_live_refresh() {
+        let home = CodexLiveTestHome::new();
+        let auth_path = get_codex_auth_path();
+        let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+        assert!(auth_path.starts_with(home._dir.path()));
+        assert!(marker_path.starts_with(home._dir.path()));
+        let before = seed_rotated_managed_codex_live_state();
+        let id_token = test_codex_id_token("user-a");
+
+        for marker in ["not json", "", "{}", "null", r#"{"version":"bad"}"#] {
+            fs::write(&marker_path, marker).expect("write malformed marker");
+            let result =
+                read_codex_live_auth_refresh_for_managed_account("account-a", Some(&id_token))
+                    .expect("malformed marker must not block live refresh inspection");
+            assert!(result.is_none(), "unproven live tokens must not be adopted");
+            assert_eq!(fs::read(&auth_path).unwrap(), before.auth_bytes);
+            assert_eq!(fs::read(&marker_path).unwrap(), marker.as_bytes());
+            assert!(
+                prepare_codex_live_auth_for_managed_account_removal("account-a", Some(&id_token))
+                    .is_err(),
+                "account removal must retain its stricter preflight"
+            );
+        }
+
+        fs::write(&auth_path, "not json").expect("write malformed native auth");
+        assert!(matches!(
+            read_codex_live_auth_refresh_for_managed_account("account-a", Some(&id_token)),
+            Err(AppError::Json { .. })
+        ));
+        assert_eq!(fs::read(&auth_path).unwrap(), b"not json");
+
+        fs::write(&auth_path, &before.auth_bytes).unwrap();
+        fs::remove_file(&marker_path).unwrap();
+        fs::create_dir(&marker_path).expect("simulate an unreadable marker path");
+        assert!(matches!(
+            read_codex_live_auth_refresh_for_managed_account("account-a", Some(&id_token)),
+            Err(AppError::Io { .. })
+        ));
+        assert_eq!(fs::read(&auth_path).unwrap(), before.auth_bytes);
     }
 
     #[test]
