@@ -18,6 +18,8 @@ import {
   type AppId,
   type ManagedAuthProvider,
 } from "@/lib/api";
+import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { overlayClaudeProviderFields } from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -96,7 +98,6 @@ import {
   useCodexConfigState,
   useApiKeyLink,
   useTemplateValues,
-  useCommonConfigSnippet,
   useCodexCommonConfig,
   useSpeedTestEndpoints,
   useCodexTomlValidation,
@@ -265,6 +266,13 @@ export interface ProviderFormProps {
   };
   showButtons?: boolean;
   isProxyTakeover?: boolean;
+  /** Claude：行里保存着、但不随切换生效的字段（编辑器底部提示）。 */
+  claudeInactiveFields?: ProviderEditorInactiveField[];
+  /**
+   * Claude 新增：当前 live 去掉当前供应商的关键字段后的样子。预设的关键字段套在它上面
+   * 显示，保存时其余部分的改动写进 live。
+   */
+  claudeLiveBase?: Record<string, unknown>;
 }
 
 export function ProviderForm(props: ProviderFormProps) {
@@ -295,6 +303,8 @@ function ProviderFormFull({
   initialData,
   showButtons = true,
   isProxyTakeover = false,
+  claudeInactiveFields,
+  claudeLiveBase,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
@@ -414,21 +424,30 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "codex"
-          ? CODEX_DEFAULT_CONFIG
-          : appId === "gemini"
-            ? GEMINI_DEFAULT_CONFIG
-            : appId === "opencode"
-              ? OPENCODE_DEFAULT_CONFIG
-              : appId === "openclaw"
-                ? OPENCLAW_DEFAULT_CONFIG
-                : appId === "hermes"
-                  ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+        : appId === "claude" && claudeLiveBase
+          ? JSON.stringify(
+              overlayClaudeProviderFields(
+                claudeLiveBase,
+                JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+              ),
+              null,
+              2,
+            )
+          : appId === "codex"
+            ? CODEX_DEFAULT_CONFIG
+            : appId === "gemini"
+              ? GEMINI_DEFAULT_CONFIG
+              : appId === "opencode"
+                ? OPENCODE_DEFAULT_CONFIG
+                : appId === "openclaw"
+                  ? OPENCLAW_DEFAULT_CONFIG
+                  : appId === "hermes"
+                    ? HERMES_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
-    [initialData, appId],
+    [initialData, appId, claudeLiveBase],
   );
 
   const form = useForm<ProviderFormData>({
@@ -807,24 +826,6 @@ function ProviderFormFull({
   });
 
   const {
-    useCommonConfig,
-    commonConfigSnippet,
-    commonConfigError,
-    handleCommonConfigToggle,
-    handleCommonConfigSnippetChange,
-    isExtracting: isClaudeExtracting,
-    handleExtract: handleClaudeExtract,
-  } = useCommonConfigSnippet({
-    settingsConfig: form.getValues("settingsConfig"),
-    onConfigChange: handleSettingsConfigChange,
-    initialData: appId === "claude" ? initialData : undefined,
-    initialEnabled:
-      appId === "claude" ? initialData?.meta?.commonConfigEnabled : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-    enabled: appId === "claude",
-  });
-
-  const {
     useCommonConfig: useCodexCommonConfigFlag,
     commonConfigSnippet: codexCommonConfigSnippet,
     commonConfigError: codexCommonConfigError,
@@ -1078,8 +1079,6 @@ function ProviderFormFull({
     opencodeLiveProviderIds,
     providerId,
   ]);
-
-  const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
   const shouldApplyLocalProxyRequestOverrides =
     (appId === "claude" || appId === "codex") && category !== "official";
@@ -1672,9 +1671,10 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
+      // Claude 的通用配置片段已冻结：沿用行里原有的标记，新增时由后端写 true（兼容旧版）。
       commonConfigEnabled:
         appId === "claude"
-          ? useCommonConfig
+          ? initialData?.meta?.commonConfigEnabled
           : appId === "codex"
             ? useCodexCommonConfigFlag
             : appId === "gemini"
@@ -2052,10 +2052,18 @@ function ProviderFormFull({
     }
 
     const preset = entry.preset as ProviderPreset;
-    const config = applyTemplateValues(
+    const templated = applyTemplateValues(
       preset.settingsConfig,
       preset.templateValues,
     );
+    // 预设只带关键字段和独有字段，套在当前 live 上显示（和切换的结果一致）。
+    const config =
+      appId === "claude" && claudeLiveBase
+        ? overlayClaudeProviderFields(
+            claudeLiveBase,
+            templated as Record<string, unknown>,
+          )
+        : templated;
 
     if (preset.apiFormat) {
       setLocalApiFormat(preset.apiFormat);
@@ -2713,16 +2721,7 @@ function ProviderFormFull({
               <CommonConfigEditor
                 value={form.getValues("settingsConfig")}
                 onChange={(value) => form.setValue("settingsConfig", value)}
-                useCommonConfig={useCommonConfig}
-                onCommonConfigToggle={handleCommonConfigToggle}
-                commonConfigSnippet={commonConfigSnippet}
-                onCommonConfigSnippetChange={handleCommonConfigSnippetChange}
-                commonConfigError={commonConfigError}
-                onEditClick={() => setIsCommonConfigModalOpen(true)}
-                isModalOpen={isCommonConfigModalOpen}
-                onModalClose={() => setIsCommonConfigModalOpen(false)}
-                onExtract={handleClaudeExtract}
-                isExtracting={isClaudeExtracting}
+                inactiveFields={claudeInactiveFields}
               />
               {settingsConfigErrorField}
             </>
@@ -2745,7 +2744,7 @@ function ProviderFormFull({
       </Form>
 
       <ConfirmDialog
-        isOpen={showCommonConfigNotice}
+        isOpen={showCommonConfigNotice && appId !== "claude"}
         variant="info"
         title={t("confirm.commonConfig.title")}
         message={t("confirm.commonConfig.message")}

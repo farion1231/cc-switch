@@ -25,29 +25,36 @@ pub const CLAUDE_PROTOCOL_SELECTORS: &[&str] = &[
     "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
 ];
 
+/// `env` 里整个前缀都属于连接和鉴权的前缀：`ANTHROPIC_*` 是地址、凭据、各档模型名、
+/// 自定义头；`AWS_*` 是 Bedrock 的区域与凭据；`VERTEX_REGION_*` 是 Vertex 的分模型区域。
+pub const CLAUDE_FLOOR_ENV_PREFIXES: &[&str] = &["ANTHROPIC_", "AWS_", "VERTEX_REGION_"];
+
+/// `env` 里按名字列出的关键字段（协议选择器之外）。
+pub const CLAUDE_FLOOR_ENV_KEYS: &[&str] = &[
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+    "CLOUD_ML_REGION",
+    // Vertex 的凭据路径。
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    // 订阅账号的长期 token 及其配套键。
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "CLAUDE_CODE_OAUTH_SCOPES",
+    // 与顶层 apiKeyHelper 配套。
+    "CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+];
+
 /// Claude Code `settings.json` 的 `env` 里，这个键是否是关键字段。
+///
+/// 前端的预设扫描（`tests/config/claudeKeyFields.json`）是这里的镜像，由下面的测试
+/// 保证两边一致。
 pub fn claude_floor_env(key: &str) -> bool {
-    // `ANTHROPIC_*`：地址、凭据、各档模型名、自定义头。
-    key.starts_with("ANTHROPIC_")
+    CLAUDE_FLOOR_ENV_PREFIXES
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
         || CLAUDE_PROTOCOL_SELECTORS.contains(&key)
+        || CLAUDE_FLOOR_ENV_KEYS.contains(&key)
         || (key.starts_with("CLAUDE_CODE_SKIP_") && key.ends_with("_AUTH"))
-        // Bedrock 的区域与凭据、Vertex 的分模型区域。
-        || key.starts_with("AWS_")
-        || key.starts_with("VERTEX_REGION_")
-        || matches!(
-            key,
-            "CLAUDE_CODE_SUBAGENT_MODEL"
-                | "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"
-                | "CLOUD_ML_REGION"
-                // Vertex 的凭据路径。
-                | "GOOGLE_APPLICATION_CREDENTIALS"
-                // 订阅账号的长期 token 及其配套键。
-                | "CLAUDE_CODE_OAUTH_TOKEN"
-                | "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"
-                | "CLAUDE_CODE_OAUTH_SCOPES"
-                // 与顶层 apiKeyHelper 配套。
-                | "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"
-        )
 }
 
 /// Claude Code `settings.json` 顶层的关键字段。
@@ -96,6 +103,10 @@ pub const CLAUDE_EXCLUSIVE_ENV: &[&str] = &[
     "CLAUDE_CODE_DISABLE_1M_CONTEXT",
     "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT",
 ];
+
+pub fn claude_exclusive_env(key: &str) -> bool {
+    CLAUDE_EXCLUSIVE_ENV.contains(&key)
+}
 
 /// Codex `config.toml` 顶层的关键字段。另有 `[model_providers.custom]` 整表。
 pub const CODEX_FLOOR_TOP: &[&str] = &[
@@ -269,5 +280,32 @@ mod tests {
         ] {
             assert!(!gemini_floor_env(key), "{key} must stay a user key");
         }
+    }
+
+    /// 前端预设扫描用的镜像必须和这里的定义一字不差。
+    #[test]
+    fn frontend_mirror_matches_the_claude_definitions() {
+        let mirror: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/config/claudeKeyFields.json"))
+                .expect("mirror is valid JSON");
+        let list = |key: &str| -> Vec<String> {
+            mirror[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("{key} is an array"))
+                .iter()
+                .map(|value| value.as_str().expect("string").to_string())
+                .collect()
+        };
+        let owned =
+            |items: &[&str]| -> Vec<String> { items.iter().map(|item| item.to_string()).collect() };
+        assert_eq!(list("envPrefixes"), owned(CLAUDE_FLOOR_ENV_PREFIXES));
+        assert_eq!(list("envKeys"), owned(CLAUDE_FLOOR_ENV_KEYS));
+        assert_eq!(list("protocolSelectors"), owned(CLAUDE_PROTOCOL_SELECTORS));
+        assert_eq!(list("top"), owned(CLAUDE_FLOOR_TOP));
+        assert_eq!(list("exclusiveEnv"), owned(CLAUDE_EXCLUSIVE_ENV));
+        assert_eq!(
+            mirror["envSkipAuth"],
+            serde_json::json!({ "prefix": "CLAUDE_CODE_SKIP_", "suffix": "_AUTH" })
+        );
     }
 }

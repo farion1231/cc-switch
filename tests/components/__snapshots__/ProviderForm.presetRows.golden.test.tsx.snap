@@ -10,7 +10,6 @@ exports[`ProviderForm 预设新增行金标 > claude > AWS Bedrock (API Key) 1`]
     "iconColor": "#FF9900",
     "meta": {
       "apiFormat": "anthropic",
-      "commonConfigEnabled": false,
       "endpointAutoSelect": true,
     },
     "name": "AWS Bedrock (API Key)",
@@ -41,7 +40,6 @@ exports[`ProviderForm 预设新增行金标 > claude > Claude Official 1`] = `
     "icon": "anthropic",
     "iconColor": "#D4915D",
     "meta": {
-      "commonConfigEnabled": false,
       "endpointAutoSelect": true,
     },
     "name": "Claude Official",
@@ -66,7 +64,6 @@ exports[`ProviderForm 预设新增行金标 > claude > E-FlowCode 1`] = `
     "iconColor": "#000000",
     "meta": {
       "apiFormat": "anthropic",
-      "commonConfigEnabled": false,
       "endpointAutoSelect": true,
     },
     "name": "E-FlowCode",
@@ -95,7 +92,6 @@ exports[`ProviderForm 预设新增行金标 > claude > Kimi For Coding 1`] = `
     "iconColor": "#6366F1",
     "meta": {
       "apiFormat": "anthropic",
-      "commonConfigEnabled": false,
       "endpointAutoSelect": true,
     },
     "name": "Kimi For Coding",
@@ -129,7 +125,6 @@ exports[`ProviderForm 预设新增行金标 > claude > Nvidia 1`] = `
     "iconColor": "#000000",
     "meta": {
       "apiFormat": "openai_chat",
-      "commonConfigEnabled": false,
       "endpointAutoSelect": true,
     },
     "name": "Nvidia",
@@ -161,7 +156,6 @@ exports[`ProviderForm 预设新增行金标 > claude > RelaxyCode 1`] = `
     "iconColor": "",
     "meta": {
       "apiFormat": "anthropic",
-      "commonConfigEnabled": false,
       "endpointAutoSelect": true,
     },
     "name": "RelaxyCode",

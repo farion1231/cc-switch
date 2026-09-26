@@ -108,6 +108,8 @@ describe("AddProviderDialog", () => {
       />,
     );
 
+    // Claude 的表单要等 live 底读回来才渲染。
+    await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
       screen.getByRole("button", {
         name: "common.add",
@@ -120,6 +122,8 @@ describe("AddProviderDialog", () => {
     expect(submitted.meta?.custom_endpoints).toEqual(
       mockFormValues.meta?.custom_endpoints,
     );
+    // 保存时带上打开时的 live 底，后端据此把全局改动写进 live、三方比较。
+    expect(submitted.editorSave).toEqual({ base: {}, onConflict: "refuse" });
     expect(handleOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -144,6 +148,7 @@ describe("AddProviderDialog", () => {
       />,
     );
 
+    await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
       screen.getByRole("button", {
         name: "common.add",

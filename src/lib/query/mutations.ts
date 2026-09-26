@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
-import type { SwitchResult } from "@/lib/api/providers";
+import type { ProviderEditorSave, SwitchResult } from "@/lib/api/providers";
+import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
@@ -28,6 +29,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
+        editorSave?: ProviderEditorSave;
       },
     ) => {
       const {
@@ -35,6 +37,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         addToLive,
         ensureClaudeDesktopOfficialSeed,
         ensureGrokBuildOfficialSeed,
+        editorSave,
         ...rest
       } = providerInput;
 
@@ -89,7 +92,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       };
       delete (newProvider as any).providerKey;
 
-      await providersApi.add(newProvider, appId, addToLive);
+      await providersApi.add(newProvider, appId, addToLive, editorSave);
       return newProvider;
     },
     onSuccess: async () => {
@@ -138,6 +141,8 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
+      // 编辑冲突由对话框让用户选保留哪一边，不弹失败提示。
+      if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
         (appId === "pi"
@@ -168,11 +173,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     mutationFn: async ({
       provider,
       originalId,
+      editorSave,
     }: {
       provider: Provider;
       originalId?: string;
+      editorSave?: ProviderEditorSave;
     }) => {
-      await providersApi.update(provider, appId, originalId);
+      await providersApi.update(provider, appId, originalId, editorSave);
       return provider;
     },
     onSuccess: async (provider, variables) => {
@@ -203,6 +210,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
+      if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
         (appId === "pi"

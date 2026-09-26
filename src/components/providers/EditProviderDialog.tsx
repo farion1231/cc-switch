@@ -18,6 +18,15 @@ import {
 } from "@/lib/api";
 import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import type {
+  EditorConflictPolicy,
+  ProviderEditorSave,
+  ProviderEditorView,
+} from "@/lib/api/providers";
+import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
+import { LiveEditConflictDialog } from "@/components/providers/LiveEditConflictDialog";
+import { toast } from "sonner";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -26,6 +35,7 @@ interface EditProviderDialogProps {
   onSubmit: (payload: {
     provider: Provider;
     originalId?: string;
+    editorSave?: ProviderEditorSave;
   }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
@@ -165,6 +175,14 @@ export function EditProviderDialog({
   // 使用 ref 标记是否已经加载过，防止重复读取覆盖用户编辑
   const [hasLoadedLive, setHasLoadedLive] = useState(false);
 
+  // Claude：底部 JSON 显示「切到这个供应商之后 settings.json 的样子」，保存时拿它做三方比较。
+  const [editorView, setEditorView] = useState<ProviderEditorView | null>(null);
+  const [pendingConflict, setPendingConflict] = useState<{
+    keys: string[];
+    retry: (policy: EditorConflictPolicy) => Promise<void>;
+  } | null>(null);
+  const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
     onOpenChange(false);
@@ -183,12 +201,46 @@ export function EditProviderDialog({
     const load = async () => {
       if (!open || !provider) {
         setLiveSettings(null);
+        setEditorView(null);
         setHasLoadedLive(false);
         return;
       }
 
       // 关键修复：只在首次打开时加载一次
       if (hasLoadedLive) {
+        return;
+      }
+
+      // Claude：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，其余来自
+      // live），代理接管时也一样，关键字段显示的是这个供应商自己的值。
+      if (appId === "claude") {
+        try {
+          const view = await providersApi.getEditorView(
+            appId,
+            asRecord(provider.settingsConfig) ?? {},
+          );
+          if (!cancelled) {
+            setEditorView(view);
+            setLiveSettings(view.settings);
+          }
+        } catch (error) {
+          // 读不了 settings.json（比如手改坏了）：退回显示保存的供应商配置。
+          if (!cancelled) {
+            setEditorView(null);
+            setLiveSettings(null);
+            toast.error(
+              t("provider.editorViewFailed", {
+                defaultValue:
+                  "无法读取 Claude Code 配置文件，下面显示的是保存的供应商配置：{{error}}",
+                error: extractErrorMessage(error),
+              }),
+            );
+          }
+        } finally {
+          if (!cancelled) {
+            setHasLoadedLive(true);
+          }
+        }
         return;
       }
 
@@ -356,18 +408,49 @@ export function EditProviderDialog({
         ...(values.meta ? { meta: values.meta } : {}),
       };
 
-      await onSubmit({
-        provider: updatedProvider,
-        originalId: provider.id,
-      });
-      closeDialog();
+      const submit = async (onConflict: EditorConflictPolicy) => {
+        await onSubmit({
+          provider: updatedProvider,
+          originalId: provider.id,
+          ...(editorView
+            ? { editorSave: { base: editorView.settings, onConflict } }
+            : {}),
+        });
+        closeDialog();
+      };
+
+      try {
+        await submit("refuse");
+      } catch (error) {
+        const conflict = parseLiveEditConflict(error);
+        if (!conflict) throw error;
+        setPendingConflict({ keys: conflict.keys, retry: submit });
+      }
     },
-    [appId, onSubmit, closeDialog, provider],
+    [appId, onSubmit, closeDialog, provider, editorView],
+  );
+
+  const handleResolveConflict = useCallback(
+    async (policy: EditorConflictPolicy) => {
+      if (!pendingConflict) return;
+      setIsResolvingConflict(true);
+      try {
+        await pendingConflict.retry(policy);
+      } catch {
+        // 失败提示由保存的 mutation 负责，编辑器保持打开。
+      } finally {
+        setIsResolvingConflict(false);
+        setPendingConflict(null);
+      }
+    },
+    [pendingConflict],
   );
 
   if (!provider || !initialData) {
     return null;
   }
+
+  const waitingForEditorView = appId === "claude" && !hasLoadedLive;
 
   return (
     <FullScreenPanel
@@ -387,18 +470,31 @@ export function EditProviderDialog({
         </Button>
       }
     >
-      <ProviderForm
-        appId={appId}
-        providerId={provider.id}
-        submitLabel={t("common.save")}
-        onSubmit={handleSubmit}
-        onCancel={closeDialog}
-        onManageAuthAccounts={setAuthSettingsTarget}
-        onSubmittingChange={setIsFormSubmitting}
-        onSubmitReadyChange={handleSubmitReadyChange}
-        initialData={initialData}
-        showButtons={false}
-        isProxyTakeover={isProxyTakeover}
+      {waitingForEditorView ? (
+        <div className="py-12 text-center text-sm text-muted-foreground">
+          {t("common.loading")}
+        </div>
+      ) : (
+        <ProviderForm
+          appId={appId}
+          providerId={provider.id}
+          submitLabel={t("common.save")}
+          onSubmit={handleSubmit}
+          onCancel={closeDialog}
+          onManageAuthAccounts={setAuthSettingsTarget}
+          onSubmittingChange={setIsFormSubmitting}
+          onSubmitReadyChange={handleSubmitReadyChange}
+          initialData={initialData}
+          showButtons={false}
+          isProxyTakeover={isProxyTakeover}
+          claudeInactiveFields={editorView?.inactive}
+        />
+      )}
+      <LiveEditConflictDialog
+        keys={pendingConflict?.keys ?? null}
+        pending={isResolvingConflict}
+        onResolve={(policy) => void handleResolveConflict(policy)}
+        onCancel={() => setPendingConflict(null)}
       />
       <AuthSettingsPanel
         target={authSettingsTarget}

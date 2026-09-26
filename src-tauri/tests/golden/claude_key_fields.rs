@@ -4,76 +4,32 @@
 //! 切换后 live 里的关键字段必须恰好等于目标供应商行里的，上一家的一个都不能留。
 //! 旧代码靠整份覆盖做到这一点，重构版改成「清空关键字段再写入」，结果必须一样。
 //!
-//! `floor_env` / `FLOOR_TOP` 是重构版计划使用的关键字段定义的副本；
-//! 那边的常量落地后，这里改为直接引用。
+//! 关键字段的定义直接引用 `live::floor`，和切换用的是同一份。
 
 use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
+use cc_switch_lib::live::floor::{claude_floor_env, claude_floor_top};
 use cc_switch_lib::{AppState, AppType, Provider, ProviderService};
 
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{official, provider, read_home_json, seed_providers, write_home_file};
-
-const PROTOCOL_SELECTORS: &[&str] = &[
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "CLAUDE_CODE_USE_GATEWAY",
-    "CLAUDE_CODE_USE_MANTLE",
-    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
-    "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
-];
-
-fn floor_env(key: &str) -> bool {
-    key.starts_with("ANTHROPIC_")
-        || PROTOCOL_SELECTORS.contains(&key)
-        || (key.starts_with("CLAUDE_CODE_SKIP_") && key.ends_with("_AUTH"))
-        || key.starts_with("AWS_")
-        || key.starts_with("VERTEX_REGION_")
-        || matches!(
-            key,
-            "CLAUDE_CODE_SUBAGENT_MODEL"
-                | "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"
-                | "CLOUD_ML_REGION"
-                | "GOOGLE_APPLICATION_CREDENTIALS"
-                | "CLAUDE_CODE_OAUTH_TOKEN"
-                | "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"
-                | "CLAUDE_CODE_OAUTH_SCOPES"
-                | "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"
-        )
-}
-
-const FLOOR_TOP: &[&str] = &[
-    "apiKeyHelper",
-    "apiBaseUrl",
-    "primaryModel",
-    "smallFastModel",
-    "apiKey",
-    "model",
-    "fallbackModel",
-    "modelOverrides",
-    "advisorModel",
-    "awsAuthRefresh",
-    "awsCredentialExport",
-    "gcpAuthRefresh",
-];
 
 /// 取出关键字段：`env.<KEY>` 与顶层键，按名字排序。
 fn floor_view(settings: &Value) -> BTreeMap<String, Value> {
     let mut view = BTreeMap::new();
     if let Some(env) = settings.get("env").and_then(Value::as_object) {
         for (key, value) in env {
-            if floor_env(key) {
+            if claude_floor_env(key) {
                 view.insert(format!("env.{key}"), value.clone());
             }
         }
     }
     if let Some(obj) = settings.as_object() {
-        for key in FLOOR_TOP {
-            if let Some(value) = obj.get(*key) {
-                view.insert((*key).to_string(), value.clone());
+        for (key, value) in obj {
+            if claude_floor_top(key) {
+                view.insert(key.clone(), value.clone());
             }
         }
     }
@@ -186,7 +142,47 @@ fn bedrock_to_official_leaves_no_provider_keys() {
     switch_and_check(&state, "claude-official");
     let live = read_home_json(LIVE);
     assert!(floor_view(&live).is_empty(), "official live: {live:#}");
-    switch_and_check(&state, "bedrock");
+
+    // 按计划改变：旧 Bedrock API Key 行顶层的 `apiKey` 投影成
+    // `env.AWS_BEARER_TOKEN_BEDROCK`（`env` 里已有就以它为准），不再写进 live 顶层。
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch back");
+    let live = read_home_json(LIVE);
+    assert_eq!(
+        live["env"]["AWS_BEARER_TOKEN_BEDROCK"],
+        json!("bedrock-key")
+    );
+    assert!(live.get("apiKey").is_none(), "live: {live:#}");
+}
+
+/// 只在顶层 `apiKey` 里存着 Key 的存量 Bedrock 行：切过去后 Key 出现在 Claude Code
+/// 真正读取的 `AWS_BEARER_TOKEN_BEDROCK` 里，行本身不改写。
+#[test]
+fn legacy_bedrock_api_key_row_is_projected_to_the_bearer_env() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let legacy = provider(
+        "bedrock",
+        json!({
+            "env": { "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-west-2" },
+            "apiKey": "legacy-bedrock-key"
+        }),
+        None,
+    );
+    let state = setup(&[relay("a", None), legacy.clone()], "a");
+
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch");
+    let live = read_home_json(LIVE);
+    assert_eq!(
+        live["env"]["AWS_BEARER_TOKEN_BEDROCK"],
+        json!("legacy-bedrock-key")
+    );
+    assert!(live.get("apiKey").is_none(), "live: {live:#}");
+    let row = state
+        .db
+        .get_provider_by_id("bedrock", AppType::Claude.as_str())
+        .expect("query")
+        .expect("row");
+    assert_eq!(row.settings_config, legacy.settings_config);
 }
 
 #[test]

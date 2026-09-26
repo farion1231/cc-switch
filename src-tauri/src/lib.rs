@@ -65,7 +65,7 @@ pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
-    provider::reapply_current_codex_official_live,
+    provider::{reapply_current_codex_official_live, EditorSave, EditorView},
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -1396,6 +1396,7 @@ pub fn run() {
             commands::get_current_provider,
             commands::add_provider,
             commands::update_provider,
+            commands::get_provider_editor_view,
             commands::delete_provider,
             commands::remove_provider_from_live_config,
             commands::switch_provider,

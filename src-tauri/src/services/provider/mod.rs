@@ -2,6 +2,8 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
+mod claude_direct;
+mod claude_editor;
 mod endpoints;
 mod gemini_auth;
 mod live;
@@ -32,6 +34,8 @@ pub use live::{
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }
+
+pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
@@ -81,7 +85,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
     let outcome =
-        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, provider)?;
+        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, provider, None)?;
     if outcome == LiveSyncOutcome::BackupOnly {
         return Ok(true);
     }
@@ -1049,6 +1053,104 @@ mod tests {
         assert_eq!(
             live["env"]["ANTHROPIC_BASE_URL"].as_str(),
             Some("https://api.new.example")
+        );
+    }
+
+    /// 编辑当前供应商、去掉它的独有字段：live 里 CC Switch 写进去的那个值随之删掉，
+    /// 用户自己的键不动。
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_provider_drops_the_compat_switch_it_no_longer_has() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let original = Provider::with_id(
+            "ds".into(),
+            "DeepSeek".into(),
+            json!({ "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.example/anthropic",
+                "CLAUDE_CODE_DISABLE_ARTIFACT": "1"
+            }}),
+            None,
+        );
+        db.save_provider("claude", &original)
+            .expect("save provider");
+        ProviderService::switch(&state, AppType::Claude, "ds").expect("switch");
+        let mut live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        live["env"]["DEBUG"] = json!("1");
+        write_json_file(&get_claude_settings_path(), &live).expect("user edit");
+
+        let mut updated = original.clone();
+        updated.settings_config["env"]
+            .as_object_mut()
+            .expect("env")
+            .remove("CLAUDE_CODE_DISABLE_ARTIFACT");
+        ProviderService::update(&state, AppType::Claude, None, updated).expect("update");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live,
+            json!({ "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.example/anthropic",
+                "DEBUG": "1"
+            }})
+        );
+    }
+
+    /// 文件已经写成目标供应商、指针还没改时崩溃：下次启动按 pending 补完指针，
+    /// 文件和指针重新一致。
+    #[tokio::test]
+    #[serial]
+    async fn claude_switch_interrupted_before_the_pointer_rolls_forward() {
+        use crate::mode::operation::failpoint;
+
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        for (id, url) in [("a", "https://a.example"), ("b", "https://b.example")] {
+            let provider = Provider::with_id(
+                id.into(),
+                id.into(),
+                json!({ "env": { "ANTHROPIC_BASE_URL": url } }),
+                None,
+            );
+            db.save_provider("claude", &provider)
+                .expect("save provider");
+        }
+        ProviderService::switch(&state, AppType::Claude, "a").expect("switch to a");
+
+        failpoint::crash_at(Some("published:0"));
+        let result = ProviderService::switch(&state, AppType::Claude, "b");
+        failpoint::crash_at(None);
+        assert!(result.is_err(), "the injected crash surfaces");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live["env"]["ANTHROPIC_BASE_URL"],
+            json!("https://b.example")
+        );
+        assert_eq!(
+            db.get_current_provider("claude")
+                .expect("current")
+                .as_deref(),
+            Some("a"),
+            "the pointer has not moved yet"
+        );
+
+        crate::mode::operation::recover_on_startup(&db);
+        assert_eq!(
+            db.get_current_provider("claude")
+                .expect("current")
+                .as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("b")
         );
     }
 
@@ -5183,6 +5285,14 @@ impl ProviderService {
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
+        if matches!(app_type, AppType::Claude) {
+            // 新版不再读通用配置片段，但旧设备经云同步拿到这一行时仍按这个标记合并
+            // 片段；不写的话，旧版切到它会把 hooks 等共享设置整份抹掉。
+            provider
+                .meta
+                .get_or_insert_with(Default::default)
+                .common_config_enabled = Some(true);
+        }
 
         let is_managed_codex_add = matches!(app_type, AppType::Codex)
             && Self::managed_codex_oauth_account_id(&provider).is_some();
@@ -5274,6 +5384,11 @@ impl ProviderService {
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
+            if matches!(app_type, AppType::Claude) {
+                // 第一个供应商同样只写关键字段，不覆盖用户已有的 settings.json。
+                claude_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                return Ok(true);
+            }
             // No current provider, set as current and sync. Managed Codex adds
             // use the transactional path above because token resolution can fail.
             state
@@ -5282,6 +5397,148 @@ impl ProviderService {
             write_live_with_common_config_for_state(state, &app_type, &provider)?;
         }
 
+        Ok(true)
+    }
+
+    /// 供应商编辑器底部 JSON 的显示内容（目前只有 Claude Code）：切到这个供应商之后
+    /// 配置文件会是什么样，以及行里不随切换生效的字段。
+    pub fn editor_view(
+        state: &AppState,
+        app_type: AppType,
+        settings_config: &Value,
+    ) -> Result<EditorView, AppError> {
+        match app_type {
+            AppType::Claude => claude_editor::view(state, settings_config),
+            other => Err(AppError::InvalidInput(format!(
+                "{} 的编辑器还不支持按关键字段显示",
+                other.as_str()
+            ))),
+        }
+    }
+
+    /// 从编辑器新增供应商。Claude Code 按关键字段拆开保存（见 `claude_editor`），其余
+    /// 应用和 `add` 一样。
+    pub fn add_from_editor(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+        add_to_live: bool,
+        editor: Option<EditorSave>,
+    ) -> Result<bool, AppError> {
+        match (app_type, editor) {
+            (AppType::Claude, Some(editor)) => {
+                Self::add_claude_from_editor(state, provider, editor)
+            }
+            (app_type, _) => Self::add(state, app_type, provider, add_to_live),
+        }
+    }
+
+    /// 从编辑器保存供应商。Claude Code 按关键字段拆开保存（见 `claude_editor`），其余
+    /// 应用和 `update` 一样。
+    pub fn update_from_editor(
+        state: &AppState,
+        app_type: AppType,
+        original_id: Option<&str>,
+        provider: Provider,
+        editor: Option<EditorSave>,
+    ) -> Result<bool, AppError> {
+        match (app_type, editor) {
+            (AppType::Claude, Some(editor))
+                if original_id.is_none_or(|original| original == provider.id) =>
+            {
+                Self::update_claude_from_editor(state, provider, editor)
+            }
+            (app_type, _) => Self::update(state, app_type, original_id, provider),
+        }
+    }
+
+    fn add_claude_from_editor(
+        state: &AppState,
+        provider: Provider,
+        editor: EditorSave,
+    ) -> Result<bool, AppError> {
+        let app_type = AppType::Claude;
+        let mut provider = provider;
+        Self::normalize_provider_if_claude(&app_type, &mut provider);
+        let plan = claude_editor::plan_save(None, &provider.settings_config, &editor.base)?;
+        provider.settings_config = plan.row_settings.clone();
+        Self::validate_provider_settings(&app_type, &provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .common_config_enabled = Some(true);
+
+        let existed = state
+            .db
+            .get_provider_by_id(&provider.id, app_type.as_str())?
+            .is_some();
+        let first = state.db.get_current_provider(app_type.as_str())?.is_none();
+        state.db.save_provider(app_type.as_str(), &provider)?;
+
+        let key_fields = first.then_some(claude_editor::KeyFieldWrite {
+            prev: None,
+            target: &provider,
+            set_pointer: true,
+        });
+        if let Err(err) =
+            claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
+        {
+            if !existed {
+                if let Err(rollback) = state.db.delete_provider(app_type.as_str(), &provider.id) {
+                    log::warn!(
+                        "撤回新增的 Claude 供应商 '{}' 失败: {rollback}",
+                        provider.id
+                    );
+                }
+            }
+            return Err(err);
+        }
+        Ok(true)
+    }
+
+    fn update_claude_from_editor(
+        state: &AppState,
+        provider: Provider,
+        editor: EditorSave,
+    ) -> Result<bool, AppError> {
+        let app_type = AppType::Claude;
+        let existing = state
+            .db
+            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        let mut provider = provider;
+        Self::normalize_provider_if_claude(&app_type, &mut provider);
+        let plan = claude_editor::plan_save(
+            existing.as_ref().map(|row| &row.settings_config),
+            &provider.settings_config,
+            &editor.base,
+        )?;
+        provider.settings_config = plan.row_settings.clone();
+        Self::validate_provider_settings(&app_type, &provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+
+        let is_current = crate::settings::get_effective_current_provider(&state.db, &app_type)?
+            .as_deref()
+            == Some(provider.id.as_str());
+        // 代理接管期间 live 的关键字段归代理；这里只更新恢复用的备份（过渡期做法，
+        // 双模式上线后改成按模式处理）。
+        let proxy_owns = is_current && live::proxy_owns_live(state, &app_type);
+        let key_fields = (is_current && !proxy_owns).then_some(claude_editor::KeyFieldWrite {
+            prev: existing.as_ref(),
+            target: &provider,
+            set_pointer: false,
+        });
+        claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)?;
+        state.db.save_provider(app_type.as_str(), &provider)?;
+
+        if proxy_owns {
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), &provider),
+            )
+            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        }
         Ok(true)
     }
 
@@ -5617,8 +5874,12 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
 
         if is_current {
-            let outcome =
-                live::sync_live_for_provider_respecting_takeover(state, &app_type, &provider)?;
+            let outcome = live::sync_live_for_provider_respecting_takeover(
+                state,
+                &app_type,
+                &provider,
+                existing_provider.as_ref(),
+            )?;
             if outcome == LiveSyncOutcome::WroteLive {
                 // MCP is stored in the database and projected after a successful
                 // live write. Keep the failure best-effort so the provider save
@@ -5893,6 +6154,10 @@ impl ProviderService {
         let provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if matches!(app_type, AppType::Claude) {
+            return Self::switch_claude_direct(state, provider, providers);
+        }
 
         // OMO ↔ OMO Slim are mutually exclusive; activating one removes the other's config file.
         if matches!(app_type, AppType::OpenCode) {
@@ -6179,6 +6444,30 @@ impl ProviderService {
         Ok(result)
     }
 
+    /// Claude Code 直连切换：只替换关键字段和独有字段，文件和指针在同一个操作里提交。
+    ///
+    /// 不回填、不同步通用配置片段：用户在 live 里的改动本来就留在原处。发布前的失败
+    /// （解析不了、并发冲突）什么都不改；开始发布后由 pending 保证前滚补完。
+    fn switch_claude_direct(
+        state: &AppState,
+        provider: &Provider,
+        providers: &IndexMap<String, Provider>,
+    ) -> Result<SwitchResult, AppError> {
+        let current_id =
+            crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?;
+        let prev = current_id
+            .as_deref()
+            .and_then(|current_id| providers.get(current_id));
+        claude_direct::switch_to(state.db.as_ref(), prev, provider)?;
+
+        // MCP 在 ~/.claude.json，和 settings.json 无关；重投影是幂等维护，失败只记警告
+        // （切换已经提交，下次同步会自愈）。
+        if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Claude) {
+            log::warn!("切换供应商后重投影 claude MCP 失败（将在下次同步时自愈）: {err}");
+        }
+        Ok(SwitchResult::default())
+    }
+
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
@@ -6203,7 +6492,8 @@ impl ProviderService {
             return Ok(());
         };
 
-        let outcome = live::sync_live_for_provider_respecting_takeover(state, &app_type, provider)?;
+        let outcome =
+            live::sync_live_for_provider_respecting_takeover(state, &app_type, provider, None)?;
         if outcome == LiveSyncOutcome::BackupOnly {
             return Ok(());
         }

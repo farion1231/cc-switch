@@ -641,11 +641,16 @@ fn switch_provider_updates_claude_live_and_state() {
     let legacy_provider = providers
         .get("old-provider")
         .expect("legacy provider still exists");
-    // 回填机制：切换前会将 live 配置回填到当前供应商
-    // 这保护了用户在 live 文件中的手动修改
+    // 不再回填：用户在 live 里的改动留在 live，上一家的行不变。
     assert_eq!(
-        legacy_provider.settings_config, legacy_live,
-        "previous provider should be backfilled with live config"
+        legacy_provider.settings_config,
+        json!({ "env": { "ANTHROPIC_API_KEY": "stale-key" } }),
+        "switching away must not copy live into the previous provider"
+    );
+    assert_eq!(
+        live_after["workspace"],
+        json!({ "path": "/tmp/workspace" }),
+        "non-key settings in live stay where they are"
     );
 
     let new_provider = providers.get("new-provider").expect("new provider exists");

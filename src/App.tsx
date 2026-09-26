@@ -44,6 +44,7 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
+import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
@@ -726,11 +727,13 @@ function App() {
   const handleEditProvider = async ({
     provider,
     originalId,
+    editorSave,
   }: {
     provider: Provider;
     originalId?: string;
+    editorSave?: ProviderEditorSave;
   }) => {
-    await updateProvider(provider, originalId);
+    await updateProvider(provider, originalId, editorSave);
     setEditingProvider(null);
   };
 

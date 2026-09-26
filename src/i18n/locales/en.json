@@ -71,21 +71,16 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
-    "writeCommonConfig": "Apply Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Common Config Snippet",
-    "commonConfigHint": "This snippet will be merged into settings.json when 'Apply Common Config' is checked",
     "fullSettingsHint": "Full Claude Code settings.json content",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
     "hideAttribution": "Hide AI Attribution",
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
     "disableAutoUpgrade": "Disable Auto-Upgrade",
-    "disableArtifact": "Disable Artifact Tool"
+    "disableArtifact": "Disable Artifact Tool",
+    "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
+    "inactiveFieldsHint": "This provider still stores {{count}} field(s) that do not take effect when switching. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
+    "addToGlobalSettings": "Add to global settings"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -179,7 +174,14 @@
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again"
+    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
+    "editorViewFailed": "Cannot read the Claude Code config file, so the saved provider configuration is shown below: {{error}}",
+    "editConflict": {
+      "title": "The config file changed while you were editing",
+      "message": "After the editor opened, the settings below were changed by another program (such as Claude Code). Overwrite them with your edits, or keep the external changes? Your other edits are saved either way.",
+      "keepTheirs": "Keep external changes",
+      "keepMine": "Overwrite with my edits"
+    }
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",

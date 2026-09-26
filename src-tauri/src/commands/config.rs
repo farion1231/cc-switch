@@ -347,7 +347,9 @@ pub async fn set_common_config_snippet(
 
     let value = if is_cleared { None } else { Some(snippet) };
 
-    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
+    // Claude 的片段已冻结：只存库，留给旧版、Lite、CLI 读；新版既不按它迁移存量行，
+    // 也不再用它重写 live（共享设置直接在供应商编辑器底部的 JSON 里改）。
+    if matches!(app_type.as_str(), "codex" | "gemini") {
         if let Some(legacy_snippet) = old_snippet
             .as_deref()
             .filter(|value| !value.trim().is_empty())
@@ -371,7 +373,7 @@ pub async fn set_common_config_snippet(
         .set_config_snippet_cleared(&app_type, is_cleared)
         .map_err(|e| e.to_string())?;
 
-    if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
+    if matches!(app_type.as_str(), "codex" | "gemini") {
         let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
         crate::services::provider::ProviderService::sync_current_provider_for_app(
             state.inner(),

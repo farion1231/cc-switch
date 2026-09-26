@@ -40,6 +40,27 @@ export interface ClaudeDesktopStatus {
   gatewayTokenConfigured: boolean;
 }
 
+/** 编辑器保存时，live 里的键在编辑期间被别的程序改过怎么办。 */
+export type EditorConflictPolicy = "refuse" | "keepMine" | "keepTheirs";
+
+/** 编辑器保存随供应商一起提交：打开时显示的完整配置，用来三方比较。 */
+export interface ProviderEditorSave {
+  base: Record<string, unknown>;
+  onConflict?: EditorConflictPolicy;
+}
+
+/** 行里保存着、但不随切换生效的字段。 */
+export interface ProviderEditorInactiveField {
+  path: string[];
+  value: unknown;
+}
+
+/** 编辑器底部 JSON 的显示内容：切到这个供应商之后配置文件会是什么样。 */
+export interface ProviderEditorView {
+  settings: Record<string, unknown>;
+  inactive: ProviderEditorInactiveField[];
+}
+
 export interface ClaudeDesktopDefaultRoute {
   routeId: string;
   envKey: string;
@@ -59,19 +80,38 @@ export const providersApi = {
     provider: Provider,
     appId: AppId,
     addToLive?: boolean,
+    editorSave?: ProviderEditorSave,
   ): Promise<boolean> {
-    return await invoke("add_provider", { provider, app: appId, addToLive });
+    return await invoke("add_provider", {
+      provider,
+      app: appId,
+      addToLive,
+      ...(editorSave ? { editorSave } : {}),
+    });
   },
 
   async update(
     provider: Provider,
     appId: AppId,
     originalId?: string,
+    editorSave?: ProviderEditorSave,
   ): Promise<boolean> {
     return await invoke("update_provider", {
       provider,
       app: appId,
       originalId,
+      ...(editorSave ? { editorSave } : {}),
+    });
+  },
+
+  /** `settingsConfig` 是供应商的行，新增时传空对象。目前只支持 Claude Code。 */
+  async getEditorView(
+    appId: AppId,
+    settingsConfig: Record<string, unknown>,
+  ): Promise<ProviderEditorView> {
+    return await invoke("get_provider_editor_view", {
+      app: appId,
+      settingsConfig,
     });
   },
 

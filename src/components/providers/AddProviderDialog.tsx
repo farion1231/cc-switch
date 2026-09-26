@@ -7,7 +7,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { universalProvidersApi } from "@/lib/api";
+import { providersApi, universalProvidersApi } from "@/lib/api";
+import type {
+  EditorConflictPolicy,
+  ProviderEditorSave,
+} from "@/lib/api/providers";
+import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
+import { LiveEditConflictDialog } from "@/components/providers/LiveEditConflictDialog";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -36,6 +43,7 @@ interface AddProviderDialogProps {
       suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
       ensureGrokBuildOfficialSeed?: boolean;
+      editorSave?: ProviderEditorSave;
     },
   ) => Promise<void> | void;
 }
@@ -69,6 +77,52 @@ export function AddProviderDialog({
   useEffect(() => {
     setAuthSettingsTarget(null);
   }, [appId, open]);
+
+  // Claude：预设的关键字段套在当前 live 上显示（去掉当前供应商的关键字段），保存时
+  // 其余部分的改动写进 live，这份底也用来三方比较。
+  const [claudeLiveBase, setClaudeLiveBase] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [claudeBaseLoaded, setClaudeBaseLoaded] = useState(false);
+  const [pendingConflict, setPendingConflict] = useState<{
+    keys: string[];
+    retry: (policy: EditorConflictPolicy) => Promise<void>;
+  } | null>(null);
+  const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+
+  useEffect(() => {
+    if (!open || appId !== "claude") {
+      setClaudeLiveBase(null);
+      setClaudeBaseLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    providersApi
+      .getEditorView(appId, {})
+      .then((view) => {
+        if (!cancelled) setClaudeLiveBase(view.settings);
+      })
+      .catch((error: unknown) => {
+        // 读不了 settings.json：退回只显示预设。
+        if (!cancelled) {
+          setClaudeLiveBase(null);
+          toast.error(
+            t("provider.editorViewFailed", {
+              defaultValue:
+                "无法读取 Claude Code 配置文件，下面显示的是保存的供应商配置：{{error}}",
+              error: extractErrorMessage(error),
+            }),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setClaudeBaseLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, appId, t]);
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
@@ -351,11 +405,44 @@ export function AddProviderDialog({
         providerData.suggestedDefaults = values.suggestedDefaults;
       }
 
-      await onSubmit(providerData);
-      closeDialog();
+      const submit = async (onConflict: EditorConflictPolicy) => {
+        await onSubmit({
+          ...providerData,
+          ...(appId === "claude" && claudeLiveBase
+            ? { editorSave: { base: claudeLiveBase, onConflict } }
+            : {}),
+        });
+        closeDialog();
+      };
+
+      try {
+        await submit("refuse");
+      } catch (error) {
+        const conflict = parseLiveEditConflict(error);
+        if (!conflict) throw error;
+        setPendingConflict({ keys: conflict.keys, retry: submit });
+      }
     },
-    [appId, onSubmit, closeDialog],
+    [appId, onSubmit, closeDialog, claudeLiveBase],
   );
+
+  const handleResolveConflict = useCallback(
+    async (policy: EditorConflictPolicy) => {
+      if (!pendingConflict) return;
+      setIsResolvingConflict(true);
+      try {
+        await pendingConflict.retry(policy);
+      } catch {
+        // 失败提示由新增的 mutation 负责，对话框保持打开。
+      } finally {
+        setIsResolvingConflict(false);
+        setPendingConflict(null);
+      }
+    },
+    [pendingConflict],
+  );
+
+  const waitingForClaudeBase = appId === "claude" && !claudeBaseLoaded;
 
   const footer =
     !showUniversalTab || activeTab === "app-specific" ? (
@@ -426,16 +513,23 @@ export function AddProviderDialog({
           </TabsList>
 
           <TabsContent value="app-specific" className="mt-0">
-            <ProviderForm
-              appId={appId}
-              submitLabel={t("common.add")}
-              onSubmit={handleSubmit}
-              onCancel={closeDialog}
-              onManageAuthAccounts={setAuthSettingsTarget}
-              onSubmittingChange={setIsFormSubmitting}
-              onSubmitReadyChange={handleSubmitReadyChange}
-              showButtons={false}
-            />
+            {waitingForClaudeBase ? (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                {t("common.loading")}
+              </div>
+            ) : (
+              <ProviderForm
+                appId={appId}
+                submitLabel={t("common.add")}
+                onSubmit={handleSubmit}
+                onCancel={closeDialog}
+                onManageAuthAccounts={setAuthSettingsTarget}
+                onSubmittingChange={setIsFormSubmitting}
+                onSubmitReadyChange={handleSubmitReadyChange}
+                showButtons={false}
+                claudeLiveBase={claudeLiveBase ?? undefined}
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="universal" className="mt-0">
@@ -468,6 +562,12 @@ export function AddProviderDialog({
       <AuthSettingsPanel
         target={authSettingsTarget}
         onClose={() => setAuthSettingsTarget(null)}
+      />
+      <LiveEditConflictDialog
+        keys={pendingConflict?.keys ?? null}
+        pending={isResolvingConflict}
+        onResolve={(policy) => void handleResolveConflict(policy)}
+        onCancel={() => setPendingConflict(null)}
       />
     </FullScreenPanel>
   );

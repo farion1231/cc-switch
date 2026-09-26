@@ -71,21 +71,16 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code 設定 (JSON) *",
-    "writeCommonConfig": "套用通用設定",
-    "editCommonConfig": "編輯通用設定",
-    "editCommonConfigTitle": "編輯通用設定片段",
-    "commonConfigHint": "該片段會在勾選「套用通用設定」時合併到 settings.json 中",
     "fullSettingsHint": "完整的 Claude Code settings.json 設定內容",
-    "extractFromCurrent": "從編輯內容擷取",
-    "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",
-    "extractFailed": "擷取失敗：{{error}}",
-    "saveFailed": "儲存失敗：{{error}}",
     "hideAttribution": "隱藏 AI 署名",
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "啟用 Tool Search",
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "停用自動升級",
-    "disableArtifact": "停用 Artifact 工具"
+    "disableArtifact": "停用 Artifact 工具",
+    "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的欄位。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
+    "addToGlobalSettings": "加入全域設定"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上檢視",
@@ -179,7 +174,14 @@
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試"
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
+    "editorViewFailed": "無法讀取 Claude Code 設定檔，下方顯示的是保存的供應商設定：{{error}}",
+    "editConflict": {
+      "title": "設定檔在編輯期間被修改",
+      "message": "開啟編輯器之後，下面這些設定被其他程式（例如 Claude Code）改過。要用你的修改覆蓋，還是保留外部的修改？其餘變更都會照常儲存。",
+      "keepTheirs": "保留外部修改",
+      "keepMine": "用我的修改覆蓋"
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由",

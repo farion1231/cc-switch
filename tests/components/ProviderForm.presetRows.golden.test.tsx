@@ -96,16 +96,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       isAuthenticated: false,
       accounts: [],
     }),
-    useCommonConfigSnippet: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      isLoading: false,
-      isExtracting: false,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      handleExtract: vi.fn(),
-    }),
     useCodexCommonConfig: () => ({
       useCommonConfig: false,
       commonConfigSnippet: "",

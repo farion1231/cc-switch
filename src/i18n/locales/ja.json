@@ -71,21 +71,16 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
-    "writeCommonConfig": "共通設定を適用",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を適用」がオンのとき settings.json にマージされます",
     "fullSettingsHint": "Claude Code の settings.json 全文",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
-    "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}",
     "hideAttribution": "AI署名を非表示",
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化",
-    "disableArtifact": "Artifact ツールを無効化"
+    "disableArtifact": "Artifact ツールを無効化",
+    "keyFieldsHint": "エンドポイント、キー、モデル、コンテキストウィンドウ、互換スイッチはプロバイダーの切り替えに従います。それ以外のフィールドは Claude Code のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
+    "inactiveFieldsHint": "このプロバイダーには、切り替えても反映されないフィールドが {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
+    "addToGlobalSettings": "グローバル設定に追加"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -179,7 +174,14 @@
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
     },
-    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください"
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
+    "editorViewFailed": "Claude Code の設定ファイルを読み込めないため、保存済みのプロバイダー設定を表示しています：{{error}}",
+    "editConflict": {
+      "title": "編集中に設定ファイルが変更されました",
+      "message": "エディターを開いた後、以下の設定が他のプログラム（Claude Code など）によって変更されました。自分の編集で上書きしますか？それとも外部の変更を残しますか？その他の編集はどちらでも保存されます。",
+      "keepTheirs": "外部の変更を残す",
+      "keepMine": "自分の編集で上書き"
+    }
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",

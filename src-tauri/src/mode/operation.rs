@@ -340,7 +340,7 @@ fn give_up_on_conflict(
 }
 
 /// 测试用的故障注入点：模拟进程在某一步崩溃（直接返回错误，不做任何清理）。
-mod failpoint {
+pub(crate) mod failpoint {
     #[cfg(test)]
     use std::cell::RefCell;
     use std::path::Path;

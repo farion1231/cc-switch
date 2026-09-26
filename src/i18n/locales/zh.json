@@ -71,21 +71,16 @@
   },
   "claudeConfig": {
     "configLabel": "Claude Code 配置 (JSON) *",
-    "writeCommonConfig": "应用通用配置",
-    "editCommonConfig": "编辑通用配置",
-    "editCommonConfigTitle": "编辑通用配置片段",
-    "commonConfigHint": "该片段会在勾选\"应用通用配置\"时合并到 settings.json 中",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
-    "extractFromCurrent": "从编辑内容提取",
-    "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",
-    "extractFailed": "提取失败: {{error}}",
-    "saveFailed": "保存失败: {{error}}",
     "hideAttribution": "隐藏 AI 署名",
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "启用 Tool Search",
     "effortMax": "最大强度思考",
     "disableAutoUpgrade": "禁用自动升级",
-    "disableArtifact": "禁用 Artifact 工具"
+    "disableArtifact": "禁用 Artifact 工具",
+    "keyFieldsHint": "地址、Key、模型、上下文窗口和兼容开关随供应商切换；其余字段是 Claude Code 全局设置，保存后对所有供应商生效。",
+    "inactiveFieldsHint": "这个供应商还保存着 {{count}} 个不随切换生效的字段。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
+    "addToGlobalSettings": "加入全局设置"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上查看",
@@ -179,7 +174,14 @@
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
+    "editorViewFailed": "无法读取 Claude Code 配置文件，下面显示的是保存的供应商配置：{{error}}",
+    "editConflict": {
+      "title": "配置文件在编辑期间被修改",
+      "message": "打开编辑器之后，下面这些设置被其他程序（比如 Claude Code）改过。要用你的修改覆盖，还是保留外部的修改？其余改动都会照常保存。",
+      "keepTheirs": "保留外部修改",
+      "keepMine": "用我的修改覆盖"
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由",

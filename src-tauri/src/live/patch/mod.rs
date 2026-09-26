@@ -76,7 +76,13 @@ pub enum LiveWriteError {
     /// 连续几次重读都发现文件在变，放弃写入。
     #[error("{path} 在写入过程中一直被其他程序修改，没有写入")]
     Conflict { path: PathBuf },
+    /// 编辑器打开之后，这些键在文件里被别的程序改过，和编辑器里的改动冲突。
+    #[error("{path} 里的 {keys:?} 在编辑期间被其他程序修改过")]
+    EditConflict { path: PathBuf, keys: Vec<String> },
 }
+
+/// 编辑冲突的错误码。命令返回 JSON 字符串，前端据此让用户选保留哪一边。
+pub const EDIT_CONFLICT_CODE: &str = "LIVE_EDIT_CONFLICT";
 
 impl From<LiveWriteError> for crate::error::AppError {
     fn from(err: LiveWriteError) -> Self {
@@ -119,6 +125,14 @@ impl From<LiveWriteError> for crate::error::AppError {
                 "{} 在写入过程中一直被其他程序修改",
                 path.display()
             )),
+            LiveWriteError::EditConflict { path, keys } => AppError::Message(
+                serde_json::json!({
+                    "code": EDIT_CONFLICT_CODE,
+                    "path": path.display().to_string(),
+                    "keys": keys,
+                })
+                .to_string(),
+            ),
         }
     }
 }

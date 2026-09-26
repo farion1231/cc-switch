@@ -7,7 +7,7 @@ sort_index: NULL
 notes: imported from link
 icon: anthropic
 icon_color: NULL
-meta: {}
+meta: {"commonConfigEnabled":true}
 is_current: true
 in_failover_queue: false
 
@@ -20,7 +20,7 @@ sort_index: NULL
 notes: NULL
 icon: NULL
 icon_color: NULL
-meta: {}
+meta: {"commonConfigEnabled":true}
 is_current: false
 in_failover_queue: false
 

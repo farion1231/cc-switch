@@ -2,17 +2,13 @@
 //!
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
-use crate::config::{
-    delete_file, get_claude_settings_path, read_json_file, write_json_file, write_json_file_private,
-};
+use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -24,148 +20,6 @@ use super::gemini_auth::{
     detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
 };
 use super::normalize_claude_models_in_value;
-
-/// ChatGPT Codex catalogs gpt-5.6 at a 372K context window with a ~353K
-/// effective budget (openai/codex#31860), far below the 1.05M API spec.
-/// Declare the catalog window for both knobs: Claude Code's built-in output
-/// reserve and compact buffer already keep the actual compact trigger
-/// (~278K-339K) below the effective budget, so anything lower only wastes
-/// usable context.
-const CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS: &str = "372000";
-const CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW: &str = "372000";
-const KIMI_FOR_CODING_CONTEXT_TOKENS: &str = "262144";
-
-/// Model env keys Claude Code may route requests through. The defaults above
-/// are calibrated against gpt-5.6's Codex catalog, so every configured model
-/// must belong to that family before they are injected — gpt-5.5's upstream
-/// catalog oscillates between 272K and 372K and must not inherit them.
-const CODEX_OAUTH_MODEL_ENV_KEYS: [&str; 6] = [
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_FABLE_MODEL",
-    "CLAUDE_CODE_SUBAGENT_MODEL",
-];
-
-fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Value>>) -> bool {
-    let Some(env) = provider_env else {
-        return false;
-    };
-    let mut saw_model = false;
-    for key in CODEX_OAUTH_MODEL_ENV_KEYS {
-        let Some(value) = env.get(key) else {
-            continue;
-        };
-        let Some(model) = value.as_str() else {
-            return false;
-        };
-        let model = model.trim();
-        if model.is_empty() {
-            continue;
-        }
-        saw_model = true;
-        if !model.to_ascii_lowercase().starts_with("gpt-5.6") {
-            return false;
-        }
-    }
-    saw_model
-}
-
-fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
-    provider
-        .settings_config
-        .pointer("/env/ANTHROPIC_BASE_URL")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .map(|url| url.trim_end_matches('/'))
-        == Some("https://api.kimi.com/coding")
-}
-
-/// Claude Code assigns unknown non-Claude model ids a 200K context window.
-/// Codex OAuth deliberately exposes GPT ids through Claude Code, so enrich the
-/// effective live settings for both newly-created and already-saved providers.
-/// Explicit user values always win; the defaults are only injected when every
-/// configured model targets gpt-5.6.
-fn apply_codex_oauth_claude_context_defaults(settings: &mut Value, provider: &Provider) {
-    if !provider.is_codex_oauth() {
-        return;
-    }
-
-    // Read provider-owned values before mutably borrowing the effective
-    // settings. This also deliberately prevents a legacy common-config
-    // snippet from overriding model-specific context limits.
-    let provider_env = provider
-        .settings_config
-        .get("env")
-        .and_then(Value::as_object);
-    let Some(root) = settings.as_object_mut() else {
-        return;
-    };
-    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
-    let Some(env) = env.as_object_mut() else {
-        log::warn!(
-            "Cannot apply Codex OAuth Claude context defaults for '{}': env is not an object",
-            provider.id
-        );
-        return;
-    };
-
-    let inject_defaults = provider_env_targets_gpt56(provider_env);
-    for (key, default_value) in [
-        (
-            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-            CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS,
-        ),
-        (
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-            CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW,
-        ),
-    ] {
-        match provider_env.and_then(|provider_env| provider_env.get(key)) {
-            Some(value) => {
-                env.insert(key.to_string(), value.clone());
-            }
-            None if inject_defaults => {
-                env.insert(key.to_string(), Value::String(default_value.to_string()));
-            }
-            // 老模型不注入默认值，同时剥掉遗留共享片段可能带进来的值
-            None => {
-                env.remove(key);
-            }
-        }
-    }
-}
-
-/// Kimi For Coding serves a 256K window, but Claude Code caps unknown models at
-/// 200K unless `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is set — and that env is ignored
-/// for `claude-`-prefixed ids, so these defaults only bite when the provider also
-/// routes the endpoint's `kimi-for-coding` alias (the preset does). Keep the
-/// defaults provider-owned so an old shared snippet cannot override them.
-fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
-    if !is_kimi_for_coding_provider(provider) {
-        return;
-    }
-
-    let provider_env = provider
-        .settings_config
-        .get("env")
-        .and_then(Value::as_object);
-    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
-        return;
-    };
-
-    for key in [
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-    ] {
-        let value = provider_env
-            .and_then(|provider_env| provider_env.get(key))
-            .cloned()
-            .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
-        env.insert(key.to_string(), value);
-    }
-}
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
@@ -700,11 +554,6 @@ pub(crate) fn build_effective_settings_with_common_config(
         }
     }
 
-    if matches!(app_type, AppType::Claude) {
-        apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
-        apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
-    }
-
     Ok(effective_settings)
 }
 
@@ -754,6 +603,13 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
     provider: &Provider,
     codex_oauth_manager: &Arc<CodexOAuthManager>,
 ) -> Result<(), AppError> {
+    if matches!(app_type, AppType::Claude) {
+        // Claude 不再整份写，也不合并片段：只替换关键字段和独有字段。live 当前对应的
+        // 就是这个供应商（同步、退出代理写回），它带进来的独有字段按同一行比对。
+        super::claude_direct::reapply(db, Some(provider), provider)?;
+        return Ok(());
+    }
+
     let effective_provider = build_effective_provider_for_live_with_codex_oauth_manager(
         db,
         app_type,
@@ -993,80 +849,11 @@ pub(crate) fn strip_common_config_from_live_settings(
     restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
 }
 
-/// 与 `apply_codex_oauth_claude_context_defaults` 严格对称：注入产物只活在
-/// live，切走回填时必须剥掉，否则程序默认值会固化成供应商的"用户显式值"，
-/// 之后调整默认值或更换模型时旧值永远压住新默认。仅当"注入会发生且注入的
-/// 就是这个值、且存储配置本来没有显式值"时才剥；用户显式存储的值和手改
-/// live 成其他数字的值都保留。
-fn strip_injected_codex_oauth_context_defaults(settings: &mut Value, provider: &Provider) {
-    if !provider.is_codex_oauth() {
-        return;
-    }
-    let provider_env = provider
-        .settings_config
-        .get("env")
-        .and_then(Value::as_object);
-    if !provider_env_targets_gpt56(provider_env) {
-        return;
-    }
-    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
-        return;
-    };
-    for (key, default_value) in [
-        (
-            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-            CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS,
-        ),
-        (
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-            CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW,
-        ),
-    ] {
-        let stored_explicit = provider_env.is_some_and(|e| e.contains_key(key));
-        if stored_explicit {
-            continue;
-        }
-        if env.get(key).and_then(Value::as_str) == Some(default_value) {
-            env.remove(key);
-        }
-    }
-}
-
-fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
-    if !is_kimi_for_coding_provider(provider) {
-        return;
-    }
-    let provider_env = provider
-        .settings_config
-        .get("env")
-        .and_then(Value::as_object);
-    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
-        return;
-    };
-    for key in [
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-    ] {
-        if provider_env.is_some_and(|provider_env| provider_env.contains_key(key)) {
-            continue;
-        }
-        if env.get(key).and_then(Value::as_str) == Some(KIMI_FOR_CODING_CONTEXT_TOKENS) {
-            env.remove(key);
-        }
-    }
-}
-
 fn restore_live_settings_for_provider_backfill(
     app_type: &AppType,
     provider: &Provider,
     live_settings: Value,
 ) -> Value {
-    if matches!(app_type, AppType::Claude) {
-        let mut settings = live_settings;
-        strip_injected_codex_oauth_context_defaults(&mut settings, provider);
-        strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
-        return settings;
-    }
     if matches!(app_type, AppType::GrokBuild) {
         let mut settings = live_settings;
         if let Err(err) = crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings) {
@@ -1224,6 +1011,11 @@ pub(crate) fn normalize_provider_common_config_for_storage(
     app_type: &AppType,
     provider: &mut Provider,
 ) -> Result<(), AppError> {
+    // Claude 的片段已冻结：新版不读它，也不再按它剥离存量行。
+    if matches!(app_type, AppType::Claude) {
+        return Ok(());
+    }
+
     let uses_common_config = provider
         .meta
         .as_ref()
@@ -1256,86 +1048,15 @@ pub(crate) fn normalize_provider_common_config_for_storage(
     Ok(())
 }
 
-/// Live configuration snapshot for backup/restore
-#[derive(Clone)]
-#[allow(dead_code)]
-pub(crate) enum LiveSnapshot {
-    Claude {
-        settings: Option<Value>,
-    },
-    Codex {
-        auth: Option<Value>,
-        config: Option<String>,
-    },
-    Gemini {
-        env: Option<HashMap<String, String>>,
-        config: Option<Value>,
-    },
-}
-
-impl LiveSnapshot {
-    #[allow(dead_code)]
-    pub(crate) fn restore(&self) -> Result<(), AppError> {
-        match self {
-            LiveSnapshot::Claude { settings } => {
-                let path = get_claude_settings_path();
-                if let Some(value) = settings {
-                    write_json_file_private(&path, value)?;
-                } else if path.exists() {
-                    delete_file(&path)?;
-                }
-            }
-            LiveSnapshot::Codex { auth, config } => {
-                let auth_path = get_codex_auth_path();
-                let config_path = get_codex_config_path();
-                if let Some(value) = auth {
-                    write_json_file_private(&auth_path, value)?;
-                } else if auth_path.exists() {
-                    delete_file(&auth_path)?;
-                }
-
-                if let Some(text) = config {
-                    crate::config::write_text_file_private(&config_path, text)?;
-                } else if config_path.exists() {
-                    delete_file(&config_path)?;
-                }
-            }
-            LiveSnapshot::Gemini { env, .. } => {
-                use crate::gemini_config::{
-                    get_gemini_env_path, get_gemini_settings_path, write_gemini_env_atomic,
-                };
-                let path = get_gemini_env_path();
-                if let Some(env_map) = env {
-                    write_gemini_env_atomic(env_map)?;
-                } else if path.exists() {
-                    delete_file(&path)?;
-                }
-
-                let settings_path = get_gemini_settings_path();
-                match self {
-                    LiveSnapshot::Gemini {
-                        config: Some(cfg), ..
-                    } => {
-                        write_json_file(&settings_path, cfg)?;
-                    }
-                    LiveSnapshot::Gemini { config: None, .. } if settings_path.exists() => {
-                        delete_file(&settings_path)?;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
-            let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file_private(&path, &settings)?;
+            return Err(AppError::localized(
+                "claude.live.requires_engine",
+                "Claude Code 配置只能经关键字段写入流程写入",
+                "Claude Code configuration must be written through the key-field write flow",
+            ));
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
@@ -1612,11 +1333,34 @@ fn proxy_owns_live_config(
         )
 }
 
+/// 这个应用的 live 现在是否归代理接管：接管中不按直连写关键字段。
+pub(crate) fn proxy_owns_live(state: &AppState, app_type: &AppType) -> bool {
+    let has_live_backup =
+        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
+            Ok(backup) => backup.is_some(),
+            Err(err) => {
+                log::warn!(
+                    "读取 {} Live 备份失败，按无备份处理: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type);
+    proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over)
+}
+
 /// Sync a provider to live while respecting proxy takeover ownership.
+///
+/// `prev` 是 live 现在对应的那一版供应商行（编辑前的行），Claude 按它删上一版带进来的
+/// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。
 pub(crate) fn sync_live_for_provider_respecting_takeover(
     state: &AppState,
     app_type: &AppType,
     provider: &Provider,
+    prev: Option<&Provider>,
 ) -> Result<LiveSyncOutcome, AppError> {
     let has_live_backup =
         match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
@@ -1648,7 +1392,11 @@ pub(crate) fn sync_live_for_provider_respecting_takeover(
                 );
             }
         }
-        write_live_with_common_config_for_state(state, app_type, provider)?;
+        if matches!(app_type, AppType::Claude) {
+            super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+        } else {
+            write_live_with_common_config_for_state(state, app_type, provider)?;
+        }
         return Ok(LiveSyncOutcome::WroteLive);
     }
 
@@ -1704,7 +1452,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     };
 
-    sync_live_for_provider_respecting_takeover(state, app_type, provider).map(|_| ())
+    sync_live_for_provider_respecting_takeover(state, app_type, provider, None).map(|_| ())
 }
 
 /// Sync current provider to live configuration
@@ -2502,318 +2250,6 @@ mod tests {
             .as_str()
             .expect("config")
             .contains("requires_openai_auth = true"));
-    }
-
-    #[test]
-    fn kimi_for_coding_effective_settings_backfill_256k_context() {
-        let db = Database::memory().expect("create memory db");
-        let provider = Provider::with_id(
-            "kimi-for-coding".to_string(),
-            "Kimi For Coding".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
-                    "ANTHROPIC_MODEL": "kimi-for-coding",
-                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
-                }
-            }),
-            None,
-        );
-
-        let effective =
-            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-                .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("262144")
-        );
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("262144")
-        );
-    }
-
-    #[test]
-    fn kimi_for_coding_context_defaults_preserve_user_overrides() {
-        let db = Database::memory().expect("create memory db");
-        let provider = Provider::with_id(
-            "kimi-for-coding".to_string(),
-            "Kimi For Coding".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
-                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "300000",
-                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "250000"
-                }
-            }),
-            None,
-        );
-
-        let effective =
-            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-                .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("300000")
-        );
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("250000")
-        );
-    }
-
-    #[test]
-    fn kimi_for_coding_backfill_strips_only_injected_context_default() {
-        let db = Database::memory().expect("create memory db");
-        let provider = Provider::with_id(
-            "kimi-for-coding".to_string(),
-            "Kimi For Coding".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
-                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
-                }
-            }),
-            None,
-        );
-
-        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-            .expect("build effective settings");
-        let backfilled =
-            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
-        assert!(backfilled["env"]
-            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
-            .is_none());
-        assert_eq!(
-            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("262144")
-        );
-    }
-
-    #[test]
-    fn codex_oauth_effective_settings_backfill_gpt_context_defaults() {
-        let db = Database::memory().expect("create memory db");
-        let mut provider = Provider::with_id(
-            "codex-oauth".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_MODEL": "gpt-5.6"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let effective =
-            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-                .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("372000")
-        );
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("372000")
-        );
-    }
-
-    #[test]
-    fn codex_oauth_context_defaults_preserve_user_overrides() {
-        let db = Database::memory().expect("create memory db");
-        let mut provider = Provider::with_id(
-            "codex-oauth".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000",
-                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "350000"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let effective =
-            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-                .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("500000")
-        );
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("350000")
-        );
-    }
-
-    #[test]
-    fn codex_oauth_context_defaults_ignore_legacy_common_config_values() {
-        let db = Database::memory().expect("create memory db");
-        db.set_config_snippet(
-            AppType::Claude.as_str(),
-            Some(
-                json!({
-                    "env": {
-                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
-                        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
-                    }
-                })
-                .to_string(),
-            ),
-        )
-        .expect("save legacy common config");
-        let mut provider = Provider::with_id(
-            "codex-oauth".to_string(),
-            "Codex".to_string(),
-            json!({ "env": { "ANTHROPIC_MODEL": "gpt-5.6" } }),
-            None,
-        );
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-
-        let effective =
-            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-                .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("372000")
-        );
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("372000")
-        );
-    }
-
-    #[test]
-    fn codex_oauth_context_defaults_skip_non_gpt56_models() {
-        let db = Database::memory().expect("create memory db");
-        db.set_config_snippet(
-            AppType::Claude.as_str(),
-            Some(
-                json!({
-                    "env": {
-                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
-                        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
-                    }
-                })
-                .to_string(),
-            ),
-        )
-        .expect("save legacy common config");
-        let mut provider = Provider::with_id(
-            "codex-oauth".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_MODEL": "gpt-5.5",
-                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-
-        let effective =
-            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-                .expect("build effective settings");
-        // 旧模型不注入 372K 默认值，遗留共享片段带进来的值也要剥掉
-        assert!(effective["env"]
-            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
-            .is_none());
-        // 用户显式写在供应商配置里的值仍然生效
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("300000")
-        );
-    }
-
-    /// 往返不动点：注入产物只活在 live，切走回灌后存储配置必须与注入前一致，
-    /// 否则程序默认值固化成"用户显式值"，之后调默认值永远压不动。
-    #[test]
-    fn codex_oauth_backfill_strips_injected_context_defaults() {
-        let db = Database::memory().expect("create memory db");
-        let mut provider = Provider::with_id(
-            "codex-oauth".to_string(),
-            "Codex".to_string(),
-            json!({ "env": { "ANTHROPIC_MODEL": "gpt-5.6" } }),
-            None,
-        );
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        // 模拟写 live：注入了两个上下文默认值
-        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
-            .expect("build effective settings");
-        assert_eq!(
-            live["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("372000")
-        );
-
-        // 模拟切走回灌：注入产物被剥掉，其余字段原样保留
-        let backfilled =
-            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
-        assert!(backfilled["env"]
-            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
-            .is_none());
-        assert!(backfilled["env"]
-            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
-            .is_none());
-        assert_eq!(backfilled["env"]["ANTHROPIC_MODEL"], json!("gpt-5.6"));
-    }
-
-    #[test]
-    fn codex_oauth_backfill_keeps_user_context_values() {
-        let db = Database::memory().expect("create memory db");
-        let mut provider = Provider::with_id(
-            "codex-oauth".to_string(),
-            "Codex".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_MODEL": "gpt-5.6",
-                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("codex_oauth".to_string()),
-            ..Default::default()
-        });
-
-        // live 里：MAX 是用户显式值；ACW 被用户手改成了非默认数字
-        let live = json!({
-            "env": {
-                "ANTHROPIC_MODEL": "gpt-5.6",
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000",
-                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"
-            }
-        });
-        let backfilled =
-            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
-        assert_eq!(
-            backfilled["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("500000")
-        );
-        assert_eq!(
-            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("300000")
-        );
     }
 
     /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。
