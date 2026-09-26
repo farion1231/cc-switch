@@ -13,17 +13,39 @@ concurrency:
   group: custom-windows-msi-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  RELEASE_TAG: v3.20.4-commandcode.1
-  RELEASE_NAME: CC Switch v3.20.4 - Command Code
-
 jobs:
   build-windows:
     runs-on: windows-2022
     timeout-minutes: 60
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Resolve upstream version
+        id: version
+        shell: pwsh
+        run: |
+          $package = Get-Content "package.json" -Raw | ConvertFrom-Json
+          $version = [string]$package.version
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Unable to resolve version from package.json"
+          }
+
+          $msiName = "CC-Switch-CommandCode-v$version-x64.msi"
+          $artifactName = "CC-Switch-CommandCode-v$version-Windows-x64-MSI"
+          $releaseTag = "v$version-commandcode"
+          $releaseName = "CC Switch v$version - Command Code"
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "msi_name=$msiName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "artifact_name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "release_name=$releaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          Write-Host "Upstream version: $version"
+          Write-Host "MSI: $msiName"
+          Write-Host "Release tag: $releaseTag"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -76,34 +98,46 @@ jobs:
       - name: Stage MSI
         id: stage
         shell: pwsh
+        env:
+          MSI_NAME: ${{ steps.version.outputs.msi_name }}
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           $msi = Get-ChildItem "src-tauri\target\release\bundle\msi\*.msi" | Select-Object -First 1
-          if (-not $msi) { throw "MSI not found" }
-          $dst = "artifacts\CC-Switch-CommandCode-v3.20.4-x64.msi"
+          if (-not $msi) {
+            throw "MSI not found"
+          }
+
+          $dst = Join-Path "artifacts" $env:MSI_NAME
           Copy-Item $msi.FullName $dst
+
           $hash = (Get-FileHash $dst -Algorithm SHA256).Hash.ToLower()
           "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "path=$dst" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
           Write-Host "MSI: $dst"
           Write-Host "SHA256: $hash"
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CC-Switch-CommandCode-v3.20.4-Windows-x64-MSI
-          path: artifacts/CC-Switch-CommandCode-v3.20.4-x64.msi
+          name: ${{ steps.version.outputs.artifact_name }}
+          path: artifacts/${{ steps.version.outputs.msi_name }}
           if-no-files-found: error
 
-      - name: Create GitHub Release
-        if: startsWith(github.event.head_commit.message, 'release:')
+      - name: Create or update GitHub Release
+        if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_NAME: ${{ steps.version.outputs.release_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          MSI_NAME: ${{ steps.version.outputs.msi_name }}
           MSI_SHA256: ${{ steps.stage.outputs.sha256 }}
         run: |
-          $asset = "artifacts\CC-Switch-CommandCode-v3.20.4-x64.msi"
+          $asset = Join-Path "artifacts" $env:MSI_NAME
           $notes = @"
-          Custom CC Switch based on official v3.20.4.
+          Custom CC Switch based on official v$env:VERSION.
 
           - Native Command Code /alpha/generate support for Claude Code
           - Command Code Token Plan quota: 5h / weekly / monthly
@@ -115,11 +149,10 @@ jobs:
           - Yellow-star sponsored presets hidden from Add Provider
           - UI app set reduced to Claude Code / Claude Desktop / Codex
           - Windows x64 MSI only
-          - Keeps the official CC Switch product identity / UpgradeCode so it can replace an existing MSI installation
-          - Same-version MSI upgrades are supported by the existing WiX template
+          - Keeps the official CC Switch product identity / UpgradeCode for in-place MSI upgrades
 
           SHA-256:
-          `$env:MSI_SHA256`
+          $env:MSI_SHA256
           "@
 
           if (gh release view $env:RELEASE_TAG --repo "${{ github.repository }}" 2>$null) {
@@ -128,4 +161,3 @@ jobs:
           } else {
             gh release create $env:RELEASE_TAG $asset --target "${{ github.sha }}" --title $env:RELEASE_NAME --notes $notes --repo "${{ github.repository }}"
           }
-
