@@ -555,6 +555,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#3A3B40",
   },
   {
+    name: "LaonongAPI",
+    websiteUrl: "https://www.laonongapi.com",
+    apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.laonongapi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-flash-lite",
+      },
+    },
+    baseURL: "https://api.laonongapi.com",
+    model: "gemini-3.1-flash-lite",
+    description: "LaonongAPI",
+    category: "aggregator",
+    endpointCandidates: ["https://api.laonongapi.com"],
+    icon: "laonongapi",
+    iconColor: "#7B61FF",
+  },
+  {
     name: "自定义",
     websiteUrl: "",
     settingsConfig: {

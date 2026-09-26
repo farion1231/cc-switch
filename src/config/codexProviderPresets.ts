@@ -3348,4 +3348,26 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    name: "LaonongAPI",
+    websiteUrl: "https://www.laonongapi.com",
+    apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "laonongapi",
+      "https://api.laonongapi.com/v1",
+      "gpt-5.6-luna",
+    ),
+    endpointCandidates: ["https://api.laonongapi.com/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+      },
+    ]),
+    category: "aggregator",
+    icon: "laonongapi",
+    iconColor: "#7B61FF",
+  },
 ];

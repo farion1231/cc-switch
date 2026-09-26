@@ -2376,6 +2376,34 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "tencent",
     iconColor: "#00A4FF",
   },
+  {
+    name: "LaonongAPI",
+    providerKey: "cc-switch-laonong-api",
+    websiteUrl: "https://www.laonongapi.com",
+    apiKeyUrl: "https://www.laonongapi.com/#/workspace/keys",
+    settingsConfig: {
+      name: "LaonongAPI",
+      baseUrl: "https://api.laonongapi.com/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-luna", {
+          id: "gpt-5.6-luna",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
+          id: "claude-sonnet-5",
+        }),
+        piModel("google/gemini-3.1-flash-lite", {
+          id: "gemini-3.1-flash-lite",
+        }),
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4-flash",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "laonongapi",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(
