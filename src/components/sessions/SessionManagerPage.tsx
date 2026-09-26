@@ -814,7 +814,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   return (
     <TooltipProvider>
       <div
-        className="mx-auto px-4 sm:px-6 flex flex-col h-full min-h-0"
+        className="mx-auto w-full px-4 sm:px-6 flex flex-col h-full min-h-0"
         onWheel={(e) => e.stopPropagation()}
       >
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
