@@ -24,7 +24,7 @@
 
 ## ❤️スポンサー
 
-> [ここに掲載しませんか？](mailto:farion1231@gmail.com)
+> [ここに掲載しませんか？](mailto:support@ccswitch.io)
 
 <details open>
 <summary>クリックで折りたたむ</summary>

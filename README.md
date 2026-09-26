@@ -24,7 +24,7 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 
 ## ❤️Sponsor
 
-> [Want to appear here?](mailto:farion1231@gmail.com)
+> [Want to appear here?](mailto:support@ccswitch.io)
 
 <details open>
 <summary>Click to collapse</summary>

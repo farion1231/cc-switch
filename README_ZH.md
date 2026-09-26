@@ -24,7 +24,7 @@
 
 ## ❤️赞助商
 
-> [想出现在这里？](mailto:farion1231@gmail.com)
+> [想出现在这里？](mailto:support@ccswitch.io)
 
 <details open>
 <summary>点击折叠</summary>

@@ -24,7 +24,7 @@
 
 ## ❤️Sponsoren
 
-> [Möchten Sie hier erscheinen?](mailto:farion1231@gmail.com)
+> [Möchten Sie hier erscheinen?](mailto:support@ccswitch.io)
 
 <details open>
 <summary>Zum Einklappen klicken</summary>
