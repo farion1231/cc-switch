@@ -1044,6 +1044,277 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn advisor_http_exchange_uses_same_auth_and_model_with_matching_stream_and_json() {
+        use axum::response::IntoResponse;
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let mock_app = Router::new().route("/v1/responses", post({
+            let captured = captured.clone();
+            move |headers: HeaderMap, axum::Json(body): axum::Json<Value>| {
+                let captured = captured.clone();
+                async move {
+                    let mut captured = captured.lock().await;
+                    let step = captured.len() % 3;
+                    captured.push(CapturedRequest { path_and_query: "/v1/responses".into(),
+                        authorization: headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).map(str::to_owned), body: body.clone() });
+                    let output = if step == 0 {
+                        json!([{"id":"fc_test","type":"function_call","call_id":"call_test","name":"advisor","arguments":"{}","status":"completed"}])
+                    } else {
+                        json!([{"id":"msg_test","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":if step == 1 {"ADVISOR_ADVICE"} else {"EXECUTOR_CONTINUED"},"annotations":[]}]}])
+                    };
+                    let response = json!({"id":"resp_test","object":"response","model":body["model"],"status":"completed","output":output,"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}});
+                    let item = response["output"][0].clone();
+                    let mut events = vec![
+                        json!({"type":"response.created","response":{"id":"resp_test","model":body["model"],"status":"in_progress","output":[]}}),
+                        json!({"type":"response.output_item.added","output_index":0,"item":item}),
+                    ];
+                    if step != 0 {
+                        events.push(json!({"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_test","delta":item["content"][0]["text"]}));
+                    }
+                    events.push(json!({"type":"response.output_item.done","output_index":0,"item":item}));
+                    events.push(json!({"type":"response.completed","response":response}));
+                    let wire: String = events.iter().map(|event| format!("event: {}\ndata: {}\n\n", event["type"].as_str().unwrap(), event)).collect();
+                    ([("content-type","text/event-stream")], wire).into_response()
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock_handle =
+            tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let mut provider = Provider::with_id(
+            "advisor-test".into(),
+            "Advisor test".into(),
+            json!({"env":{
+            "ANTHROPIC_BASE_URL":format!("http://{address}/v1"),"ANTHROPIC_AUTH_TOKEN":"synthetic-provider-secret",
+            "ANTHROPIC_MODEL":"working-model","ANTHROPIC_DEFAULT_OPUS_MODEL":"wrong-for-advisor","CC_SWITCH_ADVISOR_MODEL":"gpt-6-astra[1M]"}}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let server = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..Default::default()
+            },
+            db,
+            None,
+        );
+        let info = server.start().await.unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut messages = Vec::new();
+        for streaming in [false, true] {
+            let response = client.post(format!("http://127.0.0.1:{}/v1/messages", info.port))
+                .header("authorization", "Bearer synthetic-client-secret")
+                .json(&json!({"model":"claude-sonnet-4-6","stream":streaming,"max_tokens":4096,
+                    "messages":[{"role":"user","content":"Consult advisor and continue."}],"tools":[]}))
+                .send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let text = response.text().await.unwrap();
+            let message = if streaming {
+                crate::proxy::providers::transform_codex_anthropic::anthropic_sse_to_message_value(
+                    &text,
+                )
+                .unwrap()
+            } else {
+                serde_json::from_str::<Value>(&text).unwrap()
+            };
+            assert_eq!(
+                message["content"][0]["type"], "server_tool_use",
+                "{message}"
+            );
+            assert_eq!(message["content"][1]["content"]["text"], "ADVISOR_ADVICE");
+            assert_eq!(message["content"][2]["text"], "EXECUTOR_CONTINUED");
+            assert_eq!(message["usage"]["iterations"][1]["model"], "gpt-6-astra");
+            messages.push(message);
+        }
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), 6);
+        for (index, request) in captured.iter().enumerate() {
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer synthetic-provider-secret")
+            );
+            if index % 3 == 1 {
+                assert_eq!(request.body["model"], "gpt-6-astra");
+                assert!(request
+                    .body
+                    .get("tools")
+                    .is_none_or(|tools| tools.as_array().is_some_and(Vec::is_empty)));
+            } else {
+                assert_eq!(request.body["model"], "working-model");
+                if index % 3 == 2 {
+                    assert!(request.body.to_string().contains("ADVISOR_ADVICE"));
+                }
+            }
+        }
+        assert_eq!(messages[0]["usage"], messages[1]["usage"]);
+        server.stop().await.unwrap();
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn advisor_compaction_preserves_upstream_errors_in_json_and_streams() {
+        let mock_app = Router::new().route(
+            "/v1/responses",
+            post(|axum::Json(body): axum::Json<Value>| async move {
+                let (status, kind, message) = if body["model"] == "rate-limit" {
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "rate_limit_error",
+                        "Rate limit reached",
+                    )
+                } else {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        "prompt is too long",
+                    )
+                };
+                (
+                    status,
+                    axum::Json(json!({"error":{"type":kind,"message":message}})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock_handle =
+            tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let mut provider = Provider::with_id(
+            "advisor-errors".into(),
+            "Advisor errors".into(),
+            json!({"env":{"ANTHROPIC_BASE_URL":format!("http://{address}/v1"),
+                "ANTHROPIC_AUTH_TOKEN":"synthetic-secret","CC_SWITCH_ADVISOR_MODEL":"gpt-6-astra"}}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let server = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..Default::default()
+            },
+            db,
+            None,
+        );
+        let info = server.start().await.unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        for (model, status, kind, message) in [
+            (
+                "context-limit",
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "prompt is too long",
+            ),
+            (
+                "rate-limit",
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "Rate limit reached",
+            ),
+        ] {
+            for streaming in [false, true] {
+                let response = client.post(format!("http://127.0.0.1:{}/v1/messages", info.port))
+                    .json(&json!({"model":model,"stream":streaming,"max_tokens":4096,
+                        "messages":[{"role":"user","content":"Summarize the conversation"}],"tools":[]}))
+                    .send().await.unwrap();
+                assert_eq!(
+                    response.status(),
+                    if streaming { StatusCode::OK } else { status }
+                );
+                let text = response.text().await.unwrap();
+                let error: Value = if streaming {
+                    serde_json::from_str(
+                        text.lines()
+                            .find_map(|line| line.strip_prefix("data: "))
+                            .unwrap(),
+                    )
+                    .unwrap()
+                } else {
+                    serde_json::from_str(&text).unwrap()
+                };
+                assert_eq!(error["error"]["type"], kind);
+                assert_eq!(error["error"]["message"], message);
+            }
+        }
+        server.stop().await.unwrap();
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn native_advisor_is_passed_through_without_local_execution() {
+        let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let mock_app = Router::new().route("/v1/messages", post({
+            let captured = captured.clone();
+            move |axum::Json(body): axum::Json<Value>| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().await.push(body);
+                    axum::Json(json!({"id":"msg_native","type":"message","role":"assistant","model":"claude-sonnet-4-6",
+                        "content":[{"type":"text","text":"Native advisor handled upstream"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}))
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock_handle =
+            tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = Provider::with_id(
+            "native-advisor".into(),
+            "Native".into(),
+            json!({"env":{
+            "ANTHROPIC_BASE_URL":format!("http://{address}"),"ANTHROPIC_AUTH_TOKEN":"synthetic-token",
+            "CC_SWITCH_ADVISOR_MODEL":"must-not-be-called"}}),
+            None,
+        );
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let server = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..Default::default()
+            },
+            db,
+            None,
+        );
+        let info = server.start().await.unwrap();
+        let native_tool = json!({"type":"advisor_20260301","name":"advisor","model":"claude-opus-5","max_uses":1});
+        let response = reqwest::Client::builder().no_proxy().build().unwrap()
+            .post(format!("http://127.0.0.1:{}/v1/messages", info.port))
+            .json(&json!({"model":"claude-sonnet-4-6","max_tokens":100,"stream":false,
+                "messages":[{"role":"user","content":"Review this"}],"tools":[native_tool.clone()]}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response: Value = response.json().await.unwrap();
+        assert_eq!(
+            response["content"][0]["text"],
+            "Native advisor handled upstream"
+        );
+        let requests = captured.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["tools"], json!([native_tool]));
+        server.stop().await.unwrap();
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
     async fn alpha_search_routes_forward_to_canonical_upstream() {
         let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
         let mock_app = Router::new().route(

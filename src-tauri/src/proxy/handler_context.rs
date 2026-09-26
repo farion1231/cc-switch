@@ -32,6 +32,7 @@ pub struct StreamingTimeoutConfig {
 /// - 请求模型名称
 /// - 日志标签
 /// - Session ID（用于日志关联）
+#[derive(Clone)]
 pub struct RequestContext {
     /// 请求开始时间
     pub start_time: Instant,
