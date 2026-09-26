@@ -219,6 +219,11 @@ export const skillsApi = {
     return await invoke("migrate_skill_storage", { target });
   },
 
+  /** 获取指定存储位置的实际 SSOT 目录（遵循配置目录覆盖） */
+  async getStorageDir(location: "cc_switch" | "unified"): Promise<string> {
+    return await invoke("get_skill_storage_dir", { location });
+  },
+
   /** 搜索 skills.sh 公共目录 */
   async searchSkillsSh(
     query: string,
