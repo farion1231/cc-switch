@@ -546,11 +546,12 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
         });
     }
 
-    // Sort supports_1m=true first within each name so the subsequent dedup_by
-    // (which keeps the first occurrence) preserves the 1M-capable variant.
+    // 档位序（sonnet → opus → fable → haiku）优先，档位内保持字典序；
+    // supports_1m=true 排前，保证后续 dedup_by（保留首个）留住 1M 档变体。
     result.sort_by(|a, b| {
-        a.name
-            .cmp(&b.name)
+        claude_role_rank(&a.name)
+            .cmp(&claude_role_rank(&b.name))
+            .then_with(|| a.name.cmp(&b.name))
             .then_with(|| b.supports_1m.cmp(&a.supports_1m))
     });
     result.dedup_by(|a, b| a.name == b.name);
@@ -607,7 +608,11 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
         });
     }
 
-    result.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+    result.sort_by(|a, b| {
+        claude_role_rank(&a.route_id)
+            .cmp(&claude_role_rank(&b.route_id))
+            .then_with(|| a.route_id.cmp(&b.route_id))
+    });
     result.dedup_by(|a, b| a.route_id == b.route_id);
 
     if result.is_empty() {
@@ -801,6 +806,20 @@ fn claude_role_keyword(model: &str) -> Option<&'static str> {
         Some("sonnet")
     } else {
         None
+    }
+}
+
+/// 档位输出顺序：与前端表单固定档位顺序一致（sonnet → opus → fable → haiku，
+/// 见前端 ROLE_ORDER），未命中角色词的条目排在最后。
+/// inferenceModels 与本地 /v1/models 都按此序输出，Claude Desktop 模型菜单
+/// 才能跟随界面档位顺序且多次启用保持稳定。
+fn claude_role_rank(model: &str) -> usize {
+    match claude_role_keyword(model) {
+        Some("sonnet") => 0,
+        Some("opus") => 1,
+        Some("fable") => 2,
+        Some("haiku") => 3,
+        _ => 4,
     }
 }
 
@@ -1621,6 +1640,100 @@ mod tests {
         assert_eq!(
             profile["inferenceModels"],
             json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
+        );
+    }
+
+    #[test]
+    fn claude_desktop_direct_writes_inference_models_in_tier_order() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let mut provider = direct_provider("direct-tier-order");
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Direct),
+            api_format: Some("anthropic".to_string()),
+            claude_desktop_model_routes: [
+                "claude-haiku-4-5",
+                "claude-sonnet-4-6",
+                "claude-fable-1-0",
+                "claude-opus-4-3",
+            ]
+            .into_iter()
+            .map(|route_id| {
+                (
+                    route_id.to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: route_id.to_string(),
+                        label_override: None,
+                        supports_1m: Some(false),
+                    },
+                )
+            })
+            .collect(),
+            ..Default::default()
+        });
+        let db = test_db();
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let names: Vec<&str> = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels")
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("name").and_then(Value::as_str))
+                    .expect("model name")
+            })
+            .collect();
+        // 界面固定档位顺序：Sonnet → Opus → Fable → Haiku（前端 ROLE_ORDER）。
+        assert_eq!(
+            names,
+            vec![
+                "claude-sonnet-4-6",
+                "claude-opus-4-3",
+                "claude-fable-1-0",
+                "claude-haiku-4-5",
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_desktop_proxy_writes_inference_models_in_tier_order() {
+        let mut provider = proxy_provider("proxy-tier-order");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = [
+            "claude-haiku-4-5",
+            "claude-sonnet-4-6",
+            "claude-fable-1-0",
+            "claude-opus-4-3",
+        ]
+        .into_iter()
+        .map(|route_id| {
+            (
+                route_id.to_string(),
+                ClaudeDesktopModelRoute {
+                    model: format!("upstream-{route_id}"),
+                    label_override: None,
+                    supports_1m: Some(false),
+                },
+            )
+        })
+        .collect();
+
+        let routes = proxy_model_routes(&provider).expect("resolve proxy routes");
+        let route_ids: Vec<&str> = routes.iter().map(|route| route.route_id.as_str()).collect();
+        assert_eq!(
+            route_ids,
+            vec![
+                "claude-sonnet-4-6",
+                "claude-opus-4-3",
+                "claude-fable-1-0",
+                "claude-haiku-4-5",
+            ]
         );
     }
 
