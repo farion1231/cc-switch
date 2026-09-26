@@ -164,6 +164,15 @@ export interface CodexChatReasoning {
   outputFormat?: CodexChatReasoningOutputFormat;
 }
 
+// Claude Code / Claude Desktop `openai_chat` 转换的 reasoning 能力声明。
+// 代理把客户端的 thinking/effort 意图翻译成上游参数：
+// - supportsThinking: 注入 chat_template_kwargs.enable_thinking（vLLM Qwen 方言）
+// - supportsEffort:   注入顶层 reasoning_effort（high/max 钳到 xhigh，适配 Qwen 系枚举）
+export interface ClaudeChatReasoning {
+  supportsThinking?: boolean;
+  supportsEffort?: boolean;
+}
+
 export type PromptCacheRoutingMode = "auto" | "enabled" | "disabled";
 
 export interface LocalProxyRequestOverrides {
@@ -218,6 +227,9 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Claude Code / Claude Desktop `openai_chat` 转换的 reasoning 能力声明
+  // （meta 键 claudeChatReasoning；本地模型名的 thinking/effort 透传开关）
+  claudeChatReasoning?: ClaudeChatReasoning;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
