@@ -412,7 +412,19 @@
         "mediaFallback": "不支援圖片降級",
         "mediaFallbackDescription": "當供應商不支援圖片輸入時（已宣告純文字能力，或上游回傳不支援圖片的錯誤），自動將圖片區塊替換為 [Unsupported Image] 標記，使對話不中斷",
         "mediaHeuristic": "純文字模型預判",
-        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
+        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告",
+        "steerUserRole": "Steer 訊息",
+        "steerUserRoleDescription": "當使用者在任務執行中追加訊息時，自動將對應的 system 訊息轉換為 user 訊息，保留訊息內容與位置",
+        "responseSystemGroup": "Response system 轉換",
+        "responseSystemDescription": "當 Claude Code 請求透過 Chat Completions 介面轉送時，依下方選項將對話中插入的 system 訊息轉換為 user 訊息，減少快取失效",
+        "tokenReminderUserRole": "Token 預算提醒",
+        "tokenReminderUserRoleDescription": "當 Claude Code 插入剩餘 token 提醒時，自動將提醒訊息的角色由 system 改為 user",
+        "todoReminderUserRole": "待辦提醒",
+        "todoReminderUserRoleDescription": "當 Claude Code 插入 TodoWrite 待辦提醒時，自動將提醒訊息的角色由 system 改為 user",
+        "taskNotificationUserRole": "背景工作通知",
+        "taskNotificationUserRoleDescription": "當背景工作產生狀態通知時，自動將通知訊息的角色由 system 改為 user，保留非使用者輸入說明",
+        "allSystemUserRole": "全部轉換",
+        "allSystemUserRoleDescription": "開啟後，將首條使用者訊息之後的所有 system 訊息轉換為 user 訊息，不再依訊息類型篩選。上面四項設定仍會保留，關閉後恢復；後續系統指令也將使用 user 優先級"
       },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",

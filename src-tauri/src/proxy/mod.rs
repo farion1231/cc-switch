@@ -24,6 +24,7 @@ pub mod model_mapper;
 pub mod provider_router;
 pub mod providers;
 pub mod response_processor;
+mod response_system_rectifier;
 pub(crate) mod server;
 pub mod session;
 pub(crate) mod sse;

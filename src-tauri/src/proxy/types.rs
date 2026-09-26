@@ -192,6 +192,22 @@ pub struct AppProxyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RectifierConfig {
+    /// Claude Code human steer: preserve cache prefixes on Chat Completions routes.
+    /// Opt-in because this changes a recognized mid-turn message's role to user.
+    #[serde(default)]
+    pub request_steer_user_role: bool,
+    /// Opt-in role conversion for recognized Claude Code token reminders.
+    #[serde(default)]
+    pub request_token_reminder_user_role: bool,
+    /// Opt-in role conversion for recognized Claude Code TodoWrite reminders.
+    #[serde(default)]
+    pub request_todo_reminder_user_role: bool,
+    /// Opt-in role conversion for recognized Claude Code background notifications.
+    #[serde(default)]
+    pub request_task_notification_user_role: bool,
+    /// Convert every system message after the first user; overrides individual filters.
+    #[serde(default)]
+    pub request_all_system_user_role: bool,
     /// 总开关：是否启用整流器（默认开启）
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -231,6 +247,11 @@ fn default_log_level() -> String {
 impl Default for RectifierConfig {
     fn default() -> Self {
         Self {
+            request_steer_user_role: false,
+            request_token_reminder_user_role: false,
+            request_todo_reminder_user_role: false,
+            request_task_notification_user_role: false,
+            request_all_system_user_role: false,
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
