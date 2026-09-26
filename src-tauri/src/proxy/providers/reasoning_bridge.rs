@@ -11,20 +11,43 @@ use serde_json::{json, Value};
 pub(crate) const OPENAI_REASONING_ITEM_PREFIX: &str = "ccswitch-openai-reasoning-v1:";
 
 pub(crate) fn reasoning_summary_text(item: &Value) -> String {
-    item.get("summary")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|part| {
-            matches!(
-                part.get("type").and_then(Value::as_str),
-                Some("summary_text" | "reasoning_text")
-            )
-            .then(|| part.get("text").and_then(Value::as_str))
-            .flatten()
-        })
-        .collect::<Vec<_>>()
-        .join("")
+    if let Some(text) = reasoning_parts_text(item.get("summary")) {
+        if !text.is_empty() {
+            return text;
+        }
+    }
+
+    // Responses-compatible gateways disagree about where visible reasoning lives:
+    // the official shape uses summary[], while some gateways expose reasoning_text
+    // in content[]. Prefer summary when both are present so mirrored payloads do
+    // not make the same thought appear twice.
+    reasoning_parts_text(item.get("content")).unwrap_or_default()
+}
+
+fn reasoning_parts_text(parts: Option<&Value>) -> Option<String> {
+    let parts = parts?;
+    match parts {
+        Value::String(value) => Some(value.clone()),
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        Value::Array(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| match part {
+                    Value::String(value) if !value.is_empty() => Some(value.as_str()),
+                    Value::Object(object) => object
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            Some(text.join("\n"))
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn encode_openai_reasoning_item(item: &Value) -> Option<String> {
@@ -45,7 +68,21 @@ pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
     (item.get("type").and_then(Value::as_str) == Some("reasoning")).then_some(item)
 }
 
+#[cfg(test)]
 pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {
+    anthropic_block_from_openai_reasoning_item_for_client(item, true)
+}
+
+/// Convert an opaque Responses reasoning item into a replayable Anthropic thinking block.
+///
+/// Encrypted reasoning without a visible summary needs a home for the replay
+/// envelope. Claude VSCode cannot render `redacted_thinking`, so those clients
+/// (`preserve_redacted_thinking = false`) get an empty thinking block; every
+/// other client keeps the historical `redacted_thinking` shape.
+pub(crate) fn anthropic_block_from_openai_reasoning_item_for_client(
+    item: &Value,
+    preserve_redacted_thinking: bool,
+) -> Option<Value> {
     if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return None;
     }
@@ -59,9 +96,19 @@ pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option
     if has_encrypted_content {
         let envelope = encode_openai_reasoning_item(item)?;
         if text.is_empty() {
+            if preserve_redacted_thinking {
+                return Some(json!({
+                    "type": "redacted_thinking",
+                    "data": envelope
+                }));
+            }
+            // Responses reasoning may be encrypted without a visible summary. Keep
+            // the replay envelope in a valid thinking block instead of exposing the
+            // unsupported redacted_thinking content type or a fake placeholder.
             return Some(json!({
-                "type": "redacted_thinking",
-                "data": envelope
+                "type": "thinking",
+                "thinking": "",
+                "signature": envelope
             }));
         }
         return Some(json!({
@@ -114,18 +161,80 @@ mod tests {
     }
 
     #[test]
-    fn encrypted_item_without_summary_uses_redacted_thinking() {
+    fn encrypted_item_without_summary_uses_empty_thinking_signature_for_vscode() {
         let item = json!({
             "id": "rs_2",
             "type": "reasoning",
             "summary": [],
             "encrypted_content": "opaque"
         });
-        let block = anthropic_block_from_openai_reasoning_item(&item).unwrap();
-        assert_eq!(block["type"], "redacted_thinking");
+        let block = anthropic_block_from_openai_reasoning_item_for_client(&item, false).unwrap();
+        assert_eq!(block["type"], "thinking");
+        assert_eq!(block["thinking"], "");
+        assert!(block.get("data").is_none());
         assert_eq!(
             openai_reasoning_item_from_anthropic_block(&block),
             Some(item)
         );
+    }
+
+    #[test]
+    fn encrypted_item_without_summary_keeps_redacted_thinking_for_compatible_clients() {
+        let item = json!({
+            "id": "rs_compat",
+            "type": "reasoning",
+            "summary": [],
+            "encrypted_content": "opaque"
+        });
+        let block = anthropic_block_from_openai_reasoning_item_for_client(&item, true).unwrap();
+        assert_eq!(block["type"], "redacted_thinking");
+        assert!(block["data"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
+        assert_eq!(
+            openai_reasoning_item_from_anthropic_block(&block),
+            Some(item)
+        );
+    }
+
+    #[test]
+    fn summary_text_falls_back_to_reasoning_content() {
+        let item = json!({
+            "type": "reasoning",
+            "summary": [],
+            "content": [
+                {"type": "reasoning_text", "text": "Restored from content."}
+            ]
+        });
+
+        assert_eq!(reasoning_summary_text(&item), "Restored from content.");
+    }
+
+    #[test]
+    fn summary_text_prefers_summary_when_content_mirrors_it() {
+        let item = json!({
+            "type": "reasoning",
+            "summary": [
+                {"type": "summary_text", "text": "Visible summary."}
+            ],
+            "content": [
+                {"type": "reasoning_text", "text": "Visible summary."}
+            ]
+        });
+
+        assert_eq!(reasoning_summary_text(&item), "Visible summary.");
+    }
+
+    #[test]
+    fn summary_text_accepts_string_parts_and_unknown_part_types() {
+        let item = json!({
+            "type": "reasoning",
+            "summary": [
+                "First ",
+                {"type": "future_summary_part", "text": "second"}
+            ]
+        });
+
+        assert_eq!(reasoning_summary_text(&item), "First \nsecond");
     }
 }
