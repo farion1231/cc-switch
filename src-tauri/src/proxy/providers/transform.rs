@@ -249,12 +249,19 @@ pub fn anthropic_to_openai_with_reasoning_content(
                 let mut function = json!({
                     "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
                 });
-                // 缺失的 description 省略而非输出 null：hosted 工具（web_search 等）
-                // 与未填描述的自定义/MCP 工具都不带该字段，严格上游收到 null 会
-                // 拒绝整个请求（400 "expected string, received null"）。
-                if let Some(description) = t.get("description").filter(|d| !d.is_null()) {
-                    function["description"] = description.clone();
-                }
+                // description 归一化：空值（缺失/null/空串/空白）回退为工具名。
+                // 仅省略字段不够——部分严格聚合端点（如 opencode Zen Go）要求
+                // 该字段存在且为非空字符串，缺失或省略都会拒绝整个请求
+                // （400 "function.description is required"）。
+                let description = t
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(str::trim)
+                    .filter(|d| !d.is_empty());
+                function["description"] = json!(match description {
+                    Some(d) => d,
+                    None => t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                });
                 function["parameters"] =
                     clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})));
                 json!({"type": "function", "function": function})
@@ -1112,10 +1119,35 @@ mod tests {
             tools[0]["function"]["description"],
             json!("Run a bash command")
         );
-        // 缺 description 的自定义工具与 hosted 工具：省略字段，而不是序列化成 null
-        assert!(tools[1]["function"].get("description").is_none());
-        assert!(tools[2]["function"].get("description").is_none());
+        // 缺 description 的自定义工具与 hosted 工具：回退为工具名，
+        // 保证严格聚合端点（要求该字段存在且非空）不会拒绝整个请求
+        assert_eq!(tools[1]["function"]["description"], json!("NoDesc"));
+        assert_eq!(tools[2]["function"]["description"], json!("web_search"));
         assert!(tools[1]["function"].get("parameters").is_some());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_blank_and_whitespace_description_falls_back_to_name() {
+        let input = json!({
+            "model": "claude-opus-5",
+            "max_tokens": 50,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"name": "EmptyDesc", "description": "",
+                 "input_schema": {"type": "object"}},
+                {"name": "BlankDesc", "description": "   \n\t",
+                 "input_schema": {"type": "object"}},
+                {"name": "NullDesc", "description": null,
+                 "input_schema": {"type": "object"}}
+            ]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0]["function"]["description"], json!("EmptyDesc"));
+        assert_eq!(tools[1]["function"]["description"], json!("BlankDesc"));
+        assert_eq!(tools[2]["function"]["description"], json!("NullDesc"));
     }
 
     #[test]
