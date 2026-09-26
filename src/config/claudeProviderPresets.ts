@@ -1640,17 +1640,11 @@ export const providerPresets: ProviderPreset[] = [
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
     settingsConfig: {
-      effortLevel: "high",
       env: {
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_BASE_URL: "https://e-flowcode.cc",
+        ENABLE_TOOL_SEARCH: "true",
       },
-      enabledPlugins: {
-        "superpowers@superpowers-marketplace": true,
-      },
-      includeCoAuthoredBy: false,
-      ENABLE_TOOL_SEARCH: true,
-      skipWebFetchPreflight: true,
     },
     category: "third_party",
     endpointCandidates: ["https://e-flowcode.cc"],
@@ -1816,7 +1810,6 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
       },
-      includeCoAuthoredBy: false,
     },
     category: "aggregator",
     icon: "pipellm",
@@ -1900,10 +1893,11 @@ export const providerPresets: ProviderPreset[] = [
     name: "AWS Bedrock (API Key)",
     websiteUrl: "https://aws.amazon.com/bedrock/",
     settingsConfig: {
-      apiKey: "",
       env: {
         ANTHROPIC_BASE_URL:
           "https://bedrock-runtime.${AWS_REGION}.amazonaws.com",
+        // Claude Code 只从这个变量读 Bedrock API Key，顶层 apiKey 它不认
+        AWS_BEARER_TOKEN_BEDROCK: "",
         AWS_REGION: "${AWS_REGION}",
         ANTHROPIC_MODEL: "global.anthropic.claude-opus-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL:

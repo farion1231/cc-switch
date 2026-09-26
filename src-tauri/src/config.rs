@@ -356,19 +356,29 @@ pub fn write_json_file_with_contents<T: Serialize>(
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
 
+    let contents = sorted_json_bytes(data)?;
+    atomic_write(path, &contents)?;
+    Ok(contents)
+}
+
+fn sorted_json_bytes<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
     let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
     let sorted_value = sort_json_keys(&value);
     let json = serde_json::to_string_pretty(&sorted_value)
         .map_err(|e| AppError::JsonSerialize { source: e })?;
-
-    let contents = json.into_bytes();
-    atomic_write(path, &contents)?;
-    Ok(contents)
+    Ok(json.into_bytes())
 }
 
 /// 写入 JSON 配置文件（键按字母排序，确保确定性输出）
 pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
     write_json_file_with_contents(path, data).map(|_| ())
+}
+
+/// 同 [`write_json_file`]，用于含凭据的 live 文件（Codex `auth.json`、Claude Code
+/// `settings.json`）：Unix 下新文件和替换文件都是 0600。普通写入新建文件时按 umask
+/// 落成 0644，Key 就对同机其他用户可读。
+pub fn write_json_file_private<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
+    atomic_write_private(path, &sorted_json_bytes(data)?)
 }
 
 /// 原子写入文本文件（用于 TOML/纯文本）
@@ -377,6 +387,12 @@ pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
     atomic_write(path, data.as_bytes())
+}
+
+/// 同 [`write_text_file`]，用于含凭据的 live 文件（Codex / Grok Build 的
+/// `config.toml`，第三方 Key 就写在里面）：Unix 下 0600。
+pub fn write_text_file_private(path: &Path, data: &str) -> Result<(), AppError> {
+    atomic_write_private(path, data.as_bytes())
 }
 
 /// 原子写入：写入临时文件后 rename 替换，避免半写状态

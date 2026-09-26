@@ -219,7 +219,13 @@ export const getApiKeyFromConfig = (
   try {
     const config = JSON.parse(jsonString);
 
-    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    // Bedrock API Key：Claude Code 读的是 env.AWS_BEARER_TOKEN_BEDROCK
+    const bedrockToken = config?.env?.AWS_BEARER_TOKEN_BEDROCK;
+    if (typeof bedrockToken === "string" && bedrockToken) {
+      return bedrockToken;
+    }
+
+    // 其次顶层 apiKey：旧版 Bedrock API Key 预设写在这里，存量行照常显示
     if (
       typeof config?.apiKey === "string" &&
       config.apiKey &&
@@ -312,12 +318,16 @@ export const hasApiKeyField = (
   try {
     const config = JSON.parse(jsonString);
 
-    // 检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    // 顶层 apiKey：旧版 Bedrock API Key 预设
     if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
       return true;
     }
 
     const env = config?.env ?? {};
+
+    if (Object.prototype.hasOwnProperty.call(env, "AWS_BEARER_TOKEN_BEDROCK")) {
+      return true;
+    }
 
     if (appType === "gemini") {
       return Object.prototype.hasOwnProperty.call(env, "GEMINI_API_KEY");
@@ -350,7 +360,19 @@ export const setApiKeyInConfig = (
   try {
     const config = JSON.parse(jsonString);
 
-    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    // Bedrock API Key：写回 env.AWS_BEARER_TOKEN_BEDROCK
+    if (
+      config?.env &&
+      Object.prototype.hasOwnProperty.call(
+        config.env,
+        "AWS_BEARER_TOKEN_BEDROCK",
+      )
+    ) {
+      config.env.AWS_BEARER_TOKEN_BEDROCK = apiKey;
+      return JSON.stringify(config, null, 2);
+    }
+
+    // 顶层 apiKey：旧版 Bedrock API Key 预设的存量行，写回原处
     if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
       config.apiKey = apiKey;
       return JSON.stringify(config, null, 2);

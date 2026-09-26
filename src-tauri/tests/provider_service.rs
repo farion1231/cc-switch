@@ -2763,6 +2763,315 @@ fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
     );
 }
 
+/// 敏感键规则补上自定义请求头之前，某家的 `ANTHROPIC_CUSTOM_HEADERS` 可能已经
+/// 进了片段并合并进当前 live。升级后第一次切走：片段要去掉它，当前供应商的行也
+/// 不能把它当成自己的值留下（否则会永久发往这家的上游），可共享的键照常保留。
+#[test]
+fn switch_claude_retires_custom_headers_that_leaked_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let leaked_header = "Authorization: Bearer a-secret";
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    let live = json!({
+        "env": {
+            "ANTHROPIC_AUTH_TOKEN": "c-key",
+            "ANTHROPIC_BASE_URL": "https://c.example",
+            "ANTHROPIC_CUSTOM_HEADERS": leaked_header
+        },
+        "theme": "dark"
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let opted_in = || {
+        Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        })
+    };
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "c".to_string();
+        let mut provider_c = Provider::with_id(
+            "c".to_string(),
+            "C".to_string(),
+            json!({ "env": {
+                "ANTHROPIC_AUTH_TOKEN": "c-key",
+                "ANTHROPIC_BASE_URL": "https://c.example"
+            } }),
+            None,
+        );
+        provider_c.meta = opted_in();
+        manager.providers.insert("c".to_string(), provider_c);
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": {
+                "ANTHROPIC_AUTH_TOKEN": "b-key",
+                "ANTHROPIC_BASE_URL": "https://b.example"
+            } }),
+            None,
+        );
+        provider_b.meta = opted_in();
+        manager.providers.insert("b".to_string(), provider_b);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                json!({
+                    "env": { "ANTHROPIC_CUSTOM_HEADERS": leaked_header },
+                    "theme": "dark"
+                })
+                .to_string(),
+            ),
+        )
+        .expect("seed polluted common config snippet");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+
+    let snippet: serde_json::Value = serde_json::from_str(
+        &state
+            .db
+            .get_config_snippet(AppType::Claude.as_str())
+            .expect("read snippet")
+            .expect("snippet present"),
+    )
+    .expect("snippet is valid JSON");
+    assert!(
+        snippet.pointer("/env/ANTHROPIC_CUSTOM_HEADERS").is_none(),
+        "custom headers must leave the shared snippet: {snippet}"
+    );
+    assert_eq!(snippet.get("theme"), Some(&json!("dark")));
+
+    let provider_c = state
+        .db
+        .get_provider_by_id("c", AppType::Claude.as_str())
+        .expect("read provider c")
+        .expect("provider c exists");
+    assert!(
+        provider_c
+            .settings_config
+            .pointer("/env/ANTHROPIC_CUSTOM_HEADERS")
+            .is_none(),
+        "backfill must not keep another provider's header in C's row: {}",
+        provider_c.settings_config
+    );
+    assert_eq!(
+        provider_c
+            .settings_config
+            .pointer("/env/ANTHROPIC_AUTH_TOKEN")
+            .and_then(|v| v.as_str()),
+        Some("c-key"),
+        "C's own credential stays in its row"
+    );
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live after switch");
+    assert!(
+        live_after
+            .pointer("/env/ANTHROPIC_CUSTOM_HEADERS")
+            .is_none(),
+        "the header must not follow into B's live: {live_after}"
+    );
+    assert_eq!(live_after.get("theme"), Some(&json!("dark")));
+}
+
+/// 旧版片段会收走 Bedrock 的选择器、区域和 `/model` 的选择：所有 Claude 供应商都勾选
+/// 通用配置，`current` 的 live 是 `live`，片段是 `snippet`。
+fn seed_claude_common_config_state(
+    providers: &[(&str, serde_json::Value)],
+    current: &str,
+    live: &serde_json::Value,
+    snippet: &serde_json::Value,
+) -> cc_switch_lib::AppState {
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir"))
+        .expect("create claude settings dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = current.to_string();
+        for (id, settings) in providers {
+            let mut provider =
+                Provider::with_id(id.to_string(), id.to_string(), settings.clone(), None);
+            provider.meta = Some(ProviderMeta {
+                common_config_enabled: Some(true),
+                ..Default::default()
+            });
+            manager.providers.insert(id.to_string(), provider);
+        }
+    }
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(AppType::Claude.as_str(), Some(snippet.to_string()))
+        .expect("seed polluted common config snippet");
+    state
+}
+
+fn claude_row(state: &cc_switch_lib::AppState, id: &str) -> serde_json::Value {
+    state
+        .db
+        .get_provider_by_id(id, AppType::Claude.as_str())
+        .expect("read provider")
+        .expect("provider exists")
+        .settings_config
+}
+
+/// 片段里残留的 Bedrock 选择器和 `/model` 选择不再共享：切走时从当前供应商的行里剥掉，
+/// 也不跟着进下一家的 live。
+#[test]
+fn switch_claude_retires_key_fields_that_leaked_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let leaked = json!({
+        "env": { "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-west-2" },
+        "model": "picked-on-bedrock",
+        "theme": "dark"
+    });
+    let state = seed_claude_common_config_state(
+        &[
+            ("official", json!({ "env": {} })),
+            (
+                "relay",
+                json!({ "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "relay-key",
+                    "ANTHROPIC_BASE_URL": "https://relay.example"
+                } }),
+            ),
+        ],
+        "official",
+        &leaked,
+        &leaked,
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "relay").expect("switch should succeed");
+
+    let official = claude_row(&state, "official");
+    for pointer in ["/env/CLAUDE_CODE_USE_BEDROCK", "/env/AWS_REGION", "/model"] {
+        assert!(
+            official.pointer(pointer).is_none(),
+            "{pointer} must not stay in the official row: {official}"
+        );
+    }
+    let snippet: serde_json::Value = serde_json::from_str(
+        &state
+            .db
+            .get_config_snippet(AppType::Claude.as_str())
+            .expect("read snippet")
+            .expect("snippet present"),
+    )
+    .expect("snippet is valid JSON");
+    assert_eq!(snippet, json!({ "theme": "dark" }));
+
+    let live_after: serde_json::Value =
+        read_json_file(&get_claude_settings_path()).expect("read live after switch");
+    assert!(live_after.pointer("/env/CLAUDE_CODE_USE_BEDROCK").is_none());
+    assert!(live_after.pointer("/env/AWS_REGION").is_none());
+    assert!(live_after.get("model").is_none());
+    assert_eq!(live_after.get("theme"), Some(&json!("dark")));
+}
+
+/// 当前供应商就是把选择器交给片段的那家 Bedrock（它的行里已被剥掉）：它自己带着
+/// AWS 凭据，同家族的选择器和区域留在它的行里，切回来仍能用。
+#[test]
+fn switch_claude_keeps_bedrock_selectors_owned_by_the_current_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let snippet = json!({
+        "env": { "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-west-2" },
+        "model": "picked-on-bedrock"
+    });
+    let bedrock_live = json!({
+        "env": {
+            "AWS_BEARER_TOKEN_BEDROCK": "bedrock-key",
+            "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-4-5-v1:0",
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "AWS_REGION": "us-west-2"
+        },
+        "model": "picked-on-bedrock"
+    });
+    let state = seed_claude_common_config_state(
+        &[
+            (
+                "bedrock",
+                json!({ "env": {
+                    "AWS_BEARER_TOKEN_BEDROCK": "bedrock-key",
+                    "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-4-5-v1:0"
+                } }),
+            ),
+            ("official", json!({ "env": {} })),
+        ],
+        "bedrock",
+        &bedrock_live,
+        &snippet,
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "official").expect("switch to official");
+
+    let bedrock = claude_row(&state, "bedrock");
+    assert_eq!(
+        bedrock.pointer("/env/CLAUDE_CODE_USE_BEDROCK"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
+        bedrock.pointer("/env/AWS_REGION"),
+        Some(&json!("us-west-2"))
+    );
+    assert!(
+        bedrock.get("model").is_none(),
+        "the /model choice is not a Bedrock selector: {bedrock}"
+    );
+    let official_live: serde_json::Value =
+        read_json_file(&get_claude_settings_path()).expect("read official live");
+    assert!(
+        official_live
+            .pointer("/env/CLAUDE_CODE_USE_BEDROCK")
+            .is_none()
+            && official_live.pointer("/env/AWS_REGION").is_none(),
+        "official must not inherit Bedrock routing: {official_live}"
+    );
+
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch back");
+    let bedrock_live_after: serde_json::Value =
+        read_json_file(&get_claude_settings_path()).expect("read bedrock live");
+    assert_eq!(
+        bedrock_live_after.pointer("/env/CLAUDE_CODE_USE_BEDROCK"),
+        Some(&json!("1"))
+    );
+    assert_eq!(
+        bedrock_live_after.pointer("/env/AWS_REGION"),
+        Some(&json!("us-west-2"))
+    );
+}
+
 /// 用户在应用内删掉一个已共享的键后，切换应把删除同步进通用配置，
 /// 且不会在切到下一个供应商时被重新注入（否则会"删不掉"）。
 #[test]
@@ -3549,4 +3858,102 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
             .unwrap_or(true),
         "recovery must drop the local proxy base URL"
     );
+}
+
+/// 切换写出的 live 文件里有 Key（Codex 的 auth.json 与 config.toml、Claude Code 的
+/// settings.json、Grok Build 的 config.toml），新建或替换时都只给本人读写：普通写入
+/// 新建文件按 umask 落成 0644，同机其他用户就能读到 Key。
+#[cfg(unix)]
+#[test]
+fn switch_writes_credential_files_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    for dir in [".claude", ".codex", ".grok"] {
+        std::fs::create_dir_all(home.join(dir)).expect("create client dir");
+    }
+    // 已有的 settings.json 是 0644：替换写入后也收紧。
+    let claude_settings = get_claude_settings_path();
+    std::fs::write(&claude_settings, "{}").expect("seed claude settings");
+    std::fs::set_permissions(&claude_settings, std::fs::Permissions::from_mode(0o644))
+        .expect("chmod 644");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let claude = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        claude.current = "claude-a".to_string();
+        for (id, key) in [("claude-a", "sk-a"), ("claude-b", "sk-b")] {
+            claude.providers.insert(
+                id.to_string(),
+                Provider::with_id(
+                    id.to_string(),
+                    id.to_string(),
+                    json!({ "env": { "ANTHROPIC_AUTH_TOKEN": key } }),
+                    None,
+                ),
+            );
+        }
+    }
+    {
+        let codex = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        codex.current = "codex-official".to_string();
+        let mut official = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI".to_string(),
+            json!({ "auth": { "OPENAI_API_KEY": "sk-official" }, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        codex
+            .providers
+            .insert("codex-official".to_string(), official);
+        codex.providers.insert(
+            "codex-relay".to_string(),
+            Provider::with_id(
+                "codex-relay".to_string(),
+                "Relay".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-relay" },
+                    "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    }
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::GrokBuild.as_str(),
+            &Provider::with_id(
+                "grok-relay".to_string(),
+                "Relay".to_string(),
+                json!({ "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://relay.example/v1\"\nname = \"Relay\"\napi_key = \"xai-relay\"\napi_backend = \"responses\"\ncontext_window = 500000\n" }),
+                None,
+            ),
+        )
+        .expect("save grok provider");
+
+    let mode = |path: &std::path::Path| {
+        std::fs::metadata(path)
+            .unwrap_or_else(|e| panic!("stat {}: {e}", path.display()))
+            .permissions()
+            .mode()
+            & 0o777
+    };
+
+    ProviderService::switch(&state, AppType::Codex, "codex-official").expect("codex official");
+    assert_eq!(mode(&cc_switch_lib::get_codex_auth_path()), 0o600);
+    ProviderService::switch(&state, AppType::Codex, "codex-relay").expect("codex relay");
+    assert_eq!(mode(&cc_switch_lib::get_codex_config_path()), 0o600);
+    ProviderService::switch(&state, AppType::Claude, "claude-b").expect("claude b");
+    assert_eq!(mode(&claude_settings), 0o600);
+    ProviderService::switch(&state, AppType::GrokBuild, "grok-relay").expect("grok relay");
+    assert_eq!(mode(&cc_switch_lib::get_grok_config_path()), 0o600);
 }

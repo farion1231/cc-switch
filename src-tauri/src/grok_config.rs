@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::config::{get_home_dir, write_text_file};
+use crate::config::{get_home_dir, write_text_file_private};
 use crate::error::AppError;
 use crate::provider::Provider;
 
@@ -453,7 +453,7 @@ pub fn write_grok_live_settings(settings: &Value) -> Result<(), AppError> {
             )
         })?;
     validate_config_toml_syntax(config)?;
-    write_text_file(&get_grok_config_path(), config)
+    write_text_file_private(&get_grok_config_path(), config)
 }
 
 #[cfg(test)]

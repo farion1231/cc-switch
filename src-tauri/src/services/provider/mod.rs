@@ -47,7 +47,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live,
 };
 use usage::validate_usage_script;
 
@@ -938,6 +938,12 @@ mod tests {
             "DB_PASS",
             "GPG_PASSPHRASE",
             "AWS_CREDS",
+            // 发往上游的自定义请求头、Cookie、Authorization
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "GEMINI_CLI_CUSTOM_HEADERS",
+            "headers",
+            "UPSTREAM_COOKIE",
+            "PROXY_AUTHORIZATION",
         ] {
             assert!(
                 ProviderService::is_sensitive_config_key(key),
@@ -953,6 +959,9 @@ mod tests {
             "SSL_BYPASS",
             "GEMINI_TIMEOUT_MS",
             "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            // 名字带 HEADER 但不是发往上游的凭据：普通开关、用户自己的遥测端点
+            "CLAUDE_CODE_ATTRIBUTION_HEADER",
+            "OTEL_EXPORTER_OTLP_HEADERS",
         ] {
             assert!(
                 !ProviderService::is_sensitive_config_key(key),
@@ -1578,6 +1587,109 @@ GEMINI_TIMEOUT_MS=30000
         );
         assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
         assert_eq!(value.get("includeCoAuthoredBy"), Some(&json!(false)));
+    }
+
+    /// 关键字段（协议选择器、Bedrock/Vertex 区域、`/model` 的选择等）不进共享片段；
+    /// 同在 `CLAUDE_CODE_USE_` 前缀下、与供应商无关的开关照常共享。
+    #[test]
+    fn extract_claude_common_config_keeps_key_fields_per_provider() {
+        let settings = json!({
+            "env": {
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "CLAUDE_CODE_USE_VERTEX": "1",
+                "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
+                "AWS_REGION": "us-west-2",
+                "AWS_PROFILE": "work",
+                "CLOUD_ML_REGION": "us-east5",
+                "VERTEX_REGION_CLAUDE_4_0_OPUS": "europe-west1",
+                "ANTHROPIC_VERTEX_PROJECT_ID": "my-project",
+                "ANTHROPIC_SMALL_FAST_MODEL": "haiku",
+                "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1",
+                "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+                "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+                "DISABLE_TELEMETRY": "1"
+            },
+            "model": "opus",
+            "fallbackModel": "sonnet",
+            "apiKeyHelper": "~/bin/key.sh",
+            "awsAuthRefresh": "aws sso login",
+            "hooks": { "Stop": [] },
+            "theme": "dark"
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        assert_eq!(
+            value,
+            json!({
+                "env": {
+                    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+                    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+                    "DISABLE_TELEMETRY": "1"
+                },
+                "hooks": { "Stop": [] },
+                "theme": "dark"
+            })
+        );
+        assert!(
+            snippet.find("CLAUDE_CODE_USE_POWERSHELL_TOOL") < snippet.find("DISABLE_TELEMETRY"),
+            "removing keys must not reorder the ones that stay: {snippet}"
+        );
+    }
+
+    /// 切走时按旧片段剥离「不再共享」的条目，但当前供应商自己带着 AWS 凭据时，
+    /// 同家族的选择器和区域是它自己的，不剥。
+    #[test]
+    fn retired_snippet_entries_keep_the_current_providers_own_family() {
+        let old_snippet = json!({
+            "env": {
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "AWS_REGION": "us-west-2",
+                "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer x",
+                "DISABLE_TELEMETRY": "1"
+            },
+            "model": "picked",
+            "theme": "dark"
+        })
+        .to_string();
+        let retired = |live: Value| -> Value {
+            ProviderService::retired_snippet_entries(&AppType::Claude, &old_snippet, &live)
+                .map(|text| serde_json::from_str(&text).expect("valid JSON"))
+                .unwrap_or(Value::Null)
+        };
+
+        assert_eq!(
+            retired(json!({ "env": {} })),
+            json!({
+                "env": {
+                    "CLAUDE_CODE_USE_BEDROCK": "1",
+                    "AWS_REGION": "us-west-2",
+                    "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer x"
+                },
+                "model": "picked"
+            })
+        );
+        for live in [
+            json!({ "env": { "AWS_BEARER_TOKEN_BEDROCK": "k", "ANTHROPIC_MODEL": "arn" } }),
+            json!({ "env": { "AWS_ACCESS_KEY_ID": "AKIA", "ANTHROPIC_MODEL": "arn" } }),
+            // 旧版 Bedrock API Key 预设把 Key 写在顶层。
+            json!({ "env": { "ANTHROPIC_MODEL": "arn" }, "apiKey": "legacy-bedrock-key" }),
+        ] {
+            assert_eq!(
+                retired(live),
+                json!({
+                    "env": { "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer x" },
+                    "model": "picked"
+                }),
+                "the Bedrock provider keeps its own selector and region"
+            );
+        }
+        assert_eq!(
+            ProviderService::retired_snippet_entries(&AppType::Codex, &old_snippet, &json!({})),
+            None
+        );
     }
 
     /// Regression for issue #4272: Fable tier env keys must not enter the shared
@@ -5852,7 +5964,7 @@ impl ProviderService {
                             // 切走前先把 live 里的可共享改动（含用户直接在应用内
                             // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
                             // 详见 sync_common_config_snippet_from_live 的文档。
-                            Self::sync_common_config_snippet_from_live(
+                            let retired_entries = Self::sync_common_config_snippet_from_live(
                                 state,
                                 &app_type,
                                 &current_provider,
@@ -5867,6 +5979,19 @@ impl ProviderService {
                                     &current_provider,
                                     live_config,
                                 );
+                            if let Some(retired) = retired_entries.as_deref() {
+                                match live::remove_common_config_from_settings(
+                                    &app_type,
+                                    &current_provider.settings_config,
+                                    retired,
+                                ) {
+                                    Ok(cleaned) => current_provider.settings_config = cleaned,
+                                    Err(err) => log::warn!(
+                                        "Failed to strip retired common config entries from '{}': {err}",
+                                        current_provider.id
+                                    ),
+                                }
+                            }
                             if let Err(e) =
                                 state.db.save_provider(app_type.as_str(), &current_provider)
                             {
@@ -6213,16 +6338,19 @@ impl ProviderService {
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
     /// 配置又塞回来。所有失败均为非致命，只记 warning，绝不阻断切换。
+    ///
+    /// 返回值：旧片段里按现行提取规则不再共享的条目（见
+    /// `retired_snippet_entries`），调用方回填时要按值相等一并剥掉。
     fn sync_common_config_snippet_from_live(
         state: &AppState,
         app_type: &AppType,
         provider: &Provider,
         live_config: &Value,
         result: &mut SwitchResult,
-    ) {
+    ) -> Option<String> {
         // 作用域限定 Claude + Codex（见函数文档）。
         if !matches!(app_type, AppType::Claude | AppType::Codex) {
-            return;
+            return None;
         }
 
         let opted_in = provider
@@ -6231,18 +6359,18 @@ impl ProviderService {
             .and_then(|meta| meta.common_config_enabled)
             == Some(true);
         if !opted_in {
-            return;
+            return None;
         }
 
         match state.db.is_config_snippet_cleared(app_type.as_str()) {
-            Ok(true) => return, // 用户显式清空过通用配置，尊重其选择，不再自动塞回
+            Ok(true) => return None, // 用户显式清空过通用配置，尊重其选择，不再自动塞回
             Ok(false) => {}
             Err(err) => {
                 log::warn!(
                     "Failed to read common config cleared flag for {}: {err}",
                     app_type.as_str()
                 );
-                return;
+                return None;
             }
         }
 
@@ -6257,7 +6385,7 @@ impl ProviderService {
                     app_type.as_str(),
                     provider.id
                 );
-                return;
+                return None;
             }
         };
 
@@ -6268,7 +6396,7 @@ impl ProviderService {
             .ok()
             .flatten();
         if current.as_deref() == Some(new_snippet.as_str()) {
-            return;
+            return None;
         }
 
         if let Err(err) = state
@@ -6283,7 +6411,104 @@ impl ProviderService {
             result
                 .warnings
                 .push(format!("common_config_sync_failed:{}", provider.id));
+            // 旧片段还在库里，回填照旧按它剥离，不需要额外处理
+            return None;
         }
+
+        current
+            .as_deref()
+            .and_then(|old| Self::retired_snippet_entries(app_type, old, live_config))
+    }
+
+    /// 旧片段里、按现行提取规则不再共享的条目（凭据、关键字段），序列化成可交给
+    /// `remove_common_config_from_settings` 的片段文本；没有则返回 `None`。
+    ///
+    /// 提取规则收紧后（补上 `ANTHROPIC_CUSTOM_HEADERS` 这类凭据、`CLAUDE_CODE_USE_BEDROCK`
+    /// 这类关键字段），存量片段里还留着这些条目，并已合并进当前 live。重提取会把它们从
+    /// 片段里去掉，但回填按**新**片段剥离，就剥不掉它们，于是某一家的自定义头、Bedrock
+    /// 选择器会被永久写进**当前**供应商的行。所以切换时要按旧片段里的值再剥一次。
+    ///
+    /// 例外：当前供应商自己带着 AWS / Google 的凭据时，同家族的选择器和区域是它自己的
+    /// （片段收走它们时，也从它的行里剥掉了），不剥。凭据键从不进片段，一定是这一家的。
+    ///
+    /// 代价：别的供应商如果把自己的选择器或区域交给了片段，这次之后要重填一次；
+    /// `/model` 的选择回到默认模型。与 `scrub_leaked_gemini_common_config` 取舍一致：
+    /// 宁可让人重填，也不把一家的凭据和路由留在别家的行里。
+    ///
+    /// 只处理 Claude：Codex 提取器不走这套规则（整张 `model_providers` 表已剥离）。
+    fn retired_snippet_entries(app_type: &AppType, snippet: &str, live: &Value) -> Option<String> {
+        if !matches!(app_type, AppType::Claude) {
+            return None;
+        }
+        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(snippet) else {
+            return None;
+        };
+
+        let owns_aws = Self::claude_owns_credentials(live, "AWS_");
+        let owns_google = Self::claude_owns_credentials(live, "GOOGLE_");
+        let keep = |key: &str| {
+            (owns_aws && Self::is_claude_aws_family_key(key))
+                || (owns_google && Self::is_claude_google_family_key(key))
+        };
+
+        let mut retired = serde_json::Map::new();
+        for (key, value) in entries {
+            if key == "env" {
+                let Value::Object(env) = value else {
+                    continue;
+                };
+                let env: serde_json::Map<String, Value> = env
+                    .into_iter()
+                    .filter(|(name, _)| !Self::claude_env_key_is_shared(name) && !keep(name))
+                    .collect();
+                if !env.is_empty() {
+                    retired.insert(key, Value::Object(env));
+                }
+            } else if !Self::claude_top_key_is_shared(&key) && !keep(&key) {
+                retired.insert(key, value);
+            }
+        }
+
+        (!retired.is_empty()).then(|| Value::Object(retired).to_string())
+    }
+
+    /// live 里是否有这家自己的某类凭据：`env` 里带该前缀的敏感键。AWS 另认旧 Bedrock
+    /// API Key 预设写在顶层的 `apiKey`（Claude Code 自身没有这个设置）。
+    fn claude_owns_credentials(live: &Value, env_prefix: &str) -> bool {
+        let in_env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .is_some_and(|env| {
+                env.keys()
+                    .any(|key| key.starts_with(env_prefix) && Self::is_sensitive_config_key(key))
+            });
+        in_env || (env_prefix == "AWS_" && live.get("apiKey").is_some())
+    }
+
+    fn is_claude_aws_family_key(key: &str) -> bool {
+        key.starts_with("AWS_")
+            || key.starts_with("ANTHROPIC_BEDROCK_")
+            || matches!(
+                key,
+                "CLAUDE_CODE_USE_BEDROCK"
+                    | "CLAUDE_CODE_USE_ANTHROPIC_AWS"
+                    | "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION"
+                    | "awsAuthRefresh"
+                    | "awsCredentialExport"
+            )
+    }
+
+    fn is_claude_google_family_key(key: &str) -> bool {
+        key.starts_with("GOOGLE_")
+            || key.starts_with("VERTEX_REGION_")
+            || key.starts_with("ANTHROPIC_VERTEX_")
+            || matches!(
+                key,
+                "CLAUDE_CODE_USE_VERTEX"
+                    | "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"
+                    | "CLOUD_ML_REGION"
+                    | "gcpAuthRefresh"
+            )
     }
 
     /// Extract common config snippet from current provider
@@ -6344,8 +6569,8 @@ impl ProviderService {
     /// 覆盖：Anthropic / OpenRouter / Google / OpenAI / Gemini 等 `*_API_KEY`
     /// （Claude provider 的凭据见 `Provider::resolve_usage_credentials`，确实支持
     /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
-    /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、以及通用 secret / password /
-    /// 私钥命名。
+    /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、通用 secret / password /
+    /// 私钥命名，以及发往上游的自定义请求头、Cookie、Authorization。
     pub(crate) fn is_sensitive_config_key(name: &str) -> bool {
         let upper = name.to_ascii_uppercase();
 
@@ -6379,6 +6604,12 @@ impl ProviderService {
             "_PASS",
             "_PASSPHRASE",
             "_CREDS",
+            // 发往上游的自定义请求头（ANTHROPIC_CUSTOM_HEADERS、
+            // GEMINI_CLI_CUSTOM_HEADERS）：常见写法是 `Authorization: Bearer …`
+            // 或 `Cookie: …`，整串就是凭据。只认 `_CUSTOM_HEADERS`，不按 HEADER
+            // 一刀切：CLAUDE_CODE_ATTRIBUTION_HEADER 是普通开关，
+            // OTEL_EXPORTER_OTLP_HEADERS 发往用户自己的遥测端点，都应照常共享。
+            "_CUSTOM_HEADERS",
         ];
         const SENSITIVE_EXACT: &[&str] = &[
             "APIKEY",
@@ -6387,6 +6618,7 @@ impl ProviderService {
             "SECRET",
             "PASSWORD",
             "CREDENTIALS",
+            "HEADERS",
         ];
         // contains：覆盖 AWS_SECRET_ACCESS_KEY / *_CLIENT_SECRET /
         // GOOGLE_APPLICATION_CREDENTIALS / AWS_BEARER_TOKEN_BEDROCK 等变体。
@@ -6397,6 +6629,8 @@ impl ProviderService {
             "CREDENTIAL",
             "PRIVATE_KEY",
             "BEARER_TOKEN",
+            "COOKIE",
+            "AUTHORIZATION",
         ];
 
         SENSITIVE_EXACT.contains(&upper.as_str())
@@ -6404,75 +6638,85 @@ impl ProviderService {
             || SENSITIVE_CONTAINS.iter().any(|c| upper.contains(c))
     }
 
+    /// Claude `env` 里的键能否进通用配置片段。
+    ///
+    /// 片段会合并进每一家勾选了它的供应商，所以只能放与供应商无关的设置。关键字段
+    /// （请求发到哪、凭什么鉴权、哪个模型名、哪种协议）一旦进了片段，就会跟着切换带给
+    /// 下一家：从 Bedrock 切到官方后，官方的 live 里还留着 `CLAUDE_CODE_USE_BEDROCK=1`，
+    /// Claude Code 继续走 Bedrock。凭据另由 `is_sensitive_config_key` 统一剥离。
+    fn claude_env_key_is_shared(key: &str) -> bool {
+        // `CLAUDE_CODE_USE_*` 不能按前缀：同一前缀下还有 USE_POWERSHELL_TOOL、
+        // USE_NATIVE_FILE_SEARCH 这类与供应商无关的开关（Claude Code 2.1.282 核实）。
+        const PROTOCOL_SELECTORS: &[&str] = &[
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+            "CLAUDE_CODE_USE_GATEWAY",
+            "CLAUDE_CODE_USE_MANTLE",
+            "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+            "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+        ];
+        // Context limits follow the actual upstream model. Sharing these
+        // across providers can cap GPT/Kimi to the wrong window and make
+        // Claude Code compact too early or miss the upstream limit.
+        const UPSTREAM_WINDOW_KEYS: &[&str] = &[
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        ];
+
+        // `ANTHROPIC_*` 整个前缀都是地址、凭据、各档模型名（含 #4272 的 Fable 档）
+        // 和自定义头；`AWS_*` / `VERTEX_REGION_*` 是 Bedrock / Vertex 的区域与凭据。
+        let key_field = key.starts_with("ANTHROPIC_")
+            || PROTOCOL_SELECTORS.contains(&key)
+            || (key.starts_with("CLAUDE_CODE_SKIP_") && key.ends_with("_AUTH"))
+            || key.starts_with("AWS_")
+            || key.starts_with("VERTEX_REGION_")
+            || matches!(
+                key,
+                "CLAUDE_CODE_SUBAGENT_MODEL"
+                    | "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"
+                    | "CLOUD_ML_REGION"
+                    | "GOOGLE_APPLICATION_CREDENTIALS"
+                    | "CLAUDE_CODE_OAUTH_TOKEN"
+                    | "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"
+                    | "CLAUDE_CODE_OAUTH_SCOPES"
+                    | "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"
+            );
+        !key_field && !UPSTREAM_WINDOW_KEYS.contains(&key) && !Self::is_sensitive_config_key(key)
+    }
+
+    /// Claude 顶层键能否进通用配置片段，口径同 [`Self::claude_env_key_is_shared`]。
+    /// `model` 是 `/model` 保存的选择，属于当时那一家。
+    fn claude_top_key_is_shared(key: &str) -> bool {
+        const KEY_FIELDS: &[&str] = &[
+            "apiKeyHelper",
+            "apiBaseUrl",
+            "primaryModel",
+            "smallFastModel",
+            "apiKey",
+            "model",
+            "fallbackModel",
+            "modelOverrides",
+            "advisorModel",
+            "awsAuthRefresh",
+            "awsCredentialExport",
+            "gcpAuthRefresh",
+        ];
+        !KEY_FIELDS.contains(&key) && !Self::is_sensitive_config_key(key)
+    }
+
     /// Extract common config for Claude (JSON format)
     fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
         let mut config = settings.clone();
 
-        // 供应商专属的**非机密**字段（模型 + 端点），不应共享。凭据/机密不在此列举，
-        // 改由 `is_sensitive_config_key`（模式匹配）统一剥离，新供应商的 `*_API_KEY`
-        // 等无需再手工补名单即可被覆盖。
-        const ENV_PROVIDER_SPECIFIC_EXCLUDES: &[&str] = &[
-            "ANTHROPIC_MODEL",
-            "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            // Fable 是 v3.16.3 新增的第四档模型映射，与 haiku/sonnet/opus 同属供应商专属，
-            // 不得进入通用配置片段，否则会污染其它供应商（issue #4272）。
-            "ANTHROPIC_DEFAULT_FABLE_MODEL",
-            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
-            "CLAUDE_CODE_SUBAGENT_MODEL",
-            // Context limits follow the actual upstream model. Sharing these
-            // across providers can cap GPT/Kimi to the wrong window and make
-            // Claude Code compact too early or miss the upstream limit.
-            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-            "ANTHROPIC_BASE_URL",
-        ];
-
-        const TOP_LEVEL_EXCLUDES: &[&str] = &[
-            "apiBaseUrl",
-            // Legacy model fields
-            "primaryModel",
-            "smallFastModel",
-        ];
-
-        // Remove env fields: provider-specific (models/endpoint) + 任何凭据键。
-        if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
-            let sensitive: Vec<String> = env
-                .keys()
-                .filter(|k| Self::is_sensitive_config_key(k))
-                .cloned()
-                .collect();
-            for key in ENV_PROVIDER_SPECIFIC_EXCLUDES {
-                env.remove(*key);
-            }
-            for key in &sensitive {
-                env.remove(key);
-            }
-            // If env is empty after removal, remove the env object itself
-            if env.is_empty() {
-                config.as_object_mut().map(|obj| obj.remove("env"));
-            }
-        }
-
-        // Remove top-level fields: legacy model fields + 任何凭据键
-        // （例如非标准的顶层 apiKey / api_key / *_TOKEN）。
         if let Some(obj) = config.as_object_mut() {
-            let sensitive: Vec<String> = obj
-                .keys()
-                .filter(|k| Self::is_sensitive_config_key(k))
-                .cloned()
-                .collect();
-            for key in TOP_LEVEL_EXCLUDES {
-                obj.remove(*key);
+            if let Some(Value::Object(env)) = obj.get_mut("env") {
+                env.retain(|key, _| Self::claude_env_key_is_shared(key));
             }
-            for key in &sensitive {
-                obj.remove(key);
-            }
+            obj.retain(|key, value| match key.as_str() {
+                "env" => !value.as_object().is_some_and(|env| env.is_empty()),
+                _ => Self::claude_top_key_is_shared(key),
+            });
         }
 
         // Check if result is empty
@@ -6976,10 +7220,6 @@ impl ProviderService {
             template_type,
         )
         .await
-    }
-
-    pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
-        write_gemini_live(provider)
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
