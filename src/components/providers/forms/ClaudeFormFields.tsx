@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -155,6 +156,9 @@ interface ClaudeFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  // Strip Claude Code fingerprint headers on transform paths (default false)
+  stripClaudeCodeFingerprint: boolean;
+  onStripClaudeCodeFingerprintChange: (value: boolean) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -221,6 +225,8 @@ export function ClaudeFormFields({
   onFullUrlChange,
   customUserAgent,
   onCustomUserAgentChange,
+  stripClaudeCodeFingerprint,
+  onStripClaudeCodeFingerprintChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -240,6 +246,7 @@ export function ClaudeFormFields({
     (!isXaiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
+    stripClaudeCodeFingerprint ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -1093,6 +1100,29 @@ export function ClaudeFormFields({
                     "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
                 })}
               </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+              <div className="space-y-1">
+                <FormLabel>
+                  {t("providerForm.stripClaudeCodeFingerprint", {
+                    defaultValue: "剥离 Claude Code 指纹头",
+                  })}
+                </FormLabel>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("providerForm.stripClaudeCodeFingerprintHint", {
+                    defaultValue:
+                      "默认关闭。开启后仅在 API 格式转换路径（OpenAI Chat / Responses / Gemini）生效：转发前移除 x-app、x-stainless-*、x-claude-code-* 等客户端指纹头。原生 Anthropic 透传不受影响。",
+                  })}
+                </p>
+              </div>
+              <Switch
+                checked={stripClaudeCodeFingerprint}
+                onCheckedChange={onStripClaudeCodeFingerprintChange}
+                aria-label={t("providerForm.stripClaudeCodeFingerprint", {
+                  defaultValue: "剥离 Claude Code 指纹头",
+                })}
+              />
             </div>
 
             <CustomUserAgentField

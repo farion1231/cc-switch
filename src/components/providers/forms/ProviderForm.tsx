@@ -424,6 +424,9 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setStripClaudeCodeFingerprint(
+      initialData?.meta?.stripClaudeCodeFingerprint ?? false,
+    );
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -623,6 +626,10 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  const [stripClaudeCodeFingerprint, setStripClaudeCodeFingerprint] =
+    useState<boolean>(
+      () => initialData?.meta?.stripClaudeCodeFingerprint ?? false,
+    );
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -1775,6 +1782,13 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      // 仅在显式开启时持久化 true；缺省（undefined）视为关闭，与后端语义一致。
+      stripClaudeCodeFingerprint:
+        appId === "claude" &&
+        category !== "official" &&
+        stripClaudeCodeFingerprint
+          ? true
+          : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
@@ -2432,6 +2446,8 @@ function ProviderFormFull({
               onFullUrlChange={setLocalIsFullUrl}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              stripClaudeCodeFingerprint={stripClaudeCodeFingerprint}
+              onStripClaudeCodeFingerprintChange={setStripClaudeCodeFingerprint}
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
