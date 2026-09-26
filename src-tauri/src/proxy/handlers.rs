@@ -75,28 +75,103 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
     Ok(Json(status))
 }
 
-/// GET /v1/models — Codex model list (reachability check)
-///
-/// Codex CLI probes this endpoint at startup and deserializes the response as a
-/// catalog with a top-level `models` field.  Return the cc-switch–managed model
-/// catalog file directly so the format always matches what the current version
-/// of Codex expects.
-///
-/// Only serves the catalog when the live config.toml still references the
-/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
-/// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
-    let config_dir = crate::codex_config::get_codex_config_dir();
-    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
-        Ok(config_text) => {
-            crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &config_dir)
-        }
-        Err(_) => None,
-    };
+/// GET /models and /v1/models — account-specific official catalog, or the
+/// active CC Switch-owned catalog for third-party providers.
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let provider_id = crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+        .map_err(|error| ProxyError::DatabaseError(error.to_string()))?;
+    let provider = provider_id
+        .as_deref()
+        .map(|id| state.db.get_provider_by_id(id, "codex"))
+        .transpose()
+        .map_err(|error| ProxyError::DatabaseError(error.to_string()))?
+        .flatten();
+    if let Some(provider) = provider.filter(super::providers::is_codex_official_provider) {
+        super::forwarder::authorize_codex_official_request(
+            state.app_handle.as_ref(),
+            request.headers(),
+            &provider,
+        )
+        .await?;
+        let client =
+            super::http_client::get_without_redirects().map_err(ProxyError::ForwardFailed)?;
+        return fetch_official_model_catalog(
+            &client,
+            super::providers::CHATGPT_CODEX_BASE_URL,
+            request.uri(),
+            request.headers(),
+        )
+        .await;
+    }
 
-    let catalog = if let Some(catalog_path) =
-        active_catalog_path.as_ref().filter(|path| path.exists())
-    {
+    let config_dir = crate::codex_config::get_codex_config_dir();
+    let config_text = crate::codex_config::read_codex_config_text().ok();
+    Ok(Json(read_managed_model_catalog(
+        config_text.as_deref(),
+        &config_dir,
+    ))
+    .into_response())
+}
+
+async fn fetch_official_model_catalog(
+    client: &reqwest::Client,
+    base_url: &str,
+    uri: &http::Uri,
+    headers: &http::HeaderMap,
+) -> Result<axum::response::Response, ProxyError> {
+    let mut url = format!("{base_url}/models");
+    if let Some(query) = uri.query() {
+        url.push('?');
+        url.push_str(query);
+    }
+    let timeout = std::time::Duration::from_secs(30);
+    let mut request = client.get(url).timeout(timeout);
+    // Keep native account identity and catalog negotiation; never forward a
+    // local Host, proxy credentials, cookies, or a third-party API key.
+    for name in [
+        "authorization",
+        "chatgpt-account-id",
+        "user-agent",
+        "originator",
+        "accept",
+        "if-none-match",
+        "openai-beta",
+    ] {
+        if let Some(value) = headers.get(name) {
+            request = request.header(name, value);
+        }
+    }
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            ProxyError::Timeout("Codex model catalog request timed out".to_string())
+        } else {
+            ProxyError::ForwardFailed(error.without_url().to_string())
+        }
+    })?;
+    if response.status().is_redirection() && response.status() != StatusCode::NOT_MODIFIED {
+        return Err(ProxyError::ForwardFailed(
+            "Unexpected redirect from the Codex model catalog".to_string(),
+        ));
+    }
+    let (mut headers, status, body) = read_decoded_body(
+        super::hyper_client::ProxyResponse::Reqwest(response),
+        "Codex models",
+        timeout,
+    )
+    .await?;
+    strip_hop_by_hop_response_headers(&mut headers);
+    // Preserve the complete catalog, ETag, and upstream errors. An empty
+    // synthetic success would erase the client's account-specific model list.
+    Ok((status, headers, body).into_response())
+}
+
+fn read_managed_model_catalog(config_text: Option<&str>, config_dir: &std::path::Path) -> Value {
+    let active_catalog_path = config_text
+        .and_then(|text| crate::codex_config::resolve_cc_switch_catalog_path(text, config_dir));
+    if let Some(catalog_path) = active_catalog_path.as_ref().filter(|path| path.exists()) {
         match crate::codex_config::read_codex_model_catalog_text(catalog_path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or(json!({"models": []})),
             Err(error) => {
@@ -111,8 +186,7 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
             );
         }
         json!({"models": []})
-    };
-    Ok(Json(catalog))
+    }
 }
 
 // ============================================================================
@@ -2868,6 +2942,191 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[tokio::test]
+    async fn official_model_catalog_preserves_request_identity_and_model_metadata() {
+        use axum::{http::StatusCode, response::IntoResponse, Router};
+        let catalog = serde_json::json!({"models": [{
+            "slug": "new-official-model",
+            "visibility": "list",
+            "supported_reasoning_levels": [{"effort": "high", "description": "High"}],
+            "input_modalities": ["text", "image"],
+            "context_window": 400000,
+            "future_metadata": {"preserve": true}
+        }], "future_catalog_field": "keep"})
+        .to_string();
+        let expected_catalog = catalog.clone();
+        let app = Router::new().fallback(move |request: axum::extract::Request| {
+            let catalog = catalog.clone();
+            async move {
+                assert_eq!(request.method(), http::Method::GET);
+                assert_eq!(
+                    request.uri(),
+                    "/backend-api/codex/models?client_version=0.155.0&feature=a%2Bb"
+                );
+                for (name, expected) in [
+                    ("authorization", "Bearer client-token"),
+                    ("chatgpt-account-id", "client-account"),
+                    ("user-agent", "codex_cli_rs/0.155.0"),
+                    ("originator", "codex_cli_rs"),
+                    ("if-none-match", "\"old-catalog\""),
+                ] {
+                    assert_eq!(request.headers().get(name).unwrap(), expected);
+                }
+                for name in ["cookie", "x-api-key", "proxy-authorization"] {
+                    assert!(!request.headers().contains_key(name), "{name}");
+                }
+                assert_ne!(request.headers().get("host").unwrap(), "local-proxy");
+                (
+                    StatusCode::OK,
+                    [
+                        ("content-type", "application/json"),
+                        ("etag", "\"catalog-v2\""),
+                    ],
+                    catalog,
+                )
+                    .into_response()
+            }
+        });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let base = format!(
+            "http://{}/backend-api/codex",
+            listener.local_addr().unwrap()
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut headers = http::HeaderMap::new();
+        for (name, value) in [
+            ("authorization", "Bearer client-token"),
+            ("chatgpt-account-id", "client-account"),
+            ("user-agent", "codex_cli_rs/0.155.0"),
+            ("originator", "codex_cli_rs"),
+            ("if-none-match", "\"old-catalog\""),
+            ("host", "local-proxy"),
+            ("cookie", "private-cookie"),
+            ("x-api-key", "unrelated-key"),
+            ("proxy-authorization", "private-proxy-auth"),
+        ] {
+            headers.insert(name, value.parse().unwrap());
+        }
+        let client = crate::proxy::http_client::get_without_redirects().unwrap();
+        for path in ["/models", "/v1/models"] {
+            let uri = format!("{path}?client_version=0.155.0&feature=a%2Bb")
+                .parse()
+                .unwrap();
+            let response = super::fetch_official_model_catalog(&client, &base, &uri, &headers)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["etag"], "\"catalog-v2\"");
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), expected_catalog.as_bytes());
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn official_model_catalog_preserves_errors_and_cache_validation_without_redirecting() {
+        use axum::{http::StatusCode, response::IntoResponse, Router};
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::NOT_MODIFIED,
+            StatusCode::TEMPORARY_REDIRECT,
+        ] {
+            let requests = Arc::new(AtomicUsize::new(0));
+            let count = requests.clone();
+            let app = Router::new().fallback(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    (
+                        status,
+                        [
+                            ("location", "/redirected"),
+                            ("retry-after", "42"),
+                            ("etag", "\"same\""),
+                        ],
+                        if status == StatusCode::NOT_MODIFIED {
+                            ""
+                        } else {
+                            "upstream error"
+                        },
+                    )
+                        .into_response()
+                }
+            });
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let client = crate::proxy::http_client::get_without_redirects().unwrap();
+            let response = super::fetch_official_model_catalog(
+                &client,
+                &base,
+                &"/v1/models".parse().unwrap(),
+                &http::HeaderMap::new(),
+            )
+            .await;
+            if status == StatusCode::TEMPORARY_REDIRECT {
+                assert!(matches!(response, Err(ProxyError::ForwardFailed(_))));
+            } else {
+                let response = response.unwrap();
+                assert_eq!(response.status(), status);
+                assert_eq!(response.headers()["retry-after"], "42");
+                assert_eq!(response.headers()["etag"], "\"same\"");
+                let body = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    body.as_ref(),
+                    if status == StatusCode::NOT_MODIFIED {
+                        b"".as_slice()
+                    } else {
+                        b"upstream error".as_slice()
+                    }
+                );
+            }
+            assert_eq!(requests.load(Ordering::SeqCst), 1);
+            task.abort();
+        }
+    }
+
+    #[test]
+    fn managed_model_catalog_still_requires_an_active_owned_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = serde_json::json!({"models": [{"slug": "custom-model", "metadata": true}]});
+        std::fs::write(
+            dir.path().join("cc-switch-model-catalog.json"),
+            catalog.to_string(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("user-catalog.json"), catalog.to_string()).unwrap();
+        let empty = serde_json::json!({"models": []});
+        for config in [
+            None,
+            Some("model_provider = 'openai'"),
+            Some("model_catalog_json = 'user-catalog.json'"),
+            Some("model_catalog_json = '../cc-switch-model-catalog.json'"),
+        ] {
+            assert_eq!(super::read_managed_model_catalog(config, dir.path()), empty);
+        }
+        let active = Some("model_catalog_json = 'cc-switch-model-catalog.json'");
+        assert_eq!(
+            super::read_managed_model_catalog(active, dir.path()),
+            catalog
+        );
+        std::fs::write(
+            dir.path().join("cc-switch-model-catalog.json"),
+            "invalid json",
+        )
+        .unwrap();
+        assert_eq!(super::read_managed_model_catalog(active, dir.path()), empty);
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
