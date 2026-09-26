@@ -420,6 +420,14 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            // window-state 插件的还原（webview ready 时）早于最小尺寸约束生效，
+            // 中毒的退化几何（如 #7562 遗留的 1×1 状态文件）会经 set_size 触发
+            // Resized——此刻把尺寸拉回配置默认值。轻量模式重建窗口同样走这里。
+            if let tauri::WindowEvent::Resized(_) = event {
+                if window.label() == "main" {
+                    clamp_main_window_size(window);
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
@@ -435,6 +443,10 @@ pub fn run() {
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
+                    // 隐藏前窗口几何仍然准确，此刻落盘一次：托盘常驻用户的尺寸/位置
+                    // 变更才能持久化。退出时窗口已隐藏、几何不可靠，
+                    // save_window_state_before_exit 会跳过保存（#7562）。
+                    save_window_state_before_exit(window.app_handle());
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
                     {
@@ -2267,10 +2279,81 @@ fn window_state_flags() -> StateFlags {
 /// 当前应用的退出路径会拦截 `ExitRequested` 并最终直接 `std::process::exit(0)`，
 /// 这里需要在真正结束进程前手动落盘，避免 window-state 插件的默认退出钩子被绕过。
 pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
+    // 隐藏到托盘的窗口在 macOS 上可能经 NSWindow 回报 1×1：非零尺寸会绕过插件
+    // 对 0×0 的过滤，而插件的 update_state 没有 hidden 守卫，照读实时几何落盘后，
+    // 下次启动会还原出几乎不可见的窗口（#7562）。窗口不可见或最小化时跳过保存，
+    // 保留上一次可见时写入的有效状态；本次会话内的尺寸变更留给下次可见退出时落盘。
+    let has_suppressed_window = app_handle.webview_windows().values().any(|window| {
+        !window.is_visible().unwrap_or(true) || window.is_minimized().unwrap_or(false)
+    });
+    if has_suppressed_window {
+        log::info!("窗口处于隐藏/最小化状态，跳过退出前的窗口状态保存以保留上次有效几何");
+        return;
+    }
+
     if let Err(err) = app_handle.save_window_state(window_state_flags()) {
         log::error!("退出前保存窗口状态失败: {err}");
     } else {
         log::info!("已在退出前保存窗口状态");
+    }
+}
+
+/// 尺寸低于配置下限时返回默认尺寸，否则返回 `None`。
+fn clamped_window_size(
+    current: (f64, f64),
+    min_size: (f64, f64),
+    default_size: (f64, f64),
+) -> Option<(f64, f64)> {
+    (current.0 < min_size.0 || current.1 < min_size.1).then_some(default_size)
+}
+
+/// 把低于配置下限的主窗口尺寸拉回默认值（如 #7562 修复前写入的 1×1 状态文件）。
+///
+/// window-state 插件的还原发生在窗口最小尺寸约束生效之前，退化尺寸会原样画出，
+/// 所以挂在 `WindowEvent::Resized` 上跟随还原触发（启动与轻量模式重建都会走到）；
+/// 最小化窗口在 Windows 上会回报 0×0，跳过不处理。
+fn clamp_main_window_size(window: &tauri::Window) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let app_handle = window.app_handle();
+    let Some(window_config) = app_handle
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+    else {
+        return;
+    };
+    let (Some(min_width), Some(min_height)) = (window_config.min_width, window_config.min_height)
+    else {
+        return;
+    };
+    let (default_width, default_height) = (window_config.width, window_config.height);
+
+    let (Ok(scale), Ok(physical_size)) = (window.scale_factor(), window.inner_size()) else {
+        return;
+    };
+    let size = physical_size.to_logical::<f64>(scale);
+    let Some((width, height)) = clamped_window_size(
+        (size.width, size.height),
+        (min_width, min_height),
+        (default_width, default_height),
+    ) else {
+        return;
+    };
+
+    if let Err(err) = window.set_size(tauri::LogicalSize::new(width, height)) {
+        log::error!("恢复主窗口默认尺寸失败: {err}");
+    } else {
+        log::info!(
+            "主窗口尺寸 {:.0}×{:.0} 低于配置下限，已恢复默认 {:.0}×{:.0}",
+            size.width,
+            size.height,
+            width,
+            height
+        );
     }
 }
 
@@ -2303,11 +2386,38 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_exit_request, enabled_proxy_apps_on_startup, redact_url_for_log,
-        redact_url_for_log_with_secrets, redact_url_origin_for_log, runtime_log_level_allows,
-        ExitRequestAction,
+        clamped_window_size, classify_exit_request, enabled_proxy_apps_on_startup,
+        redact_url_for_log, redact_url_for_log_with_secrets, redact_url_origin_for_log,
+        runtime_log_level_allows, ExitRequestAction,
     };
     use crate::database::Database;
+
+    #[test]
+    fn clamped_window_size_returns_default_for_degenerate_geometry() {
+        // #7562：隐藏窗口落盘的 1×1 必须回落到配置的默认尺寸。
+        assert_eq!(
+            clamped_window_size((1.0, 1.0), (900.0, 600.0), (1000.0, 650.0)),
+            Some((1000.0, 650.0))
+        );
+        // 非零但低于下限（如多显示器缩放导致的逐次缩水）同样回落。
+        assert_eq!(
+            clamped_window_size((800.0, 550.0), (900.0, 600.0), (1000.0, 650.0)),
+            Some((1000.0, 650.0))
+        );
+    }
+
+    #[test]
+    fn clamped_window_size_keeps_healthy_geometry() {
+        // 恰好等于下限属于健康尺寸，不改动（保持已保存的用户几何）。
+        assert_eq!(
+            clamped_window_size((900.0, 600.0), (900.0, 600.0), (1000.0, 650.0)),
+            None
+        );
+        assert_eq!(
+            clamped_window_size((1280.0, 800.0), (900.0, 600.0), (1000.0, 650.0)),
+            None
+        );
+    }
 
     #[test]
     fn log_url_redaction_strips_credentials_and_query_keeps_path() {
