@@ -1609,6 +1609,19 @@ fn codex_catalog_model_entry(
         )),
     );
 
+    // Explicit, non-empty user instructions override the template identity for
+    // every catalog profile. ProxyChat keeps the full tool set below, but it
+    // must not keep the template's GPT-5 identity when the user selected a
+    // third-party model.
+    if let Some(base_instructions) = spec
+        .base_instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        entry_obj.insert("base_instructions".to_string(), json!(base_instructions));
+    }
+
     if profile != CodexCatalogToolProfile::ProxyChat {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
@@ -1619,7 +1632,8 @@ fn codex_catalog_model_entry(
         // NOTE: `base_instructions` is NOT stripped — Codex's catalog parser
         // treats it as a REQUIRED field and refuses to load the file without
         // it ("missing field `base_instructions`"). The template carries a
-        // neutral identity default; per-vendor official text overrides below.
+        // neutral identity default; explicit per-row overrides are applied
+        // before this profile-specific tool handling.
         for key in [
             "apply_patch_tool_type",
             "web_search_tool_type",
@@ -1630,14 +1644,6 @@ fn codex_catalog_model_entry(
         }
         entry_obj.insert("shell_type".to_string(), json!("shell_command"));
 
-        if let Some(base_instructions) = spec
-            .base_instructions
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            entry_obj.insert("base_instructions".to_string(), json!(base_instructions));
-        }
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
@@ -1679,11 +1685,11 @@ struct CodexCatalogModelSpec {
     /// When omitted, all catalog profiles consult the shared text-only model
     /// registry and otherwise default to `["text", "image"]`.
     input_modalities: Option<Vec<String>>,
-    /// Per-row override for the native template's `base_instructions` (the
+    /// Per-row override for the catalog template's `base_instructions` (the
     /// model identity / system preamble). Carries each vendor's OFFICIAL value
     /// (e.g. MiMo "developed by Xiaomi", MiniMax "based on MiniMax-M3"); falls
-    /// back to the template default when absent. Only consulted for
-    /// `NativeResponses`.
+    /// back to the template default when absent. Applied to every
+    /// template-based catalog profile.
     base_instructions: Option<String>,
     /// Per-row override for the generated catalog's `supported_reasoning_levels`
     /// (e.g. ["none", "low", "medium", "high", "xhigh", "max"]). When omitted
@@ -7591,6 +7597,41 @@ wire_api = "responses"
                 .and_then(|v| v.as_str()),
             Some("freeform"),
             "ProxyChat must preserve apply_patch_tool_type (no native stripping)"
+        );
+    }
+
+    #[test]
+    fn proxy_chat_profile_applies_explicit_base_instructions_override() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "base_instructions": "You are Codex, a coding agent based on GPT-5."
+        });
+        let specs = vec![CodexCatalogModelSpec {
+            model: "deepseek-v4-flash".to_string(),
+            display_name: Some("DeepSeek V4 Flash".to_string()),
+            context_window: Some(128_000),
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: Some(
+                "You are Codex, a coding agent based on DeepSeek V4 Flash.".to_string(),
+            ),
+            reasoning_levels: None,
+            default_reasoning_level: None,
+        }];
+
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+
+        assert_eq!(
+            catalog["models"][0]
+                .get("base_instructions")
+                .and_then(Value::as_str),
+            Some("You are Codex, a coding agent based on DeepSeek V4 Flash."),
+            "ProxyChat must apply an explicit, non-empty baseInstructions override"
         );
     }
 
