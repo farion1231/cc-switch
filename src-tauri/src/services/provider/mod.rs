@@ -5973,6 +5973,10 @@ impl ProviderService {
             )?;
         }
 
+        if matches!(app_type, AppType::Codex) {
+            Self::sync_codex_history_provider_metadata_after_switch(&mut result);
+        }
+
         // A material-less official Codex provider gets a config-only live
         // write, which can leave the previous third-party key in
         // ~/.codex/auth.json and strand the user on a 401 with no login
@@ -6082,6 +6086,35 @@ impl ProviderService {
         }
 
         Ok(result)
+    }
+
+    /// Codex binds each historical thread to the provider ID used when the
+    /// thread was created. After a successful provider switch, repoint those
+    /// threads to the provider now present in config.toml so old conversations
+    /// remain openable. The switch itself is already committed; treat a busy
+    /// state DB as a warning rather than rolling the live config back.
+    fn sync_codex_history_provider_metadata_after_switch(result: &mut SwitchResult) {
+        let config_text = match crate::codex_config::read_codex_config_text() {
+            Ok(config_text) => config_text,
+            Err(error) => {
+                log::warn!("Failed to read Codex config after provider switch: {error}");
+                result
+                    .warnings
+                    .push("codex_history_provider_sync_failed".to_string());
+                return;
+            }
+        };
+        let config_dir = crate::codex_config::get_codex_config_dir();
+        match crate::codex_state_db::sync_codex_state_db_thread_provider(&config_dir, &config_text)
+        {
+            Ok(_) => {}
+            Err(error) => {
+                log::warn!("Failed to sync Codex history providers after provider switch: {error}");
+                result
+                    .warnings
+                    .push("codex_history_provider_sync_failed".to_string());
+            }
+        }
     }
 
     /// Sync current provider to live configuration (re-export)
