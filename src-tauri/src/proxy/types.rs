@@ -218,6 +218,13 @@ pub struct RectifierConfig {
     /// 仍保留「显式声明」与「上游兜底」，且不改变 Codex 模型目录声明。
     #[serde(default = "default_true")]
     pub request_media_heuristic: bool,
+    /// 响应整流：模型名回写（默认关闭）
+    ///
+    /// 开启后，把响应里的 `model`/`message.model`（上游映射后的真实模型名）
+    /// 回写为客户端请求的模型名（剥掉 [1m] 本地能力标记），让 Claude Code 等
+    /// 客户端看到的始终是它请求的名字。usage 记账在回写前完成，不受影响。
+    #[serde(default)]
+    pub response_model_rewrite: bool,
 }
 
 fn default_true() -> bool {
@@ -236,6 +243,7 @@ impl Default for RectifierConfig {
             request_thinking_budget: true,
             request_media_fallback: true,
             request_media_heuristic: true,
+            response_model_rewrite: false,
         }
     }
 }
@@ -393,6 +401,10 @@ mod tests {
             config.request_media_heuristic,
             "启发式 text-only 模型识别默认应为 true"
         );
+        assert!(
+            !config.response_model_rewrite,
+            "响应模型回写默认应为 false（opt-in，按需开启）"
+        );
     }
 
     #[test]
@@ -410,6 +422,10 @@ mod tests {
         assert!(
             config.request_media_heuristic,
             "缺 requestMediaHeuristic 时应回退默认值 true"
+        );
+        assert!(
+            !config.response_model_rewrite,
+            "缺 responseModelRewrite 时应回退默认值 false"
         );
     }
 

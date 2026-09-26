@@ -1,7 +1,185 @@
+use bytes::{Bytes, BytesMut};
+use std::borrow::Cow;
+
 #[inline]
 pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
+    let rest = line.strip_prefix(field)?;
+    if rest.is_empty() {
+        return Some("");
+    }
+    let value = rest.strip_prefix(':')?;
+    Some(value.strip_prefix(' ').unwrap_or(value))
+}
+
+/// Iterate SSE lines, retaining their original LF, CRLF or CR terminator.
+/// Unlike `str::lines`, a lone CR also ends a line.
+pub(crate) fn sse_lines(mut text: &str) -> impl Iterator<Item = (&str, &str)> {
+    std::iter::from_fn(move || {
+        if text.is_empty() {
+            return None;
+        }
+        let end = text
+            .as_bytes()
+            .iter()
+            .position(|byte| matches!(byte, b'\r' | b'\n'))
+            .unwrap_or(text.len());
+        let ending_len = if text[end..].starts_with("\r\n") {
+            2
+        } else {
+            usize::from(end < text.len())
+        };
+        let line = &text[..end];
+        let ending = &text[end..end + ending_len];
+        text = &text[end + ending_len..];
+        Some((line, ending))
+    })
+}
+
+/// SSE joins successive `data` fields with LF. The common single-line case
+/// borrows the input; only multiline data needs a new string.
+pub(crate) fn sse_data(block: &str) -> Option<Cow<'_, str>> {
+    let mut data: Option<Cow<'_, str>> = None;
+    for (index, (line, _)) in sse_lines(block).enumerate() {
+        let line = if index == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line
+        };
+        if let Some(value) = strip_sse_field(line, "data") {
+            match &mut data {
+                None => data = Some(Cow::Borrowed(value)),
+                Some(data) => {
+                    let data = data.to_mut();
+                    data.push('\n');
+                    data.push_str(value);
+                }
+            }
+        }
+    }
+    data
+}
+
+pub(crate) enum SseFrame {
+    /// A complete event containing at least one data field, including its
+    /// terminating blank line. Non-data fields before the data may already
+    /// have been emitted as passthrough bytes.
+    Event(Bytes),
+    /// Leading comments (with any preceding metadata) / empty lines can be forwarded immediately,
+    /// without waiting for an event's blank line (notably heartbeat comments).
+    Passthrough(Bytes),
+}
+
+/// Incremental, byte-preserving SSE framing for response rewriting and usage
+/// inspection. Each input byte is scanned once. Complete frames within one
+/// chunk are `Bytes` slices; only frames spanning chunks need an owned buffer.
+/// Call `next_frame` until it returns None before pushing another chunk.
+#[derive(Default)]
+pub(crate) struct SseDecoder {
+    chunk: Bytes,
+    cursor: usize,
+    start: usize,
+    pending: BytesMut,
+    line_len: usize,
+    line_prefix: [u8; 8],
+    seen_line: bool,
+    has_data: bool,
+    skip_lf: bool,
+}
+
+impl SseDecoder {
+    pub(crate) fn push(&mut self, chunk: Bytes) {
+        debug_assert_eq!(self.cursor, self.chunk.len());
+        debug_assert_eq!(self.start, self.cursor);
+        self.chunk = chunk;
+        self.cursor = 0;
+        self.start = 0;
+    }
+
+    fn take_bytes(&mut self) -> Bytes {
+        let bytes = self.chunk.slice(self.start..self.cursor);
+        self.start = self.cursor;
+        if self.pending.is_empty() {
+            bytes
+        } else {
+            self.pending.extend_from_slice(&bytes);
+            std::mem::take(&mut self.pending).freeze()
+        }
+    }
+
+    pub(crate) fn next_frame(&mut self) -> Option<SseFrame> {
+        while self.cursor < self.chunk.len() {
+            let byte = self.chunk[self.cursor];
+            self.cursor += 1;
+
+            // A CR is a complete line ending on its own, so do not wait for
+            // another chunk before dispatching a CR-terminated event/heartbeat.
+            // If LF arrives later, retain it without treating it as a new line.
+            if std::mem::take(&mut self.skip_lf) && byte == b'\n' {
+                if !self.has_data {
+                    return Some(SseFrame::Passthrough(self.take_bytes()));
+                }
+                continue;
+            }
+
+            if byte != b'\r' && byte != b'\n' {
+                let remaining = &self.chunk[self.cursor - 1..];
+                let len = remaining
+                    .iter()
+                    .position(|byte| matches!(byte, b'\r' | b'\n'))
+                    .unwrap_or(remaining.len());
+                let prefix_len = len.min(self.line_prefix.len().saturating_sub(self.line_len));
+                if prefix_len > 0 {
+                    self.line_prefix[self.line_len..self.line_len + prefix_len]
+                        .copy_from_slice(&remaining[..prefix_len]);
+                }
+                self.cursor += len - 1;
+                self.line_len += len;
+                continue;
+            }
+
+            if byte == b'\r' {
+                if self.chunk.get(self.cursor) == Some(&b'\n') {
+                    self.cursor += 1;
+                } else {
+                    self.skip_lf = self.cursor == self.chunk.len();
+                }
+            }
+
+            let mut prefix = &self.line_prefix[..self.line_len.min(self.line_prefix.len())];
+            let mut line_len = self.line_len;
+            if !self.seen_line && prefix.starts_with(b"\xef\xbb\xbf") {
+                prefix = &prefix[3..];
+                line_len -= 3;
+            }
+            self.has_data |= prefix.starts_with(b"data:") || (line_len == 4 && prefix == b"data");
+            let is_comment = prefix.starts_with(b":");
+            self.seen_line = true;
+            self.line_len = 0;
+
+            if line_len == 0 {
+                let is_event = std::mem::take(&mut self.has_data);
+                let bytes = self.take_bytes();
+                return Some(if is_event {
+                    SseFrame::Event(bytes)
+                } else {
+                    SseFrame::Passthrough(bytes)
+                });
+            }
+            if !self.has_data && is_comment {
+                return Some(SseFrame::Passthrough(self.take_bytes()));
+            }
+        }
+
+        self.pending.extend_from_slice(&self.chunk[self.start..]);
+        self.start = self.cursor;
+        None
+    }
+
+    /// Preserve an incomplete tail on normal EOF. It is not a dispatched event
+    /// and must not be rewritten or counted as usage.
+    pub(crate) fn finish(self) -> Bytes {
+        self.pending.freeze()
+    }
 }
 
 #[inline]
@@ -87,7 +265,74 @@ pub(crate) fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, new
 
 #[cfg(test)]
 mod tests {
-    use super::{append_utf8_safe, strip_sse_field, take_sse_block};
+    use super::*;
+
+    #[test]
+    fn decoder_preserves_bytes_and_events_at_every_chunk_boundary() {
+        for delimiter in ["\n\n", "\r\n\r\n", "\r\r", "\n\r\n", "\r\n\n", "\n\r"] {
+            let input = format!(
+                "\u{feff}: heartbeat\r\nid: 1\ndata: {{\"text\":\"你好😀\"}}{delimiter}data: [DONE]{delimiter}data: unfinished",
+            );
+            let bytes = Bytes::from(input);
+            for size in [1, 2, 3, 7, 4096] {
+                let mut decoder = SseDecoder::default();
+                let mut output = Vec::new();
+                let mut data = Vec::new();
+                for start in (0..bytes.len()).step_by(size) {
+                    decoder.push(bytes.slice(start..(start + size).min(bytes.len())));
+                    while let Some(frame) = decoder.next_frame() {
+                        let raw = match frame {
+                            SseFrame::Event(raw) => {
+                                data.push(
+                                    sse_data(std::str::from_utf8(&raw).unwrap())
+                                        .unwrap()
+                                        .into_owned(),
+                                );
+                                raw
+                            }
+                            SseFrame::Passthrough(raw) => raw,
+                        };
+                        output.extend_from_slice(&raw);
+                    }
+                }
+                output.extend_from_slice(&decoder.finish());
+                assert_eq!(output, bytes, "delimiter={delimiter:?}, chunk={size}");
+                assert_eq!(data, ["{\"text\":\"你好😀\"}", "[DONE]"]);
+            }
+        }
+    }
+
+    #[test]
+    fn decoder_dispatches_cr_heartbeat_and_event_without_waiting_for_lf() {
+        let mut decoder = SseDecoder::default();
+        decoder.push(Bytes::from_static(b": ping\r"));
+        assert!(
+            matches!(decoder.next_frame(), Some(SseFrame::Passthrough(raw)) if raw == b": ping\r"[..])
+        );
+        assert!(decoder.next_frame().is_none());
+        decoder.push(Bytes::from_static(b"\ndata: {}\r\r"));
+        assert!(
+            matches!(decoder.next_frame(), Some(SseFrame::Passthrough(raw)) if raw == b"\n"[..])
+        );
+        assert!(
+            matches!(decoder.next_frame(), Some(SseFrame::Event(raw)) if raw == b"data: {}\r\r"[..])
+        );
+        assert!(decoder.next_frame().is_none());
+    }
+
+    #[test]
+    fn data_joins_multiline_fields_and_borrows_single_line() {
+        assert_eq!(
+            sse_data("data\rdata: one\r\ndata:  two\n\n").as_deref(),
+            Some("\none\n two")
+        );
+        assert!(matches!(
+            sse_data("data: {}\n\n"),
+            Some(Cow::Borrowed("{}"))
+        ));
+        assert_eq!(sse_data("\u{feff}data: {}\r\r").as_deref(), Some("{}"));
+        assert_eq!(sse_data(": model\nmetadata: false\n\n"), None);
+    }
 
     #[test]
     fn strip_sse_field_accepts_optional_space() {

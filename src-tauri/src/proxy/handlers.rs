@@ -523,6 +523,12 @@ async fn handle_claude_transform(
             connection_guard,
         );
 
+        // 响应模型回写（整流器子开关，默认关闭）：usage 收集已基于原始模型名完成
+        let final_stream = super::response_model_rewriter::wrap_stream_for_model_rewrite(
+            logged_stream,
+            ctx.response_model_rewrite_target(),
+        );
+
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(
             "Content-Type",
@@ -533,7 +539,7 @@ async fn handle_claude_transform(
             axum::http::HeaderValue::from_static("no-cache"),
         );
 
-        let body = axum::body::Body::from_stream(logged_stream);
+        let body = axum::body::Body::from_stream(final_stream);
         return Ok((headers, body).into_response());
     }
 
@@ -675,6 +681,12 @@ async fn handle_claude_transform(
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
     // 在上游缺 stream_options.include_usage 时没有 usage，写入只会产生无意义空行
     spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
+
+    // 响应模型回写（整流器子开关，默认关闭）：usage 记账已基于原始模型名完成
+    let mut anthropic_response = anthropic_response;
+    if let Some(target) = ctx.response_model_rewrite_target() {
+        super::response_model_rewriter::rewrite_value_model(&mut anthropic_response, &target);
+    }
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -1206,6 +1218,13 @@ async fn handle_codex_xai_native_responses_rewrite(
         let mut response_headers = response.headers().clone();
         strip_hop_by_hop_response_headers(&mut response_headers);
 
+        // 响应模型回写（整流器子开关，默认关闭）。回写改变 SSE 字节数，
+        // 上游若带 Content-Length 需要剥掉，避免下游按旧长度截断。
+        let rewrite_target = ctx.response_model_rewrite_target();
+        if rewrite_target.is_some() {
+            strip_entity_headers_for_rebuilt_body(&mut response_headers);
+        }
+
         let mut builder = axum::response::Response::builder().status(status);
         for (key, value) in &response_headers {
             builder = builder.header(key, value);
@@ -1226,7 +1245,12 @@ async fn handle_codex_xai_native_responses_rewrite(
             connection_guard,
         );
 
-        let body = axum::body::Body::from_stream(logged_stream);
+        let final_stream = super::response_model_rewriter::wrap_stream_for_model_rewrite(
+            logged_stream,
+            rewrite_target,
+        );
+
+        let body = axum::body::Body::from_stream(final_stream);
         return builder.body(body).map_err(|e| {
             log::error!("[{}] 构建 namespace 还原流式响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build streaming response: {e}"))
@@ -1297,6 +1321,11 @@ async fn handle_codex_xai_native_responses_rewrite(
                         .await;
                     }
                 });
+            }
+            // 响应模型回写（整流器子开关，默认关闭）：usage 记账已在上方基于
+            // 原始 value 完成，这里只影响发给客户端的字节。
+            if let Some(target) = ctx.response_model_rewrite_target() {
+                super::response_model_rewriter::rewrite_value_model(&mut value, &target);
             }
             match serde_json::to_vec(&value) {
                 Ok(bytes) => Bytes::from(bytes),
@@ -1422,6 +1451,12 @@ async fn handle_codex_chat_to_responses_transform(
             connection_guard,
         );
 
+        // 响应模型回写（整流器子开关，默认关闭）：usage 收集已基于原始模型名完成
+        let final_stream = super::response_model_rewriter::wrap_stream_for_model_rewrite(
+            logged_stream,
+            ctx.response_model_rewrite_target(),
+        );
+
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(
             "Content-Type",
@@ -1432,7 +1467,7 @@ async fn handle_codex_chat_to_responses_transform(
             axum::http::HeaderValue::from_static("no-cache"),
         );
 
-        let body = axum::body::Body::from_stream(logged_stream);
+        let body = axum::body::Body::from_stream(final_stream);
         return Ok((headers, body).into_response());
     }
 
@@ -1474,7 +1509,7 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
-    let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
+    let mut responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
     )
@@ -1530,6 +1565,11 @@ async fn handle_codex_chat_to_responses_transform(
                 .await;
             }
         });
+    }
+
+    // 响应模型回写（整流器子开关，默认关闭）：usage 记账已基于原始模型名完成
+    if let Some(target) = ctx.response_model_rewrite_target() {
+        super::response_model_rewriter::rewrite_value_model(&mut responses_response, &target);
     }
 
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
@@ -1646,7 +1686,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     }
 
     let _connection_guard = connection_guard;
-    let responses_response =
+    let mut responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
             &codex_tool_context,
@@ -1695,6 +1735,11 @@ async fn handle_codex_anthropic_to_responses_transform(
                 .await;
             }
         });
+    }
+
+    // 响应模型回写（整流器子开关，默认关闭）：usage 记账已基于原始模型名完成
+    if let Some(target) = ctx.response_model_rewrite_target() {
+        super::response_model_rewriter::rewrite_value_model(&mut responses_response, &target);
     }
 
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
@@ -1795,6 +1840,12 @@ fn build_codex_anthropic_sse_response(
         connection_guard,
     );
 
+    // 响应模型回写（整流器子开关，默认关闭）：usage 收集已基于原始模型名完成
+    let final_stream = super::response_model_rewriter::wrap_stream_for_model_rewrite(
+        logged_stream,
+        ctx.response_model_rewrite_target(),
+    );
+
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         "Content-Type",
@@ -1805,7 +1856,7 @@ fn build_codex_anthropic_sse_response(
         axum::http::HeaderValue::from_static("no-cache"),
     );
 
-    let body = axum::body::Body::from_stream(logged_stream);
+    let body = axum::body::Body::from_stream(final_stream);
     Ok((headers, body).into_response())
 }
 

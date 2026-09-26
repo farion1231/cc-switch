@@ -9,7 +9,7 @@ use super::{
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
-    sse::{strip_sse_field, take_sse_block},
+    sse::{sse_data, SseDecoder, SseFrame},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -174,6 +174,20 @@ pub async fn handle_streaming(
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
 
+    // 响应模型回写（整流器子开关，默认关闭）。两点防御：
+    // - 压缩 SSE（上游无视 accept-encoding: identity）时跳过回写，保持原始字节
+    //   透传——文本改写会把压缩字节转成 U+FFFD 替换字符，造成不可逆损坏；
+    // - 回写会改变 SSE 字节数，带 Content-Length 的整包 SSE 会被下游按旧长度
+    //   截断/挂起，因此剥掉实体头让 axum 按流式重生成。
+    let rewrite_target = if get_content_encoding(response.headers()).is_none() {
+        ctx.response_model_rewrite_target()
+    } else {
+        None
+    };
+    if rewrite_target.is_some() {
+        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    }
+
     let mut builder = axum::response::Response::builder().status(status);
 
     // 复制响应头
@@ -199,7 +213,14 @@ pub async fn handle_streaming(
         connection_guard,
     );
 
-    let body = axum::body::Body::from_stream(logged_stream);
+    // usage 收集器在 logged_stream 内部看到的仍是上游回显的真实模型名，
+    // 回写只影响发给客户端的字节。
+    let final_stream = super::response_model_rewriter::wrap_stream_for_model_rewrite(
+        logged_stream,
+        rewrite_target,
+    );
+
+    let body = axum::body::Body::from_stream(final_stream);
     match builder.body(body) {
         Ok(resp) => resp,
         Err(e) => {
@@ -306,6 +327,23 @@ pub async fn handle_non_streaming(
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
+
+    // 响应模型回写（整流器子开关，默认关闭）：usage 记账已在上方基于原始字节
+    // 完成，这里只改写发给客户端的副本。body 被改写后原 content-length 等
+    // 实体头失真，需要剥掉由 axum 按新 body 重新生成。
+    let body_bytes = match ctx.response_model_rewrite_target() {
+        Some(target) => {
+            match super::response_model_rewriter::rewrite_json_body_model(&body_bytes, &target) {
+                Some(rewritten) => {
+                    log::debug!("[{}] 响应模型回写: → {target}（非流式）", ctx.tag);
+                    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                    Bytes::from(rewritten)
+                }
+                None => body_bytes,
+            }
+        }
+        None => body_bytes,
+    };
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -689,8 +727,7 @@ pub fn create_logged_passthrough_stream(
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut decoder = SseDecoder::default();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
@@ -746,37 +783,32 @@ pub fn create_logged_passthrough_stream(
                     }
                     is_first_chunk = false;
                     if inspect_sse_events {
-                        crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-
-                        // 尝试解析并记录完整的 SSE 事件
-                        while let Some(event_text) = take_sse_block(&mut buffer) {
-                            if !event_text.trim().is_empty() {
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
-                                for line in event_text.lines() {
-                                    if let Some(data) = strip_sse_field(line, "data") {
-                                        if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
-                                                        }
-                                                        Err(_) => false,
-                                                    }
-                                                }
-                                                _ => false,
-                                            };
-                                            log::trace!(
-                                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
-                                                data.len()
-                                            );
-                                        } else {
-                                            log::debug!("[{tag}] <<< SSE: [DONE]");
+                        decoder.push(bytes.clone());
+                        while let Some(frame) = decoder.next_frame() {
+                            let SseFrame::Event(event_bytes) = frame else { continue; };
+                            let Ok(event_text) = std::str::from_utf8(&event_bytes) else { continue; };
+                            let Some(data) = sse_data(event_text) else { continue; };
+                            if data.trim() == "[DONE]" {
+                                log::debug!("[{tag}] <<< SSE: [DONE]");
+                                continue;
+                            }
+                            // 与回写共用分帧和多行 data 规则，但始终收集回写前的原值。
+                            let collected = match &collector {
+                                Some(c) if c.should_collect(&data) => {
+                                    match serde_json::from_str::<Value>(&data) {
+                                        Ok(json_value) => {
+                                            c.push(json_value).await;
+                                            true
                                         }
+                                        Err(_) => false,
                                     }
                                 }
-                            }
+                                _ => false,
+                            };
+                            log::trace!(
+                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                data.len()
+                            );
                         }
                     }
 
@@ -863,12 +895,111 @@ mod tests {
     use crate::proxy::providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
     };
+    use crate::proxy::sse::strip_sse_field;
     use crate::proxy::types::{ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[tokio::test]
+    async fn logged_stream_collects_multiline_usage_before_model_rewrite() {
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = collected.clone();
+        let collector = SseUsageCollector::new(
+            std::time::Instant::now(),
+            Some(super::super::handler_config::codex_stream_usage_event_filter),
+            move |events, _| captured.lock().unwrap().push(events),
+        );
+        let raw = concat!(
+            ": heartbeat\r",
+            "event: response.completed\r",
+            "data: {\"type\":\"response.completed\",\r",
+            "data: \"response\":{\"model\":\"upstream\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}}\r\r"
+        );
+        let input: Vec<_> = raw
+            .as_bytes()
+            .chunks(7)
+            .map(|chunk| Ok::<_, std::io::Error>(Bytes::copy_from_slice(chunk)))
+            .collect();
+        let logged = create_logged_passthrough_stream(
+            futures::stream::iter(input),
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        let rewritten = super::super::response_model_rewriter::wrap_stream_for_model_rewrite(
+            logged,
+            Some("alias".into()),
+        );
+        let output = rewritten
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .concat();
+        let text = std::str::from_utf8(&output).unwrap();
+        let response: Value = serde_json::from_str(&sse_data(text).unwrap()).unwrap();
+        assert_eq!(response["response"]["model"], "alias");
+        assert_eq!(response["response"]["usage"]["input_tokens"], 7);
+
+        let collected = collected.lock().unwrap();
+        assert_eq!(
+            collected.len(),
+            1,
+            "usage callback must finish exactly once"
+        );
+        assert_eq!(collected[0].len(), 1);
+        assert_eq!(collected[0][0]["response"]["model"], "upstream");
+        assert_eq!(
+            collected[0][0]["response"]["usage"],
+            response["response"]["usage"]
+        );
+    }
+
+    #[tokio::test]
+    async fn logged_stream_keeps_original_chunks_and_ignores_unfinished_usage() {
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = collected.clone();
+        let collector =
+            SseUsageCollector::new(std::time::Instant::now(), None, move |events, _| {
+                captured.lock().unwrap().push(events);
+            });
+        let chunks = vec![
+            Bytes::from_static(b": ping\n"),
+            Bytes::from_static(b"data: {\"usage\":{\"input_tokens\":7}}\n\n"),
+            Bytes::from_static(b"data: {\"usage\":{\"input_tokens\":99}}"),
+        ];
+        let stream = create_logged_passthrough_stream(
+            futures::stream::iter(chunks.clone().into_iter().map(Ok)),
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        let output = stream
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(output, chunks);
+        let collected = collected.lock().unwrap();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(
+            collected[0],
+            [serde_json::json!({"usage":{"input_tokens":7}})]
+        );
+    }
 
     #[test]
     fn format_headers_keeps_only_allowlisted_diagnostic_values() {
@@ -916,22 +1047,22 @@ mod tests {
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
         assert_eq!(
-            super::strip_sse_field("data: {\"ok\":true}", "data"),
+            strip_sse_field("data: {\"ok\":true}", "data"),
             Some("{\"ok\":true}")
         );
         assert_eq!(
-            super::strip_sse_field("data:{\"ok\":true}", "data"),
+            strip_sse_field("data:{\"ok\":true}", "data"),
             Some("{\"ok\":true}")
         );
         assert_eq!(
-            super::strip_sse_field("event: message_start", "event"),
+            strip_sse_field("event: message_start", "event"),
             Some("message_start")
         );
         assert_eq!(
-            super::strip_sse_field("event:message_start", "event"),
+            strip_sse_field("event:message_start", "event"),
             Some("message_start")
         );
-        assert_eq!(super::strip_sse_field("id:1", "data"), None);
+        assert_eq!(strip_sse_field("id:1", "data"), None);
     }
 
     #[test]

@@ -257,6 +257,18 @@ impl RequestContext {
         self.start_time.elapsed().as_millis() as u64
     }
 
+    /// 响应模型回写目标（受整流器开关管辖）。
+    ///
+    /// 仅当整流器总开关与「响应模型回写」子开关同时开启时返回
+    /// `Some(客户端请求模型名)`（剥掉 [1m] 标记）；否则返回 `None`，
+    /// 响应原样透传上游回显的模型名。
+    pub fn response_model_rewrite_target(&self) -> Option<String> {
+        if !(self.rectifier_config.enabled && self.rectifier_config.response_model_rewrite) {
+            return None;
+        }
+        super::response_model_rewriter::response_model_target(&self.request_model)
+    }
+
     /// 获取流式超时配置
     ///
     /// 配置生效规则：
