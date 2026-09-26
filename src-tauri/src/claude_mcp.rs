@@ -119,6 +119,97 @@ fn write_json_value(path: &Path, value: &Value) -> Result<(), AppError> {
     atomic_write(path, json.as_bytes())
 }
 
+const CLAUDE_CODE_API_KEY_SUFFIX_LENGTH: usize = 20;
+const PROXY_MANAGED_API_KEY: &str = "PROXY_MANAGED";
+
+fn claude_code_api_key_suffix(key: &str) -> Option<String> {
+    let key = key.trim();
+    if key.is_empty() || key == PROXY_MANAGED_API_KEY {
+        return None;
+    }
+
+    Some(
+        key.chars()
+            .rev()
+            .take(CLAUDE_CODE_API_KEY_SUFFIX_LENGTH)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect(),
+    )
+}
+
+/// Approve a Claude Code custom API key in `~/.claude.json`.
+///
+/// Claude Code stores only the final 20 characters of custom keys in
+/// `customApiKeyResponses`. Provider switching is an explicit user action, so
+/// the selected key can be moved from `rejected` to `approved` at that point.
+/// The update is idempotent and preserves the rest of the user config.
+pub(crate) fn approve_claude_code_api_key(key: &str) -> Result<bool, AppError> {
+    let Some(key_suffix) = claude_code_api_key_suffix(key) else {
+        return Ok(false);
+    };
+
+    let path = user_config_path();
+    let mut root = if path.exists() {
+        read_json_value(&path)?
+    } else {
+        serde_json::json!({})
+    };
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("~/.claude.json 根必须是对象".into()))?;
+
+    let responses = obj
+        .entry("customApiKeyResponses".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let responses = responses.as_object_mut().ok_or_else(|| {
+        AppError::Config("~/.claude.json customApiKeyResponses 必须是对象".into())
+    })?;
+
+    for field in ["approved", "rejected"] {
+        match responses.get(field) {
+            None => {
+                responses.insert(field.to_string(), Value::Array(Vec::new()));
+            }
+            Some(value) if value.is_array() => {}
+            Some(_) => {
+                return Err(AppError::Config(format!(
+                    "~/.claude.json customApiKeyResponses.{field} 必须是数组"
+                )));
+            }
+        }
+    }
+
+    let mut changed = false;
+    let approved = responses
+        .get_mut("approved")
+        .and_then(Value::as_array_mut)
+        .expect("approved array validated above");
+    if !approved
+        .iter()
+        .any(|value| value.as_str() == Some(key_suffix.as_str()))
+    {
+        approved.push(Value::String(key_suffix.clone()));
+        changed = true;
+    }
+
+    let rejected = responses
+        .get_mut("rejected")
+        .and_then(Value::as_array_mut)
+        .expect("rejected array validated above");
+    let rejected_len = rejected.len();
+    rejected.retain(|value| value.as_str() != Some(key_suffix.as_str()));
+    changed |= rejected.len() != rejected_len;
+
+    if !changed {
+        return Ok(false);
+    }
+
+    write_json_value(&path, &root)?;
+    Ok(true)
+}
+
 pub fn get_mcp_status() -> Result<McpStatus, AppError> {
     let path = user_config_path();
     let (exists, count) = if path.exists() {
@@ -407,6 +498,7 @@ pub fn set_mcp_servers_map(
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
 
     /// 测试 Windows 命令包装功能
     /// 由于使用条件编译，在非 Windows 平台上测试的是空函数
@@ -516,6 +608,56 @@ mod tests {
         {
             assert_eq!(obj["command"], "cmd");
             assert_eq!(obj["args"], json!(["/c", "npx.cmd", "-y", "foo"]));
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn approve_claude_code_api_key_moves_current_key_suffix_to_approved() {
+        let home = tempfile::tempdir().expect("create temporary home");
+        let key = "prefix-12345678901234567890";
+        let claude_json = home.path().join(".claude.json");
+        std::fs::write(
+            &claude_json,
+            serde_json::to_string_pretty(&json!({
+                "mcpServers": {"context7": {"command": "npx"}},
+                "customApiKeyResponses": {
+                    "approved": ["keep-approved", "12345678901234567890"],
+                    "rejected": ["12345678901234567890", "keep-rejected"]
+                }
+            }))
+            .expect("serialize Claude user config"),
+        )
+        .expect("write Claude user config");
+
+        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+
+        let changed = approve_claude_code_api_key(key).expect("approve API key");
+        assert!(changed);
+
+        let updated: Value = read_json_value(&claude_json).expect("read updated Claude config");
+        assert_eq!(
+            updated["mcpServers"]["context7"]["command"], "npx",
+            "unrelated Claude user config must be preserved"
+        );
+        assert_eq!(
+            updated["customApiKeyResponses"]["approved"],
+            json!(["keep-approved", "12345678901234567890"]),
+            "current key suffix should be approved exactly once"
+        );
+        assert_eq!(
+            updated["customApiKeyResponses"]["rejected"],
+            json!(["keep-rejected"]),
+            "current key suffix should be removed from rejected"
+        );
+
+        let second_change = approve_claude_code_api_key(key).expect("re-approve API key");
+        assert!(!second_change, "approval should be idempotent");
+
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
     }
 

@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_mcp_path, get_claude_settings_path, read_json_file, write_codex_live_atomic,
+    AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -2636,6 +2636,92 @@ fn provider_service_switch_claude_updates_live_and_state() {
     assert_eq!(
         legacy_provider.settings_config, legacy_live,
         "previous provider should receive backfilled live config"
+    );
+}
+
+#[test]
+fn provider_service_switch_claude_approves_target_api_key() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "env": { "ANTHROPIC_API_KEY": "old-provider-key" }
+        }))
+        .expect("serialize old live settings"),
+    )
+    .expect("seed old live settings");
+
+    let target_key = "sk-target-12345678901234567890";
+    let target_suffix = "12345678901234567890";
+    let claude_json_path = get_claude_mcp_path();
+    std::fs::write(
+        &claude_json_path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": { "context7": { "command": "npx" } },
+            "customApiKeyResponses": {
+                "approved": ["keep-approved"],
+                "rejected": [target_suffix, "keep-rejected"]
+            }
+        }))
+        .expect("serialize Claude user config"),
+    )
+    .expect("seed Claude user config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Old Claude".to_string(),
+                json!({ "env": { "ANTHROPIC_API_KEY": "old-provider-key" } }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "target-provider".to_string(),
+            Provider::with_id(
+                "target-provider".to_string(),
+                "Target Claude".to_string(),
+                json!({ "env": { "ANTHROPIC_API_KEY": target_key } }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Claude, "target-provider")
+        .expect("switch provider should succeed");
+
+    let updated: serde_json::Value = read_json_file(&claude_json_path).expect("read Claude config");
+    assert_eq!(
+        updated["customApiKeyResponses"]["approved"],
+        json!(["keep-approved", target_suffix]),
+        "the selected provider key suffix should be approved"
+    );
+    assert_eq!(
+        updated["customApiKeyResponses"]["rejected"],
+        json!(["keep-rejected"]),
+        "the selected provider key suffix should be removed from rejected"
+    );
+    assert_eq!(
+        updated["mcpServers"]["context7"]["command"], "npx",
+        "switching providers must preserve unrelated Claude user config"
+    );
+    assert!(
+        home.join(".claude.json").exists(),
+        "Claude user config should remain at the expected home path"
     );
 }
 
