@@ -297,7 +297,11 @@ describe("Codex Chat provider presets", () => {
         "Zhipu GLM",
         {
           baseUrl: "https://open.bigmodel.cn/api/v1",
-          contextWindows: { "glm-5.3": 1048576, "glm-5-turbo": 204800 },
+          contextWindows: {
+            "glm-5.3": 1048576,
+            "glm-5.3-flash": 1048576,
+            "glm-5-turbo": 204800,
+          },
         },
       ],
       [

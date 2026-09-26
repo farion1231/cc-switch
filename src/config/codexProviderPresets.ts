@@ -1437,13 +1437,26 @@ requires_openai_auth = true`,
     // 档位/上下文/模态照抄官方 models.json：glm-5.3 low/high/max 默认 max；
     // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（回落会得到
     // 模板 none/high，none 在原生直连下没有转换层兜底、会原样发给严格网关），
-    // 按官方默认收成单档 max。两模型 input_modalities=["text"]、并行工具调用 true
+    // 按官方默认收成单档 max。两模型为纯文本、并行工具调用 true。
+    // glm-5.3-flash 是官方目录后增的条目（真机 /api/v1 Responses 实测可用）：
+    // 必须显式声明 ["text", "image"]（models.dev 镜像同 OpenCode Go 预设），
+    // 否则以 flash 建行时会继承 glm-5.3 的 ["text"] 显式声明、压掉
+    // model_capabilities 的 fail-open，Codex 端将直接拦截图片输入。
     modelCatalog: modelCatalog([
       {
         model: "glm-5.3",
         displayName: "GLM-5.3",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3-Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
         supportsParallelToolCalls: true,
         reasoningLevels: ["low", "high", "max"],
         defaultReasoningLevel: "max",
