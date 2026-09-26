@@ -305,6 +305,51 @@ pub fn base_url_matches(config_toml: &str, predicate: impl FnOnce(&str) -> bool)
     extract_model_config(config_toml).is_some_and(|config| predicate(&config.base_url))
 }
 
+/// Re-select the provider's own model table in a live config being backfilled.
+///
+/// Grok Build 的 `/settings` → Default model 会改写 live 的 `models.default`
+/// （例如改成内置的 grok-4.6，或选 "no override" 清空），供应商自己的
+/// `[model.*]` 表随之没人指向。回填若原样存进供应商行，下次切回时过不了
+/// `validate_config_toml`，这个供应商就切不回去。live 的 `models.default`
+/// 缺失或指不到表、而供应商行原来的默认模型表还在 live 里时，换回行里的值；
+/// 其余情况（含官方态）返回 None，保持原样。
+pub fn restore_provider_default_model(live_config: &str, provider_config: &str) -> Option<String> {
+    let provider_default = provider_config
+        .parse::<toml::Value>()
+        .ok()?
+        .get("models")?
+        .get("default")?
+        .as_str()?
+        .trim()
+        .to_string();
+    if provider_default.is_empty() {
+        return None;
+    }
+
+    let mut document = live_config.parse::<toml_edit::DocumentMut>().ok()?;
+    let has_model_table = |document: &toml_edit::DocumentMut, name: &str| {
+        document
+            .get("model")
+            .and_then(|models| models.get(name))
+            .is_some_and(toml_edit::Item::is_table_like)
+    };
+    let live_default_resolves = document
+        .get("models")
+        .and_then(|models| models.get("default"))
+        .and_then(toml_edit::Item::as_str)
+        .is_some_and(|name| has_model_table(&document, name.trim()));
+    if live_default_resolves || !has_model_table(&document, &provider_default) {
+        return None;
+    }
+
+    document
+        .entry("models")
+        .or_insert(toml_edit::table())
+        .as_table_like_mut()?
+        .insert("default", toml_edit::value(provider_default));
+    Some(document.to_string())
+}
+
 /// Remove MCP projections from a provider-owned Grok Build settings snapshot.
 /// MCP servers are owned by the database and projected into live config.toml.
 pub fn strip_grok_mcp_servers_from_settings(settings: &mut Value) -> Result<(), AppError> {
@@ -482,6 +527,55 @@ context_window = 500000
         let error = validate_config_toml("[models]\ndefault = \"grok-4.5\"\n")
             .expect_err("missing model table should fail");
         assert!(error.to_string().contains("model"));
+    }
+
+    #[test]
+    fn backfill_restores_provider_default_after_client_selected_builtin_model() {
+        let live = valid_config().replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
+        let restored =
+            restore_provider_default_model(&live, valid_config()).expect("default restored");
+        assert_eq!(restored, valid_config());
+        validate_config_toml(&restored).expect("restored config validates");
+    }
+
+    #[test]
+    fn backfill_restores_provider_default_after_client_cleared_it() {
+        for live in [
+            valid_config().replace("default = \"grok-4.5\"\n", ""),
+            valid_config().replace("[models]\ndefault = \"grok-4.5\"\n\n", ""),
+        ] {
+            let restored =
+                restore_provider_default_model(&live, valid_config()).expect("default restored");
+            validate_config_toml(&restored).expect("restored config validates");
+            assert_eq!(
+                extract_model_config(&restored).map(|config| config.profile),
+                Some("grok-4.5".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn backfill_leaves_live_default_alone_when_it_resolves_or_cannot_be_repaired() {
+        assert_eq!(
+            restore_provider_default_model(valid_config(), valid_config()),
+            None
+        );
+
+        let own_table = format!(
+            "{}\n[model.mine]\nmodel = \"m\"\n",
+            valid_config().replace("default = \"grok-4.5\"", "default = \"mine\"")
+        );
+        assert_eq!(
+            restore_provider_default_model(&own_table, valid_config()),
+            None
+        );
+
+        let builtin_default = "[models]\ndefault = \"grok-4.6\"\n";
+        assert_eq!(restore_provider_default_model(builtin_default, ""), None);
+        assert_eq!(
+            restore_provider_default_model(builtin_default, valid_config()),
+            None
+        );
     }
 
     #[test]

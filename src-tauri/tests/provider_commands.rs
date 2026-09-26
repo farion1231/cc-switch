@@ -94,6 +94,71 @@ fn grokbuild_import_and_switch_write_live_config() {
     );
 }
 
+/// Grok Build's `/settings` → Default model rewrites `models.default` in the live
+/// config. Picking a built-in model while a third-party provider is active leaves
+/// the provider's own `[model.*]` table unreferenced; switching away and back must
+/// still work.
+#[test]
+fn grokbuild_switch_back_after_client_changed_default_model() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let live_path = home.join(".grok").join("config.toml");
+    std::fs::create_dir_all(live_path.parent().expect("grok config dir"))
+        .expect("create grok config dir");
+
+    let state = create_test_state().expect("create test state");
+    let relay_a = grokbuild_config("RelayA", "https://a.example/v1", "key-a");
+    let relay_b = grokbuild_config("RelayB", "https://b.example/v1", "key-b");
+    for (id, name, config) in [("a", "RelayA", &relay_a), ("b", "RelayB", &relay_b)] {
+        state
+            .db
+            .save_provider(
+                AppType::GrokBuild.as_str(),
+                &Provider::with_id(
+                    id.to_string(),
+                    name.to_string(),
+                    json!({ "config": config }),
+                    None,
+                ),
+            )
+            .expect("save Grok Build provider");
+    }
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "a").expect("switch to provider a");
+    assert_eq!(
+        std::fs::read_to_string(&live_path).expect("read live after switching to a"),
+        relay_a
+    );
+
+    // Simulate Grok's `/settings` → Default model picking the built-in grok-4.6.
+    let client_edited = relay_a.replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
+    std::fs::write(&live_path, &client_edited).expect("simulate client edit");
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "b").expect("switch to provider b");
+
+    let backfilled_a = state
+        .db
+        .get_provider_by_id("a", AppType::GrokBuild.as_str())
+        .expect("query provider a")
+        .expect("provider a exists")
+        .settings_config
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_default();
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "a").unwrap_or_else(|err| {
+        panic!("switching back to provider a failed: {err}\nbackfilled row a:\n{backfilled_a}")
+    });
+
+    let live = std::fs::read_to_string(&live_path).expect("read live after switching back");
+    assert!(
+        live.contains("default = \"grok-4.5\"") && live.contains("https://a.example/v1"),
+        "live should select provider a's own model table again, got:\n{live}"
+    );
+}
+
 #[test]
 fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
     let _guard = test_mutex().lock().expect("acquire test mutex");

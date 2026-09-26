@@ -1073,6 +1073,25 @@ fn restore_live_settings_for_provider_backfill(
                 provider.id
             );
         }
+        let restored = match (
+            settings.get("config").and_then(Value::as_str),
+            provider
+                .settings_config
+                .get("config")
+                .and_then(Value::as_str),
+        ) {
+            (Some(live_config), Some(provider_config)) => {
+                crate::grok_config::restore_provider_default_model(live_config, provider_config)
+            }
+            _ => None,
+        };
+        if let Some(config) = restored {
+            log::info!(
+                "Grok Build models.default no longer selected provider '{}' table; restored it while backfilling",
+                provider.id
+            );
+            settings["config"] = Value::String(config);
+        }
         return settings;
     }
     if !matches!(app_type, AppType::Codex) {
