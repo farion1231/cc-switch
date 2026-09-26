@@ -824,7 +824,7 @@
     "github": "GitHub",
     "starPrompt": "如果 CC Switch 帮到了你，请在 GitHub 点个 Star，这对我们意义重大",
     "manualInstallCommands": "手动安装命令",
-    "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes / Pi",
+    "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
     "localEnvCheck": "本地环境检查",
     "updateAllTools": "全部升级（{{count}}）",
     "currentVersion": "当前版本",
@@ -855,6 +855,8 @@
     "toolUpgradeWillRun": "将执行：",
     "toolUpgradeConfirmBtn": "确认升级",
     "toolUpgradeUnanchoredHint": "无法确定命令行实际使用哪处，将执行默认升级命令（可能装到 PATH 上第一个 npm）。",
+    "toolUpgradeUnmanagedTitle": "以下工具已跳过升级",
+    "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）不是通过 npm 或可识别的安装器安装的，CC Switch 无法判断如何升级它。请用你原来的安装方式升级（例如 winget、Scoop 或重新运行官方安装脚本）。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -917,6 +919,12 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code"
+  },
+  "mcode": {
+    "empty": {
+      "title": "还没有添加自定义供应商",
+      "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    }
   },
   "pi": {
     "empty": {

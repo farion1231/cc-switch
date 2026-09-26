@@ -319,6 +319,8 @@ export interface ToolInstallationReport {
   needs_confirmation: boolean;
   command: string;
   anchored: boolean;
+  /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */
+  unmanaged: boolean;
 }
 
 export interface RectifierConfig {

@@ -2,7 +2,9 @@
 
 # CC Switch
 
-### Der All-in-One-Manager für Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, MiniMax Code
+### Der All-in-One-Manager für Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi & MiniMax Code
+
+**API-Anbieter mit einem Klick wechseln und MCP, Skills und Prompts zentral verwalten — ohne JSON-, TOML- oder YAML-Konfigurationsdateien von Hand zu bearbeiten.**
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -15,6 +17,8 @@
 ### 🌐 Die einzige offizielle Website: **[ccswitch.io](https://ccswitch.io)**
 
 [English](README.md) | [中文](README_ZH.md) | [日本語](README_JA.md) | Deutsch | [Changelog](CHANGELOG.md)
+
+**[Download](#download--installation) · [Schnellstart](#schnellstart) · [Funktionen](#funktionen) · [FAQ](#faq) · [Benutzerhandbuch (Englisch)](docs/user-manual/en/README.md)**
 
 </div>
 
@@ -167,8 +171,8 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
-<td>Danke an SSSAiCode für die Unterstützung dieses Projekts! SSSAiCode ist ein stabiler und zuverlässiger API-Relay-Dienst, der sich der Bereitstellung stabiler, zuverlässiger und erschwinglicher Claude- und Codex-Modelldienste widmet, mit schneller Rechnungsstellung am selben Tag. SSSAiCode bietet ein besonderes Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.sssaicode.com/register?ref=DCP0SM">diesen Link</a> und erhalten Sie bei jeder Aufladung 10 $ zusätzliches Guthaben!</td>
+<td width="180"><a href="https://sssaicodeapi.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
+<td>Danke an SSSAiCode für die Unterstützung dieses Projekts! SSSAiCode ist ein stabiler und zuverlässiger API-Relay-Dienst, der sich der Bereitstellung stabiler, zuverlässiger und erschwinglicher Claude- und Codex-Modelldienste widmet, mit schneller Rechnungsstellung am selben Tag. SSSAiCode bietet ein besonderes Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://sssaicodeapi.com/register?ref=DCP0SM">diesen Link</a> und erhalten Sie bei jeder Aufladung 10 $ zusätzliches Guthaben!</td>
 </tr>
 
 <tr>
@@ -212,17 +216,16 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 
 ## Warum CC Switch?
 
-Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, MiniMax Code — doch jedes hat sein eigenes Konfigurationsformat. Der Wechsel des API-Anbieters bedeutet, JSON-, TOML- oder `.env`-Dateien von Hand zu bearbeiten, und es gibt keine einheitliche Möglichkeit, MCP und Skills über mehrere Werkzeuge hinweg zu verwalten.
+Claude Code, Codex, Gemini CLI und andere KI-Programmierwerkzeuge haben jeweils ihr eigenes Konfigurationsformat. Wer den API-Anbieter wechselt, muss JSON-, TOML-, YAML- oder `.env`-Dateien von Hand bearbeiten; auch MCP, Skills und Prompts müssen in jedem Werkzeug einzeln gepflegt werden.
 
-**CC Switch** gibt Ihnen eine einzige Desktop-App, um alle unterstützten KI-Werkzeuge zu verwalten. Statt Konfigurationsdateien von Hand zu bearbeiten, erhalten Sie eine visuelle Oberfläche, um Anbieter mit einem Klick zu importieren und sofort zwischen ihnen zu wechseln — mit 50+ integrierten Anbieter-Presets, einheitlicher MCP- und Skills-Verwaltung und schnellem Umschalten über das System-Tray. Das Ganze gestützt auf eine zuverlässige SQLite-Datenbank mit atomaren Schreibvorgängen, die Ihre Konfigurationen vor Beschädigung schützen.
+**CC Switch** bündelt all das in einer einzigen Desktop-App: Preset auswählen, Schlüssel eintragen und mit einem Klick wechseln — Ihre bestehende Konfiguration geht dabei nicht verloren.
 
-- **Eine App, neun Werkzeuge** — Verwalten Sie Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, MiniMax Code über eine einzige Oberfläche
-- **Kein manuelles Bearbeiten mehr** — 50+ Anbieter-Presets einschließlich AWS Bedrock, NVIDIA NIM und Community-Relays; einfach auswählen und umschalten
-- **Einheitliche MCP- & Skills-Verwaltung** — Ein Panel zur Verwaltung von MCP-Servern und Skills für Claude, Codex, Gemini, Grok Build, OpenCode, Hermes, MiniMax Code mit bidirektionaler Synchronisierung
-- **Schnellumschaltung über System-Tray** — Wechseln Sie Anbieter sofort über das Tray-Menü, ohne die vollständige App öffnen zu müssen
-- **Cloud-Synchronisierung** — Synchronisieren Sie Anbieterdaten geräteübergreifend über Dropbox, OneDrive, iCloud oder WebDAV-Server
+- **Eine App, zehn Werkzeuge** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code
+- **Kein manuelles Bearbeiten mehr** — 90+ Anbieter-Presets einschließlich AWS Bedrock, NVIDIA NIM und Community-Relays
+- **GPT in Claude Code, Claude in Codex** — Integriertes lokales Routing, das die Schnittstellenformate von Anthropic, OpenAI und Gemini automatisch konvertiert, mit automatischem Failover
+- **MCP, Skills & Prompts zentral verwalten** — MCP und Skills einmal hinzufügen und pro Werkzeug per Häkchen synchronisieren; Prompts werden je Werkzeug separat gepflegt
+- **Nutzung und Kontingente auf einen Blick** — Token-Verbrauch und Kosten werden auch ohne lokales Routing erfasst; Abo-Kontingente und Guthaben erscheinen direkt auf den Anbieterkarten und im System-Tray
 - **Plattformübergreifend** — Native Desktop-App für Windows, macOS und Linux, gebaut mit Tauri 2
-- **Integrierte Hilfsprogramme** — Enthält diverse Hilfsprogramme für die Login-Bestätigung beim Erststart, das Umgehen von Signaturen, die Synchronisierung von Plugin-Erweiterungen und mehr
 
 ## Screenshots
 
@@ -230,145 +233,17 @@ Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code
 | :-----------------------------------------------: | :--------------------------------------------: |
 | ![Hauptoberfläche](assets/screenshots/main-en.png) | ![Anbieter hinzufügen](assets/screenshots/add-en.png) |
 
-## Funktionen
-
-[Vollständiges Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.16.1-en.md)
-
-### Anbieterverwaltung
-
-- **9 unterstützte Werkzeuge, 50+ Presets** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, MiniMax Code; Schlüssel kopieren und mit einem Klick importieren
-- **Universelle Anbieter** — Eine Konfiguration synchronisiert sich mit Claude Code, Codex und Gemini CLI
-- Umschaltung mit einem Klick, Schnellzugriff über System-Tray, Sortierung per Drag-and-drop, Import/Export
-
-### Proxy & Failover
-
-- **Lokaler Proxy mit Hot-Switching** — Formatkonvertierung, automatisches Failover, Circuit Breaker, Anbieter-Health-Monitoring und Request-Rectifier
-- **Übernahme auf App-Ebene** — Claude, Codex, Gemini oder Grok Build unabhängig über den Proxy leiten, bis hinunter auf einzelne Anbieter
-
-### MCP, Prompts & Skills
-
-- **Einheitliches MCP-Panel** — Verwalten Sie MCP-Server für Claude, Codex, Gemini, Grok Build, OpenCode, Hermes, MiniMax Code mit bidirektionaler Synchronisierung und Deep-Link-Import
-- **Prompts** — Markdown-Editor mit App-übergreifender Synchronisierung (CLAUDE.md / AGENTS.md / GEMINI.md) und Backfill-Schutz
-- **Skills** — Installation mit einem Klick aus GitHub-Repositorys oder ZIP-Dateien, Verwaltung eigener Repositorys, mit Unterstützung für Symlinks und Dateikopien
-
-### Nutzungs- & Kostenverfolgung
-
-- **Nutzungs-Dashboard** — Verfolgen Sie Ausgaben, Anfragen und Token mit Trenddiagrammen, detaillierten Anfrageprotokollen und eigener Preisgestaltung pro Modell
-
-### Session Manager & Workspace
-
-- Gesprächsverlauf aus unterstützten Sitzungsquellen durchsuchen, suchen und wiederherstellen
-- **Workspace-Editor** (OpenClaw) — Bearbeiten Sie Agent-Dateien (AGENTS.md, SOUL.md usw.) mit Markdown-Vorschau
-
-### System & Plattform
-
-- **Cloud-Synchronisierung** — Eigenes Konfigurationsverzeichnis (Dropbox, OneDrive, iCloud, NAS) und WebDAV-Server-Synchronisierung
-- **Deep Link** (`ccswitch://`) — Importieren Sie Anbieter, MCP-Server, Prompts und Skills per URL
-- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups, i18n (zh/zh-TW/en/ja)
-
-## FAQ
-
-<details>
-<summary><strong>Welche KI-Werkzeuge unterstützt CC Switch?</strong></summary>
-
-CC Switch unterstützt neun Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **MiniMax Code**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung.
-
-</details>
-
-<details>
-<summary><strong>Muss ich das Terminal nach einem Anbieterwechsel neu starten?</strong></summary>
-
-Bei den meisten Werkzeugen ja — starten Sie Ihr Terminal oder das CLI-Werkzeug neu, damit die Änderungen wirksam werden. Die Ausnahme ist **Claude Code**, das derzeit das Hot-Switching von Anbieterdaten ohne Neustart unterstützt.
-
-</details>
-
-<details>
-<summary><strong>Meine Plugin-Konfiguration ist nach einem Anbieterwechsel verschwunden — was ist passiert?</strong></summary>
-
-CC Switch bietet eine Funktion „Gemeinsames Konfigurations-Snippet", um gemeinsame Daten (über API-Schlüssel und Endpunkte hinaus) zwischen Anbietern weiterzugeben. Gehen Sie zu „Anbieter bearbeiten" → „Panel für gemeinsame Konfiguration" → klicken Sie auf „Aus aktuellem Anbieter extrahieren", um alle gemeinsamen Daten zu speichern. Aktivieren Sie beim Anlegen eines neuen Anbieters die Option „Gemeinsame Konfiguration schreiben" (standardmäßig aktiviert), um die Plugin-Daten in den neuen Anbieter aufzunehmen. Alle Ihre Konfigurationspunkte bleiben im Standardanbieter erhalten, der beim ersten Start der App importiert wurde.
-
-</details>
-
-<details>
-<summary><strong>Installation unter macOS</strong></summary>
-
-CC Switch für macOS ist von Apple code-signiert und notarisiert. Sie können es direkt herunterladen und installieren — es sind keine zusätzlichen Schritte erforderlich. Wir empfehlen die Verwendung des `.dmg`-Installationsprogramms.
-
-</details>
-
-<details>
-<summary><strong>Warum kann ich den aktuell aktiven Anbieter nicht löschen?</strong></summary>
-
-CC Switch folgt dem Designprinzip der „minimalen Eingriffstiefe" — selbst wenn Sie die App deinstallieren, funktionieren Ihre CLI-Werkzeuge weiterhin normal. Das System behält immer eine aktive Konfiguration bei, da das Löschen aller Konfigurationen das entsprechende CLI-Werkzeug unbrauchbar machen würde. Wenn Sie ein bestimmtes CLI-Werkzeug selten verwenden, können Sie es in den Einstellungen ausblenden. Wie Sie zurück zum offiziellen Login wechseln, erfahren Sie in der nächsten Frage.
-
-</details>
-
-<details>
-<summary><strong>Wie wechsle ich zurück zum offiziellen Login?</strong></summary>
-
-Fügen Sie einen offiziellen Anbieter aus der Preset-Liste hinzu. Führen Sie nach dem Wechsel den Abmelde-/Anmelde-Vorgang aus; anschließend können Sie frei zwischen dem offiziellen Anbieter und Drittanbietern wechseln. Codex unterstützt den Wechsel zwischen verschiedenen offiziellen Anbietern, was das Umschalten zwischen mehreren Plus- oder Team-Konten erleichtert.
-
-</details>
-
-<details>
-<summary><strong>Wo werden meine Daten gespeichert?</strong></summary>
-
-- **Datenbank**: `~/.cc-switch/cc-switch.db` (SQLite — Anbieter, MCP, Prompts, Skills)
-- **Lokale Einstellungen**: `~/.cc-switch/settings.json` (gerätebezogene UI-Einstellungen)
-- **Backups**: `~/.cc-switch/backups/` (automatisch rotiert, behält die 10 neuesten)
-- **Skills**: `~/.cc-switch/skills/` (standardmäßig per Symlink mit den entsprechenden Apps verbunden)
-- **Skill-Backups**: `~/.cc-switch/skill-backups/` (vor der Deinstallation automatisch erstellt, behält die 20 neuesten)
-
-</details>
-
-<details>
-<summary><strong>Linux (Wayland + NVIDIA): Klicks im Webinhalt reagieren nicht, schwarzer Bildschirm beim Größenändern</strong></summary>
-
-Das AppImage erzwingt `GDK_BACKEND=x11` (XWayland), um einen historischen nativen Wayland-Absturz zu vermeiden. Auf neueren Wayland-+-NVIDIA-Systemen kann das dazu führen, dass der Webinhalt nicht anklickbar ist (die Titelleisten-Schaltflächen funktionieren weiterhin) und das Fenster beim Größenändern schwarz wird. Starten Sie mit dem optionalen Notausgang, um zu nativem Wayland zu wechseln:
-
-```bash
-CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
-```
-
-Wenn Sie über ein Desktop-Symbol starten, fügen Sie es der `Exec=`-Zeile der `.desktop`-Datei hinzu (z. B. `env CC_SWITCH_GDK_BACKEND=wayland /pfad/zum/AppImage`) oder setzen Sie es in Ihrer Sitzungsumgebung. Die Variable ist generisch: Auf Tiling-Wayland-Compositors (sway/Hyprland), bei denen Klicks nicht reagieren, versuchen Sie umgekehrt `CC_SWITCH_GDK_BACKEND=x11`. Bleibt sie ungesetzt, bleibt das Standardverhalten erhalten.
-
-</details>
-
-## Dokumentation
-
-Ausführliche Anleitungen zu jeder Funktion finden Sie im **[Benutzerhandbuch](docs/user-manual/en/README.md)** — es deckt Anbieterverwaltung, MCP/Prompts/Skills, Proxy & Failover und mehr ab.
-
-## Schnellstart
-
-### Grundlegende Verwendung
-
-1. **Anbieter hinzufügen**: Klicken Sie auf „Add Provider" → Wählen Sie ein Preset oder erstellen Sie eine eigene Konfiguration
-2. **Anbieter wechseln**:
-   - Hauptoberfläche: Anbieter auswählen → auf „Enable" klicken
-   - System-Tray: Anbietername direkt anklicken (sofort wirksam)
-3. **Wirksam werden**: Starten Sie Ihr Terminal oder das entsprechende CLI-Werkzeug neu, um die Änderungen anzuwenden (Claude Code erfordert keinen Neustart)
-4. **Zurück zum Offiziellen**: Fügen Sie ein „Official Login"-Preset hinzu, starten Sie das CLI-Werkzeug neu und folgen Sie dann seinem Login-/OAuth-Vorgang
-
-### MCP, Prompts, Skills & Sessions
-
-- **MCP**: Klicken Sie auf die Schaltfläche „MCP" → Server über Vorlagen oder eigene Konfiguration hinzufügen → Synchronisierung pro App umschalten
-- **Prompts**: Klicken Sie auf „Prompts" → Presets mit dem Markdown-Editor erstellen → Aktivieren, um mit den Live-Dateien zu synchronisieren
-- **Skills**: Klicken Sie auf „Skills" → GitHub-Repositorys durchsuchen → mit einem Klick in unterstützte Apps installieren
-- **Sessions**: Klicken Sie auf „Sessions" → Gesprächsverlauf aus unterstützten Sitzungsquellen durchsuchen, suchen und wiederherstellen
-
-> **Hinweis**: Beim Erststart können Sie bestehende CLI-Werkzeug-Konfigurationen manuell als Standardanbieter importieren.
-
 ## Download & Installation
 
 ### Systemanforderungen
 
 - **Windows**: Windows 10 und höher
 - **macOS**: macOS 12 (Monterey) und höher
-- **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ und andere gängige Distributionen
+- **Linux**: x86_64 oder ARM64 mit glibc 2.35+ und WebKitGTK 4.1 — z. B. Ubuntu 22.04+, Debian 12+ und aktuelle Fedora-Versionen; RHEL / Rocky / Alma 8–9 werden derzeit nicht unterstützt
 
 ### Windows-Nutzer
 
-Laden Sie das neueste Installationsprogramm `CC-Switch-v{version}-Windows.msi` oder die portable Version `CC-Switch-v{version}-Windows-Portable.zip` von der Seite [Releases](../../releases) herunter.
+Laden Sie das neueste Installationsprogramm `CC-Switch-v{version}-Windows.msi` oder die portable Version `CC-Switch-v{version}-Windows-Portable.zip` von der Seite [Releases](../../releases) herunter. Unter Windows on ARM laden Sie `CC-Switch-v{version}-Windows-arm64.msi` oder `CC-Switch-v{version}-Windows-arm64-Portable.zip` herunter.
 
 ### macOS-Nutzer
 
@@ -386,7 +261,7 @@ brew upgrade --cask cc-switch
 
 **Methode 2: Manueller Download**
 
-Laden Sie `CC-Switch-v{version}-macOS.dmg` (empfohlen) oder `.zip` von der Seite [Releases](../../releases) herunter.
+Laden Sie `CC-Switch-v{version}-macOS.dmg` (empfohlen) oder `.zip` von der Seite [Releases](../../releases) herunter. Es handelt sich um einen Universal-Build, der nativ auf Apple-Silicon- und Intel-Macs läuft.
 
 > **Hinweis**: CC Switch für macOS ist von Apple code-signiert und notarisiert. Sie können es direkt installieren und öffnen.
 
@@ -402,201 +277,236 @@ paru -S cc-switch-bin
 
 Laden Sie den neuesten Linux-Build von der Seite [Releases](../../releases) herunter:
 
-- `CC-Switch-v{version}-Linux.deb` (Debian/Ubuntu)
-- `CC-Switch-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
-- `CC-Switch-v{version}-Linux.AppImage` (universell)
+- `CC-Switch-v{version}-Linux-x86_64.deb` / `-Linux-arm64.deb` (Debian/Ubuntu)
+- `CC-Switch-v{version}-Linux-x86_64.rpm` / `-Linux-arm64.rpm` (Fedora und andere RPM-Distributionen mit WebKitGTK 4.1)
+- `CC-Switch-v{version}-Linux-x86_64.AppImage` / `-Linux-arm64.AppImage` (jede Distribution, die die obigen Systemanforderungen erfüllt)
 
 > **Flatpak**: Nicht in den offiziellen Releases enthalten. Sie können es selbst aus dem `.deb` bauen — eine Anleitung finden Sie unter [`flatpak/README.md`](flatpak/README.md).
 
+## Schnellstart
+
+### Grundlegende Verwendung
+
+1. **Anbieter hinzufügen**: Klicken Sie in der Symbolleiste auf „Add New Provider“ (die +-Schaltfläche) → Wählen Sie ein Preset oder erstellen Sie eine eigene Konfiguration
+2. **Anbieter wechseln**:
+   - Hauptoberfläche: Anbieter auswählen → auf „Enable“ klicken (bei OpenCode, OpenClaw, Hermes und MiniMax Code heißt die Schaltfläche „Add“; diese vier Werkzeuge und Pi arbeiten im Parallelmodus, sodass Sie mehrere Anbieter gleichzeitig hinzufügen können)
+   - System-Tray: Anbietername direkt anklicken (Claude Code, Codex, Gemini CLI, Grok Build)
+3. **Wirksam werden**: Claude Code erfordert keinen Neustart; bei Codex, Gemini CLI und Grok Build starten Sie das Terminal oder das CLI-Werkzeug neu, bei Claude Desktop die App selbst (siehe FAQ)
+4. **Zurück zum offiziellen Login**: Wechseln Sie zum mitgelieferten offiziellen Anbieter in der Liste (z. B. „Claude Official“), starten Sie das Werkzeug neu und folgen Sie dann seinem Login-/OAuth-Vorgang
+5. **Lokales Routing (optional)**: Wenn Sie in Claude Code Anbieter im OpenAI- oder Gemini-Format nutzen oder Claude in Codex verwenden möchten, müssen Sie das lokale Routing aktivieren. Schalten Sie dazu unter „Settings → Routing → Local Routing“ den „Routing Master Switch“ ein und aktivieren Sie anschließend unter „Routing Enabled“ das jeweilige Werkzeug. Wenn Sie das Routing direkt oben auf der Hauptseite umschalten möchten, aktivieren Sie „Show Routing Toggle on Main Page“
+
+### MCP, Prompts, Skills, Projekte & Sessions
+
+- **MCP**: Klicken Sie auf „MCP Management“ → Server über Vorlagen oder eigene Konfiguration hinzufügen (oder „Import Existing“) → Synchronisierung pro Werkzeug umschalten
+- **Prompts**: Klicken Sie auf „Prompts“ → Prompts mit dem Markdown-Editor erstellen → nach dem Aktivieren wird der Prompt in die Prompt-Datei des Werkzeugs geschrieben
+- **Skills**: Klicken Sie auf „Skills“ → „Discover Skills“ → skills.sh durchsuchen oder GitHub-Repositorys durchstöbern → mit einem Klick in unterstützte Werkzeuge installieren
+- **Projekte**: Öffnen Sie auf der Seite von Claude Code, Claude Desktop oder Codex den Projektumschalter oben auf der Hauptseite → „New project“, um die aktuelle Konfiguration zu speichern; später wählen Sie das Projekt einfach im Umschalter aus, um die gesamte Konfiguration auf einmal zu wechseln
+- **Sessions**: Klicken Sie auf „Session Manager“ → Gesprächsverlauf der einzelnen Werkzeuge durchsehen, durchsuchen und fortsetzen
+
+> **Hinweis**: Beim Erststart importiert CC Switch Ihre bestehende Konfiguration von Claude Code, Codex, Gemini CLI und Grok Build automatisch als Anbieter namens `default` und fügt für diese Werkzeuge sowie für Claude Desktop jeweils den offiziellen Anbieter hinzu, sodass nichts von Ihrer bisherigen Konfiguration verloren geht.
+
+Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch](docs/user-manual/en/README.md)** (auf Englisch) — es deckt sämtliche Funktionen ab, darunter Anbieterverwaltung, MCP/Prompts/Skills sowie lokales Routing & Failover.
+
+## Funktionen
+
+[Vollständiges Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.20.4-en.md)
+
+### Funktionen je Werkzeug
+
+| Werkzeug | Anbieter | Lokales Routing | Tray-Umschaltung | MCP | Skills | Prompts | Sessions | Nutzungsstatistik |
+| --- | --- | :---: | :---: | :---: | :---: | --- | :---: | :---: |
+| Claude Code | Wechsel | ✓ | ✓ | ✓ | ✓ | CLAUDE.md | ✓ | ✓ |
+| Claude Desktop | Wechsel | nur Model Mapping | – | – | – | – | – | nur Model Mapping |
+| Codex | Wechsel | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Gemini CLI | Wechsel | ✓ | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
+| Grok Build | Wechsel | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| OpenCode | Parallel | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| OpenClaw | Parallel | – | – | – | – | Workspace-Editor | ✓ | – |
+| Hermes | Parallel | – | – | ✓ | ✓ | Memory-Verwaltung | ✓ | – |
+| Pi | Parallel | – | – | – | ✓ | AGENTS.md, SYSTEM.md, Prompt-Vorlagen | ✓ | ✓ |
+| MiniMax Code | Parallel | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+
+- **Wechsel**: Es ist jeweils nur ein Anbieter aktiv; **Parallel**: Mehrere Anbieter werden gleichzeitig in die eigene Konfiguration des Werkzeugs geschrieben; welcher verwendet wird, wählen Sie im Werkzeug aus.
+- **Lokales Routing**: CC Switch leitet Anfragen auf Ihrem Rechner weiter und konvertiert dabei die Schnittstellenformate, siehe [Lokales Routing & Failover](#lokales-routing--failover) weiter unten. Für Anbieter von Claude Desktop können Sie „Direct“ oder „Model Mapping“ wählen; bei „Model Mapping“ laufen die Anfragen über das lokale Routing.
+- **Sessions**: Sitzungsverlauf durchsehen und durchsuchen, Befehl zum Fortsetzen kopieren und das Gespräch weiterführen (Sessions von OpenClaw und Hermes lassen sich derzeit nicht fortsetzen). Um Hermes-Sessions zu sehen, wählen Sie im Session Manager „All“.
+- **Nutzungsstatistik**: Ohne lokales Routing wird sie aus den lokalen Sitzungsprotokollen der einzelnen Werkzeuge erstellt; Anfragen über das lokale Routing werden ebenfalls erfasst.
+- Die auf der Claude-Desktop-Seite geöffneten Panels für MCP, Skills, Prompts und Sessions wirken auf Claude Code.
+
+### Anbieterverwaltung
+
+- **90+ Anbieter-Presets** — Preset auswählen und Schlüssel eintragen, um einen Anbieter hinzuzufügen; alternativ können Sie eine eigene Konfiguration erstellen
+- **Projekte** — Speichern Sie den aktuellen Anbieter sowie MCP, Skills und Prompt-Dateien von Claude Code oder Codex als Projekt (bei Claude Desktop nur den Anbieter) und wechseln Sie später über den Projektumschalter oben auf der Hauptseite oder über das System-Tray mit einem Klick die gesamte Konfiguration; beim Wechsel zu einem anderen Projekt wird der aktuelle Zustand automatisch im bisherigen Projekt gespeichert
+- **OAuth Authentication Center (Beta)** — Melden Sie sich unter „Settings → Auth“ bei mehreren GitHub-Copilot-, ChatGPT- und xAI-(Grok-)Konten an und nutzen Sie die Abonnements als Anbieter in Claude Code, Claude Desktop und Codex (außer bei OpenAI Official in Codex ist dafür jeweils das lokale Routing erforderlich). Die Nutzung von Abonnements außerhalb der offiziellen Clients kann gegen die Nutzungsbedingungen des Herstellers verstoßen — bitte schätzen Sie das Risiko selbst ein
+- **Claude Desktop mit Drittanbietern** — Direkte Verbindung zu Anthropic-kompatiblen Endpunkten möglich; für Nicht-Claude-Modelle wählen Sie „Model Mapping“, dann bildet das lokale Routing Stufen wie Sonnet, Opus und Haiku auf die tatsächlichen Modelle des Anbieters ab
+- **Universelle Anbieter** — Eine Konfiguration synchronisiert sich mit Claude Code, Codex und Gemini CLI
+- Umschaltung mit einem Klick, Schnellumschaltung über System-Tray (Claude Code, Codex, Gemini CLI, Grok Build), Sortierung per Drag-and-drop, Import/Export
+
+### Lokales Routing & Failover
+
+- **Formatkonvertierung** — Das lokale Routing konvertiert Anfragen zwischen Anthropic Messages, OpenAI Chat Completions, OpenAI Responses und Gemini Native: Claude Code und Claude Desktop können Anbieter im OpenAI- oder Gemini-Format nutzen, Codex und Grok Build Anbieter im Chat-Completions- oder Anthropic-Messages-Format
+- **Pro Werkzeug aktivierbar** — Für Claude Code, Codex, Gemini CLI und Grok Build lässt sich das lokale Routing jeweils einzeln aktivieren; danach wirkt ein Anbieterwechsel sofort auf die folgenden Anfragen (ändert der Wechsel das Modell, kann bei Codex und Grok Build trotzdem ein Neustart nötig sein)
+- **Automatisches Failover** — Konfigurieren Sie für jedes Werkzeug eine Failover-Warteschlange; schlägt eine Anfrage fehl, wird automatisch der nächste Anbieter in der Warteschlange verwendet — ergänzt durch Circuit Breaker und Anbieter-Health-Monitoring
+- **Request-Rectifier** — Korrigiert automatisch bestimmte Anfragen, die mit dem Upstream nicht kompatibel sind (z. B. Thinking-Signaturen, Herabstufung, wenn keine Bilder unterstützt werden)
+- Offizielle Anbieter (z. B. Claude Official) können nicht über das lokale Routing laufen (ausgenommen OpenAI Official von Codex)
+- Anleitungen (auf Englisch): [GPT in Claude Code nutzen](docs/guides/claude-codex-routing-guide-en.md) · [Claude in Codex nutzen](docs/guides/codex-claude-routing-guide-en.md)
+
+### MCP, Prompts & Skills
+
+- **Einheitliches MCP-Panel** — Alle MCP-Server an einer Stelle verwalten, pro Werkzeug per Häkchen synchronisieren, bestehende Konfigurationen aus den einzelnen Werkzeugen importieren, Import per Deep Link
+- **Prompts** — Je Werkzeug separat verwaltete Prompt-Bibliothek mit Markdown-Editor; nach dem Aktivieren wird der Prompt in die Prompt-Datei des Werkzeugs geschrieben (CLAUDE.md / AGENTS.md / GEMINI.md), wobei der bisherige Inhalt der Datei vorher in die Prompt-Bibliothek zurückgesichert wird und nicht verloren geht. Bei Pi lassen sich außerdem SYSTEM.md, APPEND_SYSTEM.md und Prompt-Vorlagen bearbeiten
+- **Skills** — skills.sh durchsuchen oder mit einem Klick aus GitHub-Repositorys bzw. ZIP-Dateien installieren; nach Updates suchen und alle mit einem Klick aktualisieren; Synchronisierung in die einzelnen Werkzeuge per Symlink oder Dateikopie, als Speicherort ist optional `~/.agents/skills` wählbar
+- Alle drei Panels unterstützen die Suche; bei MCP und Skills können Sie zudem pro Werkzeug alle Einträge mit einem Klick aktivieren oder deaktivieren
+
+### Nutzungs- & Kostenverfolgung
+
+- **Nutzungs-Dashboard** — Funktioniert auch ohne lokales Routing: Standardmäßig werden die lokalen Sitzungsprotokolle der einzelnen Werkzeuge automatisch gescannt und Anfragen, Token, Cache-Trefferquote und Kosten nach Anbieter und Modell ausgewertet — mit Trenddiagrammen und einem Protokoll jeder einzelnen Anfrage
+- **Kontingente & Guthaben** — Anbieterkarten und System-Tray zeigen direkt offizielle Abo-Kontingente (Claude, ChatGPT, Gemini, SuperGrok), 5-Stunden-, Wochen- und Monatskontingente von Coding Plans (Kimi, Zhipu GLM, MiniMax, Volcengine Ark u. a.) sowie Kontoguthaben (DeepSeek, OpenRouter, SiliconFlow u. a.) an; manche davon müssen zuerst über „Configure usage query“ auf der Anbieterkarte aktiviert werden. Für andere Anbieter können Sie ein eigenes Nutzungsskript schreiben
+- **Eigene Preise** — Preise pro Modell festlegen, Import von models.dev möglich
+
+### Session Manager & Workspace
+
+- **Session Manager** — Gesprächsverlauf der einzelnen Werkzeuge durchsehen und durchsuchen, Befehl zum Fortsetzen kopieren und das Gespräch weiterführen; unter macOS lässt sich eine Session mit einem Klick im Terminal fortsetzen
+- **Workspace-Editor** (OpenClaw) — Agent-Dateien (AGENTS.md, SOUL.md usw.) und „Daily Memory“ bearbeiten
+- **Memory-Verwaltung** (Hermes) — MEMORY.md und USER.md von Hermes bearbeiten
+
+### System & Plattform
+
+- **Cloud-Synchronisierung** — Geräteübergreifende Synchronisierung über WebDAV (Jianguoyun, Nextcloud, Synology NAS usw.) oder S3-kompatiblen Speicher (AWS S3, Cloudflare R2, Alibaba Cloud OSS, Tencent Cloud COS usw.); alternativ können Sie das CC-Switch-Konfigurationsverzeichnis in einen Cloud-Speicher-Ordner wie Dropbox, OneDrive oder iCloud legen
+- **CLI-Werkzeugverwaltung** — Auf der Seite „About“ sehen Sie die installierte und die neueste Version von Kommandozeilenwerkzeugen wie Claude Code und Codex, können sie mit einem Klick installieren, aktualisieren oder alle auf einmal aktualisieren und doppelte Installationen diagnostizieren; unter Windows lassen sich auch Werkzeuge in WSL verwalten (siehe FAQ)
+- **Deep Link** (`ccswitch://`) — Anbieter, MCP-Server und Prompts per Link mit einem Klick importieren oder Skill-Repositorys hinzufügen
+- **Hilfsprogramme** — Überspringen der Erststart-Bestätigung von Claude Code, Ausblenden der KI-Attribution, Übernahme des in CC Switch gewählten Anbieters durch die Claude-Code-Erweiterung für VS Code und mehr
+- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups, i18n (zh/zh-TW/en/ja)
+
+## FAQ
+
 <details>
-<summary><strong>Architekturüberblick</strong></summary>
+<summary><strong>Welche KI-Werkzeuge unterstützt CC Switch?</strong></summary>
 
-### Designprinzipien
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (React + TS)                    │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │ Components  │  │    Hooks     │  │  TanStack Query  │    │
-│  │   (UI)      │──│ (Bus. Logic) │──│   (Cache/Sync)   │    │
-│  └─────────────┘  └──────────────┘  └──────────────────┘    │
-└────────────────────────┬────────────────────────────────────┘
-                         │ Tauri IPC
-┌────────────────────────▼────────────────────────────────────┐
-│                  Backend (Tauri + Rust)                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │  Commands   │  │   Services   │  │  Models/Config   │    │
-│  │ (API Layer) │──│ (Bus. Layer) │──│     (Data)       │    │
-│  └─────────────┘  └──────────────┘  └──────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Kern-Designmuster**
-
-- **SSOT** (Single Source of Truth): Alle Daten werden in `~/.cc-switch/cc-switch.db` (SQLite) gespeichert
-- **Zweischichtiger Speicher**: SQLite für synchronisierbare Daten, JSON für gerätebezogene Einstellungen
-- **Bidirektionale Synchronisierung**: Schreiben in Live-Dateien beim Umschalten, Backfill aus den Live-Dateien beim Bearbeiten des aktiven Anbieters
-- **Atomare Schreibvorgänge**: Das Muster aus temporärer Datei + Umbenennen verhindert die Beschädigung von Konfigurationen
-- **Nebenläufigkeitssicher**: Eine durch Mutex geschützte Datenbankverbindung vermeidet Race Conditions
-- **Geschichtete Architektur**: Klare Trennung (Commands → Services → DAO → Database)
-
-**Schlüsselkomponenten**
-
-- **ProviderService**: Anbieter-CRUD, Umschaltung, Backfill, Sortierung
-- **McpService**: Verwaltung von MCP-Servern, Import/Export, Synchronisierung von Live-Dateien
-- **ProxyService**: Lokaler Proxy-Modus mit Hot-Switching und Formatkonvertierung
-- **SessionManager**: Durchsuchen des Gesprächsverlaufs über alle unterstützten Apps hinweg
-- **ConfigService**: Konfigurations-Import/-Export, Backup-Rotation
-- **SpeedtestService**: Messung der Latenz von API-Endpunkten
+CC Switch unterstützt zehn Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung; welche Funktionen jeweils unterstützt werden, sehen Sie unter [Funktionen je Werkzeug](#funktionen-je-werkzeug).
 
 </details>
 
 <details>
-<summary><strong>Entwicklungsleitfaden</strong></summary>
+<summary><strong>Muss ich das Terminal nach einem Anbieterwechsel neu starten?</strong></summary>
 
-### Umgebungsanforderungen
+Das hängt vom Werkzeug ab:
 
-- Node.js 18+
-- pnpm 8+
-- Rust 1.85+
-- Tauri CLI 2.8+
-
-### Entwicklungsbefehle
-
-```bash
-# Abhängigkeiten installieren
-pnpm install
-
-# Entwicklungsmodus (Hot Reload)
-pnpm dev
-
-# Typprüfung
-pnpm typecheck
-
-# Code formatieren
-pnpm format
-
-# Codeformatierung prüfen
-pnpm format:check
-
-# Frontend-Unit-Tests ausführen
-pnpm test:unit
-
-# Tests im Watch-Modus ausführen (für die Entwicklung empfohlen)
-pnpm test:unit:watch
-
-# Anwendung bauen
-pnpm build
-
-# Debug-Version bauen
-pnpm tauri build --debug
-```
-
-### Entwicklung des Rust-Backends
-
-```bash
-cd src-tauri
-
-# Rust-Code formatieren
-cargo fmt
-
-# Clippy-Prüfungen ausführen
-cargo clippy
-
-# Backend-Tests ausführen
-cargo test
-
-# Bestimmte Tests ausführen
-cargo test test_name
-
-# Tests mit dem Feature test-hooks ausführen
-cargo test --features test-hooks
-```
-
-### Testleitfaden
-
-**Frontend-Tests**:
-
-- Verwendet **vitest** als Test-Framework
-- Verwendet **MSW (Mock Service Worker)**, um Tauri-API-Aufrufe zu mocken
-- Verwendet **@testing-library/react** für Komponententests
-
-**Tests ausführen**:
-
-```bash
-# Alle Tests ausführen
-pnpm test:unit
-
-# Watch-Modus (automatische erneute Ausführung)
-pnpm test:unit:watch
-
-# Mit Coverage-Bericht
-pnpm test:unit --coverage
-```
-
-### Tech-Stack
-
-**Frontend**: React 18 · TypeScript · Vite · TailwindCSS 3.4 · TanStack Query v5 · react-i18next · react-hook-form · zod · shadcn/ui · @dnd-kit
-
-**Backend**: Tauri 2.8 · Rust · serde · tokio · thiserror · tauri-plugin-updater/process/dialog/store/log
-
-**Testing**: vitest · MSW · @testing-library/react
+- **Claude Code**: unterstützt Hot-Switching von Anbieterdaten — kein Neustart nötig.
+- **Codex, Gemini CLI, Grok Build**: Starten Sie Ihr Terminal oder das CLI-Werkzeug neu, damit die Änderungen wirksam werden (bei Codex und Grok Build erinnert CC Switch Sie nach dem Wechsel daran). Mit aktiviertem lokalem Routing gehen Anfragen sofort an den neuen Anbieter; ändert der Wechsel jedoch das Modell, kann bei Codex und Grok Build trotzdem ein Neustart nötig sein.
+- **Claude Desktop**: Beenden Sie Claude Desktop vollständig und öffnen Sie es erneut; bei Verwendung von „Model Mapping“ muss CC Switch außerdem weiterlaufen.
+- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code**: Dies sind Werkzeuge im Parallelmodus — ein Klick auf „Add“ (bei Pi „Enable“) trägt den Anbieter zusätzlich zu den bereits vorhandenen in die eigene Konfiguration des Werkzeugs ein; das gewünschte Modell wählen Sie anschließend im Werkzeug aus.
 
 </details>
 
 <details>
-<summary><strong>Projektstruktur</strong></summary>
+<summary><strong>Meine Plugin-Konfiguration ist nach einem Anbieterwechsel verschwunden — was ist passiert?</strong></summary>
 
-```
-├── src/                        # Frontend (React + TypeScript)
-│   ├── components/
-│   │   ├── providers/          # Anbieterverwaltung
-│   │   ├── mcp/                # MCP-Panel
-│   │   ├── prompts/            # Prompts-Verwaltung
-│   │   ├── skills/             # Skills-Verwaltung
-│   │   ├── sessions/           # Session Manager
-│   │   ├── proxy/              # Proxy-Modus-Panel
-│   │   ├── openclaw/           # OpenClaw-Konfigurationspanels
-│   │   ├── settings/           # Einstellungen (Terminal/Backup/About)
-│   │   ├── deeplink/           # Deep-Link-Import
-│   │   ├── env/                # Verwaltung von Umgebungsvariablen
-│   │   ├── universal/          # App-übergreifende Konfiguration
-│   │   ├── usage/              # Nutzungsstatistik
-│   │   └── ui/                 # shadcn/ui-Komponentenbibliothek
-│   ├── hooks/                  # Eigene Hooks (Geschäftslogik)
-│   ├── lib/
-│   │   ├── api/                # Tauri-API-Wrapper (typsicher)
-│   │   └── query/              # TanStack-Query-Konfiguration
-│   ├── i18n/                   # Internationalisierung
-│   │   └── locales/            # Übersetzungen (zh/zh-TW/en/ja)
-│   ├── config/                 # Presets (providers/mcp)
-│   └── types/                  # TypeScript-Definitionen
-├── src-tauri/                  # Backend (Rust)
-│   └── src/
-│       ├── commands/           # Tauri-Befehlsschicht (nach Domäne)
-│       ├── services/           # Geschäftslogikschicht
-│       ├── database/           # SQLite-DAO-Schicht
-│       ├── proxy/              # Proxy-Modul
-│       ├── session_manager/    # Sitzungsverwaltung
-│       ├── deeplink/           # Deep-Link-Verarbeitung
-│       └── mcp/                # MCP-Synchronisierungsmodul
-├── tests/                      # Frontend-Tests
-└── assets/                     # Screenshots & Partnerressourcen
-```
+CC Switch nutzt ein „Common Config Snippet“ (verfügbar für Claude Code, Codex und Gemini CLI), um Einstellungen außer API-Schlüssel, Endpunkt und Modell — etwa Plugins, Hooks und Umgebungsvariablen — zwischen Anbietern zu teilen. Bearbeiten Sie einen Anbieter und klicken Sie auf „Edit Common Config“ → „Extract from Editor“, um diese gemeinsamen Teile im Snippet zu speichern; lassen Sie beim Anlegen eines neuen Anbieters „Apply Common Config“ aktiviert (Standardeinstellung), dann wird das Snippet in die Konfiguration des neuen Anbieters übernommen. Bei Claude-Code- und Codex-Anbietern mit aktiviertem „Apply Common Config“ extrahiert CC Switch die gemeinsamen Teile beim Wechsel zu einem anderen Anbieter automatisch erneut aus der aktuellen Konfiguration, sodass Plugins, die Sie im Werkzeug installieren, zum nächsten Anbieter mitgenommen werden. Ihre ursprüngliche Konfiguration bleibt im Standardanbieter erhalten, der beim ersten Start der App importiert wurde.
 
 </details>
+
+<details>
+<summary><strong>Warum kann ich den aktuell aktiven Anbieter nicht löschen?</strong></summary>
+
+CC Switch folgt dem Designprinzip der „minimalen Eingriffstiefe“ — selbst wenn Sie die App deinstallieren, funktionieren Ihre Werkzeuge weiterhin normal.
+
+Bei Werkzeugen mit jeweils einem aktiven Anbieter (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build) behält das System daher immer eine aktive Konfiguration bei, da das Löschen aller Konfigurationen das entsprechende Werkzeug unbrauchbar machen würde. Werkzeuge im Parallelmodus wie OpenCode, OpenClaw, Hermes, Pi und MiniMax Code sind davon nicht betroffen — dort können Sie jeden Anbieter direkt löschen. Wenn Sie ein Werkzeug selten verwenden, können Sie es in den Einstellungen ausblenden. Wie Sie zurück zum offiziellen Login wechseln, erfahren Sie in der nächsten Frage.
+
+</details>
+
+<details>
+<summary><strong>Wie wechsle ich zurück zum offiziellen Login?</strong></summary>
+
+In CC Switch enthält die Anbieterliste von Claude Code, Claude Desktop, Codex, Gemini CLI und Grok Build jeweils bereits einen offiziellen Anbieter (**Claude Official**, **Claude Desktop Official**, **OpenAI Official**, **Google Official**, **Grok Official**); falls Sie ihn gelöscht haben, fügen Sie ihn aus den Presets wieder hinzu. Folgen Sie nach dem Wechsel zum offiziellen Anbieter dem Login-Vorgang des Werkzeugs (z. B. `/login` in Claude Code, `codex login` für Codex); anschließend können Sie frei zwischen dem offiziellen Anbieter und Drittanbietern wechseln.
+
+Codex kann sich in CC Switch außerdem über „Sign in with ChatGPT“ bei mehreren ChatGPT-Konten anmelden; für jede **OpenAI Official**-Karte wählen Sie dann unter „Account to use“ ein Konto aus, sodass der Wechsel zwischen mehreren Plus-, Pro- oder Team-Konten mit einem Klick gelingt. Karten mit „Follow Codex login“ verwenden weiterhin den eigenen Login der Codex CLI.
+
+Hinweis: Solange das lokale Routing aktiviert ist, kann nicht zu offiziellen Anbietern gewechselt werden — ausgenommen die OpenAI-Official-Karten von Codex.
+
+</details>
+
+<details>
+<summary><strong>Warum steht nach dem Aktivieren des lokalen Routings 127.0.0.1 als Adresse in der Konfigurationsdatei?</strong></summary>
+
+Bei aktiviertem lokalem Routing sendet das Werkzeug seine Anfragen zunächst an das lokale Routing von CC Switch (standardmäßig `http://127.0.0.1:15721`), und CC Switch leitet sie an den ausgewählten Anbieter weiter. Deshalb enthält die Konfigurationsdatei des Werkzeugs nur die lokale Adresse und den Platzhalterschlüssel `PROXY_MANAGED`; bei Claude Code wird der Modellname außerdem als fester Alias wie `claude-sonnet-5` eingetragen (im `/model`-Menü wird weiterhin der tatsächliche Modellname angezeigt). Die tatsächliche Anbieteradresse, der Schlüssel und das Modell sind in CC Switch gespeichert.
+
+Unter „Settings → Usage Statistics → Request Logs“ sehen Sie für jede Anfrage „angefragtes Modell → tatsächliches Modell“. Nach dem Deaktivieren des lokalen Routings wird die Konfigurationsdatei wieder auf die echte Konfiguration des aktuellen Anbieters zurückgesetzt.
+
+</details>
+
+<details>
+<summary><strong>Kann ich in Claude Code OpenAI-kompatible Schnittstellen, Gemini oder lokale Modelle verwenden?</strong></summary>
+
+Ja, dafür muss jedoch das lokale Routing aktiviert sein. Wählen Sie beim Bearbeiten des Anbieters unter „Advanced Options“ im Feld „Upstream Format“ das Schnittstellenformat, das der Anbieter verwendet: Für Dienste, die nur eine Chat-Completions-Schnittstelle anbieten (was bei vielen lokalen Modelldiensten der Fall ist), wählen Sie „OpenAI Chat Completions“, für Dienste mit Responses-Schnittstelle „OpenAI Responses API“ und für Gemini „Gemini Native generateContent“. Aktivieren Sie anschließend wie in Schritt 5 des [Schnellstarts](#schnellstart) beschrieben das lokale Routing für Claude Code. Ist das falsche Format gewählt oder das lokale Routing nicht aktiviert, erscheint in der Regel ein 404- oder 405-Fehler.
+
+Umgekehrt können Sie in Codex oder Grok Build unter „Upstream Format“ die Option „Anthropic Messages“ wählen, um Anbieter im Claude-Format zu nutzen — auch dafür muss das lokale Routing aktiviert sein. Details finden Sie in den Anleitungen [GPT in Claude Code nutzen](docs/guides/claude-codex-routing-guide-en.md) und [Claude in Codex nutzen](docs/guides/codex-claude-routing-guide-en.md) (auf Englisch).
+
+</details>
+
+<details>
+<summary><strong>Der „Connectivity check“ war erfolgreich — warum schlagen Anfragen trotzdem fehl?</strong></summary>
+
+Der „Connectivity check“ auf der Anbieterkarte prüft nur, ob die Anbieteradresse erreichbar ist, und sendet keine echte Modellanfrage; ob API-Schlüssel und Modellname korrekt sind, lässt sich damit also nicht überprüfen. Wenn Anfragen fehlschlagen, prüfen Sie Schlüssel, Modellname und Upstream-Format; bei aktiviertem lokalem Routing finden Sie die konkrete Fehlermeldung außerdem unter „Settings → Usage Statistics → Request Logs“.
+
+</details>
+
+<details>
+<summary><strong>Wo werden meine Daten gespeichert?</strong></summary>
+
+Standardmäßig liegen alle Daten im Ordner `.cc-switch` in Ihrem Benutzerverzeichnis (unter Windows `C:\Users\<Benutzername>\.cc-switch`):
+
+- **Datenbank**: `cc-switch.db` (SQLite — Anbieter, MCP, Prompts, Skills, Projekte, Nutzungsdaten usw.)
+- **Lokale Einstellungen**: `settings.json` (gerätebezogene Einstellungen, z. B. die Konfigurationsverzeichnisse der einzelnen Werkzeuge, Backup-Richtlinie, Verbindungsdaten für die Cloud-Synchronisierung)
+- **Backups**: `backups/` (standardmäßig automatisch alle 24 Stunden, die 10 neuesten werden behalten; anpassbar unter „Settings → Advanced → Backup & Restore“)
+- **Skills**: `skills/` (in den Einstellungen auf `~/.agents/skills` umstellbar); standardmäßig per Symlink mit den einzelnen Werkzeugen synchronisiert; schlägt das fehl, wird stattdessen kopiert
+- **Skill-Backups**: `skill-backups/` (vor dem Deinstallieren oder Aktualisieren eines Skills automatisch erstellt, die 20 neuesten werden behalten)
+- **OAuth-Anmeldedaten**: `copilot_auth.json`, `codex_oauth_auth.json`, `xai_oauth_auth.json`
+- **Logs**: `logs/cc-switch.log` und `crash.log` — bitte fügen Sie sie bei Problemmeldungen bei
+
+Wenn Sie unter „Settings → Advanced → Configuration Directory“ das „CC Switch Configuration Directory“ ändern, werden alle oben genannten Dateien außer `settings.json` im neuen Verzeichnis abgelegt. CC Switch verschiebt vorhandene Dateien nicht automatisch; kopieren Sie sie vorher manuell dorthin.
+
+</details>
+
+<details>
+<summary><strong>Wie verwalte ich unter Windows Werkzeuge in WSL?</strong></summary>
+
+CC Switch erkennt WSL nicht automatisch. Ändern Sie unter „Settings → Advanced → Configuration Directory → Configuration Directory Override (Advanced)“ das Verzeichnis des jeweiligen Werkzeugs auf einen Pfad in WSL, z. B. `\\wsl.localhost\Ubuntu\home\<Benutzername>\.claude`; nach dem Speichern liest und schreibt CC Switch die Konfiguration in WSL (einstellbar für Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes und Pi). Anschließend erkennt und aktualisiert auch die Seite „About“ das Werkzeug in der entsprechenden WSL-Distribution.
+
+Hinweis: Das lokale Routing trägt als Adresse `127.0.0.1` in die Konfiguration ein. Im standardmäßigen NAT-Netzwerkmodus von WSL2 erreicht `127.0.0.1` in WSL das lokale Routing unter Windows nicht; wechseln Sie daher in den Mirrored-Netzwerkmodus von WSL.
+
+</details>
+
+<details>
+<summary><strong>Gibt es eine Kommandozeilen- oder Headless-Version?</strong></summary>
+
+CC Switch selbst gibt es nur als Desktop-Version mit grafischer Oberfläche (Systemanforderungen siehe [Download & Installation](#download--installation)). Für Server, SSH-Remote-Sitzungen oder Rechner ohne Desktop-Umgebung empfehlen wir das von der Community gepflegte **[CC Switch CLI](https://github.com/SaladDay/cc-switch-cli)**: Es bietet sowohl eine interaktive Terminaloberfläche (TUI) als auch eine Kommandozeilenschnittstelle, unterstützt Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes und Pi und lässt sich über Homebrew (`brew install cc-switch-cli`) oder ein Installationsskript installieren.
+
+CC Switch CLI verwendet standardmäßig dasselbe Datenverzeichnis `~/.cc-switch` wie die Desktop-Version und ist auch mit deren WebDAV-Synchronisierung kompatibel. Die beiden Projekte werden unabhängig voneinander veröffentlicht, daher kann die von der CLI-Version unterstützte Datenbankversion zeitweise hinter der Desktop-Version zurückliegen; erscheint der Hinweis, dass die Datenbankversion zu neu ist, aktualisieren Sie die CLI-Version oder warten Sie, bis sie nachzieht.
+
+</details>
+
+<details>
+<summary><strong>Linux (Wayland + NVIDIA): Klicks im Webinhalt reagieren nicht, schwarzer Bildschirm beim Größenändern</strong></summary>
+
+Das AppImage erzwingt `GDK_BACKEND=x11` (XWayland), um einen historischen nativen Wayland-Absturz zu vermeiden. Auf neueren Wayland-+-NVIDIA-Systemen kann das dazu führen, dass der Webinhalt nicht anklickbar ist (die Titelleisten-Schaltflächen funktionieren weiterhin) und das Fenster beim Größenändern schwarz wird. Starten Sie mit dem optionalen Notausgang, um zu nativem Wayland zu wechseln:
+
+```bash
+CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+```
+
+Wenn Sie über ein Desktop-Symbol starten, fügen Sie es der `Exec=`-Zeile der `.desktop`-Datei hinzu (z. B. `env CC_SWITCH_GDK_BACKEND=wayland /pfad/zum/AppImage`) oder setzen Sie es in Ihrer Sitzungsumgebung. Die Variable ist generisch: Auf Tiling-Wayland-Compositors (sway/Hyprland), bei denen Klicks nicht reagieren, versuchen Sie umgekehrt `CC_SWITCH_GDK_BACKEND=x11`. Bleibt sie ungesetzt, bleibt das Standardverhalten erhalten.
+
+</details>
+
+Weitere Fragen und Antworten finden Sie in den [FAQ des Benutzerhandbuchs](docs/user-manual/en/5-faq/5.2-questions.md) (auf Englisch).
 
 ## Mitwirken
 
-Issues und Vorschläge sind willkommen!
+Wir freuen uns über Issues mit Fehlerberichten und Vorschlägen! Bitte eröffnen Sie vor der Entwicklung einer neuen Funktion zunächst ein Issue, um die Umsetzung zu besprechen; Feature-PRs, die nicht zum Projekt passen, können geschlossen werden.
 
-Bitte stellen Sie vor dem Einreichen von PRs Folgendes sicher:
+Entwicklungsumgebung, Prüfungen vor dem Einreichen und Architekturbeschreibung finden Sie in [CONTRIBUTING.md](CONTRIBUTING.md) (auf Englisch); bei Fragen zur Nutzung lesen Sie bitte zuerst [SUPPORT.md](SUPPORT.md); Sicherheitslücken melden Sie bitte vertraulich gemäß [SECURITY.md](SECURITY.md).
 
-- Typprüfung besteht: `pnpm typecheck`
-- Formatprüfung besteht: `pnpm format:check`
-- Unit-Tests bestehen: `pnpm test:unit`
-
-Eröffnen Sie für neue Funktionen bitte vor dem Einreichen eines PR ein Issue zur Diskussion. PRs für Funktionen, die nicht gut zum Projekt passen, können geschlossen werden.
+**Tech-Stack**: Tauri 2 · Rust · React 18 · TypeScript · SQLite
 
 ## Star History
 
