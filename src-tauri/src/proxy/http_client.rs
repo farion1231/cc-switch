@@ -196,6 +196,15 @@ pub fn get() -> Client {
         })
 }
 
+/// 创建沿用当前代理配置、但不跟随重定向的客户端。
+/// 可达性探测只需要第一个 HTTP 响应，不能因后续跳转失败误判目标不可达。
+pub fn get_without_redirects() -> Result<Client, String> {
+    build_client_with_redirect_policy(
+        get_current_proxy_url().as_deref(),
+        reqwest::redirect::Policy::none(),
+    )
+}
+
 /// 获取当前代理 URL
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
@@ -214,7 +223,15 @@ pub fn is_proxy_enabled() -> bool {
 
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_with_redirect_policy(proxy_url, reqwest::redirect::Policy::default())
+}
+
+fn build_client_with_redirect_policy(
+    proxy_url: Option<&str>,
+    redirect_policy: reqwest::redirect::Policy,
+) -> Result<Client, String> {
     let mut builder = Client::builder()
+        .redirect(redirect_policy)
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
@@ -344,6 +361,53 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
+    #[tokio::test]
+    async fn test_redirect_policy_preserves_explicit_proxy_and_default_client_behavior() {
+        use axum::{http::StatusCode, response::Redirect, routing::get, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let followed = Arc::new(AtomicUsize::new(0));
+        let seen = followed.clone();
+        let app = Router::new()
+            .route("/redirect", get(|| async { Redirect::temporary("/final") }))
+            .route(
+                "/final",
+                get(move || {
+                    let seen = seen.clone();
+                    async move {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let probe_client =
+            build_client_with_redirect_policy(Some(&proxy_url), reqwest::redirect::Policy::none())
+                .unwrap();
+        // This hostname cannot resolve: both clients must use the configured proxy.
+        let probe_response = probe_client
+            .get("http://target.invalid/redirect")
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(probe_response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(followed.load(Ordering::SeqCst), 0);
+
+        let default_response = build_client(Some(&proxy_url))
+            .unwrap()
+            .get("http://target.invalid/redirect")
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await;
+        server.abort();
+        assert_eq!(default_response.unwrap().status(), StatusCode::NO_CONTENT);
+        assert_eq!(followed.load(Ordering::SeqCst), 1);
+    }
+
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -427,6 +491,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(http_proxy_env)]
     fn test_system_proxy_points_to_loopback() {
         let _guard = env_lock().lock().unwrap();
 
