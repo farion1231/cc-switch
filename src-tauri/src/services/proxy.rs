@@ -13,7 +13,7 @@ use crate::proxy::types::*;
 use crate::services::provider::{
     build_effective_provider_for_live_with_codex_oauth_manager,
     build_effective_settings_with_common_config,
-    write_live_with_common_config_for_codex_oauth_manager,
+    write_live_with_common_config_for_codex_oauth_manager, ProviderService,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -3073,6 +3073,16 @@ impl ProxyService {
 
         let prepare_result: Result<(), String> = async {
             if should_sync_backup {
+                // An offline takeover Live file can lag behind a just-saved
+                // common-config snippet. Only a running proxy has a current
+                // projection that is safe to ingest before rebuilding backups.
+                if live_taken_over
+                    && matches!(app_type_enum, AppType::Claude)
+                    && self.is_running().await
+                {
+                    self.sync_claude_common_config_from_taken_over_live(previous_provider.as_ref());
+                }
+
                 self.update_live_backup_from_provider_inner(
                     app_type,
                     &provider,
@@ -3209,6 +3219,37 @@ impl ProxyService {
         Ok(HotSwitchOutcome {
             logical_target_changed,
         })
+    }
+
+    /// 在代理接管状态下热切换 Claude 前，把当前 live 文件中可共享的偏好同步回
+    /// 通用配置片段。代理会替换端点和凭据，因此必须经过既有提取器筛选，不能把
+    /// 接管字段整体复制到 DB。
+    ///
+    /// 与普通切换路径保持相同约束：仅作用于显式启用通用配置的供应商，尊重用户
+    /// 清空片段的选择，任何读取或写入失败都只记录警告，不能阻断热切换。
+    fn sync_claude_common_config_from_taken_over_live(&self, provider: Option<&Provider>) {
+        let Some(provider) = provider else {
+            return;
+        };
+
+        let live_config = match self.read_claude_live() {
+            Ok(config) => config,
+            Err(error) => {
+                log::warn!("读取 Claude Live 配置失败，跳过代理热切换回填: {error}");
+                return;
+            }
+        };
+        if let Err(error) = ProviderService::sync_common_config_snippet_from_live(
+            self.db.as_ref(),
+            &AppType::Claude,
+            provider,
+            &live_config,
+        ) {
+            log::warn!(
+                "同步 Claude 通用配置失败，跳过代理热切换回填 (provider={}): {error}",
+                provider.id
+            );
+        }
     }
 
     #[cfg(test)]
@@ -7789,6 +7830,205 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_provider_syncs_claude_common_preferences_from_running_proxy_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.set_config_snippet(
+            "claude",
+            Some(
+                json!({
+                    "includeCoAuthoredBy": true
+                })
+                .to_string(),
+            ),
+        )
+        .expect("seed stale common config");
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example"
+                }
+            }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key",
+                    "ANTHROPIC_BASE_URL": "https://api.b.example"
+                }
+            }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "includeCoAuthoredBy": false,
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                }
+            }))
+            .expect("seed taken-over live file");
+        service.start().await.expect("start proxy");
+
+        service
+            .hot_switch_provider("claude", "b")
+            .await
+            .expect("hot switch provider");
+
+        let snippet: Value = serde_json::from_str(
+            &db.get_config_snippet("claude")
+                .expect("read common config")
+                .expect("common config exists"),
+        )
+        .expect("common config is valid JSON");
+        assert_eq!(
+            snippet.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "a preference changed in Claude while takeover is active should become the shared config"
+        );
+        assert!(
+            snippet.get("env").is_none(),
+            "proxy URL and placeholder credentials must not be copied into common config"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read live backup")
+            .expect("live backup exists");
+        let backup: Value = serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(
+            backup.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "the new provider's restore backup should carry the refreshed common preference"
+        );
+        service.stop().await.expect("stop proxy");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_provider_keeps_newer_claude_common_preferences_when_proxy_is_offline() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.set_config_snippet(
+            "claude",
+            Some(json!({ "includeCoAuthoredBy": false }).to_string()),
+        )
+        .expect("seed newly saved common config");
+        let service = ProxyService::new(db.clone());
+
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "includeCoAuthoredBy": true,
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                }
+            }))
+            .expect("seed stale taken-over live file");
+
+        service
+            .hot_switch_provider("claude", "b")
+            .await
+            .expect("hot switch provider");
+
+        let snippet: Value = serde_json::from_str(
+            &db.get_config_snippet("claude")
+                .expect("read common config")
+                .expect("common config exists"),
+        )
+        .expect("common config is valid JSON");
+        assert_eq!(
+            snippet.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "stale offline Live config must not overwrite a newer saved common preference"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read live backup")
+            .expect("live backup exists");
+        let backup: Value = serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(
+            backup.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "the target restore backup must preserve the newer saved common preference"
+        );
     }
 
     #[tokio::test]

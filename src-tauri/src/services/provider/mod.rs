@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
-use crate::database::{validate_cost_multiplier, validate_pricing_source};
+use crate::database::{validate_cost_multiplier, validate_pricing_source, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
@@ -5852,13 +5852,21 @@ impl ProviderService {
                             // 切走前先把 live 里的可共享改动（含用户直接在应用内
                             // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
                             // 详见 sync_common_config_snippet_from_live 的文档。
-                            Self::sync_common_config_snippet_from_live(
-                                state,
+                            if let Err(error) = Self::sync_common_config_snippet_from_live(
+                                state.db.as_ref(),
                                 &app_type,
                                 &current_provider,
                                 &live_config,
-                                &mut result,
-                            );
+                            ) {
+                                log::warn!(
+                                    "Failed to sync common config from live for {} provider '{}': {error}",
+                                    app_type.as_str(),
+                                    current_provider.id
+                                );
+                                result
+                                    .warnings
+                                    .push(format!("common_config_sync_failed:{current_id}"));
+                            }
 
                             current_provider.settings_config =
                                 strip_common_config_from_live_settings(
@@ -6212,17 +6220,16 @@ impl ProviderService {
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
-    /// 配置又塞回来。所有失败均为非致命，只记 warning，绝不阻断切换。
-    fn sync_common_config_snippet_from_live(
-        state: &AppState,
+    /// 配置又塞回来。调用方将失败降级为 warning，绝不阻断切换。
+    pub(crate) fn sync_common_config_snippet_from_live(
+        db: &Database,
         app_type: &AppType,
         provider: &Provider,
         live_config: &Value,
-        result: &mut SwitchResult,
-    ) {
+    ) -> Result<(), AppError> {
         // 作用域限定 Claude + Codex（见函数文档）。
         if !matches!(app_type, AppType::Claude | AppType::Codex) {
-            return;
+            return Ok(());
         }
 
         let opted_in = provider
@@ -6231,59 +6238,24 @@ impl ProviderService {
             .and_then(|meta| meta.common_config_enabled)
             == Some(true);
         if !opted_in {
-            return;
+            return Ok(());
         }
 
-        match state.db.is_config_snippet_cleared(app_type.as_str()) {
-            Ok(true) => return, // 用户显式清空过通用配置，尊重其选择，不再自动塞回
-            Ok(false) => {}
-            Err(err) => {
-                log::warn!(
-                    "Failed to read common config cleared flag for {}: {err}",
-                    app_type.as_str()
-                );
-                return;
-            }
+        if db.is_config_snippet_cleared(app_type.as_str())? {
+            // 用户显式清空过通用配置，尊重其选择，不再自动塞回。
+            return Ok(());
         }
 
-        let new_snippet = match Self::extract_common_config_snippet_from_settings(
-            app_type.clone(),
-            live_config,
-        ) {
-            Ok(snippet) => snippet,
-            Err(err) => {
-                log::warn!(
-                    "Failed to extract common config from live for {} provider '{}': {err}",
-                    app_type.as_str(),
-                    provider.id
-                );
-                return;
-            }
-        };
+        let new_snippet =
+            Self::extract_common_config_snippet_from_settings(app_type.clone(), live_config)?;
 
         // 未变化则跳过，避免无谓写库（不切 live 配置时这是常态路径）。
-        let current = state
-            .db
-            .get_config_snippet(app_type.as_str())
-            .ok()
-            .flatten();
+        let current = db.get_config_snippet(app_type.as_str())?;
         if current.as_deref() == Some(new_snippet.as_str()) {
-            return;
+            return Ok(());
         }
 
-        if let Err(err) = state
-            .db
-            .set_config_snippet(app_type.as_str(), Some(new_snippet))
-        {
-            log::warn!(
-                "Failed to persist synced common config for {} provider '{}': {err}",
-                app_type.as_str(),
-                provider.id
-            );
-            result
-                .warnings
-                .push(format!("common_config_sync_failed:{}", provider.id));
-        }
+        db.set_config_snippet(app_type.as_str(), Some(new_snippet))
     }
 
     /// Extract common config snippet from current provider
