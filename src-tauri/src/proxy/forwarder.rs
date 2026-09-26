@@ -1987,39 +1987,16 @@ impl RequestForwarder {
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
-        let should_send_anthropic_headers = adapter.name() == "Claude"
-            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+        let is_claude_adapter = adapter.name() == "Claude";
+        let should_send_anthropic_headers =
+            is_claude_adapter && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
-        // 预计算 anthropic-beta 值（仅 Claude）
-        let anthropic_beta_value = if should_send_anthropic_headers {
-            const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-            Some(if let Some(beta) = headers.get("anthropic-beta") {
-                if let Ok(beta_str) = beta.to_str() {
-                    if beta_str.contains(CLAUDE_CODE_BETA) {
-                        beta_str.to_string()
-                    } else {
-                        format!("{CLAUDE_CODE_BETA},{beta_str}")
-                    }
-                } else {
-                    CLAUDE_CODE_BETA.to_string()
-                }
-            } else {
-                CLAUDE_CODE_BETA.to_string()
-            })
-        } else if codex_impersonate_claude_code || codex_anthropic_one_m {
-            // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
-            // model injects the context-1m marker.
-            let mut betas: Vec<&str> = Vec::new();
-            if codex_impersonate_claude_code {
-                betas.push("claude-code-20250219");
-            }
-            if codex_anthropic_one_m {
-                betas.push("context-1m-2025-08-07");
-            }
-            Some(betas.join(","))
-        } else {
-            None
-        };
+        let anthropic_beta_value = forwarded_anthropic_beta(
+            &headers,
+            is_claude_adapter,
+            codex_impersonate_claude_code,
+            codex_anthropic_one_m,
+        );
 
         // ============================================================
         // 构建有序 HeaderMap — 内联替换，保持客户端原始顺序
@@ -2164,22 +2141,20 @@ impl RequestForwarder {
                 continue;
             }
 
-            // --- anthropic-beta — 用重建值替换（确保含 claude-code 标记） ---
+            // --- anthropic-beta — Claude gateway requests keep original values ---
             if key_str.eq_ignore_ascii_case("anthropic-beta") {
                 if !saw_anthropic_beta {
                     saw_anthropic_beta = true;
-                    if let Some(ref beta_val) = anthropic_beta_value {
-                        if let Ok(hv) = http::HeaderValue::from_str(beta_val) {
-                            ordered_headers.append("anthropic-beta", hv);
-                        }
+                    for beta_value in &anthropic_beta_value {
+                        ordered_headers.append("anthropic-beta", beta_value.clone());
                     }
                 }
                 continue;
             }
 
-            // --- anthropic-version — 透传客户端值 ---
+            // --- anthropic-version — Claude gateway requests preserve client value ---
             if key_str.eq_ignore_ascii_case("anthropic-version") {
-                if should_send_anthropic_headers {
+                if is_claude_adapter {
                     saw_anthropic_version = true;
                     ordered_headers.append(key.clone(), value.clone());
                 }
@@ -2234,10 +2209,8 @@ impl RequestForwarder {
 
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
         if !saw_anthropic_beta {
-            if let Some(ref beta_val) = anthropic_beta_value {
-                if let Ok(hv) = http::HeaderValue::from_str(beta_val) {
-                    ordered_headers.append("anthropic-beta", hv);
-                }
+            for beta_value in &anthropic_beta_value {
+                ordered_headers.append("anthropic-beta", beta_value.clone());
             }
         }
 
@@ -3735,7 +3708,49 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
 }
 
 fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+    // `safeguards` is an opaque Claude Code gateway extension. Preserve its full
+    // subtree even when it contains underscore-prefixed keys, while continuing to
+    // strip internal fields everywhere else in the request.
+    let mut request_body = request_body;
+    let safeguards = request_body
+        .as_object_mut()
+        .and_then(|object| object.remove("safeguards"));
+    let mut filtered = filter_private_params_with_whitelist(request_body, &[]);
+    if let (Some(safeguards), Some(object)) = (safeguards, filtered.as_object_mut()) {
+        object.insert("safeguards".to_string(), safeguards);
+    }
+    canonicalize_value(filtered)
+}
+
+/// Preserve client beta values for every Claude adapter format. Only the Codex→Anthropic
+/// emulation path synthesizes markers, since those describe behavior added by conversion.
+fn forwarded_anthropic_beta(
+    headers: &http::HeaderMap,
+    is_claude_adapter: bool,
+    codex_impersonate_claude_code: bool,
+    codex_anthropic_one_m: bool,
+) -> Vec<http::HeaderValue> {
+    if is_claude_adapter {
+        return headers.get_all("anthropic-beta").iter().cloned().collect();
+    }
+
+    if !codex_impersonate_claude_code && !codex_anthropic_one_m {
+        return Vec::new();
+    }
+
+    // Codex→Anthropic conversion: these markers describe behavior introduced by
+    // this conversion, rather than a header received from an Anthropic client.
+    let mut betas: Vec<&str> = Vec::new();
+    if codex_impersonate_claude_code {
+        betas.push("claude-code-20250219");
+    }
+    if codex_anthropic_one_m {
+        betas.push("context-1m-2025-08-07");
+    }
+    match http::HeaderValue::from_str(&betas.join(",")) {
+        Ok(value) => vec![value],
+        Err(_) => Vec::new(),
+    }
 }
 
 fn log_prompt_cache_trace(
@@ -4024,6 +4039,72 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_preserves_anthropic_gateway_extension_fields() {
+        let body = json!({
+            "model": "claude-test",
+            "safeguards": { "mode": "auto", "_opaque": [1, 2, 3] },
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+
+        let prepared = prepare_upstream_request_body(body.clone());
+
+        assert_eq!(prepared["safeguards"], body["safeguards"]);
+    }
+
+    #[test]
+    fn anthropic_beta_header_is_forwarded_verbatim_for_native_anthropic() {
+        let mut headers = HeaderMap::new();
+        let beta = "context-management-2025-06-27,custom-capability";
+        headers.insert("anthropic-beta", HeaderValue::from_static(beta));
+
+        let forwarded = forwarded_anthropic_beta(&headers, true, false, false);
+
+        assert_eq!(forwarded, vec![HeaderValue::from_static(beta)]);
+    }
+
+    #[test]
+    fn anthropic_beta_header_preserves_repeated_values_for_claude_gateways() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "anthropic-beta",
+            HeaderValue::from_static("context-management-2025-06-27"),
+        );
+        headers.append(
+            "anthropic-beta",
+            HeaderValue::from_static("custom-capability"),
+        );
+
+        assert_eq!(
+            forwarded_anthropic_beta(&headers, true, false, false),
+            vec![
+                HeaderValue::from_static("context-management-2025-06-27"),
+                HeaderValue::from_static("custom-capability")
+            ]
+        );
+    }
+
+    #[test]
+    fn native_anthropic_does_not_synthesize_anthropic_beta_when_absent() {
+        let headers = HeaderMap::new();
+
+        assert!(forwarded_anthropic_beta(&headers, true, false, false).is_empty());
+    }
+
+    #[test]
+    fn anthropic_beta_is_generated_for_codex_anthropic_conversion() {
+        let headers = HeaderMap::new();
+
+        let forwarded = forwarded_anthropic_beta(&headers, false, true, true);
+
+        assert_eq!(
+            forwarded,
+            vec![HeaderValue::from_static(
+                "claude-code-20250219,context-1m-2025-08-07"
+            )]
         );
     }
 

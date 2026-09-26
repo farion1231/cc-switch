@@ -92,18 +92,19 @@ fn responses_json_to_anthropic_sse(
     let usage = message.get("usage").cloned().unwrap_or_else(|| json!({}));
     let mut start_usage = usage.clone();
     start_usage["output_tokens"] = json!(0);
+    let mut start_message = json!({
+        "id": message.get("id").cloned().unwrap_or_else(|| json!("")),
+        "type": "message",
+        "role": "assistant",
+        "model": message.get("model").cloned().unwrap_or_else(|| json!("")),
+        "usage": start_usage
+    });
+    if let Some(safeguard_results) = message.get("safeguard_results") {
+        start_message["safeguard_results"] = safeguard_results.clone();
+    }
     let mut events = vec![anthropic_sse(
         "message_start",
-        &json!({
-            "type": "message_start",
-            "message": {
-                "id": message.get("id").cloned().unwrap_or_else(|| json!("")),
-                "type": "message",
-                "role": "assistant",
-                "model": message.get("model").cloned().unwrap_or_else(|| json!("")),
-                "usage": start_usage
-            }
-        }),
+        &json!({ "type": "message_start", "message": start_message }),
     )];
 
     if let Some(content) = message.get("content").and_then(Value::as_array) {
@@ -2539,15 +2540,21 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     Some(response_obj.get("usage").unwrap_or(&json!({}))),
                                 );
 
+                                let mut message = json!({
+                                    "id": message_id.clone().unwrap_or_default(),
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "model": current_model.clone().unwrap_or_default(),
+                                    "usage": start_usage
+                                });
+                                if let Some(safeguard_results) =
+                                    response_obj.get("safeguard_results")
+                                {
+                                    message["safeguard_results"] = safeguard_results.clone();
+                                }
                                 let event = json!({
                                     "type": "message_start",
-                                    "message": {
-                                        "id": message_id.clone().unwrap_or_default(),
-                                        "type": "message",
-                                        "role": "assistant",
-                                        "model": current_model.clone().unwrap_or_default(),
-                                        "usage": start_usage
-                                    }
+                                    "message": message
                                 });
                                 let sse = format!("event: message_start\ndata: {}\n\n",
                                     serde_json::to_string(&event).unwrap_or_default());
@@ -3930,7 +3937,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 }
 
                                 // Emit message_delta (with usage + stop_reason)
-                                let delta_event = json!({
+                                let mut delta_event = json!({
                                     "type": "message_delta",
                                     "delta": {
                                         "stop_reason": stop_reason,
@@ -3938,6 +3945,11 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     },
                                     "usage": usage_json
                                 });
+                                if let Some(safeguard_results) =
+                                    response_obj.get("safeguard_results")
+                                {
+                                    delta_event["safeguard_results"] = safeguard_results.clone();
+                                }
                                 let sse = format!("event: message_delta\ndata: {}\n\n",
                                     serde_json::to_string(&delta_event).unwrap_or_default());
                                 log::debug!("[Claude/Responses] >>> Anthropic SSE: message_delta");
@@ -6584,6 +6596,47 @@ mod tests {
         assert!(merged.contains("event: message_start"));
         assert!(merged.contains("\"text\":\"hello\""));
         assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn responses_stream_preserves_safeguard_results_and_tool_call_id() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_safeguards\",\"model\":\"gpt-5\",\"safeguard_results\":{\"phase\":\"start\"}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_original\",\"name\":\"Bash\",\"arguments\":\"{}\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_safeguards\",\"status\":\"completed\",\"safeguard_results\":{\"phase\":\"complete\"},\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        let events = sse_data_values(&merged);
+        let message_start = events
+            .iter()
+            .find(|event| event.get("type").and_then(Value::as_str) == Some("message_start"))
+            .unwrap();
+        let tool_start = events
+            .iter()
+            .find(|event| {
+                event.get("type").and_then(Value::as_str) == Some("content_block_start")
+                    && event.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("tool_use")
+            })
+            .unwrap();
+        let message_delta = events
+            .iter()
+            .find(|event| event.get("type").and_then(Value::as_str) == Some("message_delta"))
+            .unwrap();
+
+        assert_eq!(
+            message_start.pointer("/message/safeguard_results/phase"),
+            Some(&json!("start"))
+        );
+        assert_eq!(
+            tool_start.pointer("/content_block/id"),
+            Some(&json!("call_original"))
+        );
+        assert_eq!(message_delta["safeguard_results"]["phase"], "complete");
     }
 
     #[tokio::test]

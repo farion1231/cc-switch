@@ -171,6 +171,11 @@ pub fn anthropic_to_openai_with_reasoning_content(
     if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
         result["model"] = json!(model);
     }
+    // Claude Code gateway extension used by Auto Mode's server-side classifier.
+    // Keep this opaque field when translating the surrounding Anthropic schema.
+    if let Some(safeguards) = body.get("safeguards") {
+        result["safeguards"] = safeguards.clone();
+    }
 
     let mut messages = Vec::new();
 
@@ -713,7 +718,7 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         usage_json["cache_creation_input_tokens"] = json!(cache_creation);
     }
 
-    let result = json!({
+    let mut result = json!({
         "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
         "type": "message",
         "role": "assistant",
@@ -723,6 +728,10 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         "stop_sequence": null,
         "usage": usage_json
     });
+
+    if let Some(safeguard_results) = body.get("safeguard_results") {
+        result["safeguard_results"] = safeguard_results.clone();
+    }
 
     Ok(result)
 }
@@ -744,6 +753,56 @@ mod tests {
         assert_eq!(result["max_tokens"], 1024);
         assert_eq!(result["messages"][0]["role"], "user");
         assert_eq!(result["messages"][0]["content"], "Hello");
+    }
+
+    #[test]
+    fn anthropic_to_openai_preserves_safeguards_and_tool_call_id() {
+        let safeguards = json!({"mode": "auto", "opaque": [1, 2]});
+        let input = json!({
+            "model": "claude-test",
+            "max_tokens": 16,
+            "safeguards": safeguards,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_original",
+                    "name": "Bash",
+                    "input": {"command": "pwd"}
+                }]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(result["safeguards"], safeguards);
+        assert_eq!(
+            result["messages"][0]["tool_calls"][0]["id"],
+            "toolu_original"
+        );
+    }
+
+    #[test]
+    fn openai_to_anthropic_preserves_safeguard_results_and_tool_call_id() {
+        let safeguard_results = json!({"action": "allow", "opaque": true});
+        let input = json!({
+            "id": "chatcmpl_test",
+            "model": "openai-test",
+            "safeguard_results": safeguard_results,
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {"tool_calls": [{
+                    "id": "call_original",
+                    "type": "function",
+                    "function": {"name": "Bash", "arguments": r#"{"command":"pwd"}"#}
+                }]}
+            }]
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+
+        assert_eq!(result["safeguard_results"], safeguard_results);
+        assert_eq!(result["content"][0]["id"], "call_original");
     }
 
     #[test]

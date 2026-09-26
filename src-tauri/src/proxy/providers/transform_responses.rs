@@ -1784,6 +1784,11 @@ pub fn anthropic_to_responses(
     if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
         result["model"] = json!(model);
     }
+    // Preserve Claude Code's opaque Auto Mode classifier extension across schema
+    // conversion; Responses-compatible upstreams may consume or return it.
+    if let Some(safeguards) = body.get("safeguards") {
+        result["safeguards"] = safeguards.clone();
+    }
 
     // system → instructions (Responses API 使用 instructions 字段)
     if let Some(system) = body.get("system") {
@@ -2801,7 +2806,7 @@ pub(crate) fn responses_to_anthropic_with_web_search_options(
         });
     }
 
-    let result = json!({
+    let mut result = json!({
         "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
         "type": "message",
         "role": "assistant",
@@ -2811,6 +2816,10 @@ pub(crate) fn responses_to_anthropic_with_web_search_options(
         "stop_sequence": null,
         "usage": usage_json
     });
+
+    if let Some(safeguard_results) = body.get("safeguard_results") {
+        result["safeguard_results"] = safeguard_results.clone();
+    }
 
     Ok(result)
 }
@@ -3216,6 +3225,21 @@ mod tests {
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
         // stop_sequences should not appear
         assert!(result.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn anthropic_to_responses_preserves_safeguards() {
+        let safeguards = json!({"mode": "auto", "opaque": [1, 2]});
+        let input = json!({
+            "model": "gpt-5",
+            "max_tokens": 32,
+            "safeguards": safeguards,
+            "messages": [{"role": "user", "content": "run pwd"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+        assert_eq!(result["safeguards"], safeguards);
     }
 
     #[test]
@@ -4026,6 +4050,28 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn responses_to_anthropic_preserves_safeguard_results_and_tool_call_id() {
+        let safeguard_results = json!({"action": "allow", "opaque": true});
+        let input = json!({
+            "id": "resp_test",
+            "status": "completed",
+            "model": "gpt-5",
+            "safeguard_results": safeguard_results,
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_original",
+                "name": "Bash",
+                "arguments": r#"{"command":"pwd"}"#
+            }]
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+
+        assert_eq!(result["safeguard_results"], safeguard_results);
+        assert_eq!(result["content"][0]["id"], "call_original");
     }
 
     #[test]
