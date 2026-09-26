@@ -3273,6 +3273,8 @@
     "copilotPremium": "進階請求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 後重設",
+    "resetsInAt": "{{time}} 後重設（{{at}}）",
+    "resetsAt": "重設於 {{at}}",
     "extraUsage": "超額用量",
     "expired": "工作階段已過期",
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",

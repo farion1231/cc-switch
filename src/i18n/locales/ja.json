@@ -3272,6 +3272,8 @@
     "copilotPremium": "プレミアム",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
+    "resetsInAt": "{{time}}後にリセット（{{at}}）",
+    "resetsAt": "{{at}}にリセット",
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
