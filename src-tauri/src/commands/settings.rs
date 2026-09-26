@@ -1,7 +1,10 @@
 #![allow(non_snake_case)]
 
+use super::global_proxy::{outbound_proxy_mode, OutboundProxyMode};
+use crate::proxy::http_client;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{UpdaterBuilder, UpdaterExt};
 
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
 #[derive(Clone, serde::Serialize)]
@@ -189,6 +192,66 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 更新器自带独立的 reqwest 客户端，不经过全局出站客户端；这里让它遵守同一套
+/// 出站代理策略，否则关闭「跟随系统代理」后检查更新仍会走死掉的系统代理。
+fn updater_builder_with_outbound_policy(app: &AppHandle) -> UpdaterBuilder {
+    let builder = app.updater_builder();
+    let explicit = http_client::get_current_proxy_url();
+    match outbound_proxy_mode(explicit.as_deref(), http_client::follow_system_proxy()) {
+        OutboundProxyMode::Explicit => {
+            match explicit.as_deref().and_then(|u| url::Url::parse(u).ok()) {
+                Some(url) => builder.proxy(url),
+                // 解析失败也不能退回默认构建器：那会让更新器读环境变量，把「显式代理」
+                // 静默变成跟随系统代理，与显式模式的契约相反
+                None => builder.no_proxy(),
+            }
+        }
+        OutboundProxyMode::Direct => builder.no_proxy(),
+        // 与 `build_client` 同一守卫：环境变量代理指向本应用自己的代理端口时直连，
+        // 否则更新请求会撞上这个（可能已停掉的）本地端口
+        OutboundProxyMode::System if http_client::system_proxy_points_to_loopback() => {
+            builder.no_proxy()
+        }
+        OutboundProxyMode::System => builder,
+    }
+}
+
+/// 前端「检查更新」返回给用户看的字段
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub version: String,
+    pub notes: Option<String>,
+    pub pub_date: Option<String>,
+}
+
+/// 供前端「检查更新」使用。不走插件的 JS `check()`：那条路径只能指定代理、
+/// 不能关闭系统代理跟随，会与全局出站代理策略不一致。
+#[tauri::command]
+pub async fn check_app_update(
+    app: AppHandle,
+    timeout_ms: Option<u64>,
+) -> Result<Option<AppUpdateInfo>, String> {
+    let mut builder = updater_builder_with_outbound_policy(&app);
+    if let Some(ms) = timeout_ms {
+        builder = builder.timeout(Duration::from_millis(ms));
+    }
+    let update = builder
+        .build()
+        .map_err(|e| format!("初始化更新器失败: {e}"))?
+        .check()
+        .await
+        .map_err(|e| format!("检查更新失败: {e}"))?;
+    Ok(update.map(|u| AppUpdateInfo {
+        version: u.version,
+        notes: u.body,
+        // OffsetDateTime 的 Display（`2026-09-07 14:25:28.0 +00:00:00`），与插件 JS 侧
+        // metadata.date 的 RFC 3339 并不同格式。目前没有 UI 渲染该字段，换成 RFC 3339
+        // 需要把 time 提为直接依赖，不值当。
+        pub_date: u.date.map(|d| d.to_string()),
+    }))
+}
+
 /// 下载并安装应用更新，然后由后端直接重启应用。
 ///
 /// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
@@ -196,8 +259,7 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let updater = app
-        .updater_builder()
+    let updater = updater_builder_with_outbound_policy(&app)
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
 
@@ -273,8 +335,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// 升级无法解决，而不是让其反复尝试。
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
-    let updater = app
-        .updater_builder()
+    let updater = updater_builder_with_outbound_policy(&app)
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
     let update = updater

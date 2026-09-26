@@ -13,6 +13,8 @@ import {
   testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
+  getFollowSystemProxy,
+  setFollowSystemProxy,
   type ProxyTestResult,
   type UpstreamProxyStatus,
   type DetectedProxy,
@@ -41,6 +43,43 @@ export function useSetGlobalProxyUrl() {
     onSuccess: () => {
       toast.success(t("settings.globalProxy.saved"));
       queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
+      queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Unknown error";
+      toast.error(t("settings.globalProxy.saveFailed", { error: message }));
+    },
+  });
+}
+
+/**
+ * 是否跟随系统代理
+ */
+export function useFollowSystemProxy() {
+  return useQuery({
+    queryKey: ["followSystemProxy"],
+    queryFn: getFollowSystemProxy,
+    staleTime: 30 * 1000,
+  });
+}
+
+/**
+ * 设置是否跟随系统代理（后端立即重建客户端，无需重启）
+ */
+export function useSetFollowSystemProxy() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: setFollowSystemProxy,
+    onSuccess: () => {
+      toast.success(t("settings.globalProxy.saved"));
+      queryClient.invalidateQueries({ queryKey: ["followSystemProxy"] });
       queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
     },
     onError: (error: unknown) => {
@@ -87,6 +126,9 @@ export function useUpstreamProxyStatus() {
   return useQuery<UpstreamProxyStatus>({
     queryKey: ["upstreamProxyStatus"],
     queryFn: getUpstreamProxyStatus,
+    // 这条查询会读一次系统代理配置并对代理端口做 TCP 探测，不该每次窗口聚焦都跑一遍；
+    // 超过 30s 后再聚焦会重新探测，状态块上另有手动刷新，保存代理地址和切换跟随开关也会显式失效它
+    staleTime: 30 * 1000,
   });
 }
 
