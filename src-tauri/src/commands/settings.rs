@@ -78,9 +78,17 @@ pub async fn save_settings(
         // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
         // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
         // （本开关的保存只携带开关相关字段）。
-        if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
-        {
+        // Await the switch lock rather than blocking the async command's
+        // executor while another provider switch may need to make progress.
+        let reapply_result = match state.proxy_service.reapply_codex_official_takeover().await {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                crate::services::provider::reapply_current_codex_official_live(state.inner())
+                    .map_err(|e| e.to_string())
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(err) = reapply_result {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
             if let Err(rollback_err) = crate::settings::update_settings(existing) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
@@ -140,6 +148,20 @@ pub struct CodexUnifyHistoryRestoreResult {
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
+}
+
+/// Retry an opted-in, offline migration after quitting Codex writers.
+#[tauri::command]
+pub async fn migrate_codex_unified_history(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    let _guard = state.proxy_service.lock_switch_for_app("codex").await;
+    tauri::async_runtime::spawn_blocking(
+        crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket,
+    )
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
@@ -518,6 +540,7 @@ mod tests {
                     migrated_provider_ids: vec!["legacy".to_string()],
                 }),
                 codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                    version: 2,
                     completed_at: "2026-06-12T00:00:00Z".to_string(),
                     target_provider_id: "custom".to_string(),
                     migrated_jsonl_files: 5,
@@ -571,6 +594,7 @@ mod tests {
                 codex_third_party_history_provider_bucket_v1: None,
                 codex_provider_template_v1: None,
                 codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                    version: 2,
                     completed_at: "2026-06-12T00:00:00Z".to_string(),
                     target_provider_id: "custom".to_string(),
                     migrated_jsonl_files: 1,
@@ -604,6 +628,7 @@ mod tests {
         let incoming = AppSettings {
             local_migrations: Some(LocalMigrations {
                 codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                    version: 2,
                     completed_at: "2026-06-12T00:00:00Z".to_string(),
                     target_provider_id: "custom".to_string(),
                     migrated_jsonl_files: 1,
