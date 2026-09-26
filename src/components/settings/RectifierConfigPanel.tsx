@@ -12,6 +12,7 @@ import {
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<RectifierConfig>({
+    requestSteerUserRole: false,
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
@@ -82,6 +83,24 @@ export function RectifierConfigPanel() {
         <h4 className="text-sm font-medium text-muted-foreground">
           {t("settings.advanced.rectifier.requestGroup")}
         </h4>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label htmlFor="rectifier-steer-user-role">
+              {t("settings.advanced.rectifier.steerUserRole")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.steerUserRoleDescription")}
+            </p>
+          </div>
+          <Switch
+            id="rectifier-steer-user-role"
+            checked={config.requestSteerUserRole ?? false}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestSteerUserRole: checked })
+            }
+          />
+        </div>
         <div className="flex items-center justify-between pl-4">
           <div className="space-y-0.5">
             <Label>{t("settings.advanced.rectifier.thinkingSignature")}</Label>
