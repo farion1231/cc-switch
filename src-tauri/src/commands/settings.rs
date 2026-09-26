@@ -79,7 +79,8 @@ pub async fn save_settings(
         // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
         // （本开关的保存只携带开关相关字段）。
         if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
+            crate::services::provider::reapply_current_codex_official_live_async(state.inner())
+                .await
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
             if let Err(rollback_err) = crate::settings::update_settings(existing) {
