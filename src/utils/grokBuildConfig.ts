@@ -4,6 +4,18 @@ export const GROK_BUILD_DEFAULT_MODEL = "grok-4.5";
 export const GROK_BUILD_DEFAULT_API_BACKEND = "responses";
 export const GROK_BUILD_DEFAULT_CONTEXT_WINDOW = 500000;
 
+export interface GrokBuildExtraModel {
+  /** `[model."<profile>"]` key. Defaults to the upstream model id. */
+  profile?: string;
+  /** Real model id sent to the upstream provider. */
+  model: string;
+  /** Label shown in Grok's `/model` menu. */
+  name?: string;
+  contextWindow?: number;
+  reasoningLevels?: string[];
+  defaultReasoningLevel?: string;
+}
+
 export interface GrokBuildConfigValues {
   /** Client-visible profile selected by [models].default. */
   model: string;
@@ -15,6 +27,14 @@ export interface GrokBuildConfigValues {
   envKey?: string;
   apiBackend: string;
   contextWindow: number;
+  /**
+   * Other `[model.*]` profiles on the same gateway.
+   * Undefined keeps unmanaged profiles untouched; an array replaces them.
+   */
+  extraModels?: GrokBuildExtraModel[];
+  /** Reasoning menu for the default profile. Undefined preserves the existing menu. */
+  reasoningLevels?: string[];
+  defaultReasoningLevel?: string;
 }
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -24,6 +44,111 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 
 const asString = (value: unknown, fallback = "") =>
   typeof value === "string" ? value : fallback;
+
+// Levels Grok 4.5/4.6 actually send. grok-4.6 adds xhigh; grok-4.5 uses the
+// first three. Other Codex tiers (none, minimal, max, ultra) are not in these
+// menus, so writing them makes /effort offer a value the request cannot use.
+export const GROK_REASONING_LEVELS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+
+const GROK_REASONING_LABELS: Record<
+  (typeof GROK_REASONING_LEVELS)[number],
+  string
+> = {
+  low: "Low Effort",
+  medium: "Medium Effort",
+  high: "High Effort",
+  xhigh: "Extra High Effort",
+};
+
+const grokReasoningLevels = (levels: readonly string[] | undefined) => {
+  const declared = new Set(levels ?? []);
+  return GROK_REASONING_LEVELS.filter((level) => declared.has(level));
+};
+
+const readContextWindow = (value: unknown, fallback: number) =>
+  typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : fallback;
+
+const readReasoning = (
+  table: Record<string, unknown> | undefined,
+): { reasoningLevels?: string[]; defaultReasoningLevel?: string } => {
+  const raw = table?.reasoning_efforts;
+  if (!Array.isArray(raw)) return {};
+  const declared = raw.flatMap((entry) => {
+    const record = asRecord(entry);
+    const value = asString(record?.value).trim();
+    return value ? [value] : [];
+  });
+  const levels = grokReasoningLevels(declared);
+  if (levels.length === 0) return {};
+  const defaultReasoningLevel = raw
+    .map((entry) => asRecord(entry))
+    .find((entry) => entry?.default === true)?.value;
+  const normalizedDefault = asString(defaultReasoningLevel).trim();
+  return {
+    reasoningLevels: levels,
+    ...(normalizedDefault && levels.some((level) => level === normalizedDefault)
+      ? { defaultReasoningLevel: normalizedDefault }
+      : {}),
+  };
+};
+
+const reasoningEfforts = (
+  levels: string[] | undefined,
+  defaultLevel: string | undefined,
+) => {
+  const allowed = grokReasoningLevels(levels);
+  if (allowed.length === 0) return undefined;
+  return allowed.map((value) => ({
+    value,
+    label: GROK_REASONING_LABELS[value],
+    ...(defaultLevel === value ? { default: true } : {}),
+  }));
+};
+
+const normalizeGatewayUrl = (url: string) => url.trim().replace(/\/+$/, "");
+
+const sharesGateway = (tableUrl: string, providerUrl: string) => {
+  const table = normalizeGatewayUrl(tableUrl);
+  const provider = normalizeGatewayUrl(providerUrl);
+  if (!table || !provider) return true;
+  return table === provider;
+};
+
+const readExtraModels = (
+  modelTables: Record<string, unknown> | undefined,
+  defaultProfile: string,
+  providerUrl: string,
+  fallbackWindow: number,
+): GrokBuildExtraModel[] => {
+  if (!modelTables) return [];
+  return Object.entries(modelTables).flatMap(([profile, value]) => {
+    if (profile === defaultProfile) return [];
+    const table = asRecord(value);
+    if (!table) return [];
+    const tableUrl = asString(table.base_url);
+    // Other gateways stay out of this form's shared-endpoint list so a save
+    // cannot retarget their URL, key, or protocol.
+    if (!sharesGateway(tableUrl, providerUrl)) return [];
+    const model = asString(table.model, profile).trim() || profile;
+    const reasoning = readReasoning(table);
+    return [
+      {
+        profile,
+        model,
+        name: asString(table.name).trim() || model,
+        contextWindow: readContextWindow(table.context_window, fallbackWindow),
+        ...reasoning,
+      },
+    ];
+  });
+};
 
 export function parseGrokBuildConfig(
   configToml: string | undefined,
@@ -47,7 +172,10 @@ export function parseGrokBuildConfig(
     const defaultModel = asString(models?.default, GROK_BUILD_DEFAULT_MODEL);
     const modelTables = asRecord(root?.model);
     const selectedModel = asRecord(modelTables?.[defaultModel]);
-    const rawContextWindow = selectedModel?.context_window;
+    const contextWindow = readContextWindow(
+      selectedModel?.context_window,
+      GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
+    );
 
     return {
       model: defaultModel,
@@ -60,12 +188,14 @@ export function parseGrokBuildConfig(
         selectedModel?.api_backend,
         GROK_BUILD_DEFAULT_API_BACKEND,
       ),
-      contextWindow:
-        typeof rawContextWindow === "number" &&
-        Number.isInteger(rawContextWindow) &&
-        rawContextWindow > 0
-          ? rawContextWindow
-          : GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
+      contextWindow,
+      extraModels: readExtraModels(
+        modelTables,
+        defaultModel,
+        asString(selectedModel?.base_url),
+        contextWindow,
+      ),
+      ...readReasoning(selectedModel),
     };
   } catch {
     return fallback;
@@ -92,39 +222,133 @@ export function updateGrokBuildConfig(
 
   const existingModels = asRecord(config.models) ?? {};
   const previousProfile = asString(existingModels.default, profile);
-  config.models = { ...existingModels, default: profile };
+  const modelsTable: Record<string, unknown> = {
+    ...existingModels,
+    default: profile,
+  };
+  if (values.reasoningLevels) {
+    const defaultLevel = values.defaultReasoningLevel?.trim();
+    const allowed = grokReasoningLevels(values.reasoningLevels);
+    const allowedDefault =
+      defaultLevel && allowed.some((level) => level === defaultLevel)
+        ? defaultLevel
+        : undefined;
+    if (allowedDefault) {
+      modelsTable.default_reasoning_effort = allowedDefault;
+    } else {
+      delete modelsTable.default_reasoning_effort;
+    }
+  }
+  config.models = modelsTable;
 
   const modelTables = asRecord(config.model) ?? {};
-  const existingSelected =
-    asRecord(modelTables[profile]) ??
-    asRecord(modelTables[previousProfile]) ??
-    {};
-  const apiKey = values.apiKey.trim();
-  const envKey =
-    values.envKey?.trim() || asString(existingSelected.env_key).trim();
-  const updatedSelected: Record<string, unknown> = {
-    ...existingSelected,
-    model: upstreamModel,
-    base_url: values.baseUrl.trim(),
-    name: values.name.trim(),
-    api_backend: values.apiBackend.trim() || GROK_BUILD_DEFAULT_API_BACKEND,
-    context_window:
-      Number.isInteger(values.contextWindow) && values.contextWindow > 0
-        ? values.contextWindow
-        : GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
-  };
-  if (apiKey) updatedSelected.api_key = apiKey;
-  else delete updatedSelected.api_key;
-  if (envKey) updatedSelected.env_key = envKey;
-  else delete updatedSelected.env_key;
+  const contextWindow =
+    Number.isInteger(values.contextWindow) && values.contextWindow > 0
+      ? values.contextWindow
+      : GROK_BUILD_DEFAULT_CONTEXT_WINDOW;
+  const apiBackend = values.apiBackend.trim() || GROK_BUILD_DEFAULT_API_BACKEND;
 
-  config.model = {
-    ...modelTables,
-    [profile]: updatedSelected,
+  const writeProfile = (
+    profileKey: string,
+    previousKey: string | undefined,
+    fields: {
+      model: string;
+      name: string;
+      contextWindow: number;
+      reasoningLevels?: string[];
+      defaultReasoningLevel?: string;
+    },
+  ) => {
+    const existing =
+      asRecord(modelTables[profileKey]) ??
+      (previousKey ? asRecord(modelTables[previousKey]) : undefined) ??
+      {};
+    const apiKey = values.apiKey.trim();
+    const envKey = values.envKey?.trim() || asString(existing.env_key).trim();
+    const updated: Record<string, unknown> = {
+      ...existing,
+      model: fields.model,
+      base_url: values.baseUrl.trim(),
+      name: fields.name,
+      api_backend: apiBackend,
+      context_window:
+        Number.isInteger(fields.contextWindow) && fields.contextWindow > 0
+          ? fields.contextWindow
+          : contextWindow,
+    };
+    if (apiKey) updated.api_key = apiKey;
+    else delete updated.api_key;
+    if (envKey) updated.env_key = envKey;
+    else delete updated.env_key;
+    if (fields.reasoningLevels) {
+      const efforts = reasoningEfforts(
+        fields.reasoningLevels,
+        fields.defaultReasoningLevel,
+      );
+      if (efforts) updated.reasoning_efforts = efforts;
+      else delete updated.reasoning_efforts;
+    }
+    return updated;
   };
 
-  if (previousProfile !== profile && previousProfile in modelTables) {
-    delete (config.model as Record<string, unknown>)[previousProfile];
+  if (values.extraModels) {
+    const nextTables: Record<string, unknown> = {};
+    const used = new Set<string>();
+    const writeUnique = (
+      profileKey: string,
+      previousKey: string | undefined,
+      fields: Parameters<typeof writeProfile>[2],
+    ) => {
+      const key = profileKey.trim();
+      if (!key || used.has(key) || !fields.model.trim()) return;
+      used.add(key);
+      nextTables[key] = writeProfile(key, previousKey, fields);
+    };
+    writeUnique(profile, previousProfile, {
+      model: upstreamModel,
+      name: values.name.trim(),
+      contextWindow,
+      reasoningLevels: values.reasoningLevels,
+      defaultReasoningLevel: values.defaultReasoningLevel,
+    });
+    for (const extra of values.extraModels) {
+      const model = extra.model.trim();
+      if (!model) continue;
+      const key = extra.profile?.trim() || model;
+      writeUnique(key, undefined, {
+        model,
+        name: extra.name?.trim() || model,
+        contextWindow: extra.contextWindow ?? contextWindow,
+        reasoningLevels: extra.reasoningLevels ?? [],
+        defaultReasoningLevel: extra.defaultReasoningLevel,
+      });
+    }
+    const formUrl = normalizeGatewayUrl(values.baseUrl);
+    for (const [key, value] of Object.entries(modelTables)) {
+      if (used.has(key)) continue;
+      const table = asRecord(value);
+      if (!table) continue;
+      const tableUrl = normalizeGatewayUrl(asString(table.base_url));
+      if (tableUrl && formUrl && tableUrl !== formUrl) {
+        nextTables[key] = table;
+      }
+    }
+    config.model = nextTables;
+  } else {
+    const updatedSelected = writeProfile(profile, previousProfile, {
+      model: upstreamModel,
+      name: values.name.trim(),
+      contextWindow,
+      reasoningLevels: values.reasoningLevels,
+      defaultReasoningLevel: values.defaultReasoningLevel,
+    });
+    config.model = {
+      ...modelTables,
+      [profile]: updatedSelected,
+    };
+    if (previousProfile !== profile && previousProfile in modelTables) {
+      delete (config.model as Record<string, unknown>)[previousProfile];
+    }
   }
 
   return `${stringifyToml(config).trim()}\n`;

@@ -299,4 +299,216 @@ context_window = 500000
       screen.queryByText(/Codex 不会把 model_max_output_tokens/),
     ).toBeNull();
   });
+
+  it("saves an added model and both reasoning menus", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const configToml = `[models]
+default = "grok-4.7"
+default_reasoning_effort = "xhigh"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://gateway.example/v1"
+name = "Person"
+api_key = "secret-key"
+api_backend = "responses"
+context_window = 500000
+
+[[model."grok-4.7".reasoning_efforts]]
+value = "xhigh"
+label = "Extra High Effort"
+default = true
+
+[model."grok-4.6"]
+model = "grok-4.6"
+base_url = "https://gateway.example/v1"
+name = "Person 4.6"
+api_key = "secret-key"
+api_backend = "responses"
+context_window = 500000
+
+[[model."grok-4.6".reasoning_efforts]]
+value = "high"
+label = "High Effort"
+default = true
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="gateway"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Person",
+          category: "custom",
+          settingsConfig: { config: configToml },
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("实际请求模型")).toHaveValue("grok-4.6");
+    expect(screen.getByLabelText("菜单显示名")).toHaveValue("Person 4.6");
+    expect(screen.getByText(/写入 config\.toml/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    const config = parseToml(settings.config) as any;
+    expect(config.models.default).toBe("grok-4.7");
+    expect(config.models.default_reasoning_effort).toBe("xhigh");
+    expect(config.model["grok-4.6"].name).toBe("Person 4.6");
+    expect(config.model["grok-4.6"].base_url).toBe(
+      "https://gateway.example/v1",
+    );
+    expect(config.model["grok-4.7"].reasoning_efforts[0]).toMatchObject({
+      value: "xhigh",
+      default: true,
+    });
+    expect(config.model["grok-4.6"].reasoning_efforts[0]).toMatchObject({
+      value: "high",
+      default: true,
+    });
+  });
+
+  it("keeps a newly added model row until an id is typed", async () => {
+    const user = userEvent.setup();
+    render(
+      <GrokBuildProviderForm
+        providerId="gateway"
+        submitLabel="Save"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={{
+          name: "Person",
+          category: "custom",
+          settingsConfig: {
+            config: `[models]
+default = "grok-4.7"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://gateway.example/v1"
+name = "Person"
+api_key = "dummy-key"
+api_backend = "responses"
+context_window = 500000
+`,
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "添加模型" }));
+
+    expect(screen.getByLabelText("实际请求模型")).toHaveValue("");
+  });
+
+  it("does not retarget another gateway or drop a global effort on save", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="gateway"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Person",
+          category: "custom",
+          settingsConfig: {
+            config: `[models]
+default = "grok-4.7"
+default_reasoning_effort = "low"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://gateway.example/v1"
+name = "Person"
+api_key = "dummy-key"
+api_backend = "responses"
+context_window = 500000
+
+[model."other"]
+model = "other-model"
+base_url = "https://other.example/v1"
+name = "Other"
+api_key = "dummy-other-key"
+api_backend = "chat_completions"
+context_window = 500000
+`,
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const config = parseToml(
+      JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).config,
+    ) as any;
+    expect(config.models.default_reasoning_effort).toBe("low");
+    expect(config.model.other).toMatchObject({
+      model: "other-model",
+      base_url: "https://other.example/v1",
+      api_key: "dummy-other-key",
+      api_backend: "chat_completions",
+    });
+  });
+
+  it("keeps an alias profile and its extra fields when the label changes", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="gateway"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Person",
+          category: "custom",
+          settingsConfig: {
+            config: `[models]
+default = "grok-4.7"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://gateway.example/v1"
+name = "Person"
+api_key = "dummy-key"
+api_backend = "responses"
+context_window = 500000
+
+[model."fast"]
+model = "grok-4.6"
+base_url = "https://gateway.example/v1"
+name = "grok-4.6"
+api_key = "dummy-key"
+api_backend = "responses"
+context_window = 500000
+description = "must survive"
+env_key = "DUMMY_ENV"
+`,
+          },
+        }}
+      />,
+    );
+
+    await user.clear(screen.getByLabelText("菜单显示名"));
+    await user.type(screen.getByLabelText("菜单显示名"), "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const config = parseToml(
+      JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).config,
+    ) as any;
+    expect(config.model["grok-4.6"]).toBeUndefined();
+    expect(config.model.fast).toMatchObject({
+      model: "grok-4.6",
+      name: "Renamed",
+      description: "must survive",
+      env_key: "DUMMY_ENV",
+      base_url: "https://gateway.example/v1",
+    });
+  });
 });

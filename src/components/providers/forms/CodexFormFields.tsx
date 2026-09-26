@@ -12,29 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import {
-  Check,
   ChevronDown,
   ChevronRight,
-  ChevronsUpDown,
   Download,
   Loader2,
   Plus,
@@ -42,7 +27,13 @@ import {
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { CodexOAuthSection } from "./CodexOAuthSection";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelDropdown,
+  ReasoningLevelsEditor,
+} from "./shared";
+import { GROK_REASONING_LEVELS } from "@/utils/grokBuildConfig";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
   fetchModelsForConfig,
@@ -171,6 +162,7 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.defaultReasoningLevel
       ? { defaultReasoningLevel: seed.defaultReasoningLevel }
       : {}),
+    ...(seed?.profileKey ? { profileKey: seed.profileKey } : {}),
   };
 }
 
@@ -198,170 +190,10 @@ function catalogRowsMatchModels(
       JSON.stringify(row.reasoningLevels ?? []) ===
         JSON.stringify(incoming.reasoningLevels ?? []) &&
       (row.defaultReasoningLevel ?? "") ===
-        (incoming.defaultReasoningLevel ?? "")
+        (incoming.defaultReasoningLevel ?? "") &&
+      (row.profileKey ?? "") === (incoming.profileKey ?? "")
     );
   });
-}
-
-// Reasoning effort levels Codex understands, in ascending depth order. The
-// backend drops unknown values, so the UI only offers canonical ones.
-const CODEX_REASONING_LEVELS = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-  "ultra",
-] as const;
-
-// Sentinel for the default-level Select: Radix Select forbids empty item
-// values, so "back to Auto" needs a non-empty value mapped to undefined.
-const AUTO_DEFAULT_REASONING_LEVEL = "__auto__";
-
-function ReasoningLevelsEditor({
-  levels,
-  defaultLevel,
-  onLevelsChange,
-  onDefaultLevelChange,
-}: {
-  levels?: string[];
-  defaultLevel?: string;
-  onLevelsChange: (levels: string[] | undefined) => void;
-  onDefaultLevelChange: (level: string | undefined) => void;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const selected = (levels ?? []).filter((level) =>
-    (CODEX_REASONING_LEVELS as readonly string[]).includes(level),
-  );
-
-  const toggleLevel = (level: string) => {
-    const picked = selected.includes(level)
-      ? selected.filter((item) => item !== level)
-      : [...selected, level];
-    // Store in canonical ascending-depth order (not click order): the Codex
-    // picker and the generated catalog both follow array order.
-    const next = (CODEX_REASONING_LEVELS as readonly string[]).filter((item) =>
-      picked.includes(item),
-    );
-    onLevelsChange(next.length > 0 ? next : undefined);
-    if (defaultLevel && !next.includes(defaultLevel)) {
-      onDefaultLevelChange(undefined);
-    }
-  };
-
-  const triggerLabel =
-    selected.length > 0
-      ? selected.join(", ")
-      : t("codexConfig.reasoningLevelsNotSet", {
-          defaultValue: "Not set",
-        });
-
-  return (
-    <Popover modal open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          role="combobox"
-          aria-expanded={open}
-          className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span
-            className={cn(
-              "truncate",
-              selected.length === 0 && "text-muted-foreground",
-            )}
-          >
-            {triggerLabel}
-          </span>
-          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="bottom"
-        align="start"
-        sideOffset={6}
-        avoidCollisions
-        collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
-      >
-        <Command>
-          <CommandInput
-            placeholder={t("codexConfig.reasoningLevelsSearch", {
-              defaultValue: "Search reasoning levels...",
-            })}
-          />
-          <CommandList>
-            <CommandEmpty>
-              {t("codexConfig.reasoningLevelsEmpty", {
-                defaultValue: "No levels",
-              })}
-            </CommandEmpty>
-            <CommandGroup>
-              {CODEX_REASONING_LEVELS.map((level) => (
-                <CommandItem
-                  key={level}
-                  value={level}
-                  onSelect={() => toggleLevel(level)}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      selected.includes(level) ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  <span className="flex-1">{level}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-        {selected.length > 0 && (
-          <div className="border-t border-border-default p-2">
-            <span className="text-xs text-muted-foreground">
-              {t("codexConfig.defaultReasoningLevelLabel", {
-                defaultValue: "Default level",
-              })}
-            </span>
-            <Select
-              value={defaultLevel ?? AUTO_DEFAULT_REASONING_LEVEL}
-              onValueChange={(value) =>
-                onDefaultLevelChange(
-                  value === AUTO_DEFAULT_REASONING_LEVEL ? undefined : value,
-                )
-              }
-            >
-              <SelectTrigger className="mt-1 h-8 w-full">
-                <SelectValue
-                  placeholder={t(
-                    "codexConfig.defaultReasoningLevelPlaceholder",
-                    { defaultValue: "Auto" },
-                  )}
-                />
-              </SelectTrigger>
-              {/* Must render above the enclosing z-[1000] popover: the
-                  default SelectContent z-[100] would hide the menu behind
-                  the panel when it flips upward. */}
-              <SelectContent className="z-[1100]">
-                <SelectItem value={AUTO_DEFAULT_REASONING_LEVEL}>
-                  {t("codexConfig.defaultReasoningLevelPlaceholder", {
-                    defaultValue: "Auto",
-                  })}
-                </SelectItem>
-                {selected.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {level}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 export function CodexFormFields({
@@ -671,7 +503,10 @@ export function CodexFormFields({
 
   // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
   const trimmedDefaultModel = codexModel.trim();
+  // Grok keeps the default profile outside this list and still writes it to
+  // config.toml, so the Codex "missing from the catalog" warning does not apply.
   const isDefaultModelOutsideCatalog =
+    !isGrokBuild &&
     catalogRows.length > 0 &&
     !!trimmedDefaultModel &&
     !catalogRows.some((row) => row.model.trim() === trimmedDefaultModel);
@@ -1204,10 +1039,15 @@ export function CodexFormFields({
                     )}
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.modelMappingHint", {
-                      defaultValue:
-                        "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
-                    })}
+                    {isGrokBuild
+                      ? t("grokBuild.modelMappingHint", {
+                          defaultValue:
+                            "添加的模型与默认模型共用当前地址和密钥，并写入 config.toml。Grok 的 /model 可以切换它们；思考等级会写成 reasoning_efforts。",
+                        })
+                      : t("codexConfig.modelMappingHint", {
+                          defaultValue:
+                            "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
+                        })}
                   </p>
                 </div>
 
@@ -1319,6 +1159,9 @@ export function CodexFormFields({
                         <ReasoningLevelsEditor
                           levels={row.reasoningLevels}
                           defaultLevel={row.defaultReasoningLevel}
+                          options={
+                            isGrokBuild ? GROK_REASONING_LEVELS : undefined
+                          }
                           onLevelsChange={(levels) =>
                             handleUpdateCatalogRow(index, {
                               reasoningLevels: levels,
