@@ -98,10 +98,28 @@ pub(crate) fn adaptive_thinking_is_default(model: &str) -> bool {
         .any(|needle| normalized.contains(needle))
 }
 
-/// Models that reject `thinking: {"type":"disabled"}`.
+/// Models that cannot run with thinking turned off at all.
+///
+/// Stronger than [`thinking_rejects_disabled`]: for these models there is no
+/// request shape that disables thinking, so callers must fail loudly rather than
+/// try to negotiate one.
 pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     ["fable-5", "mythos-5"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
+/// Models whose API rejects the literal `thinking: {"type":"disabled"}`.
+///
+/// A wire-format constraint, and a superset of [`thinking_cannot_be_disabled`].
+/// Opus 5 refuses the `disabled` literal but runs fine with the `thinking` key
+/// omitted entirely — which is exactly what upstream's own 400 asks for:
+/// "claude-opus-5-5 requires adaptive thinking; omit thinking or use
+/// thinking.type=adaptive and output_config.effort".
+pub(crate) fn thinking_rejects_disabled(model: &str) -> bool {
+    let normalized = normalize_model_name(model);
+    ["fable-5", "mythos-5", "opus-5"]
         .iter()
         .any(|needle| normalized.contains(needle))
 }
@@ -181,6 +199,36 @@ mod tests {
         assert!(adaptive_thinking_is_default("claude-sonnet-5"));
         assert!(thinking_cannot_be_disabled("claude-fable-5"));
         assert!(!thinking_cannot_be_disabled("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn opus_5_rejects_disabled_literal_but_can_still_skip_thinking() {
+        // Opus 5 400s on `thinking: {"type":"disabled"}` yet runs fine with the key
+        // absent, so it belongs in `thinking_rejects_disabled` only — adding it to
+        // `thinking_cannot_be_disabled` would turn a fixable request into a hard
+        // error.
+        assert!(thinking_rejects_disabled("claude-opus-5-5"));
+        assert!(!thinking_cannot_be_disabled("claude-opus-5-5"));
+    }
+
+    #[test]
+    fn models_that_cannot_disable_thinking_also_reject_the_disabled_literal() {
+        for model in ["claude-fable-5", "claude-mythos-5"] {
+            assert!(thinking_cannot_be_disabled(model), "model={model}");
+            assert!(thinking_rejects_disabled(model), "model={model}");
+        }
+    }
+
+    #[test]
+    fn older_models_accept_the_disabled_literal() {
+        for model in [
+            "claude-sonnet-5",
+            "claude-opus-4.8",
+            "claude-sonnet-4-6",
+            "claude-3-5-sonnet",
+        ] {
+            assert!(!thinking_rejects_disabled(model), "model={model}");
+        }
     }
 
     #[test]

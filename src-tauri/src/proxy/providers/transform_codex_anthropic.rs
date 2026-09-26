@@ -225,6 +225,24 @@ fn responses_system_text(item: &Value) -> Vec<String> {
     }
 }
 
+/// Express "no thinking for this request" in a shape the target model accepts.
+///
+/// Most models take the explicit `thinking: {"type":"disabled"}` literal. Opus 5
+/// and the Fable/Mythos family 400 on it and require the key to be absent
+/// instead, so for those we remove `thinking` rather than writing `disabled`.
+/// Dropping the key is the safe default either way: it means "let the model
+/// decide", and on a model that reaches this path we have already established
+/// that we cannot send a signed thinking block.
+fn set_thinking_disabled(result: &mut Value, model: &str) {
+    if crate::proxy::thinking_optimizer::thinking_rejects_disabled(model) {
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("thinking");
+        }
+        return;
+    }
+    result["thinking"] = json!({ "type": "disabled" });
+}
+
 pub fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
@@ -328,7 +346,7 @@ pub fn responses_request_to_anthropic(
             ));
         }
         if adaptive_should_think {
-            result["thinking"] = json!({ "type": "disabled" });
+            set_thinking_disabled(&mut result, model);
         }
     } else if adaptive_should_think && (!explicitly_disabled || cannot_disable_thinking) {
         thinking_enabled = true;
@@ -341,7 +359,7 @@ pub fn responses_request_to_anthropic(
             result["output_config"] = json!({ "effort": "low" });
         }
     } else if explicitly_disabled {
-        result["thinking"] = json!({ "type": "disabled" });
+        set_thinking_disabled(&mut result, model);
     } else if thinking_budget > 0 {
         thinking_enabled = true;
         // Anthropic requires max_tokens > budget_tokens and budget >= 1024. Reserve
@@ -412,7 +430,7 @@ pub fn responses_request_to_anthropic(
                 // Anthropic rejects forced tools while thinking is enabled. Preserve
                 // the caller's explicit tool constraint and disable thinking for this
                 // request instead of silently weakening `required`/named selection.
-                result["thinking"] = json!({ "type": "disabled" });
+                set_thinking_disabled(&mut result, model);
                 result.as_object_mut().unwrap().remove("output_config");
                 if let Some(value) = body.get("temperature") {
                     result["temperature"] = value.clone();
@@ -2151,6 +2169,94 @@ mod tests {
 
         let opus = responses_request_to_anthropic(request("claude-opus-4.8"), 4096).unwrap();
         assert!(opus.get("thinking").is_none());
+    }
+
+    #[test]
+    fn test_opus5_tool_history_omits_thinking_instead_of_disabled() {
+        // Regression: Codex replays a tool result with no signed thinking block to
+        // replay, so thinking has to be turned off for this turn. Opus 5 rejects the
+        // `disabled` literal outright ("requires adaptive thinking; omit thinking or
+        // use thinking.type=adaptive and output_config.effort"), so the key must be
+        // absent rather than set to `disabled`. With `model_reasoning_effort` set to
+        // anything but `none`, this fires on every tool-using turn.
+        let input = json!({
+            "model": "claude-opus-5-5",
+            "max_output_tokens": 20000,
+            "reasoning": { "effort": "xhigh" },
+            "input": [
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert!(
+            result.get("thinking").is_none(),
+            "expected thinking to be omitted, got {:?}",
+            result.get("thinking")
+        );
+    }
+
+    #[test]
+    fn test_opus5_explicit_none_omits_thinking_instead_of_disabled() {
+        // `reasoning.effort = none` takes the explicitly-disabled branch, which also
+        // has to omit the key rather than send `disabled` on Opus 5.
+        let input = json!({
+            "model": "claude-opus-5-5",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "none" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert!(
+            result.get("thinking").is_none(),
+            "expected thinking to be omitted, got {:?}",
+            result.get("thinking")
+        );
+    }
+
+    #[test]
+    fn test_opus5_forced_tool_choice_omits_thinking_instead_of_disabled() {
+        // A forced tool_choice cannot coexist with thinking, so the transform turns
+        // thinking off and restores sampling params. On Opus 5 that means dropping
+        // the key (and `output_config`), not writing `disabled`.
+        let input = json!({
+            "model": "claude-opus-5-5",
+            "max_output_tokens": 4096,
+            "temperature": 0.5,
+            "top_p": 0.9,
+            "reasoning": { "effort": "high" },
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "name": "t",
+                "description": "d",
+                "parameters": { "type": "object", "properties": {} }
+            }],
+            "tool_choice": "required"
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert!(
+            result.get("thinking").is_none(),
+            "expected thinking to be omitted, got {:?}",
+            result.get("thinking")
+        );
+        assert!(result.get("output_config").is_none());
+        assert_eq!(result["temperature"], 0.5);
+        assert_eq!(result["top_p"], 0.9);
+    }
+
+    #[test]
+    fn test_non_adaptive_model_still_sends_disabled_literal() {
+        // Models that accept `disabled` must keep getting the explicit literal —
+        // omitting it there would silently re-enable thinking.
+        let input = json!({
+            "model": "claude-3-5-sonnet",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "none" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "disabled");
     }
 
     #[test]
