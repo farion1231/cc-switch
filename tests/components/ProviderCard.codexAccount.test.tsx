@@ -11,10 +11,14 @@ const codexQuotaFooterProps = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/providers/ProviderActions", () => ({
   ProviderActions: (props: {
+    isManagedCodexAccountUnavailable?: boolean;
     onDuplicate?: () => void;
     onConfigureUsage?: () => void;
   }) => (
     <>
+      {props.isManagedCodexAccountUnavailable ? (
+        <span data-testid="managed-account-unavailable" />
+      ) : null}
       {props.onDuplicate ? (
         <button onClick={props.onDuplicate}>duplicate-provider</button>
       ) : null}
@@ -276,6 +280,22 @@ describe("ProviderCard Codex Official account identity", () => {
       screen.queryByText("账号会随 Codex CLI 当前登录变化"),
     ).not.toBeInTheDocument();
     expect(screen.getByText("codex-oauth-quota")).toBeInTheDocument();
+  });
+
+  it("passes unavailable state for a missing bound account", () => {
+    const provider = managedProvider("Work account");
+    renderCard(provider, {
+      status: {
+        ...authStatus("other@example.com"),
+        accounts: [],
+      },
+    });
+
+    expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("managed-account-unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择账号" })).toBeEnabled();
   });
 
   it("shows a manual note instead of generated account guidance", () => {
