@@ -918,7 +918,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "stepcode": "StepCode"
   },
   "mcode": {
     "empty": {
@@ -2397,6 +2398,32 @@
       "stringifiedShellEnv": "env.shellEnv should be an object, but the current value looks stringified or malformed.",
       "parseFailed": "openclaw.json could not be parsed as valid JSON5. Fix the file before editing it here."
     }
+  },
+  "stepcode": {
+    "providerKey": "Provider Key",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "Unique identifier in config file. Use lowercase letters, numbers, and hyphens only.",
+    "providerKeyLockedHint": "This provider has already been added to the app config, so its key can no longer be changed.",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, and hyphens only.",
+    "apiProtocol": "API Protocol",
+    "selectProtocol": "Select API Protocol",
+    "apiProtocolHint": "Select the protocol type compatible with the provider's API. Most providers use OpenAI Completions format.",
+    "baseUrl": "API Endpoint",
+    "baseUrlHint": "The provider's API endpoint address.",
+    "models": "Model Configuration",
+    "addModel": "Add Model",
+    "noModels": "No models configured",
+    "modelId": "Model ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "Display Name",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "toggleModelDetails": "Expand or collapse model details",
+    "removeModel": "Remove model",
+    "contextWindow": "Context Length",
+    "maxTokens": "Max Output Tokens",
+    "reasoning": "Supports Extended Thinking"
   },
   "hermes": {
     "form": {

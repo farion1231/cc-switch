@@ -93,7 +93,7 @@ impl Database {
             AppType::Hermes => Some("enabled_hermes"),
             // These applications intentionally have no MCP flag in the SSOT.
             AppType::Mcode => Some("enabled_mcode"),
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi => None,
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::StepCode => None,
         };
 
         if let Some(column) = column {

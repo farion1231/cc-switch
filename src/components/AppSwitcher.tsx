@@ -38,6 +38,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "minimax",
+  stepcode: "stepcode",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -51,6 +52,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  stepcode: "StepCode",
 };
 
 // 单色图标经 currentColor 继承按钮的 muted 文字色，未选中时自然变灰；

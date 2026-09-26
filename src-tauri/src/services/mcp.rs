@@ -171,6 +171,10 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::StepCode => {
+                // StepCode MCP support is not yet available
+                log::debug!("StepCode MCP support is not yet available, skipping sync");
+            }
             AppType::Pi => {}
         }
         Ok(())
@@ -212,6 +216,10 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::StepCode => {
+                // StepCode MCP support is not yet available
+                log::debug!("StepCode MCP support is not yet available, skipping remove");
+            }
             AppType::Pi => {}
         }
         Ok(())

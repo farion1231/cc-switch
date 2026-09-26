@@ -26,6 +26,7 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
+import { useStepcodeLiveProviderIds } from "@/hooks/useStepcode";
 import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
@@ -111,6 +112,11 @@ export function ProviderList({
     appId === "openclaw",
   );
 
+  // StepCode: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: stepcodeLiveIds } = useStepcodeLiveProviderIds(
+    appId === "stepcode",
+  );
+
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
 
@@ -129,12 +135,22 @@ export function ProviderList({
       if (appId === "openclaw") {
         return openclawLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "stepcode") {
+        return stepcodeLiveIds?.includes(providerId) ?? false;
+      }
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, providers],
+    [
+      appId,
+      opencodeLiveIds,
+      openclawLiveIds,
+      stepcodeLiveIds,
+      hermesLiveIds,
+      providers,
+    ],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -242,6 +258,10 @@ export function ProviderList({
       }
       if (appId === "openclaw") {
         const count = await providersApi.importOpenClawFromLive();
+        return count > 0;
+      }
+      if (appId === "stepcode") {
+        const count = await providersApi.importStepcodeFromLive();
         return count > 0;
       }
       if (appId === "hermes") {

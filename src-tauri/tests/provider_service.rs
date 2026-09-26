@@ -3384,6 +3384,84 @@ fn provider_service_delete_codex_removes_provider_and_files() {
 }
 
 #[test]
+fn provider_service_delete_stepcode_removes_provider_from_live_models_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let app_state = create_test_state().expect("create test state");
+
+    // A StepCode provider that has already been written to the live config.
+    let mut provider = Provider::with_id(
+        "demo".to_string(),
+        "Demo".to_string(),
+        json!({
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "sk-demo",
+            "api": "openai-responses",
+            "models": [{"id": "step-5-preview"}]
+        }),
+        None,
+    );
+    provider.meta = Some(ProviderMeta {
+        live_config_managed: Some(true),
+        ..ProviderMeta::default()
+    });
+    app_state
+        .db
+        .save_provider(AppType::StepCode.as_str(), &provider)
+        .expect("seed stepcode provider");
+
+    // StepCode loads custom providers from ~/.stepcode/models.json.
+    let stepcode_dir = home.join(".stepcode");
+    std::fs::create_dir_all(&stepcode_dir).expect("create stepcode dir");
+    let models_path = stepcode_dir.join("models.json");
+    std::fs::write(
+        &models_path,
+        json!({
+            "providers": {
+                "demo": {
+                    "baseUrl": "https://api.example.com/v1",
+                    "apiKey": "sk-demo",
+                    "api": "openai-responses",
+                    "models": [{"id": "step-5-preview"}]
+                },
+                "keep": {"baseUrl": "https://keep.example.com", "models": [{"id": "m"}]}
+            }
+        })
+        .to_string(),
+    )
+    .expect("seed models.json");
+
+    ProviderService::delete(&app_state, AppType::StepCode, "demo")
+        .expect("delete stepcode provider should succeed");
+
+    // DB record removed.
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::StepCode.as_str())
+        .expect("get providers");
+    assert!(
+        !providers.contains_key("demo"),
+        "DB entry should be removed after delete"
+    );
+
+    // Live models.json entry removed; other providers preserved.
+    let live: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&models_path).expect("read models.json"))
+            .expect("parse models.json");
+    let live_providers = live["providers"].as_object().expect("providers object");
+    assert!(
+        !live_providers.contains_key("demo"),
+        "live models.json entry should be removed after delete"
+    );
+    assert!(
+        live_providers.contains_key("keep"),
+        "unrelated providers must be preserved"
+    );
+}
+
+#[test]
 fn provider_service_delete_claude_removes_provider_files() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

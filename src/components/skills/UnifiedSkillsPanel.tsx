@@ -279,6 +279,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
+    if (app === "stepcode") return; // StepCode has no skills registry
     if (!skills || !beginWrite()) return;
 
     const ids = skills

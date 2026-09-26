@@ -142,6 +142,10 @@ impl ConfigService {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
             }
+            AppType::StepCode => {
+                // StepCode uses additive mode, no live sync needed
+                // StepCode providers are managed directly in models.json
+            }
         }
 
         Ok(())

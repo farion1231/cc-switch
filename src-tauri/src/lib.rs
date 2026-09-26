@@ -34,6 +34,7 @@ mod proxy;
 mod services;
 mod session_manager;
 mod settings;
+mod stepcode_config;
 mod store;
 
 mod tray;
@@ -1006,6 +1007,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::StepCode,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1665,6 +1667,10 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // StepCode specific
+            commands::import_stepcode_providers_from_live,
+            commands::get_stepcode_live_provider_ids,
+            commands::get_stepcode_live_provider,
             // Hermes specific
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,

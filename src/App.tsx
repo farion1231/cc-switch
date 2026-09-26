@@ -42,6 +42,7 @@ import {
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
+import { stepcodeKeys } from "@/hooks/useStepcode";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -773,6 +774,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
         });
+      } else if (activeApp === "stepcode") {
+        await queryClient.invalidateQueries({
+          queryKey: stepcodeKeys.liveProviderIds,
+        });
       } else if (activeApp === "hermes") {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
@@ -837,7 +842,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "stepcode"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -857,12 +863,17 @@ function App() {
                     queryKey: hermesKeys.liveProviderIds,
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
+                : activeApp === "stepcode"
+                  ? await queryClient.ensureQueryData({
+                      queryKey: stepcodeKeys.liveProviderIds,
+                      queryFn: () => providersApi.getStepcodeLiveProviderIds(),
                     })
-                  ).enabledProviderIds;
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: ["pi", "currentState"],
+                        queryFn: () => piApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds;
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1152,7 +1163,8 @@ function App() {
                         activeApp === "openclaw" ||
                         activeApp === "hermes" ||
                         activeApp === "pi" ||
-                        activeApp === "mcode"
+                        activeApp === "mcode" ||
+                        activeApp === "stepcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined

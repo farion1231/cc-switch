@@ -918,7 +918,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "stepcode": "StepCode"
   },
   "mcode": {
     "empty": {
@@ -2397,6 +2398,32 @@
       "stringifiedShellEnv": "env.shellEnv 应为对象，但当前值看起来像被字符串化或已损坏。",
       "parseFailed": "openclaw.json 不是合法 JSON5。请先修复文件，再通过这里编辑。"
     }
+  },
+  "stepcode": {
+    "providerKey": "供应商标识",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "配置文件中的唯一标识符，只能使用小写字母、数字和连字符",
+    "providerKeyLockedHint": "该供应商已添加到应用配置中，供应商标识不可修改",
+    "providerKeyRequired": "请填写供应商标识",
+    "providerKeyDuplicate": "此标识已被使用，请更换",
+    "providerKeyInvalid": "标识格式无效，只能使用小写字母、数字和连字符",
+    "apiProtocol": "API 协议",
+    "selectProtocol": "选择 API 协议",
+    "apiProtocolHint": "选择与供应商 API 兼容的协议类型。大多数供应商使用 OpenAI Completions 格式。",
+    "baseUrl": "API 端点",
+    "baseUrlHint": "供应商的 API 端点地址。",
+    "models": "模型配置",
+    "addModel": "添加模型",
+    "noModels": "暂无模型配置",
+    "modelId": "模型 ID",
+    "modelIdPlaceholder": "claude-3-sonnet",
+    "modelName": "显示名称",
+    "modelNamePlaceholder": "Claude 3 Sonnet",
+    "toggleModelDetails": "展开或收起模型详情",
+    "removeModel": "移除模型",
+    "contextWindow": "上下文长度",
+    "maxTokens": "最大输出 Token 数",
+    "reasoning": "支持扩展思考"
   },
   "hermes": {
     "form": {

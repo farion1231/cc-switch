@@ -16,6 +16,7 @@ export { useOmoModelSource } from "./useOmoModelSource";
 export { useOpencodeFormState } from "./useOpencodeFormState";
 export { useOmoDraftState } from "./useOmoDraftState";
 export { useOpenclawFormState } from "./useOpenclawFormState";
+export { useStepcodeFormState } from "./useStepcodeFormState";
 export { useHermesFormState } from "./useHermesFormState";
 export { useCopilotAuth } from "./useCopilotAuth";
 export { useCodexOauth } from "./useCodexOauth";

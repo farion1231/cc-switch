@@ -25,7 +25,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_stepcode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
     update_toml_common_config_snippet,
 };
@@ -47,7 +47,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live, remove_stepcode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -5611,6 +5611,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::StepCode => remove_stepcode_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -5681,6 +5682,9 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::StepCode => {
+                remove_stepcode_provider_from_live(id)?;
+            }
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6314,7 +6318,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::StepCode => Ok(String::new()),
         }
     }
 
@@ -6332,7 +6336,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::StepCode => Ok(String::new()),
         }
     }
 
@@ -7088,6 +7092,17 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::StepCode => {
+                // StepCode uses config structure: { baseUrl, apiKey, api, models }
+                // Basic validation - must be an object
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.stepcode.settings.not_object",
+                        "StepCode 配置必须是 JSON 对象",
+                        "StepCode configuration must be a JSON object",
+                    ));
+                }
+            }
             AppType::Hermes => {
                 // Hermes: accept any JSON object for now
                 if !provider.settings_config.is_object() {
@@ -7308,7 +7323,11 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+            AppType::OpenClaw
+            | AppType::Hermes
+            | AppType::Pi
+            | AppType::Mcode
+            | AppType::StepCode => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

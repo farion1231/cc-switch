@@ -54,6 +54,7 @@ export function AddProviderDialog({
     appId !== "hermes" &&
     appId !== "pi" &&
     appId !== "mcode" &&
+    appId !== "stepcode" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
@@ -199,7 +200,8 @@ export function AddProviderDialog({
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "pi" ||
-          appId === "mcode") &&
+          appId === "mcode" ||
+          appId === "stepcode") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -318,6 +320,11 @@ export function AddProviderDialog({
           }
         } else if (appId === "openclaw") {
           // OpenClaw uses baseUrl directly
+          if (parsedConfig.baseUrl) {
+            addUrl(parsedConfig.baseUrl as string);
+          }
+        } else if (appId === "stepcode") {
+          // StepCode uses baseUrl directly (same shape as OpenClaw)
           if (parsedConfig.baseUrl) {
             addUrl(parsedConfig.baseUrl as string);
           }

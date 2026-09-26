@@ -204,6 +204,32 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 获取 StepCode live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 ~/.stepcode/models.json
+   */
+  async getStepcodeLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_stepcode_live_provider_ids");
+  },
+
+  /**
+   * 从 StepCode live 配置导入供应商到数据库
+   * StepCode 特有功能：由于累加模式，用户可能已在 models.json 中配置供应商
+   */
+  async importStepcodeFromLive(): Promise<number> {
+    return await invoke("import_stepcode_providers_from_live");
+  },
+
+  /**
+   * 获取 StepCode live 配置中的单个供应商片段
+   * 用于读取 models.json 中已存在供应商的原始配置
+   */
+  async getStepcodeLiveProvider(
+    providerId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return await invoke("get_stepcode_live_provider", { providerId });
+  },
 };
 
 // ============================================================================
