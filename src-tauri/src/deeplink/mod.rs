@@ -78,6 +78,14 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
+    /// Claude Desktop 3P write mode: `direct` (default) or `proxy`.
+    ///
+    /// Only meaningful for `app=claude-desktop`. Under `proxy`, the
+    /// haiku/sonnet/opus model params are read as upstream model mappings and
+    /// converted into Claude Desktop local-route entries instead of plain env
+    /// values, so non-Claude upstreams (grok/deepseek/...) stay usable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_desktop_mode: Option<String>,
 
     // ============ Prompt-specific fields ============
     /// Base64 encoded Markdown content

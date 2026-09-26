@@ -4,6 +4,7 @@
 
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;
+use crate::commands::provider::suggested_claude_desktop_routes;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
@@ -167,8 +168,32 @@ pub(crate) fn build_provider_from_request(
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(request)?;
     if matches!(app_type, AppType::ClaudeDesktop) {
-        meta.get_or_insert_with(ProviderMeta::default)
-            .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
+        let meta_ref = meta.get_or_insert_with(ProviderMeta::default);
+        let mode = resolve_claude_desktop_mode(request)?;
+        meta_ref.claude_desktop_mode = Some(mode.clone());
+
+        if mode == ClaudeDesktopMode::Proxy {
+            // Mirror the "import providers from Claude Code" path: derive the
+            // local-route mappings from the env block built above, so
+            // sonnetModel / opusModel / haikuModel act as upstream model
+            // mappings for non-Claude upstreams.
+            let probe = Provider::with_id(
+                String::new(),
+                request.name.clone().unwrap_or_default(),
+                settings_config.clone(),
+                None,
+            );
+            let routes = suggested_claude_desktop_routes(&probe)
+                .filter(|routes| !routes.is_empty())
+                .ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "Claude Desktop proxy mode requires at least one model mapping; \
+                         set sonnetModel, opusModel or haikuModel"
+                            .to_string(),
+                    )
+                })?;
+            meta_ref.claude_desktop_model_routes = routes;
+        }
     }
 
     let provider = Provider {
@@ -187,6 +212,22 @@ pub(crate) fn build_provider_from_request(
     };
 
     Ok(provider)
+}
+
+/// Resolve the Claude Desktop write mode from the deep link request.
+///
+/// Defaults to `direct` so deep links built before this field existed keep
+/// their original behaviour.
+fn resolve_claude_desktop_mode(
+    request: &DeepLinkImportRequest,
+) -> Result<ClaudeDesktopMode, AppError> {
+    match request.claude_desktop_mode.as_deref() {
+        None | Some("direct") => Ok(ClaudeDesktopMode::Direct),
+        Some("proxy") => Ok(ClaudeDesktopMode::Proxy),
+        Some(other) => Err(AppError::InvalidInput(format!(
+            "Invalid claudeDesktopMode: '{other}'. Expected 'direct' or 'proxy'"
+        ))),
+    }
 }
 
 /// Get primary endpoint from request (first one if comma-separated)
@@ -651,7 +692,7 @@ pub fn parse_and_merge_config(
     }
 
     match request.app.as_deref().unwrap_or("") {
-        "claude" => merge_claude_config(&mut merged, &config_value)?,
+        "claude" | "claude-desktop" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,

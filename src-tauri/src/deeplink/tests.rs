@@ -218,6 +218,7 @@ fn test_build_gemini_provider_with_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -271,6 +272,7 @@ fn test_build_gemini_provider_without_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -317,6 +319,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -364,6 +367,7 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -447,6 +451,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -495,6 +500,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -548,6 +554,7 @@ fn test_parse_and_merge_config_claude() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -671,6 +678,7 @@ fn test_parse_and_merge_config_url_override() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -734,6 +742,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -789,6 +798,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        claude_desktop_mode: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -991,5 +1001,190 @@ fn test_infer_homepage_from_endpoint_without_homepage() {
     assert_eq!(
         infer_homepage_from_endpoint("https://cubence.com"),
         Some("https://cubence.com".to_string())
+    );
+}
+
+// =============================================================================
+// Claude Desktop Tests
+// =============================================================================
+
+#[test]
+fn test_parse_claude_desktop_provider() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=LingShu%20Desktop&endpoint=https%3A%2F%2Flingshuhub.com&apiKey=sk-test&claudeDesktopMode=proxy&sonnetModel=grok-4.6&opusModel=deepseek-v4.1-flash";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.app.as_deref(), Some("claude-desktop"));
+    assert_eq!(request.claude_desktop_mode.as_deref(), Some("proxy"));
+    assert_eq!(request.sonnet_model.as_deref(), Some("grok-4.6"));
+    assert_eq!(request.opus_model.as_deref(), Some("deepseek-v4.1-flash"));
+}
+
+#[test]
+fn test_claude_desktop_mode_is_trimmed_and_lowercased() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=X&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&claudeDesktopMode=%20PROXY%20";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.claude_desktop_mode.as_deref(), Some("proxy"));
+}
+
+#[test]
+fn test_claude_desktop_defaults_to_direct_mode() {
+    use super::provider::build_provider_from_request;
+    use crate::provider::ClaudeDesktopMode;
+
+    // Links built before claudeDesktopMode existed must keep their behaviour.
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Direct&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&model=claude-sonnet-5";
+
+    let request = parse_deeplink_url(url).unwrap();
+    let provider = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap();
+
+    let meta = provider.meta.expect("meta should be present");
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
+    assert!(
+        meta.claude_desktop_model_routes.is_empty(),
+        "direct mode must not carry model routes"
+    );
+}
+
+#[test]
+fn test_claude_desktop_proxy_builds_model_routes() {
+    use super::provider::build_provider_from_request;
+    use crate::provider::ClaudeDesktopMode;
+
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Proxy&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&claudeDesktopMode=proxy&sonnetModel=grok-4.6&haikuModel=grok-4.5-mini";
+
+    let request = parse_deeplink_url(url).unwrap();
+    let provider = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap();
+
+    let meta = provider.meta.expect("meta should be present");
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+
+    let routes = meta.claude_desktop_model_routes;
+    assert_eq!(
+        routes.len(),
+        2,
+        "only the roles carrying a model produce routes"
+    );
+
+    let sonnet = routes.get("claude-sonnet-5").expect("sonnet route");
+    assert_eq!(sonnet.model, "grok-4.6");
+    // Non-Claude upstreams keep their real name as the menu label.
+    assert_eq!(sonnet.label_override.as_deref(), Some("grok-4.6"));
+
+    let haiku = routes.get("claude-haiku-4-5").expect("haiku route");
+    assert_eq!(haiku.model, "grok-4.5-mini");
+
+    assert!(
+        !routes.contains_key("claude-opus-5"),
+        "a role without a model must not produce a route"
+    );
+}
+
+#[test]
+fn test_lingshu_console_claude_desktop_proxy_contract() {
+    use super::provider::build_provider_from_request;
+    use crate::provider::ClaudeDesktopMode;
+
+    // Exact URL emitted by the LinShu console's "Import to CC Switch" dialog
+    // when the operator picks Claude Desktop and maps all three roles to real
+    // (non-Claude) upstream ids.
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Lingshu+grok&endpoint=https%3A%2F%2Flingshuhub.com&apiKey=sk-abc123&sonnetModel=grok-4.6&opusModel=grok-4.7&haikuModel=grok-4.5&claudeDesktopMode=proxy&homepage=https%3A%2F%2Flingshuhub.com&enabled=true";
+
+    let request = parse_deeplink_url(url).unwrap();
+    let provider = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap();
+
+    let meta = provider.meta.expect("meta should be present");
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+
+    let routes = meta.claude_desktop_model_routes;
+    assert_eq!(routes.len(), 3, "all three mapped roles produce a route");
+
+    // The desktop menu shows the real upstream id as its label, while the
+    // model actually sent on the wire stays a claude-* id.
+    for (route_id, expected_model) in [
+        ("claude-sonnet-5", "grok-4.6"),
+        ("claude-opus-5", "grok-4.7"),
+        ("claude-haiku-4-5", "grok-4.5"),
+    ] {
+        let route = routes
+            .get(route_id)
+            .unwrap_or_else(|| panic!("missing route {route_id}"));
+        assert_eq!(route.model, expected_model);
+        assert_eq!(route.label_override.as_deref(), Some(expected_model));
+    }
+}
+
+#[test]
+fn test_claude_desktop_proxy_without_model_mapping_is_rejected() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Proxy&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&claudeDesktopMode=proxy";
+
+    let request = parse_deeplink_url(url).unwrap();
+    let err = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap_err();
+
+    assert!(
+        err.to_string().contains("proxy mode requires"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_claude_desktop_invalid_mode_is_rejected() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=X&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&claudeDesktopMode=banana";
+
+    let request = parse_deeplink_url(url).unwrap();
+    let err = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap_err();
+
+    assert!(
+        err.to_string().contains("Invalid claudeDesktopMode"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_parse_and_merge_config_accepts_claude_desktop() {
+    use super::provider::build_provider_from_request;
+
+    // claude-desktop must reach the Claude merge branch rather than falling
+    // through to the catch-all "Invalid app type" arm.
+    let config = serde_json::json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://merged.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-merged",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "grok-4.6"
+        }
+    });
+    let encoded = BASE64_STANDARD.encode(serde_json::to_vec(&config).unwrap());
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude-desktop".to_string()),
+        name: Some("Merged".to_string()),
+        config: Some(encoded),
+        config_format: Some("json".to_string()),
+        claude_desktop_mode: Some("proxy".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).unwrap();
+    assert_eq!(
+        merged.endpoint.as_deref(),
+        Some("https://merged.example.com")
+    );
+    assert_eq!(merged.api_key.as_deref(), Some("sk-merged"));
+
+    let provider = build_provider_from_request(&AppType::ClaudeDesktop, &merged).unwrap();
+    let meta = provider.meta.expect("meta should be present");
+    assert_eq!(
+        meta.claude_desktop_model_routes
+            .get("claude-sonnet-5")
+            .map(|route| route.model.as_str()),
+        Some("grok-4.6")
     );
 }
