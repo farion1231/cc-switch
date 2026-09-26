@@ -2324,6 +2324,17 @@ impl Database {
                 "0.006",
                 "0",
             ),
+            // 聚合平台会保留版本号中的点号，清洗后得到独立的
+            // `deepseek-v4.1-flash`，不是 legacy 的 `deepseek-v4-flash`；
+            // 不单列同样会因查不到价格而静默按 0 计费。
+            (
+                "deepseek-v4.1-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
             (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",

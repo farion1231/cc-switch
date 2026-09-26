@@ -2668,6 +2668,45 @@ mod tests {
     }
 
     #[test]
+    fn test_backfill_missing_usage_costs_uses_deepseek_v41_flash_alias() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "deepseek-v41-flash-zero-cost",
+                "claude",
+                "test-provider",
+                "deepseek-ai/DeepSeek-V4.1-Flash",
+                "proxy",
+                1000,
+                1_000_000,
+                1_000_000,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, output_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, output_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'deepseek-v41-flash-zero-cost'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(input_cost, "0.300000");
+        assert_eq!(output_cost, "1.200000");
+        assert_eq!(total_cost, "1.500000");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_backfill_new_anthropic_openai_pricing_after_upgrade() -> Result<(), AppError> {
         let db = Database::memory()?;
         let cases = [
@@ -4339,6 +4378,37 @@ mod tests {
             result.is_none(),
             "缺少 gpt-5 基础定价时，不应前缀误匹配到 gpt-5-mini/gpt-5-pro"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deepseek_v41_flash_pricing_aliases() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        for model_id in [
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "DeepSeek-V4.1-Flash",
+            "DEEPSEEK-AI/DEEPSEEK-V4.1-FLASH",
+            "deepseek-v4.1-flash",
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-0731",
+            "deepseek-v4-flash-vision-exp",
+        ] {
+            let row = find_model_pricing_row(&conn, model_id)?;
+            assert_eq!(
+                row,
+                Some((
+                    "0.3".to_string(),
+                    "1.2".to_string(),
+                    "0.006".to_string(),
+                    "0".to_string(),
+                )),
+                "{model_id} should use the DeepSeek V4.1 Flash price"
+            );
+        }
 
         Ok(())
     }
