@@ -1531,6 +1531,8 @@
     "commonConfigHint": "「共通設定を適用」がオンの場合、config.toml の末尾に追記されます",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
+    "enableRemoteModelCatalog": "プロバイダーからモデル一覧を取得",
+    "remoteModelCatalogHint": "Codex 0.156+ 向け：[features] api_key_model_discovery = true と model_catalog_url = <base_url>/models を書き込み、Codex がプロバイダーからモデル一覧を取得できるようにします。プロバイダーはこの URL で Codex 形式のモデルカタログを返す必要があります。返さない場合、Codex は組み込みの一覧を使用します。",
     "apiUrlLabel": "API リクエスト URL",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",

@@ -12,6 +12,8 @@ interface CodexConfigEditorProps {
 
   showRemoteCompaction?: boolean;
 
+  showRemoteModelCatalog?: boolean;
+
   isProxyTakeover?: boolean;
 
   onAuthChange: (value: string) => void;
@@ -46,6 +48,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   configValue,
   providerName,
   showRemoteCompaction,
+  showRemoteModelCatalog,
   isProxyTakeover = false,
   onAuthChange,
   onConfigChange,
@@ -94,6 +97,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         onChange={onConfigChange}
         providerName={providerName}
         showRemoteCompaction={showRemoteCompaction}
+        showRemoteModelCatalog={showRemoteModelCatalog}
         useCommonConfig={useCommonConfig}
         onCommonConfigToggle={onCommonConfigToggle}
         onEditCommonConfig={() => setIsCommonConfigModalOpen(true)}

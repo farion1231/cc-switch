@@ -434,7 +434,10 @@ export const hasTomlCommonConfigSnippet = (
 
 // ========== Codex base_url utils ==========
 
-const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+// Array tables are boundaries too; retain their brackets in the captured name
+// so [[features]] cannot be mistaken for the [features] table.
+const TOML_SECTION_HEADER_PATTERN =
+  /^\s*\[(\[[^\]\r\n]+\]|[^\]\r\n]+)\]\s*(?:#.*)?$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)')\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
@@ -485,13 +488,66 @@ const finalizeTomlText = (lines: string[]): string =>
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+/, "");
 
+// 标记从多行字符串（"""…""" / '''…'''）内部开始的行：这些行是字符串内容，
+// 不能当成表头。没有闭合的多行字符串（用户还在输入）不算。
+const getTomlMultilineStringLineMask = (lines: string[]): boolean[] => {
+  const mask = new Array<boolean>(lines.length).fill(false);
+  let delimiter: string | undefined;
+  let openedAt = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (delimiter) mask[index] = true;
+
+    let pos = 0;
+    while (pos < line.length) {
+      if (delimiter) {
+        if (delimiter === '"""' && line[pos] === "\\") {
+          pos += 2;
+        } else if (line.startsWith(delimiter, pos)) {
+          // 收尾的 """ 前面最多还能紧跟两个引号，它们属于字符串内容
+          let end = pos + 3;
+          while (end < pos + 5 && line[end] === delimiter[0]) end += 1;
+          delimiter = undefined;
+          pos = end;
+        } else {
+          pos += 1;
+        }
+        continue;
+      }
+
+      const char = line[pos];
+      if (char === "#") break;
+      if (line.startsWith('"""', pos) || line.startsWith("'''", pos)) {
+        delimiter = line.slice(pos, pos + 3);
+        openedAt = index;
+        pos += 3;
+      } else if (char === '"' || char === "'") {
+        // 单行字符串：跳到配对的引号
+        pos += 1;
+        while (pos < line.length && line[pos] !== char) {
+          pos += char === '"' && line[pos] === "\\" ? 2 : 1;
+        }
+        pos += 1;
+      } else {
+        pos += 1;
+      }
+    }
+  }
+
+  if (delimiter) mask.fill(false, openedAt + 1);
+  return mask;
+};
+
 const getTomlSectionRange = (
   lines: string[],
   sectionName: string,
 ): TomlSectionRange | undefined => {
+  const inString = getTomlMultilineStringLineMask(lines);
   let headerLineIndex = -1;
 
   for (let index = 0; index < lines.length; index += 1) {
+    if (inString[index]) continue;
     const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
     if (!match) {
       continue;
@@ -523,8 +579,9 @@ const getTomlSectionRange = (
 };
 
 const getTopLevelEndIndex = (lines: string[]): number => {
-  const firstSectionIndex = lines.findIndex((line) =>
-    TOML_SECTION_HEADER_PATTERN.test(line),
+  const inString = getTomlMultilineStringLineMask(lines);
+  const firstSectionIndex = lines.findIndex(
+    (line, index) => !inString[index] && TOML_SECTION_HEADER_PATTERN.test(line),
   );
   return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
 };
@@ -683,10 +740,13 @@ const findTomlAssignments = (
   pattern: RegExp,
 ): TomlAssignmentMatch[] => {
   const assignments: TomlAssignmentMatch[] = [];
+  const inString = getTomlMultilineStringLineMask(lines);
   let currentSectionName: string | undefined;
 
   lines.forEach((line, index) => {
-    const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
+    const sectionMatch = inString[index]
+      ? null
+      : line.match(TOML_SECTION_HEADER_PATTERN);
     if (sectionMatch) {
       currentSectionName = sectionMatch[1];
       return;
@@ -1055,6 +1115,314 @@ export const setCodexRemoteCompaction = (
   return targetSectionRange ? finalizeTomlText(lines) : normalizedText;
 };
 
+// ========== Codex remote model catalog ==========
+// Codex 0.156+ 只有在 `[features] api_key_model_discovery = true` 且当前供应商表里
+// 配了 `model_catalog_url` 时，才会从供应商拉取模型列表（请求时自动追加
+// `?client_version=…`，并带上供应商自己的鉴权）。两者缺一都只显示内置模型。
+
+const CODEX_FEATURES_SECTION_NAME = "features";
+const CODEX_API_KEY_MODEL_DISCOVERY_LINE = "api_key_model_discovery = true";
+const TOML_MODEL_CATALOG_URL_KEY_PATTERN = /^\s*model_catalog_url\s*=/;
+const TOML_MODEL_CATALOG_URL_PATTERN =
+  /^\s*model_catalog_url\s*=\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)')\s*(?:#.*)?$/;
+const TOML_API_KEY_MODEL_DISCOVERY_KEY_PATTERN =
+  /^\s*api_key_model_discovery\s*=/;
+const TOML_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN =
+  /^\s*api_key_model_discovery\s*=\s*true\s*(?:#.*)?$/;
+const TOML_DOTTED_API_KEY_MODEL_DISCOVERY_KEY_PATTERN =
+  /^\s*features\.api_key_model_discovery\s*=/;
+const TOML_DOTTED_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN =
+  /^\s*features\.api_key_model_discovery\s*=\s*true\s*(?:#.*)?$/;
+
+// 删掉只剩空行的 section（连同表头）；表体有注释或其他键、
+// 或者表头行自己带注释时保留
+const removeTomlSectionIfEmpty = (lines: string[], sectionName: string) => {
+  const sectionRange = getTomlSectionRange(lines, sectionName);
+  if (!sectionRange) return;
+  if (lines[sectionRange.headerLineIndex].trim() !== `[${sectionName}]`) {
+    return;
+  }
+  for (
+    let index = sectionRange.bodyStartIndex;
+    index < sectionRange.bodyEndIndex;
+    index += 1
+  ) {
+    if (lines[index].trim() !== "") return;
+  }
+  // 最后一个 section 的表体包含文件末尾的换行，删表时要留下它
+  const endIndex =
+    sectionRange.bodyEndIndex === lines.length &&
+    sectionRange.bodyEndIndex > sectionRange.bodyStartIndex
+      ? sectionRange.bodyEndIndex - 1
+      : sectionRange.bodyEndIndex;
+  lines.splice(
+    sectionRange.headerLineIndex,
+    endIndex - sectionRange.headerLineIndex,
+  );
+};
+
+// 合法的 TOML 按原文处理。弯引号归一化只用来修复还解析不了的文本，
+// 对合法 TOML 做归一化会改掉字符串里的内容（比如 "说“你好”"）。
+const readTomlForEdit = (
+  configText: string,
+): { parsed?: Record<string, any>; text: string } => {
+  try {
+    return { text: configText, parsed: parseToml(configText) };
+  } catch {
+    // Fall through to the quote-normalized text.
+  }
+  const text = normalizeTomlText(configText);
+  try {
+    return { text, parsed: parseToml(text) };
+  } catch {
+    return { text };
+  }
+};
+
+interface CodexRemoteModelCatalogState {
+  discovery: boolean;
+  catalogUrl?: string;
+}
+
+// 读当前自定义供应商的远程目录配置；TOML 暂时不合法时退回逐行扫描，
+// 避免用户编辑途中开关状态乱跳
+const readCodexRemoteModelCatalog = (
+  configText: string | undefined | null,
+): CodexRemoteModelCatalogState => {
+  const disabled: CodexRemoteModelCatalogState = { discovery: false };
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    if (!raw) return disabled;
+    const { text, parsed } = readTomlForEdit(raw);
+
+    if (parsed) {
+      const providerId =
+        typeof parsed.model_provider === "string"
+          ? parsed.model_provider.trim()
+          : "";
+      if (!providerId || !isCustomCodexModelProviderId(providerId)) {
+        return disabled;
+      }
+
+      const catalogUrl =
+        parsed.model_providers?.[providerId]?.model_catalog_url;
+      return {
+        discovery: parsed.features?.api_key_model_discovery === true,
+        catalogUrl:
+          typeof catalogUrl === "string" && catalogUrl.trim() !== ""
+            ? catalogUrl
+            : undefined,
+      };
+    }
+
+    // Fall back to line scanning while the user is editing invalid TOML.
+    const lines = text.split("\n");
+    const targetSectionName = getCodexCustomProviderSectionName(text);
+    if (!targetSectionName) return disabled;
+
+    const providerRange = getTomlSectionRange(lines, targetSectionName);
+    const featuresRange = getTomlSectionRange(
+      lines,
+      CODEX_FEATURES_SECTION_NAME,
+    );
+    const catalogUrl = providerRange
+      ? findTomlAssignmentInRange(
+          lines,
+          TOML_MODEL_CATALOG_URL_PATTERN,
+          providerRange.bodyStartIndex,
+          providerRange.bodyEndIndex,
+          targetSectionName,
+        )?.value.trim()
+      : undefined;
+    const discovery = featuresRange
+      ? findTomlLineInRange(
+          lines,
+          TOML_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN,
+          featuresRange.bodyStartIndex,
+          featuresRange.bodyEndIndex,
+        ) !== -1
+      : findTomlLineInRange(
+          lines,
+          TOML_DOTTED_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN,
+          0,
+          getTopLevelEndIndex(lines),
+        ) !== -1;
+
+    return { discovery, catalogUrl: catalogUrl || undefined };
+  } catch {
+    return disabled;
+  }
+};
+
+export const isCodexRemoteModelCatalogEnabled = (
+  configText: string | undefined | null,
+): boolean => {
+  const { discovery, catalogUrl } = readCodexRemoteModelCatalog(configText);
+  return discovery && Boolean(catalogUrl);
+};
+
+// 开关默认使用的目录地址：<base_url>/models（Codex 自己也是这样拼 /models 的）
+export const getCodexDefaultModelCatalogUrl = (
+  baseUrl: string | undefined | null,
+): string => `${(baseUrl ?? "").trim().replace(/\/+$/, "")}/models`;
+
+// base_url 变了时，如果目录地址还是旧 base_url 的默认值，就跟着改；
+// 用户自己改过的地址不动。
+const syncCodexModelCatalogUrlWithBaseUrl = (
+  previousConfig: string,
+  nextConfig: string,
+): string => {
+  const { discovery, catalogUrl } = readCodexRemoteModelCatalog(nextConfig);
+  if (!discovery || !catalogUrl) return nextConfig;
+
+  const previousDefault = getCodexDefaultModelCatalogUrl(
+    extractCodexBaseUrl(previousConfig),
+  );
+  const nextDefault = getCodexDefaultModelCatalogUrl(
+    extractCodexBaseUrl(nextConfig),
+  );
+  if (catalogUrl !== previousDefault || nextDefault === previousDefault) {
+    return nextConfig;
+  }
+  return setCodexRemoteModelCatalog(nextConfig, nextDefault);
+};
+
+/**
+ * 开启 / 关闭 Codex 远程模型列表。
+ *
+ * - `catalogUrl` 非空：在当前自定义供应商表写入 `model_catalog_url`，并写入
+ *   `[features] api_key_model_discovery = true`
+ * - `catalogUrl` 为 null / 空：删除这两项（`[features]` 删空后连表头一起删）
+ *
+ * 内置供应商（openai 等）不改；当前供应商没有独立的 `[model_providers.<id>]`
+ * 表时无法开启，原样返回。改完如果把合法 TOML 改坏或误改其他值，也原样返回。
+ */
+export const setCodexRemoteModelCatalog = (
+  configText: string,
+  catalogUrl: string | null,
+): string => {
+  const { text, parsed: original } = readTomlForEdit(configText);
+  const lines = text ? text.split("\n") : [];
+  const targetSectionName = getCodexCustomProviderSectionName(text);
+  if (!targetSectionName) return text;
+
+  const url = catalogUrl?.trim() ?? "";
+  const enabling = url !== "";
+  const providerRange = getTomlSectionRange(lines, targetSectionName);
+  if (enabling && !providerRange) return text;
+
+  if (providerRange) {
+    const urlLine = findTomlLineInRange(
+      lines,
+      TOML_MODEL_CATALOG_URL_KEY_PATTERN,
+      providerRange.bodyStartIndex,
+      providerRange.bodyEndIndex,
+    );
+    if (enabling) {
+      const replacementLine = `model_catalog_url = ${tomlBasicString(url)}`;
+      if (urlLine !== -1) {
+        lines[urlLine] = replacementLine;
+      } else {
+        lines.splice(
+          getTomlSectionInsertIndex(lines, providerRange),
+          0,
+          replacementLine,
+        );
+      }
+    } else if (urlLine !== -1) {
+      lines.splice(urlLine, 1);
+    }
+  }
+
+  const featuresRange = getTomlSectionRange(lines, CODEX_FEATURES_SECTION_NAME);
+  if (featuresRange) {
+    const discoveryLine = findTomlLineInRange(
+      lines,
+      TOML_API_KEY_MODEL_DISCOVERY_KEY_PATTERN,
+      featuresRange.bodyStartIndex,
+      featuresRange.bodyEndIndex,
+    );
+    if (enabling) {
+      if (discoveryLine !== -1) {
+        lines[discoveryLine] = CODEX_API_KEY_MODEL_DISCOVERY_LINE;
+      } else {
+        lines.splice(
+          getTomlSectionInsertIndex(lines, featuresRange),
+          0,
+          CODEX_API_KEY_MODEL_DISCOVERY_LINE,
+        );
+      }
+    } else if (discoveryLine !== -1) {
+      lines.splice(discoveryLine, 1);
+      removeTomlSectionIfEmpty(lines, CODEX_FEATURES_SECTION_NAME);
+    }
+  } else {
+    const topLevelEndIndex = getTopLevelEndIndex(lines);
+    const dottedLine = findTomlLineInRange(
+      lines,
+      TOML_DOTTED_API_KEY_MODEL_DISCOVERY_KEY_PATTERN,
+      0,
+      topLevelEndIndex,
+    );
+    if (dottedLine !== -1) {
+      if (enabling) {
+        lines[dottedLine] = `features.${CODEX_API_KEY_MODEL_DISCOVERY_LINE}`;
+      } else {
+        lines.splice(dottedLine, 1);
+      }
+    } else if (
+      enabling &&
+      findTomlLineInRange(lines, /^\s*features\s*\./, 0, topLevelEndIndex) !==
+        -1
+    ) {
+      // Dotted keys already define the table; a [features] header would redefine it.
+      lines.splice(
+        topLevelEndIndex,
+        0,
+        `features.${CODEX_API_KEY_MODEL_DISCOVERY_LINE}`,
+      );
+    } else if (enabling) {
+      // 放在顶级字段之后、第一个 section 之前。原文用空行分隔 section 时
+      // 才补空行，这样关闭后能还原成原文。
+      const block = [
+        `[${CODEX_FEATURES_SECTION_NAME}]`,
+        CODEX_API_KEY_MODEL_DISCOVERY_LINE,
+      ];
+      if (topLevelEndIndex > 0 && lines[topLevelEndIndex - 1].trim() === "") {
+        block.push("");
+      }
+      lines.splice(topLevelEndIndex, 0, ...block);
+    }
+  }
+
+  // Blank lines may be part of a multiline TOML string, so do not collapse them.
+  const result = lines.join("\n");
+  if (!original) {
+    // Preserve the existing best-effort editing behavior for incomplete TOML.
+    return result;
+  }
+  try {
+    const updated = parseToml(result) as Record<string, any>;
+    // A line scan can match TOML examples inside multiline strings. Syntax
+    // validation alone cannot detect that, so compare all unrelated values too.
+    for (const config of [original, updated]) {
+      const provider = config.model_providers?.[original.model_provider];
+      if (isPlainObject(provider)) delete provider.model_catalog_url;
+      if (isPlainObject(config.features)) {
+        delete config.features.api_key_model_discovery;
+        if (Object.keys(config.features).length === 0) delete config.features;
+      }
+    }
+    // JSON 比较：日期按值比较，`constructor` 之类的键也按普通键处理
+    if (JSON.stringify(original) !== JSON.stringify(updated)) {
+      return text;
+    }
+  } catch {
+    return text;
+  }
+  return result;
+};
+
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
 export const extractCodexBaseUrl = (
   configText: string | undefined | null,
@@ -1249,10 +1617,14 @@ export const getCodexBaseUrl = (
 };
 
 // 在 Codex 的 TOML 配置文本中写入或更新 base_url 字段
-export const setCodexBaseUrl = (
-  configText: string,
-  baseUrl: string,
-): string => {
+// （开启了远程模型列表且目录地址是默认值时，目录地址跟着一起改）
+export const setCodexBaseUrl = (configText: string, baseUrl: string): string =>
+  syncCodexModelCatalogUrlWithBaseUrl(
+    normalizeTomlText(configText),
+    writeCodexBaseUrl(configText, baseUrl),
+  );
+
+const writeCodexBaseUrl = (configText: string, baseUrl: string): string => {
   const trimmed = baseUrl.trim();
   const normalizedText = normalizeTomlText(configText);
   const lines = normalizedText ? normalizedText.split("\n") : [];
