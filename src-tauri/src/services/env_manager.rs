@@ -102,16 +102,28 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+fn parse_file_source_path(source_path: &str) -> Result<&str, String> {
+    let (file_path, line_num) = source_path
+        .rsplit_once(':')
+        .ok_or_else(|| "无效的文件路径格式".to_string())?;
+
+    if file_path.is_empty() {
+        return Err("无效的文件路径格式".to_string());
+    }
+
+    line_num
+        .parse::<usize>()
+        .map_err(|_| "无效的文件路径格式".to_string())?;
+
+    Ok(file_path)
+}
+
+#[cfg(not(target_os = "windows"))]
 fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
     match conflict.source_type.as_str() {
         "file" => {
             // Parse file path and line number from source_path (format: "path:line")
-            let parts: Vec<&str> = conflict.source_path.split(':').collect();
-            if parts.len() < 2 {
-                return Err("无效的文件路径格式".to_string());
-            }
-
-            let file_path = parts[0];
+            let file_path = parse_file_source_path(&conflict.source_path)?;
 
             // Read file content
             let content = fs::read_to_string(file_path)
@@ -201,12 +213,7 @@ fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
     match conflict.source_type.as_str() {
         "file" => {
             // Parse file path from source_path
-            let parts: Vec<&str> = conflict.source_path.split(':').collect();
-            if parts.is_empty() {
-                return Err("无效的文件路径格式".to_string());
-            }
-
-            let file_path = parts[0];
+            let file_path = parse_file_source_path(&conflict.source_path)?;
 
             // Read file content
             let mut content = fs::read_to_string(file_path)
@@ -232,9 +239,47 @@ fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "windows"))]
+    use tempfile::tempdir;
+
     #[test]
     fn test_backup_dir_creation() {
         let backup_dir = get_backup_dir();
         assert!(backup_dir.is_ok());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn file_source_path_parser_preserves_colons_in_path() {
+        assert_eq!(
+            parse_file_source_path("/tmp/cc:test/.zshrc:8"),
+            Ok("/tmp/cc:test/.zshrc")
+        );
+        assert!(parse_file_source_path("/tmp/.zshrc:not-a-line").is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn delete_and_restore_file_env_with_colon_in_path() {
+        let temp = tempdir().expect("create temp directory");
+        let colon_dir = temp.path().join("foo:bar");
+        fs::create_dir(&colon_dir).expect("create colon directory");
+        let file_path = colon_dir.join(".zshrc");
+        fs::write(&file_path, "export OPENAI_API_KEY=original\n").expect("write shell config");
+
+        let conflict = EnvConflict {
+            var_name: "OPENAI_API_KEY".to_string(),
+            var_value: "original".to_string(),
+            source_type: "file".to_string(),
+            source_path: format!("{}:1", file_path.display()),
+        };
+
+        delete_single_env(&conflict).expect("delete variable from shell config");
+        let deleted = fs::read_to_string(&file_path).expect("read updated shell config");
+        assert!(!deleted.contains("OPENAI_API_KEY"));
+
+        restore_single_env(&conflict).expect("restore variable to shell config");
+        let restored = fs::read_to_string(&file_path).expect("read restored shell config");
+        assert!(restored.contains("export OPENAI_API_KEY=original"));
     }
 }
