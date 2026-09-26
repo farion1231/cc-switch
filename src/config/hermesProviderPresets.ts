@@ -2368,4 +2368,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
   },
+  {
+    name: "Cheaper Inference",
+    websiteUrl: "https://cheaperinference.com",
+    apiKeyUrl: "https://cheaperinference.com/signup",
+    settingsConfig: {
+      name: "cheaperinference",
+      base_url: "https://api.cheaperinference.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-5.4", name: "GPT-5.4", context_length: 1000000 },
+        { id: "gpt-5.4-mini", name: "GPT-5.4 mini", context_length: 400000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.4", provider: "cheaperinference" },
+    },
+  },
 ];
