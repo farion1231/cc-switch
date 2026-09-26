@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { APP_ICON_MAP, SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -50,6 +50,14 @@ import {
 } from "@/components/ui/dialog";
 
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
+
+interface BulkToggleIntent {
+  app: AppId;
+  enabled: boolean;
+  ids: string[];
+  hiddenCount: number;
+  totalCount: number;
+}
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -79,6 +87,59 @@ function formatSkillBackupDate(unixSeconds: number): string {
     : date.toLocaleString();
 }
 
+function matchesSkillSearch(skill: InstalledSkill, query: string): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return true;
+
+  const searchableValues = [
+    skill.name,
+    skill.id,
+    skill.description,
+    skill.directory,
+    skill.repoOwner,
+    skill.repoName,
+    skill.repoOwner && skill.repoName
+      ? `${skill.repoOwner}/${skill.repoName}`
+      : undefined,
+  ];
+
+  return searchableValues.some((value) =>
+    value?.toLocaleLowerCase().includes(normalizedQuery),
+  );
+}
+
+function buildBulkToggleIntent(
+  skills: InstalledSkill[],
+  app: AppId,
+  enabled: boolean,
+  searchQuery: string,
+): BulkToggleIntent | null {
+  const ids = skills
+    .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+    .map((skill) => skill.id);
+  if (ids.length === 0) return null;
+
+  const visibleIds = new Set(
+    skills
+      .filter((skill) => matchesSkillSearch(skill, searchQuery))
+      .map((skill) => skill.id),
+  );
+
+  return {
+    app,
+    enabled,
+    ids,
+    hiddenCount: ids.filter((id) => !visibleIds.has(id)).length,
+    totalCount: skills.length,
+  };
+}
+
+function sameIds(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
   UnifiedSkillsPanelProps
@@ -105,6 +166,8 @@ const UnifiedSkillsPanel = React.forwardRef<
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = React.useRef(false);
   const checkUpdatesLockRef = React.useRef(false);
+  const latestSkillsRef = React.useRef<InstalledSkill[] | undefined>(undefined);
+  const latestSearchQueryRef = React.useRef("");
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -237,28 +300,11 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
-
-    const query = searchQuery.trim().toLocaleLowerCase();
-    if (!query) return skills;
-
-    return skills.filter((skill) => {
-      const searchableValues = [
-        skill.name,
-        skill.id,
-        skill.description,
-        skill.directory,
-        skill.repoOwner,
-        skill.repoName,
-        skill.repoOwner && skill.repoName
-          ? `${skill.repoOwner}/${skill.repoName}`
-          : undefined,
-      ];
-
-      return searchableValues.some((value) =>
-        value?.toLocaleLowerCase().includes(query),
-      );
-    });
+    return skills.filter((skill) => matchesSkillSearch(skill, searchQuery));
   }, [searchQuery, skills]);
+
+  latestSkillsRef.current = skills;
+  latestSearchQueryRef.current = searchQuery;
 
   const pendingApp = bulkToggleAppMutation.isPending
     ? bulkToggleAppMutation.variables?.app
@@ -278,22 +324,89 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleToggleAll = async (app: AppId, enabled: boolean) => {
-    if (!skills || !beginWrite()) return;
+  function showBulkToggleConfirmation(intent: BulkToggleIntent) {
+    const appLabel = APP_ICON_MAP[intent.app].label;
+    const actionKey = intent.enabled
+      ? "skills.bulkToggleEnable"
+      : "skills.bulkToggleDisable";
+    const action = t(actionKey);
+    const message = [
+      t(
+        intent.enabled
+          ? "skills.bulkToggleConfirmEnableMessage"
+          : "skills.bulkToggleConfirmDisableMessage",
+        {
+          app: appLabel,
+          before: intent.enabled
+            ? intent.totalCount - intent.ids.length
+            : intent.ids.length,
+          after: intent.enabled ? intent.totalCount : 0,
+          count: intent.ids.length,
+          total: intent.totalCount,
+        },
+      ),
+      intent.hiddenCount > 0
+        ? t("skills.bulkToggleConfirmHidden", {
+            count: intent.hiddenCount,
+          })
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
-    const ids = skills
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
-      .map((skill) => skill.id);
-    if (ids.length === 0) {
-      endWrite();
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.bulkToggleConfirmTitle", {
+        action,
+        app: appLabel,
+        count: intent.ids.length,
+      }),
+      message,
+      confirmText: t(
+        intent.enabled
+          ? "skills.bulkToggleConfirmEnable"
+          : "skills.bulkToggleConfirmDisable",
+        { count: intent.ids.length },
+      ),
+      variant: intent.enabled ? "info" : "destructive",
+      onConfirm: () => {
+        void confirmBulkToggle(intent);
+      },
+    });
+  }
+
+  async function confirmBulkToggle(intent: BulkToggleIntent) {
+    const currentSkills = latestSkillsRef.current;
+    const currentIntent = currentSkills
+      ? buildBulkToggleIntent(
+          currentSkills,
+          intent.app,
+          intent.enabled,
+          latestSearchQueryRef.current,
+        )
+      : null;
+
+    // Reconfirm when a refresh changes the approved IDs or displayed outcome.
+    if (
+      !currentIntent ||
+      !sameIds(intent.ids, currentIntent.ids) ||
+      intent.totalCount !== currentIntent.totalCount
+    ) {
+      if (currentIntent) {
+        showBulkToggleConfirmation(currentIntent);
+      } else {
+        setConfirmDialog(null);
+      }
       return;
     }
 
+    if (!beginWrite(true)) return;
+
     try {
       const result = await bulkToggleAppMutation.mutateAsync({
-        ids,
-        app,
-        enabled,
+        ids: intent.ids,
+        app: intent.app,
+        enabled: intent.enabled,
       });
       if (result.failed.length > 0) {
         toast.error(
@@ -302,12 +415,29 @@ const UnifiedSkillsPanel = React.forwardRef<
         );
       }
     } catch (error) {
-      toast.error(t("common.bulkToggleFailed", { count: ids.length }), {
+      toast.error(t("common.bulkToggleFailed", { count: intent.ids.length }), {
         description: String(error),
       });
     } finally {
+      setConfirmDialog(null);
       endWrite();
     }
+  }
+
+  const handleToggleAll = (app: AppId, enabled: boolean) => {
+    if (
+      !skills ||
+      interactionBlocked ||
+      checkUpdatesLockRef.current ||
+      writeLockRef.current ||
+      mutationPending ||
+      dialogOpen
+    ) {
+      return;
+    }
+
+    const intent = buildBulkToggleIntent(skills, app, enabled, searchQuery);
+    if (intent) showBulkToggleConfirmation(intent);
   };
 
   const handleUninstall = (skill: InstalledSkill) => {

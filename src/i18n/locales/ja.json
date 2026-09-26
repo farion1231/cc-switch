@@ -2595,6 +2595,14 @@
     "installedSearchPlaceholder": "インストール済みスキルの名前、説明、リポジトリを検索...",
     "installedSearchAriaLabel": "インストール済みスキルを検索",
     "noInstalledSearchResults": "検索に一致するインストール済みスキルがありません",
+    "bulkToggleEnable": "有効化",
+    "bulkToggleDisable": "無効化",
+    "bulkToggleConfirmTitle": "{{app}} の {{count}} 件のスキルを{{action}}しますか？",
+    "bulkToggleConfirmEnableMessage": "{{app}} の有効なスキル数：{{before}} → {{after}} 件。\n{{count}} 件を有効化し、操作後はインストール済み {{total}} 件のスキルがすべて有効になります。\n現在の検索結果にかかわらず実行されます。",
+    "bulkToggleConfirmDisableMessage": "{{app}} の有効なスキル数：{{before}} → {{after}} 件。\n{{count}} 件を無効化し、操作後はインストール済み {{total}} 件のスキルがすべて無効になります。\n現在の検索結果にかかわらず実行されます。",
+    "bulkToggleConfirmHidden": "変更対象のうち {{count}} 件は現在の検索で非表示です。",
+    "bulkToggleConfirmEnable": "{{count}} 件を有効化",
+    "bulkToggleConfirmDisable": "{{count}} 件を無効化",
     "searchSource": {
       "repos": "リポジトリ",
       "skillssh": "skills.sh"
