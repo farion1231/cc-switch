@@ -152,6 +152,7 @@ const BALANCE_PROVIDERS = [
   },
   { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
   { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
+  { id: "zhipu", label: "Zhipu", pattern: /(?:open|www)\.bigmodel\.cn/i },
 ] as const;
 
 /** 根据 Base URL 自动检测余额查询供应商 */
