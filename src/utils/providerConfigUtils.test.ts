@@ -13,6 +13,7 @@ import {
   setCodexModelName,
   setCodexRemoteCompaction,
   setCodexRemoteModelCatalog,
+  updateCodexExperimentalBearerToken,
   updateCommonConfigSnippet,
 } from "./providerConfigUtils";
 
@@ -246,7 +247,12 @@ base_url = "https://relay.example.com/v1"
       'base_url = "https://relay.example.com/v1"',
       "",
     ].join("\n");
-    expect(setCodexRemoteModelCatalog(input, catalogUrl)).toBe(input);
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    expect(isCodexRemoteModelCatalogEnabled(enabled)).toBe(true);
+    expect(parse(enabled).developer_instructions).toBe(
+      parse(input).developer_instructions,
+    );
+    expect(setCodexRemoteModelCatalog(enabled, null)).toBe(input);
   });
 
   it("is idempotent and restores the original config when disabled", () => {
@@ -283,23 +289,22 @@ base_url = "https://relay.example.com/v1"
     );
   });
 
-  it("inserts [features] as its own block before the first table", () => {
+  it("inserts [features] before the first table without extra blank lines", () => {
     const compact = `model_provider = "custom"
 [model_providers.custom]
 name = "Relay"
 base_url = "https://relay.example.com/v1"
 `;
-    expect(setCodexRemoteModelCatalog(compact, catalogUrl))
-      .toBe(`model_provider = "custom"
-
+    const enabled = setCodexRemoteModelCatalog(compact, catalogUrl);
+    expect(enabled).toBe(`model_provider = "custom"
 [features]
 api_key_model_discovery = true
-
 [model_providers.custom]
 name = "Relay"
 base_url = "https://relay.example.com/v1"
 model_catalog_url = "https://relay.example.com/v1/models"
 `);
+    expect(setCodexRemoteModelCatalog(enabled, null)).toBe(compact);
 
     const tablesOnly = `[model_providers.custom]
 name = "Relay"
@@ -563,6 +568,81 @@ command = "demo"
     expect(getCodexDefaultModelCatalogUrl(" https://a.example.com/v1// ")).toBe(
       "https://a.example.com/v1/models",
     );
+  });
+
+  it("ignores header-like lines inside multiline strings", () => {
+    const input = `model_provider = "custom"
+[model_providers.custom]
+name = """
+[example] # text
+"""
+base_url = "https://a.test/v1"
+experimental_bearer_token = "old"
+`;
+
+    const moved = parse(setCodexBaseUrl(input, "https://b.test/v1"));
+    expect(moved.model_providers.custom.base_url).toBe("https://b.test/v1");
+    expect(moved.model_providers.custom.name).toBe("[example] # text\n");
+
+    const token = parse(updateCodexExperimentalBearerToken(input, "new"));
+    expect(token.model_providers.custom.experimental_bearer_token).toBe("new");
+  });
+
+  it("keeps curly quotes inside strings of valid TOML", () => {
+    const input = `developer_instructions = "Say “hello”"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://a.test/v1"
+`;
+
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    expect(parse(enabled).developer_instructions).toBe("Say “hello”");
+    expect(isCodexRemoteModelCatalogEnabled(enabled)).toBe(true);
+    expect(setCodexRemoteModelCatalog(enabled, null)).toBe(input);
+  });
+
+  it("does not reject configs with dates, nan or constructor keys", () => {
+    const provider = `[model_providers.custom]
+base_url = "https://a.test/v1"
+`;
+    for (const input of [
+      `model_provider = "custom"\nupdated_at = 2026-09-26T00:00:00Z\n${provider}`,
+      `model_provider = "custom"\nvalue = nan\n${provider}`,
+      `model_provider = "custom"\n${provider}[mcp_servers.demo.env]\nconstructor = "safe"\n`,
+    ]) {
+      const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+      expect(isCodexRemoteModelCatalogEnabled(enabled)).toBe(true);
+      expect(setCodexRemoteModelCatalog(enabled, null)).toBe(input);
+    }
+  });
+
+  it("keeps a [features] header that carries its own comment", () => {
+    const input = `model_provider = "custom"
+[features] # user feature flags
+
+[model_providers.custom]
+base_url = "https://a.test/v1"
+`;
+
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    expect(isCodexRemoteModelCatalogEnabled(enabled)).toBe(true);
+    expect(setCodexRemoteModelCatalog(enabled, null)).toBe(input);
+  });
+
+  it("keeps the trailing newline when [features] is the last table", () => {
+    const input = `model_provider = "custom"
+[model_providers.custom]
+base_url = "https://a.test/v1"
+model_catalog_url = "https://a.test/v1/models"
+[features]
+api_key_model_discovery = true
+`;
+
+    expect(setCodexRemoteModelCatalog(input, null))
+      .toBe(`model_provider = "custom"
+[model_providers.custom]
+base_url = "https://a.test/v1"
+`);
   });
 
   it("works on configs with CRLF line endings", () => {

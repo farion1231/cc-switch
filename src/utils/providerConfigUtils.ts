@@ -488,13 +488,66 @@ const finalizeTomlText = (lines: string[]): string =>
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+/, "");
 
+// 标记从多行字符串（"""…""" / '''…'''）内部开始的行：这些行是字符串内容，
+// 不能当成表头。没有闭合的多行字符串（用户还在输入）不算。
+const getTomlMultilineStringLineMask = (lines: string[]): boolean[] => {
+  const mask = new Array<boolean>(lines.length).fill(false);
+  let delimiter: string | undefined;
+  let openedAt = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (delimiter) mask[index] = true;
+
+    let pos = 0;
+    while (pos < line.length) {
+      if (delimiter) {
+        if (delimiter === '"""' && line[pos] === "\\") {
+          pos += 2;
+        } else if (line.startsWith(delimiter, pos)) {
+          // 收尾的 """ 前面最多还能紧跟两个引号，它们属于字符串内容
+          let end = pos + 3;
+          while (end < pos + 5 && line[end] === delimiter[0]) end += 1;
+          delimiter = undefined;
+          pos = end;
+        } else {
+          pos += 1;
+        }
+        continue;
+      }
+
+      const char = line[pos];
+      if (char === "#") break;
+      if (line.startsWith('"""', pos) || line.startsWith("'''", pos)) {
+        delimiter = line.slice(pos, pos + 3);
+        openedAt = index;
+        pos += 3;
+      } else if (char === '"' || char === "'") {
+        // 单行字符串：跳到配对的引号
+        pos += 1;
+        while (pos < line.length && line[pos] !== char) {
+          pos += char === '"' && line[pos] === "\\" ? 2 : 1;
+        }
+        pos += 1;
+      } else {
+        pos += 1;
+      }
+    }
+  }
+
+  if (delimiter) mask.fill(false, openedAt + 1);
+  return mask;
+};
+
 const getTomlSectionRange = (
   lines: string[],
   sectionName: string,
 ): TomlSectionRange | undefined => {
+  const inString = getTomlMultilineStringLineMask(lines);
   let headerLineIndex = -1;
 
   for (let index = 0; index < lines.length; index += 1) {
+    if (inString[index]) continue;
     const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
     if (!match) {
       continue;
@@ -526,8 +579,9 @@ const getTomlSectionRange = (
 };
 
 const getTopLevelEndIndex = (lines: string[]): number => {
-  const firstSectionIndex = lines.findIndex((line) =>
-    TOML_SECTION_HEADER_PATTERN.test(line),
+  const inString = getTomlMultilineStringLineMask(lines);
+  const firstSectionIndex = lines.findIndex(
+    (line, index) => !inString[index] && TOML_SECTION_HEADER_PATTERN.test(line),
   );
   return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
 };
@@ -686,10 +740,13 @@ const findTomlAssignments = (
   pattern: RegExp,
 ): TomlAssignmentMatch[] => {
   const assignments: TomlAssignmentMatch[] = [];
+  const inString = getTomlMultilineStringLineMask(lines);
   let currentSectionName: string | undefined;
 
   lines.forEach((line, index) => {
-    const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
+    const sectionMatch = inString[index]
+      ? null
+      : line.match(TOML_SECTION_HEADER_PATTERN);
     if (sectionMatch) {
       currentSectionName = sectionMatch[1];
       return;
@@ -1074,11 +1131,17 @@ const TOML_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN =
   /^\s*api_key_model_discovery\s*=\s*true\s*(?:#.*)?$/;
 const TOML_DOTTED_API_KEY_MODEL_DISCOVERY_KEY_PATTERN =
   /^\s*features\.api_key_model_discovery\s*=/;
+const TOML_DOTTED_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN =
+  /^\s*features\.api_key_model_discovery\s*=\s*true\s*(?:#.*)?$/;
 
-// 删掉只剩空行的 section（连同表头）；有注释或其他键时保留
+// 删掉只剩空行的 section（连同表头）；表体有注释或其他键、
+// 或者表头行自己带注释时保留
 const removeTomlSectionIfEmpty = (lines: string[], sectionName: string) => {
   const sectionRange = getTomlSectionRange(lines, sectionName);
   if (!sectionRange) return;
+  if (lines[sectionRange.headerLineIndex].trim() !== `[${sectionName}]`) {
+    return;
+  }
   for (
     let index = sectionRange.bodyStartIndex;
     index < sectionRange.bodyEndIndex;
@@ -1086,14 +1149,35 @@ const removeTomlSectionIfEmpty = (lines: string[], sectionName: string) => {
   ) {
     if (lines[index].trim() !== "") return;
   }
+  // 最后一个 section 的表体包含文件末尾的换行，删表时要留下它
+  const endIndex =
+    sectionRange.bodyEndIndex === lines.length &&
+    sectionRange.bodyEndIndex > sectionRange.bodyStartIndex
+      ? sectionRange.bodyEndIndex - 1
+      : sectionRange.bodyEndIndex;
   lines.splice(
     sectionRange.headerLineIndex,
-    sectionRange.bodyEndIndex - sectionRange.headerLineIndex,
+    endIndex - sectionRange.headerLineIndex,
   );
 };
 
-const TOML_DOTTED_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN =
-  /^\s*features\.api_key_model_discovery\s*=\s*true\s*(?:#.*)?$/;
+// 合法的 TOML 按原文处理。弯引号归一化只用来修复还解析不了的文本，
+// 对合法 TOML 做归一化会改掉字符串里的内容（比如 "说“你好”"）。
+const readTomlForEdit = (
+  configText: string,
+): { parsed?: Record<string, any>; text: string } => {
+  try {
+    return { text: configText, parsed: parseToml(configText) };
+  } catch {
+    // Fall through to the quote-normalized text.
+  }
+  const text = normalizeTomlText(configText);
+  try {
+    return { text, parsed: parseToml(text) };
+  } catch {
+    return { text };
+  }
+};
 
 interface CodexRemoteModelCatalogState {
   discovery: boolean;
@@ -1108,11 +1192,10 @@ const readCodexRemoteModelCatalog = (
   const disabled: CodexRemoteModelCatalogState = { discovery: false };
   try {
     const raw = typeof configText === "string" ? configText : "";
-    const text = normalizeTomlText(raw);
-    if (!text) return disabled;
+    if (!raw) return disabled;
+    const { text, parsed } = readTomlForEdit(raw);
 
-    try {
-      const parsed = parseToml(text) as Record<string, any>;
+    if (parsed) {
       const providerId =
         typeof parsed.model_provider === "string"
           ? parsed.model_provider.trim()
@@ -1130,10 +1213,9 @@ const readCodexRemoteModelCatalog = (
             ? catalogUrl
             : undefined,
       };
-    } catch {
-      // Fall back to line scanning while the user is editing invalid TOML.
     }
 
+    // Fall back to line scanning while the user is editing invalid TOML.
     const lines = text.split("\n");
     const targetSectionName = getCodexCustomProviderSectionName(text);
     if (!targetSectionName) return disabled;
@@ -1219,15 +1301,15 @@ export const setCodexRemoteModelCatalog = (
   configText: string,
   catalogUrl: string | null,
 ): string => {
-  const normalizedText = normalizeTomlText(configText);
-  const lines = normalizedText ? normalizedText.split("\n") : [];
-  const targetSectionName = getCodexCustomProviderSectionName(normalizedText);
-  if (!targetSectionName) return normalizedText;
+  const { text, parsed: original } = readTomlForEdit(configText);
+  const lines = text ? text.split("\n") : [];
+  const targetSectionName = getCodexCustomProviderSectionName(text);
+  if (!targetSectionName) return text;
 
   const url = catalogUrl?.trim() ?? "";
   const enabling = url !== "";
   const providerRange = getTomlSectionRange(lines, targetSectionName);
-  if (enabling && !providerRange) return normalizedText;
+  if (enabling && !providerRange) return text;
 
   if (providerRange) {
     const urlLine = findTomlLineInRange(
@@ -1300,14 +1382,14 @@ export const setCodexRemoteModelCatalog = (
         `features.${CODEX_API_KEY_MODEL_DISCOVERY_LINE}`,
       );
     } else if (enabling) {
-      // 放在顶级字段之后、第一个 section 之前
+      // 放在顶级字段之后、第一个 section 之前。原文用空行分隔 section 时
+      // 才补空行，这样关闭后能还原成原文。
       const block = [
         `[${CODEX_FEATURES_SECTION_NAME}]`,
         CODEX_API_KEY_MODEL_DISCOVERY_LINE,
-        "",
       ];
-      if (topLevelEndIndex > 0 && lines[topLevelEndIndex - 1].trim() !== "") {
-        block.unshift("");
+      if (topLevelEndIndex > 0 && lines[topLevelEndIndex - 1].trim() === "") {
+        block.push("");
       }
       lines.splice(topLevelEndIndex, 0, ...block);
     }
@@ -1315,10 +1397,7 @@ export const setCodexRemoteModelCatalog = (
 
   // Blank lines may be part of a multiline TOML string, so do not collapse them.
   const result = lines.join("\n");
-  let original: Record<string, any>;
-  try {
-    original = parseToml(normalizedText);
-  } catch {
+  if (!original) {
     // Preserve the existing best-effort editing behavior for incomplete TOML.
     return result;
   }
@@ -1334,11 +1413,12 @@ export const setCodexRemoteModelCatalog = (
         if (Object.keys(config.features).length === 0) delete config.features;
       }
     }
-    if (!isSubset(original, updated) || !isSubset(updated, original)) {
-      return normalizedText;
+    // JSON 比较：日期按值比较，`constructor` 之类的键也按普通键处理
+    if (JSON.stringify(original) !== JSON.stringify(updated)) {
+      return text;
     }
   } catch {
-    return normalizedText;
+    return text;
   }
   return result;
 };
