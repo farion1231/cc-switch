@@ -815,6 +815,14 @@ mod tests {
             .collect()
     }
 
+    fn parse_sse_events(output: &str) -> Vec<Value> {
+        output
+            .split("\n\n")
+            .filter_map(|block| block.lines().find_map(|line| line.strip_prefix("data: ")))
+            .filter_map(|data| serde_json::from_str(data).ok())
+            .collect()
+    }
+
     fn render_message_events(body: &Value) -> String {
         responses_sse_events_from_anthropic_message(body, CodexToolContext::default())
             .into_iter()
@@ -1013,6 +1021,58 @@ mod tests {
         assert!(merged.contains("event: response.function_call_arguments.delta"));
         assert!(merged.contains("event: response.function_call_arguments.done"));
         assert!(merged.contains("\"status\":\"completed\""));
+    }
+
+    #[tokio::test]
+    async fn test_tool_search_stream_uses_one_typed_item_id() {
+        let context = super::super::transform_codex_chat::build_codex_tool_context_from_request(
+            &json!({"tools": [{"type": "tool_search"}]}),
+        );
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_search\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_search_1\",\"name\":\"tool_search\",\"input\":{}}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"calendar tools\\\"}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run_with_context(input, context).await;
+        let events = parse_sse_events(&merged);
+        let added = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.added")
+            .unwrap();
+        let delta = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.delta")
+            .unwrap();
+        let arguments_done = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.done")
+            .unwrap();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.done")
+            .unwrap();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        let expected_id = "tsc_call_search_1";
+        assert_eq!(added["item"]["id"], expected_id);
+        assert_eq!(delta["item_id"], expected_id);
+        assert_eq!(arguments_done["item_id"], expected_id);
+        assert_eq!(done["item"]["id"], expected_id);
+        assert_eq!(completed["response"]["output"][0]["id"], expected_id);
+        assert_eq!(done["item"]["type"], "tool_search_call");
+        assert_eq!(done["item"]["call_id"], "call_search_1");
     }
 
     #[tokio::test]
