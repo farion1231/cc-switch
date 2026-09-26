@@ -1532,6 +1532,8 @@
     "commonConfigHint": "該片段會在勾選「套用通用設定」時附加到 config.toml 末尾",
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
+    "enableRemoteModelCatalog": "從供應商拉取模型清單",
+    "remoteModelCatalogHint": "適用於 Codex 0.156+：寫入 [features] api_key_model_discovery = true 與 model_catalog_url = <base_url>/models，讓 Codex 從供應商拉取模型清單。供應商需要在該位址回傳 Codex 格式的模型目錄，否則 Codex 會退回內建清單。",
     "apiUrlLabel": "API 請求位址",
     "extractFromCurrent": "從編輯內容擷取",
     "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",

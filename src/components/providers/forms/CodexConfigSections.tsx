@@ -8,10 +8,14 @@ import React, {
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
 import {
+  extractCodexBaseUrl,
   extractCodexTopLevelInt,
+  getCodexDefaultModelCatalogUrl,
   isCodexRemoteCompactionEnabled,
+  isCodexRemoteModelCatalogEnabled,
   removeCodexTopLevelField,
   setCodexRemoteCompaction,
+  setCodexRemoteModelCatalog,
   setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
 
@@ -99,6 +103,7 @@ interface CodexConfigSectionProps {
   onChange: (value: string) => void;
   providerName?: string;
   showRemoteCompaction?: boolean;
+  showRemoteModelCatalog?: boolean;
   useCommonConfig: boolean;
   onCommonConfigToggle: (checked: boolean) => void;
   onEditCommonConfig: () => void;
@@ -115,6 +120,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   onChange,
   providerName,
   showRemoteCompaction = true,
+  showRemoteModelCatalog = true,
   useCommonConfig,
   onCommonConfigToggle,
   onEditCommonConfig,
@@ -174,6 +180,34 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       );
     },
     [handleLocalChange, providerName],
+  );
+
+  const remoteModelCatalogEnabled = useMemo(
+    () => isCodexRemoteModelCatalogEnabled(localValue),
+    [localValue],
+  );
+  const baseUrl = useMemo(
+    () => extractCodexBaseUrl(localValue)?.trim() || "",
+    [localValue],
+  );
+
+  const handleRemoteModelCatalogToggle = useCallback(
+    (checked: boolean) => {
+      const currentValue = localValueRef.current || "";
+      if (!checked) {
+        handleLocalChange(setCodexRemoteModelCatalog(currentValue, null));
+        return;
+      }
+      const currentBaseUrl = extractCodexBaseUrl(currentValue)?.trim();
+      if (!currentBaseUrl) return;
+      handleLocalChange(
+        setCodexRemoteModelCatalog(
+          currentValue,
+          getCodexDefaultModelCatalogUrl(currentBaseUrl),
+        ),
+      );
+    },
+    [handleLocalChange],
   );
 
   // Parse toggle states from TOML text
@@ -267,6 +301,24 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
                 className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
               />
               {t("codexConfig.enableRemoteCompaction")}
+            </label>
+          )}
+
+          {showRemoteModelCatalog && (
+            <label
+              className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+              title={t("codexConfig.remoteModelCatalogHint")}
+            >
+              <input
+                type="checkbox"
+                checked={remoteModelCatalogEnabled}
+                disabled={!remoteModelCatalogEnabled && !baseUrl}
+                onChange={(e) =>
+                  handleRemoteModelCatalogToggle(e.target.checked)
+                }
+                className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+              />
+              {t("codexConfig.enableRemoteModelCatalog")}
             </label>
           )}
 
