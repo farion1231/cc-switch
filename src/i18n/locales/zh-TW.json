@@ -1497,6 +1497,8 @@
     "proxyTakeoverStorageNotice": "💡 目前應用處於代理接管狀態。這裡編輯的是儲存的供應商配置，真實 live 配置已由代理暫時接管",
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
+    "enableRemoteModelCatalog": "從供應商拉取模型清單",
+    "remoteModelCatalogHint": "適用於 Codex 0.156+：寫入 [features] api_key_model_discovery = true 與 model_catalog_url = <base_url>/models，讓 Codex 從供應商拉取模型清單。供應商需要在該位址回傳 Codex 格式的模型目錄，否則 Codex 會退回內建清單。",
     "apiUrlLabel": "API 請求位址",
     "extractFailed": "擷取失敗：{{error}}",
     "saveFailed": "儲存失敗：{{error}}",
