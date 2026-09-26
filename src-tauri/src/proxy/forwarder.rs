@@ -188,6 +188,11 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 是否启用「流式语义预读」：在首个有效输出事件到达前不把流提交给客户端，
+    /// 让「上游刚开流就报错（如过载）」也能在本次请求内换到下一家供应商。
+    ///
+    /// 只有确实存在可转移的下一家时才开启，否则白白增加首字节延迟。
+    stream_priming_enabled: bool,
 }
 
 impl RequestForwarder {
@@ -255,6 +260,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        stream_priming_enabled: bool,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -278,6 +284,7 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            stream_priming_enabled,
         }
     }
 
@@ -2431,6 +2438,22 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
+            } else if self.stream_priming_enabled
+                && matches!(app_type, AppType::Codex | AppType::GrokBuild)
+                && !codex_responses_to_chat
+                && !codex_responses_to_anthropic
+                && !codex_official_auth_passthrough
+                && request_is_streaming
+                && response.is_sse()
+            {
+                // Codex 原生 Responses 透传：上游同样是 Responses 协议，因此可以沿用
+                // 「首个有效输出事件之前不提交」的预读规则。上游一开流就报
+                // `error` / `response.failed`（供应商过载最常见的形态）时，本次请求
+                // 就能直接换到下一家供应商，客户端不会看到 stream disconnected。
+                //
+                // 预读只影响提交时机，不影响已提交后的字节内容；超过预读上限或
+                // 首字节超时会退回原样提交，避免长思考阶段被无限缓冲。
+                response = self.validate_responses_stream_start(response).await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -3841,6 +3864,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::provider::LocalProxyRequestOverrides;
+    use crate::proxy::AppProxyConfig;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -3892,6 +3916,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            stream_priming_enabled: false,
         }
     }
 
@@ -5521,5 +5546,226 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    // ========================================================================
+    // 流式中途失败的故障转移（真实 HTTP 往返，假上游）
+    // ========================================================================
+
+    /// 假上游：Authorization 里带 key-a 的请求返回「刚开流就报过载」，
+    /// 其他请求返回一条正常收尾的 Responses 流。
+    /// 返回 (base_url, 收到的 Authorization 记录)。
+    async fn spawn_failing_upstream() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        use axum::body::Body;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+
+        let captured: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = captured.clone();
+
+        let app = Router::new().route(
+            "/v1/responses",
+            post(move |headers: HeaderMap| {
+                let recorder = recorder.clone();
+                async move {
+                    let authorization = headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    recorder
+                        .lock()
+                        .expect("lock captured requests")
+                        .push(authorization.clone());
+
+                    let chunks: Vec<Result<Bytes, std::io::Error>> = if authorization.contains("key-a")
+                    {
+                        vec![
+                            Ok(Bytes::from_static(
+                                b"event: response.created\ndata: {\"type\":\"response.created\"}\n\n",
+                            )),
+                            Ok(Bytes::from_static(
+                                b"event: error\ndata: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}\n\n",
+                            )),
+                        ]
+                    } else {
+                        vec![
+                            Ok(Bytes::from_static(
+                                b"event: response.created\ndata: {\"type\":\"response.created\"}\n\n",
+                            )),
+                            Ok(Bytes::from_static(
+                                b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+                            )),
+                            Ok(Bytes::from_static(
+                                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+                            )),
+                        ]
+                    };
+
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from_stream(futures::stream::iter(chunks)))
+                        .expect("build mock response")
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let addr = listener.local_addr().expect("mock upstream address");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        (format!("http://{addr}/v1"), captured)
+    }
+
+    fn codex_responses_provider(id: &str, name: &str, base_url: &str, key: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: name.to_string(),
+            settings_config: json!({
+                "base_url": base_url,
+                "env": { "OPENAI_API_KEY": key },
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: true,
+        }
+    }
+
+    /// 上游在流中途报错（供应商过载最常见的形态）时：
+    /// 1) 本次请求必须换到下一家供应商，客户端拿到的是一条干净、带终止事件的流；
+    /// 2) 报错的供应商必须被计入失败（熔断器 / 健康统计），而不是记成功。
+    #[tokio::test]
+    async fn mid_stream_error_event_fails_over_to_next_provider() {
+        let (base_url, captured) = spawn_failing_upstream().await;
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        db.save_provider(
+            "codex",
+            &codex_responses_provider("provider-a", "Provider A", &base_url, "key-a"),
+        )
+        .expect("save provider a");
+        db.save_provider(
+            "codex",
+            &codex_responses_provider("provider-b", "Provider B", &base_url, "key-b"),
+        )
+        .expect("save provider b");
+        db.add_to_failover_queue("codex", "provider-a")
+            .expect("queue a");
+        db.add_to_failover_queue("codex", "provider-b")
+            .expect("queue b");
+        db.update_proxy_config_for_app(AppProxyConfig {
+            app_type: "codex".to_string(),
+            enabled: true,
+            auto_failover_enabled: true,
+            max_retries: 1,
+            streaming_first_byte_timeout: 5,
+            streaming_idle_timeout: 5,
+            non_streaming_timeout: 5,
+            circuit_failure_threshold: 4,
+            circuit_success_threshold: 2,
+            circuit_timeout_seconds: 60,
+            circuit_error_rate_threshold: 0.6,
+            circuit_min_requests: 10,
+        })
+        .await
+        .expect("proxy config");
+
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        let providers = router
+            .select_providers("codex")
+            .await
+            .expect("select providers");
+        assert_eq!(providers.len(), 2, "两家供应商都应进入候选链路");
+        assert_eq!(providers[0].id, "provider-a");
+
+        let forwarder = RequestForwarder {
+            router: router.clone(),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            current_providers: Arc::new(RwLock::new(HashMap::new())),
+            gemini_shadow: Arc::new(GeminiShadowStore::new()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            failover_manager: Arc::new(FailoverSwitchManager::new(db.clone())),
+            app_handle: None,
+            // 与队列首位保持一致：避免测试触发真实的供应商切换副作用
+            current_provider_id_at_start: "provider-a".to_string(),
+            session_id: String::new(),
+            session_client_provided: false,
+            rectifier_config: RectifierConfig::default(),
+            optimizer_config: OptimizerConfig::default(),
+            copilot_optimizer_config: CopilotOptimizerConfig::default(),
+            non_streaming_timeout: Duration::from_secs(5),
+            streaming_first_byte_timeout: Duration::from_secs(5),
+            max_attempts: 2,
+            stream_priming_enabled: true,
+        };
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                json!({"model": "gpt-5.6-terra", "stream": true, "input": "hi"}),
+                HeaderMap::new(),
+                http::Extensions::new(),
+                providers,
+            )
+            .await
+            .unwrap_or_else(|err| panic!("forward should succeed after failover: {}", err.error));
+
+        assert_eq!(
+            result.provider.id, "provider-b",
+            "上游刚开流就报错时，本次请求必须换到下一家供应商"
+        );
+
+        let body = result
+            .response
+            .bytes_with_limit(1024 * 1024)
+            .await
+            .expect("read forwarded body");
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("response.completed"),
+            "客户端应拿到完整收尾的流: {text}"
+        );
+        assert!(
+            !text.contains("overloaded"),
+            "上游的错误事件不应透传给客户端: {text}"
+        );
+
+        let attempts = captured.lock().expect("lock captured").clone();
+        assert_eq!(attempts.len(), 2, "应先后请求两家供应商: {attempts:?}");
+        assert!(attempts[0].contains("key-a"));
+        assert!(attempts[1].contains("key-b"));
+
+        // 失败的供应商必须被计入失败（熔断器 + 数据库健康度）
+        let health = db
+            .get_provider_health("provider-a", "codex")
+            .await
+            .expect("provider a health");
+        assert!(
+            health.consecutive_failures >= 1,
+            "provider-a 连续失败次数应 >= 1, got {:?}",
+            health.consecutive_failures
+        );
+        assert!(
+            health.last_error.unwrap_or_default().contains("overloaded"),
+            "健康记录应保留上游错误信息"
+        );
     }
 }

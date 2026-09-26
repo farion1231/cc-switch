@@ -44,6 +44,7 @@ pub mod fo {
     pub const LIVE_BACKUP_ERROR: &str = "FO-003";
     pub const ALL_CIRCUIT_OPEN: &str = "FO-004";
     pub const NO_PROVIDERS: &str = "FO-005";
+    pub const STREAM_FAILURE_RECORDED: &str = "FO-006";
 }
 
 /// 响应处理日志码
@@ -53,6 +54,10 @@ pub mod rsp {
     pub const BUILD_RESPONSE_ERROR: &str = "RSP-003";
     pub const STREAM_TIMEOUT: &str = "RSP-004";
     pub const STREAM_ERROR: &str = "RSP-005";
+    /// 上游在流内返回错误事件（如 `event: error` / `response.failed`）
+    pub const STREAM_ERROR_EVENT: &str = "RSP-006";
+    /// 流未收到终止事件就结束（连接被截断）
+    pub const STREAM_TRUNCATED: &str = "RSP-007";
 }
 
 /// 使用量日志码

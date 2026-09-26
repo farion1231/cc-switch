@@ -223,6 +223,11 @@ impl RequestContext {
             0
         };
 
+        // 流式语义预读：只有「故障转移开启 + 允许重试 + 队列里确实还有下一家」时才值得
+        // 延迟提交首个输出事件，换取「上游刚开流就报错」时能在本次请求内换供应商。
+        let stream_priming_enabled =
+            self.app_config.auto_failover_enabled && max_retries > 0 && self.providers.len() > 1;
+
         RequestForwarder::new(
             state.provider_router.clone(),
             non_streaming_timeout,
@@ -241,6 +246,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            stream_priming_enabled,
         )
     }
 

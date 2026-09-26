@@ -10,6 +10,7 @@ use super::{
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
+    stream_outcome::{SseOutcomeTracker, StreamFailureReporter},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -191,12 +192,17 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
+    // 流提交后仍可能中途失败（上游错误事件 / 连接被截断）。把这类失败记回供应商，
+    // 后续请求（含客户端重试）才能落到故障转移队列里的下一家。
+    let outcome_reporter = StreamFailureReporter::for_request(ctx, state);
+
     let logged_stream = create_logged_passthrough_stream(
         stream,
         ctx.tag,
         usage_collector,
         timeout_config,
         connection_guard,
+        Some(outcome_reporter),
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -680,12 +686,16 @@ async fn log_usage_internal(
 }
 
 /// 创建带日志记录和超时控制的透传流
+///
+/// `outcome_reporter` 存在时，会在流收尾时判定上游流的真实结局；若上游在流中途
+/// 返回错误事件、或未发送终止事件就中断，则把该次失败记入供应商健康度 / 熔断器。
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    outcome_reporter: Option<StreamFailureReporter>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -693,8 +703,14 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
+        // 结局判定始终开启：客户端看到的 "stream disconnected before completion"
+        // 这类失败就靠它落账，与 usage 采集 / 调试日志开关无关。
+        let mut outcome_tracker = SseOutcomeTracker::new(outcome_reporter.is_some());
+        let mut transport_error: Option<String> = None;
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            collector.is_some()
+                || outcome_reporter.is_some()
+                || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -727,8 +743,18 @@ pub fn create_logged_passthrough_stream(
                         Err(_) => {
                             // 超时
                             let timeout_type = if is_first_chunk { "首字节" } else { "静默期" };
-                            log::error!("[{tag}] 流式响应{}超时 ({}秒)", timeout_type, duration.as_secs());
-                            yield Err(std::io::Error::other(format!("流式响应{timeout_type}超时")));
+                            log::error!(
+                                "[{tag}] [{}] 流式响应{}超时 ({}秒)",
+                                super::log_codes::rsp::STREAM_TIMEOUT,
+                                timeout_type,
+                                duration.as_secs()
+                            );
+                            let message = format!(
+                                "流式响应{timeout_type}超时（{}秒无数据）",
+                                duration.as_secs()
+                            );
+                            transport_error = Some(message.clone());
+                            yield Err(std::io::Error::other(message));
                             break;
                         }
                     }
@@ -751,6 +777,7 @@ pub fn create_logged_passthrough_stream(
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
+                                outcome_tracker.on_block(&event_text);
                                 // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
@@ -783,7 +810,11 @@ pub fn create_logged_passthrough_stream(
                     yield Ok(bytes);
                 }
                 Some(Err(e)) => {
-                    log::error!("[{tag}] 流错误: {e}");
+                    log::error!(
+                        "[{tag}] [{}] 流错误: {e}",
+                        super::log_codes::rsp::STREAM_ERROR
+                    );
+                    transport_error = Some(format!("上游流读取失败: {e}"));
                     yield Err(std::io::Error::other(e.to_string()));
                     break;
                 }
@@ -799,6 +830,10 @@ pub fn create_logged_passthrough_stream(
         }
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
+        }
+        if let Some(reporter) = outcome_reporter {
+            let outcome = outcome_tracker.finish(transport_error);
+            reporter.record_failure(&outcome).await;
         }
     }
 }
@@ -1279,5 +1314,143 @@ mod tests {
             Decimal::from_str("1.5").unwrap()
         );
         Ok(())
+    }
+
+    fn sse_stream(
+        blocks: &[&'static str],
+    ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
+        let chunks: Vec<Result<Bytes, std::io::Error>> = blocks
+            .iter()
+            .map(|block| Ok(Bytes::from_static(block.as_bytes())))
+            .collect();
+        futures::stream::iter(chunks)
+    }
+
+    async fn collect_stream(
+        stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+        reporter: StreamFailureReporter,
+    ) {
+        let passthrough = create_logged_passthrough_stream(
+            stream,
+            "Codex",
+            None,
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            Some(reporter),
+        );
+        let chunks: Vec<_> = passthrough.collect().await;
+        assert!(chunks.iter().all(Result::is_ok));
+    }
+
+    /// 上游在流中途返回错误事件（过载最常见的形态）→ 必须计入供应商失败
+    #[tokio::test]
+    async fn stream_error_event_marks_provider_failed() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        insert_provider(&db, "provider-1", "codex", ProviderMeta::default())
+            .expect("insert provider");
+        let state = build_state(db);
+        let reporter = StreamFailureReporter::new(
+            state.provider_router.clone(),
+            state.status.clone(),
+            "codex",
+            "provider-1".to_string(),
+            "Provider 1".to_string(),
+        );
+
+        collect_stream(
+            sse_stream(&[
+                "event: response.created\ndata: {\"type\":\"response.created\"}\n\n",
+                "event: error\ndata: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}\n\n",
+            ]),
+            reporter,
+        )
+        .await;
+
+        let status = state.status.read().await;
+        assert_eq!(status.failed_requests, 1);
+        assert_eq!(status.success_requests, 0);
+        let last_error = status.last_error.clone().unwrap_or_default();
+        assert!(
+            last_error.contains("Our servers are currently overloaded"),
+            "{last_error}"
+        );
+        drop(status);
+
+        // 记账走后台任务，轮询等待健康度落库（驱动熔断器的那条记录）
+        let mut failures = 0;
+        for _ in 0..40 {
+            let health = state
+                .db
+                .get_provider_health("provider-1", "codex")
+                .await
+                .expect("provider health");
+            failures = health.consecutive_failures;
+            if failures >= 1 {
+                assert!(
+                    health.last_error.unwrap_or_default().contains("overloaded"),
+                    "健康记录应保留上游错误信息"
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(failures >= 1, "供应商失败必须落库，实际 {failures}");
+    }
+
+    /// 流未发送终止事件就结束 → 同样按供应商失败记账
+    #[tokio::test]
+    async fn truncated_stream_marks_provider_failed() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = build_state(db);
+        let reporter = StreamFailureReporter::new(
+            state.provider_router.clone(),
+            state.status.clone(),
+            "codex",
+            "provider-1".to_string(),
+            "Provider 1".to_string(),
+        );
+
+        collect_stream(
+            sse_stream(&[
+                "event: response.created\ndata: {\"type\":\"response.created\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+            ]),
+            reporter,
+        )
+        .await;
+
+        let status = state.status.read().await;
+        assert_eq!(status.failed_requests, 1);
+    }
+
+    /// 正常收尾的流不能被误记为失败
+    #[tokio::test]
+    async fn completed_stream_marks_no_failure() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = build_state(db);
+        let reporter = StreamFailureReporter::new(
+            state.provider_router.clone(),
+            state.status.clone(),
+            "codex",
+            "provider-1".to_string(),
+            "Provider 1".to_string(),
+        );
+
+        collect_stream(
+            sse_stream(&[
+                "event: response.created\ndata: {\"type\":\"response.created\"}\n\n",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+            ]),
+            reporter,
+        )
+        .await;
+
+        let status = state.status.read().await;
+        assert_eq!(status.failed_requests, 0);
+        assert!(status.last_error.is_none());
     }
 }
