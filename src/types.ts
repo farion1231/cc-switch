@@ -232,6 +232,8 @@ export interface ProviderMeta {
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // Whether this provider is currently projected into an additive app's live config.
   liveConfigManaged?: boolean;
+  // Source format is needed for package-less OpenCode built-in overrides.
+  opencodeConfigFormat?: "v1" | "v2";
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

@@ -1622,6 +1622,7 @@
   },
   "opencode": {
     "npmPackage": "API 格式",
+    "nativeConfigHint": "請在下方以 JSON 編輯 OpenCode V2 原生設定。儲存時保留供應商和模型欄位。",
     "selectPackage": "選擇 API 格式",
     "npmPackageHint": "選擇 AI 服務的 API 格式",
     "baseUrl": "Base URL",

@@ -69,6 +69,32 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
 
 // ── Pure functions ───────────────────────────────────────────────────
 
+/** Keep native declarations out of the V1 structured editor. Source metadata
+ * disambiguates built-in overrides containing only models (or an empty object).
+ */
+export function isNativeOpencodeConfig(
+  json: string,
+  source?: "v1" | "v2",
+): boolean {
+  if (source) return source === "v2";
+  try {
+    const value = JSON.parse(json);
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return false;
+    if ("npm" in value || "options" in value || "api" in value) return false;
+    return [
+      "package",
+      "settings",
+      "headers",
+      "body",
+      "canonical",
+      "providers",
+    ].some((key) => key in value);
+  } catch {
+    return false;
+  }
+}
+
 export function isKnownOpencodeOptionKey(key: string): boolean {
   return OPENCODE_KNOWN_OPTION_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_OPTION_KEYS)[number],

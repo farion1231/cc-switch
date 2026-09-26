@@ -1,6 +1,6 @@
 use crate::config::write_json_file_with_contents;
 use crate::error::AppError;
-use crate::provider::OpenCodeProviderConfig;
+use crate::provider::OpenCodeConfigFormat;
 use crate::settings::get_opencode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
@@ -146,33 +146,295 @@ fn write_opencode_config_to_path_with_contents(
 }
 
 pub fn get_providers() -> Result<Map<String, Value>, AppError> {
+    Ok(get_providers_with_format()?
+        .into_iter()
+        .map(|(id, (value, _))| (id, value))
+        .collect())
+}
+
+/// Preserve the declaration's format alongside its JSON, including package-less
+/// built-in overrides. Do not recursively mix legacy and native entries.
+pub fn get_providers_with_format(
+) -> Result<IndexMap<String, (Value, OpenCodeConfigFormat)>, AppError> {
     let config = read_opencode_config()?;
-    Ok(config
+    let mut providers: IndexMap<_, _> = config
         .get("provider")
         .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default())
+        .into_iter()
+        .flatten()
+        .map(|(id, value)| (id.clone(), (value.clone(), OpenCodeConfigFormat::V1)))
+        .collect();
+    if let Some(native) = config.get("providers").and_then(Value::as_object) {
+        for (id, value) in native {
+            if is_native_provider(value) {
+                providers.insert(id.clone(), (value.clone(), OpenCodeConfigFormat::V2));
+            } else {
+                log::warn!("Invalid native OpenCode provider '{id}', leaving its source untouched");
+            }
+        }
+    }
+    Ok(providers)
+}
+
+/// Validate known native fields before giving V2 precedence over V1. Keep the
+/// original JSON (including unknown extensions) rather than projecting it into
+/// a partial type. Constraints follow OpenCode v2.0.12, commit 2670273ff17d:
+/// packages/schema/src/config/provider.ts, model.ts and provider.ts.
+pub fn is_native_provider(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    if ["npm", "options", "api"]
+        .iter()
+        .any(|key| obj.contains_key(*key))
+    {
+        return false;
+    }
+    native_fields_valid(
+        value,
+        &[
+            ("name", Value::is_string),
+            ("package", Value::is_string),
+            ("canonical", Value::is_string),
+            ("env", native_string_array),
+            ("settings", native_provider_settings),
+            ("models", |models| {
+                models
+                    .as_object()
+                    .is_some_and(|models| models.values().all(native_model))
+            }),
+        ],
+    ) && native_request_overlays(value)
+}
+
+type NativeFieldCheck<'a> = (&'a str, fn(&Value) -> bool);
+
+/// Optional means absent, not null. Unknown keys remain untouched at every level.
+fn native_fields_valid(value: &Value, fields: &[NativeFieldCheck<'_>]) -> bool {
+    value.as_object().is_some_and(|obj| {
+        fields
+            .iter()
+            .all(|(key, check)| obj.get(*key).is_none_or(check))
+    })
+}
+
+fn native_string_array(value: &Value) -> bool {
+    value
+        .as_array()
+        .is_some_and(|values| values.iter().all(Value::is_string))
+}
+
+fn native_finite(value: &Value) -> bool {
+    value.as_f64().is_some_and(f64::is_finite)
+}
+
+fn native_integer(value: &Value) -> bool {
+    // Effect Schema.Int uses JavaScript's safe integer range, including 1.0.
+    value
+        .as_f64()
+        .is_some_and(|n| n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
+}
+
+fn native_compaction(value: &Value) -> bool {
+    value.as_object().is_some_and(|obj| {
+        matches!(
+            obj.get("type").and_then(Value::as_str),
+            Some("summary" | "native")
+        )
+    })
+}
+
+fn native_provider_settings(value: &Value) -> bool {
+    native_fields_valid(
+        value,
+        &[
+            ("timeout", |v| v == &Value::Bool(false) || native_finite(v)),
+            ("chunkTimeout", native_finite),
+            ("compaction", native_compaction),
+            ("transport", |v| {
+                matches!(v.as_str(), Some("http" | "websocket"))
+            }),
+        ],
+    )
+}
+
+fn native_request_overlays(value: &Value) -> bool {
+    native_fields_valid(
+        value,
+        &[
+            ("headers", |v| {
+                v.as_object()
+                    .is_some_and(|headers| headers.values().all(Value::is_string))
+            }),
+            ("body", Value::is_object),
+        ],
+    )
+}
+
+fn native_model_overlays(value: &Value) -> bool {
+    native_request_overlays(value)
+        && native_fields_valid(
+            value,
+            &[
+                // Model/variant settings only constrain compaction; timeout and transport
+                // here are package-specific extensions, unlike provider settings.
+                ("settings", |v| {
+                    native_fields_valid(v, &[("compaction", native_compaction)])
+                }),
+            ],
+        )
+}
+
+fn native_model(value: &Value) -> bool {
+    native_model_overlays(value)
+        && native_fields_valid(
+            value,
+            &[
+                ("modelID", Value::is_string),
+                ("family", Value::is_string),
+                ("name", Value::is_string),
+                ("package", Value::is_string),
+                ("disabled", Value::is_boolean),
+                ("compatibility", native_compatibility),
+                ("capabilities", |v| {
+                    v.as_object().is_some_and(|obj| {
+                        obj.get("tools").is_some_and(Value::is_boolean)
+                            && obj.get("input").is_some_and(native_string_array)
+                            && obj.get("output").is_some_and(native_string_array)
+                    })
+                }),
+                ("variants", |v| {
+                    v.as_array().is_some_and(|variants| {
+                        variants.iter().all(|variant| {
+                            variant.get("id").is_some_and(Value::is_string)
+                                && native_model_overlays(variant)
+                        })
+                    })
+                }),
+                ("cost", |v| match v.as_array() {
+                    Some(costs) => costs.iter().all(native_cost),
+                    None => native_cost(v),
+                }),
+                ("limit", |v| {
+                    native_fields_valid(
+                        v,
+                        &[
+                            ("context", native_integer),
+                            ("input", native_integer),
+                            ("output", native_integer),
+                        ],
+                    )
+                }),
+            ],
+        )
+}
+
+fn native_compatibility(value: &Value) -> bool {
+    native_fields_valid(
+        value,
+        &[
+            ("reasoningField", Value::is_string),
+            ("requireReasoning", Value::is_boolean),
+            ("maxTokensField", |v| {
+                matches!(v.as_str(), Some("max_completion_tokens" | "max_tokens"))
+            }),
+            ("requireFinishReason", Value::is_boolean),
+            ("requireAssistantAfterTool", Value::is_boolean),
+            ("supportsPromptCacheKey", Value::is_boolean),
+        ],
+    )
+}
+
+fn native_cost(value: &Value) -> bool {
+    value.get("input").is_some_and(native_finite)
+        && value.get("output").is_some_and(native_finite)
+        && native_fields_valid(
+            value,
+            &[
+                ("tier", |v| {
+                    v.as_object().is_some_and(|obj| {
+                        obj.get("type").and_then(Value::as_str) == Some("context")
+                            && obj.get("size").is_some_and(native_integer)
+                    })
+                }),
+                ("cache", |v| {
+                    native_fields_valid(v, &[("read", native_finite), ("write", native_finite)])
+                }),
+            ],
+        )
+}
+
+pub fn provider_format(
+    value: &Value,
+    source: Option<OpenCodeConfigFormat>,
+) -> OpenCodeConfigFormat {
+    if let Some(format) = source {
+        return format;
+    }
+    if value.get("npm").is_some() || value.get("options").is_some() || value.get("api").is_some() {
+        return OpenCodeConfigFormat::V1;
+    }
+    if ["package", "settings", "headers", "body", "canonical"]
+        .iter()
+        .any(|key| value.get(*key).is_some())
+    {
+        OpenCodeConfigFormat::V2
+    } else {
+        OpenCodeConfigFormat::V1
+    }
 }
 
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+    let format = provider_format(&config, None);
+    set_provider_with_format(id, config, format)
+}
+
+pub fn set_provider_with_format(
+    id: &str,
+    config: Value,
+    format: OpenCodeConfigFormat,
+) -> Result<(), AppError> {
     let _guard = opencode_config_lock().lock()?;
     let path = get_opencode_config_path();
     let mut full_config = read_opencode_config_from_path(&path)?;
+    if format == OpenCodeConfigFormat::V1
+        && full_config
+            .get("providers")
+            .and_then(|providers| providers.get(id))
+            .is_some_and(is_native_provider)
+    {
+        return Err(AppError::Config(format!(
+            "OpenCode provider '{id}' has a native V2 declaration. Reload providers before editing it."
+        )));
+    }
+    let key = match format {
+        OpenCodeConfigFormat::V1 => "provider",
+        OpenCodeConfigFormat::V2 => {
+            if !is_native_provider(&config) {
+                return Err(AppError::Config(format!(
+                    "Invalid native OpenCode provider '{id}'"
+                )));
+            }
+            "providers"
+        }
+    };
 
     // 判空要连「存在但不是对象」一起算：否则下面 as_object_mut 拿不到，
     // 写入会静默失效——界面显示添加成功而文件里没有。provider 段是 cc-switch
     // 的投影区，归一化不会碰用户自有的 model / theme 等顶层配置。
-    if !full_config.get("provider").is_some_and(Value::is_object) {
-        if full_config.get("provider").is_some() {
-            log::warn!("opencode.json 的 provider 不是对象，已重置为空对象");
+    if !full_config.get(key).is_some_and(Value::is_object) {
+        if key == "providers" && full_config.get(key).is_some() {
+            return Err(AppError::Config(format!(
+                "OpenCode {key} must be an object"
+            )));
         }
-        full_config["provider"] = json!({});
+        if full_config.get(key).is_some() {
+            log::warn!("opencode.json 的 {key} 不是对象，已重置为空对象");
+        }
+        full_config[key] = json!({});
     }
 
-    if let Some(providers) = full_config
-        .get_mut("provider")
-        .and_then(|v| v.as_object_mut())
-    {
+    if let Some(providers) = full_config.get_mut(key).and_then(|v| v.as_object_mut()) {
         providers.insert(id.to_string(), config);
     }
 
@@ -184,36 +446,15 @@ pub fn remove_provider(id: &str) -> Result<(), AppError> {
     let path = get_opencode_config_path();
     let mut config = read_opencode_config_from_path(&path)?;
 
-    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
-        providers.remove(id);
-    } else if config.get("provider").is_some() {
-        log::warn!("opencode.json 的 provider 不是对象，无法删除供应商 '{id}'");
-    }
-
-    write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
-}
-
-pub fn get_typed_providers() -> Result<IndexMap<String, OpenCodeProviderConfig>, AppError> {
-    let providers = get_providers()?;
-    let mut result = IndexMap::new();
-
-    for (id, value) in providers {
-        match serde_json::from_value::<OpenCodeProviderConfig>(value.clone()) {
-            Ok(config) => {
-                result.insert(id, config);
-            }
-            Err(e) => {
-                log::warn!("Failed to parse provider '{id}': {e}");
-            }
+    for key in ["provider", "providers"] {
+        if let Some(providers) = config.get_mut(key).and_then(|v| v.as_object_mut()) {
+            providers.remove(id);
+        } else if config.get(key).is_some() {
+            log::warn!("opencode.json 的 {key} 不是对象，无法删除供应商 '{id}'");
         }
     }
 
-    Ok(result)
-}
-
-pub fn set_typed_provider(id: &str, config: &OpenCodeProviderConfig) -> Result<(), AppError> {
-    let value = serde_json::to_value(config).map_err(|e| AppError::JsonSerialize { source: e })?;
-    set_provider(id, value)
+    write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
 }
 
 pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
@@ -374,6 +615,251 @@ mod tests {
         let dir = home.join(".config").join("opencode");
         std::fs::create_dir_all(&dir).expect("create config dir");
         std::fs::write(dir.join("opencode.json"), content).expect("write config");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_providers_take_precedence_independently_of_key_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let legacy = r#""provider":{"shared":{"npm":"@ai-sdk/anthropic"},"legacy":{"npm":"@ai-sdk/openai"}}"#;
+        let native = r#""providers":{"shared":{"settings":{"baseURL":"https://native.example"}},"builtin":{"models":{"alias":{"modelID":"upstream"}}}}"#;
+        for text in [
+            format!("{{{legacy},{native}}}"),
+            format!("{{{native},{legacy}}}"),
+        ] {
+            write_config(temp.path(), &text);
+            let providers = get_providers_with_format().unwrap();
+            assert_eq!(providers.len(), 3);
+            assert_eq!(providers["legacy"].1, OpenCodeConfigFormat::V1);
+            assert_eq!(providers["builtin"].1, OpenCodeConfigFormat::V2);
+            assert_eq!(
+                providers["shared"].0,
+                json!({"settings":{"baseURL":"https://native.example"}})
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_provider_write_and_remove_preserve_other_declarations() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let original = json!({
+            "model": "shared/model",
+            "provider": {"shared": {"npm": "@ai-sdk/anthropic"}, "legacy": {"npm": "@ai-sdk/openai"}},
+            "providers": {"shared": {}, "builtin": {"body": {"metadata": {"keep": true}}}},
+            "mcp": {"servers": {"example": {"type": "remote", "url": "https://mcp.example"}}},
+            "plugins": [{"package": "example", "options": {"keep": true}}]
+        });
+        write_config(temp.path(), &original.to_string());
+        let native = json!({"models": {"model": {"variants": [
+            {"id": "low", "settings": {"reasoningEffort": "low"}},
+            {"id": "high", "body": {"reasoning": {"effort": "high"}}}
+        ]}}});
+        set_provider_with_format("shared", native.clone(), OpenCodeConfigFormat::V2).unwrap();
+        let mut expected = original;
+        expected["providers"]["shared"] = native;
+        assert_eq!(read_opencode_config().unwrap(), expected);
+
+        let before = std::fs::read(get_opencode_config_path()).unwrap();
+        assert!(set_provider("shared", json!({"npm": "@ai-sdk/anthropic"})).is_err());
+        assert!(set_provider_with_format(
+            "shared",
+            json!({"settings": []}),
+            OpenCodeConfigFormat::V2
+        )
+        .is_err());
+        assert_eq!(std::fs::read(get_opencode_config_path()).unwrap(), before);
+
+        remove_provider("shared").unwrap();
+        expected["providers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shared");
+        expected["provider"]
+            .as_object_mut()
+            .unwrap()
+            .remove("shared");
+        assert_eq!(read_opencode_config().unwrap(), expected);
+        assert!(!get_providers().unwrap().contains_key("shared"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn malformed_native_provider_does_not_hide_legacy_or_rewrite_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let original = r#"{
+            "provider": {"shared": {"npm": "@ai-sdk/openai"}},
+            "providers": {"shared": {"package": false}, "valid": {}}
+        }"#;
+        write_config(temp.path(), original);
+        let providers = get_providers_with_format().unwrap();
+        assert_eq!(providers["shared"].1, OpenCodeConfigFormat::V1);
+        assert_eq!(providers["valid"].1, OpenCodeConfigFormat::V2);
+        assert_eq!(
+            std::fs::read_to_string(get_opencode_config_path()).unwrap(),
+            original
+        );
+        let updated = json!({"npm": "@ai-sdk/openai", "options": {"apiKey": "fake-new"}});
+        set_provider_with_format("shared", updated.clone(), OpenCodeConfigFormat::V1).unwrap();
+        let mut expected: Value = serde_json::from_str(original).unwrap();
+        expected["provider"]["shared"] = updated;
+        assert_eq!(read_opencode_config().unwrap(), expected);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn malformed_native_nested_fields_fall_back_to_legacy() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let legacy = json!({"npm": "@ai-sdk/openai", "options": {"apiKey": "fake-old"}});
+        let mut invalid = vec![
+            json!({"models": {"m": {"variants": {}}}}),
+            json!({"settings": {"timeout": "1000"}}),
+            json!({"settings": {"timeout": true}}),
+            json!({"settings": {"timeout": null}}),
+            json!({"settings": {"chunkTimeout": false}}),
+            json!({"settings": {"compaction": {}}}),
+            json!({"settings": {"compaction": {"type": "unknown"}}}),
+            json!({"settings": {"transport": "sse"}}),
+            json!({"headers": {"X-Tenant": 1}}),
+            json!({"env": [1]}),
+        ];
+        for model in [
+            json!(null),
+            json!({"modelID": false}),
+            json!({"family": []}),
+            json!({"name": null}),
+            json!({"package": {}}),
+            json!({"disabled": "false"}),
+            json!({"settings": null}),
+            json!({"settings": {"compaction": "native"}}),
+            json!({"headers": {"X-Tenant": false}}),
+            json!({"body": []}),
+            json!({"variants": [null]}),
+            json!({"variants": [{}]}),
+            json!({"variants": [{"id": 1}]}),
+            json!({"variants": [{"id": "low", "settings": {"compaction": {"type": false}}}]}),
+            json!({"variants": [{"id": "low", "headers": {"X-Tenant": null}}]}),
+            json!({"variants": [{"id": "low", "body": []}]}),
+            json!({"limit": []}),
+            json!({"limit": {"context": "1000"}}),
+            json!({"limit": {"input": 1.5}}),
+            json!({"limit": {"output": null}}),
+            json!({"limit": {"context": 9007199254740992_u64}}),
+            json!({"capabilities": {"tools": true}}),
+            json!({"capabilities": {"tools": "true", "input": [], "output": []}}),
+            json!({"capabilities": {"tools": true, "input": "text", "output": []}}),
+            json!({"capabilities": {"tools": true, "input": [], "output": [false]}}),
+            json!({"compatibility": false}),
+            json!({"compatibility": {"reasoningField": false}}),
+            json!({"compatibility": {"maxTokensField": "tokens"}}),
+            json!({"cost": {}}),
+            json!({"cost": [{"input": 1}]}),
+            json!({"cost": {"input": "1", "output": 2}}),
+            json!({"cost": {"input": 1, "output": 2, "cache": {"read": false}}}),
+            json!({"cost": {"input": 1, "output": 2, "cache": {"write": null}}}),
+            json!({"cost": {"input": 1, "output": 2, "tier": {"type": "context"}}}),
+            json!({"cost": {"input": 1, "output": 2, "tier": {"type": "other", "size": 10}}}),
+            json!({"cost": {"input": 1, "output": 2, "tier": {"type": "context", "size": 1.5}}}),
+        ] {
+            invalid.push(json!({"models": {"m": model}}));
+        }
+        for key in [
+            "requireReasoning",
+            "requireFinishReason",
+            "requireAssistantAfterTool",
+            "supportsPromptCacheKey",
+        ] {
+            invalid.push(json!({"models": {"m": {"compatibility": {key: "true"}}}}));
+        }
+        for native in invalid {
+            let original = json!({
+                "provider": {"shared": legacy},
+                "providers": {"shared": native, "native-only": native}
+            });
+            let source = original.to_string();
+            write_config(temp.path(), &source);
+            let providers = get_providers_with_format().unwrap();
+            assert_eq!(providers.len(), 1, "{native}");
+            assert_eq!(
+                providers["shared"],
+                (legacy.clone(), OpenCodeConfigFormat::V1),
+                "{native}"
+            );
+            assert!(
+                set_provider_with_format("shared", native.clone(), OpenCodeConfigFormat::V2)
+                    .is_err(),
+                "{native}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(get_opencode_config_path()).unwrap(),
+                source
+            );
+            let updated = json!({"npm": "@ai-sdk/openai", "options": {"apiKey": "fake-new"}});
+            set_provider_with_format("shared", updated.clone(), OpenCodeConfigFormat::V1).unwrap();
+            let mut expected = original;
+            expected["provider"]["shared"] = updated;
+            assert_eq!(read_opencode_config().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_nested_fields_and_unknown_extensions_roundtrip() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let native = json!({
+            "name": "Native", "package": "@opencode/ai/providers/openai", "canonical": "openai",
+            "env": ["TEST_API_KEY"], "extension": [null, {"keep": true}],
+            "settings": {"timeout": false, "chunkTimeout": 1.5, "transport": "websocket",
+                "compaction": {"type": "native", "extension": true}, "custom": {"keep": null}},
+            "headers": {"X-Tenant": "example"}, "body": {"metadata": {"keep": true}},
+            "models": {"m": {
+                "modelID": "upstream", "family": "gpt", "name": "Model", "package": "custom",
+                "disabled": false, "extension": {"keep": [1, 2]},
+                "settings": {"compaction": {"type": "summary"}, "timeout": "package-specific"},
+                "headers": {"X-Model": "example"}, "body": {"custom": [null]},
+                "limit": {"context": 1000.0, "input": -1, "output": 0, "extension": true},
+                "capabilities": {"tools": false, "input": ["text", "custom"], "output": [], "extension": []},
+                "compatibility": {"reasoningField": "custom", "requireReasoning": true,
+                    "maxTokensField": "max_tokens", "requireFinishReason": false,
+                    "requireAssistantAfterTool": true, "supportsPromptCacheKey": false, "extension": null},
+                "cost": [{"input": 1.5, "output": 2, "cache": {"read": 0.5, "extension": true},
+                    "tier": {"type": "context", "size": 1000, "extension": null}, "extension": []}],
+                "variants": [
+                    {"id": "high", "settings": {"compaction": {"type": "native"}, "transport": "custom"},
+                        "headers": {"X-Variant": "example"}, "body": {"custom": true}, "extension": null},
+                    {"id": "low"}
+                ]
+            }}
+        });
+        for value in [
+            native,
+            json!({}),
+            json!({"settings": {"timeout": 1000.5, "transport": "http"}}),
+            json!({"models": {"m": {"cost": {"input": 0, "output": 0, "cache": {}}, "variants": []}}}),
+            json!({"models": {"m": {"cost": [], "limit": {}, "compatibility": {"maxTokensField": "max_completion_tokens"}}}}),
+        ] {
+            let mut expected = json!({"provider": {"shared": {"npm": "@ai-sdk/openai"}}});
+            write_config(temp.path(), &expected.to_string());
+            set_provider_with_format("shared", value.clone(), OpenCodeConfigFormat::V2).unwrap();
+            expected["providers"] = json!({"shared": value});
+            assert_eq!(read_opencode_config().unwrap(), expected);
+            assert_eq!(
+                get_providers_with_format().unwrap()["shared"],
+                (value, OpenCodeConfigFormat::V2)
+            );
+            assert!(set_provider_with_format(
+                "shared",
+                json!({"npm": "@ai-sdk/openai"}),
+                OpenCodeConfigFormat::V1
+            )
+            .is_err());
+            assert_eq!(read_opencode_config().unwrap(), expected);
+        }
     }
 
     #[test]

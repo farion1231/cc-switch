@@ -125,6 +125,7 @@ import {
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
+  isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -982,6 +983,15 @@ function ProviderFormFull({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+  const isNativeOpencode =
+    appId === "opencode" &&
+    !isAnyOmoCategory &&
+    isNativeOpencodeConfig(
+      form.watch("settingsConfig"),
+      initialData?.meta?.opencodeConfigFormat,
+    );
+  const isExistingNativeOpencodeKey =
+    isNativeOpencode && providerId === opencodeForm.opencodeProviderKey;
 
   const initialOmoSettings =
     appId === "opencode" &&
@@ -1180,7 +1190,10 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyRequired"));
         return;
       }
-      if (!keyPattern.test(opencodeForm.opencodeProviderKey)) {
+      if (
+        !keyPattern.test(opencodeForm.opencodeProviderKey) &&
+        !isExistingNativeOpencodeKey
+      ) {
         toast.error(t("opencode.providerKeyInvalid"));
         return;
       }
@@ -1199,7 +1212,10 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      if (Object.keys(opencodeForm.opencodeModels).length === 0) {
+      if (
+        !isNativeOpencode &&
+        Object.keys(opencodeForm.opencodeModels).length === 0
+      ) {
         issues.push(t("opencode.modelsRequired"));
       }
     }
@@ -1715,6 +1731,7 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
+      opencodeConfigFormat: isNativeOpencode ? "v2" : undefined,
       commonConfigEnabled:
         appId === "claude"
           ? useCommonConfig
@@ -2181,6 +2198,7 @@ function ProviderFormFull({
                       ) &&
                         !isProviderKeyLocked) ||
                       (opencodeForm.opencodeProviderKey.trim() !== "" &&
+                        !isExistingNativeOpencodeKey &&
                         !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                           opencodeForm.opencodeProviderKey,
                         ))
@@ -2197,6 +2215,7 @@ function ProviderFormFull({
                       </p>
                     )}
                   {opencodeForm.opencodeProviderKey.trim() !== "" &&
+                    !isExistingNativeOpencodeKey &&
                     !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                       opencodeForm.opencodeProviderKey,
                     ) && (
@@ -2210,6 +2229,7 @@ function ProviderFormFull({
                     ) && !isProviderKeyLocked
                   ) &&
                     (opencodeForm.opencodeProviderKey.trim() === "" ||
+                      isExistingNativeOpencodeKey ||
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         opencodeForm.opencodeProviderKey,
                       )) && (
@@ -2543,7 +2563,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "opencode" && !isAnyOmoCategory && (
+          {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields
               npm={opencodeForm.opencodeNpm}
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
@@ -2700,17 +2720,26 @@ function ProviderFormFull({
                 <Label htmlFor="settingsConfig">
                   {t("provider.configJson")}
                 </Label>
+                {isNativeOpencode && (
+                  <p className="text-sm text-muted-foreground">
+                    {t("opencode.nativeConfigHint")}
+                  </p>
+                )}
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
                   onChange={(config) => form.setValue("settingsConfig", config)}
-                  placeholder={`{
+                  placeholder={
+                    isNativeOpencode
+                      ? "{}"
+                      : `{
   "npm": "@ai-sdk/openai-compatible",
   "options": {
     "baseURL": "https://your-api-endpoint.com",
     "apiKey": "your-api-key-here"
   },
   "models": {}
-}`}
+}`
+                  }
                   rows={3}
                   showValidation={true}
                   language="json"
