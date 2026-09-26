@@ -1,6 +1,6 @@
 # Keep Codex Remote Control and Official Plugins While Using Third-Party APIs: CC Switch Setup Guide
 
-> Applies to CC Switch v3.16.1 and later. This guide is based on the current code, user manual, and v3.16.1 release notes. Screenshots use de-identified sample data and do not include real Access Tokens or API keys.
+> Applies to CC Switch v3.20.1 and later; UI text follows v3.20.4. This guide is based on the current code, user manual, and the v3.16.1 / v3.20.1 release notes. Screenshots use de-identified sample data and do not include real Access Tokens or API keys. Some screenshots were taken on older versions; where a switch name differs, the text of this guide takes precedence.
 
 ## What this guide solves
 
@@ -15,15 +15,17 @@ The **Codex App Enhancements** switch added in v3.16.1 solves this conflict: the
 
 This behavior already existed in v3.16.0 and was enabled by default. After some users reported that they did not want this behavior, v3.16.1 turned it into an explicit switch.
 
+Since v3.20.1, the switching logic has been simplified one step further: third-party API keys are only ever written to `config.toml` and never to `auth.json`. This switch now decides just one thing: when you switch directly to a third-party provider, whether the official login in `auth.json` is kept or deleted.
+
 ## Quick answer
 
 Recommended order:
 
 1. In the CC Switch Codex panel, switch to `OpenAI Official`.
 2. Start Codex and log in once with an official ChatGPT / Codex account. A Free subscription is enough.
-3. Return to CC Switch and enable `Settings -> General -> Codex App Enhancements -> Keep official login when switching third-party providers`.
+3. Return to CC Switch and enable `Settings -> General -> Codex App Enhancements -> Keep official login for direct switches`.
 4. Add or switch to a third-party Codex provider.
-5. If the provider uses the Chat Completions protocol, such as DeepSeek / Kimi / MiniMax, also enable local routing and route Codex through it.
+5. If the provider uses the Chat Completions protocol (its card shows the `Needs Routing` badge, for example SiliconFlow or ModelScope), also enable local routing and route Codex through it. Presets such as DeepSeek, Kimi, MiniMax, and Zhipu GLM already connect directly, so they do not need this step.
 6. Restart Codex so `config.toml` and the model catalog are reloaded.
 
 ![Codex App Enhancements switch in Settings](../images/codex-official-auth-preservation/01-codex-app-enhancement-setting.png)
@@ -32,7 +34,7 @@ Recommended order:
 
 Prepare the following:
 
-- CC Switch v3.16.1 or later.
+- CC Switch v3.20.1 or later.
 - Codex installed and able to start. Installing both the app and CLI is recommended.
 - An official ChatGPT / Codex account that can log in to Codex. A Free subscription is enough.
 - A third-party API key, such as DeepSeek, Kimi, GLM, MiniMax, OpenRouter, SiliconFlow, or similar.
@@ -60,26 +62,28 @@ Settings -> General -> Codex App Enhancements
 Enable:
 
 ```text
-Keep official login when switching third-party providers
+Keep official login for direct switches
 ```
 
 This switch is off by default because some users do not want this behavior. Enable it only when you explicitly want "third-party API + official remote control / official plugins" at the same time.
 
-After it is enabled, backend switching for third-party Codex providers uses a config-only write path:
+After it is enabled, when you switch to a third-party provider without routing takeover:
 
 - `auth.json`: keeps the official ChatGPT / Codex login cache.
 - `config.toml`: stores the active third-party provider's model, endpoint, `model_provider`, and provider-scoped `experimental_bearer_token`.
 
+The `config.toml` half has nothing to do with the switch: it is written the same way when the switch is off. The switch only controls whether `auth.json` is kept or removed. While routing takeover is enabled, the official login is always preserved, regardless of this switch.
+
 ## Step 3: Add a third-party Codex provider
 
-Return to the Codex panel and click the plus button in the upper-right corner to add a provider. Prefer built-in presets such as DeepSeek, Kimi, MiniMax, GLM, or SiliconFlow.
+Return to the Codex panel and click the plus button in the upper-right corner to add a provider. Prefer built-in presets such as DeepSeek, Kimi, MiniMax, GLM, or SiliconFlow. After selecting a preset, you only need to enter the API key; the preset automatically configures the base URL, default model, model catalog, and upstream format.
 
-Using DeepSeek as an example, after selecting the preset, you only need to enter the API key. The preset automatically configures the base URL, default model, model mapping table, and "Needs Local Routing" flag.
+After saving, check the badge on the provider card:
 
-![DeepSeek Codex provider form](../images/codex-deepseek-routing/02-deepseek-codex-routing-form.png)
+- **No badge**: the upstream natively supports the OpenAI Responses API and can connect directly, without local routing. The DeepSeek, Kimi, MiniMax, Zhipu GLM, and 千问AI平台 presets, as well as aggregators that offer GPT models, all fall into this group.
+- **Has the `Needs Routing` badge**: the upstream format is `Chat Completions (routing required)`, for example SiliconFlow or ModelScope. Local routing must be enabled for these providers so CC Switch can convert Codex Responses requests into Chat Completions requests.
 
-If your third-party provider natively supports the OpenAI Responses API, such as an aggregator that offers GPT models, local routing may not be needed.
-If it only supports OpenAI Chat Completions, which is common for DeepSeek / Kimi / MiniMax paths, local routing must be enabled so CC Switch can convert Codex Responses requests into Chat Completions requests.
+For a custom provider, choose the upstream format under `Advanced Options -> Upstream Format` at the bottom of the form.
 
 ## Step 4: Enable local routing and route Codex when needed
 
@@ -91,12 +95,12 @@ Settings -> Routing -> Local Routing
 
 Complete two actions:
 
-1. Turn on the main routing switch to start the local service. The default address is usually `127.0.0.1:15721`.
+1. Turn on the `Routing Master Switch` to start the local service. The default address is usually `127.0.0.1:15721`.
 2. Under `Routing Enabled`, turn on `Codex`.
 
 ![Enabling Codex takeover on the local routing page](../images/codex-deepseek-routing/03-local-route-codex-takeover.png)
 
-After takeover, Codex's live `config.toml` temporarily points to the CC Switch local route. The real third-party API key remains in the CC Switch provider configuration, and is projected into the `experimental_bearer_token` in `config.toml` when providers are switched.
+After takeover, Codex's live `config.toml` temporarily points to the CC Switch local route, and the token field holds the placeholder `PROXY_MANAGED`. The real third-party API key remains in the CC Switch provider configuration and is injected by the local route when it forwards requests. During takeover, the official login in `auth.json` is always preserved.
 
 ## Step 5: Switch to the third-party provider and restart Codex
 
@@ -126,7 +130,7 @@ They have different responsibilities:
 - `auth.json` stores the official ChatGPT / Codex login cache, which Codex App needs to identify the official account and enable remote control and official plugins.
 - `config.toml` stores runtime configuration such as the current model provider, base URL, model, model catalog, and provider-scoped token.
 
-After `Keep official login when switching third-party providers` is enabled, CC Switch takes the third-party provider API key from the provider configuration and writes it under the current provider in `config.toml`:
+When you switch directly to a third-party provider, CC Switch takes the third-party provider API key from the provider configuration and writes it under the current provider in `config.toml` (this step does not depend on the switch):
 
 ```toml
 model_provider = "custom"
@@ -138,7 +142,7 @@ wire_api = "responses"
 experimental_bearer_token = "sk-..."
 ```
 
-At the same time, `auth.json` keeps the official login cache unchanged. Codex App can still identify the official account, while model requests follow the current provider and base URL in `config.toml`.
+With `Keep official login for direct switches` enabled, `auth.json` keeps the official login cache unchanged. Codex App can still identify the official account, while model requests follow the current provider and base URL in `config.toml`.
 
 If the provider uses the Chat Completions protocol, CC Switch local routing adds another conversion layer:
 
@@ -170,9 +174,11 @@ If you switch to DeepSeek, Codex can still display the official account, while m
 
 Codex reads the model catalog at startup. Even if CC Switch has generated a new model catalog, a running Codex process may not hot-load it, so restart Codex after editing model mappings.
 
-### Turning the switch off returns to the old behavior
+### With the switch off, direct switches delete the official login
 
-If `Keep official login when switching third-party providers` is turned off, third-party provider switching uses the compatibility behavior from older versions and may write `auth.json` again. If your goal is to keep official remote control and official plugins long term, keep this switch enabled.
+If `Keep official login for direct switches` is turned off, switching to a third-party provider without routing takeover makes CC Switch delete `auth.json`. Codex App then loses its official login state, so official remote control and official plugins stop working. The third-party API key is still written only to `config.toml`, never to `auth.json`.
+
+Routing takeover is not affected by this switch: while routing takeover is enabled, the official login is always preserved. If your goal is to keep official remote control and official plugins long term, keep this switch enabled.
 
 ## FAQ
 
@@ -186,11 +192,11 @@ Yes. The official account is mainly used to obtain and preserve the official log
 
 **What should I do if official plugins or mobile remote control still do not work?**
 
-Switch back to `OpenAI Official`, restart Codex, and complete official login once. Then confirm `Settings -> General -> Codex App Enhancements -> Keep official login when switching third-party providers` is enabled in CC Switch before switching back to the third-party provider.
+Switch back to `OpenAI Official`, restart Codex, and complete official login once. Then confirm `Settings -> General -> Codex App Enhancements -> Keep official login for direct switches` is enabled in CC Switch before switching back to the third-party provider.
 
 **What if third-party requests return 404, the model list is wrong, or streaming responses are broken?**
 
-If the provider uses Chat Completions, confirm that the provider form has `Needs Local Routing` enabled, and that `Settings -> Routing` has both the main routing switch and Codex takeover enabled.
+If the provider uses Chat Completions, confirm that `Upstream Format` under `Advanced Options` in the provider form is set to `Chat Completions (routing required)`, and that `Settings -> Routing` has both the `Routing Master Switch` and Codex takeover turned on.
 
 **Can I switch back to OpenAI Official while local routing is enabled?**
 
@@ -203,8 +209,9 @@ Because Codex App Enhancements and routing takeover can create unnecessary troub
 ## References
 
 - [Can't see custom models in the Codex desktop app? (FAQ)](./codex-desktop-custom-model-visibility-en.md)
-- [Codex DeepSeek local routing hands-on guide](./codex-deepseek-routing-guide-en.md)
+- [Using Chat-Format APIs in Codex: Local Routing Guide](./codex-deepseek-routing-guide-en.md)
 - [Add a Codex provider: Chat Completions routing and model mapping](../user-manual/en/2-providers/2.1-add.md)
 - [Local Proxy Service](../user-manual/en/4-proxy/4.1-service.md)
 - [Local Routing](../user-manual/en/4-proxy/4.2-routing.md)
 - [CC Switch v3.16.1 Release Note](../release-notes/v3.16.1-en.md)
+- [CC Switch v3.20.1 Release Note](../release-notes/v3.20.1-en.md)
