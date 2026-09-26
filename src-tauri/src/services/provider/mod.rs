@@ -6962,6 +6962,7 @@ impl ProviderService {
         access_token: Option<&str>,
         user_id: Option<&str>,
         template_type: Option<&str>,
+        proxy_url: Option<&str>,
     ) -> Result<UsageResult, AppError> {
         usage::test_usage_script(
             state,
@@ -6974,6 +6975,7 @@ impl ProviderService {
             access_token,
             user_id,
             template_type,
+            proxy_url,
         )
         .await
     }

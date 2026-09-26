@@ -612,6 +612,14 @@ async fn query_provider_usage_inner(
         let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
         let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
 
+        // 官方 coding plan 查询同样遵循供应商级外部 API 代理：优先使用 outboundProxyUrl
+        let outbound_proxy_url = provider
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.outbound_proxy_url.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
         let quota = crate::services::coding_plan::get_coding_plan_quota(
             &base_url,
             &api_key,
@@ -620,6 +628,7 @@ async fn query_provider_usage_inner(
             coding_plan_provider.as_deref(),
             team_organization_id.as_deref(),
             team_project_id.as_deref(),
+            outbound_proxy_url.as_deref(),
         )
         .await
         .map_err(|e| format!("Failed to query coding plan: {e}"))?;
@@ -698,7 +707,15 @@ async fn query_provider_usage_inner(
         // 按 app 区分的凭据存储格式提取 Base URL 与 API Key
         let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
 
-        return crate::services::balance::get_balance(&base_url, &api_key)
+        // 官方余额查询同样遵循供应商级外部 API 代理：优先使用 outboundProxyUrl
+        let proxy_url = provider
+            .and_then(|p| p.meta.as_ref())
+            .and_then(|m| m.outbound_proxy_url.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+
+        return crate::services::balance::get_balance(&base_url, &api_key, proxy_url.as_deref())
             .await
             .map_err(|e| format!("Failed to query balance: {e}"));
     }
@@ -777,6 +794,8 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] accessToken: Option<String>,
     #[allow(non_snake_case)] userId: Option<String>,
     #[allow(non_snake_case)] templateType: Option<String>,
+    // 供应商级外部 API 代理（outboundProxyUrl），用于测试路径覆盖全局代理
+    #[allow(non_snake_case)] proxyUrl: Option<String>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::test_usage_script(
@@ -790,6 +809,7 @@ pub async fn testUsageScript(
         accessToken.as_deref(),
         userId.as_deref(),
         templateType.as_deref(),
+        proxyUrl.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())
