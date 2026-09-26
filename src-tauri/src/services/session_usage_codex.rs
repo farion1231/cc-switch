@@ -80,7 +80,7 @@ struct TokenUsageSignature {
     last: Option<TokenCountersSignature>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TimestampedTokenSignature {
     timestamp: DateTime<Utc>,
     signature: TokenUsageSignature,
@@ -167,12 +167,15 @@ impl ParentTokenTimeline {
                 parent_path.display()
             ));
         }
-        Ok(self
-            .events
+        Ok(self.signatures_at(cutoff))
+    }
+
+    fn signatures_at(&self, cutoff: DateTime<Utc>) -> Vec<TokenUsageSignature> {
+        self.events
             .iter()
             .filter(|event| event.timestamp <= cutoff)
             .map(|event| event.signature.clone())
-            .collect())
+            .collect()
     }
 }
 
@@ -766,6 +769,12 @@ fn build_rollout_index(files: &[PathBuf]) -> RolloutIndex {
         if let Some(thread_id) = thread_id_from_filename(path) {
             index.entry(thread_id).or_default().push(path.clone());
         }
+        // paginated / resume 的续写页（`<threadId>_<rolloutId>`）同时登记在线程
+        // 本体 UUID 下：子代理的 forked_from_id 指向线程本体，解析父时间线时
+        // 必须能看到首页之后的分段。
+        if let Some(thread_id) = leading_thread_id_from_filename(path) {
+            index.entry(thread_id).or_default().push(path.clone());
+        }
     }
     for paths in index.values_mut() {
         paths.sort();
@@ -1032,10 +1041,16 @@ fn parse_codex_file(
     })
 }
 
+#[cfg(test)]
 fn parent_signatures_before(
     parent_path: &Path,
     cutoff: DateTime<Utc>,
 ) -> Result<Vec<TokenUsageSignature>, String> {
+    load_parent_timeline(parent_path)?.signatures_before(parent_path, cutoff)
+}
+
+/// 读取（或命中缓存）父 rollout 单个文件的完整 token 时间线。
+fn load_parent_timeline(parent_path: &Path) -> Result<Arc<ParentTokenTimeline>, String> {
     let file = fs::File::open(parent_path)
         .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
     let stamp = ParentFileStamp::from_file(&file);
@@ -1049,7 +1064,7 @@ fn parent_signatures_before(
         })
     });
     if let Some(timeline) = cached_timeline {
-        return timeline.signatures_before(parent_path, cutoff);
+        return Ok(timeline);
     }
 
     let mut events = Vec::new();
@@ -1103,7 +1118,6 @@ fn parent_signatures_before(
         max_timestamp,
         has_token_without_timestamp,
     });
-    let result = timeline.signatures_before(parent_path, cutoff);
     if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
         caches.parent_timelines.insert(
             parent_path.to_path_buf(),
@@ -1113,7 +1127,7 @@ fn parent_signatures_before(
             },
         );
     }
-    result
+    Ok(timeline)
 }
 
 fn resolve_parent_signatures(
@@ -1125,19 +1139,44 @@ fn resolve_parent_signatures(
         return Err(format!("找不到父 rollout: {parent_id}"));
     };
 
-    let mut snapshots = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        snapshots.push(parent_signatures_before(candidate, cutoff)?);
+    // 同一线程 UUID 可能对应多个文件：同一 rollout 的副本（如 sessions/ 与
+    // archived_sessions/ 各一份）必须内容一致；paginated / resume 的续写页
+    // （`<parent_id>_<rolloutId>`）则是该线程的后续分段——翻页后首页不再增长，
+    // 必须按文件名时间前缀顺序拼成一条时间线，再判断是否已写到 child fork 时刻。
+    let mut ordered = candidates.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+
+    let mut merged = ParentTokenTimeline {
+        events: Vec::new(),
+        max_timestamp: None,
+        has_token_without_timestamp: false,
+    };
+    let mut segments: Vec<(Option<String>, Arc<ParentTokenTimeline>)> = Vec::new();
+    let mut latest_path: Option<&Path> = None;
+    for candidate in ordered {
+        let timeline = load_parent_timeline(candidate)?;
+        let rollout_id = thread_id_from_filename(candidate);
+        if let Some((_, first)) = segments.iter().find(|(id, _)| *id == rollout_id) {
+            if first.signatures_at(cutoff) != timeline.signatures_at(cutoff) {
+                return Err(format!(
+                    "父 rollout UUID {parent_id} 对应多个内容不一致的文件"
+                ));
+            }
+            continue;
+        }
+        merged.events.extend(timeline.events.iter().cloned());
+        merged.max_timestamp = match (merged.max_timestamp, timeline.max_timestamp) {
+            (Some(current), Some(other)) => Some(current.max(other)),
+            (current, other) => current.or(other),
+        };
+        merged.has_token_without_timestamp |= timeline.has_token_without_timestamp;
+        segments.push((rollout_id, timeline));
+        latest_path = Some(candidate.as_path());
     }
-    let Some(first) = snapshots.first() else {
+    let Some(latest_path) = latest_path else {
         return Err(format!("找不到父 rollout: {parent_id}"));
     };
-    if snapshots.iter().skip(1).any(|snapshot| snapshot != first) {
-        return Err(format!(
-            "父 rollout UUID {parent_id} 对应多个内容不一致的文件"
-        ));
-    }
-    Ok(first.clone())
+    merged.signatures_before(latest_path, cutoff)
 }
 
 fn matching_replay_prefix(child: &[ParsedTokenEvent], parent: &[TokenUsageSignature]) -> usize {
@@ -1614,6 +1653,7 @@ mod tests {
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
     const CHILD_B_ID: &str = "00000000-0000-4000-8000-000000000003";
+    const PARENT_PAGE_ID: &str = "00000000-0000-4000-8000-000000000004";
 
     fn write_jsonl(path: &Path, values: &[serde_json::Value]) {
         let contents = values
@@ -2604,6 +2644,68 @@ mod tests {
             "SELECT input_tokens, cache_read_tokens, output_tokens
              FROM proxy_request_logs WHERE request_id = ?1",
             [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:2")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (300, 150, 50));
+        Ok(())
+    }
+
+    /// paginated 线程翻页后，续写页是 `<threadId>_<rolloutId>` 双段文件名，
+    /// 首页从此不再增长。之后 spawn 的子代理 fork 时刻晚于首页最后事件，
+    /// 父时间线必须把首页与续写页拼起来看，否则子代理会被永久 deferred。
+    #[test]
+    #[serial_test::serial]
+    fn test_paginated_parent_pages_are_merged_before_fork_cutoff() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent_root = rollout_path(temp.path(), PARENT_ID);
+        let parent_page = temp.path().join(format!(
+            "rollout-2026-07-10T03-00-20-{PARENT_ID}_{PARENT_PAGE_ID}.jsonl"
+        ));
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent_root,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        write_jsonl(
+            &parent_page,
+            &[
+                session_meta_at(PARENT_ID, None, None, "2026-07-10T03:00:20Z"),
+                token_count_at(2_000, 1_800, 200, "2026-07-10T03:00:21Z"),
+                turn_context_at("2026-07-10T03:00:40Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    Some(PARENT_ID),
+                    "2026-07-10T03:00:30Z",
+                ),
+                turn_context(),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:31Z"),
+                token_count_at(2_000, 1_800, 200, "2026-07-10T03:00:32Z"),
+                token_count_at(2_300, 1_950, 250, "2026-07-10T03:00:33Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &child, &[&parent_root, &parent_page, &child])?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 2, false)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:3")],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(usage, (300, 150, 50));
