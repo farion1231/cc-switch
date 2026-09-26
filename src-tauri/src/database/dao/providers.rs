@@ -16,7 +16,96 @@ type OmoProviderRow = (
     String,
 );
 
+fn codex_oauth_account_id(meta_json: &str) -> Option<String> {
+    let meta = serde_json::from_str::<serde_json::Value>(meta_json).ok()?;
+    let binding = meta.get("authBinding")?.as_object()?;
+    if binding.get("source")?.as_str()? != "managed_account"
+        || binding.get("authProvider")?.as_str()? != "codex_oauth"
+    {
+        return None;
+    }
+    binding.get("accountId")?.as_str().map(str::to_string)
+}
+
 impl Database {
+    /// Remove Codex OAuth provider bindings that cannot be resolved on this device.
+    ///
+    /// Managed Codex accounts live in the device-local `codex_oauth_auth.json`, while
+    /// provider metadata is portable through database backups and cloud sync. A restore
+    /// can therefore import an account ID that does not exist locally. Reconcile those
+    /// references before projecting restored providers to the live Codex configuration.
+    pub(crate) fn codex_oauth_bound_account_ids(&self) -> Result<HashSet<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT meta FROM providers WHERE app_type = 'codex'")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut account_ids = HashSet::new();
+        for row in rows {
+            let meta_json = row.map_err(|e| AppError::Database(e.to_string()))?;
+            if let Some(account_id) = codex_oauth_account_id(&meta_json) {
+                account_ids.insert(account_id);
+            }
+        }
+        Ok(account_ids)
+    }
+
+    pub(crate) fn clear_codex_oauth_bindings_for_accounts(
+        &self,
+        unavailable_account_ids: &HashSet<String>,
+    ) -> Result<usize, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let updates = {
+            let mut stmt = conn
+                .prepare("SELECT id, meta FROM providers WHERE app_type = 'codex'")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            let mut updates = Vec::new();
+            for row in rows {
+                let (provider_id, meta_json) =
+                    row.map_err(|e| AppError::Database(e.to_string()))?;
+                let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_json) else {
+                    continue;
+                };
+                let unavailable_account = codex_oauth_account_id(&meta_json)
+                    .is_some_and(|account_id| unavailable_account_ids.contains(&account_id));
+
+                if unavailable_account {
+                    if let Some(meta) = meta.as_object_mut() {
+                        meta.remove("authBinding");
+                    }
+                    updates.push((provider_id, meta.to_string()));
+                }
+            }
+            updates
+        };
+
+        let update_count = updates.len();
+        if update_count == 0 {
+            return Ok(0);
+        }
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for (provider_id, meta_json) in updates {
+            tx.execute(
+                "UPDATE providers SET meta = ?1 WHERE id = ?2 AND app_type = 'codex'",
+                params![meta_json, provider_id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(update_count)
+    }
+
     pub fn get_all_providers(
         &self,
         app_type: &str,
@@ -803,6 +892,118 @@ impl Database {
         self.save_provider(app_type_str, &provider)?;
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod codex_oauth_binding_reconciliation_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn insert_provider(db: &Database, id: &str, app_type: &str, meta: serde_json::Value) {
+        let conn = db.conn.lock().expect("database lock");
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES (?1, ?2, ?1, '{}', ?3)",
+            params![id, app_type, meta.to_string()],
+        )
+        .expect("insert provider");
+    }
+
+    fn provider_meta(db: &Database, id: &str, app_type: &str) -> serde_json::Value {
+        let conn = db.conn.lock().expect("database lock");
+        let raw: String = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![id, app_type],
+                |row| row.get(0),
+            )
+            .expect("query provider meta");
+        serde_json::from_str(&raw).expect("valid provider meta")
+    }
+
+    #[test]
+    fn clears_restored_codex_oauth_binding_when_account_is_unavailable() {
+        let db = Database::memory().expect("memory db");
+        insert_provider(
+            &db,
+            "openai-official",
+            "codex",
+            json!({
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "codex_oauth",
+                    "accountId": "remote-account"
+                },
+                "codexFastMode": true
+            }),
+        );
+
+        let cleared = db
+            .clear_codex_oauth_bindings_for_accounts(&HashSet::from(["remote-account".to_string()]))
+            .expect("reconcile bindings");
+
+        assert_eq!(cleared, 1);
+        assert_eq!(
+            provider_meta(&db, "openai-official", "codex"),
+            json!({ "codexFastMode": true }),
+            "only the dangling binding should be removed"
+        );
+    }
+
+    #[test]
+    fn preserves_available_and_unrelated_auth_bindings() {
+        let db = Database::memory().expect("memory db");
+        let local_binding = json!({
+            "authBinding": {
+                "source": "managed_account",
+                "authProvider": "codex_oauth",
+                "accountId": "local-account"
+            }
+        });
+        let unrelated_binding = json!({
+            "authBinding": {
+                "source": "managed_account",
+                "authProvider": "github_copilot",
+                "accountId": "github-account"
+            }
+        });
+        insert_provider(&db, "local-codex", "codex", local_binding.clone());
+        insert_provider(&db, "unrelated-codex", "codex", unrelated_binding.clone());
+        insert_provider(
+            &db,
+            "other-app",
+            "claude",
+            json!({
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "codex_oauth",
+                    "accountId": "remote-account"
+                }
+            }),
+        );
+
+        assert_eq!(
+            db.codex_oauth_bound_account_ids()
+                .expect("collect bound accounts"),
+            HashSet::from(["local-account".to_string()]),
+            "only explicit Codex OAuth bindings on Codex providers are reconciled"
+        );
+
+        let unavailable = HashSet::from(["missing-account".to_string()]);
+        let cleared = db
+            .clear_codex_oauth_bindings_for_accounts(&unavailable)
+            .expect("reconcile bindings");
+
+        assert_eq!(cleared, 0);
+        assert_eq!(provider_meta(&db, "local-codex", "codex"), local_binding);
+        assert_eq!(
+            provider_meta(&db, "unrelated-codex", "codex"),
+            unrelated_binding
+        );
+        assert!(provider_meta(&db, "other-app", "claude")
+            .get("authBinding")
+            .is_some());
     }
 }
 
