@@ -337,7 +337,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
 }
 
 pub fn transform_claude_request_for_api_format(
-    body: serde_json::Value,
+    mut body: serde_json::Value,
     provider: &Provider,
     api_format: &str,
     session_id: Option<&str>,
@@ -388,6 +388,14 @@ pub fn transform_claude_request_for_api_format(
     } else {
         (None, "none")
     };
+    // Claude Code 在对话中途注入的 <total_tokens> 记账 system 消息是客户端本地
+    // 提示，上游不消费，且数值随上下文增长逐轮变化——原样转发会把转换目标的
+    // 前缀缓存从首条标记处打断（#7417）。转换路径统一在分发处剥离一次；
+    // Anthropic 直通不经此分支，保持字节原样。
+    if claude_api_format_needs_transform(api_format) {
+        super::transform::strip_claude_code_token_markers(&mut body);
+    }
+
     match api_format {
         "openai_responses" => {
             log::debug!(
@@ -1061,6 +1069,73 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn transform_claude_request_strips_token_markers_for_converted_formats() {
+        // #7417：<total_tokens> 记账消息数值逐轮变化，会打断转换目标的
+        // 前缀缓存——三条转换路径（chat/responses/gemini）都要在分发处剥离。
+        let provider = create_provider(json!({}));
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "system", "content": "<total_tokens>14963538 tokens left</total_tokens>"},
+                {"role": "user", "content": "Continue"}
+            ]
+        });
+
+        for api_format in ["openai_chat", "openai_responses", "gemini_native"] {
+            let result = transform_claude_request_for_api_format(
+                body.clone(),
+                &provider,
+                api_format,
+                None,
+                None,
+            )
+            .unwrap();
+            let serialized = serde_json::to_string(&result).unwrap();
+            assert!(
+                !serialized.contains("total_tokens"),
+                "marker leaked into {api_format} output"
+            );
+        }
+
+        // 形状抽查（chat 路径）：剥离后消息按原序保留，不合并不上提。
+        let result =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "Hello");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "Continue");
+    }
+
+    #[test]
+    fn transform_claude_request_keeps_passthrough_byte_faithful() {
+        // Anthropic 直通不做任何改写（含 <total_tokens> 标记），
+        // 保持与客户端发来的字节一致。
+        let provider = create_provider(json!({}));
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "system", "content": "<total_tokens>14963538 tokens left</total_tokens>"}
+            ]
+        });
+
+        let result = transform_claude_request_for_api_format(
+            body.clone(),
+            &provider,
+            "anthropic",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(result, body);
     }
 
     #[test]
