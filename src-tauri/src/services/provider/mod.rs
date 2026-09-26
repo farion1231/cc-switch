@@ -4141,6 +4141,66 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn opencode_provider_roundtrip_preserves_fields_on_import_and_update() {
+        with_test_home(|state, _| {
+            let mut provider = opencode_provider("roundtrip-opencode");
+            provider.settings_config["api"] = json!("https://api.example.com/v1");
+            provider.settings_config["env"] = json!(["EXAMPLE_API_KEY"]);
+            provider.settings_config["models"]["gpt-4o"]["limit"] = json!({
+                "input": 120000,
+                "context": 128000,
+                "output": 8000
+            });
+            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed opencode live provider");
+
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            let mut saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .unwrap()
+                .expect("imported provider");
+            assert_eq!(saved.settings_config, provider.settings_config);
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+
+            saved.settings_config["options"]["apiKey"] = json!("updated-key");
+            let expected = saved.settings_config.clone();
+            ProviderService::update(state, AppType::OpenCode, None, saved)
+                .expect("update imported provider");
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert_eq!(live[&provider.id], expected);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn opencode_provider_roundtrip_preserves_fields_on_live_write() {
+        with_test_home(|_, _| {
+            let mut provider = opencode_provider("write-opencode");
+            provider.settings_config["api"] = json!("https://api.example.com/v1");
+            provider.settings_config["env"] = json!(["EXAMPLE_API_KEY"]);
+            provider.settings_config["models"]["gpt-4o"]["limit"] = json!({
+                "input": 120000,
+                "context": 128000,
+                "output": 8000
+            });
+            let expected = provider.settings_config.clone();
+
+            // Exercise the full-config fragment extraction as well as the writer.
+            provider.settings_config = json!({
+                "$schema": "https://opencode.ai/config.json",
+                "provider": { provider.id.clone(): expected.clone() }
+            });
+            live::write_live_snapshot(&AppType::OpenCode, &provider)
+                .expect("write opencode provider");
+
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert_eq!(live[&provider.id], expected);
+        });
+    }
+
+    #[test]
+    #[serial]
     fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let provider = opencode_provider("imported-opencode");

@@ -1386,13 +1386,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.settings_config.clone()
             };
 
-            // Convert settings_config to OpenCodeProviderConfig
+            // Validate with the existing type, but persist the original fragment:
+            // the type does not describe every OpenCode provider/model field.
             let opencode_config_result =
                 serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
 
             match opencode_config_result {
-                Ok(config) => {
-                    opencode_config::set_typed_provider(&provider.id, &config)?;
+                Ok(_) => {
+                    opencode_config::set_provider(&provider.id, config_to_write)?;
                     log::info!("OpenCode provider '{}' written to live config", provider.id);
                 }
                 Err(e) => {
@@ -2151,8 +2152,9 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
+    use crate::provider::OpenCodeProviderConfig;
 
-    let providers = opencode_config::get_typed_providers()?;
+    let providers = opencode_config::get_providers()?;
     if providers.is_empty() {
         return Ok(0);
     }
@@ -2161,12 +2163,15 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
-    for (id, config) in providers {
-        // Convert to Value for settings_config
-        let settings_config = match serde_json::to_value(&config) {
-            Ok(v) => v,
+    for (id, settings_config) in providers {
+        // Keep validation and display-name extraction separate from persistence.
+        // Serializing this partial type would discard fields such as api, env,
+        // and models.<id>.limit.input before they ever reach the database.
+        let config = match serde_json::from_value::<OpenCodeProviderConfig>(settings_config.clone())
+        {
+            Ok(config) => config,
             Err(e) => {
-                log::warn!("Failed to serialize OpenCode provider '{id}': {e}");
+                log::warn!("Failed to parse provider '{id}': {e}");
                 continue;
             }
         };
