@@ -51,6 +51,7 @@ const locales = [
   ["ja", ja],
   ["zh-TW", zhTW],
 ] as const;
+const supportedLocales = [["en", en], ...locales] as const;
 
 describe("locale coverage", () => {
   it.each(locales)("covers every Pi translation key in %s", (_name, tree) => {
@@ -89,6 +90,18 @@ describe("locale coverage", () => {
       });
 
       expect(missingMentions).toEqual([]);
+    },
+  );
+});
+
+describe("Codex routing hint coverage", () => {
+  it.each(supportedLocales)(
+    "mentions every routed upstream protocol in %s",
+    (_name, tree) => {
+      const hint = tree.codexConfig.advancedSectionHint;
+
+      expect(hint).toContain("Chat Completions");
+      expect(hint).toContain("Anthropic Messages");
     },
   );
 });

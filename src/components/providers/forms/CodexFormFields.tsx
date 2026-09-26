@@ -902,7 +902,7 @@ export function CodexFormFields({
                   })
                 : t("codexConfig.advancedSectionHint", {
                     defaultValue:
-                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions / Anthropic Messages 协议的供应商需开启路由接管才能使用。",
                   })}
             </p>
           )}
