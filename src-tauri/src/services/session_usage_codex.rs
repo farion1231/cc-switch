@@ -21,6 +21,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, update_sync_state_on_conn, SessionSyncResult,
 };
+use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
     find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
 };
@@ -48,6 +49,7 @@ const CODEX_THREAD_REQUEST_ID_PREFIX: &str = "codex_session:thread-v1";
 struct CumulativeTokens {
     input: u64,
     cached_input: u64,
+    cache_write_input: u64,
     output: u64,
 }
 
@@ -56,6 +58,7 @@ struct CumulativeTokens {
 struct DeltaTokens {
     input: u32,
     cached_input: u32,
+    cache_write_input: u32,
     output: u32,
 }
 
@@ -625,11 +628,15 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
         None => DeltaTokens {
             input: current.input as u32,
             cached_input: current.cached_input as u32,
+            cache_write_input: current.cache_write_input as u32,
             output: current.output as u32,
         },
         Some(p) => DeltaTokens {
             input: current.input.saturating_sub(p.input) as u32,
             cached_input: current.cached_input.saturating_sub(p.cached_input) as u32,
+            cache_write_input: current
+                .cache_write_input
+                .saturating_sub(p.cache_write_input) as u32,
             output: current.output.saturating_sub(p.output) as u32,
         },
     }
@@ -638,6 +645,7 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
 fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeTokens) {
     high_water.input = high_water.input.max(current.input);
     high_water.cached_input = high_water.cached_input.max(current.cached_input);
+    high_water.cache_write_input = high_water.cache_write_input.max(current.cache_write_input);
     high_water.output = high_water.output.max(current.output);
 }
 
@@ -665,6 +673,10 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
         cached_input: total_usage
             .get("cached_input_tokens")
             .or_else(|| total_usage.get("cache_read_input_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        cache_write_input: total_usage
+            .get("cache_write_input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
         output: total_usage
@@ -968,6 +980,7 @@ fn parse_codex_file(
                     DeltaTokens {
                         input: 0,
                         cached_input: 0,
+                        cache_write_input: 0,
                         output: 0,
                     }
                 } else if let Some(last) = last {
@@ -977,6 +990,7 @@ fn parse_codex_file(
                     DeltaTokens {
                         input: last.input as u32,
                         cached_input: last.cached_input as u32,
+                        cache_write_input: last.cache_write_input as u32,
                         output: last.output as u32,
                     }
                 } else if let Some(total) = total.as_ref() {
@@ -991,8 +1005,11 @@ fn parse_codex_file(
                         total_high_water = Some(total);
                     }
                 }
+                // Cache reads and writes are disjoint parts of input_tokens.
+                let cached_input = delta.cached_input.min(delta.input);
                 let delta = DeltaTokens {
-                    cached_input: delta.cached_input.min(delta.input),
+                    cached_input,
+                    cache_write_input: delta.cache_write_input.min(delta.input - cached_input),
                     ..delta
                 };
                 let nonzero_index = if delta.is_zero() {
@@ -1508,7 +1525,7 @@ fn insert_codex_session_entry_on_conn(
         input_tokens: delta.input,
         output_tokens: delta.output,
         cache_read_tokens: delta.cached_input,
-        cache_creation_tokens: 0,
+        cache_creation_tokens: delta.cache_write_input,
         created_at,
     };
     if should_skip_session_insert(conn, request_id, &dedup_key)? {
@@ -1529,7 +1546,7 @@ fn insert_codex_session_entry_on_conn(
         input_tokens: delta.input,
         output_tokens: delta.output,
         cache_read_tokens: delta.cached_input,
-        cache_creation_tokens: 0,
+        cache_creation_tokens: delta.cache_write_input,
         model: Some(model.to_string()),
         message_id: None,
     };
@@ -1566,8 +1583,9 @@ fn insert_codex_session_entry_on_conn(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source,
+            input_token_semantics
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         )
         .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
@@ -1578,7 +1596,7 @@ fn insert_codex_session_entry_on_conn(
                 delta.input,
                 delta.output,
                 delta.cached_input,
-                0i64,                // cache_creation_tokens: Codex 日志无此数据
+                delta.cache_write_input,
                 input_cost,
                 output_cost,
                 cache_read_cost,
@@ -1594,6 +1612,7 @@ fn insert_codex_session_entry_on_conn(
                 "1.0",               // cost_multiplier
                 created_at,
                 "codex_session",     // data_source
+                INPUT_TOKEN_SEMANTICS_TOTAL, // input_tokens 含缓存读写
             ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
@@ -1609,6 +1628,7 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 mod tests {
     use super::*;
     use crate::services::session_usage::get_sync_state;
+    use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_LEGACY;
     use tempfile::tempdir;
 
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
@@ -2029,6 +2049,7 @@ mod tests {
         let current = CumulativeTokens {
             input: 17934,
             cached_input: 9600,
+            cache_write_input: 0,
             output: 454,
         };
         let delta = compute_delta(&prev, &current);
@@ -2043,11 +2064,13 @@ mod tests {
         let prev = Some(CumulativeTokens {
             input: 17934,
             cached_input: 9600,
+            cache_write_input: 0,
             output: 454,
         });
         let current = CumulativeTokens {
             input: 36722,
             cached_input: 27904,
+            cache_write_input: 0,
             output: 804,
         };
         let delta = compute_delta(&prev, &current);
@@ -2061,12 +2084,14 @@ mod tests {
         let prev = Some(CumulativeTokens {
             input: 58346,
             cached_input: 46976,
+            cache_write_input: 0,
             output: 1045,
         });
         // task 边界：相同的累计值
         let current = CumulativeTokens {
             input: 58346,
             cached_input: 46976,
+            cache_write_input: 0,
             output: 1045,
         };
         let delta = compute_delta(&prev, &current);
@@ -2079,11 +2104,13 @@ mod tests {
         let prev = Some(CumulativeTokens {
             input: 100,
             cached_input: 50,
+            cache_write_input: 0,
             output: 30,
         });
         let current = CumulativeTokens {
             input: 80,
             cached_input: 40,
+            cache_write_input: 0,
             output: 20,
         };
         let delta = compute_delta(&prev, &current);
@@ -2398,6 +2425,76 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(deltas, vec![100, 100, 50]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_write_tokens_are_billed_as_cache_creation() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        // Codex reports cache writes as a subset of input_tokens, disjoint from cached reads.
+        let usage = serde_json::json!({
+            "input_tokens": 1_000,
+            "cached_input_tokens": 300,
+            "cache_write_input_tokens": 600,
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 1_050
+        });
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                serde_json::json!({
+                    "timestamp": "2026-07-10T03:00:02Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": { "total_token_usage": usage, "last_token_usage": usage }
+                    }
+                }),
+            ],
+        );
+
+        let db = Database::memory()?;
+        assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
+
+        let conn = lock_conn!(db.conn);
+        let fresh_input = crate::services::sql_helpers::fresh_input_sql("");
+        let (fresh, cache_read, cache_creation, cache_creation_cost, total_cost): (
+            i64,
+            i64,
+            i64,
+            String,
+            String,
+        ) = conn.query_row(
+            &format!(
+                "SELECT {fresh_input}, cache_read_tokens, cache_creation_tokens,
+                        cache_creation_cost_usd, total_cost_usd
+                 FROM proxy_request_logs WHERE data_source = 'codex_session'"
+            ),
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!((fresh, cache_read, cache_creation), (100, 300, 600));
+        // gpt-5.6-sol: $4 input, $20 output, $0.40 cache read, $5 cache write per MTok.
+        assert_eq!(
+            cache_creation_cost.parse::<Decimal>().unwrap(),
+            "0.003".parse().unwrap()
+        );
+        assert_eq!(
+            total_cost.parse::<Decimal>().unwrap(),
+            "0.00452".parse().unwrap()
+        );
         Ok(())
     }
 
@@ -3130,22 +3227,29 @@ mod tests {
             )?;
         }
 
-        let delta = DeltaTokens {
-            input: 10,
-            cached_input: 1,
-            output: 2,
-        };
-        let mut suspected_duplicates = 0;
-        let inserted = insert_codex_session_entry(
-            &db,
-            "codex-session-dup",
-            &delta,
-            "gpt-5.4",
-            Some("session-1"),
-            Some("1970-01-01T00:16:45Z"),
-            &mut suspected_duplicates,
-        )?;
-        assert!(!inserted);
+        // Older rollouts carry no cache-write count; newer ones report the same
+        // count the proxy logged. Either way the session row is the proxied request.
+        for (request_id, cache_write_input) in
+            [("codex-session-dup", 0), ("codex-session-dup-write", 7)]
+        {
+            let delta = DeltaTokens {
+                input: 10,
+                cached_input: 1,
+                cache_write_input,
+                output: 2,
+            };
+            let mut suspected_duplicates = 0;
+            let inserted = insert_codex_session_entry(
+                &db,
+                request_id,
+                &delta,
+                "gpt-5.4",
+                Some("session-1"),
+                Some("1970-01-01T00:16:45Z"),
+                &mut suspected_duplicates,
+            )?;
+            assert!(!inserted, "cache_write_input={cache_write_input}");
+        }
 
         let conn = lock_conn!(db.conn);
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
@@ -3157,11 +3261,62 @@ mod tests {
     }
 
     #[test]
+    fn test_codex_session_cache_writes_dedup_against_legacy_proxy_log() -> Result<(), AppError> {
+        // v3.17.0 之前的代理不记录 Codex 缓存写入（legacy 语义行写入量恒为 0）。
+        // 重建时带写入量的 session 行仍是同一请求；新语义代理行保持精确匹配。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, created_at, semantics) in [
+                ("legacy-proxy", 1000, INPUT_TOKEN_SEMANTICS_LEGACY),
+                ("total-proxy", 5000, INPUT_TOKEN_SEMANTICS_TOTAL),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        total_cost_usd, latency_ms, status_code, created_at, data_source,
+                        input_token_semantics
+                    ) VALUES (?1, 'openai', 'codex', 'gpt-5.6', 'gpt-5.6', 1000, 50, 300, 0,
+                              '0.01', 100, 200, ?2, 'proxy', ?3)",
+                    rusqlite::params![request_id, created_at, semantics],
+                )?;
+            }
+        }
+
+        let delta = DeltaTokens {
+            input: 1000,
+            cached_input: 300,
+            cache_write_input: 600,
+            output: 50,
+        };
+        let mut suspected_duplicates = 0;
+        for (request_id, timestamp, expect_inserted) in [
+            ("session-legacy", "1970-01-01T00:16:45Z", false),
+            ("session-total", "1970-01-01T01:23:25Z", true),
+        ] {
+            let inserted = insert_codex_session_entry(
+                &db,
+                request_id,
+                &delta,
+                "gpt-5.6",
+                Some("session-1"),
+                Some(timestamp),
+                &mut suspected_duplicates,
+            )?;
+            assert_eq!(inserted, expect_inserted, "{request_id}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_codex_session_duplicate_is_observed_but_still_inserted() -> Result<(), AppError> {
         let db = Database::memory()?;
         let delta = DeltaTokens {
             input: 10,
             cached_input: 1,
+            cache_write_input: 0,
             output: 2,
         };
         let mut suspected_duplicates = 0;
@@ -3323,11 +3478,13 @@ mod tests {
         let prev = Some(CumulativeTokens {
             input: 100,
             cached_input: 0,
+            cache_write_input: 0,
             output: 50,
         });
         let current = CumulativeTokens {
             input: 110,       // delta = 10
             cached_input: 80, // delta = 80（异常：大于 input delta）
+            cache_write_input: 0,
             output: 60,
         };
         let delta = compute_delta(&prev, &current);
