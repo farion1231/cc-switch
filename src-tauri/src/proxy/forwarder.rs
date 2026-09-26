@@ -1634,6 +1634,27 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Strict native Responses gateways require every tool output to carry
+        // its call id and all parallel tool outputs to follow their calls
+        // contiguously. Codex may insert a developer notice (notably
+        // `<image_resize_notice>`) between two image outputs, or replay a
+        // Codex-generated delegation output without a call id. Normalize only
+        // those malformed shapes before any provider-specific request rewrites.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let changed = super::providers::transform_codex_responses_tool_history::normalize_responses_tool_history(
+                &mut request_body,
+            );
+            if changed > 0 {
+                log::debug!(
+                    "[Codex] Normalized {changed} malformed tool-history item(s) for native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
