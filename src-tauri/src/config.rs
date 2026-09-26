@@ -410,6 +410,36 @@ fn atomic_write_with_unix_mode(
     data: &[u8],
     unix_mode: Option<u32>,
 ) -> Result<(), AppError> {
+    stage_write(path, data, unix_mode, false)?.commit()
+}
+
+/// 已写好、还没替换目标的临时文件。原子写的前半步：写入引擎先把一次操作涉及的
+/// 所有文件都备好临时文件、记下写前意图，再逐个 [`StagedWrite::commit`]。
+#[derive(Debug)]
+pub struct StagedWrite {
+    tmp: PathBuf,
+    path: PathBuf,
+}
+
+impl StagedWrite {
+    pub fn tmp_path(&self) -> &Path {
+        &self.tmp
+    }
+
+    /// 用临时文件替换目标（失败时删掉临时文件）。
+    pub fn commit(self) -> Result<(), AppError> {
+        commit_staged(&self.tmp, &self.path)
+    }
+}
+
+/// 写入临时文件：Unix 下 `unix_mode` 为 `None` 时沿用目标文件现有的权限位。
+/// `durable` 为真时写完先 fsync，崩溃恢复要靠这份临时文件前滚。
+pub(crate) fn stage_write(
+    path: &Path,
+    data: &[u8],
+    unix_mode: Option<u32>,
+    durable: bool,
+) -> Result<StagedWrite, AppError> {
     #[cfg(not(unix))]
     let _ = unix_mode;
 
@@ -458,7 +488,11 @@ fn atomic_write_with_unix_mode(
         Err(AppError::io(&candidate, source))
     })()?;
 
-    if let Err(source) = file.write_all(data).and_then(|_| file.flush()) {
+    let written = file
+        .write_all(data)
+        .and_then(|_| file.flush())
+        .and_then(|_| if durable { file.sync_all() } else { Ok(()) });
+    if let Err(source) = written {
         drop(file);
         let _ = fs::remove_file(&tmp);
         return Err(AppError::io(&tmp, source));
@@ -479,6 +513,14 @@ fn atomic_write_with_unix_mode(
         }
     }
 
+    Ok(StagedWrite {
+        tmp,
+        path: path.to_path_buf(),
+    })
+}
+
+/// 原子写的后半步：用 `tmp` 替换 `path`。崩溃恢复也用它提交上次留下的临时文件。
+pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -527,7 +569,7 @@ fn atomic_write_with_unix_mode(
                 break;
             }
 
-            match fs::rename(&tmp, path) {
+            match fs::rename(tmp, path) {
                 Ok(()) => {
                     completed = true;
                     break;
@@ -549,7 +591,7 @@ fn atomic_write_with_unix_mode(
 
         if !completed {
             let source = last_error.unwrap_or_else(std::io::Error::last_os_error);
-            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(tmp);
             return Err(AppError::IoContext {
                 context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
                 source,
@@ -559,8 +601,8 @@ fn atomic_write_with_unix_mode(
 
     #[cfg(not(windows))]
     {
-        if let Err(source) = fs::rename(&tmp, path) {
-            let _ = fs::remove_file(&tmp);
+        if let Err(source) = fs::rename(tmp, path) {
+            let _ = fs::remove_file(tmp);
             return Err(AppError::IoContext {
                 context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
                 source,

@@ -20,8 +20,10 @@ mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
+pub mod live;
 mod mcode_config;
 mod mcp;
+pub mod mode;
 mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
@@ -669,6 +671,10 @@ pub fn run() {
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
+
+            // 补完上次崩溃时写到一半的客户端文件（写前意图在 ~/.cc-switch/live-state.json），
+            // 要在任何写客户端文件的启动步骤之前。
+            crate::mode::operation::recover_on_startup(&app_state.db);
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）

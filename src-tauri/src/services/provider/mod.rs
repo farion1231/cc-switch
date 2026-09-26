@@ -6615,17 +6615,6 @@ impl ProviderService {
     /// 下一家：从 Bedrock 切到官方后，官方的 live 里还留着 `CLAUDE_CODE_USE_BEDROCK=1`，
     /// Claude Code 继续走 Bedrock。凭据另由 `is_sensitive_config_key` 统一剥离。
     fn claude_env_key_is_shared(key: &str) -> bool {
-        // `CLAUDE_CODE_USE_*` 不能按前缀：同一前缀下还有 USE_POWERSHELL_TOOL、
-        // USE_NATIVE_FILE_SEARCH 这类与供应商无关的开关（Claude Code 2.1.282 核实）。
-        const PROTOCOL_SELECTORS: &[&str] = &[
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-            "CLAUDE_CODE_USE_GATEWAY",
-            "CLAUDE_CODE_USE_MANTLE",
-            "CLAUDE_CODE_USE_ANTHROPIC_AWS",
-            "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
-        ];
         // Context limits follow the actual upstream model. Sharing these
         // across providers can cap GPT/Kimi to the wrong window and make
         // Claude Code compact too early or miss the upstream limit.
@@ -6634,45 +6623,15 @@ impl ProviderService {
             "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
         ];
 
-        // `ANTHROPIC_*` 整个前缀都是地址、凭据、各档模型名（含 #4272 的 Fable 档）
-        // 和自定义头；`AWS_*` / `VERTEX_REGION_*` 是 Bedrock / Vertex 的区域与凭据。
-        let key_field = key.starts_with("ANTHROPIC_")
-            || PROTOCOL_SELECTORS.contains(&key)
-            || (key.starts_with("CLAUDE_CODE_SKIP_") && key.ends_with("_AUTH"))
-            || key.starts_with("AWS_")
-            || key.starts_with("VERTEX_REGION_")
-            || matches!(
-                key,
-                "CLAUDE_CODE_SUBAGENT_MODEL"
-                    | "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"
-                    | "CLOUD_ML_REGION"
-                    | "GOOGLE_APPLICATION_CREDENTIALS"
-                    | "CLAUDE_CODE_OAUTH_TOKEN"
-                    | "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"
-                    | "CLAUDE_CODE_OAUTH_SCOPES"
-                    | "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"
-            );
-        !key_field && !UPSTREAM_WINDOW_KEYS.contains(&key) && !Self::is_sensitive_config_key(key)
+        !crate::live::floor::claude_floor_env(key)
+            && !UPSTREAM_WINDOW_KEYS.contains(&key)
+            && !Self::is_sensitive_config_key(key)
     }
 
     /// Claude 顶层键能否进通用配置片段，口径同 [`Self::claude_env_key_is_shared`]。
     /// `model` 是 `/model` 保存的选择，属于当时那一家。
     fn claude_top_key_is_shared(key: &str) -> bool {
-        const KEY_FIELDS: &[&str] = &[
-            "apiKeyHelper",
-            "apiBaseUrl",
-            "primaryModel",
-            "smallFastModel",
-            "apiKey",
-            "model",
-            "fallbackModel",
-            "modelOverrides",
-            "advisorModel",
-            "awsAuthRefresh",
-            "awsCredentialExport",
-            "gcpAuthRefresh",
-        ];
-        !KEY_FIELDS.contains(&key) && !Self::is_sensitive_config_key(key)
+        !crate::live::floor::claude_floor_top(key) && !Self::is_sensitive_config_key(key)
     }
 
     /// Extract common config for Claude (JSON format)
