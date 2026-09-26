@@ -26,6 +26,52 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface CodexCuratedStoreStatus {
+  exists: boolean;
+  valid: boolean;
+  pluginCount: number;
+  needsRepair: boolean;
+}
+
+export interface CodexBlockedMarketplaceEntry {
+  name: string;
+  source: string;
+  managedPath: string;
+}
+
+export interface CodexConfigDiagnosis {
+  parseError?: string;
+  blockedMarketplaces: CodexBlockedMarketplaceEntry[];
+}
+
+export interface CodexAuthDiagnosis {
+  exists: boolean;
+  validJson: boolean;
+  needsRepair: boolean;
+}
+
+export interface CodexRepairStatus {
+  codexHome: string;
+  curatedStore: CodexCuratedStoreStatus;
+  config: CodexConfigDiagnosis;
+  auth: CodexAuthDiagnosis;
+  needsRepair: boolean;
+}
+
+export interface CodexStoreRepairResult {
+  initialized: boolean;
+  configCleaned: boolean;
+  pluginCount: number;
+  needsRepair: boolean;
+  message: string;
+}
+
+export interface CodexAuthRepairResult {
+  repaired: boolean;
+  backupPath?: string;
+  message: string;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -47,6 +93,21 @@ export const settingsApi = {
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
+  },
+
+  /** Codex 修复工具：整体诊断（插件商店 / config.toml / auth.json） */
+  async codexRepairStatus(): Promise<CodexRepairStatus> {
+    return await invoke("codex_repair_status");
+  },
+
+  /** Codex 修复工具：修复插件商店（重新下载 openai/plugins 并清理被忽略的市场注册） */
+  async repairCodexPluginStore(): Promise<CodexStoreRepairResult> {
+    return await invoke("repair_codex_plugin_store");
+  },
+
+  /** Codex 修复工具：修复损坏的 auth.json（备份后写回合法 JSON） */
+  async repairCodexAuthJson(): Promise<CodexAuthRepairResult> {
+    return await invoke("repair_codex_auth_json");
   },
 
   async restart(): Promise<boolean> {
