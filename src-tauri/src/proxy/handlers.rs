@@ -54,6 +54,19 @@ use futures::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 
+fn sse_response_headers() -> axum::http::HeaderMap {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    headers
+}
+
 // ============================================================================
 // 健康检查和状态查询（简单端点）
 // ============================================================================
@@ -184,9 +197,6 @@ async fn handle_messages_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
-
     let raw_endpoint = uri
         .path_and_query()
         .map(|path_and_query| path_and_query.as_str())
@@ -194,6 +204,18 @@ async fn handle_messages_for_app(
     let endpoint = strip_prefix
         .and_then(|prefix| raw_endpoint.strip_prefix(prefix))
         .unwrap_or(raw_endpoint);
+
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        &method,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        endpoint,
+    )
+    .await?;
 
     let is_stream = body
         .get("stream")
@@ -225,7 +247,7 @@ async fn handle_messages_for_app(
     };
 
     let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
+    result.apply_outbound_to_ctx(&mut ctx);
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -424,7 +446,35 @@ async fn handle_claude_transform(
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
+        let request_log_upstream_response_headers =
+            super::request_logger::headers_to_value(response.headers());
+        let client_response_headers = sse_response_headers();
         let stream = response.bytes_stream();
+
+        // Request-log：在转换前旁路一份上游原始 SSE。
+        // 按 api_format 选 OpenAI 聚合器，记录转换前的上游原始报文。
+        let stream: Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin> =
+            if super::response_processor::request_log_enabled(state) {
+                if let Some(collector) =
+                    super::response_processor::create_request_log_collector_with_aggregator(
+                        ctx,
+                        state,
+                        super::request_logger::aggregator_for_api_format(api_format),
+                        true,
+                        status.as_u16(),
+                        request_log_upstream_response_headers.clone(),
+                    )
+                {
+                    Box::new(Box::pin(
+                        super::request_logger::tee_raw_sse_for_request_log(stream, collector),
+                    ))
+                } else {
+                    Box::new(Box::pin(stream))
+                }
+            } else {
+                Box::new(Box::pin(stream))
+            };
+
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
@@ -515,26 +565,18 @@ async fn handle_claude_transform(
         // 获取流式超时配置
         let timeout_config = ctx.streaming_timeout_config();
 
+        // usage collector
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
             usage_collector,
+            None,
             timeout_config,
             connection_guard,
         );
 
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "Content-Type",
-            axum::http::HeaderValue::from_static("text/event-stream"),
-        );
-        headers.insert(
-            "Cache-Control",
-            axum::http::HeaderValue::from_static("no-cache"),
-        );
-
         let body = axum::body::Body::from_stream(logged_stream);
-        return Ok((headers, body).into_response());
+        return Ok((client_response_headers, body).into_response());
     }
 
     // 非流式响应转换 (OpenAI/Responses → Anthropic)
@@ -614,6 +656,8 @@ async fn handle_claude_transform(
             };
             (response_headers, None, Some(upstream_response))
         };
+    let request_log_upstream_response_headers =
+        super::request_logger::headers_to_value(&response_headers);
 
     // Preserve usage so a post-upstream conversion failure still records tokens.
     // The direct Anthropic branch below is already fully transformed and cannot
@@ -629,6 +673,26 @@ async fn handle_claude_transform(
             )
         })
     });
+
+    // Request-log（非流式）：在转换前记录上游原始响应。
+    if super::response_processor::request_log_enabled(state) {
+        super::response_processor::spawn_request_log_record(
+            ctx,
+            state,
+            false,
+            direct_anthropic_response
+                .clone()
+                .or_else(|| upstream_response.clone())
+                .unwrap_or(Value::Null),
+            status.as_u16(),
+            if status.is_success() {
+                None
+            } else {
+                Some(format!("upstream status {}", status.as_u16()))
+            },
+            request_log_upstream_response_headers.clone(),
+        );
+    }
 
     // 根据 api_format 选择非流式转换器
     let transform_result = match (direct_anthropic_response, upstream_response) {
@@ -777,9 +841,18 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        &method,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        &endpoint,
+    )
+    .await?;
 
     let is_stream = body
         .get("stream")
@@ -810,7 +883,7 @@ pub async fn handle_chat_completions(
     };
 
     let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
+    result.apply_outbound_to_ctx(&mut ctx);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -867,9 +940,18 @@ async fn handle_responses_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        &method,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        &endpoint,
+    )
+    .await?;
 
     let is_stream = body
         .get("stream")
@@ -905,7 +987,7 @@ async fn handle_responses_for_app(
     };
 
     let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
+    result.apply_outbound_to_ctx(&mut ctx);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -1018,9 +1100,18 @@ async fn handle_codex_standalone_passthrough(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, canonical_endpoint);
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        &method,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        &endpoint,
+    )
+    .await?;
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -1046,7 +1137,7 @@ async fn handle_codex_standalone_passthrough(
     };
 
     let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
+    result.apply_outbound_to_ctx(&mut ctx);
     ctx.provider = result.provider;
 
     process_response(
@@ -1094,9 +1185,18 @@ async fn handle_responses_compact_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        &method,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        &endpoint,
+    )
+    .await?;
 
     let is_stream = body
         .get("stream")
@@ -1129,7 +1229,7 @@ async fn handle_responses_compact_for_app(
     };
 
     let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
+    result.apply_outbound_to_ctx(&mut ctx);
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -1203,17 +1303,44 @@ async fn handle_codex_xai_native_responses_rewrite(
     }
 
     if response.is_sse() {
+        let request_log_upstream_response_headers =
+            super::request_logger::headers_to_value(response.headers());
         let mut response_headers = response.headers().clone();
         strip_hop_by_hop_response_headers(&mut response_headers);
-
         let mut builder = axum::response::Response::builder().status(status);
         for (key, value) in &response_headers {
             builder = builder.header(key, value);
         }
 
+        // Request-log：记录 namespace 还原前的上游原始 Responses SSE。
+        let stream: Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin> =
+            if super::response_processor::request_log_enabled(state) {
+                if let Some(collector) =
+                    super::response_processor::create_request_log_collector_with_aggregator(
+                        ctx,
+                        state,
+                        super::request_logger::aggregator_for_api_format("openai_responses"),
+                        true,
+                        status.as_u16(),
+                        request_log_upstream_response_headers.clone(),
+                    )
+                {
+                    Box::new(Box::pin(
+                        super::request_logger::tee_raw_sse_for_request_log(
+                            response.bytes_stream(),
+                            collector,
+                        ),
+                    ))
+                } else {
+                    Box::new(Box::pin(response.bytes_stream()))
+                }
+            } else {
+                Box::new(Box::pin(response.bytes_stream()))
+            };
+
         let restore_stream =
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
-                response.bytes_stream(),
+                stream,
                 restore_map,
             );
         let usage_collector =
@@ -1222,6 +1349,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             restore_stream,
             ctx.tag,
             usage_collector,
+            None,
             ctx.streaming_timeout_config(),
             connection_guard,
         );
@@ -1244,6 +1372,8 @@ async fn handle_codex_xai_native_responses_rewrite(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let request_log_upstream_response_headers =
+        super::request_logger::headers_to_value(&response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     // Restore names when the body parses as JSON; otherwise pass the bytes
@@ -1251,6 +1381,19 @@ async fn handle_codex_xai_native_responses_rewrite(
     // this only guards against a malformed upstream).
     let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
+            // Request-log（非流式）：namespace 还原前的上游原始响应。
+            // 必须在 restore_response_namespaces 就地 mutate 之前记录。
+            if super::response_processor::request_log_enabled(state) {
+                super::response_processor::spawn_request_log_record(
+                    ctx,
+                    state,
+                    false,
+                    value.clone(),
+                    status.as_u16(),
+                    None,
+                    request_log_upstream_response_headers.clone(),
+                );
+            }
             transform_codex_responses_namespace::restore_response_namespaces(
                 &mut value,
                 &restore_map,
@@ -1298,17 +1441,10 @@ async fn handle_codex_xai_native_responses_rewrite(
                     }
                 });
             }
-            match serde_json::to_vec(&value) {
-                Ok(bytes) => Bytes::from(bytes),
-                Err(e) => {
-                    log::error!("[{}] 序列化 namespace 还原响应失败: {e}", ctx.tag);
-                    body_bytes
-                }
-            }
+            serde_json::to_vec(&value).unwrap_or_else(|_| body_bytes.to_vec())
         }
-        Err(_) => body_bytes,
+        Err(_) => body_bytes.to_vec(),
     };
-
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
     response_headers.remove(axum::http::header::CONTENT_TYPE);
 
@@ -1346,7 +1482,34 @@ async fn handle_codex_chat_to_responses_transform(
     }
 
     if is_stream || response.is_sse() {
+        let request_log_upstream_response_headers =
+            super::request_logger::headers_to_value(response.headers());
+        let client_response_headers = sse_response_headers();
         let stream = response.bytes_stream();
+
+        // Request-log：在转换前旁路记录上游原始 Chat Completions SSE。
+        let stream: Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin> =
+            if super::response_processor::request_log_enabled(state) {
+                if let Some(collector) =
+                    super::response_processor::create_request_log_collector_with_aggregator(
+                        ctx,
+                        state,
+                        super::request_logger::aggregator_for_api_format("openai"),
+                        true,
+                        status.as_u16(),
+                        request_log_upstream_response_headers.clone(),
+                    )
+                {
+                    Box::new(Box::pin(
+                        super::request_logger::tee_raw_sse_for_request_log(stream, collector),
+                    ))
+                } else {
+                    Box::new(Box::pin(stream))
+                }
+            } else {
+                Box::new(Box::pin(stream))
+            };
+
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
@@ -1418,22 +1581,13 @@ async fn handle_codex_chat_to_responses_transform(
             sse_stream,
             ctx.tag,
             usage_collector,
+            None,
             ctx.streaming_timeout_config(),
             connection_guard,
         );
 
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "Content-Type",
-            axum::http::HeaderValue::from_static("text/event-stream"),
-        );
-        headers.insert(
-            "Cache-Control",
-            axum::http::HeaderValue::from_static("no-cache"),
-        );
-
         let body = axum::body::Body::from_stream(logged_stream);
-        return Ok((headers, body).into_response());
+        return Ok((client_response_headers, body).into_response());
     }
 
     let _connection_guard = connection_guard;
@@ -1445,6 +1599,8 @@ async fn handle_codex_chat_to_responses_transform(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let request_log_upstream_response_headers =
+        super::request_logger::headers_to_value(&response_headers);
     let body_str = String::from_utf8_lossy(&body_bytes);
     let chat_response: Value = match serde_json::from_slice(&body_bytes) {
         Ok(value) => value,
@@ -1474,6 +1630,23 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
+    // Request-log（非流式）：在转换前记录上游原始 Chat 响应。
+    if super::response_processor::request_log_enabled(state) {
+        super::response_processor::spawn_request_log_record(
+            ctx,
+            state,
+            false,
+            chat_response.clone(),
+            status.as_u16(),
+            if status.is_success() {
+                None
+            } else {
+                Some(format!("upstream status {}", status.as_u16()))
+            },
+            request_log_upstream_response_headers.clone(),
+        );
+    }
+
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
@@ -1585,9 +1758,36 @@ async fn handle_codex_anthropic_to_responses_transform(
     // explicit JSON media type. Explicit JSON is buffered below so 2xx error
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
+        let request_log_upstream_response_headers =
+            super::request_logger::headers_to_value(response.headers());
         let stream = response.bytes_stream();
+
+        // Request-log：上游是原始 Anthropic Messages SSE，在转换前旁路记录。
+        let stream: Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin> =
+            if super::response_processor::request_log_enabled(state) {
+                if let Some(collector) =
+                    super::response_processor::create_request_log_collector_with_aggregator(
+                        ctx,
+                        state,
+                        super::request_logger::aggregator_for_api_format("anthropic"),
+                        true,
+                        status.as_u16(),
+                        request_log_upstream_response_headers.clone(),
+                    )
+                {
+                    Box::new(Box::pin(
+                        super::request_logger::tee_raw_sse_for_request_log(stream, collector),
+                    ))
+                } else {
+                    Box::new(Box::pin(stream))
+                }
+            } else {
+                Box::new(Box::pin(stream))
+            };
+
         let sse_stream =
             create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
+
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,
@@ -1605,6 +1805,8 @@ async fn handle_codex_anthropic_to_responses_transform(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let request_log_upstream_response_headers =
+        super::request_logger::headers_to_value(&response_headers);
     let body_str = String::from_utf8_lossy(&body_bytes);
     let anthropic_response: Value = match serde_json::from_slice(&body_bytes) {
         Ok(value) => value,
@@ -1633,6 +1835,20 @@ async fn handle_codex_anthropic_to_responses_transform(
     };
 
     if is_stream {
+        // 伪流式：上游已聚合为 Anthropic message Value（非 SSE 字节流），Upstream tee
+        // 不适用，走非流式 spawn 记录转换前的上游响应。
+        if super::response_processor::request_log_enabled(state) {
+            super::response_processor::spawn_request_log_record(
+                ctx,
+                state,
+                false,
+                anthropic_response.clone(),
+                status.as_u16(),
+                None,
+                request_log_upstream_response_headers.clone(),
+            );
+        }
+
         let events =
             responses_sse_events_from_anthropic_message(&anthropic_response, codex_tool_context);
         let sse_stream = futures::stream::iter(events.into_iter().map(Ok::<Bytes, std::io::Error>));
@@ -1646,6 +1862,21 @@ async fn handle_codex_anthropic_to_responses_transform(
     }
 
     let _connection_guard = connection_guard;
+
+    // Request-log（非流式）：转换前记录上游原始 Anthropic 响应。
+    // 必须在 anthropic_response 被 move 进转换器之前记录。
+    if super::response_processor::request_log_enabled(state) {
+        super::response_processor::spawn_request_log_record(
+            ctx,
+            state,
+            false,
+            anthropic_response.clone(),
+            status.as_u16(),
+            None,
+            request_log_upstream_response_headers.clone(),
+        );
+    }
+
     let responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
@@ -1791,6 +2022,7 @@ fn build_codex_anthropic_sse_response(
         sse_stream,
         ctx.tag,
         usage_collector,
+        None,
         ctx.streaming_timeout_config(),
         connection_guard,
     );
@@ -2099,9 +2331,24 @@ pub async fn handle_gemini(
     };
 
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
-        .await?
-        .with_model_from_uri(&uri);
+    // 这里先把 endpoint 当成临时值传给 ctx::new；with_model_from_uri 会再用
+    // path_and_query 覆盖一次，确保 request-log 拿到带 query 的完整 endpoint。
+    let endpoint_tmp = uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(uri.path());
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        &method,
+        AppType::Gemini,
+        "Gemini",
+        "gemini",
+        endpoint_tmp,
+    )
+    .await?
+    .with_model_from_uri(&uri);
 
     // 提取完整的路径和查询参数
     let endpoint = uri
@@ -2138,7 +2385,7 @@ pub async fn handle_gemini(
     };
 
     let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
+    result.apply_outbound_to_ctx(&mut ctx);
     ctx.provider = result.provider;
     let response = result.response;
 

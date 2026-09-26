@@ -2874,6 +2874,11 @@
         "nonStreamingTimeout": {
           "label": "Non-Streaming Timeout (sec)",
           "description": "Total timeout for non-streaming requests"
+        },
+        "requestLogMaxSessions": {
+          "label": "Max retained sessions",
+          "description": "Records full requests and responses per session to ~/.cc-switch/proxy_request_logs/<app>/<session-id>.jsonl; oldest sessions are pruned beyond the limit. 0 disables recording",
+          "disabledHint": "Currently 0: request-log recording is disabled"
         }
       },
       "validation": {
@@ -2899,7 +2904,8 @@
       "invalidAddress": "Invalid address. Enter an IPv4 (e.g. 127.0.0.1), IPv6 (e.g. ::1), or localhost",
       "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
-      "restartRequired": "Restart routing service for address or port changes to take effect"
+      "restartRequired": "Restart routing service for address or port changes to take effect",
+      "invalidRequestLogMaxSessions": "Please enter a non-negative integer"
     },
     "switchFailed": "Switch failed: {{error}}",
     "takeover": {
@@ -2985,7 +2991,49 @@
       "stopFailed": "Failed to stop routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "requestLogViewer": {
+      "title": "Request Logs",
+      "viewLogs": "View Request Logs",
+      "openDir": "Open Log Directory",
+      "refresh": "Refresh",
+      "copyAsCurl": "Copy as cURL",
+      "copyAsJson": "Copy JSON",
+      "copyAsText": "Copy Text",
+      "foldToLevel1": "Collapse",
+      "unfoldAll": "Expand",
+      "wrapLines": "Wrap",
+      "empty": "No log files yet. Routed requests are recorded by default. If nothing appears, check that \"Max retained sessions\" is greater than 0.",
+      "loading": "Loading…",
+      "noFileSelected": "Select a session file on the left to view records",
+      "loadMore": "Load Earlier",
+      "shownOf": "Showing {{shown}} / {{total}} records",
+      "requestHeaders": "Request Headers",
+      "requestBody": "Request Body",
+      "responseHeaders": "Response Headers",
+      "responseBody": "Response Body",
+      "startTimeColon": "Start: ",
+      "endTimeColon": "End: ",
+      "sortNewest": "Newest",
+      "sortOldest": "Oldest",
+      "searchPlaceholder": "Search by endpoint, model, or status…",
+      "noMatches": "No matching records",
+      "loadMoreOldest": "Load Later",
+      "colTime": "Time",
+      "colMethod": "Method",
+      "colEndpoint": "Endpoint",
+      "colModel": "Model",
+      "colTokens": "Tokens",
+      "colTokensIn": "Input tokens",
+      "colTokensOut": "Output tokens",
+      "colDuration": "Duration",
+      "colStatus": "Status",
+      "searchSessionsPlaceholder": "Search by title or ID…",
+      "sessionFiles": "Session Logs",
+      "noSessionsMatch": "No matching sessions",
+      "emptyFile": "This file has no records",
+      "errorIndicator": "This request failed"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",

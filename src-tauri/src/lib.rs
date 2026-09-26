@@ -1583,6 +1583,10 @@ pub fn run() {
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
+            commands::list_proxy_request_log_files,
+            commands::get_proxy_request_log_records,
+            commands::get_proxy_request_log_record,
+            commands::open_proxy_request_log_dir,
             commands::get_proxy_config_for_app,
             commands::update_proxy_config_for_app,
             commands::get_default_cost_multiplier,

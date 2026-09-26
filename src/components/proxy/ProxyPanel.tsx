@@ -64,12 +64,15 @@ export function ProxyPanel({
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+  // request-log 最大保留会话数（字符串以支持完全清空）
+  const [requestLogMaxSessions, setRequestLogMaxSessions] = useState("20");
 
   // 同步全局配置到本地状态
   useEffect(() => {
     if (globalConfig) {
       setListenAddress(globalConfig.listenAddress);
       setListenPort(String(globalConfig.listenPort));
+      setRequestLogMaxSessions(String(globalConfig.requestLogMaxSessions));
     }
   }, [globalConfig]);
 
@@ -192,6 +195,42 @@ export function ProxyPanel({
         ...globalConfig,
         listenAddress: normalizedAddress,
         listenPort: port,
+      });
+      toast.success(
+        t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("proxy.settings.configSaveFailed", { defaultValue: "保存配置失败" }),
+      );
+    }
+  };
+
+  const handleSaveRequestLogMaxSessions = async () => {
+    if (!globalConfig) return;
+    const trimmed = requestLogMaxSessions.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      toast.error(
+        t("proxy.settings.invalidRequestLogMaxSessions", {
+          defaultValue: "请输入非负整数",
+        }),
+      );
+      return;
+    }
+    const value = parseInt(trimmed, 10);
+    if (isNaN(value) || value < 0 || value > 100000) {
+      toast.error(
+        t("proxy.settings.invalidRequestLogMaxSessions", {
+          defaultValue: "请输入非负整数",
+        }),
+      );
+      return;
+    }
+    try {
+      await updateGlobalConfig.mutateAsync({
+        ...globalConfig,
+        requestLogMaxSessions: value,
       });
       toast.success(
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
@@ -413,6 +452,64 @@ export function ProxyPanel({
                     onCheckedChange={handleLoggingChange}
                     disabled={updateGlobalConfig.isPending}
                   />
+                </div>
+              </div>
+
+              {/* [5b] Request-log max sessions */}
+              <div className="pt-3">
+                <div className="flex items-end justify-between gap-3 rounded-md border border-border bg-background/60 px-3 py-2">
+                  <div className="space-y-0.5 min-w-0">
+                    <Label
+                      htmlFor="request-log-max-sessions"
+                      className="text-sm font-medium"
+                    >
+                      {t("proxy.settings.fields.requestLogMaxSessions.label", {
+                        defaultValue: "最大保留会话数",
+                      })}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        "proxy.settings.fields.requestLogMaxSessions.description",
+                        {
+                          defaultValue:
+                            "按会话记录完整请求与响应到 ~/.cc-switch/proxy_request_logs/<应用>/<session-id>.jsonl；超过数量自动清理最旧的会话，0 表示关闭记录",
+                        },
+                      )}
+                    </p>
+                    {parseInt(requestLogMaxSessions, 10) === 0 &&
+                      !isNaN(parseInt(requestLogMaxSessions, 10)) && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400">
+                          {t(
+                            "proxy.settings.fields.requestLogMaxSessions.disabledHint",
+                            {
+                              defaultValue: "当前为 0：已关闭请求日志记录",
+                            },
+                          )}
+                        </p>
+                      )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Input
+                      id="request-log-max-sessions"
+                      type="number"
+                      min={0}
+                      value={requestLogMaxSessions}
+                      onChange={(e) => setRequestLogMaxSessions(e.target.value)}
+                      className="w-24"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSaveRequestLogMaxSessions}
+                      disabled={updateGlobalConfig.isPending}
+                    >
+                      {updateGlobalConfig.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </div>
 

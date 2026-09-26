@@ -2874,6 +2874,11 @@
         "nonStreamingTimeout": {
           "label": "非流式超时（秒）",
           "description": "非流式请求的总超时时间"
+        },
+        "requestLogMaxSessions": {
+          "label": "最大保留会话数",
+          "description": "按会话记录完整请求与响应到 ~/.cc-switch/proxy_request_logs/<应用>/<session-id>.jsonl；超过数量自动清理最旧的会话，0 表示关闭记录",
+          "disabledHint": "当前为 0：已关闭请求日志记录"
         }
       },
       "validation": {
@@ -2899,7 +2904,8 @@
       "invalidAddress": "地址无效，请输入 IPv4（如 127.0.0.1）、IPv6（如 ::1）或 localhost",
       "configSaved": "路由配置已保存",
       "configSaveFailed": "保存配置失败",
-      "restartRequired": "修改地址或端口后需要重启路由服务才能生效"
+      "restartRequired": "修改地址或端口后需要重启路由服务才能生效",
+      "invalidRequestLogMaxSessions": "请输入非负整数"
     },
     "switchFailed": "切换失败: {{error}}",
     "takeover": {
@@ -2985,7 +2991,49 @@
       "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "requestLogViewer": {
+      "title": "请求日志",
+      "viewLogs": "查看请求日志",
+      "openDir": "打开日志目录",
+      "refresh": "刷新",
+      "copyAsCurl": "复制为 cURL",
+      "copyAsJson": "复制 JSON",
+      "copyAsText": "复制文本",
+      "foldToLevel1": "折叠",
+      "unfoldAll": "展开",
+      "wrapLines": "换行",
+      "empty": "暂无日志文件。默认会记录经过路由的请求；若未产生任何记录，请确认「最大保留会话数」大于 0。",
+      "loading": "加载中…",
+      "noFileSelected": "选择左侧会话文件查看记录",
+      "loadMore": "加载更早",
+      "shownOf": "已显示 {{shown}} / {{total}} 条",
+      "requestHeaders": "请求头",
+      "requestBody": "请求体",
+      "responseHeaders": "响应头",
+      "responseBody": "响应体",
+      "startTimeColon": "开始：",
+      "endTimeColon": "结束：",
+      "sortNewest": "新→旧",
+      "sortOldest": "旧→新",
+      "searchPlaceholder": "按端点、模型或状态搜索…",
+      "noMatches": "没有匹配的记录",
+      "loadMoreOldest": "加载更新",
+      "colTime": "时间",
+      "colMethod": "方法",
+      "colEndpoint": "端点",
+      "colModel": "模型",
+      "colTokens": "Tokens",
+      "colTokensIn": "输入",
+      "colTokensOut": "输出",
+      "colDuration": "耗时",
+      "colStatus": "状态",
+      "searchSessionsPlaceholder": "按标题或 ID 搜索…",
+      "sessionFiles": "会话日志",
+      "noSessionsMatch": "没有匹配的会话",
+      "emptyFile": "该文件没有记录",
+      "errorIndicator": "该请求出错"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",

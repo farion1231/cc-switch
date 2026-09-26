@@ -13,6 +13,9 @@ pub struct ProxyConfig {
     pub request_timeout: u64,
     /// 是否启用日志
     pub enable_logging: bool,
+    /// 每个应用目录保留的最大 request-log 会话文件数。0 表示关闭记录，默认 20。
+    #[serde(default = "default_request_log_max_sessions")]
+    pub request_log_max_sessions: u64,
     /// 是否正在接管 Live 配置
     #[serde(default)]
     pub live_takeover_active: bool,
@@ -25,6 +28,10 @@ pub struct ProxyConfig {
     /// 非流式总超时（秒）- 非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）
     #[serde(default = "default_non_streaming_timeout")]
     pub non_streaming_timeout: u64,
+}
+
+fn default_request_log_max_sessions() -> u64 {
+    20
 }
 
 fn default_streaming_first_byte_timeout() -> u64 {
@@ -47,6 +54,7 @@ impl Default for ProxyConfig {
             max_retries: 3,
             request_timeout: 600,
             enable_logging: true,
+            request_log_max_sessions: default_request_log_max_sessions(),
             live_takeover_active: false,
             streaming_first_byte_timeout: 60,
             streaming_idle_timeout: 120,
@@ -154,6 +162,9 @@ pub struct GlobalProxyConfig {
     pub listen_port: u16,
     /// 是否启用日志
     pub enable_logging: bool,
+    /// 每个应用目录保留的最大 request-log 会话文件数。0 表示关闭记录，默认 20。
+    #[serde(default = "default_request_log_max_sessions")]
+    pub request_log_max_sessions: u64,
 }
 
 /// 应用级代理配置（每个 app 独立）

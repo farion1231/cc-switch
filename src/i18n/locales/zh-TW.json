@@ -2875,6 +2875,11 @@
         "nonStreamingTimeout": {
           "label": "非串流逾時（秒）",
           "description": "非串流請求的總逾時時間"
+        },
+        "requestLogMaxSessions": {
+          "label": "最大保留工作階段數",
+          "description": "按工作階段記錄完整請求與回應到 ~/.cc-switch/proxy_request_logs/<應用>/<session-id>.jsonl；超過數量自動清理最舊的工作階段，0 表示關閉記錄",
+          "disabledHint": "目前為 0：已關閉請求日誌記錄"
         }
       },
       "validation": {
@@ -2900,7 +2905,8 @@
       "invalidAddress": "位址無效，請輸入 IPv4（如 127.0.0.1）、IPv6（如 ::1）或 localhost",
       "configSaved": "路由設定已儲存",
       "configSaveFailed": "儲存設定失敗",
-      "restartRequired": "修改位址或連接埠後需要重新啟動路由服務才能生效"
+      "restartRequired": "修改位址或連接埠後需要重新啟動路由服務才能生效",
+      "invalidRequestLogMaxSessions": "請輸入非負整數"
     },
     "switchFailed": "切換失敗：{{error}}",
     "takeover": {
@@ -2986,7 +2992,49 @@
       "stopFailed": "停止路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
-    "stopWithRestoreFailed": "停止失敗：{{detail}}"
+    "stopWithRestoreFailed": "停止失敗：{{detail}}",
+    "requestLogViewer": {
+      "title": "請求日誌",
+      "viewLogs": "查看請求日誌",
+      "openDir": "開啟日誌目錄",
+      "refresh": "重新整理",
+      "copyAsCurl": "複製為 cURL",
+      "copyAsJson": "複製 JSON",
+      "copyAsText": "複製文字",
+      "foldToLevel1": "摺疊",
+      "unfoldAll": "展開",
+      "wrapLines": "換行",
+      "empty": "暫無日誌檔案。預設會記錄經過路由的請求；若未產生任何記錄，請確認「最大保留工作階段數」大於 0。",
+      "loading": "載入中…",
+      "noFileSelected": "選擇左側會話檔案查看記錄",
+      "loadMore": "載入更早",
+      "shownOf": "已顯示 {{shown}} / {{total}} 筆",
+      "requestHeaders": "請求標頭",
+      "requestBody": "請求內容",
+      "responseHeaders": "回應標頭",
+      "responseBody": "回應內容",
+      "startTimeColon": "開始：",
+      "endTimeColon": "結束：",
+      "sortNewest": "新→舊",
+      "sortOldest": "舊→新",
+      "searchPlaceholder": "依端點、模型或狀態搜尋…",
+      "noMatches": "沒有符合的記錄",
+      "loadMoreOldest": "載入更新",
+      "colTime": "時間",
+      "colMethod": "方法",
+      "colEndpoint": "端點",
+      "colModel": "模型",
+      "colTokens": "Tokens",
+      "colTokensIn": "輸入",
+      "colTokensOut": "輸出",
+      "colDuration": "耗時",
+      "colStatus": "狀態",
+      "searchSessionsPlaceholder": "依標題或 ID 搜尋…",
+      "sessionFiles": "會話日誌",
+      "noSessionsMatch": "沒有符合的會話",
+      "emptyFile": "該檔案沒有記錄",
+      "errorIndicator": "該請求出錯"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 連通正常 ({{responseTimeMs}}ms)",
