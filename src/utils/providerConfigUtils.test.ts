@@ -156,6 +156,99 @@ model_catalog_url = "https://backup.example.com/v1/models"
     );
   });
 
+  it.each([
+    '[mcp_servers.demo] # keep this comment\ncommand = "demo"',
+    '[[skills.config]]\npath = "/tmp/skill"\nenabled = true',
+  ])("keeps catalog edits inside the provider before %s", (followingTable) => {
+    const input = `model_provider = "custom"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+
+${followingTable}
+`;
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    const parsed = parse(enabled);
+    expect(parsed.model_providers.custom.model_catalog_url).toBe(catalogUrl);
+    expect(parsed.features.api_key_model_discovery).toBe(true);
+    expect(parsed.mcp_servers).toEqual(parse(input).mcp_servers);
+    expect(parsed.skills).toEqual(parse(input).skills);
+    expect(parse(setCodexRemoteModelCatalog(enabled, null))).toEqual(
+      parse(input),
+    );
+  });
+
+  it("edits tables with trailing comments without duplicating them", () => {
+    const input = `model_provider = "custom"
+
+[features] # feature flags
+web_search_request = true
+
+[model_providers.custom] # relay
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+`;
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    expect(isCodexRemoteModelCatalogEnabled(enabled)).toBe(true);
+    expect(enabled).toContain("[features] # feature flags");
+    expect(enabled).toContain("[model_providers.custom] # relay");
+    expect(parse(setCodexRemoteModelCatalog(enabled, null))).toEqual(
+      parse(input),
+    );
+  });
+
+  it("preserves blank lines inside multiline instructions", () => {
+    const input = [
+      'model_provider = "custom"',
+      "developer_instructions = '''",
+      "Keep the following spacing:",
+      "",
+      "",
+      "End of instructions.",
+      "'''",
+      "",
+      "[model_providers.custom]",
+      'base_url = "https://relay.example.com/v1"',
+      "",
+    ].join("\n");
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    expect(parse(enabled).developer_instructions).toBe(
+      parse(input).developer_instructions,
+    );
+    expect(setCodexRemoteModelCatalog(enabled, null)).toBe(input);
+  });
+
+  it("adds discovery alongside other dotted feature keys", () => {
+    const input = `model_provider = "custom"
+features.web_search_request = true
+
+[model_providers.custom]
+base_url = "https://relay.example.com/v1"
+`;
+    const enabled = setCodexRemoteModelCatalog(input, catalogUrl);
+    expect(isCodexRemoteModelCatalogEnabled(enabled)).toBe(true);
+    expect(parse(enabled).features.web_search_request).toBe(true);
+    expect(parse(setCodexRemoteModelCatalog(enabled, null))).toEqual(
+      parse(input),
+    );
+  });
+
+  it("does not edit TOML examples inside multiline instructions", () => {
+    const input = [
+      'model_provider = "custom"',
+      "developer_instructions = '''",
+      "[features]",
+      "api_key_model_discovery = false",
+      "'''",
+      "",
+      "[model_providers.custom]",
+      'base_url = "https://relay.example.com/v1"',
+      "",
+    ].join("\n");
+    expect(setCodexRemoteModelCatalog(input, catalogUrl)).toBe(input);
+  });
+
   it("is idempotent and restores the original config when disabled", () => {
     const enabled = setCodexRemoteModelCatalog(relayConfig, catalogUrl);
 

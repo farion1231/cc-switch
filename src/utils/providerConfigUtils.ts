@@ -434,7 +434,10 @@ export const hasTomlCommonConfigSnippet = (
 
 // ========== Codex base_url utils ==========
 
-const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+// Array tables are boundaries too; retain their brackets in the captured name
+// so [[features]] cannot be mistaken for the [features] table.
+const TOML_SECTION_HEADER_PATTERN =
+  /^\s*\[(\[[^\]\r\n]+\]|[^\]\r\n]+)\]\s*(?:#.*)?$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)')\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
@@ -1072,15 +1075,6 @@ const TOML_API_KEY_MODEL_DISCOVERY_ENABLED_PATTERN =
 const TOML_DOTTED_API_KEY_MODEL_DISCOVERY_KEY_PATTERN =
   /^\s*features\.api_key_model_discovery\s*=/;
 
-const isValidToml = (text: string): boolean => {
-  try {
-    parseToml(text);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 // 删掉只剩空行的 section（连同表头）；有注释或其他键时保留
 const removeTomlSectionIfEmpty = (lines: string[], sectionName: string) => {
   const sectionRange = getTomlSectionRange(lines, sectionName);
@@ -1219,7 +1213,7 @@ const syncCodexModelCatalogUrlWithBaseUrl = (
  * - `catalogUrl` 为 null / 空：删除这两项（`[features]` 删空后连表头一起删）
  *
  * 内置供应商（openai 等）不改；当前供应商没有独立的 `[model_providers.<id>]`
- * 表时无法开启，原样返回。改完如果把合法 TOML 改坏了，也原样返回。
+ * 表时无法开启，原样返回。改完如果把合法 TOML 改坏或误改其他值，也原样返回。
  */
 export const setCodexRemoteModelCatalog = (
   configText: string,
@@ -1294,6 +1288,17 @@ export const setCodexRemoteModelCatalog = (
       } else {
         lines.splice(dottedLine, 1);
       }
+    } else if (
+      enabling &&
+      findTomlLineInRange(lines, /^\s*features\s*\./, 0, topLevelEndIndex) !==
+        -1
+    ) {
+      // Dotted keys already define the table; a [features] header would redefine it.
+      lines.splice(
+        topLevelEndIndex,
+        0,
+        `features.${CODEX_API_KEY_MODEL_DISCOVERY_LINE}`,
+      );
     } else if (enabling) {
       // 放在顶级字段之后、第一个 section 之前
       const block = [
@@ -1308,8 +1313,31 @@ export const setCodexRemoteModelCatalog = (
     }
   }
 
-  const result = finalizeTomlText(lines);
-  if (!isValidToml(result) && isValidToml(normalizedText)) {
+  // Blank lines may be part of a multiline TOML string, so do not collapse them.
+  const result = lines.join("\n");
+  let original: Record<string, any>;
+  try {
+    original = parseToml(normalizedText);
+  } catch {
+    // Preserve the existing best-effort editing behavior for incomplete TOML.
+    return result;
+  }
+  try {
+    const updated = parseToml(result) as Record<string, any>;
+    // A line scan can match TOML examples inside multiline strings. Syntax
+    // validation alone cannot detect that, so compare all unrelated values too.
+    for (const config of [original, updated]) {
+      const provider = config.model_providers?.[original.model_provider];
+      if (isPlainObject(provider)) delete provider.model_catalog_url;
+      if (isPlainObject(config.features)) {
+        delete config.features.api_key_model_discovery;
+        if (Object.keys(config.features).length === 0) delete config.features;
+      }
+    }
+    if (!isSubset(original, updated) || !isSubset(updated, original)) {
+      return normalizedText;
+    }
+  } catch {
     return normalizedText;
   }
   return result;
