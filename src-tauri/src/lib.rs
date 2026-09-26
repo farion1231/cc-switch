@@ -5,6 +5,8 @@ mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
+#[cfg(test)]
+mod codex_desktop_tests;
 mod codex_history_migration;
 mod codex_state_db;
 mod commands;
@@ -840,6 +842,11 @@ pub fn run() {
                             log::warn!("✗ Codex official history unify migration failed: {e}");
                         }
                     }
+                    if !crate::codex_config::codex_desktop_directory_conflict() {
+                        if let Err(error) = crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket_for_app(&crate::AppType::CodexDesktop) {
+                            log::warn!("Codex Desktop history migration failed: {error}");
+                        }
+                    }
                 });
             }
 
@@ -1401,6 +1408,7 @@ pub fn run() {
             commands::ensure_codex_official_provider,
             commands::ensure_grokbuild_official_provider,
             commands::get_claude_config_status,
+            commands::get_codex_desktop_directory_conflict,
             commands::get_config_status,
             commands::get_claude_code_config_path,
             commands::get_config_dir,
@@ -1966,11 +1974,15 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 ///
 /// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
 /// 则自动启动代理服务并接管对应应用的 Live 配置。
-const PROXY_STARTUP_APP_TYPES: [&str; 4] = ["claude", "codex", "gemini", "grokbuild"];
+const PROXY_STARTUP_APP_TYPES: [&str; 5] =
+    ["claude", "codex", "codex-desktop", "gemini", "grokbuild"];
 
 async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static str> {
     let mut apps = Vec::new();
     for app_type in PROXY_STARTUP_APP_TYPES {
+        if app_type == "codex-desktop" && crate::codex_config::codex_desktop_directory_conflict() {
+            continue;
+        }
         if db
             .get_proxy_config_for_app(app_type)
             .await
@@ -2023,6 +2035,9 @@ fn initialize_common_config_snippets(state: &store::AppState) {
     // This must run before proxy takeover is restored on startup, otherwise we'd read
     // proxy-placeholder configs instead of the user's actual live settings.
     for app_type in crate::app_config::AppType::all() {
+        if app_type == crate::AppType::CodexDesktop {
+            continue;
+        }
         if !state
             .db
             .should_auto_extract_config_snippet(app_type.as_str())

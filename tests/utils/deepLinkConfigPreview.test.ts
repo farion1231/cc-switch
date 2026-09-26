@@ -128,19 +128,22 @@ value = "array-table-secret"
     expect(preview?.tomlConfig).toContain('empty = ""');
   });
 
-  it("also masks secrets in Codex TOML previews", () => {
-    const preview = parseDeepLinkConfigPreview({
-      app: "codex",
-      config: encodeBase64(
-        JSON.stringify({
-          auth: { OPENAI_API_KEY: "secret-auth-key" },
-          config: 'experimental_bearer_token = "secret-config-key"',
-        }),
-      ),
-      configFormat: "json",
-    });
+  it.each(["codex", "codex-desktop"] as const)(
+    "masks secrets in %s TOML previews",
+    (app) => {
+      const preview = parseDeepLinkConfigPreview({
+        app,
+        config: encodeBase64(
+          JSON.stringify({
+            auth: { OPENAI_API_KEY: "secret-auth-key" },
+            config: 'experimental_bearer_token = "secret-config-key"',
+          }),
+        ),
+        configFormat: "json",
+      });
 
-    expect(preview?.type).toBe("codex");
-    expect(preview?.tomlConfig).not.toContain("secret-config-key");
-  });
+      expect(preview?.type).toBe(app);
+      expect(preview?.tomlConfig).not.toContain("secret-config-key");
+    },
+  );
 });

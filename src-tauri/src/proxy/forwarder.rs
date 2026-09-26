@@ -1193,12 +1193,19 @@ impl RequestForwarder {
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
         // catalog matching and to the transform's own strip+beta detection).
-        let codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let codex_responses_to_chat =
+            matches!(
+                app_type,
+                AppType::Codex | AppType::CodexDesktop | AppType::GrokBuild
+            ) && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_responses_to_anthropic = matches!(
+            app_type,
+            AppType::Codex | AppType::CodexDesktop | AppType::GrokBuild
+        )
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
-        let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
-            && super::providers::is_codex_official_provider(provider);
+        let codex_official_auth_passthrough =
+            matches!(app_type, AppType::Codex | AppType::CodexDesktop)
+                && super::providers::is_codex_official_provider(provider);
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1220,7 +1227,8 @@ impl RequestForwarder {
                         })?;
                     let session_matches = match codex_bearer_access_token(headers) {
                         Some(access_token) => {
-                            crate::codex_config::codex_live_auth_matches_managed_request(
+                            crate::codex_config::codex_live_auth_matches_managed_request_for_app(
+                                app_type,
                                 &local_account_id,
                                 access_token,
                             )
@@ -1481,7 +1489,7 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
-        let codex_standalone_endpoint = matches!(app_type, AppType::Codex)
+        let codex_standalone_endpoint = matches!(app_type, AppType::Codex | AppType::CodexDesktop)
             .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
             .flatten();
 
@@ -1638,8 +1646,10 @@ impl RequestForwarder {
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && !codex_responses_to_chat
+        if matches!(
+            app_type,
+            AppType::Codex | AppType::CodexDesktop | AppType::GrokBuild
+        ) && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider)
         {
@@ -1680,7 +1690,10 @@ impl RequestForwarder {
             }
         }
 
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
+        if matches!(
+            app_type,
+            AppType::Codex | AppType::CodexDesktop | AppType::GrokBuild
+        ) {
             self.apply_media_prevention(&mut request_body, provider);
         }
 

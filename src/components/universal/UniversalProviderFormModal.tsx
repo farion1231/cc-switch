@@ -52,6 +52,7 @@ export function UniversalProviderFormModal({
   // 应用启用状态
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
+  const [codexDesktopEnabled, setCodexDesktopEnabled] = useState(false);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
 
   // 模型配置
@@ -73,6 +74,7 @@ export function UniversalProviderFormModal({
       setNotes(editingProvider.notes || "");
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
+      setCodexDesktopEnabled(editingProvider.apps["codex-desktop"] ?? false);
       setGeminiEnabled(editingProvider.apps.gemini);
       setModels(editingProvider.models || {});
 
@@ -92,6 +94,7 @@ export function UniversalProviderFormModal({
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
+      setCodexDesktopEnabled(false);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
       setModels(deepClone(defaultPreset.defaultModels));
     }
@@ -105,6 +108,7 @@ export function UniversalProviderFormModal({
         setName(preset.name);
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
+        setCodexDesktopEnabled(false);
         setGeminiEnabled(preset.defaultApps.gemini);
         setModels(deepClone(preset.defaultModels));
       }
@@ -114,7 +118,11 @@ export function UniversalProviderFormModal({
 
   // 更新模型配置
   const updateModel = useCallback(
-    (app: "claude" | "codex" | "gemini", field: string, value: string) => {
+    (
+      app: "claude" | "codex" | "codex-desktop" | "gemini",
+      field: string,
+      value: string,
+    ) => {
       setModels((prev) => ({
         ...prev,
         [app]: {
@@ -146,15 +154,18 @@ export function UniversalProviderFormModal({
   }, [claudeEnabled, baseUrl, apiKey, models.claude]);
 
   // 计算 Codex 配置 JSON 预览
-  const codexConfigJson = useMemo(() => {
-    if (!codexEnabled) return null;
-    const model = models.codex?.model || "gpt-5.6-sol";
-    const reasoningEffort = models.codex?.reasoningEffort || "high";
-    // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
-    const codexBaseUrl = baseUrl.endsWith("/v1")
-      ? baseUrl
-      : `${baseUrl.replace(/\/+$/, "")}/v1`;
-    const configToml = `model_provider = "custom"
+  const codexConfigPreviews = useMemo(() => {
+    return (["codex", "codex-desktop"] as const)
+      .map((app) => {
+        const enabled = app === "codex" ? codexEnabled : codexDesktopEnabled;
+        if (!enabled) return null;
+        const model = models[app]?.model || "gpt-5.6-sol";
+        const reasoningEffort = models[app]?.reasoningEffort || "high";
+        // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
+        const codexBaseUrl = baseUrl.endsWith("/v1")
+          ? baseUrl
+          : `${baseUrl.replace(/\/+$/, "")}/v1`;
+        const configToml = `model_provider = "custom"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
 disable_response_storage = true
@@ -164,13 +175,18 @@ name = "NewAPI"
 base_url = "${codexBaseUrl}"
 wire_api = "responses"
 requires_openai_auth = true`;
-    return {
-      auth: {
-        OPENAI_API_KEY: apiKey,
-      },
-      config: configToml,
-    };
-  }, [codexEnabled, baseUrl, apiKey, models.codex]);
+        return {
+          app,
+          config: {
+            auth: {
+              OPENAI_API_KEY: apiKey,
+            },
+            config: configToml,
+          },
+        };
+      })
+      .filter((entry) => entry !== null);
+  }, [codexEnabled, codexDesktopEnabled, baseUrl, apiKey, models]);
 
   // 计算 Gemini 配置 JSON 预览
   const geminiConfigJson = useMemo(() => {
@@ -202,6 +218,7 @@ requires_openai_auth = true`;
           apps: {
             claude: claudeEnabled,
             codex: codexEnabled,
+            "codex-desktop": codexDesktopEnabled,
             gemini: geminiEnabled,
           },
           models,
@@ -219,6 +236,7 @@ requires_openai_auth = true`;
       provider.apps = {
         claude: claudeEnabled,
         codex: codexEnabled,
+        "codex-desktop": codexDesktopEnabled,
         gemini: geminiEnabled,
       };
       provider.models = models;
@@ -237,6 +255,7 @@ requires_openai_auth = true`;
     notes,
     claudeEnabled,
     codexEnabled,
+    codexDesktopEnabled,
     geminiEnabled,
     models,
     selectedPreset,
@@ -261,6 +280,7 @@ requires_openai_auth = true`;
           apps: {
             claude: claudeEnabled,
             codex: codexEnabled,
+            "codex-desktop": codexDesktopEnabled,
             gemini: geminiEnabled,
           },
           models,
@@ -278,6 +298,7 @@ requires_openai_auth = true`;
       provider.apps = {
         claude: claudeEnabled,
         codex: codexEnabled,
+        "codex-desktop": codexDesktopEnabled,
         gemini: geminiEnabled,
       };
       provider.models = models;
@@ -295,6 +316,7 @@ requires_openai_auth = true`;
     notes,
     claudeEnabled,
     codexEnabled,
+    codexDesktopEnabled,
     geminiEnabled,
     models,
     selectedPreset,
@@ -506,6 +528,16 @@ requires_openai_auth = true`;
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div className="flex items-center gap-2">
+                <ProviderIcon icon="openai" name="Codex Desktop" size={20} />
+                <span className="font-medium">Codex Desktop</span>
+              </div>
+              <Switch
+                checked={codexDesktopEnabled}
+                onCheckedChange={setCodexDesktopEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
                 <ProviderIcon icon="gemini" name="Gemini" size={20} />
                 <span className="font-medium">Gemini CLI</span>
               </div>
@@ -611,6 +643,44 @@ requires_openai_auth = true`;
             </div>
           )}
 
+          {/* Codex 模型 */}
+          {codexDesktopEnabled && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2 font-medium">
+                <ProviderIcon icon="openai" name="Codex Desktop" size={16} />
+                Codex Desktop
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    {t("universalProvider.model", { defaultValue: "模型" })}
+                  </Label>
+                  <Input
+                    value={models["codex-desktop"]?.model || ""}
+                    onChange={(e) =>
+                      updateModel("codex-desktop", "model", e.target.value)
+                    }
+                    placeholder="gpt-5.6-sol"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Reasoning Effort</Label>
+                  <Input
+                    value={models["codex-desktop"]?.reasoningEffort || ""}
+                    onChange={(e) =>
+                      updateModel(
+                        "codex-desktop",
+                        "reasoningEffort",
+                        e.target.value,
+                      )
+                    }
+                    placeholder="high"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Gemini 模型 */}
           {geminiEnabled && (
             <div className="space-y-3 rounded-lg border p-4">
@@ -635,69 +705,73 @@ requires_openai_auth = true`;
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
-          <div className="space-y-4">
-            <Label>
-              {t("universalProvider.configJsonPreview", {
-                defaultValue: "配置 JSON 预览",
-              })}
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              {t("universalProvider.configJsonPreviewHint", {
-                defaultValue:
-                  "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
-              })}
-            </p>
+        {isEditMode &&
+          (claudeEnabled ||
+            codexEnabled ||
+            codexDesktopEnabled ||
+            geminiEnabled) && (
+            <div className="space-y-4">
+              <Label>
+                {t("universalProvider.configJsonPreview", {
+                  defaultValue: "配置 JSON 预览",
+                })}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("universalProvider.configJsonPreviewHint", {
+                  defaultValue:
+                    "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
+                })}
+              </p>
 
-            {/* Claude JSON */}
-            {claudeConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="claude" name="Claude" size={16} />
-                  Claude
+              {/* Claude JSON */}
+              {claudeConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="claude" name="Claude" size={16} />
+                    Claude
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(claudeConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={180}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                <JsonEditor
-                  value={JSON.stringify(claudeConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={180}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
+              )}
 
-            {/* Codex JSON */}
-            {codexConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="openai" name="Codex" size={16} />
-                  Codex
+              {/* Codex JSON */}
+              {codexConfigPreviews.map(({ app, config }) => (
+                <div key={app} className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="openai" name={app} size={16} />
+                    {app === "codex" ? "Codex" : "Codex Desktop"}
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(config, null, 2)}
+                    onChange={() => {}}
+                    height={280}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                <JsonEditor
-                  value={JSON.stringify(codexConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={280}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
+              ))}
 
-            {/* Gemini JSON */}
-            {geminiConfigJson && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                  Gemini
+              {/* Gemini JSON */}
+              {geminiConfigJson && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <ProviderIcon icon="gemini" name="Gemini" size={16} />
+                    Gemini
+                  </div>
+                  <JsonEditor
+                    value={JSON.stringify(geminiConfigJson, null, 2)}
+                    onChange={() => {}}
+                    height={140}
+                    darkMode={isDarkMode}
+                  />
                 </div>
-                <JsonEditor
-                  value={JSON.stringify(geminiConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={140}
-                  darkMode={isDarkMode}
-                />
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
       </div>
 
       {/* 保存并同步确认弹窗 */}

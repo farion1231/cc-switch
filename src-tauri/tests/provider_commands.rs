@@ -372,6 +372,7 @@ command = "say"
                 "command": "echo"
             }),
             apps: McpApps {
+                codex_desktop: false,
                 claude: false,
                 codex: true, // 启用 Codex
                 gemini: false,

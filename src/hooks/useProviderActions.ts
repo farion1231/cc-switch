@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -172,7 +173,7 @@ export function useProviderActions(
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
       const isCodexChatFormat =
-        (activeApp === "codex" || activeApp === "grokbuild") &&
+        (isCodexApp(activeApp) || activeApp === "grokbuild") &&
         (provider.meta?.apiFormat === "openai_chat" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
@@ -182,7 +183,7 @@ export function useProviderActions(
               ),
             )));
       const isCodexAnthropicFormat =
-        (activeApp === "codex" || activeApp === "grokbuild") &&
+        (isCodexApp(activeApp) || activeApp === "grokbuild") &&
         (provider.meta?.apiFormat === "anthropic" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
@@ -250,7 +251,7 @@ export function useProviderActions(
         } else if (
           provider.meta?.isFullUrl &&
           (activeApp === "claude" ||
-            activeApp === "codex" ||
+            isCodexApp(activeApp) ||
             activeApp === "grokbuild")
         ) {
           proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
@@ -332,7 +333,7 @@ export function useProviderActions(
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
-          if (activeApp === "codex") {
+          if (isCodexApp(activeApp)) {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
           } else if (activeApp === "grokbuild") {

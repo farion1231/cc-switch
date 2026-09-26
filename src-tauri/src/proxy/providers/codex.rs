@@ -290,7 +290,8 @@ fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
 /// stay on the direct OpenAI API path instead of being sent to the ChatGPT
 /// backend. The fixed legacy card keeps its existing behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
-    let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+    let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
+        || provider.id == "codex-desktop-official";
     if is_fixed_official_id && provider.category.as_deref() == Some("official") {
         return true;
     }

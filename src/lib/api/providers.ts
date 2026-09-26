@@ -103,8 +103,10 @@ export const providersApi = {
     return await invoke("ensure_claude_desktop_official_provider");
   },
 
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
+  async ensureCodexOfficialProvider(
+    app: "codex" | "codex-desktop" = "codex",
+  ): Promise<boolean> {
+    return await invoke("ensure_codex_official_provider", { app });
   },
 
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {

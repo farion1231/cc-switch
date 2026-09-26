@@ -589,10 +589,9 @@ impl SkillService {
                 }
             }
             AppType::ClaudeDesktop | AppType::Mcode => {}
-            AppType::Codex => {
-                if let Some(custom) = crate::settings::get_codex_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
+            AppType::Codex | AppType::CodexDesktop => {
+                crate::codex_config::ensure_codex_target_writable(app)?;
+                return Ok(crate::codex_config::get_codex_config_dir_for_app(app).join("skills"));
             }
             AppType::Gemini => {
                 if let Some(custom) = crate::settings::get_gemini_override_dir() {
@@ -633,7 +632,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
-            AppType::Codex => home.join(".codex").join("skills"),
+            AppType::Codex | AppType::CodexDesktop => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::GrokBuild => home.join(".grok").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
@@ -697,7 +696,10 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop)
+                || (app == AppType::CodexDesktop
+                    && crate::codex_config::codex_desktop_directory_conflict())
+            {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -2458,6 +2460,10 @@ impl SkillService {
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         fs::create_dir_all(&app_dir)?;
 
+        if *app == AppType::CodexDesktop {
+            crate::settings::remember_codex_desktop_resource_dir("skills")?;
+        }
+
         let dest = app_dir.join(&directory);
 
         if matches!(app, AppType::Pi | AppType::Mcode) && (dest.exists() || Self::is_symlink(&dest))
@@ -2673,6 +2679,13 @@ impl SkillService {
         }
 
         let skills = db.get_all_installed_skills()?;
+        if *app == AppType::CodexDesktop
+            && (crate::codex_config::codex_desktop_directory_conflict()
+                || (!skills.values().any(|skill| skill.apps.codex_desktop)
+                    && !crate::settings::codex_desktop_resource_is_managed("skills")))
+        {
+            return Ok(());
+        }
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
 
@@ -4435,6 +4448,10 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     // 扫描各应用目录
     for app in AppType::all() {
+        // Desktop starts without imported app bindings; users can opt in later.
+        if app == AppType::CodexDesktop {
+            continue;
+        }
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,
             Err(_) => continue,

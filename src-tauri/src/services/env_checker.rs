@@ -41,7 +41,7 @@ enum EnvKeyword {
 fn get_keywords_for_app(app: &str) -> Vec<EnvKeyword> {
     match app.to_lowercase().as_str() {
         "claude" => vec![EnvKeyword::Prefix("ANTHROPIC")],
-        "codex" => vec![EnvKeyword::Prefix("OPENAI")],
+        "codex" | "codex-desktop" => vec![EnvKeyword::Prefix("OPENAI")],
         "gemini" => vec![
             EnvKeyword::Prefix("GEMINI"),
             EnvKeyword::Prefix("GOOGLE_GEMINI"),

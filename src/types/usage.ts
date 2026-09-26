@@ -192,6 +192,7 @@ export interface UsageRangeSelection {
 export type AppType =
   | "claude"
   | "codex"
+  | "codex-desktop"
   | "gemini"
   | "grokbuild"
   | "opencode"
@@ -203,6 +204,7 @@ export type AppTypeFilter = "all" | AppType;
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
   "opencode",
@@ -224,6 +226,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
  */
 export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
+  "codex-desktop",
   "gemini",
   "grokbuild",
 ]);

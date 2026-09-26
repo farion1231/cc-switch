@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -309,7 +310,7 @@ function ProviderFormFull({
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
   const initialCodexOfficialIdentity =
-    appId === "codex" && initialData
+    isCodexApp(appId) && initialData
       ? resolveCodexOfficialIdentity(appId, {
           id: providerId ?? "",
           category: initialData.category,
@@ -361,7 +362,7 @@ function ProviderFormFull({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
-  const supportsFullUrl = appId === "claude" || appId === "codex";
+  const supportsFullUrl = appId === "claude" || isCodexApp(appId);
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
@@ -443,7 +444,7 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "codex"
+        : isCodexApp(appId)
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
@@ -719,7 +720,7 @@ function ProviderFormFull({
   );
 
   useEffect(() => {
-    if (appId === "codex" && !initialData && selectedPresetId === "custom") {
+    if (isCodexApp(appId) && !initialData && selectedPresetId === "custom") {
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
@@ -751,7 +752,7 @@ function ProviderFormFull({
   );
 
   const presetEntries = useMemo(() => {
-    if (appId === "codex") {
+    if (isCodexApp(appId)) {
       return codexProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `codex-${index}`,
         preset,
@@ -804,13 +805,13 @@ function ProviderFormFull({
     (presetProviderType === "codex_oauth" ||
       initialProviderType === "codex_oauth");
   const isXaiOauthProvider =
-    (appId === "claude" || appId === "codex") &&
+    (appId === "claude" || isCodexApp(appId)) &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
   const wasCodexOfficialManagedOauthBound =
-    appId === "codex" &&
+    isCodexApp(appId) &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
   const isCodexOfficialProvider =
-    appId === "codex" &&
+    isCodexApp(appId) &&
     (hasExistingCodexOfficialIdentity ||
       wasCodexOfficialManagedOauthBound ||
       (presetProviderType === "codex_oauth" &&
@@ -863,11 +864,13 @@ function ProviderFormFull({
     handleExtract: handleCodexExtract,
     clearCommonConfigError: clearCodexCommonConfigError,
   } = useCodexCommonConfig({
+    appId: appId === "codex-desktop" ? "codex-desktop" : "codex",
     codexConfig,
     onConfigChange: handleCodexConfigChange,
-    initialData: appId === "codex" ? initialData : undefined,
-    initialEnabled:
-      appId === "codex" ? initialData?.meta?.commonConfigEnabled : undefined,
+    initialData: isCodexApp(appId) ? initialData : undefined,
+    initialEnabled: isCodexApp(appId)
+      ? initialData?.meta?.commonConfigEnabled
+      : undefined,
     selectedPresetId: selectedPresetId ?? undefined,
   });
 
@@ -1111,7 +1114,7 @@ function ProviderFormFull({
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
   const shouldApplyLocalProxyRequestOverrides =
-    (appId === "claude" || appId === "codex") && category !== "official";
+    (appId === "claude" || isCodexApp(appId)) && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
     const overridesResult = shouldApplyLocalProxyRequestOverrides
@@ -1439,7 +1442,7 @@ function ProviderFormFull({
             }),
           );
         }
-      } else if (appId === "codex") {
+      } else if (isCodexApp(appId)) {
         // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
         if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
@@ -1501,7 +1504,7 @@ function ProviderFormFull({
 
     let settingsConfig: string;
 
-    if (appId === "codex") {
+    if (isCodexApp(appId)) {
       try {
         const shouldStripCodexOfficialAuth =
           isCodexOfficialManagedOauthBound || wasCodexOfficialManagedOauthBound;
@@ -1718,7 +1721,7 @@ function ProviderFormFull({
       commonConfigEnabled:
         appId === "claude"
           ? useCommonConfig
-          : appId === "codex"
+          : isCodexApp(appId)
             ? useCodexCommonConfigFlag
             : appId === "gemini"
               ? useGeminiCommonConfigFlag
@@ -1759,20 +1762,20 @@ function ProviderFormFull({
           : undefined,
       codexFastMode: isClaudeCodexOauthProvider ? codexFastMode : undefined,
       codexChatReasoning:
-        appId === "codex" &&
+        isCodexApp(appId) &&
         category !== "official" &&
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
       promptCacheRouting:
-        appId === "codex" &&
+        isCodexApp(appId) &&
         category !== "official" &&
         localCodexApiFormat === "openai_chat" &&
         promptCacheRouting !== "auto"
           ? promptCacheRouting
           : undefined,
       customUserAgent:
-        (appId === "claude" || appId === "codex") && category !== "official"
+        (appId === "claude" || isCodexApp(appId)) && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
@@ -1790,7 +1793,7 @@ function ProviderFormFull({
           ? isXaiOauthProvider
             ? "openai_responses"
             : localApiFormat
-          : appId === "codex" && category !== "official"
+          : isCodexApp(appId) && category !== "official"
             ? isXaiOauthProvider
               ? "openai_responses"
               : localCodexApiFormat
@@ -1800,7 +1803,7 @@ function ProviderFormFull({
         category !== "official" &&
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
-          : appId === "codex" &&
+          : isCodexApp(appId) &&
               category !== "official" &&
               localCodexApiFormat === "anthropic" &&
               localCodexAnthropicAuthField !== "ANTHROPIC_AUTH_TOKEN"
@@ -1808,7 +1811,7 @@ function ProviderFormFull({
             : undefined,
       // Off by default; persist true only for codex+anthropic when the user explicitly enables it
       impersonateClaudeCode:
-        appId === "codex" &&
+        isCodexApp(appId) &&
         category !== "official" &&
         localCodexApiFormat === "anthropic" &&
         localCodexImpersonateClaudeCode
@@ -1816,7 +1819,7 @@ function ProviderFormFull({
           : undefined,
       // Persist only for codex+anthropic when a positive value was entered
       maxOutputTokens:
-        appId === "codex" &&
+        isCodexApp(appId) &&
         category !== "official" &&
         localCodexApiFormat === "anthropic" &&
         localCodexMaxOutputTokens.trim() !== "" &&
@@ -1872,7 +1875,7 @@ function ProviderFormFull({
     isPartner: isCodexPartner,
     partnerPromotionKey: codexPartnerPromotionKey,
   } = useApiKeyLink({
-    appId: "codex",
+    appId: appId === "codex-desktop" ? "codex-desktop" : "codex",
     category,
     selectedPresetId,
     presetEntries,
@@ -1949,7 +1952,7 @@ function ProviderFormFull({
       setActivePreset(null);
       form.reset(defaultValues);
 
-      if (appId === "codex") {
+      if (isCodexApp(appId)) {
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
@@ -1988,7 +1991,7 @@ function ProviderFormFull({
       partnerPromotionKey: entry.preset.partnerPromotionKey,
     });
 
-    if (appId === "codex") {
+    if (isCodexApp(appId)) {
       const preset = entry.preset as CodexProviderPreset;
       const auth = preset.auth ?? {};
       const config = preset.config ?? "";
@@ -2439,8 +2442,9 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "codex" && (
+          {isCodexApp(appId) && (
             <CodexFormFields
+              appId={appId}
               providerId={providerId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
@@ -2467,9 +2471,15 @@ function ProviderFormFull({
               }
               onManageAuthAccounts={onManageAuthAccounts}
               codexOauthSelectionLabel={t("codexOauth.signInMethod")}
-              codexOauthNoneOptionLabel={t("codexOauth.noneOptionLabel")}
+              codexOauthNoneOptionLabel={t(
+                appId === "codex-desktop"
+                  ? "codexDesktop.followCodexLogin"
+                  : "codexOauth.noneOptionLabel",
+              )}
               codexOauthNoneOptionDescription={t(
-                "codex.followCodexLoginDescription",
+                appId === "codex-desktop"
+                  ? "codexDesktop.officialNotice"
+                  : "codex.followCodexLoginDescription",
               )}
               codexOauthAllowUnboundSelection
               codexOauthAllowUnboundSelectionWithoutStatus
@@ -2632,7 +2642,7 @@ function ProviderFormFull({
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {appId === "codex" ? (
+          {isCodexApp(appId) ? (
             <>
               <CodexConfigEditor
                 authValue={codexAuth}

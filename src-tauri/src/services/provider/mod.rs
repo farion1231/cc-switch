@@ -55,7 +55,7 @@ use usage::validate_usage_script;
 /// ownership of the active ChatGPT login and the proxy only forwards the
 /// authenticated request. Other apps' official providers retain the block.
 pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
-    matches!(app_type, AppType::Codex)
+    matches!(app_type, AppType::Codex | AppType::CodexDesktop)
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
@@ -63,12 +63,20 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
 /// 第三方 live 配置不受开关影响。
+#[allow(dead_code)]
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
-    let current_id = ProviderService::current(state, AppType::Codex)?;
+    reapply_current_codex_official_live_for_app(&crate::app_config::AppType::Codex, state)
+}
+
+pub fn reapply_current_codex_official_live_for_app(
+    app: &crate::app_config::AppType,
+    state: &AppState,
+) -> Result<bool, AppError> {
+    let current_id = ProviderService::current(state, app.clone())?;
     if current_id.is_empty() {
         return Ok(false);
     }
-    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
+    let providers = state.db.get_all_providers(app.as_str())?;
     let Some(provider) = providers.get(&current_id) else {
         return Ok(false);
     };
@@ -81,8 +89,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
     // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
     // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
-    let outcome =
-        live::sync_live_for_provider_respecting_takeover(state, &AppType::Codex, provider)?;
+    let outcome = live::sync_live_for_provider_respecting_takeover(state, app, provider)?;
     if outcome == LiveSyncOutcome::BackupOnly {
         return Ok(true);
     }
@@ -95,7 +102,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 已生效；若把错误上抛，save_settings 会回滚开关设置，制造"设置=旧值、
     // live=新桶"的会话分裂——正是该回滚要防止的状态。MCP 投影可自愈
     // （下次切换 / 任一 MCP 启停操作都会重新投影）。
-    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Codex) {
+    if let Err(err) = McpService::sync_enabled_for_app(state, app) {
         log::warn!("统一会话开关重写 live 后重投影 Codex MCP 失败（将在下次同步时自愈）: {err}");
     }
     Ok(true)
@@ -1967,7 +1974,7 @@ requires_openai_auth = true
             .expect("start proxy service");
         state
             .proxy_service
-            .sync_codex_live_from_provider_while_proxy_active(&original)
+            .sync_codex_live_from_provider_while_proxy_active_for_app(&AppType::Codex, &original)
             .await
             .expect("seed taken-over Codex live config");
         assert!(
@@ -3452,7 +3459,10 @@ wire_api = "responses"
                         runtime.block_on(async {
                             state
                                 .proxy_service
-                                .sync_codex_live_from_provider_while_proxy_active(&current)
+                                .sync_codex_live_from_provider_while_proxy_active_for_app(
+                                    &AppType::Codex,
+                                    &current,
+                                )
                                 .await
                                 .unwrap();
                             state
@@ -3852,7 +3862,10 @@ wire_api = "responses"
                     .expect("save baseline backup");
                 state
                     .proxy_service
-                    .sync_codex_live_from_provider_while_proxy_active(&provider)
+                    .sync_codex_live_from_provider_while_proxy_active_for_app(
+                        &AppType::Codex,
+                        &provider,
+                    )
                     .await
                     .expect("seed managed takeover live");
             });
@@ -4718,7 +4731,7 @@ impl ProviderService {
         app_type: &AppType,
         provider: &Provider,
     ) -> Result<Option<Provider>, AppError> {
-        if matches!(app_type, AppType::Codex)
+        if matches!(app_type, AppType::Codex | AppType::CodexDesktop)
             && Self::managed_codex_oauth_account_id(provider).is_some()
         {
             return build_effective_provider_for_live_with_codex_oauth_manager(
@@ -4773,7 +4786,9 @@ impl ProviderService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn managed_codex_add_transaction_error(
+        app: &AppType,
         state: &AppState,
         operation: &str,
         error: AppError,
@@ -4786,10 +4801,8 @@ impl ProviderService {
 
         if provider_saved {
             let provider_rollback = match previous_provider {
-                Some(previous) => state.db.save_provider(AppType::Codex.as_str(), previous),
-                None => state
-                    .db
-                    .delete_provider(AppType::Codex.as_str(), &provider.id),
+                Some(previous) => state.db.save_provider(app.as_str(), previous),
+                None => state.db.delete_provider(app.as_str(), &provider.id),
             };
             if let Err(rollback_error) = provider_rollback {
                 rollback_failures.push(format!("恢复 Provider 数据失败: {rollback_error}"));
@@ -4811,6 +4824,7 @@ impl ProviderService {
     }
 
     fn managed_codex_takeover_transaction_error(
+        app: &AppType,
         state: &AppState,
         operation: &str,
         error: AppError,
@@ -4830,11 +4844,9 @@ impl ProviderService {
             Some(backup) => futures::executor::block_on(
                 state
                     .db
-                    .save_live_backup(AppType::Codex.as_str(), &backup.original_config),
+                    .save_live_backup(app.as_str(), &backup.original_config),
             ),
-            None => {
-                futures::executor::block_on(state.db.delete_live_backup(AppType::Codex.as_str()))
-            }
+            None => futures::executor::block_on(state.db.delete_live_backup(app.as_str())),
         };
         if let Err(rollback_error) = backup_restore {
             rollback_failures.push(format!("恢复 Codex Live 备份失败: {rollback_error}"));
@@ -4858,7 +4870,7 @@ impl ProviderService {
         existing_provider: Option<&Provider>,
         provider: &Provider,
     ) -> Option<String> {
-        if !matches!(app_type, AppType::Codex) {
+        if !matches!(app_type, AppType::Codex | AppType::CodexDesktop) {
             return None;
         }
 
@@ -4873,6 +4885,7 @@ impl ProviderService {
     }
 
     fn prepare_outgoing_managed_codex_live_auth(
+        app: &AppType,
         state: &AppState,
         account_id: Option<&str>,
     ) -> Result<Option<CodexLiveAuthSwitchGuard>, AppError> {
@@ -4880,6 +4893,7 @@ impl ProviderService {
             return Ok(None);
         };
         live::prepare_codex_managed_oauth_live_auth_switch_away(
+            app.clone(),
             state.codex_oauth_manager.clone(),
             account_id.to_string(),
         )
@@ -4887,21 +4901,23 @@ impl ProviderService {
     }
 
     fn ensure_outgoing_managed_codex_live_auth_unchanged(
+        app: &AppType,
         account_id: Option<&str>,
         guard: Option<&CodexLiveAuthSwitchGuard>,
     ) -> Result<(), AppError> {
         if let (Some(account_id), Some(guard)) = (account_id, guard) {
-            guard.ensure_unchanged(account_id)?;
+            guard.ensure_unchanged_for_app(app, account_id)?;
         }
         Ok(())
     }
 
     fn clear_outgoing_managed_codex_live_auth(
+        app: &AppType,
         account_id: Option<&str>,
         guard: Option<&CodexLiveAuthSwitchGuard>,
     ) -> Result<(), AppError> {
         if let (Some(account_id), Some(guard)) = (account_id, guard) {
-            guard.clear_outgoing(account_id)?;
+            guard.clear_outgoing_for_app(app, account_id)?;
         }
         Ok(())
     }
@@ -5102,7 +5118,13 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
-        let is_managed_codex_add = matches!(app_type, AppType::Codex)
+        if app_type == AppType::CodexDesktop
+            && crate::codex_config::codex_desktop_directory_conflict()
+        {
+            state.db.save_provider(app_type.as_str(), &provider)?;
+            return Ok(true);
+        }
+        let is_managed_codex_add = matches!(app_type, AppType::Codex | AppType::CodexDesktop)
             && Self::managed_codex_oauth_account_id(&provider).is_some();
         let _managed_codex_add_guard = if is_managed_codex_add {
             Some(futures::executor::block_on(
@@ -5133,7 +5155,7 @@ impl ProviderService {
                 .get_provider_by_id(&provider.id, app_type.as_str())?;
             let preflighted_provider =
                 Self::preflight_managed_codex_live(state, &app_type, &provider)?;
-            let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()?;
+            let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture_for_app(&app_type)?;
             let mut provider_saved = false;
             let commit_result = (|| {
                 Self::write_preflighted_or_current_live(
@@ -5152,6 +5174,7 @@ impl ProviderService {
 
             if let Err(error) = commit_result {
                 return Err(Self::managed_codex_add_transaction_error(
+                    &app_type,
                     state,
                     "新增首个托管 Codex provider",
                     error,
@@ -5223,13 +5246,14 @@ impl ProviderService {
         // only after this lock is held. Non-managed Codex updates release it
         // before entering the legacy path, whose proxy helpers take the lock
         // themselves.
-        let codex_update_switch_guard = if matches!(app_type, AppType::Codex) {
-            Some(futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
-            ))
-        } else {
-            None
-        };
+        let codex_update_switch_guard =
+            if matches!(app_type, AppType::Codex | AppType::CodexDesktop) {
+                Some(futures::executor::block_on(
+                    state.proxy_service.lock_switch_for_app(app_type.as_str()),
+                ))
+            } else {
+                None
+            };
         let existing_provider = state
             .db
             .get_provider_by_id(&original_id, app_type.as_str())?;
@@ -5237,7 +5261,9 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
-        if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
+        if matches!(app_type, AppType::Codex | AppType::CodexDesktop)
+            && provider.category.as_deref() == Some("official")
+        {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
             )?;
@@ -5378,6 +5404,13 @@ impl ProviderService {
             return Ok(true);
         }
 
+        if app_type == AppType::CodexDesktop
+            && crate::codex_config::codex_desktop_directory_conflict()
+        {
+            state.db.save_provider(app_type.as_str(), &provider)?;
+            return Ok(true);
+        }
+
         // For other apps: Check if this is current provider (use effective current, not just DB)
         let effective_current =
             crate::settings::get_effective_current_provider(&state.db, &app_type)?;
@@ -5392,7 +5425,7 @@ impl ProviderService {
             existing_provider.as_ref(),
             &provider,
         );
-        let managed_codex_update = matches!(app_type, AppType::Codex)
+        let managed_codex_update = matches!(app_type, AppType::Codex | AppType::CodexDesktop)
             && (existing_managed_codex_account_id.is_some()
                 || target_managed_codex_account_id.is_some());
 
@@ -5407,6 +5440,7 @@ impl ProviderService {
             }
 
             let outgoing_live_auth_guard = Self::prepare_outgoing_managed_codex_live_auth(
+                &app_type,
                 state,
                 outgoing_managed_codex_account_id.as_deref(),
             )?;
@@ -5424,11 +5458,12 @@ impl ProviderService {
                 Self::preflight_managed_codex_live(state, &app_type, &provider)?;
             // Capture after preflight: a legitimate refresh may have advanced
             // auth.json, and rollback must never restore the older generation.
-            let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()?;
+            let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture_for_app(&app_type)?;
 
             if !has_live_backup && !live_taken_over {
                 let commit_result = (|| {
                     Self::ensure_outgoing_managed_codex_live_auth_unchanged(
+                        &app_type,
                         outgoing_managed_codex_account_id.as_deref(),
                         outgoing_live_auth_guard.as_ref(),
                     )?;
@@ -5439,6 +5474,7 @@ impl ProviderService {
                         preflighted_provider.as_ref(),
                     )?;
                     Self::clear_outgoing_managed_codex_live_auth(
+                        &app_type,
                         outgoing_managed_codex_account_id.as_deref(),
                         outgoing_live_auth_guard.as_ref(),
                     )?;
@@ -5464,6 +5500,7 @@ impl ProviderService {
 
             let commit_result = (|| {
                 Self::ensure_outgoing_managed_codex_live_auth_unchanged(
+                    &app_type,
                     outgoing_managed_codex_account_id.as_deref(),
                     outgoing_live_auth_guard.as_ref(),
                 )?;
@@ -5480,7 +5517,8 @@ impl ProviderService {
                     futures::executor::block_on(
                         state
                             .proxy_service
-                            .sync_codex_live_from_provider_while_proxy_active_guarded(
+                            .sync_codex_live_from_provider_while_proxy_active_guarded_for_app(
+                                &app_type,
                                 &provider,
                                 outgoing_managed_codex_account_id.as_deref(),
                                 outgoing_live_auth_guard.as_ref(),
@@ -5494,6 +5532,7 @@ impl ProviderService {
                     // half-takeover state. Keep the actual Live bundle aligned
                     // with the edited current provider as well as the backup.
                     Self::ensure_outgoing_managed_codex_live_auth_unchanged(
+                        &app_type,
                         outgoing_managed_codex_account_id.as_deref(),
                         outgoing_live_auth_guard.as_ref(),
                     )?;
@@ -5506,6 +5545,7 @@ impl ProviderService {
                 }
 
                 Self::clear_outgoing_managed_codex_live_auth(
+                    &app_type,
                     outgoing_managed_codex_account_id.as_deref(),
                     outgoing_live_auth_guard.as_ref(),
                 )?;
@@ -5517,6 +5557,7 @@ impl ProviderService {
             })();
             if let Err(error) = commit_result {
                 return Err(Self::managed_codex_takeover_transaction_error(
+                    &app_type,
                     state,
                     "更新接管中的 Codex provider",
                     error,
@@ -5710,6 +5751,7 @@ impl ProviderService {
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        crate::codex_config::ensure_codex_target_writable(&app_type)?;
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }
@@ -5889,24 +5931,27 @@ impl ProviderService {
             .filter(|account_id| target_managed_codex_account_id.as_ref() != Some(*account_id))
             .cloned();
         let outgoing_live_auth_guard = Self::prepare_outgoing_managed_codex_live_auth(
+            &app_type,
             state,
             outgoing_managed_codex_account_id.as_deref(),
         )?;
 
         // 提交 current 前预检托管 Codex token（见 preflight_managed_codex_live）。
         let preflighted_provider = Self::preflight_managed_codex_live(state, &app_type, provider)?;
-        let use_managed_codex_transaction = matches!(app_type, AppType::Codex)
-            && (current_managed_codex_account_id.is_some()
-                || target_managed_codex_account_id.is_some());
+        let use_managed_codex_transaction =
+            matches!(app_type, AppType::Codex | AppType::CodexDesktop)
+                && (current_managed_codex_account_id.is_some()
+                    || target_managed_codex_account_id.is_some());
 
         if use_managed_codex_transaction {
             // auth/config/catalog/marker form one logical live commit. Write them
             // before current, then restore the exact four-file snapshot on any
             // failure so native logins and CLI-rotated tokens are not reconstructed
             // from a stale provider row.
-            let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()?;
+            let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture_for_app(&app_type)?;
             let live_result = (|| {
                 Self::ensure_outgoing_managed_codex_live_auth_unchanged(
+                    &app_type,
                     outgoing_managed_codex_account_id.as_deref(),
                     outgoing_live_auth_guard.as_ref(),
                 )?;
@@ -5917,6 +5962,7 @@ impl ProviderService {
                     preflighted_provider.as_ref(),
                 )?;
                 Self::clear_outgoing_managed_codex_live_auth(
+                    &app_type,
                     outgoing_managed_codex_account_id.as_deref(),
                     outgoing_live_auth_guard.as_ref(),
                 )?;
@@ -5954,8 +6000,10 @@ impl ProviderService {
             // refusal after current moved would let the next switch backfill
             // the old live config into the new provider's DB row. (The
             // managed branch above has its own snapshot rollback instead.)
-            if matches!(app_type, AppType::Codex) && preflighted_provider.is_none() {
-                live::preflight_codex_live_write_for_state(state, provider)?;
+            if matches!(app_type, AppType::Codex | AppType::CodexDesktop)
+                && preflighted_provider.is_none()
+            {
+                live::preflight_codex_live_write_for_state_for_app(&app_type, state, provider)?;
             }
 
             // Additive mode apps skip setting is_current (no such concept).
@@ -5980,14 +6028,14 @@ impl ProviderService {
         // made above is what keeps that key recoverable. Failures degrade to
         // a log entry: config.toml and is_current are already committed, so
         // failing the switch here would report a switch that in fact happened.
-        if matches!(app_type, AppType::Codex)
+        if matches!(app_type, AppType::Codex | AppType::CodexDesktop)
             && backfill_completed
             && (provider.category.as_deref() == Some("official")
                 || crate::proxy::providers::is_codex_official_provider(provider))
             && target_managed_codex_account_id.is_none()
         {
             let db_auth = provider.settings_config.get("auth");
-            match crate::codex_config::clear_stale_codex_live_auth_after_official_switch(
+            match crate::codex_config::clear_stale_codex_live_auth_after_official_switch_for_app(&app_type,
                 db_auth.unwrap_or(&serde_json::Value::Null),
             ) {
                 Ok(true) => log::info!(
@@ -6004,11 +6052,11 @@ impl ProviderService {
         // config and current are already committed — but the user has to see
         // that the official login is still on disk, so surface it as a
         // switch warning instead of only a log line.
-        if matches!(app_type, AppType::Codex)
+        if matches!(app_type, AppType::Codex | AppType::CodexDesktop)
             && provider.category.as_deref() != Some("official")
             && !crate::proxy::providers::is_codex_official_provider(provider)
-            && !crate::settings::preserve_codex_official_auth_on_switch()
-            && crate::codex_config::get_codex_auth_path().exists()
+            && !crate::settings::preserve_codex_official_auth_on_switch_for_app(&app_type)
+            && crate::codex_config::get_codex_auth_path_for_app(&app_type).exists()
         {
             log::warn!("Codex auth.json still present after a preservation-off third-party switch");
             result
@@ -6221,7 +6269,10 @@ impl ProviderService {
         result: &mut SwitchResult,
     ) {
         // 作用域限定 Claude + Codex（见函数文档）。
-        if !matches!(app_type, AppType::Claude | AppType::Codex) {
+        if !matches!(
+            app_type,
+            AppType::Claude | AppType::Codex | AppType::CodexDesktop
+        ) {
             return;
         }
 
@@ -6308,7 +6359,9 @@ impl ProviderService {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
             AppType::ClaudeDesktop => Ok(String::new()),
-            AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
+            AppType::Codex | AppType::CodexDesktop => {
+                Self::extract_codex_common_config(&provider.settings_config)
+            }
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
@@ -6326,7 +6379,9 @@ impl ProviderService {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(settings_config),
             AppType::ClaudeDesktop => Ok(String::new()),
-            AppType::Codex => Self::extract_codex_common_config(settings_config),
+            AppType::Codex | AppType::CodexDesktop => {
+                Self::extract_codex_common_config(settings_config)
+            }
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
@@ -6996,7 +7051,7 @@ impl ProviderService {
             AppType::ClaudeDesktop => {
                 crate::claude_desktop_config::validate_provider(provider)?;
             }
-            AppType::Codex => {
+            AppType::Codex | AppType::CodexDesktop => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
                         "provider.codex.settings.not_object",
@@ -7195,7 +7250,7 @@ impl ProviderService {
                     crate::claude_desktop_config::direct_gateway_credentials(provider)?;
                 Ok((credentials.api_key, credentials.base_url))
             }
-            AppType::Codex => {
+            AppType::Codex | AppType::CodexDesktop => {
                 let _auth = provider
                     .settings_config
                     .get("auth")
@@ -7469,6 +7524,10 @@ impl ProviderService {
                 let codex_id = format!("universal-codex-{id}");
                 let _ = state.db.delete_provider("codex", &codex_id);
             }
+            if p.apps.codex_desktop {
+                let codex_id = format!("universal-codex-desktop-{id}");
+                let _ = state.db.delete_provider("codex-desktop", &codex_id);
+            }
             if p.apps.gemini {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
@@ -7537,6 +7596,33 @@ impl ProviderService {
         } else {
             let codex_id = format!("universal-codex-{id}");
             let _ = state.db.delete_provider("codex", &codex_id);
+        }
+
+        // 同步到 Codex Desktop
+        if let Some(mut codex_provider) = provider.to_codex_desktop_provider() {
+            // 合并已有配置
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&codex_provider.id, "codex-desktop")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &codex_provider.settings_config);
+                codex_provider.settings_config = merged;
+                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段。
+                codex_provider.meta = existing.meta;
+                codex_provider.created_at = existing.created_at;
+                codex_provider.sort_index = existing.sort_index;
+            }
+            state.db.save_provider("codex-desktop", &codex_provider)?;
+            Self::project_universal_child_to_live(
+                state,
+                AppType::CodexDesktop,
+                &codex_provider.id,
+                &mut live_failures,
+            );
+        } else {
+            let codex_id = format!("universal-codex-desktop-{id}");
+            let _ = state.db.delete_provider("codex-desktop", &codex_id);
         }
 
         // 同步到 Gemini

@@ -137,6 +137,7 @@ const UnifiedMcpPanel = React.forwardRef<
       claude: 0,
       "claude-desktop": 0,
       codex: 0,
+      "codex-desktop": 0,
       gemini: 0,
       grokbuild: 0,
       opencode: 0,

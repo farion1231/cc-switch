@@ -904,7 +904,9 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "codexDesktopConfigDir": "Codex Desktop 設定ディレクトリ",
+    "codexDesktopAuth": "Codex Desktop の拡張設定"
   },
   "apps": {
     "claude": "Claude",
@@ -918,7 +920,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop"
   },
   "mcode": {
     "empty": {
@@ -1737,7 +1741,8 @@
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
-      "mcode": "MiniMax Code"
+      "mcode": "MiniMax Code",
+      "codex-desktop": "Codex Desktop"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -1748,15 +1753,15 @@
       "syncFailed": "セッション使用量の同期に失敗しました：{{error}}"
     },
     "rebuildCodex": {
-      "title": "Codex 使用量メンテナンス",
-      "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
+      "title": "{{appName}} 使用量メンテナンス",
+      "description": "ローカルの rollout ログから {{appName}} セッション使用量を再構築します",
       "warning": "最初にデータベースを自動バックアップします。元の JSONL が削除済みの履歴は再インポートできません。",
-      "action": "Codex 使用量を再構築",
-      "confirmTitle": "Codex 使用量を再構築しますか？",
-      "confirmMessage": "既存の Codex セッション明細と集計を削除し、ローカルの Codex ログから再インポートします。\n\n削除済みログの履歴は失われます。親 rollout がない fork は保留されます。",
+      "action": "{{appName}} 使用量を再構築",
+      "confirmTitle": "{{appName}} 使用量を再構築しますか？",
+      "confirmMessage": "既存の {{appName}} セッション明細と集計を削除し、ローカルの {{appName}} ログから再インポートします。\n\n削除済みログの履歴は失われます。親 rollout がない fork は保留されます。",
       "confirmAction": "バックアップして再構築",
       "completed": "再構築完了：{{imported}} 件インポート、{{errors}} 件エラー、重複候補 {{suspected}} 件、保留ファイル {{deferred}} 件",
-      "failed": "Codex 使用量の再構築に失敗しました：{{error}}"
+      "failed": "{{appName}} 使用量の再構築に失敗しました：{{error}}"
     },
     "totalRecords": "全 {{total}} 件",
     "goToPage": "移動",
@@ -2042,7 +2047,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "codex-desktop": "Codex Desktop"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -2223,7 +2229,8 @@
     "switcherTooltip": {
       "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
       "claude-desktop": "プロジェクト：Claude Desktop のプロバイダーをワンクリックで切り替え",
-      "codex": "プロジェクト：Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え"
+      "codex": "プロジェクト：Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
+      "codex-desktop": "プロジェクト：Codex Desktop のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え"
     },
     "none": "プロジェクトを使用しない",
     "searchPlaceholder": "プロジェクトを検索",
@@ -2232,7 +2239,8 @@
     "createDescription": {
       "claude": "Claude Code の現在のプロバイダー、MCP、Skills、メモリファイルをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
       "claude-desktop": "Claude Desktop の現在のプロバイダーをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
-      "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。"
+      "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。",
+      "codex-desktop": "Codex Desktop の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。"
     },
     "manage": "プロジェクトを管理…",
     "manageTitle": "プロジェクト管理",
@@ -2657,7 +2665,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codex-desktop": "Codex Desktop"
     },
     "installFromZip": {
       "button": "ZIP からインストール",
@@ -3277,5 +3286,11 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "codexDesktop": {
+    "followCodexLogin": "Codex Desktop のログインに追従",
+    "directoryConflict": "Codex Desktop と Codex の設定ディレクトリが同じです。設定で別々のディレクトリを選択してください。",
+    "openDirectorySettings": "ディレクトリ設定を開く",
+    "officialNotice": "Codex Desktop の現在のログインに従います"
   }
 }

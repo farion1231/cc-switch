@@ -1,9 +1,10 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -202,6 +203,15 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const { data: codexDesktopDirectoryConflict } = useQuery({
+    queryKey: [
+      "codexDesktopDirectoryConflict",
+      settingsData?.codexConfigDir,
+      settingsData?.codexDesktopConfigDir,
+    ],
+    queryFn: () => settingsApi.getCodexDesktopDirectoryConflict(),
+    enabled: activeApp === "codex-desktop",
+  });
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
@@ -233,7 +243,7 @@ function App() {
     if (
       currentView === "sessions" &&
       sharedFeatureApp !== "claude" &&
-      sharedFeatureApp !== "codex" &&
+      !isCodexApp(sharedFeatureApp) &&
       sharedFeatureApp !== "grokbuild" &&
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
@@ -327,7 +337,7 @@ function App() {
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
-    sharedFeatureApp === "codex" ||
+    isCodexApp(sharedFeatureApp) ||
     sharedFeatureApp === "grokbuild" ||
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
@@ -1113,6 +1123,25 @@ function App() {
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
+              {activeApp === "codex-desktop" &&
+                codexDesktopDirectoryConflict && (
+                  <div
+                    role="status"
+                    className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+                  >
+                    <p>{t("codexDesktop.directoryConflict")}</p>
+                    <Button
+                      variant="link"
+                      className="px-0"
+                      onClick={() => {
+                        setSettingsDefaultTab("directories");
+                        setCurrentView("settings");
+                      }}
+                    >
+                      {t("codexDesktop.openDirectorySettings")}
+                    </Button>
+                  </div>
+                )}
               <div
                 ref={providerScrollContainerRef}
                 className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1"

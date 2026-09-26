@@ -35,14 +35,17 @@ pub enum ProfileScope {
     #[serde(rename = "claude-desktop")]
     ClaudeDesktop,
     Codex,
+    #[serde(rename = "codex-desktop")]
+    CodexDesktop,
 }
 
 impl ProfileScope {
     /// 全部分组（扩展新分组时同步扩展 apps/for_app 与前端 scope.ts 镜像）
-    pub const ALL: [ProfileScope; 3] = [
+    pub const ALL: [ProfileScope; 4] = [
         ProfileScope::Claude,
         ProfileScope::ClaudeDesktop,
         ProfileScope::Codex,
+        ProfileScope::CodexDesktop,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -50,6 +53,7 @@ impl ProfileScope {
             ProfileScope::Claude => "claude",
             ProfileScope::ClaudeDesktop => "claude-desktop",
             ProfileScope::Codex => "codex",
+            ProfileScope::CodexDesktop => "codex-desktop",
         }
     }
 
@@ -58,6 +62,7 @@ impl ProfileScope {
             "claude" => Ok(ProfileScope::Claude),
             "claude-desktop" => Ok(ProfileScope::ClaudeDesktop),
             "codex" => Ok(ProfileScope::Codex),
+            "codex-desktop" => Ok(ProfileScope::CodexDesktop),
             other => Err(AppError::InvalidInput(format!(
                 "Unknown profile scope: {other}"
             ))),
@@ -70,6 +75,7 @@ impl ProfileScope {
             ProfileScope::Claude => &[AppType::Claude],
             ProfileScope::ClaudeDesktop => &[AppType::ClaudeDesktop],
             ProfileScope::Codex => &[AppType::Codex],
+            ProfileScope::CodexDesktop => &[AppType::CodexDesktop],
         }
     }
 
@@ -79,6 +85,7 @@ impl ProfileScope {
             AppType::Claude => Some(ProfileScope::Claude),
             AppType::ClaudeDesktop => Some(ProfileScope::ClaudeDesktop),
             AppType::Codex => Some(ProfileScope::Codex),
+            AppType::CodexDesktop => Some(ProfileScope::CodexDesktop),
             _ => None,
         }
     }
@@ -92,6 +99,8 @@ pub struct PerApp<T> {
     #[serde(rename = "claude-desktop")]
     pub claude_desktop: T,
     pub codex: T,
+    #[serde(rename = "codex-desktop")]
+    pub codex_desktop: T,
 }
 
 impl<T> PerApp<T> {
@@ -100,6 +109,7 @@ impl<T> PerApp<T> {
             AppType::Claude => Some(&self.claude),
             AppType::ClaudeDesktop => Some(&self.claude_desktop),
             AppType::Codex => Some(&self.codex),
+            AppType::CodexDesktop => Some(&self.codex_desktop),
             _ => None,
         }
     }
@@ -109,6 +119,7 @@ impl<T> PerApp<T> {
             AppType::Claude => Some(&mut self.claude),
             AppType::ClaudeDesktop => Some(&mut self.claude_desktop),
             AppType::Codex => Some(&mut self.codex),
+            AppType::CodexDesktop => Some(&mut self.codex_desktop),
             _ => None,
         }
     }
@@ -332,6 +343,9 @@ impl ProfileService {
         profile_id: &str,
         scope: ProfileScope,
     ) -> Result<(Vec<String>, bool), AppError> {
+        for app in scope.apps() {
+            crate::codex_config::ensure_codex_target_writable(app)?;
+        }
         let mut warnings = Vec::new();
 
         // 自动保存旧项目当前状态（仅当前分组），失败不阻塞切换
@@ -477,21 +491,25 @@ mod tests {
     fn test_payload_serde_roundtrip() {
         let payload = ProfilePayload {
             providers: PerApp {
+                codex_desktop: None,
                 claude: Some("p1".into()),
                 claude_desktop: Some("d1".into()),
                 codex: None,
             },
             mcp: PerApp {
+                codex_desktop: None,
                 claude: Some(ids(&["m1", "m2"])),
                 claude_desktop: Some(vec![]),
                 codex: None,
             },
             skills: PerApp {
+                codex_desktop: None,
                 claude: Some(vec![]),
                 claude_desktop: Some(vec![]),
                 codex: Some(ids(&["s1"])),
             },
             prompts: PerApp {
+                codex_desktop: None,
                 claude: None,
                 claude_desktop: None,
                 codex: Some("pr1".into()),
@@ -530,11 +548,13 @@ mod tests {
         // 项目 A：两侧都已拍过快照
         let mut payload = ProfilePayload {
             providers: PerApp {
+                codex_desktop: None,
                 claude: Some("p1".into()),
                 claude_desktop: Some("d1".into()),
                 codex: Some("c1".into()),
             },
             mcp: PerApp {
+                codex_desktop: None,
                 claude: Some(ids(&["m1"])),
                 claude_desktop: Some(vec![]),
                 codex: Some(ids(&["m9"])),
@@ -544,11 +564,13 @@ mod tests {
         // 在 Claude 页"以当前状态更新"：只覆盖 claude 组槽位
         let fresh = ProfilePayload {
             providers: PerApp {
+                codex_desktop: None,
                 claude: Some("p2".into()),
                 claude_desktop: None,
                 codex: Some("SHOULD-NOT-LEAK".into()),
             },
             mcp: PerApp {
+                codex_desktop: None,
                 claude: Some(ids(&["m2"])),
                 claude_desktop: Some(vec![]),
                 codex: None,

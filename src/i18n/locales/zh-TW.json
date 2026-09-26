@@ -905,7 +905,9 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "codexDesktopConfigDir": "Codex Desktop 設定目錄",
+    "codexDesktopAuth": "Codex Desktop 應用增強"
   },
   "apps": {
     "claude": "Claude",
@@ -919,7 +921,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop"
   },
   "mcode": {
     "empty": {
@@ -1738,7 +1742,8 @@
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
-      "mcode": "MiniMax Code"
+      "mcode": "MiniMax Code",
+      "codex-desktop": "Codex Desktop"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
@@ -1749,15 +1754,15 @@
       "syncFailed": "工作階段用量同步失敗：{{error}}"
     },
     "rebuildCodex": {
-      "title": "Codex 用量維護",
-      "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
+      "title": "{{appName}} 用量維護",
+      "description": "從本機 rollout 日誌重新建構 {{appName}} 工作階段用量",
       "warning": "重建前會自動備份資料庫。若來源 JSONL 已刪除，對應歷史將無法重新匯入。",
-      "action": "重建 Codex 用量",
-      "confirmTitle": "確認重建 Codex 用量",
-      "confirmMessage": "此操作會清除現有 Codex 工作階段明細與彙總，再從本機 Codex 日誌重新匯入。\n\n已刪除日誌對應的歷史將遺失；缺少父 rollout 的 fork 會暫緩匯入。",
+      "action": "重建 {{appName}} 用量",
+      "confirmTitle": "確認重建 {{appName}} 用量",
+      "confirmMessage": "此操作會清除現有 {{appName}} 工作階段明細與彙總，再從本機 {{appName}} 日誌重新匯入。\n\n已刪除日誌對應的歷史將遺失；缺少父 rollout 的 fork 會暫緩匯入。",
       "confirmAction": "備份並重建",
       "completed": "重建完成：匯入 {{imported}} 筆，錯誤 {{errors}}，疑似重複 {{suspected}}，暫緩檔案 {{deferred}}",
-      "failed": "Codex 用量重建失敗：{{error}}"
+      "failed": "{{appName}} 用量重建失敗：{{error}}"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
     "goToPage": "跳轉",
@@ -2043,7 +2048,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "codex-desktop": "Codex Desktop"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -2224,7 +2230,8 @@
     "switcherTooltip": {
       "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
       "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
-      "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案"
+      "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案",
+      "codex-desktop": "專案：一鍵切換 Codex Desktop 的供應商 / MCP / Skills / 記憶檔案"
     },
     "none": "不使用專案",
     "searchPlaceholder": "搜尋專案",
@@ -2233,7 +2240,8 @@
     "createDescription": {
       "claude": "把 Claude Code 目前的供應商、MCP、Skills、記憶檔案儲存為一個專案，之後可一鍵切換。",
       "claude-desktop": "把 Claude Desktop 目前的供應商儲存為一個專案，之後可一鍵切換。",
-      "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
+      "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。",
+      "codex-desktop": "把 Codex Desktop 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
     },
     "manage": "管理專案…",
     "manageTitle": "管理專案",
@@ -2658,7 +2666,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codex-desktop": "Codex Desktop"
     },
     "installFromZip": {
       "button": "從 ZIP 安裝",
@@ -3278,5 +3287,11 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "codexDesktop": {
+    "followCodexLogin": "跟隨 Codex Desktop 登入",
+    "directoryConflict": "Codex Desktop 與 Codex 使用同一設定目錄。請先在設定中選擇不同的目錄。",
+    "openDirectorySettings": "開啟目錄設定",
+    "officialNotice": "帳號會隨 Codex Desktop 目前登入狀態變化"
   }
 }

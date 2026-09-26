@@ -13,7 +13,6 @@
 //! - `turn_context` → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 
-use crate::codex_config::get_codex_config_dir;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
@@ -274,18 +273,8 @@ fn is_codex_cursor_path(file_path: &str, codex_dir: &Path) -> bool {
         return false;
     }
 
-    if path.starts_with(codex_dir.join("sessions"))
+    path.starts_with(codex_dir.join("sessions"))
         || path.starts_with(codex_dir.join("archived_sessions"))
-    {
-        return true;
-    }
-
-    // 兼容用户改过 CODEX_HOME 后遗留、且源文件已不存在的 cursor。只接受
-    // 明确目录段 + Codex rollout UUID 文件名，避免宽 codex_dir 误删其他 importer。
-    file_path
-        .replace('\\', "/")
-        .split('/')
-        .any(|segment| matches!(segment, "sessions" | "archived_sessions"))
 }
 
 fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool, AppError> {
@@ -310,7 +299,16 @@ fn sqlite_column_exists(
     .map_err(|error| AppError::Database(format!("查询列 {table}.{column} 失败: {error}")))
 }
 
+#[allow(dead_code)]
 pub(crate) fn reset_codex_usage_on_conn(
+    conn: &rusqlite::Connection,
+    codex_dir: &Path,
+) -> Result<(), AppError> {
+    reset_codex_usage_on_conn_for_app(&crate::app_config::AppType::Codex, conn, codex_dir)
+}
+
+pub(crate) fn reset_codex_usage_on_conn_for_app(
+    app: &crate::app_config::AppType,
     conn: &rusqlite::Connection,
     codex_dir: &Path,
 ) -> Result<(), AppError> {
@@ -318,8 +316,12 @@ pub(crate) fn reset_codex_usage_on_conn(
         && sqlite_column_exists(conn, "proxy_request_logs", "data_source")?
     {
         conn.execute(
-            "DELETE FROM proxy_request_logs WHERE data_source = 'codex_session'",
-            [],
+            "DELETE FROM proxy_request_logs WHERE data_source = ?1",
+            [if *app == crate::AppType::CodexDesktop {
+                "codex_desktop_session"
+            } else {
+                "codex_session"
+            }],
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 会话明细失败: {error}")))?;
     }
@@ -327,8 +329,12 @@ pub(crate) fn reset_codex_usage_on_conn(
         && sqlite_column_exists(conn, "usage_daily_rollups", "provider_id")?
     {
         conn.execute(
-            "DELETE FROM usage_daily_rollups WHERE provider_id = '_codex_session'",
-            [],
+            "DELETE FROM usage_daily_rollups WHERE provider_id = ?1",
+            [if *app == crate::AppType::CodexDesktop {
+                "_codex_desktop_session"
+            } else {
+                "_codex_session"
+            }],
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
     }
@@ -365,12 +371,21 @@ pub(crate) fn reset_codex_usage_on_conn(
 }
 
 impl Database {
+    #[allow(dead_code)]
     pub(crate) fn reset_codex_usage(&self) -> Result<(), AppError> {
-        let codex_dir = get_codex_config_dir();
+        self.reset_codex_usage_for_app(&crate::app_config::AppType::Codex)
+    }
+
+    pub(crate) fn reset_codex_usage_for_app(
+        &self,
+        app: &crate::app_config::AppType,
+    ) -> Result<(), AppError> {
+        crate::codex_config::ensure_codex_target_writable(app)?;
+        let codex_dir = crate::codex_config::get_codex_config_dir_for_app(app);
         let conn = lock_conn!(self.conn);
         conn.execute("SAVEPOINT reset_codex_usage", [])
             .map_err(|error| AppError::Database(format!("开启 Codex 重建事务失败: {error}")))?;
-        let result = reset_codex_usage_on_conn(&conn, &codex_dir);
+        let result = reset_codex_usage_on_conn_for_app(app, &conn, &codex_dir);
         match result {
             Ok(()) => {
                 conn.execute("RELEASE reset_codex_usage", [])
@@ -559,6 +574,10 @@ fn get_codex_sync_state(
         .iter()
         .filter(|(path, _)| {
             path.as_str() != file_path_str
+                && file_path
+                    .parent()
+                    .and_then(Path::parent)
+                    .is_some_and(|root| is_codex_cursor_path(path, root))
                 && (path.ends_with(&slash_suffix) || path.ends_with(&backslash_suffix))
         })
         .map(|(_, &(modified, offset))| (offset, modified))
@@ -685,8 +704,17 @@ struct CodexFileSyncResult {
 }
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
+#[allow(dead_code)]
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    let codex_dir = get_codex_config_dir();
+    sync_codex_usage_for_app(&crate::app_config::AppType::Codex, db)
+}
+
+pub fn sync_codex_usage_for_app(
+    app: &crate::app_config::AppType,
+    db: &Database,
+) -> Result<SessionSyncResult, AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
+    let codex_dir = crate::codex_config::get_codex_config_dir_for_app(app);
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
     let mut pass = CodexSyncPass::load(db)?;
@@ -701,7 +729,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     };
 
     for file_path in &files {
-        match sync_single_codex_file(db, file_path, &rollout_index, &mut pass) {
+        match sync_single_codex_file_for_app(app, db, file_path, &rollout_index, &mut pass) {
             Ok(file_result) => {
                 result.imported = result.imported.saturating_add(file_result.imported);
                 result.skipped = result.skipped.saturating_add(file_result.skipped);
@@ -1223,7 +1251,24 @@ fn update_codex_sync_state(
 }
 
 /// 同步单个 Codex JSONL 文件。
+#[allow(dead_code)]
 fn sync_single_codex_file(
+    db: &Database,
+    file_path: &Path,
+    rollout_index: &RolloutIndex,
+    pass: &mut CodexSyncPass,
+) -> Result<CodexFileSyncResult, AppError> {
+    sync_single_codex_file_for_app(
+        &crate::app_config::AppType::Codex,
+        db,
+        file_path,
+        rollout_index,
+        pass,
+    )
+}
+
+fn sync_single_codex_file_for_app(
+    app: &crate::app_config::AppType,
     db: &Database,
     file_path: &Path,
     rollout_index: &RolloutIndex,
@@ -1409,9 +1454,16 @@ fn sync_single_codex_file(
         let mut batch_skipped = 0u32;
         let mut batch_suspected = 0u32;
         for (event, event_index) in batch {
-            let request_id =
-                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
-            match insert_codex_session_entry_on_conn(
+            let request_id = format!(
+                "{}:{root_thread_id}:{event_index}",
+                if *app == crate::AppType::CodexDesktop {
+                    "codex_desktop_session:thread-v1"
+                } else {
+                    CODEX_THREAD_REQUEST_ID_PREFIX
+                }
+            );
+            match insert_codex_session_entry_on_conn_for_app(
+                app,
                 &tx,
                 &request_id,
                 &event.delta,
@@ -1451,6 +1503,7 @@ fn sync_single_codex_file(
 /// 插入单条 Codex 会话记录到 proxy_request_logs（自取锁的便捷包装，测试专用；
 /// 生产路径走 [`insert_codex_session_entry_on_conn`] 以复用批量事务与定价缓存）
 #[cfg(test)]
+#[allow(dead_code)]
 fn insert_codex_session_entry(
     db: &Database,
     request_id: &str,
@@ -1460,8 +1513,33 @@ fn insert_codex_session_entry(
     timestamp: Option<&str>,
     suspected_duplicates: &mut u32,
 ) -> Result<bool, AppError> {
+    insert_codex_session_entry_for_app(
+        &crate::app_config::AppType::Codex,
+        db,
+        request_id,
+        delta,
+        model,
+        session_id,
+        timestamp,
+        suspected_duplicates,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn insert_codex_session_entry_for_app(
+    app: &crate::app_config::AppType,
+    db: &Database,
+    request_id: &str,
+    delta: &DeltaTokens,
+    model: &str,
+    session_id: Option<&str>,
+    timestamp: Option<&str>,
+    suspected_duplicates: &mut u32,
+) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
-    insert_codex_session_entry_on_conn(
+    insert_codex_session_entry_on_conn_for_app(
+        app,
         &conn,
         request_id,
         delta,
@@ -1479,7 +1557,33 @@ fn insert_codex_session_entry(
 /// `find_codex_pricing` 是纯函数式查找，同串必同结果），全量重导时把
 /// 每事件一次的定价 SELECT 降为每模型一次。
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 fn insert_codex_session_entry_on_conn(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    delta: &DeltaTokens,
+    model: &str,
+    session_id: Option<&str>,
+    timestamp: Option<&str>,
+    suspected_duplicates: &mut u32,
+    pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
+) -> Result<bool, AppError> {
+    insert_codex_session_entry_on_conn_for_app(
+        &crate::app_config::AppType::Codex,
+        conn,
+        request_id,
+        delta,
+        model,
+        session_id,
+        timestamp,
+        suspected_duplicates,
+        pricing_cache,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_codex_session_entry_on_conn_for_app(
+    app: &crate::app_config::AppType,
     conn: &rusqlite::Connection,
     request_id: &str,
     delta: &DeltaTokens,
@@ -1503,7 +1607,7 @@ fn insert_codex_session_entry_on_conn(
         });
 
     let dedup_key = DedupKey {
-        app_type: "codex",
+        app_type: app.as_str(),
         model,
         input_tokens: delta.input,
         output_tokens: delta.output,
@@ -1541,7 +1645,7 @@ fn insert_codex_session_entry_on_conn(
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate_for_app("codex", &usage, p, multiplier);
+            let cost = CostCalculator::calculate_for_app(app.as_str(), &usage, p, multiplier);
             (
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
@@ -1571,8 +1675,8 @@ fn insert_codex_session_entry_on_conn(
         )
         .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
-                "_codex_session",    // provider_id
-                "codex",             // app_type
+                if *app == crate::AppType::CodexDesktop { "_codex_desktop_session" } else { "_codex_session" },    // provider_id
+                app.as_str(),         // app_type
                 model,
                 model,               // request_model = model
                 delta.input,
@@ -1589,11 +1693,11 @@ fn insert_codex_session_entry_on_conn(
                 200i64,              // status_code
                 Option::<String>::None, // error_message
                 session_id.map(|s| s.to_string()),
-                Some("codex_session"), // provider_type
+                Some(if *app == crate::AppType::CodexDesktop { "codex_desktop_session" } else { "codex_session" }), // provider_type
                 1i64,                // is_streaming
                 "1.0",               // cost_multiplier
                 created_at,
-                "codex_session",     // data_source
+                if *app == crate::AppType::CodexDesktop { "codex_desktop_session" } else { "codex_session" }, // data_source
             ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
@@ -3256,7 +3360,8 @@ mod tests {
                     row.get(0)
                 })?;
             assert_eq!((codex_rows, gemini_rows, codex_rollups), (0, 1, 0));
-            assert_eq!(remaining_cursors, 2);
+            // Other roots may belong to Codex Desktop and must keep their cursors.
+            assert_eq!(remaining_cursors, 3);
         }
         Ok(())
     }

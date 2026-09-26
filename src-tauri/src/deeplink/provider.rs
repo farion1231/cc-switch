@@ -146,7 +146,7 @@ pub(crate) fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
-        AppType::Codex => build_codex_settings(request),
+        AppType::Codex | AppType::CodexDesktop => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
@@ -652,7 +652,7 @@ pub fn parse_and_merge_config(
 
     match request.app.as_deref().unwrap_or("") {
         "claude" => merge_claude_config(&mut merged, &config_value)?,
-        "codex" => merge_codex_config(&mut merged, &config_value)?,
+        "codex" | "codex-desktop" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is

@@ -86,8 +86,12 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
-    let config_dir = crate::codex_config::get_codex_config_dir();
-    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
+    handle_models_for_target(AppType::Codex).await
+}
+
+pub async fn handle_models_for_target(app_type: AppType) -> Result<Json<Value>, ProxyError> {
+    let config_dir = crate::codex_config::get_codex_config_dir_for_app(&app_type);
+    let active_catalog_path = match crate::codex_config::read_codex_config_text_for_app(&app_type) {
         Ok(config_text) => {
             crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &config_dir)
         }
@@ -763,6 +767,14 @@ pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_target(AppType::Codex, State(state), request).await
+}
+
+pub async fn handle_chat_completions_for_target(
+    app_type: AppType,
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -777,8 +789,15 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        app_type.clone(),
+        "Codex",
+        app_type.as_str(),
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -789,7 +808,7 @@ pub async fn handle_chat_completions(
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -1004,6 +1023,21 @@ async fn handle_codex_standalone_passthrough(
     request: axum::extract::Request,
     canonical_endpoint: &'static str,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough_for_target(
+        AppType::Codex,
+        state,
+        request,
+        canonical_endpoint,
+    )
+    .await
+}
+
+async fn handle_codex_standalone_passthrough_for_target(
+    app_type: AppType,
+    state: ProxyState,
+    request: axum::extract::Request,
+    canonical_endpoint: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -1018,14 +1052,21 @@ async fn handle_codex_standalone_passthrough(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        app_type.clone(),
+        "Codex",
+        app_type.as_str(),
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, canonical_endpoint);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -1348,7 +1389,8 @@ async fn handle_codex_chat_to_responses_transform(
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
-        let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
+        let sse_stream =
+            record_responses_sse_stream(sse_stream, state.codex_history_for_app(&ctx.app_type));
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
@@ -1483,7 +1525,7 @@ async fn handle_codex_chat_to_responses_transform(
         e
     })?;
     state
-        .codex_chat_history
+        .codex_history_for_app(&ctx.app_type)
         .record_response(&responses_response)
         .await;
 
@@ -2852,6 +2894,79 @@ async fn log_usage(
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
+}
+
+// Desktop shares the protocol implementation, with an independent provider namespace.
+pub async fn handle_codex_desktop_models() -> Result<Json<Value>, ProxyError> {
+    handle_models_for_target(AppType::CodexDesktop).await
+}
+pub async fn handle_codex_desktop_chat(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_target(AppType::CodexDesktop, State(state), request).await
+}
+pub async fn handle_codex_desktop_responses(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::CodexDesktop,
+        "Codex Desktop",
+        "codex-desktop",
+    )
+    .await
+}
+pub async fn handle_codex_desktop_compact(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_compact_for_app(
+        state,
+        request,
+        AppType::CodexDesktop,
+        "Codex Desktop",
+        "codex-desktop",
+    )
+    .await
+}
+pub async fn handle_codex_desktop_search(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough_for_target(
+        AppType::CodexDesktop,
+        state,
+        request,
+        "/alpha/search",
+    )
+    .await
+}
+pub async fn handle_codex_desktop_images_generations(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough_for_target(
+        AppType::CodexDesktop,
+        state,
+        request,
+        "/images/generations",
+    )
+    .await
+}
+pub async fn handle_codex_desktop_images_edits(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough_for_target(
+        AppType::CodexDesktop,
+        state,
+        request,
+        "/images/edits",
+    )
+    .await
 }
 
 #[cfg(test)]

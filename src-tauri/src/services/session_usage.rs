@@ -125,6 +125,17 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Codex",
         crate::services::session_usage_codex::sync_codex_usage(db),
     );
+    if !crate::codex_config::codex_desktop_directory_conflict() {
+        merge_sync_step(
+            &mut result,
+            "Codex Desktop",
+            crate::services::session_usage_codex::sync_codex_usage_for_app(
+                &crate::AppType::CodexDesktop,
+                db,
+            ),
+        );
+    }
+
     merge_sync_step(
         &mut result,
         "Gemini",

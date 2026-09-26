@@ -3,6 +3,7 @@ export type AppId =
   | "claude"
   | "claude-desktop"
   | "codex"
+  | "codex-desktop"
   | "gemini"
   | "grokbuild"
   | "opencode"

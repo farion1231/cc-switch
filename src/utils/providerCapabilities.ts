@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
@@ -46,13 +47,15 @@ export function resolveCodexOfficialIdentity(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): CodexOfficialIdentity | null {
-  if (appId !== "codex") return null;
+  if (!isCodexApp(appId)) return null;
 
   const managedAccountId = resolveManagedAccountId(
     provider.meta,
     "codex_oauth",
   )?.trim();
-  const hasFixedOfficialId = provider.id === CODEX_OFFICIAL_PROVIDER_ID;
+  const hasFixedOfficialId =
+    provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+    provider.id === "codex-desktop-official";
   if (hasFixedOfficialId && provider.category === "official") {
     return managedAccountId ? "managed_account" : "native_login";
   }
@@ -93,6 +96,7 @@ export function supportsOfficialProxyTakeover(
   if (!identity || identity === "api_key") return false;
   if (
     provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+    provider.id === "codex-desktop-official" ||
     identity === "managed_account"
   ) {
     return true;
@@ -130,7 +134,7 @@ export function providerNeedsRouting(
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
   }
 
-  if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
+  if (appId !== "claude" && !isCodexApp(appId) && appId !== "grokbuild") {
     return false;
   }
 
@@ -143,7 +147,7 @@ export function providerNeedsRouting(
     return provider.meta?.isFullUrl === true || (!!fmt && fmt !== "anthropic");
   }
 
-  if (appId === "codex" || appId === "grokbuild") {
+  if (isCodexApp(appId) || appId === "grokbuild") {
     const fmt = provider.meta?.apiFormat;
     // Codex 原生是 Responses，仅 Chat / Anthropic 需要转换（Responses 直连）。
     if (

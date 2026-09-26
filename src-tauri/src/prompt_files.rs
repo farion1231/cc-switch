@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::app_config::AppType;
-use crate::codex_config::get_codex_auth_path;
+
 use crate::config::get_claude_settings_path;
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
@@ -19,6 +19,7 @@ pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<()
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
+    crate::codex_config::ensure_codex_target_writable(app)?;
     if matches!(app, AppType::ClaudeDesktop) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
@@ -29,7 +30,10 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
 
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
-        AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
+        AppType::Codex | AppType::CodexDesktop => get_base_dir_with_fallback(
+            crate::codex_config::get_codex_auth_path_for_app(app),
+            ".codex",
+        )?,
         AppType::Gemini => get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => get_opencode_dir(),
@@ -42,7 +46,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
 
     let filename = match app {
         AppType::Claude => "CLAUDE.md",
-        AppType::Codex => "AGENTS.md",
+        AppType::Codex | AppType::CodexDesktop => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",

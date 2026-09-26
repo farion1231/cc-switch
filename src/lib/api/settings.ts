@@ -31,6 +31,9 @@ export interface WebDavSyncResult {
 }
 
 export const settingsApi = {
+  async getCodexDesktopDirectoryConflict(): Promise<boolean> {
+    return invoke("get_codex_desktop_directory_conflict");
+  },
   async get(): Promise<Settings> {
     return await invoke("get_settings");
   },
@@ -40,13 +43,17 @@ export const settingsApi = {
   },
 
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
-  async hasCodexUnifyHistoryBackup(): Promise<boolean> {
-    return await invoke("has_codex_unify_history_backup");
+  async hasCodexUnifyHistoryBackup(
+    app: "codex" | "codex-desktop" = "codex",
+  ): Promise<boolean> {
+    return await invoke("has_codex_unify_history_backup", { app });
   },
 
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
-  async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
-    return await invoke("restore_codex_unified_history");
+  async restoreCodexUnifiedHistory(
+    app: "codex" | "codex-desktop" = "codex",
+  ): Promise<CodexUnifyHistoryRestoreResult> {
+    return await invoke("restore_codex_unified_history", { app });
   },
 
   async restart(): Promise<boolean> {

@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { Download, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ export function ProviderEmptyState({
   // "请点击导入当前配置"的通用文案。
   const emptyCopyNs = appId === "pi" || appId === "mcode" ? appId : null;
   const showSnippetHint =
-    appId === "claude" || appId === "codex" || appId === "gemini";
+    appId === "claude" || isCodexApp(appId) || appId === "gemini";
 
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">

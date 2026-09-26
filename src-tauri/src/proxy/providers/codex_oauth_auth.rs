@@ -221,26 +221,45 @@ pub(crate) enum CodexLiveAuthSwitchGuard {
 }
 
 impl CodexLiveAuthSwitchGuard {
+    #[allow(dead_code)]
     pub(crate) fn ensure_unchanged(&self, account_id: &str) -> Result<(), crate::error::AppError> {
+        self.ensure_unchanged_for_app(&crate::app_config::AppType::Codex, account_id)
+    }
+
+    pub(crate) fn ensure_unchanged_for_app(
+        &self,
+        app: &crate::app_config::AppType,
+        account_id: &str,
+    ) -> Result<(), crate::error::AppError> {
         if let Self::ExistingAccount(Some(token)) = self {
-            crate::codex_config::ensure_codex_live_auth_unchanged_for_managed_account(
-                account_id, token,
+            crate::codex_config::ensure_codex_live_auth_unchanged_for_managed_account_for_app(
+                app, account_id, token,
             )?;
         }
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_outgoing(&self, account_id: &str) -> Result<(), crate::error::AppError> {
+        self.clear_outgoing_for_app(&crate::app_config::AppType::Codex, account_id)
+    }
+
+    pub(crate) fn clear_outgoing_for_app(
+        &self,
+        app: &crate::app_config::AppType,
+        account_id: &str,
+    ) -> Result<(), crate::error::AppError> {
         match self {
             Self::ExistingAccount(token) => {
-                crate::codex_config::clear_codex_live_auth_for_managed_account_if_unchanged(
+                crate::codex_config::clear_codex_live_auth_for_managed_account_if_unchanged_for_app(
+                    app,
                     account_id,
                     token.as_deref(),
                 )
             }
             Self::MissingAccount => {
-                crate::codex_config::clear_codex_managed_oauth_live_auth_marker_for_account(
-                    account_id,
+                crate::codex_config::clear_codex_managed_oauth_live_auth_marker_for_account_for_app(
+                    app, account_id,
                 )
             }
         }
@@ -800,8 +819,43 @@ impl CodexOAuthManager {
         Ok(())
     }
 
+    // Account storage is shared, but ownership markers and live files are not.
+    // Choose the newest proved generation without reading a conflicting Desktop root.
     async fn read_managed_live_auth_refresh_for_account(
         &self,
+        account_id: &str,
+    ) -> Result<Option<(String, Option<String>, Option<i64>)>, CodexOAuthError> {
+        let mut newest: Option<(String, Option<String>, Option<i64>)> = None;
+        for app in [
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::CodexDesktop,
+        ] {
+            if crate::codex_config::ensure_codex_target_writable(&app).is_err() {
+                continue;
+            }
+            if let Some(candidate) = self
+                .read_managed_live_auth_refresh_for_account_for_app(&app, account_id)
+                .await?
+            {
+                if newest
+                    .as_ref()
+                    .is_none_or(|current| candidate.2 > current.2)
+                {
+                    newest = Some(candidate);
+                } else if newest
+                    .as_ref()
+                    .is_some_and(|current| candidate.2 == current.2 && candidate.0 != current.0)
+                {
+                    return Err(Self::ambiguous_live_refresh_error(account_id));
+                }
+            }
+        }
+        Ok(newest)
+    }
+
+    async fn read_managed_live_auth_refresh_for_account_for_app(
+        &self,
+        app: &crate::app_config::AppType,
         account_id: &str,
     ) -> Result<Option<(String, Option<String>, Option<i64>)>, CodexOAuthError> {
         let (managed_id_token, managed_workspace) = {
@@ -817,7 +871,8 @@ impl CodexOAuthManager {
             (account.id_token.clone(), workspace)
         };
         let Some(live_refresh) =
-            crate::codex_config::read_codex_live_auth_refresh_for_managed_account(
+            crate::codex_config::read_codex_live_auth_refresh_for_managed_account_for_app(
+                app,
                 account_id,
                 managed_id_token.as_deref(),
             )
@@ -1015,16 +1070,25 @@ impl CodexOAuthManager {
             &stored_refresh_token,
             &last_refresh,
         );
-        if let Err(err) = crate::codex_config::sync_codex_managed_oauth_live_auth_after_refresh(
-            account_id,
-            &refresh_token,
-            &refreshed_auth,
-        ) {
-            // The manager token remains valid; a later provider write will
-            // retry the live synchronization without rolling it back.
-            log::warn!(
-                "[CodexOAuth] 同步刷新后的 Codex live auth 失败（account={account_id}）: {err}"
-            );
+        for app in [
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::CodexDesktop,
+        ] {
+            if crate::codex_config::ensure_codex_target_writable(&app).is_err() {
+                continue;
+            }
+            if let Err(err) =
+                crate::codex_config::sync_codex_managed_oauth_live_auth_after_refresh_for_app(
+                    &app,
+                    account_id,
+                    &refresh_token,
+                    &refreshed_auth,
+                )
+            {
+                log::warn!(
+                    "[CodexOAuth] 同步 {app:?} live auth 失败（account={account_id}）: {err}"
+                );
+            }
         }
 
         // 在 accounts 读锁下确认账号仍存在，再写缓存：与 remove/clear（持 accounts
@@ -1186,8 +1250,21 @@ impl CodexOAuthManager {
     /// Callers compare it immediately before their live write/delete; the external Codex
     /// CLI does not participate in cc-switch's switch lock and may refresh in
     /// the adopt-to-write window.
+    #[allow(dead_code)]
     pub(crate) async fn prepare_live_auth_for_account_switch_away(
         &self,
+        account_id: &str,
+    ) -> Result<CodexLiveAuthSwitchGuard, CodexOAuthError> {
+        self.prepare_live_auth_for_account_switch_away_for_app(
+            &crate::app_config::AppType::Codex,
+            account_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn prepare_live_auth_for_account_switch_away_for_app(
+        &self,
+        app: &crate::app_config::AppType,
         account_id: &str,
     ) -> Result<CodexLiveAuthSwitchGuard, CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
@@ -1198,7 +1275,7 @@ impl CodexOAuthManager {
             return Ok(CodexLiveAuthSwitchGuard::MissingAccount);
         }
         let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
-            .read_managed_live_auth_refresh_for_account(account_id)
+            .read_managed_live_auth_refresh_for_account_for_app(app, account_id)
             .await?
         else {
             return Ok(CodexLiveAuthSwitchGuard::ExistingAccount(None));
@@ -1413,13 +1490,24 @@ impl CodexOAuthManager {
         // account must leave the machine. Content matching intentionally also
         // claims a native `codex login` of the same account; that is the same
         // account-scoped credential the user just chose to remove.
-        crate::codex_config::prepare_codex_live_auth_for_managed_account_removal(
-            account_id,
-            managed_id_token.as_deref(),
-        )
-        .map_err(|error| CodexOAuthError::TokenFetchFailed(error.to_string()))?;
-        crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
+        for app in [
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::CodexDesktop,
+        ] {
+            if crate::codex_config::ensure_codex_target_writable(&app).is_err() {
+                continue;
+            }
+            crate::codex_config::prepare_codex_live_auth_for_managed_account_removal_for_app(
+                &app,
+                account_id,
+                managed_id_token.as_deref(),
+            )
+            .map_err(|error| CodexOAuthError::TokenFetchFailed(error.to_string()))?;
+            crate::codex_config::clear_codex_live_auth_for_managed_account_for_app(
+                &app, account_id,
+            )
             .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
+        }
 
         {
             // 在 accounts 写锁内原子清除该账号的 token 缓存（accounts -> access_tokens
@@ -1483,16 +1571,27 @@ impl CodexOAuthManager {
             .iter()
             .map(|(account_id, account)| (account_id.clone(), account.id_token.clone()))
             .collect::<Vec<_>>();
-        for (account_id, id_token) in &accounts_to_clear {
-            crate::codex_config::prepare_codex_live_auth_for_managed_account_removal(
-                account_id,
-                id_token.as_deref(),
-            )
-            .map_err(|error| CodexOAuthError::TokenFetchFailed(error.to_string()))?;
-        }
-        for (account_id, _) in &accounts_to_clear {
-            crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
+        for app in [
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::CodexDesktop,
+        ] {
+            if crate::codex_config::ensure_codex_target_writable(&app).is_err() {
+                continue;
+            }
+            for (account_id, id_token) in &accounts_to_clear {
+                crate::codex_config::prepare_codex_live_auth_for_managed_account_removal_for_app(
+                    &app,
+                    account_id,
+                    id_token.as_deref(),
+                )
+                .map_err(|error| CodexOAuthError::TokenFetchFailed(error.to_string()))?;
+            }
+            for (account_id, _) in &accounts_to_clear {
+                crate::codex_config::clear_codex_live_auth_for_managed_account_for_app(
+                    &app, account_id,
+                )
                 .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
+            }
         }
 
         // 与 save_to_disk 共用持久化锁：确保「清内存 + 删文件」相对于并发保存原子，

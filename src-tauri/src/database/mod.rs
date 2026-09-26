@@ -197,6 +197,10 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+        {
+            let conn = lock_conn!(db.conn);
+            Self::ensure_codex_desktop_schema(&conn)?;
+        }
         db.ensure_model_pricing_seeded()?;
 
         Ok(db)

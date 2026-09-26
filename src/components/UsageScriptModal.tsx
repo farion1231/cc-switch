@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import React, { useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -161,7 +162,10 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild"].includes(appId)) return false;
+  if (
+    !["claude", "codex", "codex-desktop", "gemini", "grokbuild"].includes(appId)
+  )
+    return false;
   if (provider.category === "official") return true;
 
   const config = provider.settingsConfig as Record<string, any>;
@@ -169,7 +173,7 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
   }
-  if (appId === "codex") {
+  if (isCodexApp(appId)) {
     const apiKey = config?.auth?.OPENAI_API_KEY;
     const bearerToken =
       typeof config?.config === "string"
@@ -249,7 +253,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               env.GOOGLE_API_KEY,
             baseUrl: env.ANTHROPIC_BASE_URL,
           };
-        } else if (appId === "codex") {
+        } else if (isCodexApp(appId)) {
           // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
           const auth = (config as any).auth || {};
           const configToml = (config as any).config || "";

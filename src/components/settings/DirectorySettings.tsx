@@ -16,6 +16,7 @@ interface DirectorySettingsProps {
   onResetAppConfig: () => Promise<void>;
   claudeDir?: string;
   codexDir?: string;
+  codexDesktopDir?: string;
   geminiDir?: string;
   grokDir?: string;
   opencodeDir?: string;
@@ -35,6 +36,7 @@ export function DirectorySettings({
   onResetAppConfig,
   claudeDir,
   codexDir,
+  codexDesktopDir,
   geminiDir,
   grokDir,
   opencodeDir,
@@ -117,6 +119,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("codex", val)}
           onBrowse={() => onBrowseDirectory("codex")}
           onReset={() => onResetDirectory("codex")}
+        />
+
+        <DirectoryInput
+          label={t("settings.codexDesktopConfigDir")}
+          description={undefined}
+          value={codexDesktopDir}
+          resolvedValue={resolvedDirs.codexDesktop}
+          placeholder={t("settings.browsePlaceholderCodex")}
+          onChange={(val) => onDirectoryChange("codex-desktop", val)}
+          onBrowse={() => onBrowseDirectory("codex-desktop")}
+          onReset={() => onResetDirectory("codex-desktop")}
         />
 
         <DirectoryInput

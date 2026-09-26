@@ -4312,7 +4312,7 @@ fn extract_env_vars_from_config(
     }
 
     // Codex 使用 auth 字段转换为 OPENAI_API_KEY
-    if *app_type == AppType::Codex {
+    if app_type.is_codex() {
         if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
             env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
         }

@@ -184,10 +184,15 @@ pub async fn auth_poll_for_account(
             let auth_manager = &codex_state.0;
             match auth_manager
                 .poll_for_token(&device_code, || async {
-                    app_state
+                    let cli = app_state
                         .proxy_service
                         .lock_switch_for_app(AppType::Codex.as_str())
-                        .await
+                        .await;
+                    let desktop = app_state
+                        .proxy_service
+                        .lock_switch_for_app(AppType::CodexDesktop.as_str())
+                        .await;
+                    (cli, desktop)
                 })
                 .await
             {
@@ -380,6 +385,10 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
         .proxy_service
         .lock_switch_for_app(AppType::Codex.as_str())
         .await;
+    let _desktop_switch_guard = app_state
+        .proxy_service
+        .lock_switch_for_app(AppType::CodexDesktop.as_str())
+        .await;
     app_state
         .codex_oauth_manager
         .remove_account(account_id)
@@ -450,6 +459,10 @@ pub(crate) async fn logout_codex_oauth_with_switch_lock(
     let _switch_guard = app_state
         .proxy_service
         .lock_switch_for_app(AppType::Codex.as_str())
+        .await;
+    let _desktop_switch_guard = app_state
+        .proxy_service
+        .lock_switch_for_app(AppType::CodexDesktop.as_str())
         .await;
     app_state
         .codex_oauth_manager

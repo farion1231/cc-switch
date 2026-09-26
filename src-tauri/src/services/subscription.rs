@@ -557,15 +557,22 @@ type CodexCredentials = (
 /// 2. 凭据文件 ~/.codex/auth.json
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
+#[allow(dead_code)]
 fn read_codex_credentials() -> CodexCredentials {
+    read_codex_credentials_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn read_codex_credentials_for_app(app: &crate::app_config::AppType) -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
-        if let Some(result) = read_codex_credentials_from_keychain() {
-            return result;
+        if *app == crate::AppType::Codex {
+            if let Some(result) = read_codex_credentials_from_keychain() {
+                return result;
+            }
         }
     }
 
-    read_codex_credentials_from_file()
+    read_codex_credentials_from_file_for_app(app)
 }
 
 /// 从 macOS Keychain 读取 Codex 凭据
@@ -590,8 +597,13 @@ fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
 }
 
 /// 从文件读取 Codex 凭据
+#[allow(dead_code)]
 fn read_codex_credentials_from_file() -> CodexCredentials {
-    let auth_path = crate::codex_config::get_codex_auth_path();
+    read_codex_credentials_from_file_for_app(&crate::app_config::AppType::Codex)
+}
+
+fn read_codex_credentials_from_file_for_app(app: &crate::app_config::AppType) -> CodexCredentials {
+    let auth_path = crate::codex_config::get_codex_auth_path_for_app(app);
 
     if !auth_path.exists() {
         return (None, None, CredentialStatus::NotFound, None);
@@ -1338,45 +1350,45 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
             }
         }
-        "codex" => {
-            let (token, account_id, status, message) = read_codex_credentials();
+        "codex" | "codex-desktop" => {
+            let target = if tool == "codex-desktop" {
+                crate::AppType::CodexDesktop
+            } else {
+                crate::AppType::Codex
+            };
+            let (token, account_id, status, message) = read_codex_credentials_for_app(&target);
+            let reauth_message = if target == crate::AppType::CodexDesktop {
+                "Authentication failed. Please re-login with Codex Desktop."
+            } else {
+                "Authentication failed. Please re-login with Codex CLI."
+            };
 
             match status {
-                CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("codex")),
+                CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found(tool)),
                 CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
-                    "codex",
+                    tool,
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
                 CredentialStatus::Expired => {
                     // 即使可能过期也尝试调用 API
                     if let Some(token) = token {
-                        let result = query_codex_quota(
-                            &token,
-                            account_id.as_deref(),
-                            "codex",
-                            "Authentication failed. Please re-login with Codex CLI.",
-                        )
-                        .await?;
+                        let result =
+                            query_codex_quota(&token, account_id.as_deref(), tool, reauth_message)
+                                .await?;
                         if result.success {
                             return Ok(result);
                         }
                     }
                     Ok(SubscriptionQuota::error(
-                        "codex",
+                        tool,
                         CredentialStatus::Expired,
                         message.unwrap_or_else(|| "Codex OAuth token may be stale".to_string()),
                     ))
                 }
                 CredentialStatus::Valid => {
                     let token = token.expect("token must be Some when status is Valid");
-                    query_codex_quota(
-                        &token,
-                        account_id.as_deref(),
-                        "codex",
-                        "Authentication failed. Please re-login with Codex CLI.",
-                    )
-                    .await
+                    query_codex_quota(&token, account_id.as_deref(), tool, reauth_message).await
                 }
             }
         }

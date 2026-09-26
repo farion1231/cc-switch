@@ -904,7 +904,9 @@
       "defaultCostMultiplierRequired": "Default multiplier is required",
       "defaultCostMultiplierInvalid": "Invalid multiplier format"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "codexDesktopConfigDir": "Codex Desktop configuration directory",
+    "codexDesktopAuth": "Codex Desktop enhancements"
   },
   "apps": {
     "claude": "Claude",
@@ -918,7 +920,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "codexDesktop": "Codex Desktop",
+    "codex-desktop": "Codex Desktop"
   },
   "mcode": {
     "empty": {
@@ -1737,7 +1741,8 @@
       "opencode": "OpenCode",
       "grokbuild": "Grok Build",
       "pi": "Pi",
-      "mcode": "MiniMax Code"
+      "mcode": "MiniMax Code",
+      "codex-desktop": "Codex Desktop"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {
@@ -1748,15 +1753,15 @@
       "syncFailed": "Session usage sync failed: {{error}}"
     },
     "rebuildCodex": {
-      "title": "Codex Usage Maintenance",
-      "description": "Rebuild Codex session usage from local rollout logs",
+      "title": "{{appName}} Usage Maintenance",
+      "description": "Rebuild {{appName}} session usage from local rollout logs",
       "warning": "The database is backed up first. History whose source JSONL has been deleted cannot be re-imported.",
-      "action": "Rebuild Codex Usage",
-      "confirmTitle": "Rebuild Codex usage?",
-      "confirmMessage": "This clears existing Codex session details and rollups, then imports them again from local Codex logs.\n\nHistory with deleted logs will be lost. Forks whose parent rollout is missing will be deferred.",
+      "action": "Rebuild {{appName}} Usage",
+      "confirmTitle": "Rebuild {{appName}} usage?",
+      "confirmMessage": "This clears existing {{appName}} session details and rollups, then imports them again from local {{appName}} logs.\n\nHistory with deleted logs will be lost. Forks whose parent rollout is missing will be deferred.",
       "confirmAction": "Back Up and Rebuild",
       "completed": "Rebuild complete: {{imported}} imported, {{errors}} errors, {{suspected}} suspected duplicates, {{deferred}} deferred files",
-      "failed": "Codex usage rebuild failed: {{error}}"
+      "failed": "{{appName}} usage rebuild failed: {{error}}"
     },
     "totalRecords": "{{total}} records total",
     "goToPage": "Go",
@@ -2042,7 +2047,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "codex-desktop": "Codex Desktop"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -2223,7 +2229,8 @@
     "switcherTooltip": {
       "claude": "Projects: switch the Claude Code provider / MCP / Skills / memory files in one click",
       "claude-desktop": "Projects: switch the Claude Desktop provider in one click",
-      "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click"
+      "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click",
+      "codex-desktop": "Projects: switch the Codex Desktop provider / MCP / Skills / memory files in one click"
     },
     "none": "No project",
     "searchPlaceholder": "Search projects",
@@ -2232,7 +2239,8 @@
     "createDescription": {
       "claude": "Save the current Claude Code provider, MCP, Skills and memory file as a project you can switch to later.",
       "claude-desktop": "Save the current Claude Desktop provider as a project you can switch to later.",
-      "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later."
+      "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later.",
+      "codex-desktop": "Save the current Codex Desktop provider, MCP, Skills and memory file configuration as a project you can switch to later."
     },
     "manage": "Manage projects…",
     "manageTitle": "Manage Projects",
@@ -2657,7 +2665,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codex-desktop": "Codex Desktop"
     },
     "installFromZip": {
       "button": "Install from ZIP",
@@ -3277,5 +3286,11 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "codexDesktop": {
+    "followCodexLogin": "Follow Codex Desktop login",
+    "directoryConflict": "Codex Desktop and Codex use the same configuration directory. Choose separate directories in Settings first.",
+    "openDirectorySettings": "Open directory settings",
+    "officialNotice": "Follows the current Codex Desktop login"
   }
 }

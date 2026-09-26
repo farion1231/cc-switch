@@ -266,14 +266,16 @@ describe("EditProviderDialog", () => {
     );
   });
 
-  it.each([
-    { description: "missing auth.json", auth: {} },
-    { description: "a logout marker", auth: { auth_mode: "chatgpt" } },
-  ])(
-    "preserves $description for a category-less official Codex provider",
-    async ({ auth }) => {
+  it.each(
+    (["codex", "codex-desktop"] as const).flatMap((appId) => [
+      { appId, description: "missing auth.json", auth: {} },
+      { appId, description: "a logout marker", auth: { auth_mode: "chatgpt" } },
+    ]),
+  )(
+    "preserves $description for a category-less official $appId provider",
+    async ({ appId, auth }) => {
       const provider: Provider = {
-        id: "codex-official",
+        id: `${appId}-official`,
         name: "OpenAI Official",
         settingsConfig: {
           auth: {
@@ -294,7 +296,7 @@ describe("EditProviderDialog", () => {
           provider={provider}
           onOpenChange={vi.fn()}
           onSubmit={handleSubmit}
-          appId="codex"
+          appId={appId}
         />,
       );
 
@@ -312,12 +314,14 @@ describe("EditProviderDialog", () => {
     },
   );
 
-  it.each([
-    { id: "header-auth", category: "custom" as const },
-    { id: "codex-official", category: undefined },
-  ])(
-    "keeps stored Codex auth for $id when Live has no auth.json",
-    async ({ id, category }) => {
+  it.each(
+    (["codex", "codex-desktop"] as const).flatMap((appId) => [
+      { appId, id: "header-auth", category: "custom" as const },
+      { appId, id: `${appId}-official`, category: undefined },
+    ]),
+  )(
+    "keeps stored $appId auth for $id when Live has no auth.json",
+    async ({ appId, id, category }) => {
       // Repro of #7433: the provider table declares its own credential source
       // (Authorization header), so a switch injects no bearer token into
       // config.toml, and default mode deletes the shared auth.json. Live is then
@@ -351,7 +355,7 @@ describe("EditProviderDialog", () => {
           provider={provider}
           onOpenChange={vi.fn()}
           onSubmit={handleSubmit}
-          appId="codex"
+          appId={appId}
         />,
       );
 

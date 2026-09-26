@@ -44,10 +44,21 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    pub codex_desktop_chat_history: Arc<CodexChatHistoryStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+}
+
+impl ProxyState {
+    pub(crate) fn codex_history_for_app(&self, app: &crate::AppType) -> Arc<CodexChatHistoryStore> {
+        if *app == crate::AppType::CodexDesktop {
+            self.codex_desktop_chat_history.clone()
+        } else {
+            self.codex_chat_history.clone()
+        }
+    }
 }
 
 /// 代理HTTP服务器
@@ -79,6 +90,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            codex_desktop_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
         };
@@ -304,6 +316,34 @@ impl ProxyServer {
             .route(
                 "/claude-desktop/v1/messages",
                 post(handlers::handle_claude_desktop_messages),
+            )
+            .route(
+                "/codex-desktop/v1/models",
+                get(handlers::handle_codex_desktop_models),
+            )
+            .route(
+                "/codex-desktop/v1/chat/completions",
+                post(handlers::handle_codex_desktop_chat),
+            )
+            .route(
+                "/codex-desktop/v1/responses",
+                post(handlers::handle_codex_desktop_responses),
+            )
+            .route(
+                "/codex-desktop/v1/responses/compact",
+                post(handlers::handle_codex_desktop_compact),
+            )
+            .route(
+                "/codex-desktop/v1/alpha/search",
+                post(handlers::handle_codex_desktop_search),
+            )
+            .route(
+                "/codex-desktop/v1/images/generations",
+                post(handlers::handle_codex_desktop_images_generations),
+            )
+            .route(
+                "/codex-desktop/v1/images/edits",
+                post(handlers::handle_codex_desktop_images_edits),
             )
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))

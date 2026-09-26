@@ -68,6 +68,7 @@ describe("useDirectorySettings", () => {
     getConfigDirMock.mockImplementation(async (app: string) => {
       if (app === "claude") return "/remote/claude";
       if (app === "codex") return "/remote/codex";
+      if (app === "codex-desktop") return "/remote/codex-desktop";
       if (app === "gemini") return "/remote/gemini";
       if (app === "grokbuild") return "/remote/grok";
       if (app === "opencode") return "/remote/opencode";
@@ -92,6 +93,7 @@ describe("useDirectorySettings", () => {
       appConfig: "/override/app",
       claude: "/remote/claude",
       codex: "/remote/codex",
+      codexDesktop: "/remote/codex-desktop",
       gemini: "/remote/gemini",
       grokbuild: "/remote/grok",
       opencode: "/remote/opencode",
@@ -253,6 +255,7 @@ describe("useDirectorySettings", () => {
       result.current.resetAllDirectories({
         claude: "/server/claude",
         codex: "/server/codex",
+        codexDesktop: "/server/codex-desktop",
         gemini: "/server/gemini",
         grokbuild: "/server/grok",
         opencode: "/server/opencode",
@@ -262,6 +265,9 @@ describe("useDirectorySettings", () => {
 
     expect(result.current.resolvedDirs.claude).toBe("/server/claude");
     expect(result.current.resolvedDirs.codex).toBe("/server/codex");
+    expect(result.current.resolvedDirs.codexDesktop).toBe(
+      "/server/codex-desktop",
+    );
     expect(result.current.resolvedDirs.gemini).toBe("/server/gemini");
     expect(result.current.resolvedDirs.grokbuild).toBe("/server/grok");
     expect(result.current.resolvedDirs.opencode).toBe("/server/opencode");

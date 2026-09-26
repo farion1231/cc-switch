@@ -523,9 +523,11 @@ export function DeepLinkImportDialog() {
 
                           {/* Codex config */}
                           {(parsedConfig.type === "codex" ||
+                            parsedConfig.type === "codex-desktop" ||
                             parsedConfig.type === "grokbuild") && (
                             <div className="space-y-2">
-                              {parsedConfig.type === "codex" &&
+                              {(parsedConfig.type === "codex" ||
+                                parsedConfig.type === "codex-desktop") &&
                                 parsedConfig.auth &&
                                 Object.keys(parsedConfig.auth).length > 0 && (
                                   <div className="space-y-1.5">

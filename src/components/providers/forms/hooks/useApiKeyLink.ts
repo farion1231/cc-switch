@@ -1,3 +1,4 @@
+import { isCodexApp } from "@/config/appConfig";
 import { useMemo } from "react";
 import type { AppId } from "@/lib/api";
 import type { ProviderCategory } from "@/types";
@@ -83,7 +84,7 @@ export function useApiKeyLink({
     shouldShowApiKeyLink:
       appId === "claude" ||
       appId === "claude-desktop" ||
-      appId === "codex" ||
+      isCodexApp(appId) ||
       appId === "gemini" ||
       appId === "opencode" ||
       appId === "openclaw" ||

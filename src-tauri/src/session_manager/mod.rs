@@ -79,6 +79,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
     sessions.extend(r1);
+    sessions.extend(codex::scan_sessions_for_app(&crate::AppType::CodexDesktop));
     sessions.extend(r2);
     sessions.extend(r3);
     sessions.extend(r4);
@@ -111,7 +112,18 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
 
     let path = Path::new(source_path);
     match provider_id {
-        "codex" => codex::load_messages(path),
+        "codex" | "codex-desktop" => {
+            let source = canonicalize_existing_path(path, "session source")?;
+            let roots = provider_roots(provider_id)?;
+            if !roots
+                .iter()
+                .filter_map(|root| root.canonicalize().ok())
+                .any(|root| source.starts_with(root))
+            {
+                return Err("Session source path is outside provider roots".to_string());
+            }
+            codex::load_messages(&source)
+        }
         "claude" => claude::load_messages(path),
         "opencode" => opencode::load_messages(path),
         "openclaw" => openclaw::load_messages(path),
@@ -174,7 +186,9 @@ fn delete_session_with_roots(
         let validated_root = canonicalize_existing_path(root, "session root")?;
         if validated_source.starts_with(&validated_root) {
             return match provider_id {
-                "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
+                "codex" | "codex-desktop" => {
+                    codex::delete_session(&validated_root, &validated_source, session_id)
+                }
                 "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
                 "opencode" => {
                     opencode::delete_session(&validated_root, &validated_source, session_id)
@@ -212,6 +226,11 @@ fn delete_session_with_roots(
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
     let roots = match provider_id {
         "codex" => codex::session_roots(),
+        "codex-desktop" => {
+            crate::codex_config::ensure_codex_target_writable(&crate::AppType::CodexDesktop)
+                .map_err(|e| e.to_string())?;
+            codex::session_roots_for_app(&crate::AppType::CodexDesktop)
+        }
         "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
         "opencode" => vec![opencode::get_opencode_data_dir()],
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],

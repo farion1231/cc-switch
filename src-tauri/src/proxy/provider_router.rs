@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 /// header. Reusing that request against another account card would cross the
 /// account boundary, so these cards must never participate in provider retry.
 pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) -> bool {
-    app_type != AppType::Codex.as_str()
+    !matches!(app_type, "codex" | "codex-desktop")
         || !crate::proxy::providers::is_codex_official_provider(provider)
 }
 

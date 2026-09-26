@@ -21,6 +21,24 @@ fn default_true() -> bool {
     true
 }
 
+pub fn preserve_codex_official_auth_on_switch_for_app(app: &AppType) -> bool {
+    let settings = get_settings();
+    if *app == AppType::CodexDesktop {
+        settings.preserve_codex_desktop_official_auth_on_switch
+    } else {
+        settings.preserve_codex_official_auth_on_switch
+    }
+}
+
+pub fn unify_codex_session_history_for_app(app: &AppType) -> bool {
+    let settings = get_settings();
+    if *app == AppType::CodexDesktop {
+        settings.unify_codex_desktop_session_history
+    } else {
+        settings.unify_codex_session_history
+    }
+}
+
 /// 主页面显示的应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +54,8 @@ pub struct VisibleApps {
     pub claude_desktop: bool,
     #[serde(default = "default_true")]
     pub codex: bool,
+    #[serde(rename = "codex-desktop", default = "default_true")]
+    pub codex_desktop: bool,
     #[serde(default = "default_true")]
     pub gemini: bool,
     #[serde(default = "default_true")]
@@ -58,6 +78,7 @@ impl Default for VisibleApps {
             claude: true,
             claude_desktop: true,
             codex: true,
+            codex_desktop: true,
             gemini: true,
             grokbuild: true,
             opencode: true,
@@ -76,6 +97,7 @@ impl VisibleApps {
             AppType::Claude => self.claude,
             AppType::ClaudeDesktop => self.claude_desktop,
             AppType::Codex => self.codex,
+            AppType::CodexDesktop => self.codex_desktop,
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
@@ -302,6 +324,8 @@ pub struct LocalMigrations {
     /// 这样重新开启能把"关闭期间"落入 openai 桶的官方会话补迁进来。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_desktop_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -394,16 +418,22 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    #[serde(default)]
+    pub preserve_codex_desktop_official_auth_on_switch: bool,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
     /// providers. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
+    #[serde(default)]
+    pub unify_codex_desktop_session_history: bool,
     /// User opted in (via the enable dialog checkbox) to migrate existing
     /// official sessions ("openai" bucket) into the shared bucket. Persisted so
     /// a failed migration retries at startup; cleared when the toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
+    #[serde(default)]
+    pub unify_codex_desktop_migrate_existing: Option<bool>,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -425,6 +455,8 @@ pub struct AppSettings {
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_desktop_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -448,6 +480,8 @@ pub struct AppSettings {
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
+    #[serde(default)]
+    pub current_provider_codex_desktop: Option<String>,
     /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_gemini: Option<String>,
@@ -471,6 +505,12 @@ pub struct AppSettings {
     /// Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
     #[serde(default)]
     pub skill_storage_location: SkillStorageLocation,
+
+    /// Local directories where the user has enabled Desktop resource management.
+    /// Keeps sync deletions working after the last binding is disabled, without
+    /// touching an unconfigured Desktop installation on startup or import.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub codex_desktop_managed_resource_dirs: std::collections::BTreeMap<String, Vec<String>>,
 
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -539,8 +579,11 @@ impl Default for AppSettings {
             enable_failover_toggle: false,
             show_profile_switcher: true,
             preserve_codex_official_auth_on_switch: false,
+            preserve_codex_desktop_official_auth_on_switch: false,
             unify_codex_session_history: false,
+            unify_codex_desktop_session_history: false,
             unify_codex_migrate_existing: None,
+            unify_codex_desktop_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
@@ -548,6 +591,7 @@ impl Default for AppSettings {
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
+            codex_desktop_config_dir: None,
             gemini_config_dir: None,
             grok_config_dir: None,
             opencode_config_dir: None,
@@ -557,6 +601,7 @@ impl Default for AppSettings {
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
+            current_provider_codex_desktop: None,
             current_provider_gemini: None,
             current_provider_grokbuild: None,
             current_provider_opencode: None,
@@ -564,6 +609,7 @@ impl Default for AppSettings {
             current_provider_hermes: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
+            codex_desktop_managed_resource_dirs: Default::default(),
             webdav_sync: None,
             s3_sync: None,
             webdav_backup: None,
@@ -595,6 +641,12 @@ impl AppSettings {
 
         self.codex_config_dir = self
             .codex_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        self.codex_desktop_config_dir = self
+            .codex_desktop_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -928,6 +980,43 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_codex_desktop_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .codex_desktop_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub(crate) fn codex_desktop_resource_is_managed(resource: &str) -> bool {
+    let dir = crate::codex_config::normalized_target_path(
+        &crate::codex_config::get_codex_config_dir_for_app(&AppType::CodexDesktop),
+    );
+    get_settings()
+        .codex_desktop_managed_resource_dirs
+        .get(resource)
+        .is_some_and(|dirs| dirs.contains(&dir))
+}
+
+pub(crate) fn remember_codex_desktop_resource_dir(resource: &str) -> Result<(), AppError> {
+    crate::codex_config::ensure_codex_target_writable(&AppType::CodexDesktop)?;
+    if codex_desktop_resource_is_managed(resource) {
+        return Ok(());
+    }
+    let dir = crate::codex_config::normalized_target_path(
+        &crate::codex_config::get_codex_config_dir_for_app(&AppType::CodexDesktop),
+    );
+    mutate_settings(|settings| {
+        let dirs = settings
+            .codex_desktop_managed_resource_dirs
+            .entry(resource.into())
+            .or_default();
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    })
+}
+
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
@@ -976,6 +1065,7 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+#[allow(dead_code)]
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -986,6 +1076,7 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
         .preserve_codex_official_auth_on_switch
 }
 
+#[allow(dead_code)]
 pub fn unify_codex_session_history() -> bool {
     settings_store()
         .read()
@@ -1008,6 +1099,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
+        AppType::CodexDesktop => settings.current_provider_codex_desktop.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::GrokBuild => settings.current_provider_grokbuild.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
@@ -1027,6 +1119,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Claude => settings.current_provider_claude = id_owned.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop = id_owned.clone(),
         AppType::Codex => settings.current_provider_codex = id_owned.clone(),
+        AppType::CodexDesktop => settings.current_provider_codex_desktop = id_owned.clone(),
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
         AppType::GrokBuild => settings.current_provider_grokbuild = id_owned.clone(),
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
@@ -1185,6 +1278,78 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
         if let Some(s3) = current.s3_sync.as_mut() {
             s3.status = status;
         }
+    })
+}
+
+pub fn is_codex_official_history_unify_migrated_for_dir_for_app(
+    app: &AppType,
+    codex_dir: &str,
+) -> bool {
+    if *app != AppType::CodexDesktop {
+        return is_codex_official_history_unify_migrated_for_dir(codex_dir);
+    }
+
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.codex_desktop_official_history_unify_v1.as_ref())
+        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+}
+
+pub fn mark_codex_official_history_unify_migrated_if_enabled_for_app(
+    app: &AppType,
+    migration: CodexOfficialHistoryUnifyMigration,
+) -> Result<bool, AppError> {
+    if *app != AppType::CodexDesktop {
+        return mark_codex_official_history_unify_migrated_if_enabled(migration);
+    }
+
+    let mut written = false;
+    mutate_settings(|settings| {
+        if settings.unify_codex_desktop_session_history
+            && settings
+                .unify_codex_desktop_migrate_existing
+                .unwrap_or(false)
+        {
+            settings
+                .local_migrations
+                .get_or_insert_with(Default::default)
+                .codex_desktop_official_history_unify_v1 = Some(migration);
+            written = true;
+        }
+    })?;
+    Ok(written)
+}
+
+pub fn clear_codex_official_history_unify_migration_for_app(app: &AppType) -> Result<(), AppError> {
+    if *app != AppType::CodexDesktop {
+        return clear_codex_official_history_unify_migration();
+    }
+
+    mutate_settings(|settings| {
+        if let Some(migrations) = settings.local_migrations.as_mut() {
+            migrations.codex_desktop_official_history_unify_v1 = None;
+        }
+    })
+}
+
+pub fn unify_codex_migrate_existing_requested_for_app(app: &AppType) -> bool {
+    if *app != AppType::CodexDesktop {
+        return unify_codex_migrate_existing_requested();
+    }
+
+    get_settings()
+        .unify_codex_desktop_migrate_existing
+        .unwrap_or(false)
+}
+
+pub fn clear_codex_unify_migrate_existing_for_app(app: &AppType) -> Result<(), AppError> {
+    if *app != AppType::CodexDesktop {
+        return clear_codex_unify_migrate_existing();
+    }
+
+    mutate_settings(|settings| {
+        settings.unify_codex_desktop_migrate_existing = None;
     })
 }
 

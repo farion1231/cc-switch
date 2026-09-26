@@ -118,9 +118,14 @@ export function useSettingsForm(): UseSettingsFormResult {
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
+      preserveCodexDesktopOfficialAuthOnSwitch:
+        data.preserveCodexDesktopOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
+      unifyCodexDesktopSessionHistory:
+        data.unifyCodexDesktopSessionHistory ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
+      codexDesktopConfigDir: sanitizeDir(data.codexDesktopConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
       grokConfigDir: sanitizeDir(data.grokConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
@@ -146,7 +151,9 @@ export function useSettingsForm(): UseSettingsFormResult {
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
+            preserveCodexDesktopOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
+            unifyCodexDesktopSessionHistory: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -186,9 +193,14 @@ export function useSettingsForm(): UseSettingsFormResult {
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
+        preserveCodexDesktopOfficialAuthOnSwitch:
+          serverData.preserveCodexDesktopOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
+        unifyCodexDesktopSessionHistory:
+          serverData.unifyCodexDesktopSessionHistory ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
+        codexDesktopConfigDir: sanitizeDir(serverData.codexDesktopConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
         grokConfigDir: sanitizeDir(serverData.grokConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),

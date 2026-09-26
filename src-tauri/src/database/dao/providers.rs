@@ -697,14 +697,27 @@ impl Database {
     pub fn init_default_official_providers(&self) -> Result<usize, AppError> {
         use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
 
+        // Older installations have already seeded the original official entries.
+        // Desktop has its own one-time seed, without selecting it or reading live files.
+        let mut inserted = 0_usize;
+        if !self
+            .get_bool_flag("codex_desktop_official_seeded")
+            .unwrap_or(false)
+        {
+            inserted += usize::from(self.ensure_official_seed_by_id(
+                crate::database::dao::providers_seed::CODEX_DESKTOP_OFFICIAL_PROVIDER_ID,
+                crate::AppType::CodexDesktop,
+            )?);
+            self.set_setting("codex_desktop_official_seeded", "true")?;
+        }
+
         if self
             .get_bool_flag("official_providers_seeded")
             .unwrap_or(false)
         {
-            return Ok(0);
+            return Ok(inserted);
         }
 
-        let mut inserted = 0_usize;
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         for seed in OFFICIAL_SEEDS {
