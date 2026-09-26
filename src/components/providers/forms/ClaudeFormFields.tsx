@@ -895,14 +895,15 @@ export function ClaudeFormFields({
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      // 按面板从上到下取值，默认兜底模型最后使用。
+                      // 用户显式填写的默认兜底模型优先；未填写时按面板
+                      // 从上到下取第一个非空值。
                       const value =
+                        claudeModel ||
                         defaultSonnetModel ||
                         defaultOpusModel ||
                         defaultFableModel ||
                         defaultHaikuModel ||
-                        subagentModel ||
-                        claudeModel;
+                        subagentModel;
                       if (value) {
                         for (const row of modelRoleRows) {
                           const roleValue = row.supportsOneM
