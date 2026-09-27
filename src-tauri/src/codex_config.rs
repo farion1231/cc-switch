@@ -8347,4 +8347,146 @@ model_catalog_json = "cc-switch-model-catalog.json"
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
     }
+
+    /// 自建/私有 LLM 网关（llm-gateway-go 部署在 llm.kxpms.cn 与本机 8782 容器）
+    /// 的回归护栏：把前端 `settings_config.modelCatalog` 喂给后端 catalog 生成
+    /// 路径，必须真的产出 N 条目，且条目里包含我们宣称的非 OpenAI 主力模型，
+    /// 不能因为预设长度（19/21 条）踩到路径分支而漏生成。
+    #[test]
+    fn self_hosted_gateway_presets_round_trip_through_catalog_pipeline() {
+        // Each test module ships its own TempHome helper; here we inline the equivalent
+        // so we don't depend on internal helpers from sibling modules. The tempdir
+        // handle is held in `_keep_alive` for the entire test so the directory survives
+        // the initial drop of the bare expression.
+        let prev_home = std::env::var("CODEX_HOME").ok();
+        let temp_home = tempfile::tempdir().expect("tempdir for CODEX_HOME");
+        let home_path = temp_home.path().to_path_buf();
+        let _keep_alive = temp_home;            // RAII: drop at end of test
+        std::env::set_var("CODEX_HOME", home_path.to_string_lossy().to_string());
+        crate::settings::reload_settings().expect("reload settings");
+        // Restore on drop so other tests keep their original CODEX_HOME.
+        struct RestoreEnv(Option<String>);
+        impl Drop for RestoreEnv {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("CODEX_HOME", v),
+                    None => std::env::remove_var("CODEX_HOME"),
+                }
+            }
+        }
+        let _restore = RestoreEnv(prev_home);
+
+        // 内联 fixture：CC Switch 前端 `ProviderForm` 落库到 settings_config 的形态。
+        // 不引用前端代码，避免重新引入 Node 工具链。
+        let kxpms_settings = serde_json::json!({
+            "auth": { "OPENAI_API_KEY": "sk-test-kxpms" },
+            "config": "model_provider = \"custom\"\nmodel = \"claude-opus-5\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+            "modelCatalog": {
+                "models": [
+                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000,
+                      "inputModalities": ["text","image"],
+                      "reasoningLevels": ["low","medium","high","xhigh","max"],
+                      "defaultReasoningLevel": "high" },
+                    { "model": "glm-5.2", "displayName": "GLM-5.2", "contextWindow": 1000000,
+                      "inputModalities": ["text"],
+                      "reasoningLevels": ["none","minimal","low","medium","high","xhigh","max"],
+                      "defaultReasoningLevel": "high" },
+                    { "model": "kimi-k3", "displayName": "Kimi K3", "contextWindow": 1048576,
+                      "inputModalities": ["text"],
+                      "reasoningLevels": ["low","high","max"], "defaultReasoningLevel": "high" },
+                    { "model": "minimax-m3", "displayName": "MiniMax M3", "contextWindow": 512000,
+                      "inputModalities": ["text","image"] },
+                ]
+            }
+        });
+
+        // 1) settings 路径 → catalog JSON
+        let catalog = codex_model_catalog_from_settings(
+            &kxpms_settings,
+            &kxpms_settings["config"].as_str().unwrap(),
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation")
+        .expect("settings has modelCatalog → catalog expected");
+        let catalog_models = catalog
+            .get("models")
+            .and_then(|m| m.as_array())
+            .expect("catalog.models array");
+        assert_eq!(
+            catalog_models.len(),
+            4,
+            "all 4 fixture models must land in the catalog"
+        );
+        for slug in ["claude-opus-5", "glm-5.2", "kimi-k3", "minimax-m3"] {
+            let hit = catalog_models
+                .iter()
+                .find(|e| e.get("slug").and_then(|s| s.as_str()) == Some(slug))
+                .unwrap_or_else(|| panic!("missing {slug} in catalog"));
+            assert!(
+                hit.get("base_instructions").is_some(),
+                "{slug} entry must have base_instructions (Codex requires it)"
+            );
+        }
+        // glia/kimi 等带 reasoningLevels 的模型，覆盖成功并只保留规范化档位
+        let glm = catalog_models
+            .iter()
+            .find(|e| e.get("slug").and_then(|s| s.as_str()) == Some("glm-5.2"))
+            .unwrap();
+        let levels: Vec<&str> = glm["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["effort"].as_str().unwrap())
+            .collect();
+        assert_eq!(glm["default_reasoning_level"], "high");
+        assert!(levels.contains(&"none") && levels.contains(&"max"));
+        assert_eq!(levels.len(), 7, "all 7 canonical levels must survive");
+
+        // 2) 整链路：settings + config 文本 → 写入 live + 注入 model_catalog_json 指针
+        // prepare_codex_config_text_with_model_catalog 写文件依赖 get_codex_config_dir()
+        // （CODEX_HOME），TempHome 已经把它指向 sandboxed 目录。
+        let config_text = kxpms_settings["config"].as_str().unwrap();
+        let out = prepare_codex_config_text_with_model_catalog(
+            &kxpms_settings,
+            config_text,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("prepare_codex_config_text_with_model_catalog");
+        let parsed: toml::Value = toml::from_str(&out).expect("toml parse");
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
+            "live config must carry the cc-switch-owned catalog pointer"
+        );
+        // 3) 写盘的内容与 settings 路径产物一致
+        let on_disk = read_codex_model_catalog_text(&get_codex_model_catalog_path())
+            .expect("read generated catalog");
+        let on_disk: serde_json::Value = serde_json::from_str(&on_disk).expect("catalog json");
+        let on_disk_models = on_disk["models"].as_array().expect("on_disk models");
+        assert_eq!(on_disk_models.len(), 4, "generated file must mirror the 4 fixture entries");
+        for slug in ["claude-opus-5", "glm-5.2", "kimi-k3", "minimax-m3"] {
+            assert!(
+                on_disk_models
+                    .iter()
+                    .any(|e| e.get("slug").and_then(|s| s.as_str()) == Some(slug)),
+                "on-disk catalog missing {slug}"
+            );
+        }
+
+        // 4) 反向：读完的内容能被 round-trip 回 settings 简化形态（前端表格用），
+        //    证明 db ↔ live ↔ 表格的链路在两次往返里没有信息丢失。
+        let simplified = read_codex_model_catalog_simplified_from_live()
+            .expect("read_codex_model_catalog_simplified_from_live")
+            .expect("should be Some for cc-switch-owned catalog");
+        let slim_models = simplified["models"].as_array().expect("simplified models");
+        assert_eq!(slim_models.len(), 4);
+        for slug in ["claude-opus-5", "glm-5.2", "kimi-k3", "minimax-m3"] {
+            assert!(
+                slim_models
+                    .iter()
+                    .any(|m| m.get("model").and_then(|s| s.as_str()) == Some(slug)),
+                "simplified catalog missing {slug}"
+            );
+        }
+    }
 }

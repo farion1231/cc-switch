@@ -3374,4 +3374,388 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "aicodewith",
     iconColor: "#3A3B40",
   },
+  {
+    // 自建 LLM 网关（llm-gateway-go 部署在 llm.kxpms.cn）。模型清单与窗口/思考
+    // 档位 SSOT = ~/.minimax/config.yaml 的 custom_provider.kaixuan；2026-09-28
+    // 对账：24 个模型 id 全部命中网关 /v1/models（603 个 id）。
+    // 协议实测（curl 级，2026-09-28）：/v1/responses 原生可用（claude-opus-5 /
+    // claude-opus-4-8 / glm-5.2 / kimi-k3 / minimax-m3 均 200），故
+    // wire_api="responses" 直连，不需要本地路由做 Responses→Chat 转换。
+    // 经 codex exec 的端到端：claude-opus-5 / minimax-m3 / glm-5.2 通过
+    // （glm-5.2 长尾 130s，网关拥塞所致）；claude-sonnet-5 与 claude-opus-5-5 在
+    // 本网关「保持连接不吐字」（curl 100s 零输出），是网关上游凭据问题。
+    // 默认模型选 claude-opus-5：非 OpenAI 阵营、实测可用、1M 窗口。
+    name: "开轩 LLM 网关",
+    websiteUrl: "https://llm.kxpms.cn",
+    category: "custom",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "claude-opus-5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+# 重试/空闲限流键：2026-09-28 17:54 实测 bogus host + 这些键后 codex 仍 30s+ 卡死
+# 直到外部 timeout；说明 codex 0.158 在 [model_providers.custom] 层不消费这三键，
+# 这是「虚假功能」。删之，避免给后来人误导。`,
+    endpointCandidates: ["https://llm.kxpms.cn/v1"],
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "claude-opus-5-5",
+        displayName: "Claude Opus 5.5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "claude-opus-4-8",
+        displayName: "Claude Opus 4.8",
+        contextWindow: 256000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "minimax-m3",
+        displayName: "MiniMax M3",
+        contextWindow: 512000,
+        inputModalities: ["text", "image"],
+        // 上游 SSOT 的档位是 off/on，Codex 只认 none/minimal/.../max，映射不
+        // 臆造：留空走模板默认 none/high。
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gemini-3.1-pro-preview",
+        displayName: "Gemini 3.1 Pro Preview",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "qwen-3.8-max",
+        displayName: "Qwen 3.8 Max",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3 Flash",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "auto",
+        displayName: "Auto (网关自动路由)",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
+      },
+    ]),
+  },
+  {
+    // 本机 LLM 网关（llm-gateway-go 容器 127.0.0.1:8782）。模型清单 SSOT =
+    // ~/.minimax/config.yaml 的 custom_provider.local（api: openai-completions）。
+    // 2026-09-28 补录：该清单漏了 glm-5.2 / claude-opus-4-8 / minimax-m2.7 —— 三个
+    // id 都在网关 /v1/models 里，且 glm-5.2 经 /v1/responses curl 级实测 200、
+    // 经 codex exec 端到端 65s 返回。
+    // 协议实测：虽然 mcode 侧按 chat 接入，网关 /v1/responses 同样原生可用
+    // （claude-opus-5 2.0s 返回），故 wire_api="responses" 直连、apiFormat 走
+    // openai_responses，不启本地路由转换。
+    // 2026-09-28 实测不可用（上游凭据/候选缺失，非本清单问题）：deepseek-v4-pro、
+    // grok-4.7 → 503 provider_unavailable；qwen3.8-max、gemini-3.5-flash → 503 no_candidate。
+    name: "本地 LLM 网关 (8782)",
+    websiteUrl: "http://localhost:8782",
+    category: "custom",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "claude-opus-5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "local_gateway"
+base_url = "http://localhost:8782/v1"
+wire_api = "responses"
+requires_openai_auth = true
+# 同「开轩 LLM 网关」：本机网关同样会因上游凭据/容量返回 503，
+# 但 request_max_retries/stream_max_retries/stream_idle_timeout_ms
+# 在 [model_providers.custom] 层不被 codex 消费，故删之。`,
+    endpointCandidates: ["http://localhost:8782/v1"],
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "claude-opus-4-6",
+        displayName: "Claude Opus 4.6",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        // 2026-09-28 补录：网关有该 id，SSOT 漏登记；1M 窗口/档位取 kaixuan 同款模型。
+        model: "claude-opus-4-8",
+        displayName: "Claude Opus 4.8",
+        contextWindow: 256000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        // 2026-09-28 补录：此前 local 清单只有 glm-5.3 系，漏了网关实际在跑的 5.2。
+        // curl 级 /v1/responses 200，codex exec 端到端 65s 返回。
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "minimax-m3",
+        displayName: "MiniMax M3",
+        contextWindow: 512000,
+        inputModalities: ["text", "image"],
+        // 上游档位 off/on 非 Codex 档位，留空走模板默认。
+      },
+      {
+        // 2026-09-28 补录：窗口/输入模态取 anthropic 侧 minimax-2 供应商登记的
+        // M2.7（同模型，M 系列的 256k 纯文本口径）。
+        model: "minimax-m2.7",
+        displayName: "MiniMax M2.7",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "grok-4.6",
+        displayName: "Grok 4.6",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gemini-3.5-flash",
+        displayName: "Gemini 3.5 Flash",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3 Flash",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "qwen3.8-max",
+        displayName: "Qwen 3.8 Max",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "claude-fable-5-1",
+        displayName: "Claude Fable 5.1",
+        contextWindow: 1000000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "auto",
+        displayName: "Auto (网关自动路由)",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+      {
+        model: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "gpt-6-astra",
+        displayName: "GPT-6 Astra",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
+      },
+    ]),
+  },
 ];
