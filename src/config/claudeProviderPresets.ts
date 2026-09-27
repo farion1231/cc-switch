@@ -1605,6 +1605,19 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
+    name: "go2llm",
+    websiteUrl: "https://go2llm.tech",
+    apiKeyUrl: "https://go2llm.tech/app",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://go2llm.tech",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://go2llm.tech"],
+    category: "aggregator",
+  },
+  {
     name: "CherryIN",
     websiteUrl: "https://open.cherryin.ai",
     apiKeyUrl: "https://open.cherryin.ai/console/token",
