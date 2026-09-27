@@ -14,19 +14,51 @@ use super::utils::{
 
 const PROVIDER_ID: &str = "claude";
 
-pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_claude_config_dir().join("projects");
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+#[derive(Clone, Copy)]
+struct ProfileContext<'a> {
+    name: &'a str,
+    config_dir: &'a Path,
+    retired: bool,
+}
 
+pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut sessions = Vec::new();
+    scan_root(
+        &get_claude_config_dir().join("projects"),
+        None,
+        &mut sessions,
+    );
+
+    match crate::claude_launcher_profile::list_profiles() {
+        Ok(profiles) => {
+            for profile in &profiles {
+                let context = ProfileContext {
+                    name: &profile.metadata.provider_name,
+                    config_dir: &profile.config_dir,
+                    retired: profile.metadata.retired,
+                };
+                scan_root(
+                    &profile.config_dir.join("projects"),
+                    Some(context),
+                    &mut sessions,
+                );
+            }
+        }
+        Err(error) => {
+            log::warn!("读取 Claude 托管会话配置失败，仅扫描默认目录: {error}");
+        }
+    }
+    sessions
+}
+
+fn scan_root(root: &Path, profile: Option<ProfileContext<'_>>, sessions: &mut Vec<SessionMeta>) {
+    let mut files = Vec::new();
+    collect_jsonl_files(root, &mut files);
     for path in files {
-        if let Some(meta) = parse_session(&path) {
+        if let Some(meta) = parse_session(&path, profile) {
             sessions.push(meta);
         }
     }
-
-    sessions
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -86,7 +118,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-    let meta = parse_session(path).ok_or_else(|| {
+    let meta = parse_session(path, None).ok_or_else(|| {
         format!(
             "Failed to parse Claude session metadata: {}",
             path.display()
@@ -120,7 +152,7 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
     Ok(true)
 }
 
-fn parse_session(path: &Path) -> Option<SessionMeta> {
+fn parse_session(path: &Path, profile: Option<ProfileContext<'_>>) -> Option<SessionMeta> {
     if is_agent_session(path) {
         return None;
     }
@@ -239,17 +271,64 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 
     let summary = summary.map(|text| truncate_summary(&text, 160));
 
+    let (profile_name, profile_config_dir, resume_command) = match profile {
+        Some(profile) => (
+            Some(profile.name.to_string()),
+            Some(profile.config_dir.to_string_lossy().to_string()),
+            (!profile.retired).then(|| managed_resume_command(profile.config_dir, &session_id)),
+        ),
+        None => (None, None, Some(format!("claude --resume {session_id}"))),
+    };
+
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
-        session_id: session_id.clone(),
+        session_id,
         title,
         summary,
         project_dir,
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: Some(format!("claude --resume {session_id}")),
+        profile_name,
+        profile_config_dir,
+        resume_command,
     })
+}
+
+fn managed_resume_command(config_dir: &Path, session_id: &str) -> String {
+    managed_resume_command_for_platform(config_dir, session_id, cfg!(target_os = "windows"))
+}
+
+fn managed_resume_command_for_platform(
+    config_dir: &Path,
+    session_id: &str,
+    windows: bool,
+) -> String {
+    if !windows {
+        return format!(
+            "CLAUDE_CONFIG_DIR={} claude --resume {}",
+            crate::session_manager::terminal::shell_escape(config_dir.to_string_lossy().as_ref()),
+            crate::session_manager::terminal::shell_escape(session_id)
+        );
+    }
+
+    fn escape_windows_batch(value: &str) -> String {
+        value
+            .replace('^', "^^")
+            .replace('%', "%%")
+            .replace('&', "^&")
+            .replace('|', "^|")
+            .replace('<', "^<")
+            .replace('>', "^>")
+            .replace('(', "^(")
+            .replace(')', "^)")
+            .replace('"', "^\"")
+    }
+    format!(
+        "set \"CLAUDE_CONFIG_DIR={}\" && claude --resume \"{}\"",
+        escape_windows_batch(config_dir.to_string_lossy().as_ref()),
+        escape_windows_batch(session_id)
+    )
 }
 
 fn is_agent_session(path: &Path) -> bool {
@@ -302,7 +381,62 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::store::AppState;
+    use serial_test::serial;
+    use std::ffi::OsString;
+    use std::sync::Arc;
     use tempfile::tempdir;
+
+    struct TestHome {
+        _temp: tempfile::TempDir,
+        previous_home: Option<OsString>,
+        previous_settings: crate::settings::AppSettings,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let previous_settings = crate::settings::get_settings();
+            let temp = tempfile::tempdir().expect("create test home");
+            let home = temp.path().join("home O'Brien");
+            std::fs::create_dir_all(&home).expect("create isolated home");
+            std::env::set_var("CC_SWITCH_TEST_HOME", &home);
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset settings");
+            Self {
+                _temp: temp,
+                previous_home,
+                previous_settings,
+            }
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            crate::settings::update_settings(self.previous_settings.clone())
+                .expect("restore settings");
+            match &self.previous_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn write_session(root: &Path, session_id: &str, title: &str) -> PathBuf {
+        let path = root.join("project").join(format!("{title}.jsonl"));
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create session dir");
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"sessionId\":\"{session_id}\",\"cwd\":\"/tmp/{title}\",\"timestamp\":\"2026-03-06T10:00:00Z\"}}\n\
+                 {{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"{title}\"}},\"sessionId\":\"{session_id}\",\"timestamp\":\"2026-03-06T10:01:00Z\"}}\n"
+            ),
+        )
+        .expect("write session");
+        path
+    }
 
     #[test]
     fn delete_session_removes_main_file_and_sidecar_directory() {
@@ -399,7 +533,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path).unwrap();
+        let meta = parse_session(&path, None).unwrap();
         assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
     }
 
@@ -418,8 +552,16 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path).unwrap();
+        let meta = parse_session(&path, None).unwrap();
+
         assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+    }
+    #[test]
+    fn managed_resume_command_uses_windows_environment_syntax_and_escaping() {
+        assert_eq!(
+            managed_resume_command_for_platform(Path::new(r"C:\Profiles\A&B"), "session&one", true),
+            r#"set "CLAUDE_CONFIG_DIR=C:\Profiles\A^&B" && claude --resume "session^&one""#
+        );
     }
 
     #[test]
@@ -435,7 +577,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path).unwrap();
+        let meta = parse_session(&path, None).unwrap();
         // No user message and no custom-title → falls back to dir basename
         assert_eq!(meta.title.as_deref(), Some("my-project"));
     }
@@ -454,7 +596,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path).unwrap();
+        let meta = parse_session(&path, None).unwrap();
         let title = meta.title.unwrap();
         assert!(title.len() <= TITLE_MAX_CHARS + 3); // +3 for "..."
         assert!(title.ends_with("..."));
@@ -474,7 +616,7 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path).unwrap();
+        let meta = parse_session(&path, None).unwrap();
         assert_eq!(meta.title.as_deref(), Some("请帮我重构这个函数"));
     }
 
@@ -494,8 +636,92 @@ mod tests {
         )
         .expect("write");
 
-        let meta = parse_session(&path).unwrap();
+        let meta = parse_session(&path, None).unwrap();
         assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
+    }
+    #[test]
+    #[serial]
+    fn scan_includes_default_active_and_retired_profiles_without_deduplicating_session_ids() {
+        let _home = TestHome::new();
+        let state = AppState::new(Arc::new(Database::memory().expect("create database")));
+        let provider_a = Provider::with_id(
+            "provider-a".to_string(),
+            "Profile A".to_string(),
+            serde_json::json!({"env": {"ANTHROPIC_AUTH_TOKEN": "secret-a"}}),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "provider-b".to_string(),
+            "Profile B".to_string(),
+            serde_json::json!({"env": {"ANTHROPIC_AUTH_TOKEN": "secret-b"}}),
+            None,
+        );
+        let dir_a = crate::claude_launcher_profile::sync_profile(&state, &provider_a)
+            .expect("sync profile A");
+        let dir_b = crate::claude_launcher_profile::sync_profile(&state, &provider_b)
+            .expect("sync profile B");
+        write_session(
+            &crate::config::get_claude_config_dir().join("projects"),
+            "duplicate-session",
+            "default-session",
+        );
+        write_session(
+            &dir_a.join("projects"),
+            "duplicate-session",
+            "profile-a-session",
+        );
+        write_session(
+            &dir_b.join("projects"),
+            "duplicate-session",
+            "profile-b-session",
+        );
+        crate::claude_launcher_profile::retire_profile("provider-b").expect("retire B");
+
+        let sessions = scan_sessions();
+        let duplicates: Vec<_> = sessions
+            .iter()
+            .filter(|session| session.session_id == "duplicate-session")
+            .collect();
+        assert_eq!(duplicates.len(), 3);
+
+        let default = duplicates
+            .iter()
+            .find(|session| session.profile_name.is_none())
+            .expect("default profile session");
+        assert_eq!(
+            default.resume_command.as_deref(),
+            Some("claude --resume duplicate-session")
+        );
+        assert!(default.profile_config_dir.is_none());
+
+        let active = duplicates
+            .iter()
+            .find(|session| session.profile_name.as_deref() == Some("Profile A"))
+            .expect("active managed profile session");
+        assert_eq!(
+            active.profile_config_dir.as_deref(),
+            Some(dir_a.to_string_lossy().as_ref())
+        );
+        // The exact shell syntax is platform-dependent (POSIX vs cmd `set`); it is
+        // covered by managed_resume_command_for_platform tests. Here we only assert
+        // the scan pipeline routes through the same builder.
+        assert_eq!(
+            active.resume_command.as_deref(),
+            Some(managed_resume_command(&dir_a, "duplicate-session").as_str())
+        );
+
+        let retired = duplicates
+            .iter()
+            .find(|session| session.profile_name.as_deref() == Some("Profile B"))
+            .expect("retired managed profile session");
+        assert_eq!(
+            retired.profile_config_dir.as_deref(),
+            Some(dir_b.to_string_lossy().as_ref())
+        );
+        assert!(retired.resume_command.is_none());
+        assert!(duplicates
+            .iter()
+            .all(|session| session.provider_id == PROVIDER_ID));
     }
 
     #[test]

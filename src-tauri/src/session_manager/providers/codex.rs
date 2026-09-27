@@ -411,6 +411,8 @@ fn parse_session_with_titles(
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
+        profile_name: None,
+        profile_config_dir: None,
         resume_command: Some(format!("codex resume {session_id}")),
     })
 }

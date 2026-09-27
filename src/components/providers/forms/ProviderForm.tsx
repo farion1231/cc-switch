@@ -28,6 +28,7 @@ import type {
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
+  ClaudeRouterConfig,
 } from "@/types";
 import {
   providerPresets,
@@ -81,6 +82,10 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import {
+  getClaudeRouterValidationError,
+  normalizeClaudeRouterConfig,
+} from "./ClaudeRouterModelsField";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -366,6 +371,13 @@ function ProviderFormFull({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [claudeRouter, setClaudeRouter] = useState<ClaudeRouterConfig>(
+    () =>
+      initialData?.meta?.claudeRouter ?? {
+        enabled: false,
+        models: [],
+      },
+  );
 
   const [pricingConfig, setPricingConfig] = useState<{
     enabled: boolean;
@@ -403,6 +415,14 @@ function ProviderFormFull({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
+    setClaudeRouter(
+      appId === "claude"
+        ? (initialData?.meta?.claudeRouter ?? {
+            enabled: false,
+            models: [],
+          })
+        : { enabled: false, models: [] },
     );
     setPricingConfig({
       enabled:
@@ -1114,6 +1134,23 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
+    if (appId === "claude") {
+      const routerError = getClaudeRouterValidationError(claudeRouter);
+      if (routerError) {
+        toast.error(
+          t(`claudeRouter.validation.${routerError}`, {
+            defaultValue:
+              routerError === "modelsRequired"
+                ? "Add at least one model before enabling the router."
+                : routerError === "fieldsRequired"
+                  ? "Every router model requires an alias, display name, and upstream model."
+                  : "Router model aliases must be unique.",
+          }),
+        );
+        return;
+      }
+    }
+
     const overridesResult = shouldApplyLocalProxyRequestOverrides
       ? buildLocalProxyRequestOverrides(
           localProxyHeadersOverride,
@@ -1724,6 +1761,10 @@ function ProviderFormFull({
               ? useGeminiCommonConfigFlag
               : undefined,
       endpointAutoSelect,
+      claudeRouter:
+        appId === "claude"
+          ? normalizeClaudeRouterConfig(claudeRouter)
+          : undefined,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
@@ -2423,6 +2464,8 @@ function ProviderFormFull({
               defaultFableModelName={defaultFableModelName}
               subagentModel={subagentModel}
               onModelChange={handleModelChange}
+              claudeRouter={claudeRouter}
+              onClaudeRouterChange={setClaudeRouter}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}

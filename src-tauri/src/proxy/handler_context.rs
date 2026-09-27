@@ -64,6 +64,8 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// 确定性路由已选定真实上游模型，不再应用供应商的传统默认模型映射。
+    bypass_model_mapping: bool,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -72,7 +74,63 @@ pub struct RequestContext {
     pub copilot_optimizer_config: CopilotOptimizerConfig,
 }
 
+/// `new` 与 `new_routed` 共享的通用初始化结果
+struct CommonInit {
+    start_time: Instant,
+    app_config: AppProxyConfig,
+    rectifier_config: RectifierConfig,
+    optimizer_config: OptimizerConfig,
+    copilot_optimizer_config: CopilotOptimizerConfig,
+    session_id: String,
+    session_client_provided: bool,
+}
+
 impl RequestContext {
+    /// 通用初始化：计时、应用级代理配置、整流/优化器配置、Session ID 提取
+    async fn common_init(
+        state: &ProxyState,
+        body: &serde_json::Value,
+        headers: &HeaderMap,
+        tag: &'static str,
+        app_type_str: &'static str,
+    ) -> Result<CommonInit, ProxyError> {
+        let start_time = Instant::now();
+
+        // 从数据库读取应用级代理配置（per-app）
+        let app_config = state
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+
+        // 从数据库读取整流器配置
+        let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
+        let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
+        let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+
+        // 提取 Session ID
+        let session_result = extract_session_id(headers, body, app_type_str);
+        let session_id = session_result.session_id.clone();
+
+        log::debug!(
+            "[{}] Session ID: {} (from {:?}, client_provided: {})",
+            tag,
+            session_id,
+            session_result.source,
+            session_result.client_provided
+        );
+
+        Ok(CommonInit {
+            start_time,
+            app_config,
+            rectifier_config,
+            optimizer_config,
+            copilot_optimizer_config,
+            session_id,
+            session_client_provided: session_result.client_provided,
+        })
+    }
+
     /// 创建请求上下文
     ///
     /// # Arguments
@@ -93,19 +151,7 @@ impl RequestContext {
         tag: &'static str,
         app_type_str: &'static str,
     ) -> Result<Self, ProxyError> {
-        let start_time = Instant::now();
-
-        // 从数据库读取应用级代理配置（per-app）
-        let app_config = state
-            .db
-            .get_proxy_config_for_app(app_type_str)
-            .await
-            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
-
-        // 从数据库读取整流器配置
-        let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
-        let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
-        let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let init = Self::common_init(state, body, headers, tag, app_type_str).await?;
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -116,18 +162,6 @@ impl RequestContext {
             .and_then(|m| m.as_str())
             .unwrap_or("unknown")
             .to_string();
-
-        // 提取 Session ID
-        let session_result = extract_session_id(headers, body, app_type_str);
-        let session_id = session_result.session_id.clone();
-
-        log::debug!(
-            "[{}] Session ID: {} (from {:?}, client_provided: {})",
-            tag,
-            session_id,
-            session_result.source,
-            session_result.client_provided
-        );
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
@@ -154,12 +188,12 @@ impl RequestContext {
             provider.name,
             request_model,
             providers.len(),
-            session_id
+            init.session_id
         );
 
         Ok(Self {
-            start_time,
-            app_config,
+            start_time: init.start_time,
+            app_config: init.app_config,
             provider,
             providers,
             current_provider_id,
@@ -168,11 +202,68 @@ impl RequestContext {
             tag,
             app_type_str,
             app_type,
-            session_id,
-            session_client_provided: session_result.client_provided,
-            rectifier_config,
-            optimizer_config,
-            copilot_optimizer_config,
+            session_id: init.session_id,
+            session_client_provided: init.session_client_provided,
+            bypass_model_mapping: false,
+            rectifier_config: init.rectifier_config,
+            optimizer_config: init.optimizer_config,
+            copilot_optimizer_config: init.copilot_optimizer_config,
+        })
+    }
+
+    /// 创建确定性路由请求上下文（Claude 网关模型路由）
+    ///
+    /// 与 `new` 的差异：
+    /// - Provider 由公开模型 ID 解析得出，不经过 ProviderRouter/故障转移队列
+    /// - `providers` 只含这一个 Provider（重试不会切到其他供应商）
+    /// - `current_provider_id` 固定为该 Provider.id：与 forwarder 的
+    ///   `current_provider_id_at_start != provider.id` 判定对齐后恒为 false，
+    ///   从而阻止 FailoverSwitchManager::try_switch 热切换全局当前供应商
+    /// - `request_model` 记录客户端原始公开模型 ID，`outbound_model` 记录真实上游模型
+    ///
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_routed(
+        state: &ProxyState,
+        body: &serde_json::Value,
+        headers: &HeaderMap,
+        provider: Provider,
+        public_model: String,
+        upstream_model: String,
+        app_type: AppType,
+        tag: &'static str,
+        app_type_str: &'static str,
+    ) -> Result<Self, ProxyError> {
+        let init = Self::common_init(state, body, headers, tag, app_type_str).await?;
+
+        let current_provider_id = provider.id.clone();
+        let providers = vec![provider.clone()];
+
+        log::debug!(
+            "[{}] Routed provider: {}, public model: {}, upstream model: {}, session: {}",
+            tag,
+            provider.name,
+            public_model,
+            upstream_model,
+            init.session_id
+        );
+
+        Ok(Self {
+            start_time: init.start_time,
+            app_config: init.app_config,
+            provider,
+            providers,
+            current_provider_id,
+            request_model: public_model,
+            outbound_model: Some(upstream_model),
+            tag,
+            app_type_str,
+            app_type,
+            session_id: init.session_id,
+            session_client_provided: init.session_client_provided,
+            bypass_model_mapping: true,
+            rectifier_config: init.rectifier_config,
+            optimizer_config: init.optimizer_config,
+            copilot_optimizer_config: init.copilot_optimizer_config,
         })
     }
 
@@ -235,6 +326,7 @@ impl RequestContext {
             self.current_provider_id.clone(),
             self.session_id.clone(),
             self.session_client_provided,
+            self.bypass_model_mapping,
             first_byte_timeout,
             idle_timeout,
             self.rectifier_config.clone(),

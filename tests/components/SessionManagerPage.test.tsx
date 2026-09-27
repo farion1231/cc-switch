@@ -190,6 +190,8 @@ describe("SessionManagerPage", () => {
         createdAt: 3,
         lastActiveAt: 30,
         sourcePath: "/mock/claude/session-1.jsonl",
+        profileName: "Profile A",
+        profileConfigDir: "/mock/profiles/provider-a",
         resumeCommand: "claude --resume claude-session-1",
       },
       {
@@ -220,6 +222,34 @@ describe("SessionManagerPage", () => {
     };
 
     setSessionFixtures(sessions, messages);
+  });
+
+  it("shows managed profile source and finds sessions by profile name", async () => {
+    renderPage("claude");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Claude Session" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getAllByText("Profile A").length).toBeGreaterThan(0);
+
+    openSearch();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Profile A" },
+    });
+    expect(
+      screen.getByRole("heading", { name: "Claude Session" }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "missing-profile" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Claude Session" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("surfaces a relative Pi sessionDir instead of presenting an empty scan as authoritative", async () => {

@@ -9,6 +9,7 @@ import {
   Loader2,
   Zap,
   Power,
+  Network,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -26,6 +27,7 @@ import {
   useGlobalProxyConfig,
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
+import { useProvidersQuery } from "@/lib/query";
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
@@ -35,6 +37,10 @@ import {
   PROXY_APP_IDS,
   type ProxyAppId,
 } from "@/config/appConfig";
+import {
+  buildClaudeRouterBaseUrl,
+  ClaudeRouterSetupDialog,
+} from "./ClaudeRouterSetupDialog";
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -52,6 +58,19 @@ export function ProxyPanel({
   const { t } = useTranslation();
   const { data: status } = useProxyStatusQuery();
   const isRunning = status?.running ?? false;
+  const [isClaudeRouterSetupOpen, setIsClaudeRouterSetupOpen] = useState(false);
+  const { data: claudeProvidersData } = useProvidersQuery("claude", {
+    isProxyRunning: isRunning,
+  });
+  const exposedClaudeModelCount = Object.values(
+    claudeProvidersData?.providers ?? {},
+  ).reduce(
+    (count, provider) =>
+      provider.meta?.claudeRouter?.enabled
+        ? count + provider.meta.claudeRouter.models.length
+        : count,
+    0,
+  );
 
   // 获取应用接管状态
   const { data: takeoverStatus } = useProxyTakeoverStatus();
@@ -60,6 +79,11 @@ export function ProxyPanel({
   // 获取全局代理配置
   const { data: globalConfig } = useGlobalProxyConfig();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
+  const claudeRouterPort = globalConfig?.listenPort ?? status?.port ?? 15721;
+  const claudeRouterBaseUrl = buildClaudeRouterBaseUrl(
+    globalConfig?.listenAddress ?? "127.0.0.1",
+    claudeRouterPort,
+  );
 
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
@@ -261,6 +285,44 @@ export function ProxyPanel({
             onCheckedChange={onToggleProxy}
             disabled={isProxyPending}
           />
+        </div>
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background ring-1 ring-border">
+                <Network className="h-4 w-4 text-emerald-500" />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <p className="text-sm font-medium leading-none">
+                  {t("claudeRouter.panel.title", {
+                    defaultValue: "Claude Code Gateway",
+                  })}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t("claudeRouter.panel.status", {
+                    status: isRunning
+                      ? t("settings.advanced.proxy.running")
+                      : t("settings.advanced.proxy.stopped"),
+                    count: exposedClaudeModelCount,
+                    defaultValue:
+                      "{{status}} · {{count}} router models exposed",
+                  })}
+                </p>
+                <code className="block break-all text-xs text-muted-foreground">
+                  {claudeRouterBaseUrl}
+                </code>
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => setIsClaudeRouterSetupOpen(true)}
+            >
+              {t("claudeRouter.panel.setup", { defaultValue: "Setup" })}
+            </Button>
+          </div>
         </div>
 
         {/* [3] App takeover switches — animated, visible only when proxy is running */}
@@ -621,6 +683,13 @@ export function ProxyPanel({
             </div>
           </div>
         )}
+        <ClaudeRouterSetupDialog
+          open={isClaudeRouterSetupOpen}
+          onOpenChange={setIsClaudeRouterSetupOpen}
+          listenAddress={globalConfig?.listenAddress ?? "127.0.0.1"}
+          port={claudeRouterPort}
+          exposedModelCount={exposedClaudeModelCount}
+        />
       </section>
     </>
   );

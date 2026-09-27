@@ -3,16 +3,11 @@ use std::path::PathBuf;
 
 use crate::error::AppError;
 
-const CLAUDE_DIR: &str = ".claude";
 const CLAUDE_CONFIG_FILE: &str = "config.json";
 
 fn claude_dir() -> Result<PathBuf, AppError> {
-    // 优先使用设置中的覆盖目录
-    if let Some(dir) = crate::settings::get_claude_override_dir() {
-        return Ok(dir);
-    }
-    let home = dirs::home_dir().ok_or_else(|| AppError::Config("无法获取用户主目录".into()))?;
-    Ok(home.join(CLAUDE_DIR))
+    // 统一走中央解析：GUI 覆盖目录 > CLAUDE_CONFIG_DIR > ~/.claude
+    Ok(crate::config::get_claude_config_dir())
 }
 
 pub fn claude_config_path() -> Result<PathBuf, AppError> {
