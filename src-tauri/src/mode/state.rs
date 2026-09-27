@@ -1,6 +1,7 @@
 //! `live-state.json`：这台设备上每个应用的客户端文件状态。
 //!
 //! - `mode`、`attached`、`proxy_route`、`contract`：直连 / 代理模式（`mode::controller`）；
+//! - `written`：CC Switch 上次写进客户端文件、之后要按记录删掉的东西（Grok 的模型表）；
 //! - `pending`：一次写客户端文件的操作在发布前写下的意图，按文件记录写前、写后的
 //!   hash 和已备好的临时文件，崩溃后据此前滚或丢弃（`mode::operation`）。
 //!
@@ -92,6 +93,20 @@ impl ModeState {
     }
 }
 
+/// CC Switch 上次写进客户端文件、切走时要按记录删掉的东西。
+///
+/// 不能按 live 现在的内容去找：客户端自己会改。Grok 的 `/settings` 会把 `models.default`
+/// 改成内置模型，按它找表就会漏删上一家的表；而 CC Switch 默认的表名 `grok-4.5` 正好是
+/// 内置模型 ID，留下的表会覆盖内置模型，把官方请求连同第三方 Key 发到第三方地址。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Written {
+    /// Grok Build `config.toml` 里 CC Switch 写的 `[model."<名称>"]` 表。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppLiveState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,6 +117,9 @@ pub struct AppLiveState {
     pub proxy_route: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<Contract>,
+    /// 没有值：这台设备上还没有新版写过这个应用的文件（升级前旧版写的，按行推断）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written: Option<Written>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
     #[serde(flatten)]
@@ -110,7 +128,10 @@ pub struct AppLiveState {
 
 impl AppLiveState {
     fn is_empty(&self) -> bool {
-        self.pending.is_none() && self.mode_state() == ModeState::default() && self.extra.is_empty()
+        self.pending.is_none()
+            && self.written.is_none()
+            && self.mode_state() == ModeState::default()
+            && self.extra.is_empty()
     }
 
     pub fn mode_state(&self) -> ModeState {
@@ -179,13 +200,19 @@ pub struct PendingTarget {
     /// 模式状态：有值时整体替换这个应用的 mode、attached、proxy_route、contract。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<ModeState>,
+    /// 写入记录：有值时整体替换。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written: Option<Written>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl PendingTarget {
     pub fn is_empty(&self) -> bool {
-        self.pointer.is_none() && self.state.is_none() && self.extra.is_empty()
+        self.pointer.is_none()
+            && self.state.is_none()
+            && self.written.is_none()
+            && self.extra.is_empty()
     }
 }
 
@@ -273,6 +300,21 @@ pub fn set_mode_state(store: &DeviceStore, app: &str, mode: ModeState) -> Result
             .entry(app.to_string())
             .or_default()
             .set_mode_state(mode);
+    })
+}
+
+/// 这个应用的写入记录；`None` 表示新版还没写过。
+pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(load(store)?
+        .apps
+        .get(app)
+        .and_then(|state| state.written.clone()))
+}
+
+pub fn set_written(store: &DeviceStore, app: &str, written: Written) -> Result<(), AppError> {
+    update(store, |state| {
+        state.apps.entry(app.to_string()).or_default().written = Some(written);
     })
 }
 

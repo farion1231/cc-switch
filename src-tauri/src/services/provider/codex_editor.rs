@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use toml_edit::{DocumentMut, Item, Table, TableLike};
+use toml_edit::{DocumentMut, Item};
 
 use crate::app_config::AppType;
 use crate::codex_config::get_codex_config_path;
@@ -38,30 +38,10 @@ use crate::store::AppState;
 
 use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
 use super::codex_direct::{self, Owner, Prepared, Target};
+use super::editor_toml::{insert_at, item_at, render, Entry, TomlEdits};
 
 fn app() -> &'static str {
     AppType::Codex.as_str()
-}
-
-/// 一个可以单独改动的位置和它的内容。
-struct Entry {
-    path: Vec<String>,
-    item: Item,
-}
-
-fn render(item: &Item) -> String {
-    let mut doc = DocumentMut::new();
-    let mut item = item.clone();
-    match &mut item {
-        Item::Value(value) => value.decor_mut().clear(),
-        Item::Table(table) => {
-            table.decor_mut().clear();
-            table.set_implicit(false);
-        }
-        _ => {}
-    }
-    doc.insert("v", item);
-    doc.to_string().trim().to_string()
 }
 
 fn is_nested_floor(parent: &str, key: &str) -> bool {
@@ -110,15 +90,6 @@ fn entries(doc: &DocumentMut, skip_route: Option<&str>) -> Vec<Entry> {
         }
     }
     entries
-}
-
-fn item_at<'a>(doc: &'a DocumentMut, path: &[String]) -> Option<&'a Item> {
-    let (last, parents) = path.split_last()?;
-    let mut current: &dyn TableLike = doc.as_table();
-    for segment in parents {
-        current = current.get(segment)?.as_table_like()?;
-    }
-    current.get(last)
 }
 
 fn parse_text(text: &str, what: &str) -> Result<DocumentMut, AppError> {
@@ -227,154 +198,10 @@ fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> 
         .collect()
 }
 
-/// 编辑器里对全局设置的一处改动。
-#[derive(Debug, Clone)]
-struct Change {
-    path: Vec<String>,
-    /// 打开编辑器时的内容；`None` 表示当时没有。
-    before: Option<String>,
-    /// 保存的内容；`None` 表示删掉。
-    after: Option<Item>,
-}
-
-/// 一次编辑器保存要写进 live 的全局改动。
-#[derive(Debug, Clone)]
-pub(crate) struct CodexEdits {
-    changes: Vec<Change>,
-    on_conflict: ConflictPolicy,
-}
-
-impl CodexEdits {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.changes.is_empty()
-    }
-
-    /// 按三方比较把改动应用到 live 文档上。
-    pub(crate) fn apply_to(
-        &self,
-        path: &Path,
-        doc: &mut DocumentMut,
-    ) -> Result<(), LiveWriteError> {
-        let mut conflicts = Vec::new();
-        let mut accepted = Vec::new();
-        for change in &self.changes {
-            let current = item_at(doc, &change.path).map(render);
-            let after = change.after.as_ref().map(render);
-            if current != change.before && current != after {
-                conflicts.push(change.path.join("."));
-                if self.on_conflict == ConflictPolicy::KeepTheirs {
-                    continue;
-                }
-            }
-            accepted.push(change);
-        }
-        if !conflicts.is_empty() && self.on_conflict == ConflictPolicy::Refuse {
-            return Err(LiveWriteError::EditConflict {
-                path: path.to_path_buf(),
-                keys: conflicts,
-            });
-        }
-        for change in accepted {
-            match &change.after {
-                Some(item) => insert_at(doc, &change.path, item.clone()),
-                None => remove_at(doc, &change.path),
-            }
-        }
-        Ok(())
-    }
-}
-
-fn insert_at(doc: &mut DocumentMut, path: &[String], item: Item) {
-    let Some((last, parents)) = path.split_last() else {
-        return;
-    };
-    let mut current: &mut dyn TableLike = doc.as_table_mut();
-    // 内联表（`model_providers = { … }`）里只能放值：表要转成内联表。
-    let mut inline = false;
-    for segment in parents {
-        if current.get(segment).and_then(Item::as_table_like).is_none() {
-            current.insert(segment, Item::Table(Table::new()));
-        }
-        let child = current.get_mut(segment).expect("just ensured a table");
-        inline = matches!(child, Item::Value(_));
-        current = child.as_table_like_mut().expect("just ensured a table");
-    }
-    let item = match item {
-        Item::Table(table) if inline => {
-            Item::Value(toml_edit::Value::InlineTable(table.into_inline_table()))
-        }
-        other => other,
-    };
-    match current.get_mut(last) {
-        Some(slot) => {
-            let decor = match &*slot {
-                Item::Value(value) => Some(value.decor().clone()),
-                _ => None,
-            };
-            *slot = item;
-            if let (Some(decor), Item::Value(value)) = (decor, slot) {
-                *value.decor_mut() = decor;
-            }
-        }
-        None => {
-            current.insert(last, item);
-        }
-    }
-}
-
-fn remove_at(doc: &mut DocumentMut, path: &[String]) {
-    let Some((last, parents)) = path.split_last() else {
-        return;
-    };
-    let mut current: &mut dyn TableLike = doc.as_table_mut();
-    for segment in parents {
-        let Some(next) = current.get_mut(segment).and_then(Item::as_table_like_mut) else {
-            return;
-        };
-        current = next;
-    }
-    current.remove(last);
-}
-
-fn global_changes(base: &DocumentMut, edited: &DocumentMut) -> Vec<Change> {
-    let base_entries = entries(base, None);
-    let edited_entries = entries(edited, None);
-    let render_of = |entries: &[Entry], path: &[String]| {
-        entries
-            .iter()
-            .find(|entry| entry.path == path)
-            .map(|entry| (render(&entry.item), entry.item.clone()))
-    };
-    let mut paths: Vec<Vec<String>> = base_entries
-        .iter()
-        .map(|entry| entry.path.clone())
-        .collect();
-    for entry in &edited_entries {
-        if !paths.contains(&entry.path) {
-            paths.push(entry.path.clone());
-        }
-    }
-    paths
-        .into_iter()
-        .filter_map(|path| {
-            let before = render_of(&base_entries, &path);
-            let after = render_of(&edited_entries, &path);
-            if before.as_ref().map(|(text, _)| text) == after.as_ref().map(|(text, _)| text) {
-                return None;
-            }
-            Some(Change {
-                path,
-                before: before.map(|(text, _)| text),
-                after: after.map(|(_, item)| item),
-            })
-        })
-        .collect()
-}
-
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
 pub(crate) struct CodexEditorPlan {
     pub row_settings: Value,
-    pub edits: CodexEdits,
+    pub edits: TomlEdits,
 }
 
 /// 把编辑器里的完整配置拆开：关键字段、独有字段换进行（行里其余内容原样保留），其余部分
@@ -396,10 +223,11 @@ pub(crate) fn plan_save(
     })?;
     Ok(CodexEditorPlan {
         row_settings: store_into_row(stored_row, edited, &projection)?,
-        edits: CodexEdits {
-            changes: global_changes(&base_doc, &edited_doc),
+        edits: TomlEdits::between(
+            &entries(&base_doc, None),
+            &entries(&edited_doc, None),
             on_conflict,
-        },
+        ),
     })
 }
 
@@ -504,7 +332,7 @@ pub(crate) enum KeyFields<'a> {
 pub(crate) fn write_live(
     db: &Database,
     manager: &Arc<CodexOAuthManager>,
-    edits: &CodexEdits,
+    edits: &TomlEdits,
     key_fields: KeyFields<'_>,
 ) -> Result<(), AppError> {
     match key_fields {
@@ -553,7 +381,7 @@ pub(crate) fn write_live(
     }
 }
 
-struct EditsOnly<'a>(&'a CodexEdits);
+struct EditsOnly<'a>(&'a TomlEdits);
 
 impl LivePatch for EditsOnly<'_> {
     fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
@@ -572,6 +400,14 @@ mod tests {
         text.parse().unwrap()
     }
 
+    fn global_changes(base: &DocumentMut, edited: &DocumentMut) -> TomlEdits {
+        TomlEdits::between(
+            &entries(base, None),
+            &entries(edited, None),
+            ConflictPolicy::Refuse,
+        )
+    }
+
     const LIVE: &str = "approval_policy = \"on-request\"\nmodel = \"gpt-a\"\n\n[agents]\ndefault_subagent_model = \"mini\"\nmax_threads = 4\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
 
     #[test]
@@ -583,7 +419,7 @@ mod tests {
             .replace("max_threads = 4", "max_threads = 8")
             .replace("command = \"fs\"", "command = \"fs2\""));
         let changes = global_changes(&base, &edited);
-        let paths: Vec<String> = changes.iter().map(|change| change.path.join(".")).collect();
+        let paths = changes.paths();
         assert_eq!(paths, vec!["agents.max_threads", "mcp_servers.fs"]);
     }
 
@@ -591,10 +427,7 @@ mod tests {
     fn edits_detect_three_way_conflicts() {
         let base = doc(LIVE);
         let edited = doc(&LIVE.replace("on-request", "never"));
-        let edits = CodexEdits {
-            changes: global_changes(&base, &edited),
-            on_conflict: ConflictPolicy::Refuse,
-        };
+        let edits = global_changes(&base, &edited);
         // 编辑期间别的程序把它改成了第三个值。
         let mut live = doc(&LIVE.replace("on-request", "untrusted"));
         let err = edits

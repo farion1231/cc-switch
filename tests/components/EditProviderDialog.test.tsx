@@ -207,6 +207,67 @@ describe("EditProviderDialog", () => {
     expect(payload.editorSave).toEqual({ base: view, onConflict: "refuse" });
   });
 
+  it.each([
+    [
+      "gemini",
+      {
+        env: { GEMINI_API_KEY: "db-key", GEMINI_MODEL: "m" },
+        config: {},
+      },
+      {
+        env: { GEMINI_SANDBOX: "docker", GEMINI_API_KEY: "db-key" },
+        config: { ui: { theme: "dark" } },
+      },
+    ],
+    [
+      "grokbuild",
+      { config: '[models]\ndefault = "grok-4.5"\n' },
+      { config: '[ui]\ntheme = "dark"\n\n[models]\ndefault = "grok-4.5"\n' },
+    ],
+  ] as const)(
+    "%s 也显示切换投影，并把它作为保存时三方比较的基准",
+    async (appId, settingsConfig, view) => {
+      const provider: Provider = {
+        id: "p",
+        name: "P",
+        category: "custom",
+        settingsConfig: settingsConfig as Record<string, unknown>,
+      };
+      apiMocks.getEditorView.mockResolvedValue({ settings: view, inactive: [] });
+      const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+      render(
+        <EditProviderDialog
+          open
+          provider={provider}
+          onOpenChange={vi.fn()}
+          onSubmit={handleSubmit}
+          appId={appId}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(
+          JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+        ).toEqual(view);
+      });
+      expect(apiMocks.getEditorView).toHaveBeenCalledWith(
+        appId,
+        provider.settingsConfig,
+        "custom",
+      );
+      expect(apiMocks.getCurrent).not.toHaveBeenCalled();
+      expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+      expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
+        base: view,
+        onConflict: "refuse",
+      });
+    },
+  );
+
   it("Codex 读不了配置文件时退回显示保存的供应商配置", async () => {
     const provider: Provider = {
       id: "relay",

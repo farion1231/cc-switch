@@ -2,9 +2,8 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::config::{get_home_dir, write_text_file_private};
+use crate::config::get_home_dir;
 use crate::error::AppError;
-use crate::provider::Provider;
 
 pub const DEFAULT_MODEL: &str = "grok-4.5";
 pub const DEFAULT_API_BACKEND: &str = "responses";
@@ -233,113 +232,10 @@ pub fn extract_base_url(config_toml: &str) -> Option<String> {
     Some(extract_model_config(config_toml)?.base_url)
 }
 
-fn update_selected_model_string(
-    config_toml: &str,
-    field: &str,
-    value: &str,
-) -> Result<String, AppError> {
-    let mut document = config_toml
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|error| {
-            AppError::localized(
-                "provider.grokbuild.config.invalid_toml",
-                format!("Grok Build config.toml 格式错误: {error}"),
-                format!("Invalid Grok Build config.toml: {error}"),
-            )
-        })?;
-    let default_model = document
-        .get("models")
-        .and_then(|item| item.get("default"))
-        .and_then(toml_edit::Item::as_str)
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .ok_or_else(|| {
-            AppError::localized(
-                "provider.grokbuild.default_model.missing",
-                "Grok Build 配置缺少 models.default",
-                "Grok Build configuration is missing models.default",
-            )
-        })?
-        .to_string();
-
-    let selected_model = document
-        .get_mut("model")
-        .and_then(|item| item.get_mut(&default_model))
-        .and_then(toml_edit::Item::as_table_like_mut)
-        .ok_or_else(|| {
-            AppError::localized(
-                "provider.grokbuild.default_model.missing",
-                format!("Grok Build 配置缺少 [model.\"{default_model}\"]"),
-                format!("Grok Build configuration is missing [model.\"{default_model}\"]"),
-            )
-        })?;
-    selected_model.insert(field, toml_edit::value(value));
-    Ok(document.to_string())
-}
-
-pub fn apply_proxy_takeover(
-    config_toml: &str,
-    proxy_base_url: &str,
-    token_placeholder: &str,
-) -> Result<String, AppError> {
-    let updated = update_selected_model_string(config_toml, "base_url", proxy_base_url)?;
-    let updated = update_selected_model_string(&updated, "api_key", token_placeholder)?;
-    update_selected_model_string(&updated, "api_backend", DEFAULT_API_BACKEND)
-}
-
-pub fn update_api_key(config_toml: &str, api_key: &str) -> Result<String, AppError> {
-    update_selected_model_string(config_toml, "api_key", api_key)
-}
-
 pub fn has_proxy_placeholder(config_toml: &str, token_placeholder: &str) -> bool {
     extract_model_config(config_toml)
         .and_then(|config| config.api_key)
         .is_some_and(|api_key| api_key == token_placeholder)
-}
-
-/// Re-select the provider's own model table in a live config being backfilled.
-///
-/// Grok Build 的 `/settings` → Default model 会改写 live 的 `models.default`
-/// （例如改成内置的 grok-4.6，或选 "no override" 清空），供应商自己的
-/// `[model.*]` 表随之没人指向。回填若原样存进供应商行，下次切回时过不了
-/// `validate_config_toml`，这个供应商就切不回去。live 的 `models.default`
-/// 缺失或指不到表、而供应商行原来的默认模型表还在 live 里时，换回行里的值；
-/// 其余情况（含官方态）返回 None，保持原样。
-pub fn restore_provider_default_model(live_config: &str, provider_config: &str) -> Option<String> {
-    let provider_default = provider_config
-        .parse::<toml::Value>()
-        .ok()?
-        .get("models")?
-        .get("default")?
-        .as_str()?
-        .trim()
-        .to_string();
-    if provider_default.is_empty() {
-        return None;
-    }
-
-    let mut document = live_config.parse::<toml_edit::DocumentMut>().ok()?;
-    let has_model_table = |document: &toml_edit::DocumentMut, name: &str| {
-        document
-            .get("model")
-            .and_then(|models| models.get(name))
-            .is_some_and(toml_edit::Item::is_table_like)
-    };
-    let live_default_resolves = document
-        .get("models")
-        .and_then(|models| models.get("default"))
-        .and_then(toml_edit::Item::as_str)
-        .is_some_and(|name| has_model_table(&document, name.trim()));
-    if live_default_resolves || !has_model_table(&document, &provider_default) {
-        return None;
-    }
-
-    document
-        .entry("models")
-        .or_insert(toml_edit::table())
-        .as_table_like_mut()?
-        .insert("default", toml_edit::value(provider_default));
-    Some(document.to_string())
 }
 
 /// Remove MCP projections from a provider-owned Grok Build settings snapshot.
@@ -383,7 +279,7 @@ pub fn strip_grok_mcp_servers_from_settings(settings: &mut Value) -> Result<(), 
 /// Read the live `~/.grok/config.toml` as a provider settings snapshot.
 ///
 /// 只做 TOML 语法校验：live 处于官方态（无自定义模型表）时同样需要能被
-/// 读取，供切换回填与界面展示使用。需要"完整自定义模型配置"的导入路径
+/// 读取，供导入使用。需要"完整自定义模型配置"的导入路径
 /// 由调用方自行叠加 `validate_config_toml`。
 pub fn read_grok_live_settings() -> Result<Value, AppError> {
     let path = get_grok_config_path();
@@ -400,59 +296,10 @@ pub fn read_grok_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "config": config }))
 }
 
-pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
-    let settings = provider.settings_config.as_object().ok_or_else(|| {
-        AppError::localized(
-            "provider.grokbuild.settings.not_object",
-            "Grok Build 配置必须是 JSON 对象",
-            "Grok Build configuration must be a JSON object",
-        )
-    })?;
-    let config = settings
-        .get("config")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            AppError::localized(
-                "provider.grokbuild.config.missing",
-                "Grok Build 配置缺少 config 字段",
-                "Grok Build configuration is missing the config field",
-            )
-        })?;
-
-    // 官方条目不注入自定义模型表：按快照原样写回（首次为空文件），
-    // Grok CLI 回落到官方内置模型 + 自带 OAuth 登录；MCP 投影随后由
-    // 切换流程重新补写。非官方供应商必须携带完整的自定义模型配置。
-    if provider.category.as_deref() != Some("official") {
-        validate_config_toml(config)?;
-    }
-
-    write_grok_live_settings(&json!({ "config": config }))
-}
-
-/// Raw live-file writer, mirroring `read_grok_live_settings` (syntax-only).
-///
-/// 代理接管的备份/恢复也走这里：官方态 live（无自定义模型表）必须可以
-/// 原样写回。完整形状校验由 `write_grok_provider_live` 的非官方分支负责。
-pub fn write_grok_live_settings(settings: &Value) -> Result<(), AppError> {
-    let config = settings
-        .get("config")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            AppError::localized(
-                "provider.grokbuild.config.missing",
-                "Grok Build 配置缺少 config 字段",
-                "Grok Build configuration is missing the config field",
-            )
-        })?;
-    validate_config_toml_syntax(config)?;
-    write_text_file_private(&get_grok_config_path(), config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
-    use tempfile::TempDir;
 
     fn valid_config() -> &'static str {
         r#"[models]
@@ -522,99 +369,11 @@ context_window = 500000
     }
 
     #[test]
-    fn backfill_restores_provider_default_after_client_selected_builtin_model() {
-        let live = valid_config().replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
-        let restored =
-            restore_provider_default_model(&live, valid_config()).expect("default restored");
-        assert_eq!(restored, valid_config());
-        validate_config_toml(&restored).expect("restored config validates");
-    }
-
-    #[test]
-    fn backfill_restores_provider_default_after_client_cleared_it() {
-        for live in [
-            valid_config().replace("default = \"grok-4.5\"\n", ""),
-            valid_config().replace("[models]\ndefault = \"grok-4.5\"\n\n", ""),
-        ] {
-            let restored =
-                restore_provider_default_model(&live, valid_config()).expect("default restored");
-            validate_config_toml(&restored).expect("restored config validates");
-            assert_eq!(
-                extract_model_config(&restored).map(|config| config.profile),
-                Some("grok-4.5".to_string())
-            );
-        }
-    }
-
-    #[test]
-    fn backfill_leaves_live_default_alone_when_it_resolves_or_cannot_be_repaired() {
-        assert_eq!(
-            restore_provider_default_model(valid_config(), valid_config()),
-            None
-        );
-
-        let own_table = format!(
-            "{}\n[model.mine]\nmodel = \"m\"\n",
-            valid_config().replace("default = \"grok-4.5\"", "default = \"mine\"")
-        );
-        assert_eq!(
-            restore_provider_default_model(&own_table, valid_config()),
-            None
-        );
-
-        let builtin_default = "[models]\ndefault = \"grok-4.6\"\n";
-        assert_eq!(restore_provider_default_model(builtin_default, ""), None);
-        assert_eq!(
-            restore_provider_default_model(builtin_default, valid_config()),
-            None
-        );
-    }
-
-    #[test]
     fn rejects_config_without_api_key_or_env_key() {
         let config = valid_config().replace("api_key = \"secret\"\n", "");
         let error = validate_config_toml(&config).expect_err("credentials should be required");
         assert!(error.to_string().contains("api_key"));
         assert!(error.to_string().contains("env_key"));
-    }
-
-    #[test]
-    fn extracts_selected_model_and_updates_takeover_fields() {
-        let selected = extract_model_config(valid_config()).expect("selected model");
-        assert_eq!(selected.profile, "grok-4.5");
-        assert_eq!(selected.model, "grok-4.5");
-        assert_eq!(selected.base_url, "https://example.com/v1");
-
-        let updated = apply_proxy_takeover(
-            valid_config(),
-            "http://127.0.0.1:15721/grokbuild/v1",
-            "PROXY_MANAGED",
-        )
-        .expect("takeover config");
-        let selected = extract_model_config(&updated).expect("updated selected model");
-        assert_eq!(selected.base_url, "http://127.0.0.1:15721/grokbuild/v1");
-        assert_eq!(selected.api_key.as_deref(), Some("PROXY_MANAGED"));
-        assert!(has_proxy_placeholder(&updated, "PROXY_MANAGED"));
-    }
-
-    #[test]
-    fn takeover_preserves_env_key_profile_and_injects_inline_placeholder() {
-        let direct_config = valid_env_key_config().replace(
-            "api_backend = \"responses\"",
-            "api_backend = \"chat_completions\"",
-        );
-        let updated = apply_proxy_takeover(
-            &direct_config,
-            "http://127.0.0.1:15721/grokbuild/v1",
-            "PROXY_MANAGED",
-        )
-        .expect("takeover config");
-        let selected = extract_model_config(&updated).expect("updated selected model");
-
-        assert_eq!(selected.profile, "grok-env");
-        assert_eq!(selected.env_key.as_deref(), Some("GROK_TEST_API_KEY"));
-        assert_eq!(selected.api_key.as_deref(), Some("PROXY_MANAGED"));
-        assert_eq!(selected.api_backend, DEFAULT_API_BACKEND);
     }
 
     #[test]
@@ -690,86 +449,5 @@ context_window = 500000
         assert!(!config.contains("mcp_servers"));
         assert!(config.contains("model = \"grok-4.5\""));
         validate_config_toml(config).expect("stripped config remains valid");
-    }
-
-    #[test]
-    #[serial]
-    fn official_provider_roundtrips_without_custom_model_tables() {
-        let temp = TempDir::new().expect("temp dir");
-        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-
-        // 官方条目：空 config 可写（清掉自定义模型表，交还 Grok CLI 官方登录）
-        let mut official = Provider::with_id(
-            "grokbuild-official".to_string(),
-            "Grok Official".to_string(),
-            json!({ "config": "" }),
-            None,
-        );
-        official.category = Some("official".to_string());
-        write_grok_provider_live(&official).expect("official empty config is writable");
-        assert_eq!(
-            fs::read_to_string(get_grok_config_path()).expect("read config"),
-            ""
-        );
-
-        // 官方态 live（如 MCP 投影补写后）无自定义模型表，读取与原样写回都必须可用
-        let official_live = "[mcp_servers.echo]\ncommand = \"echo\"\n";
-        write_grok_live_settings(&json!({ "config": official_live }))
-            .expect("official-mode live is writable for backup restore");
-        let settings = read_grok_live_settings().expect("official-mode live is readable");
-        assert_eq!(
-            settings.get("config").and_then(Value::as_str),
-            Some(official_live)
-        );
-
-        // 非官方供应商仍要求完整的自定义模型配置
-        let custom = Provider::with_id(
-            "custom".to_string(),
-            "Custom".to_string(),
-            json!({ "config": "" }),
-            None,
-        );
-        assert!(write_grok_provider_live(&custom).is_err());
-
-        match original_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn writes_and_reads_live_config() {
-        let temp = TempDir::new().expect("temp dir");
-        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-
-        let provider = Provider::with_id(
-            "grok".to_string(),
-            "Example".to_string(),
-            json!({ "config": valid_config() }),
-            None,
-        );
-        write_grok_provider_live(&provider).expect("write live config");
-
-        let path = get_grok_config_path();
-        assert_eq!(path, temp.path().join(".grok").join("config.toml"));
-        assert_eq!(
-            fs::read_to_string(path).expect("read config"),
-            valid_config()
-        );
-        assert_eq!(
-            read_grok_live_settings()
-                .expect("read live settings")
-                .get("config")
-                .and_then(Value::as_str),
-            Some(valid_config())
-        );
-
-        match original_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
     }
 }

@@ -60,15 +60,6 @@
     "mustBeObject": "設定必須是 JSON 物件，不能是陣列或其他類型",
     "invalidJson": "JSON 格式錯誤"
   },
-  "commonConfig": {
-    "guideTitle": "什麼是通用設定片段？",
-    "guidePurpose": "用來在不同供應商之間共用外掛程式、環境變數等非敏感設定。切換供應商時不會遺失這些設定。",
-    "guideUsage": "用法：① 點擊「從編輯內容擷取」儲存通用部分 ② 新增供應商時勾選「套用通用設定」",
-    "guideReExtract": "如果您新安裝了外掛程式或 Hook，請重新擷取一次通用設定，以便同步至其他供應商。",
-    "guideReassurance": "請放心：您的原始設定已儲存在預設供應商中，不會遺失。",
-    "emptyTitle": "尚未建立通用設定片段",
-    "emptyHint": "點擊下方「從編輯內容擷取」按鈕，從目前設定中擷取可重複使用的部分"
-  },
   "claudeConfig": {
     "configLabel": "Claude Code 設定 (JSON) *",
     "fullSettingsHint": "完整的 Claude Code settings.json 設定內容",
@@ -337,11 +328,6 @@
       "title": "開啟自動同步",
       "message": "開啟自動同步後，每次資料庫變更都會自動上傳至 WebDAV 伺服器。\n\n這可能會產生較高的網路流量消耗，請確保您的網路環境和 WebDAV 服務支援頻繁的資料傳輸。",
       "confirm": "我已了解，繼續開啟"
-    },
-    "commonConfig": {
-      "title": "關於通用設定",
-      "message": "「通用設定片段」可以在不同供應商之間共用外掛程式、環境變數等設定，避免切換供應商時遺失這些設定。\n\n使用方法：\n① 編輯供應商時點擊「編輯通用設定」→「從編輯內容擷取」\n② 新增供應商時勾選「套用通用設定」（預設已勾選）\n\n如果您新安裝了外掛程式或 Hook，請重新擷取一次通用設定。",
-      "confirm": "我了解了"
     }
   },
   "settings": {
@@ -1082,7 +1068,10 @@
     "defaultModelHint": "Grok Build 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。",
     "advancedSectionHint": "包含上游格式、思考能力與自訂 User-Agent。使用 Chat Completions / Anthropic Messages 協定的供應商需開啟路由接管才能使用。",
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把請求中的 reasoning effort 轉成上游 Chat 參數。",
-    "maxOutputTokensHint": "預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。"
+    "maxOutputTokensHint": "預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。",
+    "keyFieldsHint": "預設模型（models.default）和它指向的模型表隨供應商切換；其餘是 Grok Build 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
+    "inactiveFieldCopied": "已複製"
   },
   "sessionManager": {
     "title": "工作階段管理",
@@ -1587,23 +1576,11 @@
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
     "envFileHint": "使用 .env 格式設定 Gemini 環境變數",
-    "configJson": "設定檔 (config.json)",
-    "configJsonHint": "使用 JSON 格式設定 Gemini 擴充參數（選填）",
-    "writeCommonConfig": "套用通用設定",
-    "editCommonConfig": "編輯通用設定",
-    "editCommonConfigTitle": "編輯 Gemini 通用設定片段",
-    "commonConfigHint": "該片段會在勾選「套用通用設定」時寫入 Gemini 的 .env（不允許包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
-    "extractFromCurrent": "從編輯內容擷取",
-    "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",
-    "extractFailed": "擷取失敗：{{error}}",
-    "saveFailed": "儲存失敗：{{error}}",
-    "extractedConfigInvalid": "擷取的設定格式錯誤",
-    "invalidJsonFormat": "通用設定片段格式錯誤（必須是有效的 JSON）",
-    "commonConfigInvalidKeys": "通用設定片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（發現：{{keys}}）",
-    "commonConfigInvalidValues": "通用設定片段的值必須是字串",
-    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容",
-    "configMergeFailed": "設定合併失敗：{{error}}",
-    "configReplaceFailed": "設定替換失敗：{{error}}"
+    "configJson": "設定檔 (settings.json)",
+    "configJsonHint": "Gemini CLI 的 settings.json（MCP 伺服器在 MCP 面板中管理）",
+    "keyFieldsHint": "位址、Key、模型名稱和認證方式隨供應商切換；其餘環境變數和 settings.json 是 Gemini CLI 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
+    "addToGlobalSettings": "加入全域設定"
   },
   "opencode": {
     "npmPackage": "API 格式",

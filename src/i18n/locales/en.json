@@ -60,15 +60,6 @@
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
     "invalidJson": "Invalid JSON format"
   },
-  "commonConfig": {
-    "guideTitle": "What is a Common Config Snippet?",
-    "guidePurpose": "It lets you share non-sensitive settings (plugins, environment variables, etc.) across different providers. These settings won't be lost when you switch providers.",
-    "guideUsage": "How to use: ① Click \"Extract from Editor\" to save the common parts  ② Check \"Apply Common Config\" when creating a new provider",
-    "guideReExtract": "If you've newly installed plugins or hooks, re-extract the common config so they sync to other providers.",
-    "guideReassurance": "Don't worry — your original configuration is safely stored in the default provider and won't be lost.",
-    "emptyTitle": "No common config snippet yet",
-    "emptyHint": "Click \"Extract from Editor\" below to extract reusable parts from your current configuration"
-  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Full Claude Code settings.json content",
@@ -337,11 +328,6 @@
       "title": "Enable Auto Sync",
       "message": "When auto sync is enabled, every database change will be automatically uploaded to the WebDAV server.\n\nThis may result in significant network traffic. Please ensure your network and WebDAV service can handle frequent data transfers.",
       "confirm": "I understand, enable"
-    },
-    "commonConfig": {
-      "title": "About Common Config",
-      "message": "The \"Common Config Snippet\" lets you share plugins, environment variables, and other settings across different providers — so they won't be lost when you switch.\n\nHow to use:\n① Edit a provider → click \"Edit Common Config\" → \"Extract from Editor\"\n② When creating a new provider, check \"Apply Common Config\" (enabled by default)\n\nIf you've newly installed plugins or hooks, re-extract the common config to keep them in sync.",
-      "confirm": "Got it"
     }
   },
   "settings": {
@@ -1081,7 +1067,10 @@
     "defaultModelHint": "The model Grok Build requests by default; change it anytime without waiting for a preset update.",
     "advancedSectionHint": "Includes upstream format, reasoning overrides and custom User-Agent. Providers using the Chat Completions or Anthropic Messages protocol require routing takeover to be enabled.",
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts the request's reasoning effort into the upstream Chat parameter.",
-    "maxOutputTokensHint": "The default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192."
+    "maxOutputTokensHint": "The default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192.",
+    "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
+    "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to copy its TOML and paste it above if you need it; the value stored in the provider is kept.",
+    "inactiveFieldCopied": "Copied"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1586,23 +1575,11 @@
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
     "envFileHint": "Configure Gemini environment variables in .env format",
-    "configJson": "Configuration File (config.json)",
-    "configJsonHint": "Configure Gemini extended parameters in JSON format (optional)",
-    "writeCommonConfig": "Apply Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "This snippet writes to Gemini .env when 'Apply Common Config' is checked (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
-    "extractedConfigInvalid": "Extracted config format is invalid",
-    "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
-    "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
-    "commonConfigInvalidValues": "Common config snippet values must be strings",
-    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
-    "configMergeFailed": "Config merge failed: {{error}}",
-    "configReplaceFailed": "Config replace failed: {{error}}"
+    "configJson": "Settings file (settings.json)",
+    "configJsonHint": "Gemini CLI's settings.json (MCP servers are managed in the MCP panel)",
+    "keyFieldsHint": "The endpoint, key, model name and auth type follow the provider; the other environment variables and settings.json are Gemini CLI global settings and apply to every provider after saving.",
+    "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
+    "addToGlobalSettings": "Add to global settings"
   },
   "opencode": {
     "npmPackage": "API Format",

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,7 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import {
-  providersApi,
-  settingsApi,
-  type AppId,
-  type ManagedAuthProvider,
-} from "@/lib/api";
+import { providersApi, type AppId, type ManagedAuthProvider } from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import { overlayClaudeProviderFields } from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -101,7 +96,6 @@ import {
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
-  useGeminiCommonConfig,
   useOmoModelSource,
   useOpencodeFormState,
   useOmoDraftState,
@@ -112,7 +106,6 @@ import {
   useXaiOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { useSettingsQuery } from "@/lib/query";
 import {
   CLAUDE_DEFAULT_CONFIG,
   CODEX_DEFAULT_CONFIG,
@@ -324,23 +317,7 @@ function ProviderFormFull({
   const hasExistingCodexOfficialIdentity =
     initialCodexOfficialIdentity !== null &&
     initialCodexOfficialIdentity !== "api_key";
-  const queryClient = useQueryClient();
-  const { data: settingsData } = useSettingsQuery();
-  const showCommonConfigNotice =
-    settingsData != null && settingsData.commonConfigConfirmed !== true;
   const isDarkMode = useDarkMode();
-
-  const handleCommonConfigConfirm = async () => {
-    try {
-      if (settingsData) {
-        const { webdavSync: _, ...rest } = settingsData;
-        await settingsApi.save({ ...rest, commonConfigConfirmed: true });
-        await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      }
-    } catch (error) {
-      console.error("Failed to save commonConfigConfirmed:", error);
-    }
-  };
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
@@ -840,7 +817,6 @@ function ProviderFormFull({
     handleGeminiConfigChange,
     resetGeminiConfig,
     envStringToObj,
-    envObjToString,
   } = useGeminiConfigState({
     initialData: appId === "gemini" ? initialData : undefined,
   });
@@ -890,26 +866,6 @@ function ProviderFormFull({
     },
     [originalHandleGeminiModelChange, updateGeminiEnvField],
   );
-
-  const {
-    useCommonConfig: useGeminiCommonConfigFlag,
-    commonConfigSnippet: geminiCommonConfigSnippet,
-    commonConfigError: geminiCommonConfigError,
-    handleCommonConfigToggle: handleGeminiCommonConfigToggle,
-    handleCommonConfigSnippetChange: handleGeminiCommonConfigSnippetChange,
-    isExtracting: isGeminiExtracting,
-    handleExtract: handleGeminiExtract,
-    clearCommonConfigError: clearGeminiCommonConfigError,
-  } = useGeminiCommonConfig({
-    envValue: geminiEnv,
-    onEnvChange: handleGeminiEnvChange,
-    envStringToObj,
-    envObjToString,
-    initialData: appId === "gemini" ? initialData : undefined,
-    initialEnabled:
-      appId === "gemini" ? initialData?.meta?.commonConfigEnabled : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-  });
 
   // ── Extracted hooks: OpenCode / OMO / OpenClaw ─────────────────────
 
@@ -1653,14 +1609,12 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
-      // Claude Code、Codex 的通用配置片段已冻结：沿用行里原有的标记，新增时由后端写
-      // true（兼容旧版）。
+      // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
+      // 由后端写 true（兼容旧版）。
       commonConfigEnabled:
-        appId === "claude" || appId === "codex"
+        appId === "claude" || appId === "codex" || appId === "gemini"
           ? initialData?.meta?.commonConfigEnabled
-          : appId === "gemini"
-            ? useGeminiCommonConfigFlag
-            : undefined,
+          : undefined,
       endpointAutoSelect,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
@@ -2594,18 +2548,9 @@ function ProviderFormFull({
                 configValue={geminiConfig}
                 onEnvChange={handleGeminiEnvChange}
                 onConfigChange={handleGeminiConfigChange}
-                useCommonConfig={useGeminiCommonConfigFlag}
-                onCommonConfigToggle={handleGeminiCommonConfigToggle}
-                commonConfigSnippet={geminiCommonConfigSnippet}
-                onCommonConfigSnippetChange={
-                  handleGeminiCommonConfigSnippetChange
-                }
-                onCommonConfigErrorClear={clearGeminiCommonConfigError}
-                commonConfigError={geminiCommonConfigError}
                 envError={envError}
                 configError={geminiConfigError}
-                onExtract={handleGeminiExtract}
-                isExtracting={isGeminiExtracting}
+                inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}
             </>
@@ -2714,16 +2659,6 @@ function ProviderFormFull({
           )}
         </form>
       </Form>
-
-      <ConfirmDialog
-        isOpen={showCommonConfigNotice && appId !== "claude"}
-        variant="info"
-        title={t("confirm.commonConfig.title")}
-        message={t("confirm.commonConfig.message")}
-        confirmText={t("confirm.commonConfig.confirm")}
-        onConfirm={() => void handleCommonConfigConfirm()}
-        onCancel={() => void handleCommonConfigConfirm()}
-      />
 
       <ConfirmDialog
         isOpen={softIssues !== null && softIssues.length > 0}

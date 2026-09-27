@@ -1,6 +1,7 @@
-//! Live configuration operations
+//! Live 配置的读取、首次导入和按模式分发的写入。
 //!
-//! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
+//! 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的客户端文件只经写入引擎写
+//! （`*_direct.rs`），这里只负责分发；Claude Desktop 和累加式应用仍在这里写。
 
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{get_claude_settings_path, read_json_file};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -16,9 +17,6 @@ use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexO
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
-use super::gemini_auth::{
-    detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
-};
 use super::normalize_claude_models_in_value;
 
 pub(crate) fn provider_exists_in_live_config(
@@ -548,6 +546,15 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         )?;
         return Ok(());
     }
+    if matches!(app_type, AppType::Gemini) {
+        // Gemini、Grok Build 同理：只替换关键字段，不合并片段、不补回 MCP。
+        super::gemini_direct::reapply(db, provider)?;
+        return Ok(());
+    }
+    if matches!(app_type, AppType::GrokBuild) {
+        super::grok_direct::reapply(db, Some(provider), provider)?;
+        return Ok(());
+    }
 
     let effective_provider = build_effective_provider_for_live(db, app_type, provider)?;
 
@@ -666,127 +673,6 @@ pub(crate) fn codex_managed_oauth_live_auth(
     )
 }
 
-pub(crate) fn strip_common_config_from_live_settings(
-    db: &Database,
-    app_type: &AppType,
-    provider: &Provider,
-    live_settings: Value,
-) -> Value {
-    let snippet = match db.get_config_snippet(app_type.as_str()) {
-        Ok(snippet) => snippet,
-        Err(err) => {
-            log::warn!(
-                "Failed to load common config for {} while backfilling '{}': {err}",
-                app_type.as_str(),
-                provider.id
-            );
-            return restore_live_settings_for_provider_backfill(app_type, provider, live_settings);
-        }
-    };
-
-    let backfill_settings = if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
-        match snippet.as_deref() {
-            Some(snippet_text) => {
-                match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
-                    Ok(settings) => settings,
-                    Err(err) => {
-                        log::warn!(
-                            "Failed to strip common config for {} provider '{}': {err}",
-                            app_type.as_str(),
-                            provider.id
-                        );
-                        live_settings
-                    }
-                }
-            }
-            None => live_settings,
-        }
-    } else {
-        live_settings
-    };
-
-    restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
-}
-
-fn restore_live_settings_for_provider_backfill(
-    app_type: &AppType,
-    provider: &Provider,
-    live_settings: Value,
-) -> Value {
-    if matches!(app_type, AppType::GrokBuild) {
-        let mut settings = live_settings;
-        if let Err(err) = crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings) {
-            log::warn!(
-                "Failed to strip Grok Build mcp_servers while backfilling '{}': {err}",
-                provider.id
-            );
-        }
-        let restored = match (
-            settings.get("config").and_then(Value::as_str),
-            provider
-                .settings_config
-                .get("config")
-                .and_then(Value::as_str),
-        ) {
-            (Some(live_config), Some(provider_config)) => {
-                crate::grok_config::restore_provider_default_model(live_config, provider_config)
-            }
-            _ => None,
-        };
-        if let Some(config) = restored {
-            log::info!(
-                "Grok Build models.default no longer selected provider '{}' table; restored it while backfilling",
-                provider.id
-            );
-            settings["config"] = Value::String(config);
-        }
-        return settings;
-    }
-    live_settings
-}
-
-pub(crate) fn normalize_provider_common_config_for_storage(
-    db: &Database,
-    app_type: &AppType,
-    provider: &mut Provider,
-) -> Result<(), AppError> {
-    // Claude Code、Codex 的片段已冻结：新版不读它，也不再按它剥离存量行。
-    if matches!(app_type, AppType::Claude | AppType::Codex) {
-        return Ok(());
-    }
-
-    let uses_common_config = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.common_config_enabled)
-        .unwrap_or(false);
-
-    if !uses_common_config {
-        return Ok(());
-    }
-
-    let Some(snippet) = db.get_config_snippet(app_type.as_str())? else {
-        return Ok(());
-    };
-
-    if snippet.trim().is_empty() {
-        return Ok(());
-    }
-
-    match remove_common_config_from_settings(app_type, &provider.settings_config, &snippet) {
-        Ok(settings) => provider.settings_config = settings,
-        Err(err) => {
-            log::warn!(
-                "Failed to normalize common config before saving {} provider '{}': {err}",
-                app_type.as_str(),
-                provider.id
-            );
-        }
-    }
-
-    Ok(())
-}
-
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
@@ -812,11 +698,18 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             ));
         }
         AppType::Gemini => {
-            // Delegate to write_gemini_live which handles env file writing correctly
-            write_gemini_live(provider)?;
+            return Err(AppError::localized(
+                "gemini.live.requires_engine",
+                "Gemini CLI 配置只能经关键字段写入流程写入",
+                "Gemini CLI configuration must be written through the key-field write flow",
+            ));
         }
         AppType::GrokBuild => {
-            crate::grok_config::write_grok_provider_live(provider)?;
+            return Err(AppError::localized(
+                "grokbuild.live.requires_engine",
+                "Grok Build 配置只能经关键字段写入流程写入",
+                "Grok Build configuration must be written through the key-field write flow",
+            ));
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -1017,6 +910,9 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
     }
     if matches!(app_type, AppType::Claude) {
         super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+    } else if matches!(app_type, AppType::GrokBuild) {
+        // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
+        super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else {
         write_live_with_common_config_for_state(state, app_type, provider)?;
     }
@@ -1396,88 +1292,6 @@ pub fn should_import_default_config_on_startup(
     }
 
     Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
-}
-
-/// Write Gemini live configuration with authentication handling
-pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
-    use crate::gemini_config::{
-        get_gemini_settings_path, json_to_env, validate_gemini_settings_strict,
-        write_gemini_env_atomic,
-    };
-
-    // One-time auth type detection to avoid repeated detection
-    let auth_type = detect_gemini_auth_type(provider);
-
-    let env_map = json_to_env(&provider.settings_config)?;
-
-    // Prepare config to write to ~/.gemini/settings.json
-    // Behavior:
-    // - config is object: use it (merge with existing to preserve mcpServers etc.)
-    // - config is null or absent: preserve existing file content
-    let settings_path = get_gemini_settings_path();
-    let mut config_to_write: Option<Value> = None;
-
-    if let Some(config_value) = provider.settings_config.get("config") {
-        if config_value.is_object() {
-            // Merge with existing settings to preserve mcpServers and other fields
-            let mut merged = if settings_path.exists() {
-                read_json_file::<Value>(&settings_path).unwrap_or_else(|_| json!({}))
-            } else {
-                json!({})
-            };
-
-            // Merge provider config into existing settings
-            if let (Some(merged_obj), Some(config_obj)) =
-                (merged.as_object_mut(), config_value.as_object())
-            {
-                for (k, v) in config_obj {
-                    merged_obj.insert(k.clone(), v.clone());
-                }
-            }
-            config_to_write = Some(merged);
-        } else if !config_value.is_null() {
-            return Err(AppError::localized(
-                "gemini.validation.invalid_config",
-                "Gemini 配置格式错误: config 必须是对象或 null",
-                "Gemini config invalid: config must be an object or null",
-            ));
-        }
-        // config is null: don't modify existing settings.json (preserve mcpServers etc.)
-    }
-
-    // If no config specified or config is null, preserve existing file
-    if config_to_write.is_none() && settings_path.exists() {
-        config_to_write = Some(read_json_file(&settings_path)?);
-    }
-
-    match auth_type {
-        GeminiAuthType::GoogleOfficial => {
-            // Google Official uses OAuth, no API key validation needed.
-            // Write user's env vars as-is (e.g. GEMINI_MODEL, custom vars).
-            write_gemini_env_atomic(&env_map)?;
-        }
-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
-            // API Key mode -- require GEMINI_API_KEY
-            validate_gemini_settings_strict(&provider.settings_config)?;
-            write_gemini_env_atomic(&env_map)?;
-        }
-    }
-
-    if let Some(config_value) = config_to_write {
-        write_json_file(&settings_path, &config_value)?;
-    }
-
-    // Set security.auth.selectedType based on auth type
-    // - Google Official: OAuth mode
-    // - All others: API Key mode
-    match auth_type {
-        GeminiAuthType::GoogleOfficial => ensure_google_oauth_security_flag(provider)?,
-        GeminiAuthType::Packycode | GeminiAuthType::Generic => {
-            crate::gemini_config::write_packycode_settings()?;
-        }
-    }
-
-    Ok(())
 }
 
 /// Remove an OpenCode provider from the live configuration
@@ -1867,42 +1681,6 @@ mod tests {
     }
 
     #[test]
-    fn category_less_fixed_follow_login_backfill_preserves_logout() {
-        let provider = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
-            "OpenAI Official".to_string(),
-            json!({
-                "auth": {
-                    "auth_mode": "chatgpt",
-                    "tokens": { "refresh_token": "old-refresh-token" }
-                },
-                "config": "model = \"old-model\"\n"
-            }),
-            None,
-        );
-        assert!(crate::proxy::providers::is_codex_official_provider(
-            &provider
-        ));
-
-        for live_auth in [json!({}), json!({ "auth_mode": "chatgpt" })] {
-            let live_settings = json!({
-                "auth": live_auth,
-                "config": "model = \"live-model\"\n"
-            });
-            let backfilled = restore_live_settings_for_provider_backfill(
-                &AppType::Codex,
-                &provider,
-                live_settings.clone(),
-            );
-
-            assert_eq!(
-                backfilled, live_settings,
-                "a legacy official card must not restore the stored login after logout"
-            );
-        }
-    }
-
-    #[test]
     fn explicit_common_config_flag_overrides_legacy_subset_detection() {
         let mut provider = Provider::with_id(
             "claude-test".to_string(),
@@ -1979,97 +1757,5 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
-    }
-
-    #[test]
-    fn codex_switch_backfill_keeps_live_catalog_when_db_has_none() {
-        // When the DB provider has no stored catalog, a catalog reconstructed
-        // from Live (if any) should be left intact — the DB-preference overlay
-        // must not wipe it.
-        let mut provider = Provider::with_id(
-            "deepseek".to_string(),
-            "DeepSeek".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-deepseek" },
-                "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-pro\"\n"
-            }),
-            None,
-        );
-        provider.category = Some("cn_official".to_string());
-
-        let live_settings = json!({
-            "auth": { "OPENAI_API_KEY": "sk-deepseek" },
-            "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-pro\"\n",
-            "modelCatalog": { "models": [ { "model": "deepseek-v4-pro" } ] }
-        });
-
-        let result = restore_live_settings_for_provider_backfill(
-            &AppType::Codex,
-            &provider,
-            live_settings.clone(),
-        );
-
-        assert_eq!(
-            result.get("modelCatalog"),
-            live_settings.get("modelCatalog"),
-            "backfill must keep the Live-reconstructed catalog when the DB has none"
-        );
-    }
-
-    #[test]
-    fn codex_switch_backfill_keeps_live_auth_when_it_carries_material() {
-        // Positive control: a Live auth.json that does carry material stays
-        // authoritative (the manual `~/.codex/auth.json` edit path).
-        let mut provider = Provider::with_id(
-            "custom".to_string(),
-            "Custom".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-db-stale" },
-                "config": "model_provider = \"custom\"\n"
-            }),
-            None,
-        );
-        provider.category = Some("custom".to_string());
-
-        let live_settings = json!({
-            "auth": { "OPENAI_API_KEY": "sk-live" },
-            "config": "model_provider = \"custom\"\n"
-        });
-
-        let result =
-            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
-
-        assert_eq!(
-            result.get("auth"),
-            Some(&json!({ "OPENAI_API_KEY": "sk-live" }))
-        );
-    }
-
-    #[test]
-    fn grok_switch_backfill_strips_synced_mcp_servers() {
-        let provider = Provider::with_id(
-            "grok".to_string(),
-            "Grok".to_string(),
-            json!({
-                "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n"
-            }),
-            None,
-        );
-        let live_settings = json!({
-            "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n\n[mcp_servers.echo]\ncommand = \"echo\"\n"
-        });
-
-        let result = restore_live_settings_for_provider_backfill(
-            &AppType::GrokBuild,
-            &provider,
-            live_settings,
-        );
-        let config_text = result
-            .get("config")
-            .and_then(Value::as_str)
-            .expect("config text");
-
-        assert!(!config_text.contains("mcp_servers"));
-        assert!(config_text.contains("model = \"grok-4.5\""));
     }
 }

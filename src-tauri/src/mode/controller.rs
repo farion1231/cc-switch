@@ -11,10 +11,9 @@
 //! | 接上（启动） | 按保存的路由写代理契约 | 接上 |
 //! | 换路由 | 契约没变就不碰；变了先改写客户端 | 路由、契约 |
 //!
-//! Claude Code、Codex、Gemini CLI 的客户端文件经写入引擎写，文件和模式状态在同一个
-//! 操作里提交，崩溃后按 pending 前滚。Grok Build 暂时沿用原有的整份写入函数（改成只写
-//! 关键字段之前的过渡做法）：先写文件，成功后再落定状态；进入代理前先把 live 回填进
-//! 直连供应商的行，和直连切走时一样。
+//! 四个应用的客户端文件都经写入引擎写，只改关键字段（和独有字段），文件和模式状态在
+//! 同一个操作里提交，崩溃后按 pending 前滚。进入代理前不回填：直连供应商的行不会因为
+//! 进出代理而改变。
 //!
 //! 调用方持有这个应用的代理切换锁（`ProxyService::lock_switch_for_app`）；写引擎的应用
 //! 写锁在更里面拿，两把锁不反向嵌套。
@@ -23,20 +22,20 @@ use serde_json::{json, Value};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::live::engine::{lock_app, DeviceStore, LiveFile};
-use crate::live::patch::dotenv::DotenvPatch;
+use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
     direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, PROXY_TOKEN_PLACEHOLDER,
 };
+use crate::live::project::gemini::GeminiProjection;
+use crate::live::project::grok::GrokProjection;
 use crate::provider::Provider;
 use crate::services::provider::codex_direct::{self, Owner};
-use crate::services::provider::{claude_direct, ProviderService, SwitchResult};
-use crate::services::McpService;
+use crate::services::provider::{claude_direct, gemini_direct, grok_direct};
 use crate::store::AppState;
 
 use super::contract;
 use super::current::{self, Purpose};
-use super::operation::{self, FileChange};
+use super::operation;
 use super::state::{op, Contract, Mode, ModeState, PendingTarget};
 
 /// 支持代理模式的应用。
@@ -123,6 +122,14 @@ impl LiveNow {
         }
     }
 
+    /// live 现在是哪个直连供应商写进去的（Grok 在没有写入记录时据此推断要删的表）。
+    fn direct_owner(&self) -> Option<&Provider> {
+        match self {
+            Self::Direct(provider) => provider.as_ref(),
+            Self::Proxy { .. } => None,
+        }
+    }
+
     /// Codex 的 live 现在是谁写进去的。
     fn codex_owner(&self) -> Owner<'_> {
         match self {
@@ -162,60 +169,10 @@ fn claude_contract(route: &Provider, proxy_url: &str) -> (ClaudeProjection, Cont
     (projection, contract)
 }
 
-fn gemini_env_file() -> LiveFile {
-    LiveFile::private(crate::gemini_config::get_gemini_env_path())
-}
-
-/// 客户端文件不经引擎的应用（Codex、Grok Build）写完文件后落定状态。
+/// 只落定状态，不碰客户端文件（未接上时换路由、故障转移记下新路由等）。
 fn commit_state(state: &AppState, app: &AppType, target: &PendingTarget) -> Result<(), String> {
     operation::commit_target(&state.db, &DeviceStore::for_device(), app.as_str(), target)
         .map_err(err)
-}
-
-/// 经引擎提交一次只有 `.env` 的 Gemini 操作；`patch` 为空时只落定状态。
-fn run_gemini(
-    state: &AppState,
-    op: &str,
-    patch: Option<&DotenvPatch>,
-    target: PendingTarget,
-) -> Result<(), AppError> {
-    let app = AppType::Gemini.as_str();
-    let guard = lock_app(app);
-    let store = DeviceStore::for_device();
-    let changes: Vec<FileChange<'_>> = patch
-        .into_iter()
-        .map(|patch| FileChange {
-            file: gemini_env_file(),
-            patch,
-        })
-        .collect();
-    operation::run(&store, &guard, op, &changes, target, &|target| {
-        operation::commit_target(&state.db, &store, app, target)
-    })?;
-    Ok(())
-}
-
-fn gemini_proxy_patch(proxy_url: &str) -> DotenvPatch {
-    DotenvPatch {
-        set: vec![
-            ("GOOGLE_GEMINI_BASE_URL".to_string(), proxy_url.to_string()),
-            (
-                "GEMINI_API_KEY".to_string(),
-                PROXY_TOKEN_PLACEHOLDER.to_string(),
-            ),
-        ],
-        ..DotenvPatch::default()
-    }
-}
-
-/// 进入代理前把 live 回填进直连供应商的行（Gemini、Grok Build 的过渡做法）。
-/// live 里已经是代理占位符（旧版接管的遗留）时不回填，否则会把占位符存进行里。
-fn backfill_direct(state: &AppState, app: &AppType, live_now: &LiveNow) {
-    let LiveNow::Direct(Some(direct)) = live_now else {
-        return;
-    };
-    let mut ignored = SwitchResult::default();
-    ProviderService::backfill_current_from_live(state, app, direct, &mut ignored);
 }
 
 /// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件；接上
@@ -250,16 +207,19 @@ async fn write_proxy(
             .map_err(err)?;
         }
         AppType::Gemini => {
-            backfill_direct(state, app, live_now);
-            let contract = contract::gemini(&proxy_url);
+            let projection = GeminiProjection::proxy_contract(
+                &GeminiProjection::of(&route.settings_config, false),
+                &proxy_url,
+                PROXY_TOKEN_PLACEHOLDER,
+            );
+            let contract = contract::gemini(&projection);
             let unchanged = !force
                 && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == contract.key);
             target.contract = Some(contract);
-            let patch = gemini_proxy_patch(&proxy_url);
-            run_gemini(
-                state,
+            gemini_direct::run(
+                &state.db,
                 op_name,
-                (!unchanged).then_some(&patch),
+                (!unchanged).then_some(&projection),
                 PendingTarget {
                     state: Some(target),
                     ..PendingTarget::default()
@@ -291,25 +251,28 @@ async fn write_proxy(
             }
         }
         AppType::GrokBuild => {
-            let contract = contract::whole_row(app.as_str(), &proxy_url, route);
+            let base_url = format!("{}/grokbuild/v1", proxy_url.trim_end_matches('/'));
+            let projection = GrokProjection::proxy_contract(
+                &grok_direct::projection(route).map_err(err)?,
+                &base_url,
+                PROXY_TOKEN_PLACEHOLDER,
+            )
+            .map_err(err)?;
+            let contract = contract::grok(&projection);
             let unchanged = !force
                 && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == contract.key);
-            if !unchanged {
-                backfill_direct(state, app, live_now);
-                state
-                    .proxy_service
-                    .sync_grok_live_from_provider_while_proxy_active(route)
-                    .await?;
-            }
             target.contract = Some(contract);
-            commit_state(
-                state,
-                app,
-                &PendingTarget {
+            grok_direct::run(
+                &state.db,
+                op_name,
+                live_now.direct_owner(),
+                (!unchanged).then_some(&projection),
+                PendingTarget {
                     state: Some(target),
                     ..PendingTarget::default()
                 },
-            )?;
+            )
+            .map_err(err)?;
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }
@@ -398,22 +361,73 @@ fn write_direct(
                 .map_err(err)?;
             }
         }
-        AppType::Gemini | AppType::GrokBuild => {
-            if attached {
-                state.proxy_service.restore_live_from_direct_provider(app)?;
-                if let Err(error) = McpService::sync_enabled_for_app(state, app) {
-                    log::warn!("写回直连配置后重投影 {app:?} MCP 失败（下次同步时自愈）: {error}");
-                }
-            }
-            if matches!(app, AppType::Gemini) {
-                run_gemini(state, op_name, None, pending_target).map_err(err)?;
+        AppType::Gemini => {
+            // 直连供应商写不出来（没有、行里带着占位符、缺 Key）也不能让客户端一直指着
+            // 代理：退一步只清空关键字段。
+            let projection = if attached {
+                let written = usable_direct(app, direct.as_ref())
+                    .map(gemini_direct::projection)
+                    .transpose();
+                Some(
+                    written
+                        .unwrap_or_else(|error| {
+                            log::warn!("写回直连的 Gemini 配置失败，只清空关键字段: {error}");
+                            None
+                        })
+                        .unwrap_or_else(GeminiProjection::empty),
+                )
             } else {
-                commit_state(state, app, &pending_target)?;
-            }
+                None
+            };
+            gemini_direct::run(&state.db, op_name, projection.as_ref(), pending_target)
+                .map_err(err)?;
+        }
+        AppType::GrokBuild => {
+            let projection = if attached {
+                let written = usable_direct(app, direct.as_ref())
+                    .map(grok_direct::projection)
+                    .transpose();
+                Some(
+                    written
+                        .unwrap_or_else(|error| {
+                            log::warn!("写回直连的 Grok Build 配置失败，只清空关键字段: {error}");
+                            None
+                        })
+                        .unwrap_or(GrokProjection { table: None }),
+                )
+            } else {
+                None
+            };
+            grok_direct::run(
+                &state.db,
+                op_name,
+                None,
+                projection.as_ref(),
+                pending_target,
+            )
+            .map_err(err)?;
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }
     Ok(())
+}
+
+/// 能照写回 live 的直连供应商：行里本身带着占位符（旧版接管期间被导入的残留）的不行，
+/// 否则客户端会一直指着已经不在的本地代理。
+fn usable_direct<'a>(app: &AppType, direct: Option<&'a Provider>) -> Option<&'a Provider> {
+    direct.filter(|provider| {
+        let polluted = crate::services::ProxyService::config_has_proxy_placeholder(
+            app,
+            &provider.settings_config,
+        );
+        if polluted {
+            log::warn!(
+                "直连供应商 {} 的行里带着代理占位符，只清空关键字段",
+                provider.id
+            );
+        }
+        !polluted
+    })
 }
 
 fn require_proxy_app(app: &AppType) -> Result<(), String> {
@@ -1314,6 +1328,7 @@ mod mode_tests {
     use crate::mode::operation::failpoint;
     use crate::mode::state::{self, Mode};
     use crate::proxy::types::ProxyConfig;
+    use crate::services::provider::ProviderService;
     use serde_json::{json, Value};
     use serial_test::serial;
     use std::ffi::OsString;
@@ -2535,6 +2550,574 @@ model_provider = "c"
                 .unwrap()
                 .is_none(),
             "an operation that never published leaves no pending"
+        );
+    }
+
+    // ===== Gemini CLI =====
+
+    const GEMINI_USER_ENV: &str = "# my notes\nGEMINI_SANDBOX=docker\nGEMINI_API_KEY=key-a\nDEBUG=1\nGOOGLE_GEMINI_BASE_URL=https://a.example\nGEMINI_MODEL=m-a\n";
+    const GEMINI_USER_SETTINGS: &str = r#"{
+  "model": {
+    "name": "m-a",
+    "compressionThreshold": 0.5
+  },
+  "security": {
+    "auth": {
+      "selectedType": "gemini-api-key"
+    }
+  },
+  "mcpServers": {
+    "fs": {
+      "command": "fs"
+    }
+  }
+}
+"#;
+
+    fn gemini_env_path() -> std::path::PathBuf {
+        crate::gemini_config::get_gemini_env_path()
+    }
+
+    fn gemini_settings_path() -> std::path::PathBuf {
+        crate::gemini_config::get_gemini_settings_path()
+    }
+
+    fn seed_gemini(env: &str, settings: &str) {
+        fs::create_dir_all(gemini_env_path().parent().unwrap()).unwrap();
+        fs::write(gemini_env_path(), env).unwrap();
+        fs::write(gemini_settings_path(), settings).unwrap();
+    }
+
+    fn gemini_env() -> String {
+        fs::read_to_string(gemini_env_path()).unwrap()
+    }
+
+    fn gemini_settings() -> Value {
+        serde_json::from_slice(&fs::read(gemini_settings_path()).unwrap()).unwrap()
+    }
+
+    /// `.env` 里用户自己的行（注释、非关键字段），按原顺序。
+    fn gemini_user_lines(text: &str) -> Vec<String> {
+        text.lines()
+            .filter(|line| {
+                line.split_once('=')
+                    .is_none_or(|(key, _)| !crate::live::floor::gemini_floor_env(key.trim()))
+            })
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn gemini(id: &str, env: Value, config: Value) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            id.to_uppercase(),
+            json!({ "env": env, "config": config }),
+            None,
+        )
+    }
+
+    fn gemini_a_vertex() -> [Provider; 2] {
+        [
+            gemini(
+                "a",
+                json!({
+                    "GEMINI_API_KEY": "key-a",
+                    "GOOGLE_GEMINI_BASE_URL": "https://a.example",
+                    "GEMINI_MODEL": "m-a"
+                }),
+                json!({ "model": { "name": "m-a" } }),
+            ),
+            gemini(
+                "vertex",
+                json!({
+                    "GOOGLE_GENAI_USE_VERTEXAI": "true",
+                    "GOOGLE_CLOUD_PROJECT": "p"
+                }),
+                json!({}),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn gemini_switch_replaces_only_key_fields_and_round_trips() {
+        let _home = Home::new();
+        seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
+        let state = state_with(AppType::Gemini, &gemini_a_vertex(), "a").await;
+
+        ProviderService::switch(&state, AppType::Gemini, "vertex").expect("to vertex");
+        assert_eq!(
+            gemini_env(),
+            "# my notes\nGEMINI_SANDBOX=docker\nDEBUG=1\nGOOGLE_GENAI_USE_VERTEXAI=true\nGOOGLE_CLOUD_PROJECT=p\n"
+        );
+        assert_eq!(
+            gemini_settings(),
+            json!({
+                "model": { "compressionThreshold": 0.5 },
+                "security": { "auth": { "selectedType": "gemini-api-key" } },
+                "mcpServers": { "fs": { "command": "fs" } }
+            })
+        );
+
+        ProviderService::switch(&state, AppType::Gemini, "a").expect("back to a");
+        let env = gemini_env();
+        assert_eq!(gemini_user_lines(&env), gemini_user_lines(GEMINI_USER_ENV));
+        for line in [
+            "GEMINI_API_KEY=key-a",
+            "GOOGLE_GEMINI_BASE_URL=https://a.example",
+            "GEMINI_MODEL=m-a",
+        ] {
+            assert!(env.contains(line), "{env}");
+        }
+        assert!(!env.contains("VERTEX"), "{env}");
+        assert_eq!(
+            gemini_settings(),
+            serde_json::from_str::<Value>(GEMINI_USER_SETTINGS).unwrap()
+        );
+        assert_eq!(direct(&state, &AppType::Gemini).as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn gemini_official_switch_selects_the_google_login() {
+        let _home = Home::new();
+        seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
+        let [a, _] = gemini_a_vertex();
+        let mut official = gemini("google", json!({}), json!({}));
+        official.category = Some("official".to_string());
+        let state = state_with(AppType::Gemini, &[a, official], "a").await;
+
+        ProviderService::switch(&state, AppType::Gemini, "google").expect("to official");
+        assert_eq!(gemini_env(), "# my notes\nGEMINI_SANDBOX=docker\nDEBUG=1\n");
+        assert_eq!(
+            gemini_settings()["security"]["auth"]["selectedType"],
+            json!("oauth-personal")
+        );
+        assert!(gemini_settings()["model"].get("name").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn gemini_proxy_contract_follows_the_route_model_and_skips_same_contract_routes() {
+        let _home = Home::new();
+        seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
+        let [a, _] = gemini_a_vertex();
+        let mut b = a.clone();
+        b.id = "b".to_string();
+        b.settings_config["env"]["GEMINI_API_KEY"] = json!("key-b");
+        b.settings_config["env"]["GOOGLE_GEMINI_BASE_URL"] = json!("https://b.example");
+        let state = state_with(AppType::Gemini, &[a, b], "a").await;
+
+        enter(&state, &AppType::Gemini).await.expect("enter");
+        let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
+        let env = gemini_env();
+        assert!(env.contains("GEMINI_API_KEY=PROXY_MANAGED"), "{env}");
+        assert!(
+            env.contains(&format!("GOOGLE_GEMINI_BASE_URL={proxy_url}")),
+            "{env}"
+        );
+        assert!(env.contains("GEMINI_MODEL=m-a"), "{env}");
+        assert_eq!(gemini_user_lines(&env), gemini_user_lines(GEMINI_USER_ENV));
+
+        // b 的模型名和 a 一样：契约相同，客户端文件不读也不写。
+        let before = fs::read(gemini_env_path()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(gemini_env_path(), fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        ProviderService::switch(&state, AppType::Gemini, "b").expect("route to b");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(gemini_env_path(), fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        assert_eq!(fs::read(gemini_env_path()).unwrap(), before);
+        assert_eq!(in_use(&state, &AppType::Gemini).as_deref(), Some("b"));
+
+        exit(&state, &AppType::Gemini).await.expect("exit");
+        let env = gemini_env();
+        assert!(env.contains("GEMINI_API_KEY=key-a"), "{env}");
+        assert!(!env.contains(PROXY_TOKEN_PLACEHOLDER), "{env}");
+        assert_eq!(gemini_user_lines(&env), gemini_user_lines(GEMINI_USER_ENV));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn gemini_editor_saves_key_fields_to_the_row_and_global_edits_to_live() {
+        let _home = Home::new();
+        seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
+        let state = state_with(AppType::Gemini, &gemini_a_vertex(), "a").await;
+
+        let a = state.db.get_provider_by_id("a", "gemini").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Gemini, &a.settings_config, None)
+            .expect("view");
+        assert_eq!(view.settings["env"]["GEMINI_SANDBOX"], json!("docker"));
+        assert_eq!(
+            view.settings["config"]["mcpServers"]["fs"]["command"],
+            json!("fs")
+        );
+
+        let mut edited = view.settings.clone();
+        edited["env"]["GEMINI_API_KEY"] = json!("key-a2");
+        edited["env"]["DEBUG"] = json!("2");
+        edited["config"]["ui"] = json!({ "theme": "dark" });
+        let mut row = a.clone();
+        row.settings_config = edited;
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Gemini,
+            Some("a"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base: view.settings.clone(),
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save");
+
+        let env = gemini_env();
+        assert!(
+            env.contains("GEMINI_API_KEY=key-a2") && env.contains("DEBUG=2"),
+            "{env}"
+        );
+        assert_eq!(gemini_settings()["ui"], json!({ "theme": "dark" }));
+        let saved = state.db.get_provider_by_id("a", "gemini").unwrap().unwrap();
+        assert_eq!(
+            saved.settings_config["env"]["GEMINI_API_KEY"],
+            json!("key-a2")
+        );
+        assert!(saved.settings_config["env"].get("DEBUG").is_none());
+        assert!(saved.settings_config["config"].get("ui").is_none());
+
+        // 编辑非当前的 vertex：live 的关键字段不动，全局改动照写。
+        let vertex = state
+            .db
+            .get_provider_by_id("vertex", "gemini")
+            .unwrap()
+            .unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Gemini, &vertex.settings_config, None)
+                .expect("view vertex");
+        assert!(view.settings["env"].get("GEMINI_API_KEY").is_none());
+        let mut edited = view.settings.clone();
+        edited["env"]["GOOGLE_CLOUD_PROJECT"] = json!("p2");
+        edited["env"]["DEBUG"] = json!("3");
+        let mut row = vertex.clone();
+        row.settings_config = edited;
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Gemini,
+            Some("vertex"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base: view.settings,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save vertex");
+        let env = gemini_env();
+        assert!(
+            env.contains("GEMINI_API_KEY=key-a2") && env.contains("DEBUG=3"),
+            "{env}"
+        );
+        assert!(!env.contains("GOOGLE_CLOUD_PROJECT"), "{env}");
+        let saved = state
+            .db
+            .get_provider_by_id("vertex", "gemini")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.settings_config["env"]["GOOGLE_CLOUD_PROJECT"],
+            json!("p2")
+        );
+    }
+
+    // ===== Grok Build =====
+
+    const GROK_USER_LIVE: &str = "# mine\n[ui]\ntheme = \"dark\"\n\n[model.mine]\nmodel = \"m\"\nname = \"Mine\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
+
+    fn grok_path() -> std::path::PathBuf {
+        crate::grok_config::get_grok_config_path()
+    }
+
+    fn seed_grok(text: &str) {
+        fs::create_dir_all(grok_path().parent().unwrap()).unwrap();
+        fs::write(grok_path(), text).unwrap();
+    }
+
+    fn grok_text() -> String {
+        fs::read_to_string(grok_path()).unwrap()
+    }
+
+    fn grok_doc() -> toml::Table {
+        toml::from_str(&grok_text()).unwrap()
+    }
+
+    /// live 里的 `[model.*]` 表名（排好序）。
+    fn grok_tables() -> Vec<String> {
+        grok_doc()
+            .get("model")
+            .and_then(|model| model.as_table())
+            .map(|tables| tables.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn grok_row(id: &str, table: &str, extra: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            id.to_uppercase(),
+            json!({ "config": format!(
+                "[models]\ndefault = \"{table}\"\n\n[model.\"{table}\"]\nmodel = \"{id}-model\"\nname = \"{id}\"\nbase_url = \"https://{id}.example/v1\"\napi_key = \"key-{id}\"\napi_backend = \"responses\"\ncontext_window = 500000\n{extra}"
+            ) }),
+            None,
+        )
+    }
+
+    fn grok_official() -> Provider {
+        let mut official = Provider::with_id(
+            "grok-official".to_string(),
+            "Grok Official".to_string(),
+            json!({ "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        official
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_switch_deletes_the_written_table_even_after_the_client_changed_the_default() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(
+            AppType::GrokBuild,
+            &[grok_row("a", "grok-4.5", ""), grok_official()],
+            "grok-official",
+        )
+        .await;
+
+        ProviderService::switch(&state, AppType::GrokBuild, "a").expect("to a");
+        assert_eq!(grok_doc()["models"]["default"].as_str(), Some("grok-4.5"));
+        assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+
+        // Grok 的 /settings 把默认模型改成了内置的 grok-4.6。
+        let changed = grok_text().replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
+        fs::write(grok_path(), changed).unwrap();
+
+        ProviderService::switch(&state, AppType::GrokBuild, "grok-official").expect("to official");
+        assert_eq!(grok_tables(), vec!["mine"], "{}", grok_text());
+        assert!(grok_doc().get("models").is_none(), "{}", grok_text());
+        assert!(grok_text().starts_with("# mine\n[ui]\ntheme = \"dark\"\n"));
+
+        // 切回去照样能用。
+        ProviderService::switch(&state, AppType::GrokBuild, "a").expect("back to a");
+        assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_table_keys_follow_the_provider_and_renames_replace_the_old_table() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(
+            AppType::GrokBuild,
+            &[
+                grok_row("a", "grok-4.5", "reasoning_summary = \"none\"\n"),
+                grok_row("b", "b", ""),
+            ],
+            "b",
+        )
+        .await;
+
+        ProviderService::switch(&state, AppType::GrokBuild, "a").expect("to a");
+        assert_eq!(
+            grok_doc()["model"]["grok-4.5"]["reasoning_summary"].as_str(),
+            Some("none")
+        );
+        ProviderService::switch(&state, AppType::GrokBuild, "b").expect("to b");
+        assert_eq!(grok_tables(), vec!["b", "mine"]);
+        assert!(
+            !grok_text().contains("reasoning_summary"),
+            "{}",
+            grok_text()
+        );
+
+        // 编辑当前供应商、把表名从 b 改成 grok-4.6：live 里只剩新表。
+        let mut b = state
+            .db
+            .get_provider_by_id("b", "grokbuild")
+            .unwrap()
+            .unwrap();
+        b.settings_config = grok_row("b", "grok-4.6", "").settings_config;
+        ProviderService::update(&state, AppType::GrokBuild, Some("b"), b).expect("rename");
+        assert_eq!(grok_tables(), vec!["grok-4.6", "mine"]);
+        assert_eq!(grok_doc()["models"]["default"].as_str(), Some("grok-4.6"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_without_a_write_record_infers_the_table_an_older_version_wrote() {
+        let _home = Home::new();
+        // 旧版把 a 的行整份写进了 live：新版没有写入记录。
+        let a = grok_row("a", "grok-4.5", "");
+        let old = format!(
+            "{}\n{}",
+            a.settings_config["config"].as_str().unwrap(),
+            GROK_USER_LIVE
+        );
+        seed_grok(&old);
+        let state = state_with(AppType::GrokBuild, &[a, grok_row("b", "b", "")], "a").await;
+
+        ProviderService::switch(&state, AppType::GrokBuild, "b").expect("to b");
+        assert_eq!(grok_tables(), vec!["b", "mine"], "{}", grok_text());
+        assert_eq!(
+            state::written(&DeviceStore::for_device(), "grokbuild")
+                .unwrap()
+                .unwrap()
+                .tables,
+            vec!["b".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_proxy_writes_the_route_table_through_the_engine() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(
+            AppType::GrokBuild,
+            &[
+                grok_row("a", "grok-4.5", ""),
+                grok_row("b", "b", ""),
+                grok_official(),
+            ],
+            "a",
+        )
+        .await;
+        ProviderService::switch(&state, AppType::GrokBuild, "a").expect("direct a");
+
+        enter(&state, &AppType::GrokBuild).await.expect("enter");
+        let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
+        let doc = grok_doc();
+        let table = &doc["model"]["grok-4.5"];
+        assert_eq!(table["api_key"].as_str(), Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_eq!(
+            table["base_url"].as_str(),
+            Some(format!("{proxy_url}/grokbuild/v1").as_str())
+        );
+
+        // 换一家表名不同的路由：旧的代理表按写入记录删掉。
+        ProviderService::switch(&state, AppType::GrokBuild, "b").expect("route to b");
+        assert_eq!(grok_tables(), vec!["b", "mine"]);
+        assert!(
+            ProviderService::switch(&state, AppType::GrokBuild, "grok-official").is_err(),
+            "the official account cannot be routed"
+        );
+
+        exit(&state, &AppType::GrokBuild).await.expect("exit");
+        assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+        assert_eq!(
+            grok_doc()["model"]["grok-4.5"]["api_key"].as_str(),
+            Some("key-a")
+        );
+        assert!(grok_text().contains("[mcp_servers.fs]"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_switch_crash_rolls_forward_with_the_write_record() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(
+            AppType::GrokBuild,
+            &[grok_row("a", "grok-4.5", ""), grok_row("b", "b", "")],
+            "a",
+        )
+        .await;
+        ProviderService::switch(&state, AppType::GrokBuild, "a").expect("direct a");
+
+        for point in ["published:0", "target"] {
+            ProviderService::switch(&state, AppType::GrokBuild, "a").expect("reset");
+            failpoint::crash_at(Some(point));
+            let crashed = ProviderService::switch(&state, AppType::GrokBuild, "b");
+            failpoint::crash_at(None);
+            assert!(crashed.is_err(), "{point}");
+
+            crate::mode::operation::recover_on_startup(&state.db);
+            assert_eq!(grok_tables(), vec!["b", "mine"], "{point}");
+            assert_eq!(direct(&state, &AppType::GrokBuild).as_deref(), Some("b"));
+            assert_eq!(
+                state::written(&DeviceStore::for_device(), "grokbuild")
+                    .unwrap()
+                    .unwrap()
+                    .tables,
+                vec!["b".to_string()],
+                "{point}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_editor_saves_the_table_to_the_row_and_global_edits_to_live() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(
+            AppType::GrokBuild,
+            &[grok_row("a", "grok-4.5", ""), grok_row("b", "b", "")],
+            "a",
+        )
+        .await;
+        ProviderService::switch(&state, AppType::GrokBuild, "a").expect("direct a");
+
+        let a = state
+            .db
+            .get_provider_by_id("a", "grokbuild")
+            .unwrap()
+            .unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::GrokBuild, &a.settings_config, None)
+                .expect("view");
+        let shown = view.settings["config"].as_str().unwrap().to_string();
+        assert!(
+            shown.contains("[model.mine]") && shown.contains("key-a"),
+            "{shown}"
+        );
+
+        let edited = shown
+            .replace("theme = \"dark\"", "theme = \"light\"")
+            .replace("a-model", "a-model-2");
+        let mut row = a.clone();
+        row.settings_config = json!({ "config": edited });
+        ProviderService::update_from_editor(
+            &state,
+            AppType::GrokBuild,
+            Some("a"),
+            row,
+            Some(crate::services::provider::EditorSave {
+                base: view.settings,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save");
+
+        let doc = grok_doc();
+        assert_eq!(doc["ui"]["theme"].as_str(), Some("light"));
+        assert_eq!(
+            doc["model"]["grok-4.5"]["model"].as_str(),
+            Some("a-model-2")
+        );
+        let saved = state
+            .db
+            .get_provider_by_id("a", "grokbuild")
+            .unwrap()
+            .unwrap();
+        let row_text = saved.settings_config["config"].as_str().unwrap();
+        assert!(row_text.contains("a-model-2"), "{row_text}");
+        assert!(
+            !row_text.contains("[ui]") && !row_text.contains("[model.mine]"),
+            "{row_text}"
         );
     }
 }

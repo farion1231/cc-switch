@@ -75,7 +75,8 @@ fn deeplink_grokbuild_rows() {
 }
 
 /// 首启：先把 live 导入成 `default`，再 seed 官方预设（顺序同 `lib.rs` 的启动流程）。
-/// live 里供应商以外的部分进了通用配置片段，片段也一起锁。
+/// live 里供应商以外的部分进了通用配置片段，片段也一起锁。关键字段（模型名、推理档位
+/// 等）不进片段、留在 `default` 行里：片段已冻结，收进去就再也写不回 live。
 ///
 /// `settings_sort` 见 [`crate::util::sort_objects`]：Gemini 的 `.env` 解析顺序不稳定。
 fn first_run_import(app: AppType, snapshot: &str, settings_sort: &[&str]) {

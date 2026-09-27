@@ -8,7 +8,8 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::live::project::claude::ClaudeProjection;
-use crate::provider::Provider;
+use crate::live::project::gemini::GeminiProjection;
+use crate::live::project::grok::GrokProjection;
 
 use super::state::Contract;
 
@@ -36,32 +37,28 @@ pub fn claude(projection: &ClaudeProjection) -> Contract {
     }
 }
 
-/// Gemini CLI：只有代理地址和占位 Key，和路由供应商无关。
-pub fn gemini(proxy_url: &str) -> Contract {
+/// Gemini CLI：代理地址、占位 Key 和路由供应商的模型名（都在投影里）。
+pub fn gemini(projection: &GeminiProjection) -> Contract {
     Contract {
         version: CONTRACT_VERSION,
         key: key_of(&json!({
             "app": "gemini",
             "version": CONTRACT_VERSION,
-            "url": proxy_url,
+            "projection": projection.to_value(),
         })),
         exclusive: Map::new(),
     }
 }
 
-/// Codex、Grok Build：接管写入仍按路由供应商的行整份生成（换成只写关键字段之前的过渡
-/// 做法），所以契约按行的内容算（连同 meta：托管账号的绑定在 meta 里），换一家路由就要
-/// 重写客户端。
-pub fn whole_row(app: &str, proxy_url: &str, route: &Provider) -> Contract {
+/// Grok Build：路由供应商的整张模型表（地址、Key 已换成本地代理的）。模型表里其余的键
+/// （模型名、窗口、推理摘要等）不同，客户端就要跟着改。
+pub fn grok(projection: &GrokProjection) -> Contract {
     Contract {
         version: CONTRACT_VERSION,
         key: key_of(&json!({
-            "app": app,
+            "app": "grokbuild",
             "version": CONTRACT_VERSION,
-            "url": proxy_url,
-            "route": route.id,
-            "settings": route.settings_config,
-            "meta": route.meta,
+            "projection": projection.to_value(),
         })),
         exclusive: Map::new(),
     }

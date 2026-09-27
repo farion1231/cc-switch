@@ -104,7 +104,7 @@ export const providersApi = {
     });
   },
 
-  /** `settingsConfig` 是供应商的行，新增时传空对象。目前只支持 Claude Code。 */
+  /** 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的编辑器显示内容。`settingsConfig` 是供应商的行，新增时传空对象。 */
   async getEditorView(
     appId: AppId,
     settingsConfig: Record<string, unknown>,

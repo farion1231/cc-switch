@@ -13,7 +13,7 @@ in_failover_queue: false
 
 id: default
 name: default
-settings_config: {"auth":{"OPENAI_API_KEY":"sk-live"},"config":"model_provider = \"relay\"\nmodel = \"gpt-5-codex\"\n\n[model_providers.relay]\nname = \"relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n\n[mcp_servers.external]\ncommand = \"external\"\n"}
+settings_config: {"auth":{"OPENAI_API_KEY":"sk-live"},"config":"model_provider = \"relay\"\nmodel = \"gpt-5-codex\"\nmodel_reasoning_effort = \"high\"\n\n[model_providers.relay]\nname = \"relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n\n[mcp_servers.external]\ncommand = \"external\"\n"}
 website_url: NULL
 category: custom
 sort_index: NULL
@@ -25,7 +25,5 @@ is_current: true
 in_failover_queue: false
 
 
-common config snippet: model_reasoning_effort = "high"
-
-[projects."/Users/me/repo"]
+common config snippet: [projects."/Users/me/repo"]
 trust_level = "trusted"

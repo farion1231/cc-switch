@@ -15,6 +15,8 @@ pub struct DotenvPatch {
     pub set: Vec<(String, String)>,
     /// 当前值（去掉引号后）等于其中之一才删除。`set` 里有同名变量时跳过。
     pub remove_if: Vec<(String, Vec<String>)>,
+    /// 按名删掉（所有重复的行）。`set` 里有同名变量时跳过。
+    pub remove: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +83,12 @@ impl LivePatch for DotenvPatch {
             }
         }
 
+        lines.retain(|line| {
+            line.key.as_deref().is_none_or(|key| {
+                targets.contains(key) || !self.remove.iter().any(|doomed| doomed == key)
+            })
+        });
+
         for (key, values) in &self.remove_if {
             if targets.contains(key.as_str()) {
                 continue;
@@ -104,6 +112,24 @@ impl LivePatch for DotenvPatch {
         }
         Ok(out.into_bytes())
     }
+}
+
+/// 文件里的变量和值（值原样，不去引号），按第一次出现的位置排；重复定义时取最后一个
+/// 值（和 dotenv 解析的结果一致）。
+pub fn entries(text: &str) -> Vec<(String, String)> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for raw in text.split('\n') {
+        let raw = raw.strip_suffix('\r').unwrap_or(raw);
+        let Some(key) = parse_key(raw) else {
+            continue;
+        };
+        let value = value_of(raw).to_string();
+        match entries.iter_mut().find(|(existing, _)| existing == key) {
+            Some(entry) => entry.1 = value,
+            None => entries.push((key.to_string(), value)),
+        }
+    }
+    entries
 }
 
 /// `KEY=...` 或 `export KEY=...` 里的变量名；认不出的行返回 `None`，原样保留。
@@ -172,6 +198,22 @@ mod tests {
         );
         assert_eq!(apply(&patch, Some("DEBUG=1")), "DEBUG=1\nGEMINI_MODEL=m");
         assert_eq!(apply(&patch, None), "GEMINI_MODEL=m\n");
+    }
+
+    #[test]
+    fn remove_drops_every_line_of_the_key_and_entries_take_the_last_value() {
+        let patch = DotenvPatch {
+            remove: vec!["X".into()],
+            ..DotenvPatch::default()
+        };
+        assert_eq!(apply(&patch, Some("X=1\nY=2\nexport X=3\n")), "Y=2\n");
+        assert_eq!(
+            entries("# c\nX=1\nY = 2\nexport X=\"3\"\n"),
+            vec![
+                ("X".to_string(), "\"3\"".to_string()),
+                ("Y".to_string(), "2".to_string())
+            ]
+        );
     }
 
     #[test]

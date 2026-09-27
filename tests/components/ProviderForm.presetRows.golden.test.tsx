@@ -96,16 +96,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       isAuthenticated: false,
       accounts: [],
     }),
-    useGeminiCommonConfig: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      isExtracting: false,
-      handleExtract: vi.fn(),
-      clearCommonConfigError: vi.fn(),
-    }),
   };
 });
 

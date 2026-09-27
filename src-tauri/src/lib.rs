@@ -734,7 +734,7 @@ pub fn run() {
             //
             // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
             // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
-            // 这样用户切到官方预设时，回填机制会保护原 live 配置不丢失。
+            // 降级回旧版时，旧版的回填和整份写入仍靠这一行保住用户原来的 live 配置。
             //
             // 捕获首次运行快照：所有全新装用户都会看到欢迎弹窗介绍 CC Switch 的工作方式。
             // 读失败时默认不弹，宁可漏弹也不要因为故障打扰用户。

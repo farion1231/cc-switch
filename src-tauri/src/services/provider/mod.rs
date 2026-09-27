@@ -7,8 +7,13 @@ mod claude_editor;
 pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
+mod editor_toml;
 mod endpoints;
 mod gemini_auth;
+pub(crate) mod gemini_direct;
+mod gemini_editor;
+pub(crate) mod grok_direct;
+mod grok_editor;
 mod live;
 mod pi;
 mod usage;
@@ -40,9 +45,7 @@ pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::{
-    build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config_for_codex_oauth_manager,
+    provider_exists_in_live_config, sync_current_provider_for_app_to_live,
     write_live_with_common_config_for_state, LiveSyncOutcome,
 };
 
@@ -868,6 +871,9 @@ mod tests {
                 "GOOGLE_GEMINI_BASE_URL": "https://gemini.example",
                 "GOOGLE_APPLICATION_CREDENTIALS": "/path/creds.json",
                 "SOME_PROXY_AUTH_TOKEN": "tok-proxy",
+                // 关键字段归供应商：片段已冻结，收进去会从行里剥掉、再也写不回 live
+                "GEMINI_MODEL": "gemini-2.5-pro",
+                "GOOGLE_GENAI_USE_VERTEXAI": "true",
                 // 可共享的非机密配置必须保留
                 "GEMINI_TIMEOUT_MS": "30000"
             }
@@ -882,10 +888,12 @@ mod tests {
             "GOOGLE_API_KEY",
             "GOOGLE_APPLICATION_CREDENTIALS",
             "SOME_PROXY_AUTH_TOKEN",
+            "GEMINI_MODEL",
+            "GOOGLE_GENAI_USE_VERTEXAI",
         ] {
             assert!(
                 value.get(leaked).is_none(),
-                "credential {leaked} must not leak into the shared Gemini snippet"
+                "{leaked} must not go into the shared Gemini snippet"
             );
         }
         assert_eq!(
@@ -945,6 +953,18 @@ mod tests {
                 "{key} is ordinary shareable config and must not be stripped"
             );
         }
+    }
+
+    /// 测试夹具：按键排序写一份 `~/.gemini/.env`。
+    fn write_gemini_env(map: &HashMap<String, String>) -> Result<(), AppError> {
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        let text = keys
+            .into_iter()
+            .map(|key| format!("{key}={}", map[key]))
+            .collect::<Vec<_>>()
+            .join("\n");
+        crate::gemini_config::write_gemini_env_text_atomic(&text)
     }
 
     fn seed_leaked_gemini_state(db: &Arc<Database>) {
@@ -1387,7 +1407,7 @@ mod tests {
         // 没有当前供应商——这正是 sync_current_provider_for_app 直接返回 Ok 而
         // 根本不写文件的分支。此时 live 若清不掉，片段又已被清空，下次切换的
         // backfill 就会把残留永久写进受害供应商的配置。
-        crate::gemini_config::write_gemini_env_atomic(&HashMap::from([
+        write_gemini_env(&HashMap::from([
             ("GOOGLE_API_KEY".to_string(), "key-A-leaked".to_string()),
             ("GEMINI_TIMEOUT_MS".to_string(), "30000".to_string()),
             // 只存在于 live 的手工修改：定向删除必须保住它，全量重投影会抹掉
@@ -1709,59 +1729,6 @@ GEMINI_TIMEOUT_MS=30000
         );
     }
 
-    /// 切走时按旧片段剥离「不再共享」的条目，但当前供应商自己带着 AWS 凭据时，
-    /// 同家族的选择器和区域是它自己的，不剥。
-    #[test]
-    fn retired_snippet_entries_keep_the_current_providers_own_family() {
-        let old_snippet = json!({
-            "env": {
-                "CLAUDE_CODE_USE_BEDROCK": "1",
-                "AWS_REGION": "us-west-2",
-                "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer x",
-                "DISABLE_TELEMETRY": "1"
-            },
-            "model": "picked",
-            "theme": "dark"
-        })
-        .to_string();
-        let retired = |live: Value| -> Value {
-            ProviderService::retired_snippet_entries(&AppType::Claude, &old_snippet, &live)
-                .map(|text| serde_json::from_str(&text).expect("valid JSON"))
-                .unwrap_or(Value::Null)
-        };
-
-        assert_eq!(
-            retired(json!({ "env": {} })),
-            json!({
-                "env": {
-                    "CLAUDE_CODE_USE_BEDROCK": "1",
-                    "AWS_REGION": "us-west-2",
-                    "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer x"
-                },
-                "model": "picked"
-            })
-        );
-        for live in [
-            json!({ "env": { "AWS_BEARER_TOKEN_BEDROCK": "k", "ANTHROPIC_MODEL": "arn" } }),
-            json!({ "env": { "AWS_ACCESS_KEY_ID": "AKIA", "ANTHROPIC_MODEL": "arn" } }),
-            // 旧版 Bedrock API Key 预设把 Key 写在顶层。
-            json!({ "env": { "ANTHROPIC_MODEL": "arn" }, "apiKey": "legacy-bedrock-key" }),
-        ] {
-            assert_eq!(
-                retired(live),
-                json!({
-                    "env": { "ANTHROPIC_CUSTOM_HEADERS": "Authorization: Bearer x" },
-                    "model": "picked"
-                }),
-                "the Bedrock provider keeps its own selector and region"
-            );
-        }
-        assert_eq!(
-            ProviderService::retired_snippet_entries(&AppType::Codex, &old_snippet, &json!({})),
-            None
-        );
-    }
-
     /// Regression for issue #4272: Fable tier env keys must not enter the shared
     /// Claude common-config snippet (same class as haiku/sonnet/opus model pins).
     #[test]
@@ -1841,9 +1808,15 @@ GEMINI_TIMEOUT_MS=30000
 model = "gpt-4"
 wire_api = "chat"
 disable_response_storage = true
+model_reasoning_effort = "high"
+approval_policy = "on-request"
 experimental_bearer_token = "sk-live-secret"
 model_catalog_json = "cc-switch-model-catalog.json"
 web_search = "disabled"
+
+[agents]
+default_subagent_model = "gpt-4-mini"
+max_threads = 4
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -1906,9 +1879,21 @@ command = "legacy-cmd"
             !extracted.contains("web_search"),
             "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
         );
+        // 关键字段归供应商（片段已冻结，收进去会从行里剥掉、再也写不回 live）
+        for key in [
+            "disable_response_storage",
+            "model_reasoning_effort",
+            "default_subagent_model",
+        ] {
+            assert!(
+                !extracted.contains(key),
+                "key field {key} must stay with the provider, got: {extracted}"
+            );
+        }
         // 真正可共享的键保留
         assert!(
-            extracted.contains("disable_response_storage = true"),
+            extracted.contains("approval_policy = \"on-request\"")
+                && extracted.contains("max_threads = 4"),
             "shareable keys must survive extraction, got: {extracted}"
         );
     }
@@ -4623,63 +4608,6 @@ impl ProviderService {
             .filter(|id| !id.is_empty())
     }
 
-    /// 切走前把 live 回填进 `current_provider` 的行，返回是否回填成功。
-    ///
-    /// Codex、Gemini CLI、Grok Build 的直连写入仍是整份写（改成只写关键字段之前的过渡
-    /// 做法），要靠它留住用户直接在 live 里的改动。进入代理模式也算一次「切走」。
-    pub(crate) fn backfill_current_from_live(
-        state: &AppState,
-        app_type: &AppType,
-        current_provider: &Provider,
-        result: &mut SwitchResult,
-    ) -> bool {
-        // live 里是代理占位符（旧版接管的遗留）时不回填，否则会把占位符存进行里。
-        if state.proxy_service.live_has_proxy_placeholder(app_type) {
-            return false;
-        }
-        let Ok(live_config) = read_live_settings(app_type.clone()) else {
-            return false;
-        };
-        let mut current_provider = current_provider.clone();
-        // 切走前先把 live 里的可共享改动（含用户直接在应用内装插件/加 hook/改偏好）
-        // 同步进通用配置片段，再做剥离回填。详见 sync_common_config_snippet_from_live。
-        let retired_entries = Self::sync_common_config_snippet_from_live(
-            state,
-            app_type,
-            &current_provider,
-            &live_config,
-            result,
-        );
-
-        current_provider.settings_config = strip_common_config_from_live_settings(
-            state.db.as_ref(),
-            app_type,
-            &current_provider,
-            live_config,
-        );
-        if let Some(retired) = retired_entries.as_deref() {
-            match live::remove_common_config_from_settings(
-                app_type,
-                &current_provider.settings_config,
-                retired,
-            ) {
-                Ok(cleaned) => current_provider.settings_config = cleaned,
-                Err(err) => log::warn!(
-                    "Failed to strip retired common config entries from '{}': {err}",
-                    current_provider.id
-                ),
-            }
-        }
-        if let Err(e) = state.db.save_provider(app_type.as_str(), &current_provider) {
-            log::warn!("Backfill failed: {e}");
-            result
-                .warnings
-                .push(format!("backfill_failed:{}", current_provider.id));
-            return false;
-        }
-        true
-    }
-
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
@@ -4875,12 +4803,11 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
-        if matches!(app_type, AppType::Claude | AppType::Codex) {
+        if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
             // 新版不再读通用配置片段，但旧设备经云同步拿到这一行时仍按这个标记合并
             // 片段；不写的话，旧版切到它会把 hooks、MCP 等共享设置整份抹掉。
             provider
@@ -4924,10 +4851,21 @@ impl ProviderService {
             crate::mode::current::Purpose::Direct,
         )?;
         if current.is_none() {
-            if matches!(app_type, AppType::Claude) {
-                // 第一个供应商同样只写关键字段，不覆盖用户已有的 settings.json。
-                claude_direct::switch_to(state.db.as_ref(), None, &provider)?;
-                return Ok(true);
+            // 第一个供应商同样只写关键字段，不覆盖用户已有的配置文件。
+            match app_type {
+                AppType::Claude => {
+                    claude_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                    return Ok(true);
+                }
+                AppType::Gemini => {
+                    gemini_direct::switch_to(state.db.as_ref(), &provider)?;
+                    return Ok(true);
+                }
+                AppType::GrokBuild => {
+                    grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                    return Ok(true);
+                }
+                _ => {}
             }
             // No current provider, set as current and sync. Managed Codex adds
             // use the transactional path above because token resolution can fail.
@@ -4995,8 +4933,9 @@ impl ProviderService {
         Ok(true)
     }
 
-    /// 供应商编辑器底部配置的显示内容（Claude Code、Codex）：切到这个供应商之后配置文件
-    /// 会是什么样，以及行里不随切换生效的字段。`category` 用来认出 Codex 官方卡。
+    /// 供应商编辑器底部配置的显示内容（Claude Code、Codex、Gemini CLI、Grok Build）：切到
+    /// 这个供应商之后配置文件会是什么样，以及行里不随切换生效的字段。`category` 用来认出
+    /// 官方卡。
     pub fn editor_view(
         state: &AppState,
         app_type: AppType,
@@ -5006,6 +4945,8 @@ impl ProviderService {
         match app_type {
             AppType::Claude => claude_editor::view(state, settings_config),
             AppType::Codex => codex_editor::view(state, settings_config, category),
+            AppType::Gemini => gemini_editor::view(state, settings_config, category),
+            AppType::GrokBuild => grok_editor::view(state, settings_config, category),
             other => Err(AppError::InvalidInput(format!(
                 "{} 的编辑器还不支持按关键字段显示",
                 other.as_str()
@@ -5049,6 +4990,11 @@ impl ProviderService {
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
                 Self::update_codex_from_editor(state, provider, editor)
+            }
+            (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor))
+                if original_id.is_none_or(|original| original == provider.id) =>
+            {
+                Self::update_gemini_or_grok_from_editor(state, app_type, provider, editor)
             }
             (app_type, _) => Self::update(state, app_type, original_id, provider),
         }
@@ -5129,6 +5075,107 @@ impl ProviderService {
                 };
                 if let Err(rollback) = rollback {
                     log::warn!("恢复 Codex 供应商 '{}' 失败: {rollback}", provider.id);
+                }
+            }
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    /// 从编辑器保存 Gemini CLI、Grok Build 供应商：关键字段存回行，其余改动作为全局设置
+    /// 写进 live（三方比较）。直连模式下编辑当前供应商时，关键字段在同一次写入里换进
+    /// live；代理模式下编辑路由那家，全局设置写完后按新行重写代理契约。
+    fn update_gemini_or_grok_from_editor(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+        editor: EditorSave,
+    ) -> Result<bool, AppError> {
+        let _switch_guard =
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+        let existing = state
+            .db
+            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        let stored = existing.as_ref().map(|row| &row.settings_config);
+        let mut provider = provider;
+        enum Edits {
+            Gemini(gemini_editor::GeminiEdits),
+            Grok(editor_toml::TomlEdits),
+        }
+        let edits = if matches!(app_type, AppType::Gemini) {
+            let plan = gemini_editor::plan_save(
+                stored,
+                &provider.settings_config,
+                &editor.base,
+                editor.on_conflict,
+            )?;
+            provider.settings_config = plan.row_settings;
+            Edits::Gemini(plan.edits)
+        } else {
+            let plan = grok_editor::plan_save(
+                stored,
+                &provider.settings_config,
+                &editor.base,
+                grok_direct::is_official(&provider),
+                editor.on_conflict,
+            )?;
+            provider.settings_config = plan.row_settings;
+            Edits::Grok(plan.edits)
+        };
+        Self::validate_provider_settings(&app_type, &provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+
+        let mode = crate::mode::current::mode_state(&app_type);
+        let is_direct_current = crate::mode::current::provider_for(
+            &state.db,
+            &app_type,
+            crate::mode::current::Purpose::Direct,
+        )?
+        .as_deref()
+            == Some(provider.id.as_str());
+        let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
+        // 代理模式下 live 的关键字段是代理契约，这里只写全局改动。
+        let key_fields = !mode.is_proxy() && is_direct_current;
+
+        state.db.save_provider(app_type.as_str(), &provider)?;
+        let written = match &edits {
+            Edits::Gemini(edits) => {
+                gemini_editor::write_live(state.db.as_ref(), edits, key_fields.then_some(&provider))
+            }
+            Edits::Grok(edits) => grok_editor::write_live(
+                state.db.as_ref(),
+                edits,
+                key_fields.then_some((existing.as_ref(), &provider)),
+            ),
+        }
+        .and_then(|()| {
+            if is_route {
+                futures::executor::block_on(crate::mode::controller::switch_route_locked(
+                    state, &app_type, &provider,
+                ))
+                .map_err(AppError::Message)
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(error) = written {
+            let pending = match app_type {
+                AppType::Gemini => gemini_direct::has_pending(),
+                _ => grok_direct::has_pending(),
+            };
+            // 文件已经发布、只是落定状态失败时，pending 会在下次操作或启动时补完，行要
+            // 留着；还没发布就失败，撤回刚存的行。
+            if !pending {
+                let rollback = match &existing {
+                    Some(existing) => state.db.save_provider(app_type.as_str(), existing),
+                    None => state.db.delete_provider(app_type.as_str(), &provider.id),
+                };
+                if let Err(rollback) = rollback {
+                    log::warn!(
+                        "恢复 {} 供应商 '{}' 失败: {rollback}",
+                        app_type.as_str(),
+                        provider.id
+                    );
                 }
             }
             return Err(error);
@@ -5265,7 +5312,6 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
@@ -5661,18 +5707,11 @@ impl ProviderService {
         Ok(())
     }
 
-    /// Switch to a provider
+    /// 切换供应商。
     ///
-    /// Switch flow:
-    /// 1. Validate target provider exists
-    /// 2. Check if proxy takeover mode is active AND proxy server is running
-    /// 3. If takeover mode active: hot-switch proxy target and refresh proxy-safe Live labels
-    /// 4. If normal mode:
-    ///    a. **Backfill mechanism**: Backfill current live config to current provider
-    ///    b. Update local settings current_provider_xxx (device-level)
-    ///    c. Update database is_current (as default for new devices)
-    ///    d. Write target provider config to live files
-    ///    e. Sync MCP configuration
+    /// - 代理模式：只换代理路由，直连指针不变；契约没变时客户端文件不读也不写。
+    /// - 直连模式：切换式应用只替换客户端文件里的关键字段（不回填），文件和指针在同一个
+    ///   操作里提交；累加式应用按各自的规则写入。
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
@@ -5752,6 +5791,13 @@ impl ProviderService {
         if matches!(app_type, AppType::Codex) {
             return Self::switch_codex_direct(state, provider, providers);
         }
+        if matches!(app_type, AppType::Gemini) {
+            gemini_direct::switch_to(state.db.as_ref(), provider)?;
+            return Ok(SwitchResult::default());
+        }
+        if matches!(app_type, AppType::GrokBuild) {
+            return Self::switch_grok_direct(state, provider, providers);
+        }
 
         // OMO ↔ OMO Slim are mutually exclusive; activating one removes the other's config file.
         if matches!(app_type, AppType::OpenCode) {
@@ -5774,35 +5820,13 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Backfill: Backfill current live config to current provider
-        // Use effective current provider (validated existence) to ensure backfill targets valid provider
-        let current_id = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?;
-        if let Some(current_id) = current_id {
-            // Additive mode apps - all providers coexist in the same file,
-            // no backfill needed (backfill is for exclusive mode apps like Gemini)
-            if current_id != id && !app_type.is_additive_mode() {
-                if let Some(current_provider) = providers.get(&current_id) {
-                    Self::backfill_current_from_live(
-                        state,
-                        &app_type,
-                        current_provider,
-                        &mut result,
-                    );
-                }
-            }
-        }
-
         // Additive mode apps skip setting is_current (no such concept).
         if !app_type.is_additive_mode() {
             crate::settings::set_current_provider(&app_type, Some(id))?;
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
-        // Sync to live (write_gemini_live handles security flag internally for Gemini).
+        // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
         write_live_with_common_config_for_state(state, &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
@@ -5948,6 +5972,25 @@ impl ProviderService {
         Ok(result)
     }
 
+    /// Grok Build 直连切换：`models.default` 和模型表换成目标的，按写入记录删掉上一家
+    /// 的表；文件、指针和写入记录在同一个操作里提交。不回填、不补回 MCP。
+    fn switch_grok_direct(
+        state: &AppState,
+        provider: &Provider,
+        providers: &IndexMap<String, Provider>,
+    ) -> Result<SwitchResult, AppError> {
+        let current_id = crate::mode::current::provider_for(
+            &state.db,
+            &AppType::GrokBuild,
+            crate::mode::current::Purpose::Direct,
+        )?;
+        let live_owner = current_id
+            .as_deref()
+            .and_then(|current_id| providers.get(current_id));
+        grok_direct::switch_to(state.db.as_ref(), live_owner, provider)?;
+        Ok(SwitchResult::default())
+    }
+
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
@@ -6055,203 +6098,6 @@ impl ProviderService {
         }
 
         Self::migrate_legacy_common_config_usage(state, app_type, &snippet)
-    }
-
-    /// 切走某供应商前，把它 live 配置里的可共享部分重新提取并**整体替换**到
-    /// 通用配置片段，使在 live 应用里直接做的改动不会因切换而丢失。
-    ///
-    /// 采用"整体重提取 + 替换"而非"只合并新增"，是为了同时覆盖三种情况：
-    /// - **新增**：用户直接在应用里装了插件、加了 hook、改了 env/主题/权限等共享
-    ///   偏好，被捕获进通用配置，切到别的供应商也带得过去；
-    /// - **删除**：被删掉的键不在新提取结果里，于是从片段里消失、下次切换不会被
-    ///   重新注入——否则会出现"插件怎么删也删不掉"的反直觉 bug；
-    /// - **密钥安全**：提取器已剥掉 auth / model / endpoint，密钥永不进共享片段。
-    ///
-    /// 之所以"整体替换"是安全的：每次写 live 都会把当前片段合并进去，所以切走时
-    /// 读到的 live 一定是"片段 + 本地改动"的超集，重提取只会丢掉用户真正删掉的键，
-    /// 不会误删其它供应商共享的内容。
-    ///
-    /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
-    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
-    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
-    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
-    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
-    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
-    ///
-    /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
-    /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
-    /// 配置又塞回来。所有失败均为非致命，只记 warning，绝不阻断切换。
-    ///
-    /// 返回值：旧片段里按现行提取规则不再共享的条目（见
-    /// `retired_snippet_entries`），调用方回填时要按值相等一并剥掉。
-    fn sync_common_config_snippet_from_live(
-        state: &AppState,
-        app_type: &AppType,
-        provider: &Provider,
-        live_config: &Value,
-        result: &mut SwitchResult,
-    ) -> Option<String> {
-        // 作用域限定 Claude + Codex（见函数文档）。
-        if !matches!(app_type, AppType::Claude | AppType::Codex) {
-            return None;
-        }
-
-        let opted_in = provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.common_config_enabled)
-            == Some(true);
-        if !opted_in {
-            return None;
-        }
-
-        match state.db.is_config_snippet_cleared(app_type.as_str()) {
-            Ok(true) => return None, // 用户显式清空过通用配置，尊重其选择，不再自动塞回
-            Ok(false) => {}
-            Err(err) => {
-                log::warn!(
-                    "Failed to read common config cleared flag for {}: {err}",
-                    app_type.as_str()
-                );
-                return None;
-            }
-        }
-
-        let new_snippet = match Self::extract_common_config_snippet_from_settings(
-            app_type.clone(),
-            live_config,
-        ) {
-            Ok(snippet) => snippet,
-            Err(err) => {
-                log::warn!(
-                    "Failed to extract common config from live for {} provider '{}': {err}",
-                    app_type.as_str(),
-                    provider.id
-                );
-                return None;
-            }
-        };
-
-        // 未变化则跳过，避免无谓写库（不切 live 配置时这是常态路径）。
-        let current = state
-            .db
-            .get_config_snippet(app_type.as_str())
-            .ok()
-            .flatten();
-        if current.as_deref() == Some(new_snippet.as_str()) {
-            return None;
-        }
-
-        if let Err(err) = state
-            .db
-            .set_config_snippet(app_type.as_str(), Some(new_snippet))
-        {
-            log::warn!(
-                "Failed to persist synced common config for {} provider '{}': {err}",
-                app_type.as_str(),
-                provider.id
-            );
-            result
-                .warnings
-                .push(format!("common_config_sync_failed:{}", provider.id));
-            // 旧片段还在库里，回填照旧按它剥离，不需要额外处理
-            return None;
-        }
-
-        current
-            .as_deref()
-            .and_then(|old| Self::retired_snippet_entries(app_type, old, live_config))
-    }
-
-    /// 旧片段里、按现行提取规则不再共享的条目（凭据、关键字段），序列化成可交给
-    /// `remove_common_config_from_settings` 的片段文本；没有则返回 `None`。
-    ///
-    /// 提取规则收紧后（补上 `ANTHROPIC_CUSTOM_HEADERS` 这类凭据、`CLAUDE_CODE_USE_BEDROCK`
-    /// 这类关键字段），存量片段里还留着这些条目，并已合并进当前 live。重提取会把它们从
-    /// 片段里去掉，但回填按**新**片段剥离，就剥不掉它们，于是某一家的自定义头、Bedrock
-    /// 选择器会被永久写进**当前**供应商的行。所以切换时要按旧片段里的值再剥一次。
-    ///
-    /// 例外：当前供应商自己带着 AWS / Google 的凭据时，同家族的选择器和区域是它自己的
-    /// （片段收走它们时，也从它的行里剥掉了），不剥。凭据键从不进片段，一定是这一家的。
-    ///
-    /// 代价：别的供应商如果把自己的选择器或区域交给了片段，这次之后要重填一次；
-    /// `/model` 的选择回到默认模型。与 `scrub_leaked_gemini_common_config` 取舍一致：
-    /// 宁可让人重填，也不把一家的凭据和路由留在别家的行里。
-    ///
-    /// 只处理 Claude：Codex 提取器不走这套规则（整张 `model_providers` 表已剥离）。
-    fn retired_snippet_entries(app_type: &AppType, snippet: &str, live: &Value) -> Option<String> {
-        if !matches!(app_type, AppType::Claude) {
-            return None;
-        }
-        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(snippet) else {
-            return None;
-        };
-
-        let owns_aws = Self::claude_owns_credentials(live, "AWS_");
-        let owns_google = Self::claude_owns_credentials(live, "GOOGLE_");
-        let keep = |key: &str| {
-            (owns_aws && Self::is_claude_aws_family_key(key))
-                || (owns_google && Self::is_claude_google_family_key(key))
-        };
-
-        let mut retired = serde_json::Map::new();
-        for (key, value) in entries {
-            if key == "env" {
-                let Value::Object(env) = value else {
-                    continue;
-                };
-                let env: serde_json::Map<String, Value> = env
-                    .into_iter()
-                    .filter(|(name, _)| !Self::claude_env_key_is_shared(name) && !keep(name))
-                    .collect();
-                if !env.is_empty() {
-                    retired.insert(key, Value::Object(env));
-                }
-            } else if !Self::claude_top_key_is_shared(&key) && !keep(&key) {
-                retired.insert(key, value);
-            }
-        }
-
-        (!retired.is_empty()).then(|| Value::Object(retired).to_string())
-    }
-
-    /// live 里是否有这家自己的某类凭据：`env` 里带该前缀的敏感键。AWS 另认旧 Bedrock
-    /// API Key 预设写在顶层的 `apiKey`（Claude Code 自身没有这个设置）。
-    fn claude_owns_credentials(live: &Value, env_prefix: &str) -> bool {
-        let in_env = live
-            .get("env")
-            .and_then(Value::as_object)
-            .is_some_and(|env| {
-                env.keys()
-                    .any(|key| key.starts_with(env_prefix) && Self::is_sensitive_config_key(key))
-            });
-        in_env || (env_prefix == "AWS_" && live.get("apiKey").is_some())
-    }
-
-    fn is_claude_aws_family_key(key: &str) -> bool {
-        key.starts_with("AWS_")
-            || key.starts_with("ANTHROPIC_BEDROCK_")
-            || matches!(
-                key,
-                "CLAUDE_CODE_USE_BEDROCK"
-                    | "CLAUDE_CODE_USE_ANTHROPIC_AWS"
-                    | "ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION"
-                    | "awsAuthRefresh"
-                    | "awsCredentialExport"
-            )
-    }
-
-    fn is_claude_google_family_key(key: &str) -> bool {
-        key.starts_with("GOOGLE_")
-            || key.starts_with("VERTEX_REGION_")
-            || key.starts_with("ANTHROPIC_VERTEX_")
-            || matches!(
-                key,
-                "CLAUDE_CODE_USE_VERTEX"
-                    | "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"
-                    | "CLOUD_ML_REGION"
-                    | "gcpAuthRefresh"
-            )
     }
 
     /// Extract common config snippet from current provider
@@ -6446,16 +6292,24 @@ impl ProviderService {
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
 
-        // Remove provider-specific fields.
+        // 关键字段（选路、模型名、推理档位等，见 `live::floor`）归供应商，不进片段：
+        // 片段已冻结，收进去的值会从行里被迁移剥掉、再也写不回 live。
         let root = doc.as_table_mut();
-        root.remove("model");
-        root.remove("model_provider");
-        // Legacy/alt formats might use a top-level base_url.
-        root.remove("base_url");
-        // wire_api 与 base_url 同属供应商路由语义：无 model_provider 时
-        // update_codex_toml_field / 前端 setCodexWireApi 都会把它落在顶层，
-        // 进了片段会改写其它供应商的协议选择（chat vs responses）。
-        root.remove("wire_api");
+        for key in crate::live::floor::CODEX_FLOOR_TOP {
+            root.remove(key);
+        }
+        for path in crate::live::floor::CODEX_FLOOR_NESTED {
+            let [parent, key] = path else { continue };
+            if let Some(table) = root
+                .get_mut(parent)
+                .and_then(|item| item.as_table_like_mut())
+            {
+                table.remove(key);
+                if table.is_empty() {
+                    root.remove(parent);
+                }
+            }
+        }
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
@@ -6524,13 +6378,12 @@ impl ProviderService {
         let mut snippet = serde_json::Map::new();
         if let Some(env) = env {
             for (key, value) in env {
-                // 端点按名剥离（它不是凭据，模式匹配够不着）；凭据全部交给
-                // `is_sensitive_config_key` 统一模式匹配（与 Claude 提取器一致）。
-                // 只列固定名单会漏掉下一个 `*_API_KEY` —— 例如 `GOOGLE_API_KEY`
-                // （provider.rs 认可的一等 Gemini 凭据），而共享片段会被 deep-merge
-                // 回其它 Gemini 供应商，漏剥即等于把 A 账号的密钥写进 B 供应商并
-                // 发往 B 的 base_url。`GEMINI_API_KEY` 不必单列：`_KEY` 后缀已覆盖。
-                if key == "GOOGLE_GEMINI_BASE_URL" || Self::is_sensitive_config_key(key) {
+                // 关键字段（地址、凭据、模型名、Vertex 选择器）归供应商，不进片段：
+                // 片段已冻结，新版不再合并它，收进去的值会从行里被迁移剥掉、再也写不回
+                // live（首启导入的 `GEMINI_MODEL` 就是这样丢的）。凭据另交给
+                // `is_sensitive_config_key` 统一模式匹配（与 Claude 提取器一致），
+                // 兜住关键字段清单以外的 `*_API_KEY`、`*_TOKEN`。
+                if crate::live::floor::gemini_floor_env(key) || Self::is_sensitive_config_key(key) {
                     continue;
                 }
                 let Value::String(v) = value else {
@@ -7002,7 +6855,7 @@ impl ProviderService {
                     })?;
                 if provider.category.as_deref() == Some("official") {
                     // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
-                    // 回填快照只要求 TOML 语法合法。
+                    // 其余内容只要求 TOML 语法合法。
                     crate::grok_config::validate_config_toml_syntax(config)?;
                 } else {
                     crate::grok_config::validate_config_toml(config)?;

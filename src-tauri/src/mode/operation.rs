@@ -288,6 +288,9 @@ pub fn commit_target(
         state::set_mode_state(store, app, mode.clone())?;
         mirror_proxy_flag(db, app, mode.is_proxy())?;
     }
+    if let Some(written) = &target.written {
+        state::set_written(store, app, written.clone())?;
+    }
     Ok(())
 }
 

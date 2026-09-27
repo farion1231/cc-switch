@@ -3,17 +3,12 @@
 //! 提供代理服务器的启动、停止和配置管理
 
 use crate::app_config::AppType;
-use crate::config::{get_claude_settings_path, read_json_file, write_text_file_private};
+use crate::config::{get_claude_settings_path, read_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
-use crate::services::provider::{
-    build_effective_settings_with_common_config,
-    write_live_with_common_config_for_codex_oauth_manager,
-};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -24,7 +19,6 @@ use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
 #[derive(Clone)]
 pub struct ProxyService {
     db: Arc<Database>,
-    codex_oauth_manager: Arc<CodexOAuthManager>,
     server: Arc<RwLock<Option<ProxyServer>>>,
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
@@ -33,46 +27,12 @@ pub struct ProxyService {
 
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
-        let codex_oauth_manager =
-            Arc::new(CodexOAuthManager::new(crate::config::get_app_config_dir()));
-
-        Self::new_with_codex_oauth_manager(db, codex_oauth_manager)
-    }
-
-    pub fn new_with_codex_oauth_manager(
-        db: Arc<Database>,
-        codex_oauth_manager: Arc<CodexOAuthManager>,
-    ) -> Self {
         Self {
             db,
-            codex_oauth_manager,
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
         }
-    }
-
-    pub async fn sync_grok_live_from_provider_while_proxy_active(
-        &self,
-        provider: &Provider,
-    ) -> Result<(), String> {
-        let existing_live = self.read_grok_live().ok();
-        let mut effective_settings = build_effective_settings_with_common_config(
-            self.db.as_ref(),
-            &AppType::GrokBuild,
-            provider,
-        )
-        .map_err(|e| format!("构建 Grok Build 有效配置失败: {e}"))?;
-        if let Some(existing_live) = existing_live.as_ref() {
-            Self::preserve_toml_mcp_servers_from_existing_config(
-                &mut effective_settings,
-                existing_live,
-            )?;
-        }
-        let (proxy_url, _) = self.build_proxy_urls().await?;
-        let proxy_grok_base_url = format!("{}/grokbuild/v1", proxy_url.trim_end_matches('/'));
-        Self::apply_grok_takeover_fields(&mut effective_settings, &proxy_grok_base_url)?;
-        self.write_grok_live(&effective_settings)
     }
 
     /// 设置 AppHandle（在应用初始化时调用）
@@ -268,21 +228,6 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
-    fn apply_grok_takeover_fields(config: &mut Value, proxy_base_url: &str) -> Result<(), String> {
-        let config_toml = config
-            .get("config")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "Grok Build 配置缺少 config 字段".to_string())?;
-        let updated = crate::grok_config::apply_proxy_takeover(
-            config_toml,
-            proxy_base_url,
-            PROXY_TOKEN_PLACEHOLDER,
-        )
-        .map_err(|e| format!("更新 Grok Build 接管配置失败: {e}"))?;
-        config["config"] = json!(updated);
-        Ok(())
-    }
-
     /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
     /// 时写的契约）。
     pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
@@ -307,138 +252,9 @@ impl ProxyService {
         }
     }
 
-    /// 按直连指针的供应商整份写回 live（Gemini、Grok Build；改成只写关键字段之前的过渡
-    /// 做法）。没有直连供应商、或行里本身带着占位符（旧版接管期间被导入
-    /// 的残留）时，退一步只清掉占位符和本地代理地址。
-    pub(crate) fn restore_live_from_direct_provider(
-        &self,
-        app_type: &AppType,
-    ) -> Result<(), String> {
-        match self.restore_live_from_ssot_for_app(app_type) {
-            Ok(true) => return Ok(()),
-            Ok(false) => log::warn!("{app_type:?} 没有可写回的直连供应商，只清理接管占位符"),
-            Err(error) => {
-                log::error!("{app_type:?} 写回直连供应商失败，只清理接管占位符: {error}")
-            }
-        }
-        self.cleanup_takeover_placeholders_in_live_for_app(app_type)
-    }
-
     /// 一份配置（客户端文件或供应商行）里有没有接管占位符。
     pub(crate) fn config_has_proxy_placeholder(app_type: &AppType, config: &Value) -> bool {
         Self::live_has_proxy_placeholder_for_app(app_type, config)
-    }
-
-    /// 返回值：
-    /// - Ok(true)：已成功写回
-    /// - Ok(false)：缺少直连供应商/供应商不存在/供应商本身含占位符，无法写回
-    fn restore_live_from_ssot_for_app(&self, app_type: &AppType) -> Result<bool, String> {
-        let current_id = crate::mode::current::provider_for(
-            &self.db,
-            app_type,
-            crate::mode::current::Purpose::Direct,
-        )
-        .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?;
-
-        let Some(current_id) = current_id else {
-            return Ok(false);
-        };
-
-        let providers = self
-            .db
-            .get_all_providers(app_type.as_str())
-            .map_err(|e| format!("读取 {app_type:?} 供应商列表失败: {e}"))?;
-
-        let Some(provider) = providers.get(&current_id) else {
-            return Ok(false);
-        };
-
-        // 供应商配置本身含接管占位符时不可写回（历史异常：接管期间 Live 被
-        // 误导入成了供应商）。写回只会把占位符固化进 Live；返回 Ok(false)
-        // 让调用方落到"清理占位符"兜底。
-        if Self::live_has_proxy_placeholder_for_app(app_type, &provider.settings_config) {
-            log::warn!(
-                "{app_type:?} 当前供应商配置含代理接管占位符（疑似接管期间被导入的残留），跳过 SSOT 写回，改走占位符清理"
-            );
-            return Ok(false);
-        }
-
-        write_live_with_common_config_for_codex_oauth_manager(
-            self.db.as_ref(),
-            app_type,
-            provider,
-            &self.codex_oauth_manager,
-        )
-        .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
-
-        Ok(true)
-    }
-
-    fn cleanup_takeover_placeholders_in_live_for_app(
-        &self,
-        app_type: &AppType,
-    ) -> Result<(), String> {
-        match app_type {
-            AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
-            AppType::GrokBuild => self.cleanup_grok_takeover_placeholders_in_live(),
-            _ => Ok(()),
-        }
-    }
-
-    fn is_local_proxy_url(url: &str) -> bool {
-        let url = url.trim();
-        if !url.starts_with("http://") {
-            return false;
-        }
-        let rest = &url["http://".len()..];
-        rest.starts_with("127.0.0.1")
-            || rest.starts_with("localhost")
-            || rest.starts_with("0.0.0.0")
-            || rest.starts_with("[::1]")
-            || rest.starts_with("[::]")
-            || rest.starts_with("::1")
-            || rest.starts_with("::")
-    }
-
-    fn cleanup_gemini_takeover_placeholders_in_live(&self) -> Result<(), String> {
-        let mut config = self.read_gemini_live()?;
-
-        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
-            return Ok(());
-        };
-
-        if env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
-            env.remove("GEMINI_API_KEY");
-        }
-
-        if env
-            .get("GOOGLE_GEMINI_BASE_URL")
-            .and_then(|v| v.as_str())
-            .map(Self::is_local_proxy_url)
-            .unwrap_or(false)
-        {
-            env.remove("GOOGLE_GEMINI_BASE_URL");
-        }
-
-        self.write_gemini_live(&config)?;
-        Ok(())
-    }
-
-    fn cleanup_grok_takeover_placeholders_in_live(&self) -> Result<(), String> {
-        let config = self.read_grok_live()?;
-        let Some(config_toml) = config.get("config").and_then(Value::as_str) else {
-            return Ok(());
-        };
-        if !crate::grok_config::has_proxy_placeholder(config_toml, PROXY_TOKEN_PLACEHOLDER) {
-            return Ok(());
-        }
-
-        // A valid provider snapshot should normally restore before this fallback.
-        // Clearing the token prevents a stale local route from looking usable.
-        let updated = crate::grok_config::update_api_key(config_toml, "")
-            .map_err(|e| format!("清理 Grok Build 接管占位符失败: {e}"))?;
-        write_text_file_private(&crate::grok_config::get_grok_config_path(), &updated)
-            .map_err(|e| format!("写入 Grok Build 配置失败: {e}"))
     }
 
     /// 是否有应用处于代理模式
@@ -527,67 +343,6 @@ impl ProxyService {
         }
     }
 
-    fn preserve_toml_mcp_servers_from_existing_config(
-        target_settings: &mut Value,
-        existing_config: &Value,
-    ) -> Result<(), String> {
-        let target_obj = target_settings
-            .as_object_mut()
-            .ok_or_else(|| "TOML 应用备份必须是 JSON 对象".to_string())?;
-
-        let target_config = target_obj
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let mut target_doc = if target_config.trim().is_empty() {
-            toml_edit::DocumentMut::new()
-        } else {
-            target_config
-                .parse::<toml_edit::DocumentMut>()
-                .map_err(|e| format!("解析新的 config.toml 失败: {e}"))?
-        };
-
-        let existing_config = existing_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if existing_config.trim().is_empty() {
-            target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-            return Ok(());
-        }
-
-        let existing_doc = existing_config
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("解析现有 config.toml 备份失败: {e}"))?;
-
-        if let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") {
-            match target_doc.get_mut("mcp_servers") {
-                Some(target_mcp_servers) => {
-                    if let (Some(target_table), Some(existing_table)) = (
-                        target_mcp_servers.as_table_like_mut(),
-                        existing_mcp_servers.as_table_like(),
-                    ) {
-                        for (server_id, server_item) in existing_table.iter() {
-                            if target_table.get(server_id).is_none() {
-                                target_table.insert(server_id, server_item.clone());
-                            }
-                        }
-                    } else {
-                        log::warn!(
-                            "config.toml contains a non-table mcp_servers section; skipping MCP merge"
-                        );
-                    }
-                }
-                None => {
-                    target_doc["mcp_servers"] = existing_mcp_servers.clone();
-                }
-            }
-        }
-
-        target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-        Ok(())
-    }
-
     // ==================== Live 配置读写辅助方法 ====================
 
     fn read_claude_live(&self) -> Result<Value, String> {
@@ -638,22 +393,9 @@ impl ProxyService {
         Ok(env_to_json(&env_map))
     }
 
-    fn write_gemini_live(&self, config: &Value) -> Result<(), String> {
-        use crate::gemini_config::{json_to_env, write_gemini_env_atomic};
-
-        let env_map = json_to_env(config).map_err(|e| format!("转换 Gemini 配置失败: {e}"))?;
-        write_gemini_env_atomic(&env_map).map_err(|e| format!("写入 Gemini env 失败: {e}"))?;
-        Ok(())
-    }
-
     fn read_grok_live(&self) -> Result<Value, String> {
         crate::grok_config::read_grok_live_settings()
             .map_err(|e| format!("读取 Grok Build 配置失败: {e}"))
-    }
-
-    fn write_grok_live(&self, config: &Value) -> Result<(), String> {
-        crate::grok_config::write_grok_live_settings(config)
-            .map_err(|e| format!("写入 Grok Build 配置失败: {e}"))
     }
 
     // ==================== 原有方法 ====================

@@ -76,6 +76,7 @@ export function GrokBuildProviderForm({
   onSubmittingChange,
   initialData,
   showButtons = true,
+  inactiveFields = [],
 }: GrokBuildProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -520,6 +521,12 @@ export function GrokBuildProviderForm({
               <FormLabel htmlFor="grokbuild-config-toml">
                 {t("grokBuild.rawConfig", { defaultValue: "config.toml" })}
               </FormLabel>
+              <p className="text-xs text-muted-foreground">
+                {t("grokBuild.keyFieldsHint", {
+                  defaultValue:
+                    "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
+                })}
+              </p>
               <JsonEditor
                 value={rawConfig}
                 onChange={handleRawConfigChange}
@@ -536,6 +543,40 @@ export function GrokBuildProviderForm({
                     defaultValue: `Invalid config.toml: ${rawConfigError}`,
                   })}
                 </p>
+              )}
+              {inactiveFields.length > 0 && (
+                <div className="rounded-md border border-border-default bg-muted/40 p-3 space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    {t("grokBuild.inactiveFieldsHint", {
+                      count: inactiveFields.length,
+                      defaultValue:
+                        "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+                    })}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {inactiveFields.map((field) => (
+                      <button
+                        key={field.path.join(".")}
+                        type="button"
+                        title={String(field.value)}
+                        onClick={() => {
+                          void navigator.clipboard
+                            ?.writeText(String(field.value))
+                            .then(() =>
+                              toast.success(
+                                t("grokBuild.inactiveFieldCopied", {
+                                  defaultValue: "已复制",
+                                }),
+                              ),
+                            );
+                        }}
+                        className="rounded border border-border-default px-2 py-0.5 font-mono text-xs text-blue-500 hover:bg-blue-500/10 dark:text-blue-400"
+                      >
+                        {field.path.join(".")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </>

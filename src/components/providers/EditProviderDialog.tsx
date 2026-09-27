@@ -39,6 +39,16 @@ interface EditProviderDialogProps {
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
 
+/** 切换只替换关键字段的应用：编辑器显示「切到这个供应商之后配置文件的样子」。 */
+const EDITOR_VIEW_APPS: readonly AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+];
+
+const usesEditorView = (appId: AppId) => EDITOR_VIEW_APPS.includes(appId);
+
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -129,9 +139,9 @@ export function EditProviderDialog({
         return;
       }
 
-      // Claude Code、Codex：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，
-      // 其余来自 live），代理模式下也一样，关键字段显示的是这个供应商自己的值。
-      if (appId === "claude" || appId === "codex") {
+      // 切换式应用：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，其余
+      // 来自 live），代理模式下也一样，关键字段显示的是这个供应商自己的值。
+      if (usesEditorView(appId)) {
         try {
           const view = await providersApi.getEditorView(
             appId,
@@ -335,8 +345,7 @@ export function EditProviderDialog({
     return null;
   }
 
-  const waitingForEditorView =
-    (appId === "claude" || appId === "codex") && !hasLoadedLive;
+  const waitingForEditorView = usesEditorView(appId) && !hasLoadedLive;
 
   return (
     <FullScreenPanel

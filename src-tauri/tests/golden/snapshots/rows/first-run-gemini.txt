@@ -1,13 +1,13 @@
 id: default
 name: default
-settings_config: {"env":{"GEMINI_API_KEY":"g-live","GOOGLE_GEMINI_BASE_URL":"https://relay.example"},"config":{"security":{"auth":{"selectedType":"gemini-api-key"}},"ui":{"theme":"GitHub"}}}
+settings_config: {"env":{"GEMINI_API_KEY":"g-live","GEMINI_MODEL":"gemini-2.5-pro","GOOGLE_GEMINI_BASE_URL":"https://relay.example"},"config":{"security":{"auth":{"selectedType":"gemini-api-key"}},"ui":{"theme":"GitHub"}}}
 website_url: NULL
 category: custom
 sort_index: NULL
 notes: NULL
 icon: NULL
 icon_color: NULL
-meta: {"commonConfigEnabled":true}
+meta: {}
 is_current: true
 in_failover_queue: false
 
@@ -25,6 +25,4 @@ is_current: false
 in_failover_queue: false
 
 
-common config snippet: {
-  "GEMINI_MODEL": "gemini-2.5-pro"
-}
+common config snippet: NULL

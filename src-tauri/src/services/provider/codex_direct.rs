@@ -307,7 +307,7 @@ enum AuthGoal {
 
 /// `config.toml` 的补丁：先应用编辑器里的全局改动（有的话），再换关键字段。
 struct ConfigWithEdits<'a> {
-    edits: Option<&'a super::codex_editor::CodexEdits>,
+    edits: Option<&'a super::editor_toml::TomlEdits>,
     key_fields: &'a CodexConfigPatch,
 }
 
@@ -599,7 +599,7 @@ pub(crate) fn run_with_edits(
     planned: Planned,
     prepared: &Prepared,
     pending: PendingTarget,
-    edits: Option<&super::codex_editor::CodexEdits>,
+    edits: Option<&super::editor_toml::TomlEdits>,
 ) -> Result<OperationReport, AppError> {
     let guard = lock_app(app());
     let store = DeviceStore::for_device();
