@@ -61,7 +61,7 @@
 |------|------|
 | [2.1-add.md](./2-providers/2.1-add.md) | プリセットの使用、カスタム設定、統一プロバイダー |
 | [2.2-switch.md](./2-providers/2.2-switch.md) | メイン画面での切り替え、トレイでの切り替え、反映方法 |
-| [2.3-edit.md](./2-providers/2.3-edit.md) | 設定の編集、API Key の変更、バックフィル機能 |
+| [2.3-edit.md](./2-providers/2.3-edit.md) | 設定の編集、API Key の変更、グローバル設定と編集の競合 |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | ドラッグで並べ替え、プロバイダーの複製、削除 |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | 使用量クエリ、残額表示、複数プラン表示 |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop サードパーティプロバイダー、直結モード、モデルマッピング |
