@@ -241,6 +241,7 @@
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
     "codexRestartRequired": "切換成功，請重新啟動客戶端以套用",
+    "geminiRestartRequired": "切換成功，請重新啟動 Gemini CLI 以套用",
     "grokBuildRestartRequired": "切換成功，請重新啟動 Grok Build 以套用",
     "claudeDesktopRestartRequired": "切換成功，重新啟動 Claude Desktop 後生效",
     "claudeDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Claude Desktop 後生效",

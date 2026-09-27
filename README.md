@@ -393,7 +393,7 @@ CC Switch supports ten tools: **Claude Code**, **Claude Desktop**, **Codex**, **
 It depends on the tool:
 
 - **Claude Code**: supports hot-switching of provider data — no restart needed.
-- **Codex, Gemini CLI, Grok Build**: restart your terminal or the CLI tool for changes to take effect (CC Switch reminds you after switching Codex or Grok Build). With local routing on, requests go to the new provider immediately, but all three tools may still need a restart if the switch changes the model.
+- **Codex, Gemini CLI, Grok Build**: restart your terminal or the CLI tool for changes to take effect (CC Switch reminds you after switching). With local routing on, requests go to the new provider immediately, but all three tools may still need a restart if the switch changes the model.
 - **Claude Desktop**: fully quit and reopen Claude Desktop; when using "Model Mapping", also keep CC Switch running.
 - **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code**: these are coexist-mode tools — clicking "Add" ("Enable" for Pi) writes the provider into the tool's own config alongside the others; you then pick the model you want inside the tool.
 

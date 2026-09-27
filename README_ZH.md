@@ -394,7 +394,7 @@ CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**�
 视工具而定：
 
 - **Claude Code**：支持供应商数据的热切换，无需重启。
-- **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（Codex 和 Grok Build 切换成功后会有提示）。开启本地路由后，请求会立即转发到新供应商；但如果切换改变了模型，这三个工具仍可能需要重启。
+- **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（切换成功后会有提示）。开启本地路由后，请求会立即转发到新供应商；但如果切换改变了模型，这三个工具仍可能需要重启。
 - **Claude Desktop**：需要完全退出并重新打开 Claude Desktop；使用“模型映射”时，还需要保持 CC Switch 运行。
 - **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
 

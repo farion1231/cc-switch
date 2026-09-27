@@ -342,6 +342,9 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "gemini") {
+            messageKey = "notifications.geminiRestartRequired";
+            defaultMessage = "切换成功，请重启 Gemini CLI 以生效";
           } else if (activeApp === "grokbuild") {
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
