@@ -217,6 +217,39 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/restart_app`, () => success(true)),
 
+  http.post(`${TAURI_ENDPOINT}/codex_repair_status`, () =>
+    success({
+      codexHome: "/tmp/codex",
+      curatedStore: {
+        exists: true,
+        valid: true,
+        pluginCount: 0,
+        needsRepair: false,
+      },
+      config: { parseError: null, blockedMarketplaces: [] },
+      auth: { exists: true, validJson: true, needsRepair: false },
+      needsRepair: false,
+    }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/repair_codex_plugin_store`, () =>
+    success({
+      initialized: false,
+      configCleaned: false,
+      pluginCount: 0,
+      needsRepair: false,
+      message: "ok",
+    }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/repair_codex_auth_json`, () =>
+    success({
+      repaired: false,
+      backupPath: null,
+      message: "ok",
+    }),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
 
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),

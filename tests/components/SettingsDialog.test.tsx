@@ -133,6 +133,25 @@ vi.mock("@/hooks/useImportExport", () => ({
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     restart: vi.fn().mockResolvedValue(true),
+    codexRepairStatus: vi.fn().mockResolvedValue({
+      codexHome: "/tmp/codex",
+      curatedStore: { exists: true, valid: true, pluginCount: 0, needsRepair: false },
+      config: { parseError: null, blockedMarketplaces: [] },
+      auth: { exists: true, validJson: true, needsRepair: false },
+      needsRepair: false,
+    }),
+    repairCodexPluginStore: vi.fn().mockResolvedValue({
+      initialized: false,
+      configCleaned: false,
+      pluginCount: 0,
+      needsRepair: false,
+      message: "ok",
+    }),
+    repairCodexAuthJson: vi.fn().mockResolvedValue({
+      repaired: false,
+      backupPath: null,
+      message: "ok",
+    }),
   },
 }));
 
@@ -184,6 +203,10 @@ vi.mock("@/components/settings/LanguageSettings", () => ({
       <button onClick={() => onChange("en")}>change-language</button>
     </div>
   ),
+}));
+
+vi.mock("@/components/settings/CodexRepairSettings", () => ({
+  CodexRepairSettings: () => <div>codex-repair-settings</div>,
 }));
 
 vi.mock("@/components/settings/ThemeSettings", () => ({
