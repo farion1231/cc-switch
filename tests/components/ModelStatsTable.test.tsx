@@ -25,7 +25,39 @@ vi.mock("recharts", () => {
   return {
     ResponsiveContainer: Frame,
     PieChart: Frame,
-    Pie: Frame,
+    Pie: ({
+      children,
+      data,
+      label,
+    }: {
+      children?: ReactNode;
+      data?: Array<{ model: string }>;
+      label?: (props: {
+        payload: { model: string };
+        x: number;
+        y: number;
+        cx: number;
+        cy: number;
+        outerRadius: number;
+        textAnchor: "start";
+      }) => ReactNode;
+    }) => (
+      <div>
+        <svg>
+          {data?.[0] &&
+            label?.({
+              payload: data[0],
+              x: 220,
+              y: 80,
+              cx: 300,
+              cy: 140,
+              outerRadius: 90,
+              textAnchor: "start",
+            })}
+        </svg>
+        {children}
+      </div>
+    ),
     Cell: () => null,
     Tooltip: () => null,
   };
@@ -87,6 +119,32 @@ describe("ModelStatsTable distribution", () => {
     expect(within(rows[1]).getByText("25.0%")).toBeInTheDocument();
     expect(within(rows[2]).getByText("25.0%")).toBeInTheDocument();
     expect(within(rows[2]).getByText("75.0%")).toBeInTheDocument();
+  });
+
+  it("renders full model IDs outside both charts and in the legend", () => {
+    const fullModelId = "gpt-6-astra-202609";
+    useModelStatsMock.mockReturnValue({
+      data: [{ ...stats[0], model: fullModelId }],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<ModelStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "usage.modelDistribution.tokenShare / usage.modelDistribution.costShare",
+      }),
+    );
+
+    const labels = Array.from(document.querySelectorAll("svg text"));
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      expect(label.lastChild?.textContent).toBe(`${fullModelId} 100.0%`);
+    }
+    const legend = screen.getByRole("button", {
+      name: /^gpt-6-astra-202609,/,
+    });
+    expect(within(legend).getByText(fullModelId)).toBeInTheDocument();
   });
 
   it("shares legend visibility across the charts and resets it on filter change", () => {

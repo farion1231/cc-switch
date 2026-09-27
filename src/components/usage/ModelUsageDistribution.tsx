@@ -41,11 +41,6 @@ function getShare(row: ModelDistributionRow, metric: Metric): number | null {
   return metric === "tokens" ? row.tokenShare : row.costShare;
 }
 
-function compactModelLabel(model: string): string {
-  const characters = Array.from(model);
-  return characters.length > 10 ? characters.slice(0, 9).join("") + "…" : model;
-}
-
 interface LabelGeometry {
   x: number;
   y: number;
@@ -57,11 +52,8 @@ function getApproximateLabelWidth(
   row: ModelDistributionRow,
   metric: Metric,
 ): number {
-  const label =
-    compactModelLabel(row.model) +
-    " " +
-    formatModelShare(getShare(row, metric));
-  return Array.from(label).length * 6;
+  const label = row.model + " " + formatModelShare(getShare(row, metric));
+  return Array.from(label).length * 6.5;
 }
 
 function getEstimatedLabelPositions(
@@ -96,21 +88,27 @@ function getEstimatedLabelPositions(
   return positions;
 }
 
+function labelBounds(label: LabelGeometry): { start: number; end: number } {
+  if (label.textAnchor === "end") {
+    return { start: label.x - label.width, end: label.x };
+  }
+  if (label.textAnchor === "middle") {
+    return {
+      start: label.x - label.width / 2,
+      end: label.x + label.width / 2,
+    };
+  }
+  return { start: label.x, end: label.x + label.width };
+}
+
+function labelFitsChart(label: LabelGeometry, chartWidth: number): boolean {
+  const bounds = labelBounds(label);
+  return bounds.start >= 8 && bounds.end <= chartWidth - 8;
+}
+
 function labelsOverlap(left: LabelGeometry, right: LabelGeometry): boolean {
-  const bounds = (label: LabelGeometry) => {
-    if (label.textAnchor === "end") {
-      return { start: label.x - label.width, end: label.x };
-    }
-    if (label.textAnchor === "middle") {
-      return {
-        start: label.x - label.width / 2,
-        end: label.x + label.width / 2,
-      };
-    }
-    return { start: label.x, end: label.x + label.width };
-  };
-  const leftBounds = bounds(left);
-  const rightBounds = bounds(right);
+  const leftBounds = labelBounds(left);
+  const rightBounds = labelBounds(right);
 
   return (
     Math.abs(left.y - right.y) < 14 &&
@@ -235,6 +233,9 @@ function DistributionChartCard({
       width: getApproximateLabelWidth(row, metric),
       textAnchor,
     };
+    // The Pie uses a centered cx and equal left/right chart margins.
+    const chartWidth = props.cx * 2;
+    if (!labelFitsChart(currentLabel, chartWidth)) return null;
     const estimatedPositions = getEstimatedLabelPositions(
       distribution.rows,
       metric,
@@ -247,10 +248,14 @@ function DistributionChartCard({
       .some((candidate) => {
         const position = estimatedPositions.get(candidate.model);
         if (!position) return false;
-        return labelsOverlap(currentLabel, {
+        const candidateLabel = {
           ...position,
           width: getApproximateLabelWidth(candidate, metric),
-        });
+        };
+        return (
+          labelFitsChart(candidateLabel, chartWidth) &&
+          labelsOverlap(currentLabel, candidateLabel)
+        );
       });
     if (collidesWithHigherPriorityLabel) return null;
 
@@ -264,7 +269,7 @@ function DistributionChartCard({
         dominantBaseline="central"
       >
         <title>{row.model}</title>
-        {compactModelLabel(row.model) + " " + formatModelShare(share)}
+        {row.model + " " + formatModelShare(share)}
       </text>
     );
   };
@@ -455,7 +460,7 @@ export function ModelUsageDistribution({
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: row.color }}
                 />
-                <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                <span className="min-w-0 flex-1 break-all font-mono text-xs">
                   {row.model}
                 </span>
                 <span
