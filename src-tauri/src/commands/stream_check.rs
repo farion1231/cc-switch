@@ -57,7 +57,11 @@ pub async fn stream_check_all_providers(
 
     let allowed_ids: Option<HashSet<String>> = if proxy_targets_only {
         let mut ids = HashSet::new();
-        if let Ok(Some(current_id)) = state.db.get_current_provider(app_type.as_str()) {
+        if let Ok(Some(current_id)) = crate::mode::current::provider_for(
+            &state.db,
+            &app_type,
+            crate::mode::current::Purpose::InUse,
+        ) {
             ids.insert(current_id);
         }
         if let Ok(queue) = state.db.get_failover_queue(app_type.as_str()) {

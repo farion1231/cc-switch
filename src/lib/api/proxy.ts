@@ -45,6 +45,11 @@ export const proxyApi = {
     return invoke("set_proxy_takeover_for_app", { appType, enabled });
   },
 
+  // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
+  async getDirectProvider(appType: string): Promise<string | null> {
+    return invoke("get_direct_provider", { appType });
+  },
+
   // ========== v3+ 全局/应用级配置 API ==========
 
   // 获取全局代理配置

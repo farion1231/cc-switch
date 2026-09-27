@@ -1259,16 +1259,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
-        let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
-        {
-            Some(id) => id,
-            None => return Ok(()),
-        };
-
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config_for_state(state, app_type, provider)?;
-        }
+        sync_current_provider_for_app_respecting_mode(state, app_type)?;
     }
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
@@ -1281,168 +1272,52 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LiveSyncOutcome {
+    /// 按直连投影写了 live。
     WroteLive,
-    BackupOnly,
+    /// 应用在代理模式：live 是代理契约，没有按直连写。
+    ProxyMode,
 }
 
-/// Return whether proxy takeover currently owns this app's live file.
-///
-/// A backup row by itself is not evidence: stale rows survive crashes and failed
-/// restores. Likewise, an enabled flag left behind by an interrupted teardown
-/// must not suppress a real live write unless there is corroborating evidence.
-fn proxy_owns_live_config(
-    state: &AppState,
-    app_type: &AppType,
-    has_live_backup: bool,
-    live_taken_over: bool,
-) -> bool {
-    if live_taken_over {
-        return true;
-    }
-
-    let takeover_enabled =
-        match futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str())) {
-            Ok(config) => config.enabled,
-            Err(err) => {
-                log::warn!(
-                    "读取 {} 代理接管标志失败，按未接管处理并继续写入 live 配置；\
-                     若该应用此刻确实处于接管状态，本次写入会覆盖接管的 live: {err}",
-                    app_type.as_str()
-                );
-                false
-            }
-        };
-
-    // The enabled flag is only trusted when the proxy is actually running and
-    // the app still has a backup. This avoids treating an interrupted teardown
-    // (enabled=true, ordinary live file, no backup) as proxy ownership. The
-    // per-app lock covers the short activation window before the flag/placeholder
-    // is committed and avoids using a global proxy-running bit for another app.
-    if takeover_enabled
-        && has_live_backup
-        && futures::executor::block_on(state.proxy_service.is_running())
-    {
-        return true;
-    }
-
-    has_live_backup
-        && futures::executor::block_on(
-            state
-                .proxy_service
-                .is_switch_in_progress_for_app(app_type.as_str()),
-        )
-}
-
-/// 这个应用的 live 现在是否归代理接管：接管中不按直连写关键字段。
-pub(crate) fn proxy_owns_live(state: &AppState, app_type: &AppType) -> bool {
-    let has_live_backup =
-        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
-            Ok(backup) => backup.is_some(),
-            Err(err) => {
-                log::warn!(
-                    "读取 {} Live 备份失败，按无备份处理: {err}",
-                    app_type.as_str()
-                );
-                false
-            }
-        };
-    let live_taken_over = state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(app_type);
-    proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over)
-}
-
-/// Sync a provider to live while respecting proxy takeover ownership.
+/// 把 `provider` 同步到 live，按应用的模式处理：
+/// - 直连模式：按直连投影写 live；
+/// - 代理模式：live 是代理契约。`provider` 是代理路由的那家时按新契约重写（契约没变
+///   就不动）；其余供应商（包括直连指针那家）只在退出代理时写回，这里不碰 live。
 ///
 /// `prev` 是 live 现在对应的那一版供应商行（编辑前的行），Claude 按它删上一版带进来的
-/// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。
-pub(crate) fn sync_live_for_provider_respecting_takeover(
+/// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。调用方不能持有这个应用的
+/// 代理切换锁（代理模式下这里要拿它）。
+pub(crate) fn sync_live_for_provider_respecting_mode(
     state: &AppState,
     app_type: &AppType,
     provider: &Provider,
     prev: Option<&Provider>,
 ) -> Result<LiveSyncOutcome, AppError> {
-    let has_live_backup =
-        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
-            Ok(backup) => backup.is_some(),
-            Err(err) => {
-                log::warn!(
-                    "读取 {} Live 备份失败，按无备份处理并继续写入 live 配置: {err}",
-                    app_type.as_str()
-                );
-                false
-            }
-        };
-    let live_taken_over = state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(app_type);
-
-    if !proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over) {
-        // A stale backup must follow the provider too, otherwise a later restore
-        // can resurrect the old URL and undo the live write we are making now.
-        if has_live_backup {
-            if let Err(err) = futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            ) {
-                log::warn!(
-                    "刷新 {} 残留 Live 备份失败（不影响本次 live 写入）: {err}",
-                    app_type.as_str()
-                );
-            }
+    let mode = crate::mode::current::mode_state(app_type);
+    if mode.is_proxy() {
+        if mode.proxy_route.as_deref() == Some(provider.id.as_str()) {
+            futures::executor::block_on(crate::mode::controller::resync_route(state, app_type))
+                .map_err(AppError::Message)?;
         }
-        if matches!(app_type, AppType::Claude) {
-            super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
-        } else {
-            write_live_with_common_config_for_state(state, app_type, provider)?;
-        }
-        return Ok(LiveSyncOutcome::WroteLive);
+        return Ok(LiveSyncOutcome::ProxyMode);
     }
-
-    // Takeover owns live: update the restore source, and refresh proxy-safe
-    // projections while the proxy is running.
-    futures::executor::block_on(
-        state
-            .proxy_service
-            .update_live_backup_from_provider(app_type.as_str(), provider),
-    )
-    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-
-    if !futures::executor::block_on(state.proxy_service.is_running()) {
-        return Ok(LiveSyncOutcome::BackupOnly);
+    if matches!(app_type, AppType::Claude) {
+        super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+    } else {
+        write_live_with_common_config_for_state(state, app_type, provider)?;
     }
-
-    match app_type {
-        AppType::Claude => futures::executor::block_on(
-            state
-                .proxy_service
-                .sync_claude_live_from_provider_while_proxy_active(provider),
-        )
-        .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?,
-        AppType::Codex if live_taken_over => futures::executor::block_on(
-            state
-                .proxy_service
-                .sync_codex_live_from_provider_while_proxy_active(provider),
-        )
-        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?,
-        AppType::GrokBuild if live_taken_over => futures::executor::block_on(
-            state
-                .proxy_service
-                .sync_grok_live_from_provider_while_proxy_active(provider),
-        )
-        .map_err(|e| AppError::Message(format!("同步 Grok Build Live 配置失败: {e}")))?,
-        _ => {}
-    }
-
-    Ok(LiveSyncOutcome::BackupOnly)
+    Ok(LiveSyncOutcome::WroteLive)
 }
 
-fn sync_current_provider_for_app_respecting_takeover(
+/// 把正在用的那家（代理模式下是代理路由）同步到 live。
+fn sync_current_provider_for_app_respecting_mode(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)? {
+    let current_id = match crate::mode::current::provider_for(
+        &state.db,
+        app_type,
+        crate::mode::current::Purpose::InUse,
+    )? {
         Some(id) => id,
         None => return Ok(()),
     };
@@ -1452,7 +1327,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     };
 
-    sync_live_for_provider_respecting_takeover(state, app_type, provider, None).map(|_| ())
+    sync_live_for_provider_respecting_mode(state, app_type, provider, None).map(|_| ())
 }
 
 /// Sync current provider to live configuration
@@ -1477,7 +1352,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
             // Switch mode: sync only current provider. During proxy takeover,
             // update the restore backup instead of rewriting the taken-over
             // live file.
-            sync_current_provider_for_app_respecting_takeover(state, &app_type)
+            sync_current_provider_for_app_respecting_mode(state, &app_type)
         };
 
         if let Err(error) = result {
@@ -1648,15 +1523,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         return Ok(false);
     }
 
-    // 拒绝把"被代理接管的 Live"导入为供应商：接管期间 Live 里只有
+    // 拒绝把"代理模式下的 Live"导入为供应商：代理模式下 Live 里只有
     // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
-    // 它会成为 current provider（SSOT），后续"无备份恢复"路径会把占位符
-    // 当真实配置写回 Live，永久卡在已失效的本地代理上。
-    // 典型触发场景：代理接管开启时切换 app_config_dir 并重启，新数据库首启导入。
-    if state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(&app_type)
-    {
+    // 它会成为直连指针（SSOT），退出代理时会把占位符当真实配置写回 Live。
+    // 典型触发场景：代理模式下切换 app_config_dir 并重启，新数据库首启导入。
+    if state.proxy_service.live_has_proxy_placeholder(&app_type) {
         return Err(AppError::localized(
             "provider.import.live_taken_over",
             "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",

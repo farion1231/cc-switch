@@ -110,6 +110,8 @@
     "enable": "启用",
     "inUse": "使用中",
     "needsRouting": "需要路由",
+    "directProvider": "直连",
+    "directProviderHint": "退出路由后恢复为这个供应商",
     "noRoutingSupport": "不支持路由",
     "blockedByProxyHint": "代理接管模式下不可切换到官方供应商",
     "editProvider": "编辑供应商",
@@ -2894,7 +2896,7 @@
       "disabled": "{{app}} 路由已关闭",
       "failed": "切换路由状态失败: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换该应用供应商为热切换",
+        "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切换供应商只改路由，直连供应商不变",
         "broken": "{{appLabel}} 路由中，但路由服务未运行",
         "inactive": "路由 {{appLabel}} 的请求，让该应用请求走本地路由"
       }
@@ -2969,7 +2971,7 @@
       "stopped": "路由服务已停止",
       "stopFailed": "停止路由服务失败：{{detail}}"
     },
-    "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
+    "stoppedWithRestore": "路由服务已关闭，所有应用已退回直连",
     "stopWithRestoreFailed": "停止失败: {{detail}}"
   },
   "streamCheck": {

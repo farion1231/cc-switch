@@ -628,11 +628,9 @@ wire_api = "responses"
         "normal switch should inject the DeepSeek key into config.toml"
     );
 
-    state
-        .proxy_service
-        .set_takeover_for_app("codex", true)
+    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex)
         .await
-        .expect("enable Codex takeover");
+        .expect("enter Codex routing mode");
     let proxy_status = state
         .proxy_service
         .get_status()
@@ -662,29 +660,9 @@ wire_api = "responses"
         "takeover live config should not keep the upstream DeepSeek endpoint"
     );
 
-    let backup = state
-        .db
-        .get_live_backup("codex")
+    cc_switch_lib::mode::controller::exit(&state, &AppType::Codex)
         .await
-        .expect("read Codex backup")
-        .expect("backup exists after takeover");
-    let backup_value: serde_json::Value =
-        serde_json::from_str(&backup.original_config).expect("parse backup");
-    let backup_config = backup_value
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    assert!(
-        backup_config.contains("https://api.deepseek.com/v1")
-            && backup_config.contains("deepseek-key"),
-        "takeover backup should remain the restorable DeepSeek config"
-    );
-
-    state
-        .proxy_service
-        .set_takeover_for_app("codex", false)
-        .await
-        .expect("disable Codex takeover");
+        .expect("leave Codex routing mode");
 
     let restored_auth: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read restored auth");
@@ -2045,7 +2023,7 @@ requires_openai_auth = true
 }
 
 #[test]
-fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
+fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let _home = ensure_test_home();
@@ -2087,64 +2065,46 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
         )
         .expect("set common config snippet");
 
-    let taken_over_live = json!({
-        "env": {
-            "ANTHROPIC_BASE_URL": "http://127.0.0.1:5000",
-            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
-        }
-    });
     let settings_path = get_claude_settings_path();
     std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
     std::fs::write(
         &settings_path,
-        serde_json::to_string_pretty(&taken_over_live).expect("serialize taken over live"),
+        r#"{"env":{"ANTHROPIC_BASE_URL":"https://claude.example","ANTHROPIC_AUTH_TOKEN":"real-token"}}"#,
     )
-    .expect("write taken over live");
+    .expect("seed live settings");
 
-    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}"))
-        .expect("seed live backup");
-
-    let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
-        .expect("get proxy config");
-    proxy_config.enabled = true;
-    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
-        .expect("enable takeover");
+    let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
+    rt.block_on(async {
+        let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        state
+            .db
+            .update_proxy_config(proxy_config)
+            .await
+            .expect("use ephemeral proxy port");
+        cc_switch_lib::mode::controller::enter(&state, &AppType::Claude)
+            .await
+            .expect("enter routing mode");
+    });
+    let contract_bytes = std::fs::read(&settings_path).expect("read proxy contract");
 
     ProviderService::sync_current_provider_for_app(&state, AppType::Claude)
         .expect("sync current provider should succeed");
 
-    let live_after: serde_json::Value =
-        read_json_file(&settings_path).expect("read live settings after sync");
     assert_eq!(
-        live_after, taken_over_live,
-        "sync should not overwrite live config while takeover is active"
+        std::fs::read(&settings_path).expect("read live settings after sync"),
+        contract_bytes,
+        "routing mode: syncing the routed provider must not rewrite live with its direct projection"
     );
-
-    let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
-        .expect("get live backup")
-        .expect("backup exists");
-    let backup_value: serde_json::Value =
-        serde_json::from_str(&backup.original_config).expect("parse backup value");
-
-    assert_eq!(
-        backup_value
-            .get("includeCoAuthoredBy")
-            .and_then(|v| v.as_bool()),
-        Some(false),
-        "restore backup should receive the updated effective config"
-    );
-    assert_eq!(
-        backup_value
-            .get("env")
-            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
-            .and_then(|v| v.as_str()),
-        Some("real-token"),
-        "restore backup should preserve the provider token rather than proxy placeholder"
-    );
+    rt.block_on(cc_switch_lib::mode::controller::exit(
+        &state,
+        &AppType::Claude,
+    ))
+    .expect("leave routing mode");
 }
 
 #[test]
-fn switch_codex_provider_with_takeover_live_but_stopped_proxy_keeps_proxy_live_config() {
+fn switch_codex_in_direct_mode_replaces_leftover_proxy_placeholders() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     enable_codex_official_auth_preservation();
@@ -2222,77 +2182,37 @@ wire_api = "responses"
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
-    futures::executor::block_on(
-        state.db.save_live_backup(
-            "codex",
-            &serde_json::to_string(&json!({
-                "auth": oauth_auth,
-                "config": old_provider_config
-            }))
-            .expect("serialize backup"),
-        ),
-    )
-    .expect("seed Codex live backup");
-
-    assert!(
-        !futures::executor::block_on(state.proxy_service.is_running()),
-        "fixture keeps the proxy server stopped"
-    );
+    assert!(!cc_switch_lib::mode::current::is_proxy(&AppType::Codex));
 
     ProviderService::switch(&state, AppType::Codex, "new-provider")
-        .expect("switch should update takeover backup instead of writing normal live config");
+        .expect("switch in direct mode writes the new provider");
 
     let auth_after: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
         auth_after, oauth_auth,
-        "provider switch during takeover ownership must not rewrite Codex OAuth auth"
+        "preserving the official login keeps OAuth auth.json"
     );
 
     let live_config =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
     assert!(
-        live_config.contains("http://127.0.0.1:15721/v1"),
-        "live config should remain pointed at the local proxy"
+        live_config.contains("https://new.deepseek.example/v1")
+            && !live_config.contains("PROXY_MANAGED"),
+        "a direct switch replaces leftover proxy placeholders: {live_config}"
     );
-    assert!(
-        live_config.contains("PROXY_MANAGED"),
-        "live config should keep the proxy bearer placeholder"
-    );
-    assert!(
-        live_config.contains(r#"model_provider = "deepseek-new""#)
-            && live_config.contains(r#"name = "DeepSeek New""#),
-        "live config should update the Codex-visible provider label during takeover"
-    );
-    assert!(
-        !live_config.contains("https://new.deepseek.example/v1"),
-        "normal provider base_url must not overwrite taken-over live config"
-    );
-
-    let backup = futures::executor::block_on(state.db.get_live_backup("codex"))
-        .expect("get Codex backup")
-        .expect("backup exists");
-    let backup_value: serde_json::Value =
-        serde_json::from_str(&backup.original_config).expect("parse backup");
-    assert_eq!(
-        backup_value.get("auth"),
-        Some(&auth_after),
-        "restore backup should preserve the official OAuth auth"
-    );
-    let backup_config = backup_value
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    assert!(
-        backup_config.contains("new-key") && backup_config.contains("deepseek-new"),
-        "restore backup should be rebuilt from the newly selected provider"
-    );
-
-    let current = state
+    let old_row = state
         .db
-        .get_current_provider(AppType::Codex.as_str())
-        .expect("get current provider");
-    assert_eq!(current.as_deref(), Some("new-provider"));
+        .get_provider_by_id("old-provider", AppType::Codex.as_str())
+        .expect("read old provider")
+        .expect("old provider exists");
+    assert!(
+        !old_row
+            .settings_config
+            .to_string()
+            .contains("PROXY_MANAGED"),
+        "leftover placeholders must not be backfilled into the outgoing provider"
+    );
 }
 
 #[test]
@@ -3438,8 +3358,8 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
         .set_current_provider(AppType::Claude.as_str(), "default")
         .expect("set current provider");
 
-    futures::executor::block_on(state.proxy_service.recover_from_crash())
-        .expect("recover from crash");
+    // 启动时处理旧版遗留的接管态：没开代理（enabled=0），写回直连。
+    futures::executor::block_on(cc_switch_lib::mode::controller::startup(&state));
 
     let live_after: serde_json::Value =
         read_json_file(&settings_path).expect("read live settings after recovery");

@@ -107,8 +107,14 @@ impl RequestContext {
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
-        let current_provider_id =
-            crate::settings::get_current_provider(&app_type).unwrap_or_default();
+        let current_provider_id = crate::mode::current::provider_for(
+            &state.db,
+            &app_type,
+            crate::mode::current::Purpose::InUse,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
         // 从请求体提取模型名称
         let request_model = body

@@ -251,25 +251,49 @@ pub fn recover_all(
         .collect()
 }
 
-/// 落定直连指针：设备本地的 `current_provider_*` 和 DB 的 `is_current`，和现有切换
-/// 用的是同一套机制。
-pub fn commit_pointer(
+/// 落定目标状态。必须可以重复执行（崩溃恢复可能再跑一次）。
+///
+/// - 直连指针：设备本地的 `current_provider_*` 和 DB 的 `is_current`，和现有切换用的是
+///   同一套机制；
+/// - 模式状态：写进 `live-state.json`，另把 `proxy_config.enabled` 镜像成
+///   「mode == proxy」。旧版只认这一列来决定启动时是否接管，降级后才能照常工作。
+pub fn commit_target(
     db: &crate::database::Database,
+    store: &DeviceStore,
     app: &str,
     target: &PendingTarget,
 ) -> Result<(), AppError> {
-    let Some(id) = target.pointer.as_deref() else {
+    if let Some(id) = target.pointer.as_deref() {
+        let app_type: crate::app_config::AppType = app.parse()?;
+        crate::settings::set_current_provider(&app_type, Some(id))?;
+        db.set_current_provider(app, id)?;
+    }
+    if let Some(mode) = &target.state {
+        state::set_mode_state(store, app, mode.clone())?;
+        mirror_proxy_flag(db, app, mode.is_proxy())?;
+    }
+    Ok(())
+}
+
+/// `proxy_config.enabled := (mode == proxy)`。
+pub fn mirror_proxy_flag(
+    db: &crate::database::Database,
+    app: &str,
+    proxy: bool,
+) -> Result<(), AppError> {
+    let (enabled, auto_failover) = db.get_proxy_flags_sync(app);
+    if enabled == proxy {
         return Ok(());
-    };
-    let app_type: crate::app_config::AppType = app.parse()?;
-    crate::settings::set_current_provider(&app_type, Some(id))?;
-    db.set_current_provider(app, id)
+    }
+    db.set_proxy_flags_sync(app, proxy, auto_failover)
 }
 
 /// 启动时调用：补完上次崩溃留下的客户端文件写入。要在任何写客户端文件的启动步骤之前。
 pub fn recover_on_startup(db: &crate::database::Database) {
     let store = DeviceStore::for_device();
-    for (app, outcome) in recover_all(&store, &|app, target| commit_pointer(db, app, target)) {
+    for (app, outcome) in recover_all(&store, &|app, target| {
+        commit_target(db, &store, app, target)
+    }) {
         match outcome {
             Ok(RecoveryOutcome::Abandoned { paths }) => {
                 log::warn!("[{app}] 上次未完成的写入无法补完，这些文件已被外部修改: {paths:?}")

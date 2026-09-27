@@ -244,22 +244,6 @@ impl CodexLiveFileState {
     }
 }
 
-/// Rollback point for the cc-switch-owned model catalog. Catalog projection
-/// writes this file before the caller commits `config.toml`, so guarded restore
-/// paths use this snapshot when a concurrently changing `auth.json` cancels the
-/// commit.
-pub(crate) struct CodexModelCatalogFileSnapshot(CodexLiveFileState);
-
-impl CodexModelCatalogFileSnapshot {
-    pub(crate) fn capture() -> Result<Self, AppError> {
-        CodexLiveFileState::capture(get_codex_model_catalog_path()).map(Self)
-    }
-
-    pub(crate) fn restore(&self) -> Result<(), AppError> {
-        self.0.restore()
-    }
-}
-
 /// Exact rollback state for a managed Codex live write. The generated catalog
 /// and ownership marker are part of the same logical commit as auth/config.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3726,33 +3710,6 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
         doc.as_table_mut().remove("model_providers");
     }
     Ok(doc.to_string())
-}
-
-/// 统一会话开关开启时，把官方供应商 `{ auth, config }` 设置对象中的
-/// config 文本注入共享 custom 路由；开关关闭或非官方供应商时不做改动。
-///
-/// 普通 live 写入（`write_codex_live_for_provider`）与代理接管备份
-/// （`update_live_backup_from_provider`）两条落盘路径共用：接管期间
-/// live 归代理所有，注入必须进备份，接管释放恢复的 live 才带统一路由。
-pub fn apply_codex_unified_session_bucket_to_settings(
-    category: Option<&str>,
-    settings: &mut Value,
-) -> Result<(), AppError> {
-    if category != Some("official") || !crate::settings::unify_codex_session_history() {
-        return Ok(());
-    }
-    let config_text = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .to_string();
-    let injected = inject_codex_unified_session_bucket(&config_text)?;
-    if injected != config_text {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("config".to_string(), Value::String(injected));
-        }
-    }
-    Ok(())
 }
 
 /// Backfill helper: strip the unified-session injection from a live

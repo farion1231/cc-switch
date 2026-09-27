@@ -9,8 +9,9 @@
 //! - ② 按字段锁（普通断言）：Claude 关键字段的切换结果、Codex 的安全红线。
 //! - ③ 被替代的行为（整份覆盖、回填、片段合并、备份恢复）只在重构方案里记录，不在这里锁。
 //!
-//! `downgrade_contract` 锁的是「上一个正式版」这一侧：重构版的降级方案依赖旧版识别
-//! `PROXY_MANAGED` 字面值、在没有备份行时按当前供应商重建 live。
+//! 降级的旧版一侧（旧版按 `PROXY_MANAGED` 字面值识别接管态、没有备份行时按当前供应商
+//! 重建 live）随接管备份机制一起退役，发版时改用上一个正式版的二进制做降级回放。新版
+//! 这一侧由 `mode::controller` 的测试锁住：代理契约沿用这个字面值，启动时删掉旧备份行。
 //!
 //! 更新快照：`CC_SWITCH_UPDATE_GOLDEN=1 cargo test --test golden`，再逐个审 diff。
 //! 快照变了就意味着行为变了，要能说清楚为什么。
@@ -21,7 +22,6 @@ mod support;
 
 mod claude_key_fields;
 mod codex_red_lines;
-mod downgrade_contract;
 mod file_modes;
 mod import_rows;
 mod mcp_bytes;

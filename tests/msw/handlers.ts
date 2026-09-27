@@ -358,6 +358,8 @@ export const handlers = [
     }),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_direct_provider`, () => success(null)),
+
   http.post(`${TAURI_ENDPOINT}/get_proxy_takeover_status`, () =>
     success({
       claude: false,

@@ -229,10 +229,6 @@ pub fn extract_credentials(config_toml: &str) -> Option<(String, String)> {
     Some((config.base_url, api_key))
 }
 
-pub fn extract_inline_api_key(config_toml: &str) -> Option<String> {
-    extract_model_config(config_toml)?.api_key
-}
-
 pub fn extract_base_url(config_toml: &str) -> Option<String> {
     Some(extract_model_config(config_toml)?.base_url)
 }
@@ -299,10 +295,6 @@ pub fn has_proxy_placeholder(config_toml: &str, token_placeholder: &str) -> bool
     extract_model_config(config_toml)
         .and_then(|config| config.api_key)
         .is_some_and(|api_key| api_key == token_placeholder)
-}
-
-pub fn base_url_matches(config_toml: &str, predicate: impl FnOnce(&str) -> bool) -> bool {
-    extract_model_config(config_toml).is_some_and(|config| predicate(&config.base_url))
 }
 
 /// Re-select the provider's own model table in a live config being backfilled.

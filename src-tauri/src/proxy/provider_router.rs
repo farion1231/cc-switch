@@ -46,14 +46,16 @@ impl ProviderRouter {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
-        let current_id = AppType::from_str(app_type)
+        // 代理模式下路由到代理路由那家，和直连指针无关。
+        let current_id = AppType::from_str(app_type).ok().and_then(|app_enum| {
+            crate::mode::current::provider_for(
+                &self.db,
+                &app_enum,
+                crate::mode::current::Purpose::InUse,
+            )
             .ok()
-            .and_then(|app_enum| {
-                crate::settings::get_effective_current_provider(&self.db, &app_enum)
-                    .ok()
-                    .flatten()
-            })
-            .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
+            .flatten()
+        });
         let current_provider = current_id
             .as_deref()
             .map(|id| self.db.get_provider_by_id(id, app_type))

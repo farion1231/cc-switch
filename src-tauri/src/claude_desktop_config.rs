@@ -176,9 +176,10 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         .ok()
         .flatten()
         .is_some_and(|token| !token.trim().is_empty());
-    let current_provider = crate::settings::get_effective_current_provider(
+    let current_provider = crate::mode::current::provider_for(
         db,
         &crate::app_config::AppType::ClaudeDesktop,
+        crate::mode::current::Purpose::Direct,
     )
     .ok()
     .flatten()

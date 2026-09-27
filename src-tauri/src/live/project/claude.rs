@@ -168,6 +168,172 @@ pub fn store_into_row(row: &Value, projection: &ClaudeProjection) -> Value {
     row
 }
 
+/// 代理模式下写进客户端的凭据占位符。旧版只认这个字面值来识别接管态，不能改。
+pub const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// 代理契约里的稳定模型别名：客户端只看到这几个名字，真实模型由代理映射。
+const PROXY_HAIKU_ALIAS: &str = "claude-haiku-4-5";
+const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
+const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
+const PROXY_FABLE_ALIAS: &str = "claude-fable-5";
+// 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
+const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+
+/// 代理契约里怎么写凭据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyAuth {
+    /// 路由供应商的行里有 `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` 就沿用同名键写占位
+    /// 符，都没有就写 `ANTHROPIC_AUTH_TOKEN`。
+    FollowRow,
+    /// 托管账号（Copilot、Codex、xAI）：只写一个键，两个都在会触发 Claude Code 的
+    /// 「Both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set」警告（#4919）。
+    /// - Codex 系要 `ANTHROPIC_AUTH_TOKEN`，缺了会弹登录提示（#3784）；
+    /// - Copilot 默认也用 `ANTHROPIC_AUTH_TOKEN`：`ANTHROPIC_API_KEY` 占位会触发自定义 key
+    ///   确认框，默认选项是拒绝，之后就是未登录；只有表单显式选了 `ANTHROPIC_API_KEY`
+    ///   才用它，避开和 /login 的 key 冲突（#1049）。
+    Managed { auth_token: bool },
+}
+
+/// 代理契约：代理模式下 `settings.json` 的关键字段和独有字段。
+///
+/// - 关键字段：本地代理地址、占位凭据、按角色写的稳定模型别名（显示名跟着路由供应商）；
+///   其余关键字段（协议选择器、云凭据、`/model` 的选择等）一律清空，否则 Claude Code 会
+///   绕过代理；
+/// - 独有字段：路由供应商的。它们在客户端发请求时生效，代理不能替它补上。
+pub fn proxy_projection(
+    route: &ClaudeProjection,
+    proxy_url: &str,
+    auth: ProxyAuth,
+) -> ClaudeProjection {
+    let mut env = Map::new();
+    env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        Value::String(proxy_url.to_string()),
+    );
+    for (key, value) in proxy_model_fields(&route.env) {
+        env.insert(key.to_string(), Value::String(value));
+    }
+    let placeholder = Value::String(PROXY_TOKEN_PLACEHOLDER.to_string());
+    match auth {
+        ProxyAuth::FollowRow => {
+            let mut wrote_any = false;
+            for key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+                if route.env.contains_key(key) {
+                    env.insert(key.to_string(), placeholder.clone());
+                    wrote_any = true;
+                }
+            }
+            if !wrote_any {
+                env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), placeholder);
+            }
+        }
+        ProxyAuth::Managed { auth_token } => {
+            let key = if auth_token {
+                "ANTHROPIC_AUTH_TOKEN"
+            } else {
+                "ANTHROPIC_API_KEY"
+            };
+            env.insert(key.to_string(), placeholder);
+        }
+    }
+    ClaudeProjection {
+        top: Map::new(),
+        env,
+        exclusive: route.exclusive.clone(),
+    }
+}
+
+/// 按角色写的模型别名和显示名。
+///
+/// 回落顺序：haiku 用自己的、再用 `ANTHROPIC_SMALL_FAST_MODEL`、再用 `ANTHROPIC_MODEL`；
+/// sonnet、opus 用自己的、再用 `ANTHROPIC_MODEL`、再用 `ANTHROPIC_SMALL_FAST_MODEL`；
+/// fable 没配就不写（映射侧会 fable→opus 降级，和官方一致）。上游模型带 1M 标记时，
+/// 别名也带上，Claude Code 才按 1M 计算窗口。
+fn proxy_model_fields(env: &Map<String, Value>) -> Vec<(&'static str, String)> {
+    let default_model = env_string(env, "ANTHROPIC_MODEL");
+    let small_fast_model = env_string(env, "ANTHROPIC_SMALL_FAST_MODEL");
+    let haiku = env_string(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+        .or(small_fast_model)
+        .or(default_model);
+    let sonnet = env_string(env, "ANTHROPIC_DEFAULT_SONNET_MODEL")
+        .or(default_model)
+        .or(small_fast_model);
+    let opus = env_string(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")
+        .or(default_model)
+        .or(small_fast_model);
+    let fable = env_string(env, "ANTHROPIC_DEFAULT_FABLE_MODEL");
+
+    let mut fields = Vec::with_capacity(9);
+    let roles = [
+        (
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            PROXY_HAIKU_ALIAS,
+            false,
+            haiku,
+        ),
+        (
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            PROXY_SONNET_ALIAS,
+            true,
+            sonnet,
+        ),
+        (
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            PROXY_OPUS_ALIAS,
+            true,
+            opus,
+        ),
+        (
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            PROXY_FABLE_ALIAS,
+            true,
+            fable,
+        ),
+    ];
+    for (model_key, name_key, alias, supports_one_m, upstream) in roles {
+        let Some(upstream) = upstream else {
+            continue;
+        };
+        let mut client_model = alias.to_string();
+        if supports_one_m && has_one_m_marker(upstream) {
+            client_model.push_str(ONE_M_MARKER_FOR_CLIENT);
+        }
+        fields.push((model_key, client_model));
+        let display_name = env_string(env, name_key)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
+                    .trim()
+                    .to_string()
+            });
+        if !display_name.is_empty() {
+            fields.push((name_key, display_name));
+        }
+    }
+    if let Some(subagent) = env_string(env, "CLAUDE_CODE_SUBAGENT_MODEL") {
+        fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent.to_string()));
+    }
+    fields
+}
+
+fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    env.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn has_one_m_marker(model: &str) -> bool {
+    model
+        .trim_end()
+        .to_ascii_lowercase()
+        .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+}
+
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Bool(flag) => *flag,

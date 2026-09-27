@@ -28,8 +28,8 @@
 //! | 17 | 切到无材料官方卡时删掉第三方残留的 auth.json，真实登录不删；重选当前卡不删 | 已有 `..._official_clears_stale_third_party_auth`、`provider_service_reswitch_current_official_keeps_live_auth` |
 //! | 18 | 元数据（last_refresh、account_id）不算登录（#6277） | crate 内：`services/proxy.rs` 的 #6277 回归测试 |
 //! | 19 | 托管账号切走：先采纳 CLI 轮换过的 refresh token，按 marker 精确删；代际无法排序时拒绝 | crate 内：`services/provider/mod.rs` 的托管账号测试 |
-//! | 20 | 进入代理不写 auth.json；第三方路由契约用字面值 `PROXY_MANAGED` | 已有 `codex_official_to_deepseek_then_takeover_...`；`downgrade_contract` |
-//! | 21 | 代理下官方路由不写占位凭据，客户端带自己的真实登录 | crate 内：`codex_takeover_hot_switches_between_builtin_official_and_third_party` |
+//! | 20 | 进入代理不写 auth.json；第三方路由契约用字面值 `PROXY_MANAGED` | 已有 `codex_official_to_deepseek_then_takeover_...` |
+//! | 21 | 代理下官方路由不写占位凭据，客户端带自己的真实登录 | crate 内：`mode::controller` 的 `codex_routes_between_official_and_third_party_contracts` |
 //! | 22 | 退出代理不覆盖用户此刻的登录状态（期间登出就保持登出，重新登录就保留新登录） | 本文件 |
 //! | 23 | `model_catalog_json` 只认领 `cc-switch-model-catalog.json`；用户自己的指针不认领、不删除 | 本文件 |
 //! | 24 | `web_search = "disabled"` 只删 CC Switch 写的哨兵值，用户的其他值保留 | 本文件 |
@@ -791,20 +791,31 @@ async fn check_proxy_exit_keeps_login(current: &str, after_login: Option<&str>) 
         switch(&state, "relay").expect("switch to relay");
     }
     use_ephemeral_proxy_port(&state).await;
-    state
-        .proxy_service
-        .set_takeover_for_app("codex", true)
+    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex)
         .await
         .expect("enter proxy");
+    if current == "codex-official" {
+        // 进入代理不回填官方卡（直连切走时的回填是另一回事，随 Codex 只写关键字段那一步去掉）。
+        let official = state
+            .db
+            .get_provider_by_id(current, AppType::Codex.as_str())
+            .expect("read official row")
+            .expect("official row");
+        assert!(
+            !official
+                .settings_config
+                .to_string()
+                .contains("refresh-token"),
+            "entering the proxy must not store the ChatGPT login in the official row"
+        );
+    }
 
     match after_login {
         None => std::fs::remove_file(get_codex_auth_path()).expect("codex logout"),
         Some(login) => std::fs::write(get_codex_auth_path(), login).expect("codex login"),
     }
 
-    state
-        .proxy_service
-        .set_takeover_for_app("codex", false)
+    cc_switch_lib::mode::controller::exit(&state, &AppType::Codex)
         .await
         .expect("exit proxy");
 
@@ -828,10 +839,9 @@ async fn exiting_proxy_keeps_the_login_the_user_has_now() {
     check_proxy_exit_keeps_login("relay", Some(NEW_LOGIN)).await;
 }
 
-/// CX-22 的缺口：当前是第三方卡、保留登录开关打开时，代理期间登出，退出代理会把备份里的
-/// 旧登录写回 auth.json（现状）。重构后代理改成显式的直连 / 代理两种模式，退出代理不写 auth.json，届时去掉 ignore。
+/// CX-22：当前是第三方卡、保留登录开关打开时，代理期间登出，退出代理后仍是登出状态（退出
+/// 代理按直连供应商写回，不回放进入时的快照）。
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "known gap: proxy exit resurrects a login the user logged out of; fixed once proxy mode no longer rewrites auth.json on exit"]
 #[allow(
     clippy::await_holding_lock,
     reason = "the test HOME and settings are process-global; the guard must span the async takeover calls"

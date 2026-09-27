@@ -1,9 +1,10 @@
 //! `live-state.json`：这台设备上每个应用的客户端文件状态。
 //!
-//! 目前只有 `pending`：一次写客户端文件的操作在发布前写下的意图，按文件记录写前、
-//! 写后的 hash 和已备好的临时文件，崩溃后据此前滚或丢弃（`mode::operation`）。
-//! 双模式的 `mode`、`proxy_route`、`contract` 以后加在同一个对象里；不认识的字段
-//! 读写时原样保留。
+//! - `mode`、`attached`、`proxy_route`、`contract`：直连 / 代理模式（`mode::controller`）；
+//! - `pending`：一次写客户端文件的操作在发布前写下的意图，按文件记录写前、写后的
+//!   hash 和已备好的临时文件，崩溃后据此前滚或丢弃（`mode::operation`）。
+//!
+//! 不认识的字段读写时原样保留。
 //!
 //! 文件是设备本地的（0600，不同步），路径见 [`DeviceStore`]。
 
@@ -46,8 +47,61 @@ impl Default for LiveState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    Direct,
+    Proxy,
+}
+
+/// 进入代理时写进客户端文件的契约。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Contract {
+    pub version: u32,
+    /// 契约内容的摘要：切换路由时摘要相同，客户端文件就不用动。
+    pub key: String,
+    /// 契约写进客户端的独有字段。退出代理时按它删除（值相同才删）：路由供应商的行
+    /// 之后可能被编辑过，不能到时再按行重新计算。
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub exclusive: Map<String, Value>,
+}
+
+/// 一个应用的模式状态。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModeState {
+    /// 没有值：这台设备还没运行过有双模式的版本，启动时按旧版遗留的接管状态定下来。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<Mode>,
+    /// 客户端文件当前是否指向代理。退出 CC Switch 时分离、下次启动再接上。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub attached: bool,
+    /// 代理模式下路由到的供应商。和直连指针互相独立，退出代理时保留。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<Contract>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl ModeState {
+    pub fn is_proxy(&self) -> bool {
+        self.mode == Some(Mode::Proxy)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppLiveState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<Mode>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub attached: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<Contract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
     #[serde(flatten)]
@@ -56,7 +110,23 @@ pub struct AppLiveState {
 
 impl AppLiveState {
     fn is_empty(&self) -> bool {
-        self.pending.is_none() && self.extra.is_empty()
+        self.pending.is_none() && self.mode_state() == ModeState::default() && self.extra.is_empty()
+    }
+
+    pub fn mode_state(&self) -> ModeState {
+        ModeState {
+            mode: self.mode,
+            attached: self.attached,
+            proxy_route: self.proxy_route.clone(),
+            contract: self.contract.clone(),
+        }
+    }
+
+    pub fn set_mode_state(&mut self, state: ModeState) {
+        self.mode = state.mode;
+        self.attached = state.attached;
+        self.proxy_route = state.proxy_route;
+        self.contract = state.contract;
     }
 }
 
@@ -66,6 +136,16 @@ pub mod op {
     pub const SWITCH: &str = "switch";
     /// 把当前供应商重新写进客户端文件（编辑、同步等）。
     pub const APPLY: &str = "apply";
+    /// 进入代理模式：客户端文件写成代理契约。
+    pub const ENTER: &str = "enter";
+    /// 退出代理模式：客户端文件写回直连供应商。
+    pub const EXIT: &str = "exit";
+    /// 退出 CC Switch 时把客户端指回直连，模式不变。
+    pub const DETACH: &str = "detach";
+    /// 启动时把客户端重新指向代理。
+    pub const ATTACH: &str = "attach";
+    /// 代理模式下换路由（契约变了时同一操作里先改写客户端）。
+    pub const ROUTE: &str = "route";
 }
 
 /// 一次操作的写前意图。
@@ -94,13 +174,16 @@ pub struct PendingTarget {
     /// 直连指针：切换成功后当前供应商是谁。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pointer: Option<String>,
+    /// 模式状态：有值时整体替换这个应用的 mode、attached、proxy_route、contract。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ModeState>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl PendingTarget {
     pub fn is_empty(&self) -> bool {
-        self.pointer.is_none() && self.extra.is_empty()
+        self.pointer.is_none() && self.state.is_none() && self.extra.is_empty()
     }
 }
 
@@ -171,6 +254,26 @@ pub fn set_pending(
     })
 }
 
+/// 这个应用的模式状态。
+pub fn mode_state(store: &DeviceStore, app: &str) -> Result<ModeState, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(load(store)?
+        .apps
+        .get(app)
+        .map(AppLiveState::mode_state)
+        .unwrap_or_default())
+}
+
+pub fn set_mode_state(store: &DeviceStore, app: &str, mode: ModeState) -> Result<(), AppError> {
+    update(store, |state| {
+        state
+            .apps
+            .entry(app.to_string())
+            .or_default()
+            .set_mode_state(mode);
+    })
+}
+
 /// 有未完成操作的应用。
 pub fn apps_with_pending(store: &DeviceStore) -> Result<Vec<String>, AppError> {
     let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -198,7 +301,7 @@ mod tests {
             }],
             target: PendingTarget {
                 pointer: Some("p1".to_string()),
-                extra: Map::new(),
+                ..PendingTarget::default()
             },
         }
     }

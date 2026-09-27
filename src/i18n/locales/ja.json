@@ -110,6 +110,8 @@
     "enable": "有効化",
     "inUse": "使用中",
     "needsRouting": "ルーティングが必要",
+    "directProvider": "直接接続",
+    "directProviderHint": "ルーティングを終了するとこのプロバイダに戻ります",
     "noRoutingSupport": "ルーティング非対応",
     "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
@@ -2894,7 +2896,7 @@
       "disabled": "{{app}} ルーティング無効",
       "failed": "ルーティングの切り替えに失敗しました: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
+        "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nプロバイダを切り替えるとルートだけが変わり、直接接続のプロバイダはそのままです",
         "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
         "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
@@ -2969,7 +2971,7 @@
       "stopped": "ルーティングサービスが停止しました",
       "stopFailed": "ルーティングサービスの停止に失敗しました: {{detail}}"
     },
-    "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
+    "stoppedWithRestore": "ルーティングサービスを停止し、すべてのアプリを直接接続に戻しました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
   },
   "streamCheck": {

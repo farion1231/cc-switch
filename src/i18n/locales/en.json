@@ -110,6 +110,8 @@
     "enable": "Enable",
     "inUse": "In Use",
     "needsRouting": "Needs Routing",
+    "directProvider": "Direct",
+    "directProviderHint": "Leaving routing mode switches back to this provider",
     "noRoutingSupport": "No Routing Support",
     "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
     "editProvider": "Edit Provider",
@@ -2894,7 +2896,7 @@
       "disabled": "{{app}} routing disabled",
       "failed": "Failed to toggle routing: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
+        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitching providers changes the route only; the direct provider stays",
         "broken": "{{appLabel}} is routing, but routing service is not running",
         "inactive": "Route {{appLabel}}'s requests through local routing"
       }
@@ -2969,7 +2971,7 @@
       "stopped": "Routing service stopped",
       "stopFailed": "Failed to stop routing service: {{detail}}"
     },
-    "stoppedWithRestore": "Routing service stopped, all routing configs restored",
+    "stoppedWithRestore": "Routing service stopped; all apps are back on direct connections",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
   },
   "streamCheck": {

@@ -1229,26 +1229,6 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<AppState>();
 
-                // 检查是否有 Live 备份（表示上次异常退出时可能处于接管状态）
-                let has_backups = match state.db.has_any_live_backup().await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        log::error!("检查 Live 备份失败: {e}");
-                        false
-                    }
-                };
-                // 检查 Live 配置是否仍处于被接管状态（包含占位符）
-                let live_taken_over = state.proxy_service.detect_takeover_in_live_configs();
-
-                if has_backups || live_taken_over {
-                    log::warn!("检测到上次异常退出（存在接管残留），正在恢复 Live 配置...");
-                    if let Err(e) = state.proxy_service.recover_from_crash().await {
-                        log::error!("恢复 Live 配置失败: {e}");
-                    } else {
-                        log::info!("Live 配置已恢复");
-                    }
-                }
-
                 // 必须排在 auto-extract 之前：先把历史泄漏进 Gemini 共享片段的凭据
                 // 清干净，否则紧接着的提取会基于被污染的 live 再写一遍。
                 if let Err(e) =
@@ -1262,8 +1242,9 @@ pub fn run() {
 
                 initialize_common_config_snippets(&state);
 
-                // 检查 settings 表中的代理状态，自动恢复代理服务
-                restore_proxy_state_on_startup(&state).await;
+                // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
+                // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
+                crate::mode::controller::startup(&state).await;
 
                 // Periodic backup check (on startup)
                 if let Err(e) = state.db.periodic_backup_if_needed() {
@@ -1584,6 +1565,7 @@ pub fn run() {
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
+            commands::get_direct_provider,
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
@@ -1903,43 +1885,12 @@ pub fn run() {
 
 /// 应用退出前的清理工作
 ///
-/// 在应用退出前检查代理服务器状态，如果正在运行则停止代理并恢复 Live 配置。
-/// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
-/// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
+/// 把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
+/// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
-        let proxy_service = &state.proxy_service;
-
-        // 退出时也需要兜底：代理可能已崩溃/未运行，但 Live 接管残留仍在（占位符/备份）。
-        let has_backups = match state.db.has_any_live_backup().await {
-            Ok(v) => v,
-            Err(e) => {
-                log::error!("退出时检查 Live 备份失败: {e}");
-                false
-            }
-        };
-        let live_taken_over = proxy_service.detect_takeover_in_live_configs();
-        let needs_restore = has_backups || live_taken_over;
-
-        if needs_restore {
-            log::info!("检测到接管残留，开始恢复 Live 配置（保留代理状态）...");
-            // 使用 keep_state 版本，保留 settings 表中的代理状态
-            if let Err(e) = proxy_service.stop_with_restore_keep_state().await {
-                log::error!("退出时恢复 Live 配置失败: {e}");
-            } else {
-                log::info!("已恢复 Live 配置（代理状态已保留，下次启动将自动恢复）");
-            }
-            return;
-        }
-
-        // 非接管模式：代理在运行则仅停止代理
-        if proxy_service.is_running().await {
-            log::info!("检测到代理服务器正在运行，开始停止...");
-            if let Err(e) = proxy_service.stop().await {
-                log::error!("退出时停止代理失败: {e}");
-            }
-            log::info!("代理服务器清理完成");
-        }
+        crate::mode::controller::detach_all(state.inner()).await;
+        log::info!("退出清理完成：客户端已指回直连，代理已停止");
     }
 }
 
@@ -1963,76 +1914,20 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
     }
 }
 
-// ============================================================
-// 启动时恢复代理状态
-// ============================================================
-
-/// 启动时根据 proxy_config 表中的代理状态自动恢复代理服务
-///
-/// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
-/// 则自动启动代理服务并接管对应应用的 Live 配置。
-const PROXY_STARTUP_APP_TYPES: [&str; 4] = ["claude", "codex", "gemini", "grokbuild"];
-
-async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static str> {
-    let mut apps = Vec::new();
-    for app_type in PROXY_STARTUP_APP_TYPES {
-        if db
-            .get_proxy_config_for_app(app_type)
-            .await
-            .is_ok_and(|config| config.enabled)
-        {
-            apps.push(app_type);
-        }
-    }
-    apps
-}
-
-async fn restore_proxy_state_on_startup(state: &store::AppState) {
-    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
-    let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
-
-    if apps_to_restore.is_empty() {
-        log::debug!("启动时无需恢复代理状态");
-        return;
-    }
-
-    log::info!("检测到上次代理状态需要恢复，应用列表: {apps_to_restore:?}");
-
-    // 逐个恢复接管状态
-    for app_type in apps_to_restore {
-        match state
-            .proxy_service
-            .set_takeover_for_app(app_type, true)
-            .await
-        {
-            Ok(()) => {
-                log::info!("✓ 已恢复 {app_type} 的代理接管状态");
-            }
-            Err(e) => {
-                log::error!("✗ 恢复 {app_type} 的代理接管状态失败: {e}");
-                // 失败时清除该应用的状态，避免下次启动再次尝试
-                if let Err(clear_err) = state
-                    .proxy_service
-                    .set_takeover_for_app(app_type, false)
-                    .await
-                {
-                    log::error!("清除 {app_type} 代理状态失败: {clear_err}");
-                }
-            }
-        }
-    }
-}
-
 fn initialize_common_config_snippets(state: &store::AppState) {
     // Auto-extract common config snippets from clean live files when snippet is missing.
-    // This must run before proxy takeover is restored on startup, otherwise we'd read
-    // proxy-placeholder configs instead of the user's actual live settings.
+    // This must run before proxy mode is re-attached on startup, otherwise we'd read
+    // proxy-placeholder configs instead of the user's actual live settings. A client
+    // still attached from an update restart (no detach on the way out) is skipped too.
     for app_type in crate::app_config::AppType::all() {
         if !state
             .db
             .should_auto_extract_config_snippet(app_type.as_str())
             .unwrap_or(false)
         {
+            continue;
+        }
+        if state.proxy_service.live_has_proxy_placeholder(&app_type) {
             continue;
         }
 
@@ -2308,11 +2203,9 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_exit_request, enabled_proxy_apps_on_startup, redact_url_for_log,
-        redact_url_for_log_with_secrets, redact_url_origin_for_log, runtime_log_level_allows,
-        ExitRequestAction,
+        classify_exit_request, redact_url_for_log, redact_url_for_log_with_secrets,
+        redact_url_origin_for_log, runtime_log_level_allows, ExitRequestAction,
     };
-    use crate::database::Database;
 
     #[test]
     fn log_url_redaction_strips_credentials_and_query_keeps_path() {
@@ -2418,22 +2311,5 @@ mod tests {
             classify_exit_request(Some(1)),
             ExitRequestAction::CleanupAndExit
         );
-    }
-
-    #[tokio::test]
-    async fn startup_restore_includes_enabled_grokbuild_route() {
-        let db = Database::memory().expect("initialize database");
-        let mut config = db
-            .get_proxy_config_for_app("grokbuild")
-            .await
-            .expect("read Grok Build proxy config");
-        config.enabled = true;
-        db.update_proxy_config_for_app(config)
-            .await
-            .expect("enable Grok Build proxy config");
-
-        let apps = enabled_proxy_apps_on_startup(&db).await;
-
-        assert_eq!(apps, vec!["grokbuild"]);
     }
 }

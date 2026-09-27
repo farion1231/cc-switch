@@ -80,7 +80,7 @@ pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, App
     let file = claude_direct::settings_file();
     let pre = read_current(&file.path)?;
     let (live, _) = patch_json::parse(&file.path, pre.as_deref())?;
-    let prev = current_row(state)?.map(|row| ClaudeProjection::of(&row.settings_config));
+    let prev = live_exclusive_owner(state)?;
     let settings = project_onto(
         &file.path,
         &live,
@@ -93,13 +93,29 @@ pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, App
     })
 }
 
-/// 直连指针指向的供应商：live 里的独有字段是它带进来的。
-fn current_row(state: &AppState) -> Result<Option<Provider>, AppError> {
-    let Some(id) = crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+/// live 里的独有字段是谁带进来的：接上代理时是代理契约，否则是直连指针指向的供应商。
+fn live_exclusive_owner(state: &AppState) -> Result<Option<ClaudeProjection>, AppError> {
+    let mode = crate::mode::current::mode_state(&AppType::Claude);
+    if mode.attached {
+        if let Some(contract) = mode.contract {
+            return Ok(Some(ClaudeProjection {
+                exclusive: contract.exclusive,
+                ..ClaudeProjection::default()
+            }));
+        }
+    }
+    let Some(id) = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Claude,
+        crate::mode::current::Purpose::Direct,
+    )?
     else {
         return Ok(None);
     };
-    state.db.get_provider_by_id(&id, AppType::Claude.as_str())
+    Ok(state
+        .db
+        .get_provider_by_id(&id, AppType::Claude.as_str())?
+        .map(|row| ClaudeProjection::of(&row.settings_config)))
 }
 
 fn inactive_fields(row: &Value, display: &Value) -> Vec<InactiveField> {
@@ -314,8 +330,9 @@ pub(crate) fn write_live(
 
     let app = AppType::Claude.as_str();
     let guard = lock_app(app);
+    let store = DeviceStore::for_device();
     operation::run(
-        &DeviceStore::for_device(),
+        &store,
         &guard,
         if pointer.is_some() {
             op::SWITCH
@@ -330,7 +347,7 @@ pub(crate) fn write_live(
             pointer,
             ..PendingTarget::default()
         },
-        &|target| operation::commit_pointer(db, app, target),
+        &|target| operation::commit_target(db, &store, app, target),
     )?;
     Ok(())
 }
