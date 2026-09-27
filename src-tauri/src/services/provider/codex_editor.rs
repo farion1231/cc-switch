@@ -1,0 +1,654 @@
+//! Codex 供应商编辑器：底部的 config.toml 就是「切到这个供应商之后 config.toml 的样子」。
+//!
+//! - 显示：在内存里对当前 live 做一次切换投影（和切换用同一个补丁），关键字段、独有字段
+//!   换成这个供应商的，其余部分是 live 原样。Key 显示在 API Key 输入框里（行的 `auth`），
+//!   不在 TOML 里重复。
+//! - 保存：关键字段、独有字段写回这个供应商的行（行里其余内容原样保留）；其余部分的改动
+//!   是 Codex 的全局设置，经引擎写进 live，只改用户动过的键。编辑的是直连模式下的当前
+//!   供应商时，关键字段和独有字段在同一次写入里也换进 live。
+//! - 三方比较：每个改动都带着打开编辑器时的原值，live 里这个键已经被别的程序改成了第三个
+//!   值就算冲突，由用户选保留哪一边。
+//!
+//! 改动的粒度：顶层的值；顶层表里的每个键（`[mcp_servers.fs]` 这类子表按整张算）；
+//! `[model_providers]` 下 CC Switch 路由表以外的每张表。嵌在用户表里的模型名是关键字段，
+//! 不算全局改动。
+
+use std::path::Path;
+use std::sync::Arc;
+
+use serde_json::{Map, Value};
+use toml_edit::{DocumentMut, Item, Table, TableLike};
+
+use crate::app_config::AppType;
+use crate::codex_config::get_codex_config_path;
+use crate::database::Database;
+use crate::error::AppError;
+use crate::live::engine::{lock_app, read_current, DeviceStore, LiveFile};
+use crate::live::floor;
+use crate::live::patch::toml::parse;
+use crate::live::patch::{LivePatch, LiveWriteError};
+use crate::live::project::codex::{
+    CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
+};
+use crate::mode::operation::{self, FileChange};
+use crate::mode::state::{op, PendingTarget};
+use crate::provider::Provider;
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::store::AppState;
+
+use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
+use super::codex_direct::{self, Owner, Prepared, Target};
+
+fn app() -> &'static str {
+    AppType::Codex.as_str()
+}
+
+/// 一个可以单独改动的位置和它的内容。
+struct Entry {
+    path: Vec<String>,
+    item: Item,
+}
+
+fn render(item: &Item) -> String {
+    let mut doc = DocumentMut::new();
+    let mut item = item.clone();
+    match &mut item {
+        Item::Value(value) => value.decor_mut().clear(),
+        Item::Table(table) => {
+            table.decor_mut().clear();
+            table.set_implicit(false);
+        }
+        _ => {}
+    }
+    doc.insert("v", item);
+    doc.to_string().trim().to_string()
+}
+
+fn is_nested_floor(parent: &str, key: &str) -> bool {
+    floor::CODEX_FLOOR_NESTED
+        .iter()
+        .any(|segments| segments.len() == 2 && segments[0] == parent && segments[1] == key)
+}
+
+/// 全局设置的每个位置：关键字段、独有字段、CC Switch 的路由表不算。
+fn entries(doc: &DocumentMut, skip_route: Option<&str>) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    for (key, item) in doc.as_table().iter() {
+        if floor::CODEX_FLOOR_TOP.contains(&key) || floor::CODEX_EXCLUSIVE_TOP.contains(&key) {
+            continue;
+        }
+        if key == "model_providers" {
+            if let Some(providers) = item.as_table_like() {
+                for (id, table) in providers.iter() {
+                    if id == ROUTE_ID || id == OFFICIAL_PROXY_ROUTE_ID || Some(id) == skip_route {
+                        continue;
+                    }
+                    entries.push(Entry {
+                        path: vec![key.to_string(), id.to_string()],
+                        item: table.clone(),
+                    });
+                }
+            }
+            continue;
+        }
+        match item.as_table_like() {
+            Some(table) => {
+                for (child, child_item) in table.iter() {
+                    if is_nested_floor(key, child) {
+                        continue;
+                    }
+                    entries.push(Entry {
+                        path: vec![key.to_string(), child.to_string()],
+                        item: child_item.clone(),
+                    });
+                }
+            }
+            None => entries.push(Entry {
+                path: vec![key.to_string()],
+                item: item.clone(),
+            }),
+        }
+    }
+    entries
+}
+
+fn item_at<'a>(doc: &'a DocumentMut, path: &[String]) -> Option<&'a Item> {
+    let (last, parents) = path.split_last()?;
+    let mut current: &dyn TableLike = doc.as_table();
+    for segment in parents {
+        current = current.get(segment)?.as_table_like()?;
+    }
+    current.get(last)
+}
+
+fn parse_text(text: &str, what: &str) -> Result<DocumentMut, AppError> {
+    text.parse::<DocumentMut>().map_err(|err| {
+        AppError::localized(
+            "provider.codex.editor.invalid_toml",
+            format!("Codex 配置不是合法的 TOML（{what}）：{err}"),
+            format!("The Codex configuration is not valid TOML ({what}): {err}"),
+        )
+    })
+}
+
+fn config_text(settings: &Value) -> &str {
+    settings.get("config").and_then(Value::as_str).unwrap_or("")
+}
+
+/// 编辑器显示的内容。`settings_config` 是这个供应商的行（新增时是空对象）。
+pub fn view(
+    state: &AppState,
+    settings_config: &Value,
+    category: Option<&str>,
+) -> Result<EditorView, AppError> {
+    let path = get_codex_config_path();
+    let pre = read_current(&path)?;
+    let mut doc = parse(&path, pre.as_deref())?;
+
+    let mut provider =
+        Provider::with_id(String::new(), String::new(), settings_config.clone(), None);
+    provider.category = category.map(str::to_string);
+    let mode = crate::mode::current::mode_state(&AppType::Codex);
+    let direct = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Codex,
+        crate::mode::current::Purpose::Direct,
+    )?
+    .and_then(|id| state.db.get_provider_by_id(&id, app()).ok().flatten());
+    let owner = match (&mode.contract, mode.attached) {
+        (Some(contract), true) => Owner::Contract {
+            contract,
+            route: None,
+        },
+        _ => direct.as_ref().map_or(Owner::None, Owner::Provider),
+    };
+    let planned = codex_direct::plan(
+        &state.db,
+        &owner,
+        &Target::Direct(Some(&provider)),
+        &Prepared::default(),
+    )?;
+    planned.config().apply_to(&path, &mut doc)?;
+
+    // Key 在 API Key 输入框里（行的 auth），TOML 里不再重复显示。
+    let row_key = settings_config
+        .get("auth")
+        .and_then(crate::codex_config::extract_codex_auth_api_key);
+    if let Some(route) = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_like_mut)
+        .and_then(|providers| providers.get_mut(ROUTE_ID))
+        .and_then(Item::as_table_like_mut)
+    {
+        let injected = route
+            .get("experimental_bearer_token")
+            .and_then(Item::as_str)
+            .map(str::to_string);
+        if injected.is_some() && injected == row_key {
+            route.remove("experimental_bearer_token");
+        }
+    }
+
+    let display = doc.to_string();
+    let mut settings = settings_config
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
+    settings.insert("config".to_string(), Value::String(display.clone()));
+    settings
+        .entry("auth".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    Ok(EditorView {
+        inactive: inactive_fields(config_text(settings_config), &doc),
+        settings: Value::Object(settings),
+    })
+}
+
+/// 行里保存着、但不随切换生效的全局设置（值和显示的不同才列出）。值是可以照抄的 TOML。
+fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> {
+    let Ok(row) = row_text.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    let row_route = row
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::to_string);
+    entries(&row, row_route.as_deref())
+        .into_iter()
+        .filter(|entry| item_at(display, &entry.path).map(render) != Some(render(&entry.item)))
+        .map(|entry| {
+            let mut fragment = DocumentMut::new();
+            insert_at(&mut fragment, &entry.path, entry.item.clone());
+            InactiveField {
+                path: entry.path,
+                value: Value::String(fragment.to_string()),
+            }
+        })
+        .collect()
+}
+
+/// 编辑器里对全局设置的一处改动。
+#[derive(Debug, Clone)]
+struct Change {
+    path: Vec<String>,
+    /// 打开编辑器时的内容；`None` 表示当时没有。
+    before: Option<String>,
+    /// 保存的内容；`None` 表示删掉。
+    after: Option<Item>,
+}
+
+/// 一次编辑器保存要写进 live 的全局改动。
+#[derive(Debug, Clone)]
+pub(crate) struct CodexEdits {
+    changes: Vec<Change>,
+    on_conflict: ConflictPolicy,
+}
+
+impl CodexEdits {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+
+    /// 按三方比较把改动应用到 live 文档上。
+    pub(crate) fn apply_to(
+        &self,
+        path: &Path,
+        doc: &mut DocumentMut,
+    ) -> Result<(), LiveWriteError> {
+        let mut conflicts = Vec::new();
+        let mut accepted = Vec::new();
+        for change in &self.changes {
+            let current = item_at(doc, &change.path).map(render);
+            let after = change.after.as_ref().map(render);
+            if current != change.before && current != after {
+                conflicts.push(change.path.join("."));
+                if self.on_conflict == ConflictPolicy::KeepTheirs {
+                    continue;
+                }
+            }
+            accepted.push(change);
+        }
+        if !conflicts.is_empty() && self.on_conflict == ConflictPolicy::Refuse {
+            return Err(LiveWriteError::EditConflict {
+                path: path.to_path_buf(),
+                keys: conflicts,
+            });
+        }
+        for change in accepted {
+            match &change.after {
+                Some(item) => insert_at(doc, &change.path, item.clone()),
+                None => remove_at(doc, &change.path),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn insert_at(doc: &mut DocumentMut, path: &[String], item: Item) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    let mut current: &mut dyn TableLike = doc.as_table_mut();
+    // 内联表（`model_providers = { … }`）里只能放值：表要转成内联表。
+    let mut inline = false;
+    for segment in parents {
+        if current.get(segment).and_then(Item::as_table_like).is_none() {
+            current.insert(segment, Item::Table(Table::new()));
+        }
+        let child = current.get_mut(segment).expect("just ensured a table");
+        inline = matches!(child, Item::Value(_));
+        current = child.as_table_like_mut().expect("just ensured a table");
+    }
+    let item = match item {
+        Item::Table(table) if inline => {
+            Item::Value(toml_edit::Value::InlineTable(table.into_inline_table()))
+        }
+        other => other,
+    };
+    match current.get_mut(last) {
+        Some(slot) => {
+            let decor = match &*slot {
+                Item::Value(value) => Some(value.decor().clone()),
+                _ => None,
+            };
+            *slot = item;
+            if let (Some(decor), Item::Value(value)) = (decor, slot) {
+                *value.decor_mut() = decor;
+            }
+        }
+        None => {
+            current.insert(last, item);
+        }
+    }
+}
+
+fn remove_at(doc: &mut DocumentMut, path: &[String]) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    let mut current: &mut dyn TableLike = doc.as_table_mut();
+    for segment in parents {
+        let Some(next) = current.get_mut(segment).and_then(Item::as_table_like_mut) else {
+            return;
+        };
+        current = next;
+    }
+    current.remove(last);
+}
+
+fn global_changes(base: &DocumentMut, edited: &DocumentMut) -> Vec<Change> {
+    let base_entries = entries(base, None);
+    let edited_entries = entries(edited, None);
+    let render_of = |entries: &[Entry], path: &[String]| {
+        entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .map(|entry| (render(&entry.item), entry.item.clone()))
+    };
+    let mut paths: Vec<Vec<String>> = base_entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    for entry in &edited_entries {
+        if !paths.contains(&entry.path) {
+            paths.push(entry.path.clone());
+        }
+    }
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let before = render_of(&base_entries, &path);
+            let after = render_of(&edited_entries, &path);
+            if before.as_ref().map(|(text, _)| text) == after.as_ref().map(|(text, _)| text) {
+                return None;
+            }
+            Some(Change {
+                path,
+                before: before.map(|(text, _)| text),
+                after: after.map(|(_, item)| item),
+            })
+        })
+        .collect()
+}
+
+/// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
+pub(crate) struct CodexEditorPlan {
+    pub row_settings: Value,
+    pub edits: CodexEdits,
+}
+
+/// 把编辑器里的完整配置拆开：关键字段、独有字段换进行（行里其余内容原样保留），其余部分
+/// 和 `base` 比，得出用户改过的全局设置。行有问题（会把官方登录发给第三方等）在这里报错。
+pub(crate) fn plan_save(
+    stored_row: Option<&Value>,
+    edited: &Value,
+    base: &Value,
+    official: bool,
+    proxy_injected_oauth: bool,
+    on_conflict: ConflictPolicy,
+) -> Result<CodexEditorPlan, AppError> {
+    let edited_doc = parse_text(config_text(edited), "edited")?;
+    let base_doc = parse_text(config_text(base), "base")?;
+    let projection = CodexProjection::of(&RowInput {
+        settings: edited,
+        official,
+        proxy_injected_oauth,
+    })?;
+    Ok(CodexEditorPlan {
+        row_settings: store_into_row(stored_row, edited, &projection)?,
+        edits: CodexEdits {
+            changes: global_changes(&base_doc, &edited_doc),
+            on_conflict,
+        },
+    })
+}
+
+/// 把编辑器里的关键字段、独有字段存回行：行的 `config` 里这两类键换成编辑器的，其余内容
+/// 原样保留（降级后旧版会整份使用这些行）；`auth`、模型目录等表单字段取编辑器的。
+fn store_into_row(
+    stored_row: Option<&Value>,
+    edited: &Value,
+    projection: &CodexProjection,
+) -> Result<Value, AppError> {
+    let mut row = edited.clone();
+    let stored_text = stored_row.map(config_text).unwrap_or("");
+    let mut doc = parse_text(stored_text, "stored")?;
+
+    let stored_route = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::to_string);
+    let root = doc.as_table_mut();
+    for key in floor::CODEX_FLOOR_TOP
+        .iter()
+        .chain(floor::CODEX_EXCLUSIVE_TOP.iter())
+    {
+        root.remove(key);
+    }
+    for segments in floor::CODEX_FLOOR_NESTED {
+        if let Some(table) = root.get_mut(segments[0]).and_then(Item::as_table_like_mut) {
+            table.remove(segments[1]);
+        }
+    }
+    if let Some(providers) = root
+        .get_mut("model_providers")
+        .and_then(Item::as_table_like_mut)
+    {
+        for id in [Some(ROUTE_ID), stored_route.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            providers.remove(id);
+        }
+        if providers.is_empty() {
+            root.remove("model_providers");
+        }
+    }
+
+    for (key, value) in projection.top.iter().chain(&projection.exclusive) {
+        root.insert(key, Item::Value(value.clone()));
+    }
+    for (path, value) in &projection.nested {
+        let segments: Vec<String> = path.clone();
+        insert_at(&mut doc, &segments, Item::Value(value.clone()));
+    }
+    let key = edited
+        .get("auth")
+        .and_then(crate::codex_config::extract_codex_auth_api_key);
+    match &projection.route {
+        Route::Custom { table, .. } => {
+            let mut table = table.clone();
+            let token = table
+                .get("experimental_bearer_token")
+                .and_then(Item::as_str)
+                .map(str::to_string);
+            if token.is_some() && token == key {
+                table.remove("experimental_bearer_token");
+            }
+            doc["model_provider"] = toml_edit::value(ROUTE_ID);
+            insert_at(
+                &mut doc,
+                &["model_providers".to_string(), ROUTE_ID.to_string()],
+                Item::Table(table),
+            );
+        }
+        Route::BuiltIn { id, table } => {
+            doc["model_provider"] = toml_edit::value(id.as_str());
+            if let Some(table) = table {
+                insert_at(
+                    &mut doc,
+                    &["model_providers".to_string(), id.clone()],
+                    Item::Table(table.clone()),
+                );
+            }
+        }
+        Route::Official | Route::Default => {}
+    }
+    row["config"] = Value::String(doc.to_string());
+    Ok(row)
+}
+
+/// 编辑器改动之外，同一次写入里要不要把关键字段也换进 live。
+pub(crate) enum KeyFields<'a> {
+    /// 只写全局改动。
+    None,
+    /// 直连模式下编辑当前供应商：`prev` 是编辑前的行，`set_pointer` 为新增第一个供应商。
+    Direct {
+        prev: Option<&'a Provider>,
+        target: &'a Provider,
+        set_pointer: bool,
+    },
+}
+
+/// 把编辑器保存的改动写进 live。没有要写的就什么都不做。
+pub(crate) fn write_live(
+    db: &Database,
+    manager: &Arc<CodexOAuthManager>,
+    edits: &CodexEdits,
+    key_fields: KeyFields<'_>,
+) -> Result<(), AppError> {
+    match key_fields {
+        KeyFields::Direct {
+            prev,
+            target,
+            set_pointer,
+        } => {
+            let owner = prev.map_or(Owner::None, Owner::Provider);
+            let spec = Target::Direct(Some(target));
+            let prepared = codex_direct::prepare(manager, &owner, &spec)?;
+            let planned = codex_direct::plan(db, &owner, &spec, &prepared)?;
+            codex_direct::run_with_edits(
+                db,
+                if set_pointer { op::SWITCH } else { op::APPLY },
+                planned,
+                &prepared,
+                PendingTarget {
+                    pointer: set_pointer.then(|| target.id.clone()),
+                    ..PendingTarget::default()
+                },
+                Some(edits),
+            )?;
+            Ok(())
+        }
+        KeyFields::None => {
+            if edits.is_empty() {
+                return Ok(());
+            }
+            let guard = lock_app(app());
+            let store = DeviceStore::for_device();
+            let patch = EditsOnly(edits);
+            operation::run(
+                &store,
+                &guard,
+                op::APPLY,
+                &[FileChange {
+                    file: LiveFile::private(get_codex_config_path()),
+                    patch: &patch,
+                }],
+                PendingTarget::default(),
+                &|target| operation::commit_target(db, &store, app(), target),
+            )?;
+            Ok(())
+        }
+    }
+}
+
+struct EditsOnly<'a>(&'a CodexEdits);
+
+impl LivePatch for EditsOnly<'_> {
+    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
+        let mut doc = parse(path, pre)?;
+        self.0.apply_to(path, &mut doc)?;
+        Ok(doc.to_string().into_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn doc(text: &str) -> DocumentMut {
+        text.parse().unwrap()
+    }
+
+    const LIVE: &str = "approval_policy = \"on-request\"\nmodel = \"gpt-a\"\n\n[agents]\ndefault_subagent_model = \"mini\"\nmax_threads = 4\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
+
+    #[test]
+    fn global_changes_skip_key_fields_and_nested_model_names() {
+        let base = doc(LIVE);
+        let edited = doc(&LIVE
+            .replace("gpt-a", "gpt-b")
+            .replace("\"mini\"", "\"maxi\"")
+            .replace("max_threads = 4", "max_threads = 8")
+            .replace("command = \"fs\"", "command = \"fs2\""));
+        let changes = global_changes(&base, &edited);
+        let paths: Vec<String> = changes.iter().map(|change| change.path.join(".")).collect();
+        assert_eq!(paths, vec!["agents.max_threads", "mcp_servers.fs"]);
+    }
+
+    #[test]
+    fn edits_detect_three_way_conflicts() {
+        let base = doc(LIVE);
+        let edited = doc(&LIVE.replace("on-request", "never"));
+        let edits = CodexEdits {
+            changes: global_changes(&base, &edited),
+            on_conflict: ConflictPolicy::Refuse,
+        };
+        // 编辑期间别的程序把它改成了第三个值。
+        let mut live = doc(&LIVE.replace("on-request", "untrusted"));
+        let err = edits
+            .apply_to(Path::new("config.toml"), &mut live)
+            .expect_err("conflict");
+        assert!(matches!(err, LiveWriteError::EditConflict { .. }));
+
+        // 没被别人改过：照写，其余字节不动。
+        let mut live = doc(LIVE);
+        edits.apply_to(Path::new("config.toml"), &mut live).unwrap();
+        assert_eq!(live.to_string(), LIVE.replace("on-request", "never"));
+    }
+
+    #[test]
+    fn saving_puts_key_fields_into_the_row_and_keeps_the_rest_of_it() {
+        let stored = json!({
+            "auth": { "OPENAI_API_KEY": "sk-old" },
+            "config": "model_provider = \"relay\"\nmodel = \"gpt-a\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://old.example/v1\"\n\n[mcp_servers.legacy]\ncommand = \"x\"\n"
+        });
+        let edited = json!({
+            "auth": { "OPENAI_API_KEY": "sk-new" },
+            "config": "approval_policy = \"never\"\nmodel_provider = \"custom\"\nmodel = \"gpt-b\"\n\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://new.example/v1\"\n"
+        });
+        let plan = plan_save(
+            Some(&stored),
+            &edited,
+            &edited,
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+        let row = &plan.row_settings;
+        assert_eq!(row["auth"]["OPENAI_API_KEY"], "sk-new");
+        let text = row["config"].as_str().unwrap();
+        let parsed: toml::Table = toml::from_str(text).unwrap();
+        assert_eq!(parsed["model"].as_str(), Some("gpt-b"));
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://new.example/v1")
+        );
+        assert!(parsed["model_providers"].get("relay").is_none());
+        assert!(
+            !text.contains("sk-new"),
+            "the key stays in auth, not the config: {text}"
+        );
+        assert!(
+            text.contains("[mcp_servers.legacy]"),
+            "the row's other content stays for older versions: {text}"
+        );
+        assert!(
+            !text.contains("approval_policy"),
+            "global settings go to live, not the row: {text}"
+        );
+    }
+}

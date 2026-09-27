@@ -361,7 +361,7 @@ pub fn write_json_file_with_contents<T: Serialize>(
     Ok(contents)
 }
 
-fn sorted_json_bytes<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
+pub(crate) fn sorted_json_bytes<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
     let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
     let sorted_value = sort_json_keys(&value);
     let json = serde_json::to_string_pretty(&sorted_value)

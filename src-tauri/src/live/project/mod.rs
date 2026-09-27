@@ -4,3 +4,4 @@
 //! 补丁交给引擎，以现有文件为底改写。
 
 pub mod claude;
+pub mod codex;

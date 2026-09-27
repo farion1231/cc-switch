@@ -100,7 +100,7 @@ fn write_ssot_skill(directory: &str) {
 
 #[test]
 fn profile_snapshot_apply_roundtrip_restores_configuration() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -280,7 +280,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
 
 #[test]
 fn shared_profile_sides_are_isolated_and_mergeable() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -394,7 +394,7 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
 
 #[test]
 fn profile_apply_reports_dangling_references_and_continues() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -450,7 +450,7 @@ fn profile_apply_reports_dangling_references_and_continues() {
 
 #[test]
 fn clear_current_profile_only_clears_scoped_marker() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -489,7 +489,7 @@ fn clear_current_profile_only_clears_scoped_marker() {
 
 #[test]
 fn switching_profile_autosaves_previous_profile_state() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -645,7 +645,7 @@ fn switching_profile_autosaves_previous_profile_state() {
 
 #[test]
 fn profile_switch_in_routing_mode_changes_the_route_only() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -799,7 +799,7 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
 #[cfg(any(target_os = "macos", windows))]
 #[test]
 fn claude_desktop_profile_scope_is_independent() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 

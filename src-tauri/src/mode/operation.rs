@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::config::commit_staged;
+use crate::config::{commit_staged, delete_file};
 use crate::error::AppError;
 use crate::live::engine::{
     digest, ensure_first_write_backup, plan, plan_from, read_current, stage, AppWriteGuard,
@@ -81,11 +81,11 @@ pub fn run(
         return Ok(report);
     }
 
-    // 2. 备好所有临时文件；失败就清掉，什么都没改。
+    // 2. 备好所有临时文件（要删的文件没有）；失败就清掉，什么都没改。
     let mut staged = Vec::with_capacity(plans.len());
     for (planned, _) in &plans {
         match stage(planned) {
-            Ok(write) => staged.push(write.tmp_path().to_path_buf()),
+            Ok(write) => staged.push(write.map(|write| write.tmp_path().to_path_buf())),
             Err(err) => {
                 discard_all(&staged);
                 return Err(err);
@@ -120,7 +120,7 @@ pub fn run(
             let current = read_current(&current_planned.file.path)?;
             if digest(current.as_deref()) == current_planned.pre {
                 ensure_first_write_backup(store, &current_planned.file.path, current.as_deref())?;
-                commit_staged(&pending.files[index].staged, &current_planned.file.path)?;
+                publish(&pending.files[index])?;
                 published_any = true;
                 report.changed.push(current_planned.file.path.clone());
                 break;
@@ -136,20 +136,32 @@ pub fn run(
                     &current_planned.file.path,
                 ));
             }
-            let replanned = plan_from(&current_planned.file, *patch, current)?;
+            // 以新内容为底重算失败（新内容解析不了，或补丁拒绝在它上面改）：还没发布过
+            // 任何文件就整体放弃，已发布过就留着 pending 等前滚。
+            let replanned = match plan_from(&current_planned.file, *patch, current) {
+                Ok(replanned) => replanned,
+                Err(err) => {
+                    if !published_any {
+                        discard_pending_files(&pending);
+                        if let Err(clear) = state::set_pending(store, guard.app(), None) {
+                            log::warn!("清除写前意图失败: {clear}");
+                        }
+                    }
+                    return Err(err.into());
+                }
+            };
             if replanned.is_noop() {
                 // 外部写入的结果恰好就是目标内容。
-                let _ = fs::remove_file(&pending.files[index].staged);
-                pending.files[index] =
-                    pending_file(&replanned, pending.files[index].staged.clone());
+                discard_staged(&pending.files[index]);
+                pending.files[index] = pending_file(&replanned, None);
                 state::set_pending(store, guard.app(), Some(pending.clone()))?;
                 break;
             }
-            let old_staged = pending.files[index].staged.clone();
-            let new_staged = stage(&replanned)?.tmp_path().to_path_buf();
+            let old = pending.files[index].clone();
+            let new_staged = stage(&replanned)?.map(|write| write.tmp_path().to_path_buf());
             pending.files[index] = pending_file(&replanned, new_staged);
             state::set_pending(store, guard.app(), Some(pending.clone()))?;
-            let _ = fs::remove_file(old_staged);
+            discard_staged(&old);
             current_planned = replanned;
         }
         failpoint::hit(&format!("published:{index}"))?;
@@ -184,7 +196,7 @@ pub fn recover(
     let mut positions = Vec::with_capacity(pending.files.len());
     for file in &pending.files {
         let current = digest(read_current(&file.path)?.as_deref());
-        positions.push(if current.as_deref() == Some(file.planned.as_str()) {
+        positions.push(if current == file.planned {
             At::Planned
         } else if current == file.pre {
             At::Pre
@@ -215,13 +227,17 @@ pub fn recover(
         if !matches!(at, At::Pre) {
             continue;
         }
-        let staged = read_current(&file.staged)?;
-        if digest(staged.as_deref()).as_deref() != Some(file.planned.as_str()) {
+        if let Some(staged) = &file.staged {
+            let staged = read_current(staged)?;
+            if digest(staged.as_deref()) != file.planned {
+                return abandon(store, guard, &pending, vec![file.path.clone()]);
+            }
+        } else if file.planned.is_some() {
             return abandon(store, guard, &pending, vec![file.path.clone()]);
         }
         let current = read_current(&file.path)?;
         ensure_first_write_backup(store, &file.path, current.as_deref())?;
-        commit_staged(&file.staged, &file.path)?;
+        publish(file)?;
     }
     commit_target(&pending.target)?;
     state::set_pending(store, guard.app(), None)?;
@@ -304,7 +320,7 @@ pub fn recover_on_startup(db: &crate::database::Database) {
     }
 }
 
-fn pending_file(planned: &Planned, staged: PathBuf) -> PendingFile {
+fn pending_file(planned: &Planned, staged: Option<PathBuf>) -> PendingFile {
     PendingFile {
         path: planned.file.path.clone(),
         pre: planned.pre.clone(),
@@ -313,15 +329,29 @@ fn pending_file(planned: &Planned, staged: PathBuf) -> PendingFile {
     }
 }
 
-fn discard_all(staged: &[PathBuf]) {
-    for path in staged {
+/// 发布一个文件：用临时文件替换目标，或者删掉它。
+fn publish(file: &PendingFile) -> Result<(), AppError> {
+    match &file.staged {
+        Some(staged) => commit_staged(staged, &file.path),
+        None => delete_file(&file.path),
+    }
+}
+
+fn discard_all(staged: &[Option<PathBuf>]) {
+    for path in staged.iter().flatten() {
         let _ = fs::remove_file(path);
+    }
+}
+
+fn discard_staged(file: &PendingFile) {
+    if let Some(staged) = &file.staged {
+        let _ = fs::remove_file(staged);
     }
 }
 
 fn discard_pending_files(pending: &Pending) {
     for file in &pending.files {
-        let _ = fs::remove_file(&file.staged);
+        discard_staged(file);
     }
 }
 
@@ -517,6 +547,92 @@ mod tests {
     fn assert_new(fx: &Fixture) {
         assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "new"}));
         assert_eq!(fx.read(&fx.b), json!({"key": "new"}));
+    }
+
+    /// 改 a、删 b，在 `stage` 之后的某一步崩溃。
+    fn write_a_delete_b(fx: &Fixture, crash: &str) -> RefCell<Option<String>> {
+        let pointer = RefCell::new(None);
+        let patch = set_key("new");
+        let delete = crate::live::patch::WholeFile::Delete;
+        failpoint::crash_at(Some(crash));
+        let guard = lock_app(&fx.app);
+        let result = run(
+            &fx.store,
+            &guard,
+            state::op::SWITCH,
+            &[
+                FileChange {
+                    file: LiveFile::shared(&fx.a),
+                    patch: &patch,
+                },
+                FileChange {
+                    file: LiveFile::shared(&fx.b),
+                    patch: &delete,
+                },
+            ],
+            PendingTarget {
+                pointer: Some("B".into()),
+                ..PendingTarget::default()
+            },
+            &|target| {
+                *pointer.borrow_mut() = target.pointer.clone();
+                Ok(())
+            },
+        );
+        failpoint::crash_at(None);
+        drop(guard);
+        assert!(result.is_err(), "crash injected at {crash}");
+        pointer
+    }
+
+    #[test]
+    fn deleting_a_file_is_part_of_the_operation_and_rolls_forward() {
+        let fx = Fixture::new();
+        let pointer = write_a_delete_b(&fx, "pending");
+        assert_eq!(recover_now(&fx, &pointer), Some(RecoveryOutcome::Discarded));
+        assert_old(&fx);
+
+        for crash in ["published:0", "published:1", "target"] {
+            let fx = Fixture::new();
+            let pointer = write_a_delete_b(&fx, crash);
+            let pending = state::pending(&fx.store, &fx.app)
+                .unwrap()
+                .expect("pending");
+            assert_eq!(pending.files[1].planned, None, "{crash}: deletion recorded");
+            assert_eq!(pending.files[1].staged, None, "{crash}: nothing staged");
+
+            assert_eq!(
+                recover_now(&fx, &pointer),
+                Some(RecoveryOutcome::RolledForward),
+                "{crash}"
+            );
+            assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "new"}), "{crash}");
+            assert!(!fx.b.exists(), "{crash}: b deleted");
+            assert_eq!(*pointer.borrow(), Some("B".into()), "{crash}");
+            assert!(fx.temp_files().is_empty(), "{crash}");
+        }
+    }
+
+    #[test]
+    fn deleting_a_missing_file_is_a_noop() {
+        let fx = Fixture::new();
+        fs::remove_file(&fx.b).unwrap();
+        let guard = lock_app(&fx.app);
+        let delete = crate::live::patch::WholeFile::Delete;
+        let report = run(
+            &fx.store,
+            &guard,
+            state::op::SWITCH,
+            &[FileChange {
+                file: LiveFile::shared(&fx.b),
+                patch: &delete,
+            }],
+            PendingTarget::default(),
+            &|_| Ok(()),
+        )
+        .unwrap();
+        assert!(report.changed.is_empty());
+        assert!(!fx.b.exists());
     }
 
     #[test]

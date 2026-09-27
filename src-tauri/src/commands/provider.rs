@@ -90,14 +90,20 @@ pub async fn get_provider_editor_view(
     app_handle: tauri::AppHandle,
     app: String,
     #[allow(non_snake_case)] settingsConfig: serde_json::Value,
+    category: Option<String>,
 ) -> Result<EditorView, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        ProviderService::editor_view(state.inner(), app_type, &settingsConfig)
-            .map_err(|e| e.to_string())
+        ProviderService::editor_view(
+            state.inner(),
+            app_type,
+            &settingsConfig,
+            category.as_deref(),
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("读取编辑器内容失败: {e}"))?

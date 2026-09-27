@@ -28,7 +28,7 @@ const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 /**
  * 递归剥掉禁键，得到"实际会被写进配置的那份片段"。
  *
- * 只给**读取侧**（`hasCommonConfigSnippet` / `hasTomlCommonConfigSnippet`）用，
+ * 只给**读取侧**（`hasCommonConfigSnippet`）用，
  * 写入侧不需要——`deepMerge` / `deepRemove` 自身就跳过禁键，净化前后输出相同。
  *
  * 之所以读取侧非做不可：两侧对禁键的处理**语义不同**。写入侧是"跳过这个键、
@@ -421,36 +421,6 @@ export const setApiKeyInConfig = (
     return JSON.stringify(config, null, 2);
   } catch (err) {
     return jsonString;
-  }
-};
-
-// ========== TOML Config Utilities ==========
-
-// TOML 片段的合并/剥离必须走后端命令（configApi.updateTomlCommonConfigSnippet，
-// toml_edit 保注释保键序）。禁止在前端用 smol-toml parse→merge→stringify
-// 整文档重序列化：注释全丢、键序重排、还会生成多余的空父表头。
-
-// Check if TOML config already contains the common config snippet (structural subset check)
-export const hasTomlCommonConfigSnippet = (
-  tomlString: string,
-  snippetString: string,
-): boolean => {
-  if (!snippetString.trim()) return false;
-
-  try {
-    const config = parseToml(normalizeTomlText(tomlString || ""));
-    // 与 JSON 侧同样净化：smol-toml 也会把 `["__proto__"]` 这类表头解析成自有键。
-    const snippet = sanitizeSnippet(
-      parseToml(normalizeTomlText(snippetString)),
-    );
-    if (!isPlainObject(snippet) || Object.keys(snippet).length === 0) {
-      return false;
-    }
-    return isSubset(config, snippet);
-  } catch {
-    // Fallback to text-based matching if TOML parsing fails
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    return norm(tomlString).includes(norm(snippetString));
   }
 };
 

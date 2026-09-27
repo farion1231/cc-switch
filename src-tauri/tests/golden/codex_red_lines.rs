@@ -1,8 +1,8 @@
 //! ② Codex 直连切换的红线。
 //!
-//! `plan_codex_live_write` 这条安全链会在 Codex 改成只替换关键字段时重写，这里只锁结果，不锁机制：
-//! 断言写成「Codex 0.149 能加载」「官方登录不会被带到第三方地址」「被拒的切换没有副作用」
-//! 这类性质，不断言表叫什么 id、归一化走的哪条分支，新的生成器同样要能通过。
+//! 这些红线先在整份写入的旧实现上写成，Codex 改成只替换关键字段之后照样通过：这里只锁
+//! 结果，不锁机制，断言写成「Codex 0.149 能加载」「官方登录不会被带到第三方地址」「被拒的
+//! 切换没有副作用」这类性质，不断言表叫什么 id、归一化走的哪条分支。
 //!
 //! 红线索引（CX 编号；「已有」指 `tests/provider_service.rs` 等处已有的黑盒测试，
 //! 「crate 内」指经公开服务入口、但依赖 crate 内测试钩子而留在 src 里的测试）：
@@ -26,7 +26,7 @@
 //! | 15 | 代理注入型 OAuth 卡（xai_oauth 等）直连不会带出官方登录 | 本文件 |
 //! | 16 | 官方卡：带登录材料整份写 auth.json；无材料只写 config、不动现有登录 | 已有 `..._official_accounts_write_auth_json`、`..._supports_official_login_provider_without_auth_write` |
 //! | 17 | 切到无材料官方卡时删掉第三方残留的 auth.json，真实登录不删；重选当前卡不删 | 已有 `..._official_clears_stale_third_party_auth`、`provider_service_reswitch_current_official_keeps_live_auth` |
-//! | 18 | 元数据（last_refresh、account_id）不算登录（#6277） | crate 内：`services/proxy.rs` 的 #6277 回归测试 |
+//! | 18 | 元数据（last_refresh、account_id）不算登录（#6277） | crate 内：`codex_config.rs` 的 `credential_login_material_only_counts_real_credentials` |
 //! | 19 | 托管账号切走：先采纳 CLI 轮换过的 refresh token，按 marker 精确删；代际无法排序时拒绝 | crate 内：`services/provider/mod.rs` 的托管账号测试 |
 //! | 20 | 进入代理不写 auth.json；第三方路由契约用字面值 `PROXY_MANAGED` | 已有 `codex_official_to_deepseek_then_takeover_...` |
 //! | 21 | 代理下官方路由不写占位凭据，客户端带自己的真实登录 | crate 内：`mode::controller` 的 `codex_routes_between_official_and_third_party_contracts` |
@@ -35,9 +35,13 @@
 //! | 24 | `web_search = "disabled"` 只删 CC Switch 写的哨兵值，用户的其他值保留 | 本文件 |
 //! | 25 | auth.json 删不掉时切换照常成功，返回 `codex_auth_cleanup_failed` 警告 | 本文件 |
 //!
-//! 不锁、按计划改变的：统一会话桶的注入与剥离、回填（token 提回 auth、剥 MCP、保留
-//! modelCatalog）、给用户表补 name / wire_api、接管的备份与恢复细节、
-//! profile 覆盖选路（现状是已知盲区，重构版改为写入前校验并拒绝）。
+//! 只替换关键字段之后新增的性质锁在 crate 内 `mode::controller` 的 `codex_*` 测试里：其余
+//! 字节不动、独有字段只删上一家的值、切回官方留下休眠表、生效的 profile 覆盖选路时拒绝
+//! 写入、只清能证明是 CC Switch 写的旧表、保留登录关闭时删掉的登录切回官方时还回来、
+//! 切换中途 CLI 刷新了登录就停下、契约相同时不碰客户端文件、编辑器的全局改动。
+//!
+//! 已删除、不再锁的机制：统一会话桶的注入与剥离、回填（token 提回 auth、剥 MCP、保留
+//! modelCatalog）、给用户表补 name / wire_api、接管的备份与恢复。
 
 use std::path::PathBuf;
 use std::time::SystemTime;

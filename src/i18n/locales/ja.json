@@ -177,7 +177,7 @@
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
-    "editorViewFailed": "Claude Code の設定ファイルを読み込めないため、保存済みのプロバイダー設定を表示しています：{{error}}",
+    "editorViewFailed": "クライアントの設定ファイルを読み込めないため、保存済みのプロバイダー設定を表示しています：{{error}}",
     "editConflict": {
       "title": "編集中に設定ファイルが変更されました",
       "message": "エディターを開いた後、以下の設定が他のプログラム（Claude Code など）によって変更されました。自分の編集で上書きしますか？それとも外部の変更を残しますか？その他の編集はどちらでも保存されます。",
@@ -1512,14 +1512,9 @@
     "configTomlHint": "Codex の config.toml 設定内容",
     "configTomlStorageHint": "プロキシ引き継ぎ中は保存済みの config を表示しており、実際の config.toml ではありません。",
     "proxyTakeoverStorageNotice": "💡 このアプリはプロキシ引き継ぎ中です。ここで編集しているのは保存済みのプロバイダー設定で、実際の live 設定はすでにプロキシが一時的に引き継いでいます。",
-    "writeCommonConfig": "共通設定を適用",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を適用」がオンの場合、config.toml の末尾に追記されます",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
     "apiUrlLabel": "API リクエスト URL",
-    "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
     "saveFailed": "保存に失敗しました: {{error}}",
@@ -1583,7 +1578,10 @@
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
     "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
-    "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません"
+    "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません",
+    "keyFieldsHint": "エンドポイント、キー、モデル、推論レベル、コンテキストウィンドウ、互換スイッチはプロバイダーに合わせて切り替わります。それ以外は Codex のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
+    "inactiveFieldsHint": "このプロバイダーには切り替え時に適用されない設定が {{count}} 件保存されています。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。保存済みの値は削除されません。",
+    "inactiveFieldCopied": "コピーしました"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

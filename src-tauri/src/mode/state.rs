@@ -162,10 +162,12 @@ pub struct PendingFile {
     pub path: PathBuf,
     /// 写前内容的 hash；`None` 表示写前文件不存在。
     pub pre: Option<String>,
-    /// 写后内容的 hash。
-    pub planned: String,
-    /// 已写好写后内容、等着 rename 的临时文件。
-    pub staged: PathBuf,
+    /// 写后内容的 hash；`None` 表示这个操作要删掉它。
+    #[serde(default)]
+    pub planned: Option<String>,
+    /// 已写好写后内容、等着 rename 的临时文件；删文件时没有。
+    #[serde(default)]
+    pub staged: Option<PathBuf>,
 }
 
 /// 文件都写完之后要落定的状态。
@@ -296,8 +298,8 @@ mod tests {
             files: vec![PendingFile {
                 path: PathBuf::from("/tmp/settings.json"),
                 pre: None,
-                planned: "abc".to_string(),
-                staged: PathBuf::from("/tmp/settings.json.tmp.1"),
+                planned: Some("abc".to_string()),
+                staged: Some(PathBuf::from("/tmp/settings.json.tmp.1")),
             }],
             target: PendingTarget {
                 pointer: Some("p1".to_string()),

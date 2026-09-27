@@ -47,41 +47,32 @@ vi.mock("@/components/JsonEditor", () => ({
 }));
 
 describe("Common config modals", () => {
-  it("keeps the Codex common config modal closed after user closes it with an error present", async () => {
+  it("shows no Codex common config snippet and lists fields that do not follow the provider", () => {
     render(
       <CodexConfigEditor
         authValue="{}"
         configValue=""
         onAuthChange={() => {}}
         onConfigChange={() => {}}
-        useCommonConfig={false}
-        onCommonConfigToggle={() => {}}
-        commonConfigSnippet={`base_url = "https://example.com"`}
-        onCommonConfigSnippetChange={() => false}
-        onCommonConfigErrorClear={() => {}}
-        commonConfigError="Invalid TOML"
         authError=""
         configError=""
+        inactiveFields={[
+          {
+            path: ["mcp_servers", "legacy"],
+            value: '[mcp_servers.legacy]\ncommand = "x"\n',
+          },
+        ]}
       />,
     );
 
-    expect(screen.queryByTestId("common-config-panel")).not.toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", {
+    expect(
+      screen.queryByRole("button", {
         name: /codexConfig.editCommonConfig|编辑通用配置/,
       }),
-    );
-
-    expect(screen.getByTestId("common-config-panel")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
-
-    await waitFor(() =>
-      expect(
-        screen.queryByTestId("common-config-panel"),
-      ).not.toBeInTheDocument(),
-    );
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mcp_servers.legacy" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the Gemini common config modal closed after user closes it with an error present", async () => {

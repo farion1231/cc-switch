@@ -48,6 +48,69 @@ impl fmt::Display for KeyPath {
 /// 在内存里算出一个文件的新内容。
 pub trait LivePatch {
     fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError>;
+
+    /// 引擎实际调用的入口：`None` 表示删掉这个文件（比如 Codex 切到第三方时删
+    /// `auth.json`）。默认总是写 [`apply`](LivePatch::apply) 的结果。
+    fn apply_file(
+        &self,
+        path: &Path,
+        pre: Option<&[u8]>,
+    ) -> Result<Option<Vec<u8>>, LiveWriteError> {
+        self.apply(path, pre).map(Some)
+    }
+}
+
+/// CC Switch 整份拥有的文件（Codex 的模型目录、托管账号的登录标记，以及切换时整份
+/// 写入或删除的 `auth.json`）：不以现有内容为底，直接给出写后的内容。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WholeFile {
+    Write(Vec<u8>),
+    Delete,
+}
+
+/// 以计划时读到的内容为前提的整份写入：发布前文件被别的程序改过（比如 Codex CLI 刚
+/// 刷新了登录），就拒绝，不按新内容重算，免得覆盖掉更新的内容。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Guarded {
+    /// 计划时内容的 hash；`None` 表示当时文件不存在。
+    pub expected_pre: Option<String>,
+    pub then: WholeFile,
+}
+
+impl LivePatch for Guarded {
+    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
+        Ok(self.apply_file(path, pre)?.unwrap_or_default())
+    }
+
+    fn apply_file(
+        &self,
+        path: &Path,
+        pre: Option<&[u8]>,
+    ) -> Result<Option<Vec<u8>>, LiveWriteError> {
+        if crate::live::engine::digest(pre) != self.expected_pre {
+            return Err(LiveWriteError::Conflict {
+                path: path.to_path_buf(),
+            });
+        }
+        self.then.apply_file(path, pre)
+    }
+}
+
+impl LivePatch for WholeFile {
+    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
+        Ok(self.apply_file(path, pre)?.unwrap_or_default())
+    }
+
+    fn apply_file(
+        &self,
+        _path: &Path,
+        _pre: Option<&[u8]>,
+    ) -> Result<Option<Vec<u8>>, LiveWriteError> {
+        Ok(match self {
+            Self::Write(bytes) => Some(bytes.clone()),
+            Self::Delete => None,
+        })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +142,9 @@ pub enum LiveWriteError {
     /// 编辑器打开之后，这些键在文件里被别的程序改过，和编辑器里的改动冲突。
     #[error("{path} 里的 {keys:?} 在编辑期间被其他程序修改过")]
     EditConflict { path: PathBuf, keys: Vec<String> },
+    /// 写完之后客户端实际走的路由不是目标供应商：当前生效的 profile 覆盖了选路。
+    #[error("Codex 当前生效的 profile \"{profile}\" 覆盖了 {key}")]
+    Route { profile: String, key: String },
 }
 
 /// 编辑冲突的错误码。命令返回 JSON 字符串，前端据此让用户选保留哪一边。
@@ -125,6 +191,15 @@ impl From<LiveWriteError> for crate::error::AppError {
                 "{} 在写入过程中一直被其他程序修改",
                 path.display()
             )),
+            LiveWriteError::Route { profile, key } => AppError::localized(
+                "provider.codex.config.profile_overrides_route",
+                format!(
+                    "Codex 当前生效的 profile \"{profile}\"（[profiles.{profile}]）设置了 {key}，切换后请求仍会按它发出，不会发往目标供应商。请删掉这个 profile 里的 {key}，或把顶层的 profile 改掉。本次没有写入任何文件"
+                ),
+                format!(
+                    "The active Codex profile \"{profile}\" ([profiles.{profile}]) sets {key}, so requests would keep following it instead of the target provider. Remove {key} from that profile or change the top-level profile. Nothing was written"
+                ),
+            ),
             LiveWriteError::EditConflict { path, keys } => AppError::Message(
                 serde_json::json!({
                     "code": EDIT_CONFLICT_CODE,

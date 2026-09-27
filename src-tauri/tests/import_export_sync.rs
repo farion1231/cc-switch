@@ -12,7 +12,7 @@ use support::{
 
 #[test]
 fn sync_enabled_to_codex_writes_enabled_servers() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
 
     // 模拟 Codex 已安装/已初始化：存在 ~/.codex 目录
@@ -47,7 +47,7 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
 
 #[test]
 fn sync_enabled_to_codex_preserves_non_mcp_content_and_style() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
 
     // 预置含有顶层注释与非 MCP 键的 config.toml
@@ -106,7 +106,7 @@ mode = "dev"
 
 #[test]
 fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
@@ -144,7 +144,7 @@ fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
 
 #[test]
 fn sync_enabled_to_codex_removes_servers_when_none_enabled() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
@@ -170,7 +170,7 @@ disabled = { type = "stdio", command = "noop" }
 
 #[test]
 fn sync_enabled_to_codex_returns_error_on_invalid_toml() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
@@ -211,7 +211,7 @@ fn sync_enabled_to_codex_returns_error_on_invalid_toml() {
 
 #[test]
 fn sync_single_server_to_codex_fails_closed_on_invalid_toml() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
@@ -247,7 +247,7 @@ fn sync_single_server_to_codex_fails_closed_on_invalid_toml() {
 
 #[test]
 fn write_codex_live_atomic_persists_auth_and_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
 
     let auth = json!({ "OPENAI_API_KEY": "dev-key" });
@@ -279,7 +279,7 @@ args = ["ok"]
 
 #[test]
 fn write_codex_live_atomic_rolls_back_auth_when_config_write_fails() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
 
     let auth_path = cc_switch_lib::get_codex_auth_path();
@@ -330,7 +330,7 @@ command = "noop"
 
 #[test]
 fn import_from_codex_adds_servers_from_mcp_servers_table() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
@@ -389,7 +389,7 @@ url = "https://example.com"
 
 #[test]
 fn import_from_codex_merges_into_existing_entries() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
     if let Some(parent) = path.parent() {
@@ -458,7 +458,7 @@ command = "echo"
 
 #[test]
 fn sync_claude_enabled_mcp_projects_to_user_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -515,7 +515,7 @@ fn sync_claude_enabled_mcp_projects_to_user_config() {
 
 #[test]
 fn import_from_claude_merges_into_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let claude_path = home.join(".claude.json");
@@ -592,7 +592,7 @@ fn import_from_claude_merges_into_config() {
 
 #[test]
 fn create_backup_skips_missing_file() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let config_path = home.join(".cc-switch").join("config.json");
@@ -607,7 +607,7 @@ fn create_backup_skips_missing_file() {
 
 #[test]
 fn create_backup_generates_snapshot_file() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let config_dir = home.join(".cc-switch");
@@ -637,7 +637,7 @@ fn create_backup_generates_snapshot_file() {
 
 #[test]
 fn create_backup_retains_only_latest_entries() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let config_dir = home.join(".cc-switch");
@@ -691,7 +691,7 @@ fn create_backup_retains_only_latest_entries() {
 
 #[test]
 fn export_sql_writes_to_target_path() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -737,7 +737,7 @@ fn export_sql_writes_to_target_path() {
 
 #[test]
 fn export_sql_returns_error_for_invalid_path() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -776,7 +776,7 @@ fn export_sql_returns_error_for_invalid_path() {
 
 #[test]
 fn import_sql_rejects_non_cc_switch_backup() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -800,7 +800,7 @@ fn import_sql_rejects_non_cc_switch_backup() {
 
 #[test]
 fn import_sql_accepts_cc_switch_exported_backup() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 

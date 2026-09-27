@@ -7,7 +7,7 @@ sort_index: NULL
 notes: NULL
 icon: openai
 icon_color: NULL
-meta: {}
+meta: {"commonConfigEnabled":true}
 is_current: true
 in_failover_queue: false
 

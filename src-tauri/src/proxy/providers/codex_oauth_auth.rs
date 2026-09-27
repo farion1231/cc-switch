@@ -229,22 +229,6 @@ impl CodexLiveAuthSwitchGuard {
         }
         Ok(())
     }
-
-    pub(crate) fn clear_outgoing(&self, account_id: &str) -> Result<(), crate::error::AppError> {
-        match self {
-            Self::ExistingAccount(token) => {
-                crate::codex_config::clear_codex_live_auth_for_managed_account_if_unchanged(
-                    account_id,
-                    token.as_deref(),
-                )
-            }
-            Self::MissingAccount => {
-                crate::codex_config::clear_codex_managed_oauth_live_auth_marker_for_account(
-                    account_id,
-                )
-            }
-        }
-    }
 }
 
 impl RefreshTokenAdoptionOutcome {

@@ -24,7 +24,7 @@ fn sanitize_provider_name(name: &str) -> String {
 
 #[test]
 fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -98,7 +98,7 @@ fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
 
 #[test]
 fn provider_service_switch_codex_updates_live_and_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -191,13 +191,19 @@ command = "say"
 
     let config_text =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    // 只替换关键字段：live 里用户的 MCP 原样留着；行里的 MCP 不是关键字段，不投影。
     assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "config.toml should contain synced MCP servers"
+        config_text.contains("[mcp_servers.legacy]"),
+        "live settings outside the key fields stay: {config_text}"
     );
     assert!(
-        config_text.contains("experimental_bearer_token"),
-        "config.toml should carry the selected provider API key"
+        !config_text.contains("mcp_servers.latest"),
+        "the row's own MCP section is not projected: {config_text}"
+    );
+    // 这张卡没有路由（只有 MCP），Key 没有第三方地址可发，不写进 live。
+    assert!(
+        !config_text.contains("experimental_bearer_token"),
+        "{config_text}"
     );
 
     let current_id = state
@@ -214,42 +220,20 @@ command = "say"
         .db
         .get_all_providers(AppType::Codex.as_str())
         .expect("read providers after switch");
-
-    let new_provider = providers.get("new-provider").expect("new provider exists");
-    let new_config_text = new_provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    // provider 存储的是原始配置，不包含 MCP 同步后的内容
-    assert!(
-        new_config_text.contains("mcp_servers.latest"),
-        "provider config should contain original MCP servers"
-    );
-    // live 文件额外包含同步的 MCP 服务器
-    assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "live config should include synced MCP servers"
-    );
-
     let legacy = providers
         .get("old-provider")
         .expect("legacy provider still exists");
-    let legacy_auth_value = legacy
-        .settings_config
-        .get("auth")
-        .and_then(|v| v.get("OPENAI_API_KEY"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
     assert_eq!(
-        legacy_auth_value, "legacy-key",
-        "previous provider should be backfilled with live auth"
+        legacy.settings_config,
+        json!({ "auth": {"OPENAI_API_KEY": "stale"}, "config": "stale-config" }),
+        "switching away never writes live content back into the row"
     );
 }
 
 #[test]
-fn provider_service_switch_codex_preserves_user_model_provider_id_after_migration() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+/// 第三方路由一律写成 `custom`：行里用什么 id 都一样，行本身不改写。
+fn provider_service_switch_codex_writes_every_third_party_route_as_custom() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -317,25 +301,29 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("aihubmix"),
-        "provider switching should preserve user-editable model_provider after the one-time migration"
+        Some("custom"),
+        "every third-party route is written as the custom table"
     );
 
     let model_providers = parsed
         .get("model_providers")
         .and_then(|v| v.as_table())
         .expect("model_providers table exists");
-    assert!(
-        model_providers.get("custom").is_none(),
-        "provider switching should not force user-edited provider ids back to custom"
-    );
     assert_eq!(
         model_providers
-            .get("aihubmix")
+            .get("custom")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1"),
-        "selected provider id should point at the newly selected supplier endpoint"
+        "the custom table points at the newly selected supplier endpoint"
+    );
+    assert!(
+        model_providers.get("aihubmix").is_none(),
+        "the row's own table id is not written"
+    );
+    assert!(
+        model_providers.get("rightcode").is_none(),
+        "the old version's table for old-provider (same id and address as its row) is retired"
     );
 
     let providers = state
@@ -351,13 +339,13 @@ requires_openai_auth = true
         .unwrap_or_default();
     assert!(
         new_config_text.contains("[model_providers.aihubmix]"),
-        "stored provider template should remain provider-specific"
+        "stored provider template stays as it was"
     );
 }
 
 #[test]
-fn provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn provider_service_switch_codex_preserves_oauth_and_keeps_rows_untouched() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -444,6 +432,11 @@ requires_openai_auth = true
     }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
+    let bridge_before = state
+        .db
+        .get_provider_by_id("bridge-provider", AppType::Codex.as_str())
+        .expect("read bridge row")
+        .expect("bridge row");
 
     ProviderService::switch(&state, AppType::Codex, "bridge-provider")
         .expect("switch to bridge provider should succeed");
@@ -472,9 +465,14 @@ requires_openai_auth = true
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
     let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
     assert_eq!(
+        parsed_live.get("model_provider").and_then(|v| v.as_str()),
+        Some("custom"),
+        "third-party routes are always written as the custom table"
+    );
+    assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("custom"))
             .and_then(|v| v.get("experimental_bearer_token"))
             .and_then(|v| v.as_str()),
         Some("bridge-key"),
@@ -483,45 +481,32 @@ requires_openai_auth = true
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("custom"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
         Some(true)
     );
 
-    ProviderService::switch(&state, AppType::Codex, "plain-provider")
-        .expect("switch away should backfill bridge provider");
-
-    let providers = state
-        .db
-        .get_all_providers(AppType::Codex.as_str())
-        .expect("read providers");
-    let stored_bridge = providers
-        .get("bridge-provider")
-        .expect("bridge provider exists after backfill");
-    assert_eq!(
-        stored_bridge
-            .settings_config
-            .pointer("/auth/OPENAI_API_KEY")
-            .and_then(|v| v.as_str()),
-        Some("bridge-key"),
-        "backfill should restore the API key into stored provider auth"
-    );
+    // 旧版按行的 id 写进 live 的表（id 和地址都对得上 legacy-provider 的投影）被清掉，
+    // 里面的真实 Key 不再留在 live 里。
     assert!(
-        stored_bridge
-            .settings_config
-            .pointer("/auth/tokens")
+        parsed_live
+            .get("model_providers")
+            .and_then(|v| v.get("rightcode"))
             .is_none(),
-        "backfill should not persist ChatGPT OAuth tokens into provider storage"
+        "the table an old version wrote for legacy-provider is retired: {live_config}"
     );
-    assert!(
-        !stored_bridge
-            .settings_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .contains("experimental_bearer_token"),
-        "stored provider config should stay clean; bridge token is generated only for live config"
+
+    ProviderService::switch(&state, AppType::Codex, "plain-provider")
+        .expect("switch away from the bridge provider");
+    let bridge_after = state
+        .db
+        .get_provider_by_id("bridge-provider", AppType::Codex.as_str())
+        .expect("read bridge row")
+        .expect("bridge row");
+    assert_eq!(
+        bridge_after.settings_config, bridge_before.settings_config,
+        "switching away never writes live content back into the row"
     );
 }
 
@@ -531,7 +516,7 @@ requires_openai_auth = true
     reason = "this integration-style test must serialize global test HOME and settings mutations across async takeover calls"
 )]
 async fn codex_official_to_deepseek_then_takeover_enters_and_restores_proxy_managed_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -686,7 +671,7 @@ wire_api = "responses"
 
 #[test]
 fn provider_service_switch_codex_default_removes_auth_json_when_preservation_off() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Intentionally do NOT enable preservation: this locks the default opt-out
     // behavior where a third-party switch deletes auth.json outright — the
@@ -776,7 +761,7 @@ requires_openai_auth = true
 
 #[test]
 fn provider_service_switch_codex_default_injects_bearer_token_into_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation stays OFF (default). Since Codex 0.149 (openai/codex#39214)
     // custom providers no longer inherit ambient auth, so third-party switches
@@ -834,7 +819,7 @@ requires_openai_auth = false
 
 #[test]
 fn provider_service_switch_codex_preserved_login_rejects_empty_third_party_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation ON + third-party provider with an empty config: auth.json is
     // not written, and an empty config.toml has no provider table to carry the
@@ -877,14 +862,14 @@ fn provider_service_switch_codex_preserved_login_rejects_empty_third_party_confi
 
 #[test]
 fn provider_service_switch_codex_preserved_login_normalizes_legacy_reroute_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation ON + a legacy-shape third-party config (top-level
     // openai_base_url rerouting the built-in `openai` provider): the shape
     // has no provider table to carry the bearer token — since 0.149 the
     // built-in provider would keep using the preserved official OAuth from
     // auth.json and send it to the third-party base URL. The switch must
-    // normalize the config into a cc-switch-owned custom table with the key
+    // normalize the config into the custom table with the key
     // injected, leaving the official login untouched.
     let _home = ensure_test_home();
     enable_codex_official_auth_preservation();
@@ -935,10 +920,10 @@ openai_base_url = "https://relay.example/v1"
         "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        live_config.contains("[model_providers.cc-switch]")
+        live_config.contains("[model_providers.custom]")
             && live_config.contains("base_url = \"https://relay.example/v1\"")
             && live_config.contains("experimental_bearer_token = \"third-party-key\""),
-        "routing and key must move into the cc-switch provider table; got:\n{live_config}"
+        "routing and key must move into the custom provider table; got:\n{live_config}"
     );
 
     let auth_value: serde_json::Value =
@@ -954,7 +939,7 @@ openai_base_url = "https://relay.example/v1"
 
 #[test]
 fn provider_service_switch_codex_preserved_login_normalizes_config_carried_token() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Same legacy reroute shape, but the key sits in the config text itself
     // (raw-edited provider with `auth = {}`): normalization must see
@@ -1000,8 +985,8 @@ experimental_bearer_token = "config-carried-key"
         "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        live_config.contains("[model_providers.cc-switch]"),
-        "a cc-switch provider table must be created; got:\n{live_config}"
+        live_config.contains("[model_providers.custom]"),
+        "the custom provider table must be created; got:\n{live_config}"
     );
     assert_eq!(
         cc_switch_lib::extract_codex_experimental_bearer_token(&live_config).as_deref(),
@@ -1012,7 +997,7 @@ experimental_bearer_token = "config-carried-key"
 
 #[test]
 fn provider_service_switch_codex_default_normalizes_legacy_reroute_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Same legacy shape with preservation OFF (default): the switch is
     // config-only on every path, so instead of feeding the built-in
@@ -1057,15 +1042,15 @@ openai_base_url = "https://relay.example/v1"
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
     assert!(
         !live_config.contains("openai_base_url")
-            && live_config.contains("[model_providers.cc-switch]")
+            && live_config.contains("[model_providers.custom]")
             && live_config.contains("experimental_bearer_token = \"third-party-key\""),
-        "routing and key must move into the cc-switch provider table; got:\n{live_config}"
+        "routing and key must move into the custom provider table; got:\n{live_config}"
     );
 }
 
 #[test]
 fn provider_service_switch_codex_preserved_login_rejects_keyless_official_auth_fallback() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Preservation ON + a header-auth card with NO API key anywhere
     // (`auth = {}`) whose config also sets `requires_openai_auth = true`:
@@ -1152,7 +1137,7 @@ wire_api = "responses"
 
 #[test]
 fn provider_service_switch_codex_preserved_login_allows_keyless_header_auth_provider() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     // Same keyless header-auth card WITHOUT the fallback flag: 0.149 resolves
     // this provider as unauthenticated, provider headers survive untouched,
@@ -1209,7 +1194,7 @@ http_headers = { Authorization = "Bearer explicit-header-token" }
 
 #[test]
 fn provider_service_switch_codex_supports_official_login_provider_without_auth_write() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1297,11 +1282,11 @@ requires_openai_auth = true
 
 #[test]
 fn provider_service_switch_codex_official_clears_stale_third_party_auth() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
-    // preservation stays OFF (default): switching to the third-party provider
-    // wrote its key into live auth.json, and that residue is what this test
-    // expects the official switch to clean up.
+    // preservation stays OFF (default). Versions before the key moved into
+    // config.toml wrote the third-party key into live auth.json; that residue
+    // is what this test expects the official switch to clean up.
     let _home = ensure_test_home();
 
     let third_party_config = r#"model_provider = "aihubmix"
@@ -1313,9 +1298,10 @@ base_url = "https://aihubmix.example/v1"
 wire_api = "responses"
 requires_openai_auth = true
 "#;
-    // Live key intentionally differs from the DB row so the assertion below
-    // proves the backfill preserved the live copy before it was deleted.
-    let live_auth = json!({ "OPENAI_API_KEY": "stale-live-key" });
+    // The residue is the row's own key: only a key some third-party row
+    // carries is provably CC Switch's to delete (a user's own
+    // `codex login --api-key` login is left alone).
+    let live_auth = json!({ "OPENAI_API_KEY": "old-db-key" });
     write_codex_live_atomic(&live_auth, Some(third_party_config))
         .expect("seed third-party live config");
 
@@ -1374,8 +1360,8 @@ requires_openai_auth = true
             .settings_config
             .pointer("/auth/OPENAI_API_KEY")
             .and_then(|v| v.as_str()),
-        Some("stale-live-key"),
-        "the live key must be backfilled into the outgoing provider before deletion"
+        Some("old-db-key"),
+        "the outgoing row is never rewritten from live"
     );
 
     let live_config =
@@ -1388,7 +1374,7 @@ requires_openai_auth = true
 
 #[test]
 fn provider_service_reswitch_current_official_keeps_live_auth() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1435,7 +1421,7 @@ fn provider_service_reswitch_current_official_keeps_live_auth() {
 
 #[test]
 fn read_codex_live_settings_tolerates_missing_auth_when_config_file_exists() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1458,8 +1444,8 @@ fn read_codex_live_settings_tolerates_missing_auth_when_config_file_exists() {
 }
 
 #[test]
-fn reapply_codex_official_live_resyncs_mcp_servers() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn reapply_codex_official_live_rewrites_only_the_session_routing() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1468,106 +1454,10 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
         "OPENAI_API_KEY": null,
         "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
     });
-    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
-
-    let mut initial_config = MultiAppConfig::default();
-    {
-        let manager = initial_config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        let official = Provider::with_id(
-            "codex-official".to_string(),
-            "Official".to_string(),
-            json!({
-                "auth": {
-                    "auth_mode": "chatgpt",
-                    "OPENAI_API_KEY": null,
-                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
-                },
-                "config": ""
-            }),
-            None,
-        );
-        manager
-            .providers
-            .insert("codex-official".to_string(), official);
-    }
-    let servers = initial_config
-        .mcp
-        .servers
-        .get_or_insert_with(Default::default);
-    servers.insert(
-        "echo-server".into(),
-        McpServer {
-            id: "echo-server".into(),
-            name: "Echo Server".into(),
-            server: json!({
-                "type": "stdio",
-                "command": "echo"
-            }),
-            apps: McpApps {
-                claude: false,
-                codex: true,
-                gemini: false,
-                grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-            },
-            description: None,
-            homepage: None,
-            docs: None,
-            tags: Vec::new(),
-        },
-    );
-
-    let state = create_test_state_with_config(&initial_config).expect("create test state");
-
-    ProviderService::switch(&state, AppType::Codex, "codex-official")
-        .expect("switch to official provider");
-    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after switch");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "switch should sync enabled MCP servers into live"
-    );
-
-    // 统一会话开关变更触发的 reapply 会整体重写 live config.toml（有意设计），
-    // 写完必须重新投影 DB 里启用的 MCP，否则用户的 MCP 会静默失效。
-    let reapplied =
-        cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply official live");
-    assert!(
-        reapplied,
-        "current provider is official, reapply should run"
-    );
-
-    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after reapply");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "reapply must re-project enabled MCP servers after the full live rewrite, got: {live}"
-    );
-}
-
-/// reapply 走到 MCP 投影时 live 已按新开关状态落盘、开关事实上已生效：
-/// ① 投影失败若上抛，save_settings 会回滚开关设置，制造"设置=旧值、
-/// live=新桶"的会话分裂——必须降级为警告而不是失败；
-/// ② 投影必须只针对 Codex：sync_all_enabled 按 AppType::all() 顺序短路，
-/// Claude 排在 Codex 前面，损坏的 ~/.claude.json 会在轮到 Codex 之前
-/// 报错——若吞错了事，刚被整体重写清掉的 [mcp_servers] 就无人补回，
-/// Codex MCP 静默消失。这里用坏 JSON 的 ~/.claude.json 复现该场景。
-#[test]
-fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let live_auth = json!({
-        "auth_mode": "chatgpt",
-        "OPENAI_API_KEY": null,
-        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
-    });
-    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+    // live 里已有用户的 MCP 和其他设置：开关只改选路，其余字节不碰。
+    let user_part =
+        "approval_policy = \"on-request\"\n\n[mcp_servers.echo-server]\ncommand = \"echo\"\n";
+    write_codex_live_atomic(&live_auth, Some(user_part)).expect("seed official live");
 
     let mut initial_config = MultiAppConfig::default();
     {
@@ -1577,14 +1467,7 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
         let mut official = Provider::with_id(
             "official-provider".to_string(),
             "Official".to_string(),
-            json!({
-                "auth": {
-                    "auth_mode": "chatgpt",
-                    "OPENAI_API_KEY": null,
-                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
-                },
-                "config": ""
-            }),
+            json!({ "auth": {}, "config": "" }),
             None,
         );
         official.category = Some("official".to_string());
@@ -1592,69 +1475,56 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
             .providers
             .insert("official-provider".to_string(), official);
     }
-    let servers = initial_config
-        .mcp
-        .servers
-        .get_or_insert_with(Default::default);
-    servers.insert(
-        "echo-server".into(),
-        McpServer {
-            id: "echo-server".into(),
-            name: "Echo Server".into(),
-            server: json!({
-                "type": "stdio",
-                "command": "echo"
-            }),
-            apps: McpApps {
-                claude: false,
-                codex: true,
-                gemini: false,
-                grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-            },
-            description: None,
-            homepage: None,
-            docs: None,
-            tags: Vec::new(),
-        },
-    );
-
     let state = create_test_state_with_config(&initial_config).expect("create test state");
-
-    // 先切换建立"当前=官方"的前置状态，再破坏 claude 文件，
-    // 让损坏只作用于被测的 reapply 路径。
     ProviderService::switch(&state, AppType::Codex, "official-provider")
         .expect("switch to official provider");
 
-    // 破坏 ~/.claude.json：坏 JSON 能通过 should_sync_claude_mcp 门控
-    // （文件存在即过），但 read_mcp_servers_map 解析必然报错。
-    // 注意 codex-only 的服务器也会触发 claude 的 remove 分支读该文件。
+    // 坏掉的 ~/.claude.json 和 Codex 无关，不能挡住开关，也不能被碰。
     let claude_json = cc_switch_lib::get_claude_mcp_path();
     std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
 
-    let reapplied = cc_switch_lib::reapply_current_codex_official_live(&state)
-        .expect("MCP projection failure must degrade to a warning, not fail the toggle");
-    assert!(
-        reapplied,
-        "current provider is official, reapply should run"
-    );
+    let set_unify = |on: bool| {
+        cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+            unify_codex_session_history: on,
+            ..Default::default()
+        })
+        .expect("update settings");
+    };
+    let read_live = || {
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml")
+    };
 
-    // 定向投影不碰 claude：Codex 的 MCP 投影必须完成，不能被
-    // 无关应用的损坏文件阻断后静默丢失。
-    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after reapply");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "codex MCP projection must not be blocked by a broken ~/.claude.json, got: {live}"
-    );
-
-    // 顺带锁定：定向投影不应把手改坏的 ~/.claude.json 触碰或"修复"。
-    let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
+    set_unify(true);
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply"));
+    let unified = read_live();
+    let doc: toml::Value = toml::from_str(&unified).expect("parse");
+    assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{unified}");
     assert_eq!(
-        claude_after, "{ not valid json",
-        "codex-only projection must not touch claude's live file"
+        doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+        Some(true),
+        "the unified bucket is the official mirror: {unified}"
+    );
+    assert!(
+        unified.contains("[mcp_servers.echo-server]") && unified.contains("approval_policy"),
+        "{unified}"
+    );
+
+    set_unify(false);
+    assert!(cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply"));
+    let direct = read_live();
+    let doc: toml::Value = toml::from_str(&direct).expect("parse");
+    assert!(doc.get("model_provider").is_none(), "{direct}");
+    assert!(direct.contains("[mcp_servers.echo-server]"), "{direct}");
+
+    assert_eq!(
+        std::fs::read_to_string(&claude_json).expect("read claude json"),
+        "{ not valid json"
+    );
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&cc_switch_lib::get_codex_auth_path())
+            .expect("read auth.json"),
+        live_auth,
+        "the official login is never touched"
     );
 }
 
@@ -1663,8 +1533,8 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
 /// 会让"切 Codex"直接报切换失败——而此时 DB is_current 与 live 都已
 /// 落盘，切换事实上成功，报错只制造分裂假象。
 #[test]
-fn switch_codex_projects_mcp_despite_broken_claude_json() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+fn switch_codex_ignores_a_broken_claude_json() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1728,15 +1598,12 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
 
     let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");
-    assert!(
-        live.contains("mcp_servers.echo-server"),
-        "switch must re-project codex MCP after the full live rewrite, got: {live}"
-    );
+    assert!(live.contains("gpt-5.5"), "{live}");
 
     let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
     assert_eq!(
         claude_after, "{ not valid json",
-        "codex-only projection must not touch claude's live file"
+        "a Codex switch must not touch claude's live file"
     );
 }
 
@@ -1747,7 +1614,7 @@ fn switch_codex_projects_mcp_despite_broken_claude_json() {
 /// 状态永远陈旧。
 #[test]
 fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1804,7 +1671,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
 
 #[test]
 fn provider_service_switch_codex_official_accounts_write_auth_json() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1897,7 +1764,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
 
 #[test]
 fn provider_service_switch_codex_backfill_keeps_provider_specific_model_provider_id() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2024,7 +1891,7 @@ requires_openai_auth = true
 
 #[test]
 fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2105,7 +1972,7 @@ fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
 
 #[test]
 fn switch_codex_in_direct_mode_replaces_leftover_proxy_placeholders() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -2217,7 +2084,7 @@ wire_api = "responses"
 
 #[test]
 fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2255,7 +2122,7 @@ fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
 
 #[test]
 fn legacy_common_config_migration_flag_roundtrip() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2296,7 +2163,7 @@ fn legacy_common_config_migration_flag_roundtrip() {
 
 #[test]
 fn switch_packycode_gemini_updates_security_selected_type() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -2349,7 +2216,7 @@ fn switch_packycode_gemini_updates_security_selected_type() {
 
 #[test]
 fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -2404,7 +2271,7 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
 
 #[test]
 fn switch_google_official_gemini_preserves_env_vars() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -2467,7 +2334,7 @@ fn switch_google_official_gemini_preserves_env_vars() {
 
 #[test]
 fn provider_service_switch_claude_updates_live_and_state() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -2827,271 +2694,9 @@ fn switch_claude_refuses_a_settings_file_it_cannot_parse() {
     );
 }
 
-/// Codex 版切换自动回写：live 里新增的共享键被捕获进通用配置片段并传递给
-/// 下一个供应商；供应商专属字段、密钥与 cc-switch 注入产物绝不进片段；
-/// 回填后旧供应商的存储配置不残留片段内容（autosync 先于 strip，值必然匹配）。
-#[test]
-fn switch_codex_syncs_shared_keys_from_live_into_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    // A 激活状态下的 live：A 专属路由 + 已共享的 [tui] + 用户刚加的
-    // disable_response_storage + cc-switch 注入产物 + MCP 同步投影
-    // + 顶层 wire_api（无 model_provider 时的 fallback 写法，属 A 的路由语义）
-    // + 历史错误格式 [mcp.servers]（sync_all_enabled 清不掉的孤儿形态）
-    let live_config = r#"model = "gpt-5.5"
-model_provider = "aprov"
-wire_api = "chat"
-experimental_bearer_token = "sk-a-live-secret"
-model_catalog_json = "cc-switch-model-catalog.json"
-web_search = "disabled"
-disable_response_storage = true
-
-[tui]
-notifications = true
-
-[model_providers.aprov]
-name = "A Prov"
-base_url = "https://a.example/v1"
-wire_api = "responses"
-
-[mcp_servers.echo]
-type = "stdio"
-command = "echo"
-
-[mcp.servers.ghost-legacy]
-command = "ghost-cmd"
-"#;
-    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
-        .expect("seed codex live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "a".to_string();
-        let mut provider_a = Provider::with_id(
-            "a".to_string(),
-            "A".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-a" },
-                "config": "model = \"gpt-5.5\"\nmodel_provider = \"aprov\"\n\n[model_providers.aprov]\nname = \"A Prov\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n"
-            }),
-            None,
-        );
-        provider_a.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("a".to_string(), provider_a);
-        let mut provider_b = Provider::with_id(
-            "b".to_string(),
-            "B".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-b" },
-                "config": "model = \"gpt-5.5\"\nmodel_provider = \"bprov\"\n\n[model_providers.bprov]\nname = \"B Prov\"\nbase_url = \"https://b.example/v1\"\nwire_api = \"responses\"\n"
-            }),
-            None,
-        );
-        provider_b.meta = Some(ProviderMeta {
-            common_config_enabled: Some(true),
-            ..Default::default()
-        });
-        manager.providers.insert("b".to_string(), provider_b);
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet(
-            AppType::Codex.as_str(),
-            Some("[tui]\nnotifications = true\n".to_string()),
-        )
-        .expect("seed codex common config snippet");
-
-    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
-
-    // 片段：捕获新增共享键、保留既有共享键；专属字段/密钥/注入产物一律不进
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Codex.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    assert!(
-        snippet.contains("disable_response_storage = true"),
-        "newly added shared key should be captured, got: {snippet}"
-    );
-    assert!(
-        snippet.contains("notifications = true"),
-        "previously shared key should be preserved, got: {snippet}"
-    );
-    for forbidden in [
-        "experimental_bearer_token",
-        "sk-a-live-secret",
-        "model_catalog_json",
-        "web_search",
-        "mcp_servers",
-        "model_providers",
-        "model_provider",
-        "wire_api",
-        "ghost-legacy",
-    ] {
-        assert!(
-            !snippet.contains(forbidden),
-            "'{forbidden}' must never enter the shared snippet, got: {snippet}"
-        );
-    }
-
-    // B 的 live：共享键传递到位，A 的密钥/投影不得跟过来
-    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after switch");
-    assert!(
-        live_after.contains("disable_response_storage = true"),
-        "shared key should propagate to the next provider's live, got: {live_after}"
-    );
-    assert!(
-        live_after.contains("model_provider = \"bprov\""),
-        "live should be provider B's own config, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("sk-a-live-secret"),
-        "provider A's bearer token must not leak into B's live, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("mcp_servers"),
-        "no DB-enabled MCP servers, so live must not resurrect stale entries, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("ghost-legacy"),
-        "the legacy [mcp.servers] orphan must not propagate to B's live, got: {live_after}"
-    );
-    assert!(
-        !live_after.contains("wire_api = \"chat\""),
-        "provider A's top-level wire_api must not rewrite B's protocol, got: {live_after}"
-    );
-
-    // A 的存储配置：回填后不残留片段内容 / MCP 投影 / 注入产物
-    let providers = state
-        .db
-        .get_all_providers(AppType::Codex.as_str())
-        .expect("read providers after switch");
-    let stored_a = providers.get("a").expect("provider a exists");
-    let stored_a_config = stored_a
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    assert!(
-        stored_a_config.contains("model_provider = \"aprov\""),
-        "provider-owned routing must survive backfill, got: {stored_a_config}"
-    );
-    // 顶层 wire_api 是 A 自己的路由语义：不进片段，但回填时留在 A 的快照里
-    assert!(
-        stored_a_config.contains("wire_api = \"chat\""),
-        "provider-owned top-level wire_api must survive backfill, got: {stored_a_config}"
-    );
-    for forbidden in [
-        "disable_response_storage",
-        "notifications",
-        "mcp_servers",
-        "experimental_bearer_token",
-        "ghost-legacy",
-    ] {
-        assert!(
-            !stored_a_config.contains(forbidden),
-            "'{forbidden}' must be stripped from the stored provider config on backfill, got: {stored_a_config}"
-        );
-    }
-}
-
-/// Codex 版删除同步：用户在 live 里删掉一个已共享的键后，切换应把删除
-/// 同步进通用配置，且不会在切到下一个供应商时被重新注入（否则"删不掉"）。
-#[test]
-fn switch_codex_syncs_deletions_from_live_into_common_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    // 片段里有两个共享键，但用户已在 live 里删掉 disable_response_storage
-    let live_config = r#"model_provider = "aprov"
-
-[tui]
-notifications = true
-
-[model_providers.aprov]
-name = "A Prov"
-base_url = "https://a.example/v1"
-wire_api = "responses"
-"#;
-    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
-        .expect("seed codex live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "a".to_string();
-        for (id, name, prov_key) in [("a", "A", "aprov"), ("b", "B", "bprov")] {
-            let mut provider = Provider::with_id(
-                id.to_string(),
-                name.to_string(),
-                json!({
-                    "auth": { "OPENAI_API_KEY": format!("sk-{id}") },
-                    "config": format!("model_provider = \"{prov_key}\"\n\n[model_providers.{prov_key}]\nname = \"{name} Prov\"\nbase_url = \"https://{id}.example/v1\"\nwire_api = \"responses\"\n")
-                }),
-                None,
-            );
-            provider.meta = Some(ProviderMeta {
-                common_config_enabled: Some(true),
-                ..Default::default()
-            });
-            manager.providers.insert(id.to_string(), provider);
-        }
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-    state
-        .db
-        .set_config_snippet(
-            AppType::Codex.as_str(),
-            Some("disable_response_storage = true\n\n[tui]\nnotifications = true\n".to_string()),
-        )
-        .expect("seed codex common config snippet");
-
-    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
-
-    let snippet = state
-        .db
-        .get_config_snippet(AppType::Codex.as_str())
-        .expect("read snippet")
-        .expect("snippet present");
-    assert!(
-        !snippet.contains("disable_response_storage"),
-        "deleted shared key must be removed from the snippet, got: {snippet}"
-    );
-    assert!(
-        snippet.contains("notifications = true"),
-        "kept shared key should remain in the snippet, got: {snippet}"
-    );
-
-    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
-        .expect("read config.toml after switch");
-    assert!(
-        !live_after.contains("disable_response_storage"),
-        "deleted shared key must not be re-injected into the next provider, got: {live_after}"
-    );
-    assert!(
-        live_after.contains("notifications = true"),
-        "kept shared key should propagate to the next provider, got: {live_after}"
-    );
-}
-
 #[test]
 fn provider_service_switch_missing_provider_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3112,7 +2717,7 @@ fn provider_service_switch_missing_provider_returns_error() {
 
 #[test]
 fn provider_service_switch_codex_missing_auth_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3149,7 +2754,7 @@ fn provider_service_switch_codex_missing_auth_returns_error() {
 
 #[test]
 fn provider_service_delete_codex_removes_provider_and_files() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -3212,7 +2817,7 @@ fn provider_service_delete_codex_removes_provider_and_files() {
 
 #[test]
 fn provider_service_delete_claude_removes_provider_files() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -3272,7 +2877,7 @@ fn provider_service_delete_claude_removes_provider_files() {
 
 #[test]
 fn provider_service_delete_current_provider_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3321,7 +2926,7 @@ fn provider_service_delete_current_provider_returns_error() {
 
 #[test]
 fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_back() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -3386,7 +2991,7 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
 fn switch_writes_credential_files_owner_only() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     for dir in [".claude", ".codex", ".grok"] {
@@ -3487,7 +3092,7 @@ fn open_claude_editor(state: &cc_switch_lib::AppState, id: &str) -> (Provider, s
         .get_provider_by_id(id, AppType::Claude.as_str())
         .expect("read provider")
         .expect("provider exists");
-    let view = ProviderService::editor_view(state, AppType::Claude, &row.settings_config)
+    let view = ProviderService::editor_view(state, AppType::Claude, &row.settings_config, None)
         .expect("editor view");
     (row, view.settings)
 }
@@ -3632,7 +3237,8 @@ fn claude_editor_lists_row_fields_that_never_reach_live() {
         r#"{ "env": { "ANTHROPIC_BASE_URL": "https://relay.example" } }"#,
     );
 
-    let view = ProviderService::editor_view(&state, AppType::Claude, &imported).expect("view");
+    let view =
+        ProviderService::editor_view(&state, AppType::Claude, &imported, None).expect("view");
     assert_eq!(
         serde_json::to_value(&view.inactive).expect("serialize"),
         json!([{ "path": ["env", "API_TIMEOUT_MS"], "value": "3000000" }])
@@ -3710,7 +3316,7 @@ fn claude_editor_first_provider_keeps_the_existing_settings() {
     std::fs::write(&settings_path, existing).expect("seed live");
     let state = create_test_state().expect("state");
 
-    let base = ProviderService::editor_view(&state, AppType::Claude, &json!({}))
+    let base = ProviderService::editor_view(&state, AppType::Claude, &json!({}), None)
         .expect("view")
         .settings;
     assert_eq!(

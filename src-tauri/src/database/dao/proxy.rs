@@ -785,6 +785,24 @@ impl Database {
     ///
     /// 用于托盘菜单构建等同步场景
     /// 返回 (enabled, auto_failover_enabled)
+    /// 同步读代理的监听地址和端口（读不到时用默认值）。给直连切换生成 Codex 休眠表的
+    /// 本地地址用，不需要代理在运行。
+    pub fn get_proxy_listen_sync(&self) -> (String, u16) {
+        let fallback = || {
+            let defaults = crate::proxy::types::ProxyConfig::default();
+            (defaults.listen_address, defaults.listen_port)
+        };
+        let Ok(conn) = self.conn.lock() else {
+            return fallback();
+        };
+        conn.query_row(
+            "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? as u16)),
+        )
+        .unwrap_or_else(|_| fallback())
+    }
+
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
         let conn = match self.conn.lock() {
             Ok(c) => c,

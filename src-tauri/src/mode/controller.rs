@@ -11,8 +11,8 @@
 //! | 接上（启动） | 按保存的路由写代理契约 | 接上 |
 //! | 换路由 | 契约没变就不碰；变了先改写客户端 | 路由、契约 |
 //!
-//! Claude Code、Gemini CLI 的客户端文件经写入引擎写，文件和模式状态在同一个操作里
-//! 提交，崩溃后按 pending 前滚。Codex、Grok Build 暂时沿用原有的整份写入函数（改成只写
+//! Claude Code、Codex、Gemini CLI 的客户端文件经写入引擎写，文件和模式状态在同一个
+//! 操作里提交，崩溃后按 pending 前滚。Grok Build 暂时沿用原有的整份写入函数（改成只写
 //! 关键字段之前的过渡做法）：先写文件，成功后再落定状态；进入代理前先把 live 回填进
 //! 直连供应商的行，和直连切走时一样。
 //!
@@ -29,6 +29,7 @@ use crate::live::project::claude::{
     direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, PROXY_TOKEN_PLACEHOLDER,
 };
 use crate::provider::Provider;
+use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::{claude_direct, ProviderService, SwitchResult};
 use crate::services::McpService;
 use crate::store::AppState;
@@ -122,11 +123,21 @@ impl LiveNow {
         }
     }
 
-    /// live 里的 Codex 登录现在属于哪个供应商。
-    fn owner(&self) -> Option<&Provider> {
+    /// Codex 的 live 现在是谁写进去的。
+    fn codex_owner(&self) -> Owner<'_> {
         match self {
-            Self::Direct(provider) => provider.as_ref(),
-            Self::Proxy { route, .. } => route.as_ref(),
+            Self::Direct(provider) => provider.as_ref().map_or(Owner::None, Owner::Provider),
+            Self::Proxy {
+                contract: Some(contract),
+                route,
+            } => Owner::Contract {
+                contract,
+                route: route.as_ref(),
+            },
+            Self::Proxy {
+                contract: None,
+                route,
+            } => route.as_ref().map_or(Owner::None, Owner::Provider),
         }
     }
 }
@@ -197,25 +208,14 @@ fn gemini_proxy_patch(proxy_url: &str) -> DotenvPatch {
     }
 }
 
-/// 进入代理前把 live 回填进直连供应商的行（Codex、Gemini、Grok Build 的过渡做法）。
+/// 进入代理前把 live 回填进直连供应商的行（Gemini、Grok Build 的过渡做法）。
 /// live 里已经是代理占位符（旧版接管的遗留）时不回填，否则会把占位符存进行里。
-///
-/// Codex 官方卡不回填：live 里的 ChatGPT 登录是用户自己的、会被 CLI 轮换，存进行里会随
-/// 云同步走，退出代理时还会把用户期间已登出的登录写回去。
 fn backfill_direct(state: &AppState, app: &AppType, live_now: &LiveNow) {
     let LiveNow::Direct(Some(direct)) = live_now else {
         return;
     };
-    if matches!(app, AppType::Codex) && is_codex_official(direct) {
-        return;
-    }
     let mut ignored = SwitchResult::default();
     ProviderService::backfill_current_from_live(state, app, direct, &mut ignored);
-}
-
-fn is_codex_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
-        || crate::proxy::providers::is_codex_official_provider(provider)
 }
 
 /// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件；接上
@@ -267,20 +267,39 @@ async fn write_proxy(
             )
             .map_err(err)?;
         }
-        AppType::Codex | AppType::GrokBuild => {
+        AppType::Codex => {
+            let (_, base_url) = state.proxy_service.build_proxy_urls().await?;
+            let owner = live_now.codex_owner();
+            let spec = codex_direct::Target::Proxy {
+                route,
+                base_url: &base_url,
+            };
+            let prepared =
+                codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
+            let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
+            let unchanged = !force
+                && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == planned.contract.key);
+            target.contract = Some(planned.contract.clone());
+            let pending = PendingTarget {
+                state: Some(target),
+                ..PendingTarget::default()
+            };
+            if unchanged {
+                commit_state(state, app, &pending)?;
+            } else {
+                codex_direct::run(&state.db, op_name, planned, &prepared, pending).map_err(err)?;
+            }
+        }
+        AppType::GrokBuild => {
             let contract = contract::whole_row(app.as_str(), &proxy_url, route);
             let unchanged = !force
                 && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == contract.key);
             if !unchanged {
                 backfill_direct(state, app, live_now);
-                if matches!(app, AppType::Codex) {
-                    write_codex_proxy(state, route, live_now.owner()).await?;
-                } else {
-                    state
-                        .proxy_service
-                        .sync_grok_live_from_provider_while_proxy_active(route)
-                        .await?;
-                }
+                state
+                    .proxy_service
+                    .sync_grok_live_from_provider_while_proxy_active(route)
+                    .await?;
             }
             target.contract = Some(contract);
             commit_state(
@@ -293,60 +312,6 @@ async fn write_proxy(
             )?;
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
-    }
-    Ok(())
-}
-
-async fn write_codex_proxy(
-    state: &AppState,
-    route: &Provider,
-    live_owner: Option<&Provider>,
-) -> Result<(), String> {
-    let route_account = ProviderService::managed_codex_oauth_account_id(route);
-    if let Some(account_id) = route_account
-        .as_deref()
-        .filter(|_| crate::proxy::providers::is_codex_official_provider(route))
-    {
-        state
-            .codex_oauth_manager
-            .ensure_account_exists(account_id)
-            .await
-            .map_err(err)?;
-    }
-    let outgoing = live_owner
-        .and_then(ProviderService::managed_codex_oauth_account_id)
-        .filter(|account| route_account.as_deref() != Some(account.as_str()));
-    let guard = match outgoing.as_deref() {
-        Some(account_id) => Some(
-            state
-                .codex_oauth_manager
-                .prepare_live_auth_for_account_switch_away(account_id)
-                .await
-                .map_err(err)?,
-        ),
-        None => None,
-    };
-    let snapshot = crate::codex_config::CodexLiveStateSnapshot::capture().map_err(err)?;
-    let result = async {
-        state
-            .proxy_service
-            .sync_codex_live_from_provider_while_proxy_active_guarded(
-                route,
-                outgoing.as_deref(),
-                guard.as_ref(),
-            )
-            .await?;
-        if let (Some(account_id), Some(guard)) = (outgoing.as_deref(), guard.as_ref()) {
-            guard.clear_outgoing(account_id).map_err(err)?;
-        }
-        Ok::<(), String>(())
-    }
-    .await;
-    if let Err(error) = result {
-        if let Err(rollback) = snapshot.restore_preserving_newer_same_account_auth() {
-            return Err(format!("{error}; 回滚 Codex Live 同时失败: {rollback}"));
-        }
-        return Err(error);
     }
     Ok(())
 }
@@ -398,42 +363,44 @@ fn write_direct(
             )
             .map_err(err)?;
         }
-        AppType::Codex | AppType::Gemini | AppType::GrokBuild => {
+        AppType::Codex => {
+            if !attached {
+                commit_state(state, app, &pending_target)?;
+                return Ok(());
+            }
+            // 行里本身带着占位符（旧版接管期间被导入的残留）时不能照写：只清空关键字段。
+            let target = direct.as_ref().filter(|provider| {
+                !crate::services::ProxyService::config_has_proxy_placeholder(
+                    app,
+                    &provider.settings_config,
+                )
+            });
+            let owner = live_now.codex_owner();
+            if let Err(error) = codex_direct::write_direct(
+                &state.db,
+                &state.codex_oauth_manager,
+                op_name,
+                owner,
+                target,
+                pending_target.clone(),
+            ) {
+                // 直连供应商写不出来（比如绑定的托管账号已被删除）也不能让客户端一直指着
+                // 代理：退一步只清空关键字段。
+                log::warn!("写回直连的 Codex 配置失败，只清空关键字段: {error}");
+                codex_direct::write_direct(
+                    &state.db,
+                    &state.codex_oauth_manager,
+                    op_name,
+                    owner,
+                    None,
+                    pending_target,
+                )
+                .map_err(err)?;
+            }
+        }
+        AppType::Gemini | AppType::GrokBuild => {
             if attached {
-                match direct.as_ref() {
-                    Some(direct) if matches!(app, AppType::Codex) => {
-                        // 没绑托管账号的官方卡：live 里的登录是用户自己的（代理期间可能已登出
-                        // 或换了账号），只写 config，不动 auth.json。
-                        let unbound_official = is_codex_official(direct)
-                            && ProviderService::managed_codex_oauth_account_id(direct).is_none();
-                        let mut config_only;
-                        let direct = if unbound_official {
-                            config_only = direct.clone();
-                            config_only.settings_config["auth"] = json!({});
-                            &config_only
-                        } else {
-                            direct
-                        };
-                        let outgoing = live_now
-                            .owner()
-                            .and_then(ProviderService::managed_codex_oauth_account_id)
-                            .filter(|account| {
-                                ProviderService::managed_codex_oauth_account_id(direct).as_deref()
-                                    != Some(account.as_str())
-                            });
-                        if let Err(error) = ProviderService::write_codex_direct_live(
-                            state,
-                            direct,
-                            outgoing.as_deref(),
-                        ) {
-                            // 直连供应商写不出来（比如绑定的托管账号已被删除）也不能让客户端
-                            // 一直指着代理：退一步只清掉占位符和本地代理地址，登录不动。
-                            log::warn!("写回直连的 Codex 配置失败，只清理接管占位符: {error}");
-                            state.proxy_service.clear_proxy_placeholders(app)?;
-                        }
-                    }
-                    _ => state.proxy_service.restore_live_from_direct_provider(app)?,
-                }
+                state.proxy_service.restore_live_from_direct_provider(app)?;
                 if let Err(error) = McpService::sync_enabled_for_app(state, app) {
                     log::warn!("写回直连配置后重投影 {app:?} MCP 失败（下次同步时自愈）: {error}");
                 }
@@ -1909,14 +1876,26 @@ mod mode_tests {
 
         ProviderService::switch(&state, AppType::Codex, &official.id).expect("route to official");
         let official_contract = fs::read_to_string(&config_path).unwrap();
-        assert!(
-            !official_contract.contains(PROXY_TOKEN_PLACEHOLDER),
-            "the official contract carries the client's own login: {official_contract}"
-        );
-        assert!(
-            official_contract.contains("cc-switch-official"),
+        let doc: toml::Table = toml::from_str(&official_contract).unwrap();
+        assert_eq!(
+            doc["model_provider"].as_str(),
+            Some("cc-switch-official"),
             "{official_contract}"
         );
+        let route = &doc["model_providers"]["cc-switch-official"];
+        assert!(
+            route.get("experimental_bearer_token").is_none(),
+            "the official contract carries the client's own login: {official_contract}"
+        );
+        assert_eq!(route["requires_openai_auth"].as_bool(), Some(true));
+        // 第三方路由留下的 custom 表改成休眠形态：指向本地代理、只有占位 Key。
+        let dormant = &doc["model_providers"]["custom"];
+        assert_eq!(
+            dormant["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(dormant.get("requires_openai_auth").is_none());
+        assert!(!official_contract.contains("sk-relay"));
         assert_eq!(auth(), native_auth);
 
         ProviderService::switch(&state, AppType::Codex, "relay").expect("route back");
@@ -1928,5 +1907,634 @@ mod mode_tests {
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    // ---------- Codex：只替换关键字段 ----------
+
+    fn codex_row(id: &str, url: &str, extra: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            id.to_uppercase(),
+            json!({
+                "auth": { "OPENAI_API_KEY": format!("sk-{id}") },
+                "config": format!(
+                    "model_provider = \"{id}\"\nmodel = \"gpt-{id}\"\n{extra}\n[model_providers.{id}]\nname = \"{id}\"\nbase_url = \"{url}\"\nwire_api = \"responses\"\n"
+                ),
+            }),
+            None,
+        )
+    }
+
+    fn codex_official() -> Provider {
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        official
+    }
+
+    fn codex_config_path() -> std::path::PathBuf {
+        crate::codex_config::get_codex_config_path()
+    }
+
+    fn codex_auth_path() -> std::path::PathBuf {
+        crate::codex_config::get_codex_auth_path()
+    }
+
+    fn seed_codex(config: &str, auth: Option<&Value>) {
+        let path = codex_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, config).unwrap();
+        match auth {
+            Some(auth) => fs::write(codex_auth_path(), auth.to_string()).unwrap(),
+            None => {
+                let _ = fs::remove_file(codex_auth_path());
+            }
+        }
+    }
+
+    fn codex_text() -> String {
+        fs::read_to_string(codex_config_path()).unwrap()
+    }
+
+    fn codex_doc() -> toml::Table {
+        toml::from_str(&codex_text()).unwrap()
+    }
+
+    fn set_preservation(on: bool) {
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: on,
+            ..Default::default()
+        })
+        .unwrap();
+    }
+
+    fn chatgpt_login(account: &str) -> Value {
+        json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": "id",
+                "access_token": format!("access-{account}"),
+                "refresh_token": format!("refresh-{account}"),
+                "account_id": account
+            },
+            "last_refresh": "2026-09-01T00:00:00Z"
+        })
+    }
+
+    /// live 里 A 的关键字段之外，都是用户和 Codex 自己的东西。
+    const CODEX_USER_LIVE: &str = r#"# 用户的注释
+approval_policy = "on-request"
+model_provider = "custom"
+model = "gpt-a"
+model_context_window = 200000
+
+[projects."/work"]
+trust_level = "trusted"
+
+[agents]
+default_subagent_model = "gpt-a-mini"
+max_threads = 4
+
+[model_providers.custom]
+name = "a"
+base_url = "https://a.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "sk-a"
+
+[model_providers.ollama_local]
+name = "Ollama"
+base_url = "http://localhost:11434/v1"
+
+[mcp_servers.fs]
+command = "fs-server"
+"#;
+
+    fn codex_a_b() -> [Provider; 2] {
+        [
+            codex_row(
+                "a",
+                "https://a.example/v1",
+                "model_context_window = 200000\n[agents]\ndefault_subagent_model = \"gpt-a-mini\"\n",
+            ),
+            codex_row("b", "https://b.example/v1", ""),
+        ]
+    }
+
+    /// 关键字段之外的部分（用户的表、注释、MCP、项目信任）。
+    fn codex_user_parts(text: &str) -> Vec<&str> {
+        [
+            "# 用户的注释",
+            "approval_policy = \"on-request\"",
+            "[projects.\"/work\"]",
+            "max_threads = 4",
+            "[model_providers.ollama_local]",
+            "[mcp_servers.fs]",
+        ]
+        .into_iter()
+        .filter(|part| text.contains(part))
+        .collect()
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_direct_switch_replaces_only_key_fields_and_round_trips() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let on_b = codex_text();
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["model"].as_str(), Some("gpt-b"));
+        let route = &doc["model_providers"]["custom"];
+        assert_eq!(route["base_url"].as_str(), Some("https://b.example/v1"));
+        assert_eq!(route["experimental_bearer_token"].as_str(), Some("sk-b"));
+        assert!(!on_b.contains("sk-a"), "A's key is gone: {on_b}");
+        // A 带进来的独有字段（值没被改过）删掉；嵌在 [agents] 里的模型名只删那一个键。
+        assert!(doc.get("model_context_window").is_none(), "{on_b}");
+        assert!(doc["agents"].get("default_subagent_model").is_none());
+        assert_eq!(doc["agents"]["max_threads"].as_integer(), Some(4));
+        assert_eq!(codex_user_parts(&on_b).len(), 6, "{on_b}");
+
+        ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
+        let on_a = codex_text();
+        let doc = codex_doc();
+        assert_eq!(doc["model"].as_str(), Some("gpt-a"));
+        assert_eq!(doc["model_context_window"].as_integer(), Some(200000));
+        assert_eq!(
+            doc["agents"]["default_subagent_model"].as_str(),
+            Some("gpt-a-mini")
+        );
+        assert_eq!(codex_user_parts(&on_a).len(), 6, "{on_a}");
+
+        // 第二轮往返字节稳定。
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b again");
+        assert_eq!(codex_text(), on_b);
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a again");
+        assert_eq!(codex_text(), on_a);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_exclusive_fields_the_user_changed_stay() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let edited = CODEX_USER_LIVE.replace(
+            "model_context_window = 200000",
+            "model_context_window = 150000",
+        );
+        seed_codex(&edited, None);
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        assert_eq!(
+            codex_doc()["model_context_window"].as_integer(),
+            Some(150000),
+            "a value the user changed is not A's to remove"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_switch_leaves_a_dormant_route_table() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let state = state_with(AppType::Codex, &[a, b, codex_official()], "a").await;
+
+        ProviderService::switch(
+            &state,
+            AppType::Codex,
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+        )
+        .expect("switch to official");
+        let text = codex_text();
+        let doc = codex_doc();
+        assert!(doc.get("model_provider").is_none(), "{text}");
+        let dormant = &doc["model_providers"]["custom"];
+        assert_eq!(
+            dormant["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/v1"),
+            "the dormant table points at the configured local proxy: {text}"
+        );
+        assert_eq!(
+            dormant["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(dormant.get("name").is_some(), "Codex loads it: {text}");
+        assert!(!text.contains("sk-a"), "no real key stays behind: {text}");
+        assert_eq!(codex_user_parts(&text).len(), 6, "{text}");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(codex_auth_path()).unwrap()).unwrap(),
+            chatgpt_login("acct"),
+            "the official login is untouched"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_an_active_profile_overriding_the_route_is_refused_without_side_effects() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = format!(
+            "profile = \"work\"\n{CODEX_USER_LIVE}\n[profiles.work]\nmodel_provider = \"ollama_local\"\n"
+        );
+        seed_codex(&live, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let mtime = fs::metadata(codex_config_path())
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        let err = ProviderService::switch(&state, AppType::Codex, "b").expect_err("refused");
+        assert!(err.to_string().contains("work"), "{err}");
+        assert_eq!(codex_text(), live);
+        assert_eq!(
+            fs::metadata(codex_config_path())
+                .unwrap()
+                .modified()
+                .unwrap(),
+            mtime
+        );
+        assert_eq!(direct(&state, &AppType::Codex).as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_migration_retires_only_tables_cc_switch_wrote() {
+        let _home = Home::new();
+        set_preservation(true);
+        // 旧版按行的 id 整份写进来的表：a（id 和地址都对得上 a 的行）、b 的地址被用户改过、
+        // 被 profile 引用的 c、代理占位残留、用户自己的 ollama_local。
+        let live = r#"model_provider = "a"
+model = "gpt-a"
+
+[model_providers.a]
+name = "a"
+base_url = "https://a.example/v1"
+experimental_bearer_token = "sk-a"
+
+[model_providers.b]
+name = "b"
+base_url = "https://my-own-b.example/v1"
+
+[model_providers.c]
+name = "c"
+base_url = "https://c.example/v1"
+
+[model_providers.deepseek]
+name = "deepseek"
+base_url = "http://127.0.0.1:15721/v1"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[model_providers.ollama_local]
+name = "Ollama"
+base_url = "http://localhost:11434/v1"
+
+[profiles.side]
+model_provider = "c"
+"#;
+        seed_codex(live, None);
+        let [a, b] = codex_a_b();
+        let c = codex_row("c", "https://c.example/v1", "");
+        let state = state_with(AppType::Codex, &[a, b, c], "a").await;
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let text = codex_text();
+        let providers = codex_doc()["model_providers"].as_table().unwrap().clone();
+        assert!(!providers.contains_key("a"), "provably ours: {text}");
+        assert!(
+            !providers.contains_key("deepseek"),
+            "placeholder leftover: {text}"
+        );
+        assert!(
+            providers.contains_key("b"),
+            "address differs, not provably ours"
+        );
+        assert!(providers.contains_key("c"), "a profile still selects it");
+        assert!(
+            providers.contains_key("ollama_local"),
+            "the user's own table"
+        );
+        assert!(!text.contains("sk-a"), "{text}");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_switch_crash_rolls_every_file_forward() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex(CODEX_USER_LIVE, Some(&chatgpt_login("acct")));
+        let [a, mut b] = codex_a_b();
+        b.settings_config["modelCatalog"] = json!({ "models": [{ "model": "gpt-b" }] });
+        let state = state_with(AppType::Codex, &[a, b, codex_official()], "a").await;
+        ProviderService::switch(
+            &state,
+            AppType::Codex,
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+        )
+        .expect("official");
+
+        // 官方 → b：删 auth.json（暂存登录）、改 config.toml、写模型目录，一起提交。
+        for point in ["published:0", "published:1", "published:2", "target"] {
+            ProviderService::switch(
+                &state,
+                AppType::Codex,
+                crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+            )
+            .expect("reset to official");
+            assert!(codex_auth_path().exists(), "{point}: login restored");
+            failpoint::crash_at(Some(point));
+            let crashed = ProviderService::switch(&state, AppType::Codex, "b");
+            failpoint::crash_at(None);
+            assert!(crashed.is_err(), "{point}");
+
+            crate::mode::operation::recover_on_startup(&state.db);
+            assert!(!codex_auth_path().exists(), "{point}: auth.json deleted");
+            assert_eq!(codex_doc()["model"].as_str(), Some("gpt-b"), "{point}");
+            assert!(
+                crate::codex_config::get_codex_model_catalog_path().exists(),
+                "{point}: catalog written"
+            );
+            assert_eq!(
+                direct(&state, &AppType::Codex).as_deref(),
+                Some("b"),
+                "{point}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_preservation_off_gives_the_login_back_on_the_way_to_official() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, b, official.clone()], &official.id).await;
+        let login = || -> Option<Value> {
+            fs::read(codex_auth_path())
+                .ok()
+                .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        };
+
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        assert_eq!(login(), None, "no login next to a third-party route");
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("to official");
+        assert_eq!(
+            login(),
+            Some(chatgpt_login("acct")),
+            "the same login comes back"
+        );
+        let row = state
+            .db
+            .get_provider_by_id(&official.id, "codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.settings_config["auth"],
+            json!({}),
+            "the login never goes into the row (it would sync to the cloud)"
+        );
+
+        // 在官方卡上登出后切走再切回：保持登出。
+        fs::remove_file(codex_auth_path()).unwrap();
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("to official");
+        assert_eq!(login(), None, "logging out sticks");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_keyring_logins_keep_requires_openai_auth_on_the_preservation_setting() {
+        let _home = Home::new();
+        for preserve in [true, false] {
+            set_preservation(preserve);
+            seed_codex("cli_auth_credentials_store = \"keyring\"\n", None);
+            let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+            let doc = codex_doc();
+            assert_eq!(
+                doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+                Some(preserve),
+                "the login lives in the keyring, auth.json says nothing (preserve={preserve})"
+            );
+            assert_eq!(doc["cli_auth_credentials_store"].as_str(), Some("keyring"));
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_route_switch_with_the_same_contract_leaves_the_client_files_alone() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        // b、c 在客户端看来一样（同一个模型名，没有独有字段），只是上游和 Key 不同。
+        let [a, b] = codex_a_b();
+        let mut c = codex_row("c", "https://c.example/v1", "");
+        c.settings_config["config"] = json!(c.settings_config["config"]
+            .as_str()
+            .unwrap()
+            .replace("gpt-c", "gpt-b"));
+        // d 和 b 只差模型名。
+        let d = codex_row("d", "https://d.example/v1", "");
+        let state = state_with(AppType::Codex, &[a, b, c, d], "b").await;
+        enter(&state, &AppType::Codex).await.expect("enter");
+        let entered = codex_text();
+        assert!(entered.contains(PROXY_TOKEN_PLACEHOLDER), "{entered}");
+        assert!(!entered.contains("sk-b"), "{entered}");
+        let mtime = fs::metadata(codex_config_path())
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(codex_config_path(), fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        ProviderService::switch(&state, AppType::Codex, "c").expect("switch route");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(codex_config_path(), fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        assert_eq!(codex_text(), entered);
+        assert_eq!(
+            fs::metadata(codex_config_path())
+                .unwrap()
+                .modified()
+                .unwrap(),
+            mtime
+        );
+        assert_eq!(in_use(&state, &AppType::Codex).as_deref(), Some("c"));
+
+        // 换到只有模型名不同的 d：契约变了，客户端先改写。
+        ProviderService::switch(&state, AppType::Codex, "d").expect("route to d");
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-d"));
+        // 换到独有字段也不同的 a：同样改写。
+        ProviderService::switch(&state, AppType::Codex, "a").expect("route to a");
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-a"));
+        assert_eq!(direct(&state, &AppType::Codex).as_deref(), Some("b"));
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        let back = codex_text();
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-b"));
+        assert!(
+            back.contains("sk-b") && !back.contains(PROXY_TOKEN_PLACEHOLDER),
+            "{back}"
+        );
+        assert_eq!(codex_user_parts(&back).len(), 6, "{back}");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_saves_key_fields_to_the_row_and_global_edits_to_live() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let save = |id: &str, settings: Value, base: Value| {
+            let mut row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            row.settings_config = settings;
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                Some(id),
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+
+        // 编辑非当前的 b：显示的是切到 b 之后的 config.toml（Key 在输入框里，不在 TOML 里）。
+        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &b_row.settings_config, None)
+                .expect("view b");
+        let shown = view.settings["config"].as_str().unwrap().to_string();
+        assert!(
+            shown.contains("gpt-b") && shown.contains("https://b.example/v1"),
+            "{shown}"
+        );
+        assert!(!shown.contains("sk-b"), "{shown}");
+        assert_eq!(codex_user_parts(&shown).len(), 6, "{shown}");
+
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(
+            shown
+                .replace("\"on-request\"", "\"never\"")
+                .replace("\"gpt-b\"", "\"gpt-b2\"")
+                + "\n[mcp_servers.git]\ncommand = \"git\"\n"
+        );
+        save("b", edited, view.settings.clone()).expect("save b");
+        let live = codex_text();
+        assert!(
+            live.contains("approval_policy = \"never\""),
+            "global edit applied: {live}"
+        );
+        assert!(live.contains("[mcp_servers.git]"), "{live}");
+        assert_eq!(
+            codex_doc()["model"].as_str(),
+            Some("gpt-a"),
+            "b is not current: {live}"
+        );
+        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let b_config = b_row.settings_config["config"].as_str().unwrap();
+        assert!(
+            b_config.contains("gpt-b2") && !b_config.contains("approval_policy"),
+            "{b_config}"
+        );
+
+        // 编辑当前的 a：关键字段立刻换进 live。
+        let a_row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &a_row.settings_config, None)
+                .expect("view a");
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(view.settings["config"]
+            .as_str()
+            .unwrap()
+            .replace("\"gpt-a\"", "\"gpt-a2\""));
+        save("a", edited, view.settings.clone()).expect("save a");
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-a2"));
+        assert!(codex_text().contains("[mcp_servers.git]"));
+
+        // 打开编辑器之后别的程序改了同一个键：保存时报冲突，什么都不写。
+        let a_row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &a_row.settings_config, None)
+                .expect("view a again");
+        let outside = codex_text().replace("\"never\"", "\"untrusted\"");
+        fs::write(codex_config_path(), &outside).unwrap();
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(view.settings["config"]
+            .as_str()
+            .unwrap()
+            .replace("\"never\"", "\"on-failure\""));
+        let err = save("a", edited, view.settings.clone()).expect_err("conflict");
+        assert!(
+            err.to_string()
+                .contains(crate::live::patch::EDIT_CONFLICT_CODE),
+            "{err}"
+        );
+        assert_eq!(codex_text(), outside);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_login_refreshed_during_the_switch_is_never_overwritten() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let [a, _] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, official.clone()], &official.id).await;
+        let config_before = codex_text();
+
+        // 计划删掉 auth.json 之后、发布之前，Codex CLI 刷新了登录。
+        let mut refreshed = chatgpt_login("acct");
+        refreshed["tokens"]["refresh_token"] = json!("refresh-acct-2");
+        let fresh = refreshed.to_string();
+        failpoint::on_before_publish(Some(Box::new(move |_, path: &std::path::Path| {
+            if path == codex_auth_path() {
+                fs::write(path, &fresh).unwrap();
+            }
+        })));
+        let result = ProviderService::switch(&state, AppType::Codex, "a");
+        failpoint::on_before_publish(None);
+
+        assert!(
+            result.is_err(),
+            "the switch stops instead of deleting a newer login"
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(codex_auth_path()).unwrap()).unwrap(),
+            refreshed
+        );
+        assert_eq!(codex_text(), config_before, "nothing else was published");
+        assert_eq!(
+            direct(&state, &AppType::Codex).as_deref(),
+            Some(official.id.as_str())
+        );
+        assert!(
+            state::pending(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .is_none(),
+            "an operation that never published leaves no pending"
+        );
     }
 }

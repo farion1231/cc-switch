@@ -10,7 +10,7 @@ use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn pricing_model_source_commands_round_trip() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 

@@ -98,7 +98,6 @@ import {
   useCodexConfigState,
   useApiKeyLink,
   useTemplateValues,
-  useCodexCommonConfig,
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
@@ -267,7 +266,8 @@ export interface ProviderFormProps {
   showButtons?: boolean;
   isProxyTakeover?: boolean;
   /** Claude：行里保存着、但不随切换生效的字段（编辑器底部提示）。 */
-  claudeInactiveFields?: ProviderEditorInactiveField[];
+  /** 编辑器里行保存着、但不随切换生效的字段（Claude Code、Codex）。 */
+  inactiveFields?: ProviderEditorInactiveField[];
   /**
    * Claude 新增：当前 live 去掉当前供应商的关键字段后的样子。预设的关键字段套在它上面
    * 显示，保存时其余部分的改动写进 live。
@@ -303,7 +303,7 @@ function ProviderFormFull({
   initialData,
   showButtons = true,
   isProxyTakeover = false,
-  claudeInactiveFields,
+  inactiveFields,
   claudeLiveBase,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
@@ -823,24 +823,6 @@ function ProviderFormFull({
     presetEntries: appId === "claude" ? presetEntries : [],
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
-  });
-
-  const {
-    useCommonConfig: useCodexCommonConfigFlag,
-    commonConfigSnippet: codexCommonConfigSnippet,
-    commonConfigError: codexCommonConfigError,
-    handleCommonConfigToggle: handleCodexCommonConfigToggle,
-    handleCommonConfigSnippetChange: handleCodexCommonConfigSnippetChange,
-    isExtracting: isCodexExtracting,
-    handleExtract: handleCodexExtract,
-    clearCommonConfigError: clearCodexCommonConfigError,
-  } = useCodexCommonConfig({
-    codexConfig,
-    onConfigChange: handleCodexConfigChange,
-    initialData: appId === "codex" ? initialData : undefined,
-    initialEnabled:
-      appId === "codex" ? initialData?.meta?.commonConfigEnabled : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
   });
 
   const {
@@ -1671,15 +1653,14 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
-      // Claude 的通用配置片段已冻结：沿用行里原有的标记，新增时由后端写 true（兼容旧版）。
+      // Claude Code、Codex 的通用配置片段已冻结：沿用行里原有的标记，新增时由后端写
+      // true（兼容旧版）。
       commonConfigEnabled:
-        appId === "claude"
+        appId === "claude" || appId === "codex"
           ? initialData?.meta?.commonConfigEnabled
-          : appId === "codex"
-            ? useCodexCommonConfigFlag
-            : appId === "gemini"
-              ? useGeminiCommonConfigFlag
-              : undefined,
+          : appId === "gemini"
+            ? useGeminiCommonConfigFlag
+            : undefined,
       endpointAutoSelect,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
@@ -2600,18 +2581,9 @@ function ProviderFormFull({
                 isProxyTakeover={isProxyTakeover}
                 onAuthChange={setCodexAuth}
                 onConfigChange={handleCodexConfigChange}
-                useCommonConfig={useCodexCommonConfigFlag}
-                onCommonConfigToggle={handleCodexCommonConfigToggle}
-                commonConfigSnippet={codexCommonConfigSnippet}
-                onCommonConfigSnippetChange={
-                  handleCodexCommonConfigSnippetChange
-                }
-                onCommonConfigErrorClear={clearCodexCommonConfigError}
-                commonConfigError={codexCommonConfigError}
                 authError={codexAuthError}
                 configError={codexConfigError}
-                onExtract={handleCodexExtract}
-                isExtracting={isCodexExtracting}
+                inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}
             </>
@@ -2721,7 +2693,7 @@ function ProviderFormFull({
               <CommonConfigEditor
                 value={form.getValues("settingsConfig")}
                 onChange={(value) => form.setValue("settingsConfig", value)}
-                inactiveFields={claudeInactiveFields}
+                inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}
             </>

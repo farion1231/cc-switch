@@ -108,10 +108,12 @@ export const providersApi = {
   async getEditorView(
     appId: AppId,
     settingsConfig: Record<string, unknown>,
+    category?: string,
   ): Promise<ProviderEditorView> {
     return await invoke("get_provider_editor_view", {
       app: appId,
       settingsConfig,
+      ...(category ? { category } : {}),
     });
   },
 

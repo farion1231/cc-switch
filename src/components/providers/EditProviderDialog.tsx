@@ -16,8 +16,6 @@ import {
   type AppId,
   type ManagedAuthProvider,
 } from "@/lib/api";
-import { extractCodexExperimentalBearerToken } from "@/utils/providerConfigUtils";
-import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type {
   EditorConflictPolicy,
@@ -45,86 +43,6 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-
-const hasAuthMaterial = (value: unknown): boolean => {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return true;
-};
-
-/**
- * Whether an auth payload actually carries a credential, ignoring the bare
- * `auth_mode` marker — the frontend twin of the backend
- * `codex_auth_has_login_material`.
- */
-const hasCodexAuthMaterial = (auth: Record<string, unknown> | null): boolean =>
-  auth !== null &&
-  Object.entries(auth).some(
-    ([key, value]) => key !== "auth_mode" && hasAuthMaterial(value),
-  );
-
-/**
- * Rebuild the provider auth only for a current Codex provider's live snapshot.
- *
- * In official-auth-preservation mode, live config.toml owns the active
- * provider bearer while the shared auth.json may belong to another provider or
- * contain the user's ChatGPT login. Stored provider auth remains the template:
- * this mirrors the backend switch-away backfill and avoids copying shared auth
- * material into the provider row. DB snapshots and presets must keep their
- * normal auth-first precedence.
- */
-const reconcileCodexLiveAuth = (
-  liveSettings: Record<string, unknown>,
-  storedSettings: Record<string, unknown> | null,
-  isOfficialProvider: boolean,
-): Record<string, unknown> => {
-  if (isOfficialProvider) return liveSettings;
-
-  const configText =
-    typeof liveSettings.config === "string" ? liveSettings.config : "";
-  const bearer = extractCodexExperimentalBearerToken(configText);
-  const liveAuth = asRecord(liveSettings.auth);
-  const storedAuth = asRecord(storedSettings?.auth);
-
-  if (!bearer) {
-    // Live auth.json is a single shared slot with no provider identity, and a
-    // third-party Codex route never reads it: the switch deletes the file in
-    // default mode and injects the key into config.toml instead — an injection
-    // that is skipped entirely when the provider table declares its own
-    // credential source (`env_key`, `auth`/`aws`, an explicit Authorization
-    // header). A credential-less live auth (missing file, or the bare
-    // `auth_mode` logout marker) is therefore an absent field, not an emptied
-    // one: keep the stored template so saving the form cannot silently erase
-    // the only remaining copy of the provider's key.
-    if (!hasCodexAuthMaterial(liveAuth) && hasCodexAuthMaterial(storedAuth)) {
-      return { ...liveSettings, auth: storedAuth };
-    }
-    return liveSettings;
-  }
-
-  const authTemplate = storedAuth ?? liveAuth ?? {};
-  const hasProviderApiKey =
-    typeof authTemplate.OPENAI_API_KEY === "string" &&
-    authTemplate.OPENAI_API_KEY.trim().length > 0;
-  const hasOauthLogin = Object.entries(authTemplate).some(
-    ([key, value]) =>
-      key !== "auth_mode" && key !== "OPENAI_API_KEY" && hasAuthMaterial(value),
-  );
-
-  // Match should_restore_codex_provider_token_for_backfill: an OAuth-only
-  // provider must not be silently converted into an API-key provider.
-  if (hasOauthLogin && !hasProviderApiKey) return liveSettings;
-
-  return {
-    ...liveSettings,
-    auth: {
-      ...authTemplate,
-      OPENAI_API_KEY: bearer,
-    },
-  };
-};
 
 export function EditProviderDialog({
   open,
@@ -211,27 +129,28 @@ export function EditProviderDialog({
         return;
       }
 
-      // Claude：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，其余来自
-      // live），代理接管时也一样，关键字段显示的是这个供应商自己的值。
-      if (appId === "claude") {
+      // Claude Code、Codex：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，
+      // 其余来自 live），代理模式下也一样，关键字段显示的是这个供应商自己的值。
+      if (appId === "claude" || appId === "codex") {
         try {
           const view = await providersApi.getEditorView(
             appId,
             asRecord(provider.settingsConfig) ?? {},
+            provider.category,
           );
           if (!cancelled) {
             setEditorView(view);
             setLiveSettings(view.settings);
           }
         } catch (error) {
-          // 读不了 settings.json（比如手改坏了）：退回显示保存的供应商配置。
+          // 读不了配置文件（比如手改坏了）：退回显示保存的供应商配置。
           if (!cancelled) {
             setEditorView(null);
             setLiveSettings(null);
             toast.error(
               t("provider.editorViewFailed", {
                 defaultValue:
-                  "无法读取 Claude Code 配置文件，下面显示的是保存的供应商配置：{{error}}",
+                  "无法读取客户端配置文件，下面显示的是保存的供应商配置：{{error}}",
                 error: extractErrorMessage(error),
               }),
             );
@@ -319,44 +238,10 @@ export function EditProviderDialog({
     };
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
-  // Legacy official cards may have no category; their live logout still owns auth.
-  const isCodexOfficialProvider =
-    appId === "codex" &&
-    provider !== null &&
-    (provider.category === "official" ||
-      resolveCodexOfficialIdentity(appId, provider) !== null);
-
-  const initialSettingsConfig = useMemo(() => {
-    const storedSettings = asRecord(provider?.settingsConfig);
-    const base =
-      appId === "codex" && liveSettings
-        ? reconcileCodexLiveAuth(
-            liveSettings,
-            storedSettings,
-            isCodexOfficialProvider,
-          )
-        : (liveSettings ?? storedSettings ?? {});
-
-    // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
-    // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
-    // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
-    // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
-    // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
-    if (
-      appId === "codex" &&
-      liveSettings &&
-      provider?.settingsConfig &&
-      typeof provider.settingsConfig === "object"
-    ) {
-      const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
-        .modelCatalog;
-      if (dbCatalog !== undefined) {
-        return { ...base, modelCatalog: dbCatalog };
-      }
-    }
-
-    return base;
-  }, [liveSettings, provider?.settingsConfig, isCodexOfficialProvider, appId]); // 只依赖表单初始化所需字段，不依赖整个 provider
+  const initialSettingsConfig = useMemo(
+    () => liveSettings ?? asRecord(provider?.settingsConfig) ?? {},
+    [liveSettings, provider?.settingsConfig],
+  ); // 只依赖表单初始化所需字段，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
@@ -450,7 +335,8 @@ export function EditProviderDialog({
     return null;
   }
 
-  const waitingForEditorView = appId === "claude" && !hasLoadedLive;
+  const waitingForEditorView =
+    (appId === "claude" || appId === "codex") && !hasLoadedLive;
 
   return (
     <FullScreenPanel
@@ -487,7 +373,7 @@ export function EditProviderDialog({
           initialData={initialData}
           showButtons={false}
           isProxyTakeover={isProxyTakeover}
-          claudeInactiveFields={editorView?.inactive}
+          inactiveFields={editorView?.inactive}
         />
       )}
       <LiveEditConflictDialog

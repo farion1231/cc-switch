@@ -44,6 +44,11 @@ impl DeviceStore {
         self.root.join("live-state.json")
     }
 
+    /// 这台设备状态目录下的一个文件（比如 Codex 的登录暂存）。
+    pub fn file(&self, name: &str) -> PathBuf {
+        self.root.join(name)
+    }
+
     pub fn first_write_backup_dir(&self) -> PathBuf {
         self.root.join("backups").join("live-first-write")
     }
@@ -101,14 +106,14 @@ pub struct Planned {
     /// 写前内容的 hash，`None` 表示文件不存在。
     pub pre: Option<String>,
     pre_bytes: Option<Vec<u8>>,
-    /// 写后内容的 hash。
-    pub planned: String,
-    bytes: Vec<u8>,
+    /// 写后内容的 hash；`None` 表示删掉这个文件。
+    pub planned: Option<String>,
+    bytes: Option<Vec<u8>>,
 }
 
 impl Planned {
     pub fn is_noop(&self) -> bool {
-        self.pre.as_deref() == Some(self.planned.as_str())
+        self.pre == self.planned
     }
 
     pub fn pre_bytes(&self) -> Option<&[u8]> {
@@ -127,20 +132,24 @@ pub(crate) fn plan_from(
     patch: &dyn LivePatch,
     pre_bytes: Option<Vec<u8>>,
 ) -> Result<Planned, LiveWriteError> {
-    let bytes = patch.apply(&file.path, pre_bytes.as_deref())?;
+    let bytes = patch.apply_file(&file.path, pre_bytes.as_deref())?;
     Ok(Planned {
         file: file.clone(),
         pre: digest(pre_bytes.as_deref()),
         pre_bytes,
-        planned: digest(Some(&bytes)).expect("digest of bytes"),
+        planned: digest(bytes.as_deref()),
         bytes,
     })
 }
 
-/// 把新内容写进目标旁边的临时文件（fsync 过，崩溃后可以靠它前滚）。
-pub fn stage(planned: &Planned) -> Result<StagedWrite, AppError> {
+/// 把新内容写进目标旁边的临时文件（fsync 过，崩溃后可以靠它前滚）。要删文件时没有
+/// 临时文件，返回 `None`。
+pub fn stage(planned: &Planned) -> Result<Option<StagedWrite>, AppError> {
+    let Some(bytes) = planned.bytes.as_deref() else {
+        return Ok(None);
+    };
     let mode = planned.file.private.then_some(0o600);
-    stage_write(&planned.file.path, &planned.bytes, mode, true)
+    stage_write(&planned.file.path, bytes, mode, true).map(Some)
 }
 
 /// 这个文件第一次经引擎写入前，留一份原文件的字节级备份。
@@ -264,7 +273,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let planned = plan(&LiveFile::private(&path), &set_patch("a", "b")).unwrap();
-        stage(&planned).unwrap().commit().unwrap();
+        stage(&planned).unwrap().unwrap().commit().unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
