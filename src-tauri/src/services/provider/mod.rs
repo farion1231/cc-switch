@@ -45,8 +45,8 @@ pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
 pub(crate) use live::{
-    provider_exists_in_live_config, sync_current_provider_for_app_to_live,
-    write_live_with_common_config_for_state, LiveSyncOutcome,
+    provider_exists_in_live_config, sync_additive_app_to_live, write_live_for_state,
+    LiveSyncOutcome,
 };
 
 // Internal re-exports
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
         // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
-        // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。
+        // (旧版切换时合并片段；新版片段冻结只给旧版读)，因此任何凭据都不得进入片段。
         // 之前这里只硬编码跳过 GEMINI_API_KEY/GOOGLE_GEMINI_BASE_URL，而
         // GOOGLE_API_KEY 是 provider.rs 认可的一等 Gemini 凭据 → 会泄露到别的供应商。
         let settings = json!({
@@ -1076,8 +1076,7 @@ mod tests {
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
-        write_live_with_common_config_for_state(&state, &AppType::Claude, &original)
-            .expect("seed live file");
+        write_live_for_state(&state, &AppType::Claude, &original).expect("seed live file");
 
         let mut updated = original.clone();
         updated.settings_config["env"]["ANTHROPIC_BASE_URL"] =
@@ -1216,8 +1215,7 @@ mod tests {
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
-        write_live_with_common_config_for_state(&state, &AppType::Claude, &original)
-            .expect("seed live file");
+        write_live_for_state(&state, &AppType::Claude, &original).expect("seed live file");
         db.save_live_backup(
             "claude",
             &serde_json::to_string(&original.settings_config).expect("serialize backup"),
@@ -1267,8 +1265,7 @@ mod tests {
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
-        write_live_with_common_config_for_state(&state, &AppType::Claude, &original)
-            .expect("seed live file");
+        write_live_for_state(&state, &AppType::Claude, &original).expect("seed live file");
         let mut config = db
             .get_proxy_config_for_app("claude")
             .await
@@ -4603,7 +4600,7 @@ wire_api = "responses"
                     Some(third_party.id.as_str()),
                 )
                 .expect("switch local current to third party");
-                write_live_with_common_config_for_state(state, &AppType::Codex, &third_party)
+                write_live_for_state(state, &AppType::Codex, &third_party)
                     .expect("write third-party live");
                 let live_after_switch = crate::codex_config::CodexLiveStateSnapshot::capture()
                     .expect("capture third-party live");
@@ -4884,7 +4881,7 @@ impl ProviderService {
             if !add_to_live {
                 return Ok(true);
             }
-            write_live_with_common_config_for_state(state, &app_type, &provider)?;
+            write_live_for_state(state, &app_type, &provider)?;
             return Ok(true);
         }
 
@@ -4916,7 +4913,7 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_with_common_config_for_state(state, &app_type, &provider)?;
+            write_live_for_state(state, &app_type, &provider)?;
         }
 
         Ok(true)
@@ -4928,8 +4925,7 @@ impl ProviderService {
     fn add_codex(state: &AppState, provider: Provider) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         // 和切换互斥：等着的切换不能看到只存了一半的托管账号绑定。
-        let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let current = crate::mode::current::provider_for(
             &state.db,
             &app_type,
@@ -4952,10 +4948,7 @@ impl ProviderService {
             crate::mode::state::op::SWITCH,
             codex_direct::Owner::None,
             Some(&provider),
-            crate::mode::state::PendingTarget {
-                pointer: Some(provider.id.clone()),
-                ..Default::default()
-            },
+            crate::mode::state::PendingTarget::pointer(Some(provider.id.clone())),
         );
         if let Err(error) = written {
             // 文件已经发布、只是落定状态失败时，pending 会在下次操作或启动时补完指针，
@@ -5100,8 +5093,7 @@ impl ProviderService {
         kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
-        let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5128,7 +5120,7 @@ impl ProviderService {
 
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
-        let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
+        let is_route = mode.routes_to(&provider.id);
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = if key_fields {
@@ -5149,24 +5141,9 @@ impl ProviderService {
                 &plan.edits,
                 codex_editor::KeyFields::None,
             )
-            .and_then(|()| {
-                if is_route {
-                    futures::executor::block_on(crate::mode::controller::switch_route_locked(
-                        state, &app_type, &provider,
-                    ))
-                    .map_err(AppError::Message)
-                } else {
-                    Ok(())
-                }
-            })
+            .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider))
         };
-        if let Err(error) = written {
-            if !crate::mode::operation::has_pending(AppType::Codex.as_str()) {
-                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
-            }
-            return Err(error);
-        }
-        Ok(true)
+        Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
     /// 从编辑器新增或保存 Gemini CLI、Grok Build 供应商：关键字段存回行，其余改动作为全局
@@ -5180,8 +5157,7 @@ impl ProviderService {
         editor: EditorSave,
         kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
-        let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5220,7 +5196,7 @@ impl ProviderService {
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let set_pointer = kind == EditorSaveKind::Add;
-        let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
+        let is_route = mode.routes_to(&provider.id);
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = match &edits {
@@ -5237,34 +5213,26 @@ impl ProviderService {
                 set_pointer,
             ),
         }
-        .and_then(|()| {
-            if is_route {
-                futures::executor::block_on(crate::mode::controller::switch_route_locked(
-                    state, &app_type, &provider,
-                ))
-                .map_err(AppError::Message)
-            } else {
-                Ok(())
-            }
-        });
-        if let Err(error) = written {
-            if !crate::mode::operation::has_pending(app_type.as_str()) {
-                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
-            }
-            return Err(error);
-        }
-        Ok(true)
+        .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider));
+        Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
-    /// 编辑器保存先存行、再写 live。写 live 失败时：文件已经发布、只是落定状态失败的，
-    /// pending 会在下次操作或启动时补完，行要留着；还没发布就失败（没有 pending），调用方
-    /// 用这个撤回刚存的行。
-    fn restore_row(
+    /// 编辑器保存先存行、再写 live（`written`）。写 live 失败时：文件已经发布、只是落定
+    /// 状态失败的，pending 会在下次操作或启动时补完，行要留着；还没发布就失败（没有
+    /// pending），撤回刚存的行。
+    fn keep_row_if_written(
         state: &AppState,
         app_type: &AppType,
         provider_id: &str,
         existing: Option<&Provider>,
-    ) {
+        written: Result<(), AppError>,
+    ) -> Result<bool, AppError> {
+        let Err(error) = written else {
+            return Ok(true);
+        };
+        if crate::mode::operation::has_pending(app_type.as_str()) {
+            return Err(error);
+        }
         let rollback = match existing {
             Some(existing) => state.db.save_provider(app_type.as_str(), existing),
             None => state.db.delete_provider(app_type.as_str(), provider_id),
@@ -5275,6 +5243,24 @@ impl ProviderService {
                 app_type.as_str()
             );
         }
+        Err(error)
+    }
+
+    /// 代理模式下保存的是路由那家（`is_route`）：按新行重写代理契约，契约没变就不碰客户端
+    /// 文件。调用方持有这个应用的切换锁。
+    fn rewrite_route_if(
+        is_route: bool,
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        if !is_route {
+            return Ok(());
+        }
+        futures::executor::block_on(crate::mode::controller::switch_route_locked(
+            state, app_type, provider,
+        ))
+        .map_err(AppError::Message)
     }
 
     fn add_claude_from_editor(
@@ -5283,8 +5269,7 @@ impl ProviderService {
         editor: EditorSave,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
-        let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let mut provider = provider;
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         let plan = claude_editor::plan_save(None, &provider.settings_config, &editor.base)?;
@@ -5309,15 +5294,9 @@ impl ProviderService {
             target: &provider,
             set_pointer: true,
         });
-        if let Err(error) =
-            claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
-        {
-            if !crate::mode::operation::has_pending(AppType::Claude.as_str()) {
-                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
-            }
-            return Err(error);
-        }
-        Ok(true)
+        let written =
+            claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields);
+        Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
     /// 和其他编辑器一样先存行、再写 live：写 live 失败且没有 pending 时撤回行；已经发布的
@@ -5328,8 +5307,7 @@ impl ProviderService {
         editor: EditorSave,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
-        let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5345,18 +5323,12 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         let mode = crate::mode::current::mode_state(&app_type);
-        let is_direct_current = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?
-        .as_deref()
-            == Some(provider.id.as_str());
-        let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
+        let is_route = mode.routes_to(&provider.id);
         // 代理模式下 live 的关键字段是代理契约，这里只写全局改动；编辑的是代理路由那家
         // 时，写完按新行重写契约（契约没变就不动）。直连指针那家在退出代理时写回。
-        let key_fields =
-            (!mode.is_proxy() && is_direct_current).then_some(claude_editor::KeyFieldWrite {
+        let key_fields = EditorSaveKind::Update
+            .writes_key_fields(state, &app_type, &mode, &provider.id)?
+            .then_some(claude_editor::KeyFieldWrite {
                 prev: existing.as_ref(),
                 target: &provider,
                 set_pointer: false,
@@ -5365,23 +5337,8 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
-                .and_then(|()| {
-                    if is_route {
-                        futures::executor::block_on(crate::mode::controller::switch_route_locked(
-                            state, &app_type, &provider,
-                        ))
-                        .map_err(AppError::Message)
-                    } else {
-                        Ok(())
-                    }
-                });
-        if let Err(error) = written {
-            if !crate::mode::operation::has_pending(AppType::Claude.as_str()) {
-                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
-            }
-            return Err(error);
-        }
-        Ok(true)
+                .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider));
+        Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
     /// Update a provider
@@ -5547,7 +5504,7 @@ impl ProviderService {
             if !live_config_managed {
                 return Ok(true);
             }
-            write_live_with_common_config_for_state(state, &app_type, &provider)?;
+            write_live_for_state(state, &app_type, &provider)?;
             return Ok(true);
         }
 
@@ -5560,7 +5517,7 @@ impl ProviderService {
         )?
         .as_deref()
             == Some(provider.id.as_str());
-        let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
+        let is_route = mode.routes_to(&provider.id);
         let is_current = is_direct_current || is_route;
 
         if matches!(app_type, AppType::Codex) {
@@ -5628,10 +5585,7 @@ impl ProviderService {
 
         state.db.save_provider(app_type.as_str(), provider)?;
         let written = if mode.is_proxy() {
-            futures::executor::block_on(crate::mode::controller::switch_route_locked(
-                state, &app_type, provider,
-            ))
-            .map_err(AppError::Message)
+            Self::rewrite_route_if(true, state, &app_type, provider)
         } else {
             codex_direct::write_direct(
                 state.db.as_ref(),
@@ -5836,13 +5790,7 @@ impl ProviderService {
         // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
         // 没做完的写入之后再读模式和指针：刚进入代理的应用不会被一次直连写入覆盖，上次
         // 失败后重试也按补完后的指针删上一家的独有字段。
-        let _switch_guard = if app_type.supports_local_proxy() {
-            Some(futures::executor::block_on(
-                crate::mode::controller::lock_settled(state, &app_type),
-            )?)
-        } else {
-            None
-        };
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
 
         if crate::mode::current::is_proxy(&app_type) {
             // 代理模式：只换代理路由，直连指针不变。契约没变时客户端文件不读也不写；
@@ -5922,7 +5870,7 @@ impl ProviderService {
         }
 
         // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
-        write_live_with_common_config_for_state(state, &app_type, provider)?;
+        write_live_for_state(state, &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
@@ -6046,10 +5994,7 @@ impl ProviderService {
             crate::mode::state::op::SWITCH,
             owner,
             Some(provider),
-            crate::mode::state::PendingTarget {
-                pointer: Some(provider.id.clone()),
-                ..Default::default()
-            },
+            crate::mode::state::PendingTarget::pointer(Some(provider.id.clone())),
         )?;
 
         let mut result = SwitchResult::default();
@@ -6096,31 +6041,13 @@ impl ProviderService {
         app_type: AppType,
     ) -> Result<(), AppError> {
         if app_type.is_additive_mode() {
-            return sync_current_provider_for_app_to_live(state, &app_type);
+            return sync_additive_app_to_live(state, &app_type);
         }
-
-        let switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        let current_id = match crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::InUse,
-        )? {
-            Some(id) => id,
-            None => return Ok(()),
-        };
-
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        let Some(provider) = providers.get(&current_id) else {
-            return Ok(());
-        };
-
-        let outcome =
-            live::sync_live_for_provider_respecting_mode(state, &app_type, provider, None)?;
-        drop(switch_guard);
-        if outcome == LiveSyncOutcome::ProxyMode {
+        // 没有正在用的那家、或者在代理模式（客户端文件没按直连重写）时不重投影 MCP。
+        let outcome = live::sync_current_provider_for_app_respecting_mode(state, &app_type)?;
+        if outcome != Some(LiveSyncOutcome::WroteLive) {
             return Ok(());
         }
-
         McpService::sync_enabled_for_app(state, &app_type)
     }
 
@@ -6504,7 +6431,7 @@ impl ProviderService {
     /// 一次性清理：把历史泄漏进 Gemini 共享片段的凭据从所有存储位置抹掉。
     ///
     /// 背景：`extract_gemini_common_config` 曾只剥离两个固定键名，`GOOGLE_API_KEY`
-    /// 等一等凭据会进入共享片段，再被 `apply_common_config_to_settings` 深合并进
+    /// 等一等凭据会进入共享片段，再在切换时被深合并进
     /// **其它** Gemini 供应商的 env，随请求发往对方的 base_url。
     ///
     /// 光修提取器不够：Gemini 的片段一旦生成就**永不自动重提取**（启动期

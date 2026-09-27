@@ -16,15 +16,14 @@ import {
   type AppId,
   type ManagedAuthProvider,
 } from "@/lib/api";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import type {
   EditorConflictPolicy,
   ProviderEditorSave,
   ProviderEditorView,
 } from "@/lib/api/providers";
-import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
-import { LiveEditConflictDialog } from "@/components/providers/LiveEditConflictDialog";
-import { toast } from "sonner";
+import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
+import { usesEditorView } from "@/config/appConfig";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -38,16 +37,6 @@ interface EditProviderDialogProps {
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
-
-/** 切换只替换关键字段的应用：编辑器显示「切到这个供应商之后配置文件的样子」。 */
-const EDITOR_VIEW_APPS: readonly AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-];
-
-const usesEditorView = (appId: AppId) => EDITOR_VIEW_APPS.includes(appId);
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -105,11 +94,7 @@ export function EditProviderDialog({
 
   // Claude：底部 JSON 显示「切到这个供应商之后 settings.json 的样子」，保存时拿它做三方比较。
   const [editorView, setEditorView] = useState<ProviderEditorView | null>(null);
-  const [pendingConflict, setPendingConflict] = useState<{
-    keys: string[];
-    retry: (policy: EditorConflictPolicy) => Promise<void>;
-  } | null>(null);
-  const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
@@ -158,13 +143,7 @@ export function EditProviderDialog({
           if (!cancelled) {
             setEditorView(null);
             setLiveSettings(null);
-            toast.error(
-              t("provider.editorViewFailed", {
-                defaultValue:
-                  "无法读取客户端配置文件，下面显示的是保存的供应商配置：{{error}}",
-                error: extractErrorMessage(error),
-              }),
-            );
+            toastEditorViewFailed(t, error);
           }
         } finally {
           if (!cancelled) {
@@ -314,32 +293,16 @@ export function EditProviderDialog({
         });
         closeDialog();
       };
-
-      try {
-        await submit("refuse");
-      } catch (error) {
-        const conflict = parseLiveEditConflict(error);
-        if (!conflict) throw error;
-        setPendingConflict({ keys: conflict.keys, retry: submit });
-      }
+      await submitWithConflictRetry(submit);
     },
-    [appId, onSubmit, closeDialog, provider, editorView],
-  );
-
-  const handleResolveConflict = useCallback(
-    async (policy: EditorConflictPolicy) => {
-      if (!pendingConflict) return;
-      setIsResolvingConflict(true);
-      try {
-        await pendingConflict.retry(policy);
-      } catch {
-        // 失败提示由保存的 mutation 负责，编辑器保持打开。
-      } finally {
-        setIsResolvingConflict(false);
-        setPendingConflict(null);
-      }
-    },
-    [pendingConflict],
+    [
+      appId,
+      onSubmit,
+      closeDialog,
+      provider,
+      editorView,
+      submitWithConflictRetry,
+    ],
   );
 
   if (!provider || !initialData) {
@@ -386,12 +349,7 @@ export function EditProviderDialog({
           inactiveFields={editorView?.inactive}
         />
       )}
-      <LiveEditConflictDialog
-        keys={pendingConflict?.keys ?? null}
-        pending={isResolvingConflict}
-        onResolve={(policy) => void handleResolveConflict(policy)}
-        onCancel={() => setPendingConflict(null)}
-      />
+      {conflictDialog}
       <AuthSettingsPanel
         target={authSettingsTarget}
         onClose={() => setAuthSettingsTarget(null)}

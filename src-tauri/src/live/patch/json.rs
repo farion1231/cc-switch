@@ -101,6 +101,13 @@ impl JsonPatch {
     }
 }
 
+/// 文档里 `path` 处的值。
+pub fn value_at<'a>(doc: &'a Value, path: &KeyPath) -> Option<&'a Value> {
+    path.0
+        .iter()
+        .try_fold(doc, |current, segment| current.get(segment))
+}
+
 impl LivePatch for JsonPatch {
     fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
         let (mut doc, style) = parse(path, pre)?;

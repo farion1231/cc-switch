@@ -56,10 +56,7 @@ fn provider(state: &AppState, app: &AppType, id: &str) -> Result<Option<Provider
 }
 
 fn direct_provider(state: &AppState, app: &AppType) -> Result<Option<Provider>, String> {
-    match current::provider_for(&state.db, app, Purpose::Direct).map_err(err)? {
-        Some(id) => provider(state, app, &id),
-        None => Ok(None),
-    }
+    current::direct_provider(&state.db, app).map_err(err)
 }
 
 fn route_provider(
@@ -121,6 +118,11 @@ impl LiveNow {
                 .as_ref()
                 .map(|provider| ClaudeProjection::of(&provider.settings_config)),
         }
+    }
+
+    /// 客户端文件现在就是这份契约（`key` 相同）。
+    fn has_contract(&self, key: &str) -> bool {
+        matches!(self, Self::Proxy { contract: Some(contract), .. } if contract.key == key)
     }
 
     /// live 现在是哪个直连供应商写进去的（Grok 在没有写入记录时据此推断要删的表）。
@@ -187,23 +189,19 @@ async fn write_proxy(
     live_now: &LiveNow,
     mut target: ModeState,
 ) -> Result<(), String> {
-    let (proxy_url, _) = state.proxy_service.build_proxy_urls().await?;
+    let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
     match app {
         AppType::Claude => {
             let (projection, contract) = claude_contract(route, &proxy_url);
-            let unchanged = !force
-                && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == contract.key);
+            let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
             claude_direct::run(
                 &state.db,
                 op_name,
                 (!unchanged).then_some(&patch),
-                PendingTarget {
-                    state: Some(target),
-                    ..PendingTarget::default()
-                },
+                PendingTarget::mode(target),
             )
             .map_err(err)?;
         }
@@ -214,37 +212,28 @@ async fn write_proxy(
                 PROXY_TOKEN_PLACEHOLDER,
             );
             let contract = contract::gemini(&projection);
-            let unchanged = !force
-                && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == contract.key);
+            let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
             gemini_direct::run(
                 &state.db,
                 op_name,
                 (!unchanged).then_some(&projection),
-                PendingTarget {
-                    state: Some(target),
-                    ..PendingTarget::default()
-                },
+                PendingTarget::mode(target),
             )
             .map_err(err)?;
         }
         AppType::Codex => {
-            let (_, base_url) = state.proxy_service.build_proxy_urls().await?;
             let owner = live_now.codex_owner();
             let spec = codex_direct::Target::Proxy {
                 route,
-                base_url: &base_url,
+                base_url: &codex_base_url,
             };
             let prepared =
                 codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
             let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
-            let unchanged = !force
-                && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == planned.contract.key);
+            let unchanged = !force && live_now.has_contract(&planned.contract.key);
             target.contract = Some(planned.contract.clone());
-            let pending = PendingTarget {
-                state: Some(target),
-                ..PendingTarget::default()
-            };
+            let pending = PendingTarget::mode(target);
             if unchanged {
                 commit_state(state, app, &pending)?;
             } else {
@@ -260,18 +249,14 @@ async fn write_proxy(
             )
             .map_err(err)?;
             let contract = contract::grok(&projection);
-            let unchanged = !force
-                && matches!(live_now, LiveNow::Proxy { contract: Some(c), .. } if c.key == contract.key);
+            let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
             grok_direct::run(
                 &state.db,
                 op_name,
                 live_now.direct_owner(),
                 (!unchanged).then_some(&projection),
-                PendingTarget {
-                    state: Some(target),
-                    ..PendingTarget::default()
-                },
+                PendingTarget::mode(target),
             )
             .map_err(err)?;
         }
@@ -289,10 +274,7 @@ fn write_direct(
     target: ModeState,
 ) -> Result<(), String> {
     let direct = direct_provider(state, app)?;
-    let pending_target = PendingTarget {
-        state: Some(target),
-        ..PendingTarget::default()
-    };
+    let pending_target = PendingTarget::mode(target);
     let attached = matches!(live_now, LiveNow::Proxy { .. });
     match app {
         AppType::Claude => {
@@ -341,42 +323,23 @@ fn write_direct(
             }
         }
         AppType::Gemini => {
-            // 直连供应商写不出来（没有、行里带着占位符、缺 Key）也不能让客户端一直指着
-            // 代理：退一步只清空关键字段。
-            let projection = if attached {
-                let written = usable_direct(app, direct.as_ref())
-                    .map(gemini_direct::projection)
-                    .transpose();
-                Some(
-                    written
-                        .unwrap_or_else(|error| {
-                            log::warn!("写回直连的 Gemini 配置失败，只清空关键字段: {error}");
-                            None
-                        })
-                        .unwrap_or_else(GeminiProjection::empty),
+            let projection = attached.then(|| {
+                direct_or_empty(
+                    app,
+                    direct.as_ref(),
+                    gemini_direct::projection,
+                    GeminiProjection::empty,
                 )
-            } else {
-                None
-            };
+            });
             gemini_direct::run(&state.db, op_name, projection.as_ref(), pending_target)
                 .map_err(err)?;
         }
         AppType::GrokBuild => {
-            let projection = if attached {
-                let written = usable_direct(app, direct.as_ref())
-                    .map(grok_direct::projection)
-                    .transpose();
-                Some(
-                    written
-                        .unwrap_or_else(|error| {
-                            log::warn!("写回直连的 Grok Build 配置失败，只清空关键字段: {error}");
-                            None
-                        })
-                        .unwrap_or(GrokProjection { table: None }),
-                )
-            } else {
-                None
-            };
+            let projection = attached.then(|| {
+                direct_or_empty(app, direct.as_ref(), grok_direct::projection, || {
+                    GrokProjection { table: None }
+                })
+            });
             grok_direct::run(
                 &state.db,
                 op_name,
@@ -389,6 +352,27 @@ fn write_direct(
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }
     Ok(())
+}
+
+/// 直连供应商的投影。写不出来（没有、行里带着占位符、缺 Key）也不能让客户端一直指着
+/// 代理：退一步只清空关键字段（`empty`）。
+fn direct_or_empty<P>(
+    app: &AppType,
+    direct: Option<&Provider>,
+    project: impl FnOnce(&Provider) -> Result<P, AppError>,
+    empty: impl FnOnce() -> P,
+) -> P {
+    usable_direct(app, direct)
+        .map(project)
+        .transpose()
+        .unwrap_or_else(|error| {
+            log::warn!(
+                "写回直连的 {} 配置失败，只清空关键字段: {error}",
+                app.as_str()
+            );
+            None
+        })
+        .unwrap_or_else(empty)
 }
 
 /// 能照写回 live 的直连供应商：行里本身带着占位符（旧版接管期间被导入的残留）的不行，
@@ -562,7 +546,7 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
 
 /// 没有应用在代理模式了就停掉代理服务（Claude Desktop 的模型映射另外自己启停）。
 async fn stop_server_if_unused(state: &AppState) {
-    if PROXY_APPS.iter().any(current::is_proxy) {
+    if current::proxy_flags(PROXY_APPS).contains(&true) {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -633,14 +617,7 @@ pub async fn switch_route_locked(
         ..mode.clone()
     };
     if !mode.attached {
-        commit_state(
-            state,
-            app,
-            &PendingTarget {
-                state: Some(new_state),
-                ..PendingTarget::default()
-            },
-        )?;
+        commit_state(state, app, &PendingTarget::mode(new_state))?;
     } else {
         let live_now = LiveNow::of(state, app, &mode)?;
         write_proxy(state, app, op::ROUTE, target, &live_now, new_state).await?;
@@ -790,14 +767,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             mode: Some(Mode::Proxy),
             ..mode
         };
-        commit_state(
-            state,
-            app,
-            &PendingTarget {
-                state: Some(mode),
-                ..PendingTarget::default()
-            },
-        )?;
+        commit_state(state, app, &PendingTarget::mode(mode))?;
         match enter_locked(state, app, op::ATTACH).await {
             Ok(()) => return Ok(()),
             Err(error) => {

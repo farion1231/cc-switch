@@ -91,6 +91,11 @@ impl ModeState {
     pub fn is_proxy(&self) -> bool {
         self.mode == Some(Mode::Proxy)
     }
+
+    /// 代理模式下路由到的就是 `id` 这家。
+    pub fn routes_to(&self, id: &str) -> bool {
+        self.is_proxy() && self.proxy_route.as_deref() == Some(id)
+    }
 }
 
 /// CC Switch 上次写进客户端文件、切走时要按记录删掉的东西。
@@ -213,6 +218,22 @@ pub struct PendingTarget {
 }
 
 impl PendingTarget {
+    /// 只改直连指针（`None` 表示不改）。
+    pub fn pointer(pointer: Option<String>) -> Self {
+        Self {
+            pointer,
+            ..Self::default()
+        }
+    }
+
+    /// 只落定模式状态。
+    pub fn mode(state: ModeState) -> Self {
+        Self {
+            state: Some(state),
+            ..Self::default()
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.pointer.is_none()
             && self.state.is_none()
@@ -289,23 +310,25 @@ pub fn set_pending(
 }
 
 /// 这个应用的模式状态。
-pub fn mode_state(store: &DeviceStore, app: &str) -> Result<ModeState, AppError> {
+/// 几个应用的模式状态，状态文件只读一次。
+pub fn mode_states<const N: usize>(
+    store: &DeviceStore,
+    apps: [&str; N],
+) -> Result<[ModeState; N], AppError> {
     let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
-    Ok(load(store)?
-        .apps
-        .get(app)
-        .map(AppLiveState::mode_state)
-        .unwrap_or_default())
-}
-
-pub fn set_mode_state(store: &DeviceStore, app: &str, mode: ModeState) -> Result<(), AppError> {
-    update(store, |state| {
+    let state = load(store)?;
+    Ok(apps.map(|app| {
         state
             .apps
-            .entry(app.to_string())
-            .or_default()
-            .set_mode_state(mode);
-    })
+            .get(app)
+            .map(AppLiveState::mode_state)
+            .unwrap_or_default()
+    }))
+}
+
+pub fn mode_state(store: &DeviceStore, app: &str) -> Result<ModeState, AppError> {
+    let [mode] = mode_states(store, [app])?;
+    Ok(mode)
 }
 
 /// 这个应用的写入记录；`None` 表示新版还没写过。
@@ -315,12 +338,6 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
         .apps
         .get(app)
         .and_then(|state| state.written.clone()))
-}
-
-pub fn set_written(store: &DeviceStore, app: &str, written: Written) -> Result<(), AppError> {
-    update(store, |state| {
-        state.apps.entry(app.to_string()).or_default().written = Some(written);
-    })
 }
 
 /// 有未完成操作的应用。
@@ -348,10 +365,7 @@ mod tests {
                 planned: Some("abc".to_string()),
                 staged: Some(PathBuf::from("/tmp/settings.json.tmp.1")),
             }],
-            target: PendingTarget {
-                pointer: Some("p1".to_string()),
-                ..PendingTarget::default()
-            },
+            target: PendingTarget::pointer(Some("p1".to_string())),
             published: false,
         }
     }

@@ -13,7 +13,6 @@
 //! `[model_providers]` 下 CC Switch 路由表以外的每张表。嵌在用户表里的模型名是关键字段，
 //! 不算全局改动。
 
-use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
@@ -23,14 +22,13 @@ use crate::app_config::AppType;
 use crate::codex_config::get_codex_config_path;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::live::engine::{lock_app, read_current, DeviceStore, LiveFile};
+use crate::live::engine::{read_current, LiveFile};
 use crate::live::floor;
 use crate::live::patch::toml::parse;
-use crate::live::patch::{LivePatch, LiveWriteError};
 use crate::live::project::codex::{
     CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
 };
-use crate::mode::operation::{self, FileChange};
+use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
@@ -38,7 +36,7 @@ use crate::store::AppState;
 
 use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
 use super::codex_direct::{self, Owner, Prepared, Target};
-use super::editor_toml::{insert_at, item_at, render, Entry, TomlEdits};
+use super::editor_toml::{self, config_text, insert_at, render, Entry, TomlEdits};
 
 fn app() -> &'static str {
     AppType::Codex.as_str()
@@ -95,17 +93,7 @@ fn entries(doc: &DocumentMut, skip_routes: &[&str]) -> Vec<Entry> {
 }
 
 fn parse_text(text: &str, what: &str) -> Result<DocumentMut, AppError> {
-    text.parse::<DocumentMut>().map_err(|err| {
-        AppError::localized(
-            "provider.codex.editor.invalid_toml",
-            format!("Codex 配置不是合法的 TOML（{what}）：{err}"),
-            format!("The Codex configuration is not valid TOML ({what}): {err}"),
-        )
-    })
-}
-
-fn config_text(settings: &Value) -> &str {
-    settings.get("config").and_then(Value::as_str).unwrap_or("")
+    editor_toml::parse_text(text, "provider.codex.editor.invalid_toml", "Codex", what)
 }
 
 fn selected_route(doc: &DocumentMut) -> Option<&str> {
@@ -168,23 +156,12 @@ pub fn view(
     })
 }
 
-/// 行里保存着、但不随切换生效的全局设置（值和显示的不同才列出）。值是可以照抄的 TOML。
+/// 行里保存着、但不随切换生效的全局设置。
 fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> {
     let Ok(row) = row_text.parse::<DocumentMut>() else {
         return Vec::new();
     };
-    entries(&row, selected_route(&row).as_slice())
-        .into_iter()
-        .filter(|entry| item_at(display, &entry.path).map(render) != Some(render(&entry.item)))
-        .map(|entry| {
-            let mut fragment = DocumentMut::new();
-            insert_at(&mut fragment, &entry.path, entry.item.clone());
-            InactiveField {
-                path: entry.path,
-                value: Value::String(fragment.to_string()),
-            }
-        })
-        .collect()
+    editor_toml::inactive_fields(entries(&row, selected_route(&row).as_slice()), display)
 }
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
@@ -201,15 +178,9 @@ struct LiveOwner {
 
 impl LiveOwner {
     fn read(state: &AppState) -> Result<Self, AppError> {
-        let direct = crate::mode::current::provider_for(
-            &state.db,
-            &AppType::Codex,
-            crate::mode::current::Purpose::Direct,
-        )?
-        .and_then(|id| state.db.get_provider_by_id(&id, app()).ok().flatten());
         Ok(Self {
             mode: crate::mode::current::mode_state(&AppType::Codex),
-            direct,
+            direct: crate::mode::current::direct_provider(&state.db, &AppType::Codex)?,
         })
     }
 
@@ -447,10 +418,7 @@ pub(crate) fn write_live(
                 if set_pointer { op::SWITCH } else { op::APPLY },
                 planned,
                 &prepared,
-                PendingTarget {
-                    pointer: set_pointer.then(|| target.id.clone()),
-                    ..PendingTarget::default()
-                },
+                PendingTarget::pointer(set_pointer.then(|| target.id.clone())),
                 Some(edits),
             )?;
             Ok(())
@@ -459,39 +427,25 @@ pub(crate) fn write_live(
             if edits.is_empty() {
                 return Ok(());
             }
-            let guard = lock_app(app());
-            let store = DeviceStore::for_device();
-            let patch = EditsOnly(edits);
-            operation::run(
-                &store,
-                &guard,
+            AppWrite::begin(db, app())?.run(
                 op::APPLY,
                 &[FileChange {
                     file: LiveFile::private(get_codex_config_path()),
-                    patch: &patch,
+                    patch: edits,
                 }],
                 PendingTarget::default(),
-                &|target| operation::commit_target(db, &store, app(), target),
             )?;
             Ok(())
         }
     }
 }
 
-struct EditsOnly<'a>(&'a TomlEdits);
-
-impl LivePatch for EditsOnly<'_> {
-    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
-        let mut doc = parse(path, pre)?;
-        self.0.apply_to(path, &mut doc)?;
-        Ok(doc.to_string().into_bytes())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::live::patch::LiveWriteError;
     use serde_json::json;
+    use std::path::Path;
 
     fn doc(text: &str) -> DocumentMut {
         text.parse().unwrap()

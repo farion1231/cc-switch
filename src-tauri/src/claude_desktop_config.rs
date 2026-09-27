@@ -176,14 +176,10 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         .ok()
         .flatten()
         .is_some_and(|token| !token.trim().is_empty());
-    let current_provider = crate::mode::current::provider_for(
-        db,
-        &crate::app_config::AppType::ClaudeDesktop,
-        crate::mode::current::Purpose::Direct,
-    )
-    .ok()
-    .flatten()
-    .and_then(|id| db.get_provider_by_id(&id, "claude-desktop").ok().flatten());
+    let current_provider =
+        crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+            .ok()
+            .flatten();
     let mode = current_provider.as_ref().map(provider_mode);
     let expected_base_url = match mode {
         Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
@@ -933,7 +929,7 @@ pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError>
     }
     Ok(format!(
         "{}{}",
-        proxy_origin_from_parts(&config.listen_address, config.listen_port),
+        crate::services::proxy::proxy_origin(&config.listen_address, config.listen_port),
         CLAUDE_DESKTOP_PROXY_PREFIX
     ))
 }
@@ -1372,21 +1368,6 @@ fn paths_from_dirs(normal_dir: PathBuf, threep_dir: PathBuf) -> ClaudeDesktopPat
         meta_path,
         device: DeviceStore::for_device(),
     }
-}
-
-fn proxy_origin_from_parts(listen_address: &str, listen_port: u16) -> String {
-    let connect_host = match listen_address {
-        "0.0.0.0" => "127.0.0.1",
-        "::" => "::1",
-        value => value,
-    };
-    let connect_host_for_url = if connect_host.contains(':') && !connect_host.starts_with('[') {
-        format!("[{connect_host}]")
-    } else {
-        connect_host.to_string()
-    };
-
-    format!("http://{}:{}", connect_host_for_url, listen_port)
 }
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]

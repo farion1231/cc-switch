@@ -10,7 +10,6 @@ use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
-use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexOAuthManager};
@@ -81,24 +80,6 @@ fn json_remove_array_items(target_arr: &mut Vec<Value>, source_arr: &[Value]) {
             .position(|target_item| json_is_subset(target_item, source_item))
         {
             target_arr.remove(index);
-        }
-    }
-}
-
-fn json_deep_merge(target: &mut Value, source: &Value) {
-    match (target, source) {
-        (Value::Object(target_map), Value::Object(source_map)) => {
-            for (key, source_value) in source_map {
-                match target_map.get_mut(key) {
-                    Some(target_value) => json_deep_merge(target_value, source_value),
-                    None => {
-                        target_map.insert(key.clone(), source_value.clone());
-                    }
-                }
-            }
-        }
-        (target_value, source_value) => {
-            *target_value = source_value.clone();
         }
     }
 }
@@ -216,28 +197,6 @@ fn toml_item_is_subset(target: &Item, source: &Item) -> bool {
             toml_value_is_subset(target_value, source_value)
         }
         _ => false,
-    }
-}
-
-fn merge_toml_item(target: &mut Item, source: &Item) {
-    if let Some(source_table) = source.as_table_like() {
-        if let Some(target_table) = target.as_table_like_mut() {
-            merge_toml_table_like(target_table, source_table);
-            return;
-        }
-    }
-
-    *target = source.clone();
-}
-
-fn merge_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
-    for (key, source_item) in source.iter() {
-        match target.get_mut(key) {
-            Some(target_item) => merge_toml_item(target_item, source_item),
-            None => {
-                target.insert(key, source_item.clone());
-            }
-        }
     }
 }
 
@@ -422,112 +381,14 @@ pub(crate) fn remove_common_config_from_settings(
     }
 }
 
-fn apply_common_config_to_settings(
-    app_type: &AppType,
-    settings: &Value,
-    snippet: &str,
-) -> Result<Value, AppError> {
-    let trimmed = snippet.trim();
-    if trimmed.is_empty() {
-        return Ok(settings.clone());
-    }
-
-    match app_type {
-        AppType::Claude => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
-            let mut result = settings.clone();
-            json_deep_merge(&mut result, &source);
-            Ok(result)
-        }
-        AppType::Codex => {
-            let mut result = settings.clone();
-            let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
-            let mut target_doc = if config_toml.trim().is_empty() {
-                DocumentMut::new()
-            } else {
-                config_toml.parse::<DocumentMut>().map_err(|e| {
-                    AppError::Message(format!(
-                        "Invalid Codex config.toml while applying common config: {e}"
-                    ))
-                })?
-            };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
-
-            merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
-            if let Some(obj) = result.as_object_mut() {
-                obj.insert("config".to_string(), Value::String(target_doc.to_string()));
-            }
-            Ok(result)
-        }
-        AppType::Gemini => {
-            let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Gemini common config: {e}")))?;
-            let mut result = settings.clone();
-            if let Some(env) = result.get_mut("env") {
-                json_deep_merge(env, &source);
-            } else if let Some(obj) = result.as_object_mut() {
-                obj.insert("env".to_string(), source);
-            }
-            Ok(result)
-        }
-        AppType::GrokBuild
-        | AppType::OpenCode
-        | AppType::OpenClaw
-        | AppType::Hermes
-        | AppType::Pi
-        | AppType::Mcode
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
-    }
-}
-
-pub(crate) fn build_effective_settings_with_common_config(
-    db: &Database,
-    app_type: &AppType,
-    provider: &Provider,
-) -> Result<Value, AppError> {
-    let snippet = db.get_config_snippet(app_type.as_str())?;
-    let mut effective_settings = provider.settings_config.clone();
-
-    if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
-        if let Some(snippet_text) = snippet.as_deref() {
-            match apply_common_config_to_settings(app_type, &effective_settings, snippet_text) {
-                Ok(settings) => effective_settings = settings,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to apply common config for {} provider '{}': {err}",
-                        app_type.as_str(),
-                        provider.id
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(effective_settings)
-}
-
-pub(crate) fn write_live_with_common_config_for_state(
+/// 把 `provider` 写进 live（live 当前对应的就是它：同步、退出代理写回）。切换式应用只
+/// 替换关键字段；通用配置片段冻结在库里只给旧版读，这里不再合并。
+pub(crate) fn write_live_for_state(
     state: &AppState,
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
-    write_live_with_common_config_for_codex_oauth_manager(
-        state.db.as_ref(),
-        app_type,
-        provider,
-        &state.codex_oauth_manager,
-    )
-}
-
-pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
-    db: &Database,
-    app_type: &AppType,
-    provider: &Provider,
-    codex_oauth_manager: &Arc<CodexOAuthManager>,
-) -> Result<(), AppError> {
+    let db = state.db.as_ref();
     if matches!(app_type, AppType::Claude) {
         // Claude 不再整份写，也不合并片段：只替换关键字段和独有字段。live 当前对应的
         // 就是这个供应商（同步、退出代理写回），它带进来的独有字段按同一行比对。
@@ -538,7 +399,7 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         // Codex 同理：只替换关键字段和独有字段，不合并片段、不补回 MCP。
         super::codex_direct::write_direct(
             db,
-            codex_oauth_manager,
+            &state.codex_oauth_manager,
             crate::mode::state::op::APPLY,
             super::codex_direct::Owner::Provider(provider),
             Some(provider),
@@ -556,30 +417,17 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         return Ok(());
     }
 
-    let effective_provider = build_effective_provider_for_live(db, app_type, provider)?;
-
     if matches!(app_type, AppType::ClaudeDesktop) {
-        crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
+        crate::claude_desktop_config::apply_provider(db, provider)?;
         log::info!(
             "Claude Desktop 3P profile '{}' written for provider '{}'",
             crate::claude_desktop_config::PROFILE_ID,
-            effective_provider.id
+            provider.id
         );
         return Ok(());
     }
 
-    write_live_snapshot(app_type, &effective_provider)
-}
-
-pub(crate) fn build_effective_provider_for_live(
-    db: &Database,
-    app_type: &AppType,
-    provider: &Provider,
-) -> Result<Provider, AppError> {
-    let mut effective_provider = provider.clone();
-    effective_provider.settings_config =
-        build_effective_settings_with_common_config(db, app_type, provider)?;
-    Ok(effective_provider)
+    write_live_snapshot(app_type, provider)
 }
 
 /// 构建写入托管 Codex `auth.json` 的完整可刷新 auth（含 refresh_token + last_refresh）。
@@ -845,7 +693,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
             continue;
         }
 
-        if let Err(e) = write_live_with_common_config_for_state(state, app_type, provider) {
+        if let Err(e) = write_live_for_state(state, app_type, provider) {
             log::warn!(
                 "Failed to sync {:?} provider '{}' to live: {e}",
                 app_type,
@@ -860,15 +708,12 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
     Ok(())
 }
 
-pub(crate) fn sync_current_provider_for_app_to_live(
+/// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
+pub(crate) fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    if app_type.is_additive_mode() {
-        sync_all_providers_to_live(state, app_type)?;
-    } else {
-        sync_current_provider_for_app_respecting_mode(state, app_type)?;
-    }
+    sync_all_providers_to_live(state, app_type)?;
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
@@ -917,16 +762,17 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
         // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
         super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else {
-        write_live_with_common_config_for_state(state, app_type, provider)?;
+        write_live_for_state(state, app_type, provider)?;
     }
     Ok(LiveSyncOutcome::WroteLive)
 }
 
-/// 把正在用的那家（代理模式下是代理路由）同步到 live。
-fn sync_current_provider_for_app_respecting_mode(
+/// 把正在用的那家（代理模式下是代理路由）同步到 live；没有正在用的那家时返回 `None`。
+/// 返回时已经放开切换锁。
+pub(crate) fn sync_current_provider_for_app_respecting_mode(
     state: &AppState,
     app_type: &AppType,
-) -> Result<(), AppError> {
+) -> Result<Option<LiveSyncOutcome>, AppError> {
     let _switch_guard = crate::mode::controller::lock_settled_blocking(state, app_type)?;
     let current_id = match crate::mode::current::provider_for(
         &state.db,
@@ -934,15 +780,15 @@ fn sync_current_provider_for_app_respecting_mode(
         crate::mode::current::Purpose::InUse,
     )? {
         Some(id) => id,
-        None => return Ok(()),
+        None => return Ok(None),
     };
 
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let Some(provider) = providers.get(&current_id) else {
-        return Ok(());
+        return Ok(None);
     };
 
-    sync_live_for_provider_respecting_mode(state, app_type, provider, None).map(|_| ())
+    sync_live_for_provider_respecting_mode(state, app_type, provider, None).map(Some)
 }
 
 /// Sync current provider to live configuration
@@ -967,7 +813,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
             // Switch mode: sync only current provider. During proxy takeover,
             // update the restore backup instead of rewriting the taken-over
             // live file.
-            sync_current_provider_for_app_respecting_mode(state, &app_type)
+            sync_current_provider_for_app_respecting_mode(state, &app_type).map(|_| ())
         };
 
         if let Err(error) = result {
@@ -1592,7 +1438,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
+    fn claude_common_config_remove_strips_what_old_versions_merged() {
         let settings = json!({
             "env": {
                 "ANTHROPIC_API_KEY": "sk-test"
@@ -1605,10 +1451,14 @@ mod tests {
   }
 }"#;
 
-        let applied =
-            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
-        assert_eq!(applied["includeCoAuthoredBy"], json!(false));
-        assert_eq!(applied["env"]["CLAUDE_CODE_USE_BEDROCK"], json!("1"));
+        // 旧版切换时把片段深合并进行里的样子。
+        let applied = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-test",
+                "CLAUDE_CODE_USE_BEDROCK": "1"
+            },
+            "includeCoAuthoredBy": false
+        });
 
         let stripped =
             remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
@@ -1616,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
+    fn codex_common_config_remove_strips_what_old_versions_merged() {
         let settings = json!({
             "auth": {
                 "OPENAI_API_KEY": "sk-test"
@@ -1625,10 +1475,13 @@ mod tests {
         });
         let snippet = "[shared]\nreasoning = \"medium\"\n";
 
-        let applied = apply_common_config_to_settings(&AppType::Codex, &settings, snippet).unwrap();
-        let applied_config = applied["config"].as_str().unwrap_or_default();
-        assert!(applied_config.contains("[shared]"));
-        assert!(applied_config.contains("reasoning = \"medium\""));
+        // 旧版切换时把片段合并进行里的样子。
+        let applied = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model_provider = \"openai\"\n[general]\nmodel = \"gpt-5\"\n\n[shared]\nreasoning = \"medium\"\n"
+        });
 
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();

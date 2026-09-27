@@ -23,21 +23,16 @@ use crate::provider::Provider;
 use crate::store::AppState;
 
 use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
-use super::editor_toml::{insert_at, item_at, render, Entry, TomlEdits};
+use super::editor_toml::{self, config_text, Entry, TomlEdits};
 use super::grok_direct;
 
-fn config_text(settings: &Value) -> &str {
-    settings.get("config").and_then(Value::as_str).unwrap_or("")
-}
-
 fn parse_text(text: &str, what: &str) -> Result<DocumentMut, AppError> {
-    text.parse::<DocumentMut>().map_err(|err| {
-        AppError::localized(
-            "provider.grokbuild.editor.invalid_toml",
-            format!("Grok Build 配置不是合法的 TOML（{what}）：{err}"),
-            format!("The Grok Build configuration is not valid TOML ({what}): {err}"),
-        )
-    })
+    editor_toml::parse_text(
+        text,
+        "provider.grokbuild.editor.invalid_toml",
+        "Grok Build",
+        what,
+    )
 }
 
 /// 全局设置的每个位置：`models.default` 和 `cc_tables`（CC Switch 写的模型表）不算。
@@ -87,18 +82,8 @@ pub fn view(
     let file = grok_direct::config_file();
     let pre = read_current(&file.path)?;
     let mut doc = parse(&file.path, pre.as_deref())?;
-    let live_owner = crate::mode::current::provider_for(
-        &state.db,
-        &crate::app_config::AppType::GrokBuild,
-        crate::mode::current::Purpose::Direct,
-    )?
-    .and_then(|id| {
-        state
-            .db
-            .get_provider_by_id(&id, crate::app_config::AppType::GrokBuild.as_str())
-            .ok()
-            .flatten()
-    });
+    let live_owner =
+        crate::mode::current::direct_provider(&state.db, &crate::app_config::AppType::GrokBuild)?;
     let retired = grok_direct::retired_tables(&DeviceStore::for_device(), live_owner.as_ref())?;
     GrokConfigPatch::direct(&projection, retired, PROXY_TOKEN_PLACEHOLDER)
         .apply_to(&file.path, &mut doc)?;
@@ -134,7 +119,7 @@ fn row_table_name(settings: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 行里保存着、但不随切换生效的全局设置（值和显示的不同才列出）。值是可以照抄的 TOML。
+/// 行里保存着、但不随切换生效的全局设置。
 fn inactive_fields(
     row_text: &str,
     display: &DocumentMut,
@@ -145,18 +130,7 @@ fn inactive_fields(
         return Vec::new();
     };
     let cc_tables: Vec<&str> = row_table.into_iter().chain(shown_table).collect();
-    entries(&row, &cc_tables)
-        .into_iter()
-        .filter(|entry| item_at(display, &entry.path).map(render) != Some(render(&entry.item)))
-        .map(|entry| {
-            let mut fragment = DocumentMut::new();
-            insert_at(&mut fragment, &entry.path, entry.item.clone());
-            InactiveField {
-                path: entry.path,
-                value: Value::String(fragment.to_string()),
-            }
-        })
-        .collect()
+    editor_toml::inactive_fields(entries(&row, &cc_tables), display)
 }
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
@@ -253,10 +227,7 @@ pub(crate) fn write_live(
         },
         prev,
         projection.as_ref(),
-        PendingTarget {
-            pointer,
-            ..PendingTarget::default()
-        },
+        PendingTarget::pointer(pointer),
         Some(edits),
     )?;
     Ok(())

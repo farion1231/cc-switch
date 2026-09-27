@@ -107,13 +107,13 @@ impl RequestContext {
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
-        let current_provider_id = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::InUse,
-        )
-        .ok()
-        .flatten();
+        let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
+            .ok()
+            .flatten();
+        let current_provider_id = current_provider
+            .as_ref()
+            .map(|provider| provider.id.clone())
+            .unwrap_or_default();
 
         // 从请求体提取模型名称
         let request_model = body
@@ -138,7 +138,7 @@ impl RequestContext {
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
         let providers = state
             .provider_router
-            .select_providers_with_current(app_type_str, current_provider_id.clone())
+            .select_providers_with_current(app_type_str, current_provider)
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {
@@ -167,7 +167,7 @@ impl RequestContext {
             app_config,
             provider,
             providers,
-            current_provider_id: current_provider_id.unwrap_or_default(),
+            current_provider_id,
             request_model,
             outbound_model: None,
             tag,

@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { toast } from "sonner";
 import { providersApi, type AppId } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
+
+/** 编辑器投影读不了客户端配置文件（比如手改坏了）：编辑器退回显示保存的内容。 */
+export function toastEditorViewFailed(t: TFunction, error: unknown) {
+  toast.error(
+    t("provider.editorViewFailed", {
+      defaultValue:
+        "无法读取客户端配置文件，下面显示的是保存的供应商配置：{{error}}",
+      error: extractErrorMessage(error),
+    }),
+  );
+}
 
 /**
  * 投影出的底，和投影成它的那份草稿（预设或模板）。投影进行中或失败时底为 `null`。保存时
@@ -51,13 +63,7 @@ export function useDraftEditorProjection(
         })
         .catch((error: unknown) => {
           if (current !== sequence.current) return;
-          toast.error(
-            t("provider.editorViewFailed", {
-              defaultValue:
-                "无法读取客户端配置文件，下面显示的是保存的供应商配置：{{error}}",
-              error: extractErrorMessage(error),
-            }),
-          );
+          toastEditorViewFailed(t, error);
         });
     },
     [appId, onEditorBaseChange, t],

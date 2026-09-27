@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { Label } from "@/components/ui/label";
 import JsonEditor from "@/components/JsonEditor";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 
 interface CommonConfigEditorProps {
   value: string;
@@ -10,8 +11,6 @@ interface CommonConfigEditorProps {
   /** 行里保存着、但不随切换生效的字段；可以一键加进上方 JSON（保存后成为全局设置）。 */
   inactiveFields?: ProviderEditorInactiveField[];
 }
-
-const formatFieldPath = (path: string[]) => path.join(".");
 
 /** 把一个字段写进 JSON 文本；解析不了就原样返回。 */
 const setFieldInConfig = (
@@ -287,32 +286,21 @@ export function CommonConfigEditor({
         showValidation={true}
         language="json"
       />
-      {pendingInactiveFields.length > 0 && (
-        <div className="rounded-md border border-border-default bg-muted/40 p-3 space-y-2">
-          <p className="text-xs text-muted-foreground">
-            {t("claudeConfig.inactiveFieldsHint", {
-              count: pendingInactiveFields.length,
-              defaultValue:
-                "这个供应商还保存着 {{count}} 个不随切换生效的字段。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
-            })}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {pendingInactiveFields.map((field) => (
-              <button
-                key={formatFieldPath(field.path)}
-                type="button"
-                onClick={() => handleAddInactiveField(field)}
-                title={t("claudeConfig.addToGlobalSettings", {
-                  defaultValue: "加入全局设置",
-                })}
-                className="rounded border border-border-default px-2 py-0.5 font-mono text-xs text-blue-500 hover:bg-blue-500/10 dark:text-blue-400"
-              >
-                + {formatFieldPath(field.path)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <InactiveFieldsPanel
+        fields={pendingInactiveFields}
+        hint={t("claudeConfig.inactiveFieldsHint", {
+          count: pendingInactiveFields.length,
+          defaultValue:
+            "这个供应商还保存着 {{count}} 个不随切换生效的字段。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
+        })}
+        action={{
+          kind: "add",
+          title: t("claudeConfig.addToGlobalSettings", {
+            defaultValue: "加入全局设置",
+          }),
+          onAdd: handleAddInactiveField,
+        }}
+      />
     </div>
   );
 }

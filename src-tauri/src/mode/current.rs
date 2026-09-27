@@ -8,6 +8,7 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
+use crate::provider::Provider;
 
 use super::state::{self, ModeState};
 
@@ -35,26 +36,67 @@ pub fn is_proxy(app: &AppType) -> bool {
     mode_state(app).is_proxy()
 }
 
+/// 同 [`is_proxy`]，一次看几个应用，状态文件只读一次（状态面板每 2 秒轮询一次）。
+pub fn proxy_flags<const N: usize>(apps: [AppType; N]) -> [bool; N] {
+    let names = apps.each_ref().map(AppType::as_str);
+    match state::mode_states(&DeviceStore::for_device(), names) {
+        Ok(states) => {
+            std::array::from_fn(|i| apps[i].supports_local_proxy() && states[i].is_proxy())
+        }
+        Err(err) => {
+            log::warn!("读取模式状态失败，按直连处理: {err}");
+            [false; N]
+        }
+    }
+}
+
 pub fn provider_for(
     db: &Database,
     app: &AppType,
     purpose: Purpose,
 ) -> Result<Option<String>, AppError> {
     if purpose == Purpose::InUse {
-        let mode = mode_state(app);
-        if mode.is_proxy() {
-            if let Some(route) = mode.proxy_route {
-                if db.get_provider_by_id(&route, app.as_str())?.is_some() {
-                    return Ok(Some(route));
-                }
-                log::warn!(
-                    "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
-                    app.as_str()
-                );
-            }
+        if let Some(route) = proxy_route_row(db, app)? {
+            return Ok(Some(route.id));
         }
     }
     crate::settings::get_effective_current_provider(db, app)
+}
+
+/// 正在用的那一行（见 [`Purpose::InUse`]）。
+pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
+    match proxy_route_row(db, app)? {
+        Some(route) => Ok(Some(route)),
+        None => direct_provider(db, app),
+    }
+}
+
+/// 代理模式下代理路由那一行；不在代理模式、或者路由那家在库里不存在（按直连处理）时
+/// 为 `None`。
+fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
+    let mode = mode_state(app);
+    if !mode.is_proxy() {
+        return Ok(None);
+    }
+    let Some(route) = mode.proxy_route else {
+        return Ok(None);
+    };
+    let row = db.get_provider_by_id(&route, app.as_str())?;
+    if row.is_none() {
+        log::warn!(
+            "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
+            app.as_str()
+        );
+    }
+    Ok(row)
+}
+
+/// 直连指针指向的那一行。
+pub fn direct_provider(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
+    match provider_for(db, app, Purpose::Direct)? {
+        Some(id) => db.get_provider_by_id(&id, app.as_str()),
+        None => Ok(None),
+    }
 }
 
 /// 设备本地记录的直连指针（不验证是否存在、不回落到 DB）。只给切换失败时的回滚用：
@@ -70,8 +112,7 @@ pub fn is_referenced(db: &Database, app: &AppType, id: &str) -> Result<bool, App
     {
         return Ok(true);
     }
-    let mode = mode_state(app);
-    Ok(mode.is_proxy() && mode.proxy_route.as_deref() == Some(id))
+    Ok(mode_state(app).routes_to(id))
 }
 
 #[cfg(test)]

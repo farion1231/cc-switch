@@ -102,11 +102,31 @@ impl TomlPatch {
     }
 }
 
-impl LivePatch for TomlPatch {
+/// 改一份已经解析好的 TOML 文档。实现了它的补丁可以直接交给引擎：解析、改、再输出。
+pub trait TomlDocPatch {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError>;
+}
+
+impl<T: TomlDocPatch> LivePatch for T {
     fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
         let mut doc = parse(path, pre)?;
         self.apply_to(path, &mut doc)?;
         Ok(doc.to_string().into_bytes())
+    }
+}
+
+/// 在同一份文档上依次应用几个补丁（比如先应用编辑器里的改动，再换关键字段）。
+pub struct TomlSteps<'a>(pub Vec<&'a dyn TomlDocPatch>);
+
+impl TomlDocPatch for TomlSteps<'_> {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        self.0.iter().try_for_each(|step| step.apply_to(path, doc))
+    }
+}
+
+impl TomlDocPatch for TomlPatch {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        Self::apply_to(self, path, doc)
     }
 }
 
@@ -127,13 +147,16 @@ pub fn parse(path: &Path, pre: Option<&[u8]>) -> Result<DocumentMut, LiveWriteEr
     })
 }
 
+/// 值的写法，不带两侧的空白和行尾注释。
+pub fn value_text(value: &Value) -> String {
+    let mut value = value.clone();
+    value.decor_mut().clear();
+    value.to_string()
+}
+
 /// 值相同就算相同，不看两侧的空白和行尾注释。
-fn same_value(left: &Value, right: &Value) -> bool {
-    let mut left = left.clone();
-    let mut right = right.clone();
-    left.decor_mut().clear();
-    right.decor_mut().clear();
-    left.to_string() == right.to_string()
+pub fn same_value(left: &Value, right: &Value) -> bool {
+    value_text(left) == value_text(right)
 }
 
 /// 原位替换时沿用旧条目的空白、注释和表的位置，替换后这一行（这张表）不挪动。
@@ -156,7 +179,8 @@ fn split(key_path: &KeyPath) -> (&[String], &String) {
         .expect("patch paths must name a key, not the document root")
 }
 
-fn shape_error(path: &Path, segments: &[String]) -> LiveWriteError {
+/// 路径上的这一段应该是表，却不是。
+pub fn shape_error(path: &Path, segments: &[String]) -> LiveWriteError {
     LiveWriteError::Shape {
         path: path.to_path_buf(),
         key_path: KeyPath(segments.to_vec()),

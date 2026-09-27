@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { GeminiEnvSection, GeminiConfigSection } from "./GeminiConfigSections";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 
 interface GeminiConfigEditorProps {
   envValue: string;
@@ -118,32 +119,21 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
         configError={configError}
       />
 
-      {pendingInactiveFields.length > 0 && (
-        <div className="rounded-md border border-border-default bg-muted/40 p-3 space-y-2">
-          <p className="text-xs text-muted-foreground">
-            {t("geminiConfig.inactiveFieldsHint", {
-              count: pendingInactiveFields.length,
-              defaultValue:
-                "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
-            })}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {pendingInactiveFields.map((field) => (
-              <button
-                key={field.path.join(".")}
-                type="button"
-                onClick={() => handleAddInactiveField(field)}
-                title={t("geminiConfig.addToGlobalSettings", {
-                  defaultValue: "加入全局设置",
-                })}
-                className="rounded border border-border-default px-2 py-0.5 font-mono text-xs text-blue-500 hover:bg-blue-500/10 dark:text-blue-400"
-              >
-                + {field.path.join(".")}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <InactiveFieldsPanel
+        fields={pendingInactiveFields}
+        hint={t("geminiConfig.inactiveFieldsHint", {
+          count: pendingInactiveFields.length,
+          defaultValue:
+            "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
+        })}
+        action={{
+          kind: "add",
+          title: t("geminiConfig.addToGlobalSettings", {
+            defaultValue: "加入全局设置",
+          }),
+          onAdd: handleAddInactiveField,
+        }}
+      />
     </div>
   );
 };

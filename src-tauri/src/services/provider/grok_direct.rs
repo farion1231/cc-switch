@@ -9,14 +9,12 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::grok_config::get_grok_config_path;
-use std::path::Path;
 
-use crate::live::engine::{lock_app, DeviceStore, LiveFile};
-use crate::live::patch::toml::parse;
-use crate::live::patch::{LivePatch, LiveWriteError};
+use crate::live::engine::{DeviceStore, LiveFile};
+use crate::live::patch::toml::{TomlDocPatch, TomlSteps};
 use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
 use crate::live::project::grok::{GrokConfigPatch, GrokProjection};
-use crate::mode::operation::{self, FileChange, OperationReport};
+use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{self, op, PendingTarget, Written};
 use crate::provider::Provider;
 
@@ -107,10 +105,7 @@ fn write(
         op,
         live_owner,
         Some(&projection),
-        PendingTarget {
-            pointer: pointer.map(str::to_string),
-            ..PendingTarget::default()
-        },
+        PendingTarget::pointer(pointer.map(str::to_string)),
     )
 }
 
@@ -135,11 +130,8 @@ pub(crate) fn run_with_edits(
     mut target: PendingTarget,
     edits: Option<&TomlEdits>,
 ) -> Result<OperationReport, AppError> {
-    let guard = lock_app(app());
-    let store = DeviceStore::for_device();
-    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
     // 先补完上一次没做完的操作：它可能改了写入记录和指针，下面要按最新的记录删表。
-    operation::recover_before_write(&store, &guard, &commit)?;
+    let app_write = AppWrite::begin(db, app())?;
     let patch = match projection {
         Some(projection) => {
             target.written = Some(Written {
@@ -148,42 +140,28 @@ pub(crate) fn run_with_edits(
             });
             Some(GrokConfigPatch::direct(
                 projection,
-                retired_tables(&store, live_owner)?,
+                retired_tables(&app_write.store, live_owner)?,
                 PROXY_TOKEN_PLACEHOLDER,
             ))
         }
         None => None,
     };
     let edits = edits.filter(|edits| !edits.is_empty());
-    let write = GrokWrite {
-        edits,
-        key_fields: patch,
-    };
-    let changes: Vec<FileChange<'_>> = (write.key_fields.is_some() || edits.is_some())
+    // 先按三方比较应用编辑器的改动，再换模型表。
+    let mut steps: Vec<&dyn TomlDocPatch> = Vec::new();
+    if let Some(edits) = edits {
+        steps.push(edits);
+    }
+    if let Some(patch) = &patch {
+        steps.push(patch);
+    }
+    let write = TomlSteps(steps);
+    let changes: Vec<FileChange<'_>> = (!write.0.is_empty())
         .then(|| FileChange {
             file: config_file(),
             patch: &write,
         })
         .into_iter()
         .collect();
-    operation::run(&store, &guard, op, &changes, target, &commit)
-}
-
-/// 写 `config.toml`：先按三方比较应用编辑器的改动，再换模型表。
-struct GrokWrite<'a> {
-    edits: Option<&'a TomlEdits>,
-    key_fields: Option<GrokConfigPatch>,
-}
-
-impl LivePatch for GrokWrite<'_> {
-    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
-        let mut doc = parse(path, pre)?;
-        if let Some(edits) = self.edits {
-            edits.apply_to(path, &mut doc)?;
-        }
-        if let Some(key_fields) = &self.key_fields {
-            key_fields.apply_to(path, &mut doc)?;
-        }
-        Ok(doc.to_string().into_bytes())
-    }
+    app_write.run(op, &changes, target)
 }

@@ -79,12 +79,15 @@ impl LiveFile {
 
 /// 文件内容的 hash；文件不存在是 `None`。
 pub fn digest(bytes: Option<&[u8]>) -> Option<String> {
-    bytes.map(|bytes| {
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
-    })
+    bytes.map(sha256_hex)
+}
+
+/// 十六进制的 SHA-256。
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// 读当前字节；文件不存在返回 `None`，其他读取错误照报。

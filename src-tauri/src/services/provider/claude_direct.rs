@@ -8,10 +8,10 @@ use crate::app_config::AppType;
 use crate::config::get_claude_settings_path;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::live::engine::{lock_app, DeviceStore, LiveFile};
+use crate::live::engine::LiveFile;
 use crate::live::patch::json::JsonPatch;
 use crate::live::project::claude::{direct_patch, ClaudeProjection};
-use crate::mode::operation::{self, FileChange, OperationReport};
+use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
 
@@ -64,10 +64,7 @@ fn write(
             op::APPLY
         },
         Some(&patch),
-        PendingTarget {
-            pointer: pointer.map(str::to_string),
-            ..PendingTarget::default()
-        },
+        PendingTarget::pointer(pointer.map(str::to_string)),
     )
 }
 
@@ -79,11 +76,8 @@ pub(crate) fn run(
     patch: Option<&JsonPatch>,
     target: PendingTarget,
 ) -> Result<OperationReport, AppError> {
-    let guard = lock_app(app());
-    let store = DeviceStore::for_device();
-    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
     // 补丁是按调用方读到的指针算的（要删上一家的独有字段）：先补完上一次的操作。
-    operation::recover_before_write(&store, &guard, &commit)?;
+    let write = AppWrite::begin(db, app())?;
     let changes: Vec<FileChange<'_>> = patch
         .into_iter()
         .map(|patch| FileChange {
@@ -91,5 +85,5 @@ pub(crate) fn run(
             patch,
         })
         .collect();
-    operation::run(&store, &guard, op, &changes, target, &commit)
+    write.run(op, &changes, target)
 }

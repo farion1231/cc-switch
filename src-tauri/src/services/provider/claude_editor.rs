@@ -16,12 +16,12 @@ use serde_json::{Map, Value};
 use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::live::engine::{lock_app, read_current, DeviceStore};
+use crate::live::engine::read_current;
 use crate::live::floor;
 use crate::live::patch::json::{self as patch_json, JsonPatch};
 use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
 use crate::live::project::claude::{direct_patch, project_onto, store_into_row, ClaudeProjection};
-use crate::mode::operation::{self, FileChange};
+use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
 use crate::store::AppState;
@@ -63,6 +63,36 @@ pub enum ConflictPolicy {
     KeepMine,
     /// 冲突的键保留外部的值，其余改动照常写。
     KeepTheirs,
+}
+
+impl ConflictPolicy {
+    /// 三方比较：`conflict` 给出冲突改动的显示名（live 里现在的值既不是打开编辑器时的，
+    /// 也不是要写的）。有冲突时按策略整体拒绝、跳过冲突的改动或照写；返回要写的改动。
+    pub(crate) fn resolve<'c, C>(
+        self,
+        path: &Path,
+        changes: &'c [C],
+        conflict: impl Fn(&C) -> Option<String>,
+    ) -> Result<Vec<&'c C>, LiveWriteError> {
+        let mut conflicts = Vec::new();
+        let mut accepted = Vec::new();
+        for change in changes {
+            if let Some(key) = conflict(change) {
+                conflicts.push(key);
+                if self == Self::KeepTheirs {
+                    continue;
+                }
+            }
+            accepted.push(change);
+        }
+        if !conflicts.is_empty() && self == Self::Refuse {
+            return Err(LiveWriteError::EditConflict {
+                path: path.to_path_buf(),
+                keys: conflicts,
+            });
+        }
+        Ok(accepted)
+    }
 }
 
 /// 编辑器保存时随供应商一起提交的上下文。
@@ -108,18 +138,10 @@ fn live_exclusive_owner(state: &AppState) -> Result<Option<ClaudeProjection>, Ap
             }));
         }
     }
-    let Some(id) = crate::mode::current::provider_for(
-        &state.db,
-        &AppType::Claude,
-        crate::mode::current::Purpose::Direct,
-    )?
-    else {
-        return Ok(None);
-    };
-    Ok(state
-        .db
-        .get_provider_by_id(&id, AppType::Claude.as_str())?
-        .map(|row| ClaudeProjection::of(&row.settings_config)))
+    Ok(
+        crate::mode::current::direct_provider(&state.db, &AppType::Claude)?
+            .map(|row| ClaudeProjection::of(&row.settings_config)),
+    )
 }
 
 fn inactive_fields(row: &Value, display: &Value) -> Vec<InactiveField> {
@@ -154,21 +176,40 @@ fn inactive_fields(row: &Value, display: &Value) -> Vec<InactiveField> {
     fields
 }
 
-/// 编辑器里对全局设置的一处改动。
+/// 编辑器里对 JSON 全局设置的一处改动。
 #[derive(Debug, Clone, PartialEq)]
-struct GlobalChange {
-    path: KeyPath,
+pub(crate) struct JsonChange {
+    pub path: KeyPath,
     /// 打开编辑器时的值；`None` 表示当时没有这个键。
-    before: Option<Value>,
+    pub before: Option<Value>,
     /// 保存的值；`None` 表示删掉。
-    after: Option<Value>,
+    pub after: Option<Value>,
+}
+
+impl JsonChange {
+    /// live 里这个位置现在是 `now`：既不是打开编辑器时的值，也不是要写的值。
+    pub(crate) fn conflicts_with(&self, now: Option<&Value>) -> Option<String> {
+        (now != self.before.as_ref() && now != self.after.as_ref()).then(|| self.path.to_string())
+    }
+
+    /// 把要写的改动收成一个补丁。
+    pub(crate) fn patch(changes: &[&Self]) -> JsonPatch {
+        let mut patch = JsonPatch::default();
+        for change in changes {
+            match &change.after {
+                Some(value) => patch.set.push((change.path.clone(), value.clone())),
+                None => patch.remove.push(change.path.clone()),
+            }
+        }
+        patch
+    }
 }
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
 #[derive(Debug, Clone)]
 pub(crate) struct EditorPlan {
     pub row_settings: Value,
-    changes: Vec<GlobalChange>,
+    changes: Vec<JsonChange>,
 }
 
 /// 把编辑器里的完整配置拆开：关键字段、独有字段换进 `stored_row`（新增时为 `None`），
@@ -223,7 +264,7 @@ pub(crate) fn plan_save(
 
 /// `removed_from_live`：用户删掉的、从 live 带进来的独有字段，从 live 删。其余独有字段
 /// 归供应商行，不算全局改动。
-fn global_changes(base: &Value, edited: &Value, removed_from_live: &[String]) -> Vec<GlobalChange> {
+fn global_changes(base: &Value, edited: &Value, removed_from_live: &[String]) -> Vec<JsonChange> {
     let top = |doc: &Value| doc.as_object().cloned().unwrap_or_default();
     let env = |doc: &Value| {
         doc.get("env")
@@ -260,7 +301,7 @@ fn diff_level(
     before: &Map<String, Value>,
     after: &Map<String, Value>,
     skip: impl Fn(&str) -> bool,
-    changes: &mut Vec<GlobalChange>,
+    changes: &mut Vec<JsonChange>,
 ) {
     let keys = before
         .keys()
@@ -269,7 +310,7 @@ fn diff_level(
         if skip(key) || before.get(key) == after.get(key) {
             continue;
         }
-        changes.push(GlobalChange {
+        changes.push(JsonChange {
             path: parent.child(key),
             before: before.get(key).cloned(),
             after: after.get(key).cloned(),
@@ -277,14 +318,8 @@ fn diff_level(
     }
 }
 
-fn value_at<'a>(doc: &'a Value, path: &KeyPath) -> Option<&'a Value> {
-    path.0
-        .iter()
-        .try_fold(doc, |current, segment| current.get(segment))
-}
-
 struct EditorPatch<'a> {
-    changes: &'a [GlobalChange],
+    changes: &'a [JsonChange],
     on_conflict: ConflictPolicy,
     key_fields: Option<JsonPatch>,
 }
@@ -292,30 +327,10 @@ struct EditorPatch<'a> {
 impl LivePatch for EditorPatch<'_> {
     fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
         let (mut doc, style) = patch_json::parse(path, pre)?;
-
-        let mut conflicts = Vec::new();
-        let mut patch = JsonPatch::default();
-        for change in self.changes {
-            let current = value_at(&doc, &change.path);
-            if current != change.before.as_ref() && current != change.after.as_ref() {
-                conflicts.push(change.path.to_string());
-                if self.on_conflict == ConflictPolicy::KeepTheirs {
-                    continue;
-                }
-            }
-            match &change.after {
-                Some(value) => patch.set.push((change.path.clone(), value.clone())),
-                None => patch.remove.push(change.path.clone()),
-            }
-        }
-        if !conflicts.is_empty() && self.on_conflict == ConflictPolicy::Refuse {
-            return Err(LiveWriteError::EditConflict {
-                path: path.to_path_buf(),
-                keys: conflicts,
-            });
-        }
-
-        patch.apply_to(path, &mut doc)?;
+        let accepted = self.on_conflict.resolve(path, self.changes, |change| {
+            change.conflicts_with(patch_json::value_at(&doc, &change.path))
+        })?;
+        JsonChange::patch(&accepted).apply_to(path, &mut doc)?;
         if let Some(key_fields) = &self.key_fields {
             key_fields.apply_to(path, &mut doc)?;
         }
@@ -361,15 +376,8 @@ pub(crate) fn write_live(
         key_fields: key_patch,
     };
 
-    let app = AppType::Claude.as_str();
-    let guard = lock_app(app);
-    let store = DeviceStore::for_device();
-    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app, target);
     // 关键字段的补丁是按调用方读到的行算的：先补完上一次的操作。
-    operation::recover_before_write(&store, &guard, &commit)?;
-    operation::run(
-        &store,
-        &guard,
+    AppWrite::begin(db, AppType::Claude.as_str())?.run(
         if pointer.is_some() {
             op::SWITCH
         } else {
@@ -379,11 +387,7 @@ pub(crate) fn write_live(
             file: claude_direct::settings_file(),
             patch: &patch,
         }],
-        PendingTarget {
-            pointer,
-            ..PendingTarget::default()
-        },
-        &commit,
+        PendingTarget::pointer(pointer),
     )?;
     Ok(())
 }
@@ -394,7 +398,7 @@ mod tests {
     use serde_json::json;
 
     fn apply(
-        changes: &[GlobalChange],
+        changes: &[JsonChange],
         policy: ConflictPolicy,
         live: &Value,
     ) -> Result<Value, LiveWriteError> {
@@ -430,17 +434,17 @@ mod tests {
         assert_eq!(
             changes,
             vec![
-                GlobalChange {
+                JsonChange {
                     path: KeyPath::new(&["alwaysThinkingEnabled"]),
                     before: None,
                     after: Some(json!(false)),
                 },
-                GlobalChange {
+                JsonChange {
                     path: KeyPath::new(&["env", "DEBUG"]),
                     before: Some(json!("1")),
                     after: None,
                 },
-                GlobalChange {
+                JsonChange {
                     path: KeyPath::new(&["env", "EXTRA"]),
                     before: None,
                     after: Some(json!("x")),
@@ -476,12 +480,12 @@ mod tests {
     #[test]
     fn a_key_changed_elsewhere_is_a_conflict_unless_the_user_picks_a_side() {
         let changes = vec![
-            GlobalChange {
+            JsonChange {
                 path: KeyPath::new(&["x"]),
                 before: Some(json!(1)),
                 after: Some(json!(2)),
             },
-            GlobalChange {
+            JsonChange {
                 path: KeyPath::new(&["y"]),
                 before: None,
                 after: Some(json!("mine")),

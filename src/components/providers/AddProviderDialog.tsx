@@ -12,9 +12,9 @@ import type {
   EditorConflictPolicy,
   ProviderEditorSave,
 } from "@/lib/api/providers";
-import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
-import { LiveEditConflictDialog } from "@/components/providers/LiveEditConflictDialog";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
+import { usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -32,9 +32,6 @@ import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { ManagedAuthProvider } from "@/lib/api";
-
-// 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见下）。
-const DRAFT_EDITOR_APPS: readonly AppId[] = ["codex", "gemini", "grokbuild"];
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -100,12 +97,9 @@ export function AddProviderDialog({
       setDraftEditorBase(base ? { base, draft } : null),
     [],
   );
-  const projectsDraft = DRAFT_EDITOR_APPS.includes(appId);
-  const [pendingConflict, setPendingConflict] = useState<{
-    keys: string[];
-    retry: (policy: EditorConflictPolicy) => Promise<void>;
-  } | null>(null);
-  const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+  // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。
+  const projectsDraft = appId !== "claude" && usesEditorView(appId);
+  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
 
   useEffect(() => {
     if (!open || appId !== "claude") {
@@ -123,13 +117,7 @@ export function AddProviderDialog({
         // 读不了 settings.json：退回只显示预设。
         if (!cancelled) {
           setClaudeLiveBase(null);
-          toast.error(
-            t("provider.editorViewFailed", {
-              defaultValue:
-                "无法读取 Claude Code 配置文件，下面显示的是保存的供应商配置：{{error}}",
-              error: extractErrorMessage(error),
-            }),
-          );
+          toastEditorViewFailed(t, error);
         }
       })
       .finally(() => {
@@ -436,14 +424,7 @@ export function AddProviderDialog({
         });
         closeDialog();
       };
-
-      try {
-        await submit("refuse");
-      } catch (error) {
-        const conflict = parseLiveEditConflict(error);
-        if (!conflict) throw error;
-        setPendingConflict({ keys: conflict.keys, retry: submit });
-      }
+      await submitWithConflictRetry(submit);
     },
     [
       appId,
@@ -452,23 +433,8 @@ export function AddProviderDialog({
       claudeLiveBase,
       projectsDraft,
       draftEditorBase,
+      submitWithConflictRetry,
     ],
-  );
-
-  const handleResolveConflict = useCallback(
-    async (policy: EditorConflictPolicy) => {
-      if (!pendingConflict) return;
-      setIsResolvingConflict(true);
-      try {
-        await pendingConflict.retry(policy);
-      } catch {
-        // 失败提示由新增的 mutation 负责，对话框保持打开。
-      } finally {
-        setIsResolvingConflict(false);
-        setPendingConflict(null);
-      }
-    },
-    [pendingConflict],
   );
 
   const waitingForClaudeBase = appId === "claude" && !claudeBaseLoaded;
@@ -596,12 +562,7 @@ export function AddProviderDialog({
         target={authSettingsTarget}
         onClose={() => setAuthSettingsTarget(null)}
       />
-      <LiveEditConflictDialog
-        keys={pendingConflict?.keys ?? null}
-        pending={isResolvingConflict}
-        onResolve={(policy) => void handleResolveConflict(policy)}
-        onCancel={() => setPendingConflict(null)}
-      />
+      {conflictDialog}
     </FullScreenPanel>
   );
 }

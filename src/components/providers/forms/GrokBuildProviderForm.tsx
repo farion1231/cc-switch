@@ -32,6 +32,7 @@ import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 import {
   grokBuildOfficialPreset,
   grokBuildProviderPresets,
@@ -563,40 +564,20 @@ export function GrokBuildProviderForm({
                   })}
                 </p>
               )}
-              {inactiveFields.length > 0 && (
-                <div className="rounded-md border border-border-default bg-muted/40 p-3 space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    {t("grokBuild.inactiveFieldsHint", {
-                      count: inactiveFields.length,
-                      defaultValue:
-                        "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
-                    })}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {inactiveFields.map((field) => (
-                      <button
-                        key={field.path.join(".")}
-                        type="button"
-                        title={String(field.value)}
-                        onClick={() => {
-                          void navigator.clipboard
-                            ?.writeText(String(field.value))
-                            .then(() =>
-                              toast.success(
-                                t("grokBuild.inactiveFieldCopied", {
-                                  defaultValue: "已复制",
-                                }),
-                              ),
-                            );
-                        }}
-                        className="rounded border border-border-default px-2 py-0.5 font-mono text-xs text-blue-500 hover:bg-blue-500/10 dark:text-blue-400"
-                      >
-                        {field.path.join(".")}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <InactiveFieldsPanel
+                fields={inactiveFields}
+                hint={t("grokBuild.inactiveFieldsHint", {
+                  count: inactiveFields.length,
+                  defaultValue:
+                    "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+                })}
+                action={{
+                  kind: "copy",
+                  copiedText: t("grokBuild.inactiveFieldCopied", {
+                    defaultValue: "已复制",
+                  }),
+                }}
+              />
             </div>
           </>
         )}

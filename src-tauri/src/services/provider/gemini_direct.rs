@@ -12,9 +12,9 @@ use crate::gemini_config::{
     get_gemini_env_path, get_gemini_settings_path, validate_gemini_settings,
     validate_gemini_settings_strict,
 };
-use crate::live::engine::{lock_app, DeviceStore, LiveFile};
+use crate::live::engine::LiveFile;
 use crate::live::project::gemini::GeminiProjection;
-use crate::mode::operation::{self, FileChange, OperationReport};
+use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
 
@@ -58,10 +58,7 @@ pub(crate) fn switch_to(db: &Database, target: &Provider) -> Result<OperationRep
         db,
         op::SWITCH,
         Some(&projection),
-        PendingTarget {
-            pointer: Some(target.id.clone()),
-            ..PendingTarget::default()
-        },
+        PendingTarget::pointer(Some(target.id.clone())),
     )
 }
 
@@ -90,11 +87,8 @@ pub(crate) fn run_with_edits(
     target: PendingTarget,
     edits: Option<&GeminiEdits>,
 ) -> Result<OperationReport, AppError> {
-    let guard = lock_app(app());
-    let store = DeviceStore::for_device();
-    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
     // 写不写、写成谁是调用方按读到的指针定的：先补完上一次的操作。
-    operation::recover_before_write(&store, &guard, &commit)?;
+    let write = AppWrite::begin(db, app())?;
     let env = EnvWrite {
         edits,
         key_fields: projection.map(GeminiProjection::env_patch),
@@ -116,5 +110,5 @@ pub(crate) fn run_with_edits(
             patch: &settings,
         });
     }
-    operation::run(&store, &guard, op, &changes, target, &commit)
+    write.run(op, &changes, target)
 }

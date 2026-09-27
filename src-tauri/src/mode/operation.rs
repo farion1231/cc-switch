@@ -336,6 +336,43 @@ pub fn recover_before_write(
     }
 }
 
+/// 一个应用的一次写入：拿着这个应用的写锁，上一次没做完的操作已经补完。各应用的写入
+/// 函数都从 [`AppWrite::begin`] 开始，再按拿锁之后读到的状态算补丁。
+pub struct AppWrite<'a> {
+    db: &'a Database,
+    pub store: DeviceStore,
+    pub guard: AppWriteGuard,
+}
+
+impl<'a> AppWrite<'a> {
+    /// 拿写锁，先补完上一次的操作；补完过就停下（见 [`recover_before_write`]）。
+    pub fn begin(db: &'a Database, app: &str) -> Result<Self, AppError> {
+        let write = Self {
+            db,
+            store: DeviceStore::for_device(),
+            guard: crate::live::engine::lock_app(app),
+        };
+        recover_before_write(&write.store, &write.guard, &|target| write.commit(target))?;
+        Ok(write)
+    }
+
+    fn commit(&self, target: &PendingTarget) -> Result<(), AppError> {
+        commit_target(self.db, &self.store, self.guard.app(), target)
+    }
+
+    /// 执行一次操作（见 [`run`]）。
+    pub fn run(
+        &self,
+        op: &str,
+        changes: &[FileChange<'_>],
+        target: PendingTarget,
+    ) -> Result<OperationReport, AppError> {
+        run(&self.store, &self.guard, op, changes, target, &|target| {
+            self.commit(target)
+        })
+    }
+}
+
 /// 启动时补完所有应用未完成的操作。
 pub fn recover_all(
     store: &DeviceStore,
@@ -375,12 +412,20 @@ pub fn commit_target(
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(app, id)?;
     }
-    if let Some(mode) = &target.state {
-        state::set_mode_state(store, app, mode.clone())?;
-        mirror_proxy_flag(db, app, mode.is_proxy())?;
+    // 模式和写入记录在同一次状态文件写入里落定。
+    if target.state.is_some() || target.written.is_some() {
+        state::update(store, |live| {
+            let entry = live.apps.entry(app.to_string()).or_default();
+            if let Some(mode) = &target.state {
+                entry.set_mode_state(mode.clone());
+            }
+            if let Some(written) = &target.written {
+                entry.written = Some(written.clone());
+            }
+        })?;
     }
-    if let Some(written) = &target.written {
-        state::set_written(store, app, written.clone())?;
+    if let Some(mode) = &target.state {
+        mirror_proxy_flag(db, app, mode.is_proxy())?;
     }
     Ok(())
 }
@@ -605,10 +650,7 @@ mod tests {
                     patch: &patch,
                 },
             ],
-            PendingTarget {
-                pointer: Some("B".into()),
-                ..PendingTarget::default()
-            },
+            PendingTarget::pointer(Some("B".into())),
             &|target| {
                 *pointer.borrow_mut() = target.pointer.clone();
                 Ok(())
@@ -657,10 +699,7 @@ mod tests {
                     patch: &delete,
                 },
             ],
-            PendingTarget {
-                pointer: Some("B".into()),
-                ..PendingTarget::default()
-            },
+            PendingTarget::pointer(Some("B".into())),
             &|target| {
                 *pointer.borrow_mut() = target.pointer.clone();
                 Ok(())
@@ -920,10 +959,7 @@ mod tests {
                     patch: &write_stash,
                 },
             ],
-            PendingTarget {
-                pointer: Some("B".into()),
-                ..PendingTarget::default()
-            },
+            PendingTarget::pointer(Some("B".into())),
             &|_| Ok(()),
         );
         failpoint::crash_at(None);

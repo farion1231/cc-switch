@@ -5,11 +5,54 @@
 
 use std::path::Path;
 
+use serde_json::Value;
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
+use crate::error::AppError;
+use crate::live::patch::toml::TomlDocPatch;
 use crate::live::patch::LiveWriteError;
 
-use super::claude_editor::ConflictPolicy;
+use super::claude_editor::{ConflictPolicy, InactiveField};
+
+/// 行（或编辑器内容）里的 TOML 文本。
+pub(crate) fn config_text(settings: &Value) -> &str {
+    settings.get("config").and_then(Value::as_str).unwrap_or("")
+}
+
+/// 解析编辑器里的 TOML。`key`、`app` 用来报错，`what` 说明是哪一份。
+pub(crate) fn parse_text(
+    text: &str,
+    key: &'static str,
+    app: &str,
+    what: &str,
+) -> Result<DocumentMut, AppError> {
+    text.parse::<DocumentMut>().map_err(|err| {
+        AppError::localized(
+            key,
+            format!("{app} 配置不是合法的 TOML（{what}）：{err}"),
+            format!("The {app} configuration is not valid TOML ({what}): {err}"),
+        )
+    })
+}
+
+/// 行里保存着、但不随切换生效的全局设置（值和显示的不同才列出）。值是可以照抄的 TOML。
+pub(crate) fn inactive_fields(
+    row_entries: Vec<Entry>,
+    display: &DocumentMut,
+) -> Vec<InactiveField> {
+    row_entries
+        .into_iter()
+        .filter(|entry| item_at(display, &entry.path).map(render) != Some(render(&entry.item)))
+        .map(|entry| {
+            let mut fragment = DocumentMut::new();
+            insert_at(&mut fragment, &entry.path, entry.item.clone());
+            InactiveField {
+                path: entry.path,
+                value: Value::String(fragment.to_string()),
+            }
+        })
+        .collect()
+}
 
 /// 一个可以单独改动的位置和它的内容。
 pub(crate) struct Entry {
@@ -87,25 +130,11 @@ impl TomlEdits {
         path: &Path,
         doc: &mut DocumentMut,
     ) -> Result<(), LiveWriteError> {
-        let mut conflicts = Vec::new();
-        let mut accepted = Vec::new();
-        for change in &self.changes {
+        let accepted = self.on_conflict.resolve(path, &self.changes, |change| {
             let current = item_at(doc, &change.path).map(render);
             let after = change.after.as_ref().map(render);
-            if current != change.before && current != after {
-                conflicts.push(change.path.join("."));
-                if self.on_conflict == ConflictPolicy::KeepTheirs {
-                    continue;
-                }
-            }
-            accepted.push(change);
-        }
-        if !conflicts.is_empty() && self.on_conflict == ConflictPolicy::Refuse {
-            return Err(LiveWriteError::EditConflict {
-                path: path.to_path_buf(),
-                keys: conflicts,
-            });
-        }
+            (current != change.before && current != after).then(|| change.path.join("."))
+        })?;
         for change in accepted {
             match &change.after {
                 Some(item) => insert_at(doc, &change.path, item.clone()),
@@ -113,6 +142,12 @@ impl TomlEdits {
             }
         }
         Ok(())
+    }
+}
+
+impl TomlDocPatch for TomlEdits {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        Self::apply_to(self, path, doc)
     }
 }
 

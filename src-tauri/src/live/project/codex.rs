@@ -15,8 +15,8 @@ use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value as TomlV
 
 use crate::error::AppError;
 use crate::live::floor;
-use crate::live::patch::toml::parse;
-use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
+use crate::live::patch::toml::{same_value, shape_error, TomlDocPatch};
+use crate::live::patch::LiveWriteError;
 
 /// CC Switch 写入的路由表 id。
 pub const ROUTE_ID: &str = "custom";
@@ -24,8 +24,7 @@ pub const ROUTE_ID: &str = "custom";
 pub const OFFICIAL_PROXY_ROUTE_ID: &str = "cc-switch-official";
 /// CC Switch 生成的模型目录文件名。
 pub const CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
-/// 代理模式下写给客户端的占位 Key，旧版靠这个字面值识别接管。
-pub const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+pub use super::claude::PROXY_TOKEN_PLACEHOLDER;
 /// `web_search` 的禁用值。
 pub const WEB_SEARCH_DISABLED: &str = "disabled";
 const MODEL_CATALOG_JSON: &str = "model_catalog_json";
@@ -515,24 +514,10 @@ pub struct CodexConfigPatch {
     pub retired: Vec<KnownTable>,
 }
 
-impl LivePatch for CodexConfigPatch {
-    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
-        let mut doc = parse(path, pre)?;
-        self.apply_to(path, &mut doc)?;
-        Ok(doc.to_string().into_bytes())
+impl TomlDocPatch for CodexConfigPatch {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        Self::apply_to(self, path, doc)
     }
-}
-
-fn shape_error(path: &Path, segments: &[&str]) -> LiveWriteError {
-    LiveWriteError::Shape {
-        path: path.to_path_buf(),
-        key_path: KeyPath::new(segments),
-        expected: "表",
-    }
-}
-
-fn same_value(left: &TomlValue, right: &TomlValue) -> bool {
-    undecorated(left.clone()).to_string() == undecorated(right.clone()).to_string()
 }
 
 /// 原位改值：已有就沿用原来的空白和行尾注释，没有就追加。
@@ -649,11 +634,7 @@ impl CodexConfigPatch {
                 current = current
                     .get_mut(segment)
                     .and_then(Item::as_table_like_mut)
-                    .ok_or_else(|| {
-                        let names: Vec<&str> =
-                            segments[..=depth].iter().map(String::as_str).collect();
-                        shape_error(path, &names)
-                    })?;
+                    .ok_or_else(|| shape_error(path, &segments[..=depth]))?;
             }
             put_value(current, last, value);
         }
@@ -695,7 +676,7 @@ impl CodexConfigPatch {
         };
         let providers = container
             .as_table_like_mut()
-            .ok_or_else(|| shape_error(path, &["model_providers"]))?;
+            .ok_or_else(|| shape_error(path, &["model_providers".to_string()]))?;
 
         // 旧版留下的保留 id 表会让 Codex 整份拒绝加载：能证明是 CC Switch 写的删掉，
         // 其余按原样改名成 cc-switch-N（不知道用户在乎其中哪些键）。

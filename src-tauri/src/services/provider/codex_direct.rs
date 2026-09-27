@@ -28,7 +28,8 @@ use crate::codex_config::{
 use crate::config::sorted_json_bytes;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::live::engine::{digest, lock_app, read_current, DeviceStore, LiveFile};
+use crate::live::engine::{digest, read_current, DeviceStore, LiveFile};
+use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
     official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
@@ -36,7 +37,7 @@ use crate::live::project::codex::{
     ROUTE_ID, WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
-use crate::mode::operation::{self, FileChange, OperationReport};
+use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{Contract, PendingTarget};
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
@@ -64,18 +65,15 @@ fn managed_account(provider: &Provider) -> Option<String> {
 /// 本地代理给 Codex 的地址（带 `/v1`），不需要代理在运行：官方直连时写休眠表用。
 pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
     let (address, port) = db.get_proxy_listen_sync();
-    let host = match address.as_str() {
-        "0.0.0.0" => "127.0.0.1".to_string(),
-        "::" => "[::1]".to_string(),
-        other if other.contains(':') && !other.starts_with('[') => format!("[{other}]"),
-        other => other.to_string(),
-    };
     let port = if port == 0 {
         crate::proxy::types::ProxyConfig::default().listen_port
     } else {
         port
     };
-    format!("http://{host}:{port}/v1")
+    format!(
+        "{}/v1",
+        crate::services::proxy::proxy_origin(&address, port)
+    )
 }
 
 /// 写成什么样。
@@ -302,32 +300,19 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
 #[derive(Debug, Clone)]
 enum AuthGoal {
     ThirdParty,
-    ProxyThirdParty,
+    /// 代理的第三方路由，或者没有直连供应商：不动原生登录，只清托管账号的登录。
+    KeepNative,
     Official(Value),
     Managed(Value),
-    /// 没有直连供应商：只清托管账号的登录。
-    Keep,
 }
 
-/// `config.toml` 的补丁：先应用编辑器里的全局改动（有的话），再换关键字段。
-struct ConfigWithEdits<'a> {
-    edits: Option<&'a super::editor_toml::TomlEdits>,
-    key_fields: &'a CodexConfigPatch,
-}
-
-impl LivePatch for ConfigWithEdits<'_> {
-    fn apply(
-        &self,
-        path: &std::path::Path,
-        pre: Option<&[u8]>,
-    ) -> Result<Vec<u8>, crate::live::patch::LiveWriteError> {
-        let mut doc = crate::live::patch::toml::parse(path, pre)?;
-        if let Some(edits) = self.edits {
-            edits.apply_to(path, &mut doc)?;
-        }
-        self.key_fields.apply_to(path, &mut doc)?;
-        Ok(doc.to_string().into_bytes())
-    }
+/// 行里的 `auth`（没有时是空对象）。
+fn row_auth(provider: &Provider) -> Value {
+    provider
+        .settings_config
+        .get("auth")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()))
 }
 
 /// 在内存里算好的一次 Codex 写入。
@@ -375,17 +360,11 @@ pub(crate) fn plan(
     let official = provider.is_some_and(is_official);
     let managed_login = prepared.target_login.as_ref().map(|(_, auth)| auth.clone());
     let (route, stamp, auth) = match (target, &projection) {
-        (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::Keep),
+        (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::KeepNative),
         (Target::Direct(Some(provider)), Some(projection)) => {
             let auth = match &managed_login {
                 Some(login) => AuthGoal::Managed(login.clone()),
-                None if official => AuthGoal::Official(
-                    provider
-                        .settings_config
-                        .get("auth")
-                        .cloned()
-                        .unwrap_or_else(|| Value::Object(Map::new())),
-                ),
+                None if official => AuthGoal::Official(row_auth(provider)),
                 None => AuthGoal::ThirdParty,
             };
             match &projection.route {
@@ -417,13 +396,7 @@ pub(crate) fn plan(
             if official {
                 let auth = match &managed_login {
                     Some(login) => AuthGoal::Managed(login.clone()),
-                    None => AuthGoal::Official(
-                        route
-                            .settings_config
-                            .get("auth")
-                            .cloned()
-                            .unwrap_or_else(|| Value::Object(Map::new())),
-                    ),
+                    None => AuthGoal::Official(row_auth(route)),
                 };
                 (
                     RouteWrite::OfficialProxy(official_mirror_table(Some(base_url), false)),
@@ -434,7 +407,7 @@ pub(crate) fn plan(
                 (
                     RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
                     Some(RouteAuth::Bearer),
-                    AuthGoal::ProxyThirdParty,
+                    AuthGoal::KeepNative,
                 )
             }
         }
@@ -456,13 +429,7 @@ pub(crate) fn plan(
     let leaving_official = owner
         .provider()
         .filter(|provider| is_official(provider) && managed_account(provider).is_none())
-        .map(|provider| {
-            provider
-                .settings_config
-                .get("auth")
-                .cloned()
-                .unwrap_or_else(|| Value::Object(Map::new()))
-        });
+        .map(row_auth);
 
     let config = CodexConfigPatch {
         top,
@@ -494,12 +461,6 @@ pub(crate) fn plan(
         official_logins: facts.official_logins,
         contract,
     })
-}
-
-fn value_literal(value: &TomlValue) -> String {
-    let mut value = value.clone();
-    value.decor_mut().clear();
-    value.to_string()
 }
 
 fn table_text(table: &Table) -> String {
@@ -535,7 +496,7 @@ fn contract_of(
     let pairs = |entries: &[(String, TomlValue)]| -> Vec<Value> {
         let mut pairs: Vec<Value> = entries
             .iter()
-            .map(|(key, value)| serde_json::json!([key, value_literal(value)]))
+            .map(|(key, value)| serde_json::json!([key, value_text(value)]))
             .collect();
         pairs.sort_by_key(|pair| pair[0].as_str().unwrap_or_default().to_string());
         pairs
@@ -543,7 +504,7 @@ fn contract_of(
     let nested: Vec<Value> = config
         .nested
         .iter()
-        .map(|(path, value)| serde_json::json!([path.join("."), value_literal(value)]))
+        .map(|(path, value)| serde_json::json!([path.join("."), value_text(value)]))
         .collect();
     let parts = serde_json::json!({
         "app": "codex",
@@ -569,7 +530,7 @@ fn contract_of(
             .exclusive
             .iter()
             .chain(row_catalog_pointer(&config.top))
-            .map(|(key, value)| (key.clone(), Value::String(value_literal(value))))
+            .map(|(key, value)| (key.clone(), Value::String(value_text(value))))
             .collect(),
     }
 }
@@ -641,12 +602,10 @@ pub(crate) fn run_with_edits(
     pending: PendingTarget,
     edits: Option<&super::editor_toml::TomlEdits>,
 ) -> Result<OperationReport, AppError> {
-    let guard = lock_app(app());
-    let store = DeviceStore::for_device();
-    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
     // 先补完上一次的操作，再读 auth.json 和登录暂存：补完会改写它们，按补完前读到的内容
     // 写下去会被当成外部修改；`owner` 也是调用方按补完前的指针定的。
-    operation::recover_before_write(&store, &guard, &commit)?;
+    let write = AppWrite::begin(db, app())?;
+    let store = &write.store;
 
     // 切走的托管账号：采纳之后 CLI 又刷新了就停下，免得删掉新 token。
     if let Some((account, outgoing)) = &prepared.outgoing {
@@ -692,11 +651,11 @@ pub(crate) fn run_with_edits(
         stash,
         pre: stash_pre,
         unreadable: stash_unreadable,
-    } = load_stash(&store, &planned.official_logins);
+    } = load_stash(store, &planned.official_logins);
     let preserve = crate::settings::preserve_codex_official_auth_on_switch();
     let target = match &planned.auth {
         AuthGoal::ThirdParty => AuthTarget::ThirdParty { preserve },
-        AuthGoal::ProxyThirdParty | AuthGoal::Keep => AuthTarget::ProxyThirdParty,
+        AuthGoal::KeepNative => AuthTarget::ProxyThirdParty,
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
         AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
     };
@@ -789,10 +748,13 @@ pub(crate) fn run_with_edits(
         })
         .transpose()?;
     let catalog_patch = planned.catalog.map(WholeFile::Write);
-    let config_patch = ConfigWithEdits {
-        edits,
-        key_fields: &config,
-    };
+    // 先应用编辑器里的全局改动（有的话），再换关键字段。
+    let mut config_steps: Vec<&dyn TomlDocPatch> = Vec::new();
+    if let Some(edits) = edits {
+        config_steps.push(edits);
+    }
+    config_steps.push(&config);
+    let config_patch = TomlSteps(config_steps);
 
     let mut changes: Vec<FileChange<'_>> = Vec::new();
     // auth.json 放第一个：Codex CLI 恰好在这时刷新了登录，就在发布任何文件之前停下。
@@ -825,7 +787,7 @@ pub(crate) fn run_with_edits(
         });
     }
 
-    operation::run(&store, &guard, op, &changes, pending, &commit)
+    write.run(op, &changes, pending)
 }
 
 /// 直连写入：`prepare` → `plan` → `run`。

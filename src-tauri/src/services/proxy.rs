@@ -25,6 +25,21 @@ pub struct ProxyService {
     switch_locks: SwitchLockManager,
 }
 
+/// 客户端连接代理用的地址。`listen_address` 可能是 `0.0.0.0` / `::`（监听所有网卡），
+/// 客户端连不上这个地址，改用本机回环；IPv6 加方括号。
+pub(crate) fn proxy_origin(listen_address: &str, listen_port: u16) -> String {
+    let host = match listen_address {
+        "0.0.0.0" => "127.0.0.1",
+        "::" => "::1",
+        other => other,
+    };
+    if host.contains(':') && !host.starts_with('[') {
+        format!("http://[{host}]:{listen_port}")
+    } else {
+        format!("http://{host}:{listen_port}")
+    }
+}
+
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -131,12 +146,17 @@ impl ProxyService {
     /// 各应用是否处于代理模式（读设备本地的模式状态，不读会随云同步的
     /// `proxy_config.enabled`）。
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        use crate::mode::current::is_proxy;
+        let [claude, codex, gemini, grokbuild] = crate::mode::current::proxy_flags([
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::GrokBuild,
+        ]);
         Ok(ProxyTakeoverStatus {
-            claude: is_proxy(&AppType::Claude),
-            codex: is_proxy(&AppType::Codex),
-            gemini: is_proxy(&AppType::Gemini),
-            grokbuild: is_proxy(&AppType::GrokBuild),
+            claude,
+            codex,
+            gemini,
+            grokbuild,
             // OpenCode and OpenClaw don't support proxy features
             opencode: false,
             openclaw: false,
@@ -197,19 +217,6 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // listen_address 可能是 0.0.0.0（用于监听所有网卡），但客户端无法用 0.0.0.0 连接；
-        // 因此写回到各应用配置时，优先使用本机回环地址。
-        let connect_host = match config.listen_address.as_str() {
-            "0.0.0.0" => "127.0.0.1".to_string(),
-            "::" => "::1".to_string(),
-            _ => config.listen_address.clone(),
-        };
-        let connect_host_for_url = if connect_host.contains(':') && !connect_host.starts_with('[') {
-            format!("[{connect_host}]")
-        } else {
-            connect_host
-        };
-
         let mut listen_port = config.listen_port;
         if let Some(server) = self.server.read().await.as_ref() {
             let status = server.get_status().await;
@@ -221,10 +228,8 @@ impl ProxyService {
             return Err("代理监听端口为 0，但代理服务器尚未运行，无法生成接管地址".to_string());
         }
 
-        let proxy_origin = format!("http://{}:{}", connect_host_for_url, listen_port);
-        let proxy_url = proxy_origin.clone();
-        let proxy_codex_base_url = format!("{}/v1", proxy_origin.trim_end_matches('/'));
-
+        let proxy_url = proxy_origin(&config.listen_address, listen_port);
+        let proxy_codex_base_url = format!("{proxy_url}/v1");
         Ok((proxy_url, proxy_codex_base_url))
     }
 
@@ -252,9 +257,16 @@ impl ProxyService {
         }
     }
 
-    /// 一份配置（客户端文件或供应商行）里有没有接管占位符。
+    /// 一份配置（客户端文件或供应商行）里有没有接管占位符：行里带着它的是旧版接管期间
+    /// 被导入的残留，不能照写回 live，否则客户端会一直指着已经不在的本地代理。
     pub(crate) fn config_has_proxy_placeholder(app_type: &AppType, config: &Value) -> bool {
-        Self::live_has_proxy_placeholder_for_app(app_type, config)
+        match app_type {
+            AppType::Claude => Self::is_claude_live_taken_over(config),
+            AppType::Codex => Self::is_codex_live_taken_over(config),
+            AppType::Gemini => Self::is_gemini_live_taken_over(config),
+            AppType::GrokBuild => Self::is_grok_live_taken_over(config),
+            _ => false,
+        }
     }
 
     /// 是否有应用处于代理模式
@@ -325,22 +337,6 @@ impl ProxyService {
             .is_some_and(|config_toml| {
                 crate::grok_config::has_proxy_placeholder(config_toml, PROXY_TOKEN_PLACEHOLDER)
             })
-    }
-
-    /// 判断给定的 Live/备份配置是否已被代理接管（包含占位符）
-    ///
-    /// 用途：检测"备份里存的其实是代理配置"这种异常历史状态。
-    /// 如果发现，备份不可信，备份路径不能写入（否则会把代理配置固化进备份槽），
-    /// 恢复路径不能读取（否则会把代理占位符原样写回 Live，永久卡在代理地址）。
-    /// 两种情况下都应该走 SSOT 兜底重建 Live。
-    fn live_has_proxy_placeholder_for_app(app_type: &AppType, config: &Value) -> bool {
-        match app_type {
-            AppType::Claude => Self::is_claude_live_taken_over(config),
-            AppType::Codex => Self::is_codex_live_taken_over(config),
-            AppType::Gemini => Self::is_gemini_live_taken_over(config),
-            AppType::GrokBuild => Self::is_grok_live_taken_over(config),
-            _ => false,
-        }
     }
 
     // ==================== Live 配置读写辅助方法 ====================

@@ -21,14 +21,14 @@ use crate::error::AppError;
 use crate::live::engine::read_current;
 use crate::live::floor;
 use crate::live::patch::dotenv::{self, DotenvPatch};
-use crate::live::patch::json::{self as patch_json, JsonPatch};
+use crate::live::patch::json::{self as patch_json, value_at, JsonPatch};
 use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
 use crate::live::project::gemini::GeminiProjection;
 use crate::mode::state::{op, PendingTarget};
 use crate::provider::Provider;
 use crate::store::AppState;
 
-use super::claude_editor::{ConflictPolicy, EditorView, InactiveField};
+use super::claude_editor::{ConflictPolicy, EditorView, InactiveField, JsonChange};
 use super::gemini_direct;
 
 fn floor_paths() -> impl Iterator<Item = KeyPath> {
@@ -174,12 +174,6 @@ fn restore(doc: &mut Value, path: &[String], value: Value) {
     }
 }
 
-fn value_at<'a>(doc: &'a Value, path: &KeyPath) -> Option<&'a Value> {
-    path.0
-        .iter()
-        .try_fold(doc, |current, segment| current.get(segment))
-}
-
 /// `.env` 里一个变量的改动。
 #[derive(Debug, Clone, PartialEq)]
 struct EnvChange {
@@ -188,14 +182,6 @@ struct EnvChange {
     before: Option<String>,
     /// 保存的值；`None` 表示删掉。
     after: Option<String>,
-}
-
-/// settings.json 里一处的改动（值已去掉关键字段）。
-#[derive(Debug, Clone, PartialEq)]
-struct JsonChange {
-    path: KeyPath,
-    before: Option<Value>,
-    after: Option<Value>,
 }
 
 /// 一次编辑器保存要写进 live 的全局改动。
@@ -276,13 +262,6 @@ fn diff_objects(
     }
 }
 
-fn conflict_error(path: &Path, keys: Vec<String>) -> LiveWriteError {
-    LiveWriteError::EditConflict {
-        path: path.to_path_buf(),
-        keys,
-    }
-}
-
 /// 写 `.env`：先按三方比较应用编辑器的改动，再换关键字段。
 pub(crate) struct EnvWrite<'a> {
     pub edits: Option<&'a GeminiEdits>,
@@ -304,23 +283,17 @@ impl LivePatch for EnvWrite<'_> {
                     .find(|(existing, _)| existing == key)
                     .map(|(_, value)| value.clone())
             };
-            let mut conflicts = Vec::new();
-            let mut patch = DotenvPatch::default();
-            for change in &edits.env {
+            let accepted = edits.on_conflict.resolve(path, &edits.env, |change| {
                 let now = current_of(&change.key);
-                if now != change.before && now != change.after {
-                    conflicts.push(format!(".env {}", change.key));
-                    if edits.on_conflict == ConflictPolicy::KeepTheirs {
-                        continue;
-                    }
-                }
+                (now != change.before && now != change.after)
+                    .then(|| format!(".env {}", change.key))
+            })?;
+            let mut patch = DotenvPatch::default();
+            for change in accepted {
                 match &change.after {
                     Some(value) => patch.set.push((change.key.clone(), value.clone())),
                     None => patch.remove.push(change.key.clone()),
                 }
-            }
-            if !conflicts.is_empty() && edits.on_conflict == ConflictPolicy::Refuse {
-                return Err(conflict_error(path, conflicts));
             }
             bytes = Some(patch.apply(path, bytes.as_deref())?);
         }
@@ -342,25 +315,12 @@ impl LivePatch for SettingsWrite<'_> {
     fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
         let (mut doc, style) = patch_json::parse(path, pre)?;
         if let Some(edits) = self.edits.filter(|edits| edits.touches_settings()) {
-            let mut conflicts = Vec::new();
-            let mut patch = JsonPatch::default();
-            for change in &edits.settings {
+            let accepted = edits.on_conflict.resolve(path, &edits.settings, |change| {
                 let now =
                     value_at(&doc, &change.path).and_then(|value| strip_floor(&change.path, value));
-                if now != change.before && now != change.after {
-                    conflicts.push(change.path.to_string());
-                    if edits.on_conflict == ConflictPolicy::KeepTheirs {
-                        continue;
-                    }
-                }
-                match &change.after {
-                    Some(value) => patch.set.push((change.path.clone(), value.clone())),
-                    None => patch.remove.push(change.path.clone()),
-                }
-            }
-            if !conflicts.is_empty() && edits.on_conflict == ConflictPolicy::Refuse {
-                return Err(conflict_error(path, conflicts));
-            }
+                change.conflicts_with(now.as_ref())
+            })?;
+            let patch = JsonChange::patch(&accepted);
             let kept: Vec<(KeyPath, Value)> = floor_paths()
                 .filter_map(|floor_path| {
                     let value = value_at(&doc, &floor_path)?.clone();
@@ -493,10 +453,7 @@ pub(crate) fn write_live(
             op::APPLY
         },
         projection.as_ref(),
-        PendingTarget {
-            pointer,
-            ..PendingTarget::default()
-        },
+        PendingTarget::pointer(pointer),
         Some(edits),
     )?;
     Ok(())

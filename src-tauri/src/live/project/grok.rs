@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, TableLike};
 
 use crate::error::AppError;
-use crate::live::patch::toml::parse;
-use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
+use crate::live::patch::toml::TomlDocPatch;
+use crate::live::patch::{KeyPath, LiveWriteError};
 
 /// 代理契约写进模型表的接口类型（本地代理只提供 Responses）。
 pub const PROXY_API_BACKEND: &str = "responses";
@@ -305,11 +305,9 @@ impl GrokConfigPatch {
     }
 }
 
-impl LivePatch for GrokConfigPatch {
-    fn apply(&self, path: &Path, pre: Option<&[u8]>) -> Result<Vec<u8>, LiveWriteError> {
-        let mut doc = parse(path, pre)?;
-        self.apply_to(path, &mut doc)?;
-        Ok(doc.to_string().into_bytes())
+impl TomlDocPatch for GrokConfigPatch {
+    fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        Self::apply_to(self, path, doc)
     }
 }
 
@@ -341,6 +339,7 @@ fn table_mut<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::live::patch::LivePatch;
 
     const PLACEHOLDER: &str = "PROXY_MANAGED";
 
