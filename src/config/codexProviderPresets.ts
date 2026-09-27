@@ -3496,6 +3496,16 @@ requires_openai_auth = true
         defaultReasoningLevel: "high",
       },
       {
+        // 2026-09-28 补登：网关 /v1/models 实测有 grok-4.6（id='grok-4.6'），
+        // context_window=262144、modality='vision'。档位沿用 grok-4.7 同款。
+        model: "grok-4.6",
+        displayName: "Grok 4.6",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high"],
+        defaultReasoningLevel: "high",
+      },
+      {
         model: "gemini-3.1-pro-preview",
         displayName: "Gemini 3.1 Pro Preview",
         contextWindow: 256000,
