@@ -640,6 +640,8 @@ pub struct UniversalProviderApps {
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default)]
+    pub hermes: bool,
 }
 
 /// Claude 模型配置
@@ -682,6 +684,13 @@ pub struct GeminiModelConfig {
     pub model: Option<String>,
 }
 
+/// Hermes 模型配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HermesModelConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
 /// 各应用的模型配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UniversalProviderModels {
@@ -691,6 +700,8 @@ pub struct UniversalProviderModels {
     pub codex: Option<CodexModelConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes: Option<HermesModelConfig>,
 }
 
 /// 统一供应商（跨应用共享配置）
@@ -914,6 +925,52 @@ requires_openai_auth = true"#
             in_failover_queue: false,
         })
     }
+
+    /// 生成 Hermes 供应商配置
+    pub fn to_hermes_provider(&self) -> Option<Provider> {
+        if !self.apps.hermes {
+            return None;
+        }
+
+        let id = format!("universal-hermes-{}", self.id);
+        let model = self
+            .models
+            .hermes
+            .as_ref()
+            .and_then(|models| models.model.clone())
+            .unwrap_or_else(|| "gpt-5.6-sol".to_string());
+        let base_url = self.base_url.trim_end_matches('/');
+        let base_url = base_url
+            .strip_suffix("/chat/completions")
+            .unwrap_or(base_url);
+        let settings_config = serde_json::json!({
+            "name": id,
+            "base_url": base_url,
+            "api_key": self.api_key,
+            "api_mode": "chat_completions",
+            // `model` mirrors the derived singular field that Hermes'
+            // `set_provider` writes to config.yaml. Keeping it in the DB copy
+            // too stops the UI (which reads providers from the DB) from showing
+            // a stale `model` after a universal-provider re-sync.
+            "model": model,
+            "models": [{ "id": model }],
+        });
+
+        Some(Provider {
+            id,
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
 }
 
 // ============================================================================
@@ -1016,10 +1073,11 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
-        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, HermesModelConfig,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
+        ProviderMeta, UniversalProvider,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::collections::HashMap;
 
     #[test]
@@ -1340,6 +1398,82 @@ mod tests {
         );
 
         assert!(universal.to_codex_provider().is_none());
+    }
+
+    #[test]
+    fn universal_codebuddy_provider_preserves_chat_routing_metadata() {
+        let mut universal = UniversalProvider::new(
+            "codebuddy".to_string(),
+            "CodeBuddy".to_string(),
+            "codebuddy".to_string(),
+            "https://copilot.tencent.com/v2/chat/completions".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+        universal.apps.codex = true;
+        universal.apps.hermes = true;
+        universal.models.hermes = Some(HermesModelConfig {
+            model: Some("deepseek-v4-flash".to_string()),
+        });
+        universal.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            is_full_url: Some(true),
+            ..ProviderMeta::default()
+        });
+
+        let claude = universal.to_claude_provider().expect("claude provider");
+        assert_eq!(
+            claude
+                .settings_config
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://copilot.tencent.com/v2/chat/completions")
+        );
+        assert_eq!(
+            claude.meta.and_then(|meta| meta.api_format),
+            Some("openai_chat".to_string())
+        );
+
+        let codex = universal.to_codex_provider().expect("codex provider");
+        let config = codex
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config toml");
+        assert!(config.contains("base_url = \"https://copilot.tencent.com/v2/chat/completions\""));
+        assert_eq!(
+            codex.meta.and_then(|meta| meta.api_format),
+            Some("openai_chat".to_string())
+        );
+
+        let hermes = universal.to_hermes_provider().expect("hermes provider");
+        assert_eq!(
+            hermes
+                .settings_config
+                .get("base_url")
+                .and_then(Value::as_str),
+            Some("https://copilot.tencent.com/v2")
+        );
+        assert_eq!(
+            hermes
+                .settings_config
+                .pointer("/models/0/id")
+                .and_then(Value::as_str),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            hermes
+                .settings_config
+                .get("api_mode")
+                .and_then(Value::as_str),
+            Some("chat_completions")
+        );
+        // The derived singular `model` field must mirror `models[0].id` so the
+        // DB copy (what the UI reads) stays in sync with config.yaml.
+        assert_eq!(
+            hermes.settings_config.get("model").and_then(Value::as_str),
+            Some("deepseek-v4-flash")
+        );
     }
 
     #[test]

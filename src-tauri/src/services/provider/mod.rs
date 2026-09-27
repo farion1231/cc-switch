@@ -119,8 +119,8 @@ mod tests {
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
     use crate::provider::{
-        AuthBinding, AuthBindingSource, ClaudeModelConfig, ProviderMeta, UniversalProvider,
-        UsageScript,
+        AuthBinding, AuthBindingSource, ClaudeModelConfig, HermesModelConfig, ProviderMeta,
+        UniversalProvider, UsageScript,
     };
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
@@ -4698,6 +4698,54 @@ wire_api = "responses"
             );
         });
     }
+
+    #[test]
+    #[serial]
+    fn sync_universal_to_apps_writes_and_removes_hermes_child() {
+        with_test_home(|state, _home| {
+            let mut universal = UniversalProvider::new(
+                "shared".to_string(),
+                "Shared Relay".to_string(),
+                "custom".to_string(),
+                "https://api.example.com/v1".to_string(),
+                "api-key".to_string(),
+            );
+            universal.apps.hermes = true;
+            universal.models.hermes = Some(HermesModelConfig {
+                model: Some("model-a".to_string()),
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+
+            ProviderService::sync_universal_to_apps(state, "shared").expect("sync Hermes child");
+            let child_id = "universal-hermes-shared";
+            assert!(state
+                .db
+                .get_provider_by_id(child_id, "hermes")
+                .expect("query Hermes child")
+                .is_some());
+            assert!(crate::hermes_config::get_providers()
+                .expect("read Hermes providers")
+                .contains_key(child_id));
+
+            universal.apps.hermes = false;
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("disable Hermes child");
+            ProviderService::sync_universal_to_apps(state, "shared").expect("remove Hermes child");
+            assert!(state
+                .db
+                .get_provider_by_id(child_id, "hermes")
+                .expect("query removed Hermes child")
+                .is_none());
+            assert!(!crate::hermes_config::get_providers()
+                .expect("read Hermes providers")
+                .contains_key(child_id));
+        });
+    }
 }
 
 impl ProviderService {
@@ -7473,6 +7521,11 @@ impl ProviderService {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }
+            if p.apps.hermes {
+                let hermes_id = format!("universal-hermes-{id}");
+                let _ = remove_hermes_provider_from_live(&hermes_id);
+                let _ = state.db.delete_provider("hermes", &hermes_id);
+            }
         }
 
         Ok(true)
@@ -7561,6 +7614,39 @@ impl ProviderService {
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        // Hermes is additive: keep the generated child in both DB and config.yaml.
+        if let Some(mut hermes_provider) = provider.to_hermes_provider() {
+            if let Some(existing) = state.db.get_provider_by_id(&hermes_provider.id, "hermes")? {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &hermes_provider.settings_config);
+                hermes_provider.settings_config = merged;
+            }
+            Self::set_provider_live_config_managed(&mut hermes_provider, false);
+            state.db.save_provider("hermes", &hermes_provider)?;
+            match write_live_with_common_config_for_state(state, &AppType::Hermes, &hermes_provider)
+            {
+                Ok(()) => {
+                    Self::set_provider_live_config_managed(&mut hermes_provider, true);
+                    state.db.save_provider("hermes", &hermes_provider)?;
+                }
+                Err(err) => {
+                    log::warn!("统一供应商同步后写入 Hermes live 配置失败: {err}");
+                    live_failures.push("hermes".to_string());
+                }
+            }
+        } else {
+            let hermes_id = format!("universal-hermes-{id}");
+            match remove_hermes_provider_from_live(&hermes_id) {
+                Ok(()) => {
+                    let _ = state.db.delete_provider("hermes", &hermes_id);
+                }
+                Err(err) => {
+                    log::warn!("禁用统一供应商的 Hermes 子项失败: {err}");
+                    live_failures.push("hermes".to_string());
+                }
+            }
         }
 
         if live_failures.is_empty() {

@@ -348,4 +348,19 @@ context_window = 500000
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
   });
+
+  it("Hermes 添加供应商时可以进入统一供应商页签", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="hermes"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("tab", { name: "provider.tabUniversal" }),
+    ).toBeInTheDocument();
+  });
 });

@@ -6,6 +6,7 @@
  */
 
 import type {
+  ProviderMeta,
   UniversalProvider,
   UniversalProviderApps,
   UniversalProviderModels,
@@ -24,6 +25,8 @@ export interface UniversalProviderPreset {
   defaultApps: UniversalProviderApps;
   /** 默认模型配置 */
   defaultModels: UniversalProviderModels;
+  /** 默认 API 地址 */
+  defaultBaseUrl?: string;
   /** 网站链接 */
   websiteUrl?: string;
   /** 图标名称 */
@@ -32,6 +35,8 @@ export interface UniversalProviderPreset {
   iconColor?: string;
   /** 描述 */
   description?: string;
+  /** 同步到各客户端 Provider 的元数据 */
+  meta?: ProviderMeta;
   /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
 }
@@ -53,6 +58,9 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   gemini: {
     model: "gemini-3.6-flash",
   },
+  hermes: {
+    model: "gpt-5.6-sol",
+  },
 };
 
 /**
@@ -60,12 +68,55 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
  */
 export const universalProviderPresets: UniversalProviderPreset[] = [
   {
+    name: "CodeBuddy",
+    providerType: "codebuddy",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: false,
+      hermes: true,
+    },
+    defaultModels: {
+      claude: {
+        model: "deepseek-v4-flash",
+        haikuModel: "deepseek-v4-flash",
+        sonnetModel: "deepseek-v4-flash",
+        opusModel: "deepseek-v4-flash",
+      },
+      codex: {
+        model: "deepseek-v4-flash",
+        reasoningEffort: "high",
+      },
+      hermes: {
+        model: "deepseek-v4-flash",
+      },
+    },
+    defaultBaseUrl: "https://copilot.tencent.com/v2/chat/completions",
+    websiteUrl: "https://www.codebuddy.cn",
+    icon: "codebuddy",
+    iconColor: "#7C3AED",
+    description:
+      "腾讯 CodeBuddy 中国版 API，通过 CC Switch 本地路由供 Claude Code 和 Codex 使用",
+    meta: {
+      apiFormat: "openai_chat",
+      isFullUrl: true,
+      promptCacheRouting: "disabled",
+      codexChatReasoning: {
+        supportsThinking: false,
+        supportsEffort: false,
+        thinkingParam: "none",
+        effortParam: "none",
+      },
+    },
+  },
+  {
     name: "NewAPI",
     providerType: "newapi",
     defaultApps: {
       claude: true,
       codex: true,
       gemini: true,
+      hermes: true,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     websiteUrl: "https://www.newapi.pro",
@@ -81,6 +132,7 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       claude: true,
       codex: true,
       gemini: true,
+      hermes: true,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     icon: "openai",
@@ -89,6 +141,21 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
     isCustomTemplate: true,
   },
 ];
+
+export function normalizeUniversalCodexBaseUrl(baseUrl: string): string {
+  const baseTrimmed = baseUrl.replace(/\/+$/, "");
+  const authority = baseTrimmed.split("://", 2)[1] ?? baseTrimmed;
+  return baseTrimmed.endsWith("/v1") || authority.includes("/")
+    ? baseTrimmed
+    : `${baseTrimmed}/v1`;
+}
+
+export function normalizeUniversalHermesBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  return trimmed.endsWith("/chat/completions")
+    ? trimmed.slice(0, -"/chat/completions".length)
+    : trimmed;
+}
 
 /**
  * 根据预设创建统一供应商
@@ -111,6 +178,7 @@ export function createUniversalProviderFromPreset(
     websiteUrl: preset.websiteUrl,
     icon: preset.icon,
     iconColor: preset.iconColor,
+    meta: preset.meta ? deepClone(preset.meta) : undefined,
     createdAt: Date.now(),
   };
 }

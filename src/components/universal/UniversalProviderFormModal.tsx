@@ -14,6 +14,8 @@ import type { UniversalProvider, UniversalProviderModels } from "@/types";
 import {
   universalProviderPresets,
   createUniversalProviderFromPreset,
+  normalizeUniversalCodexBaseUrl,
+  normalizeUniversalHermesBaseUrl,
   type UniversalProviderPreset,
 } from "@/config/universalProviderPresets";
 import { deepClone } from "@/utils/deepClone";
@@ -53,6 +55,7 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [hermesEnabled, setHermesEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -74,6 +77,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setHermesEnabled(editingProvider.apps.hermes ?? false);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -86,13 +90,14 @@ export function UniversalProviderFormModal({
       const defaultPreset = initialPreset || universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
       setName(defaultPreset.name);
-      setBaseUrl("");
+      setBaseUrl(defaultPreset.defaultBaseUrl || "");
       setApiKey("");
       setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setHermesEnabled(defaultPreset.defaultApps.hermes ?? false);
       setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -103,9 +108,11 @@ export function UniversalProviderFormModal({
       setSelectedPreset(preset);
       if (!isEditMode) {
         setName(preset.name);
+        setBaseUrl(preset.defaultBaseUrl || "");
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setHermesEnabled(preset.defaultApps.hermes ?? false);
         setModels(deepClone(preset.defaultModels));
       }
     },
@@ -114,7 +121,11 @@ export function UniversalProviderFormModal({
 
   // 更新模型配置
   const updateModel = useCallback(
-    (app: "claude" | "codex" | "gemini", field: string, value: string) => {
+    (
+      app: "claude" | "codex" | "gemini" | "hermes",
+      field: string,
+      value: string,
+    ) => {
       setModels((prev) => ({
         ...prev,
         [app]: {
@@ -150,10 +161,7 @@ export function UniversalProviderFormModal({
     if (!codexEnabled) return null;
     const model = models.codex?.model || "gpt-5.6-sol";
     const reasoningEffort = models.codex?.reasoningEffort || "high";
-    // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
-    const codexBaseUrl = baseUrl.endsWith("/v1")
-      ? baseUrl
-      : `${baseUrl.replace(/\/+$/, "")}/v1`;
+    const codexBaseUrl = normalizeUniversalCodexBaseUrl(baseUrl);
     const configToml = `model_provider = "custom"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
@@ -185,6 +193,19 @@ requires_openai_auth = true`;
     };
   }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
 
+  const hermesConfigJson = useMemo(() => {
+    if (!hermesEnabled) return null;
+    const model = models.hermes?.model || "gpt-5.6-sol";
+    return {
+      base_url: normalizeUniversalHermesBaseUrl(baseUrl),
+      api_key: apiKey,
+      api_mode: "chat_completions",
+      models: [{ id: model }],
+    };
+  }, [hermesEnabled, baseUrl, apiKey, models.hermes]);
+  const showConfigPreview =
+    claudeEnabled || codexEnabled || geminiEnabled || hermesEnabled;
+
   // 提交表单
   const handleSubmit = useCallback(() => {
     if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
@@ -203,6 +224,7 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -220,6 +242,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        hermes: hermesEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -238,6 +261,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    hermesEnabled,
     models,
     selectedPreset,
     onSave,
@@ -262,6 +286,7 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -279,6 +304,7 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        hermes: hermesEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -296,6 +322,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    hermesEnabled,
     models,
     selectedPreset,
   ]);
@@ -514,6 +541,16 @@ requires_openai_auth = true`;
                 onCheckedChange={setGeminiEnabled}
               />
             </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="hermes" name="Hermes" size={20} />
+                <span className="font-medium">Hermes</span>
+              </div>
+              <Switch
+                checked={hermesEnabled}
+                onCheckedChange={setHermesEnabled}
+              />
+            </div>
           </div>
         </div>
 
@@ -632,10 +669,32 @@ requires_openai_auth = true`;
               </div>
             </div>
           )}
+
+          {/* Hermes 模型 */}
+          {hermesEnabled && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2 font-medium">
+                <ProviderIcon icon="hermes" name="Hermes" size={16} />
+                Hermes
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  {t("universalProvider.model", { defaultValue: "模型" })}
+                </Label>
+                <Input
+                  value={models.hermes?.model || ""}
+                  onChange={(e) =>
+                    updateModel("hermes", "model", e.target.value)
+                  }
+                  placeholder="gpt-5.6-sol"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
+        {isEditMode && showConfigPreview && (
           <div className="space-y-4">
             <Label>
               {t("universalProvider.configJsonPreview", {
@@ -696,6 +755,22 @@ requires_openai_auth = true`;
                 />
               </div>
             )}
+
+            {/* Hermes JSON */}
+            {hermesConfigJson && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ProviderIcon icon="hermes" name="Hermes" size={16} />
+                  Hermes
+                </div>
+                <JsonEditor
+                  value={JSON.stringify(hermesConfigJson, null, 2)}
+                  onChange={() => {}}
+                  height={180}
+                  darkMode={isDarkMode}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -707,7 +782,7 @@ requires_openai_auth = true`;
           defaultValue: "同步统一供应商",
         })}
         message={t("universalProvider.syncConfirmDescription", {
-          defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
+          defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex、Gemini 和 Hermes 中关联的供应商配置。确定要继续吗？`,
           name: name,
         })}
         confirmText={t("universalProvider.saveAndSync", {
