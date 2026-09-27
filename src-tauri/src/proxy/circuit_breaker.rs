@@ -46,6 +46,12 @@ pub struct CircuitBreakerConfig {
     pub error_rate_threshold: f64,
     /// 最小请求数 - 计算错误率前的最小请求数
     pub min_requests: u32,
+    /// HalfOpen permit 最大占用时长（秒）。
+    ///
+    /// 探测请求发出后若超过该时长仍未通过 `record_success` / `record_failure`
+    /// 显式释放，则会在下一次 `allow_request` 被强制回收，防止上游挂起导致
+    /// HalfOpen 状态卡死、新探测全部被拒。
+    pub half_open_permit_max_age_seconds: u64,
 }
 
 impl From<&AppProxyConfig> for CircuitBreakerConfig {
@@ -56,6 +62,7 @@ impl From<&AppProxyConfig> for CircuitBreakerConfig {
             timeout_seconds: config.circuit_timeout_seconds as u64,
             error_rate_threshold: config.circuit_error_rate_threshold,
             min_requests: config.circuit_min_requests,
+            half_open_permit_max_age_seconds: config.circuit_half_open_permit_max_age_seconds as u64,
         }
     }
 }
@@ -68,6 +75,7 @@ impl Default for CircuitBreakerConfig {
             timeout_seconds: 60,
             error_rate_threshold: 0.6,
             min_requests: 10,
+            half_open_permit_max_age_seconds: 30,
         }
     }
 }
@@ -90,6 +98,12 @@ pub struct CircuitBreaker {
     config: Arc<RwLock<CircuitBreakerConfig>>,
     /// 半开状态已放行的请求数（用于限流）
     half_open_requests: Arc<AtomicU32>,
+    /// 当前 HalfOpen permit 的获取时间（用于超时自释放）。
+    ///
+    /// 与 `half_open_requests` 计数器配合：探测请求超过
+    /// `config.half_open_permit_max_age_seconds` 未显式释放时，
+    /// 下一次 `allow_request` 会强制回收该名额，避免上游挂起导致卡死。
+    half_open_permit_acquired_at: Arc<std::sync::Mutex<Option<Instant>>>,
 }
 
 /// 熔断器放行结果
@@ -114,6 +128,7 @@ impl CircuitBreaker {
             last_opened_at: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
             half_open_requests: Arc::new(AtomicU32::new(0)),
+            half_open_permit_acquired_at: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -181,7 +196,10 @@ impl CircuitBreaker {
                                 allowed: true,
                                 used_half_open_permit: false,
                             },
-                            CircuitState::HalfOpen => self.allow_half_open_probe(),
+                            CircuitState::HalfOpen => {
+                                self.maybe_release_stale_half_open_permit().await;
+                                self.allow_half_open_probe()
+                            }
                             CircuitState::Open => AllowResult {
                                 allowed: false,
                                 used_half_open_permit: false,
@@ -195,7 +213,11 @@ impl CircuitBreaker {
                     used_half_open_permit: false,
                 }
             }
-            CircuitState::HalfOpen => self.allow_half_open_probe(),
+            CircuitState::HalfOpen => {
+                // HalfOpen：先清理过期的探测名额，防止上游挂起导致状态卡死
+                self.maybe_release_stale_half_open_permit().await;
+                self.allow_half_open_probe()
+            }
         }
     }
 
@@ -318,6 +340,10 @@ impl CircuitBreaker {
         let current = self.half_open_requests.fetch_add(1, Ordering::SeqCst);
 
         if current < max_half_open_requests {
+            // 记录 permit 获取时间，供 maybe_release_stale_half_open_permit 超时回收
+            if let Ok(mut guard) = self.half_open_permit_acquired_at.lock() {
+                *guard = Some(Instant::now());
+            }
             AllowResult {
                 allowed: true,
                 used_half_open_permit: true,
@@ -340,6 +366,12 @@ impl CircuitBreaker {
         let mut current = self.half_open_requests.load(Ordering::SeqCst);
         loop {
             if current == 0 {
+                // 计数器已为 0：保持时间戳与计数器一致（防御性清理）
+                if let Ok(mut guard) = self.half_open_permit_acquired_at.lock() {
+                    if guard.is_some() {
+                        *guard = None;
+                    }
+                }
                 return;
             }
 
@@ -349,9 +381,83 @@ impl CircuitBreaker {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return,
+                Ok(_) => {
+                    // 真正释放了名额：清理时间戳
+                    if let Ok(mut guard) = self.half_open_permit_acquired_at.lock() {
+                        *guard = None;
+                    }
+                    return;
+                }
                 Err(actual) => current = actual,
             }
+        }
+    }
+
+    /// 若 HalfOpen permit 占用时长超过 `config.half_open_permit_max_age_seconds`，
+    /// 强制回收该名额（清理时间戳并 CAS 递减计数器）。
+    ///
+    /// 这是 P0.2 的核心：探测请求若因上游挂起迟迟未触发 `record_success` /
+    /// `record_failure`，permit 会一直占用、新探测全部被拒；自释放机制让
+    /// 下一次 `allow_request` 能重新尝试探测，而不是等到外部 timeout 才回收。
+    ///
+    /// 调用方在 `allow_request` 进入 HalfOpen 分支前调用本方法。
+    async fn maybe_release_stale_half_open_permit(&self) {
+        let max_age = {
+            let cfg = self.config.read().await;
+            std::time::Duration::from_secs(cfg.half_open_permit_max_age_seconds)
+        };
+
+        // 第一阶段：在锁内读取时间戳，若未占用或未超时则直接返回
+        let stale_age = {
+            let mut guard = match self.half_open_permit_acquired_at.lock() {
+                Ok(g) => g,
+                Err(_) => return, // poisoned mutex, 保守不清理
+            };
+            match *guard {
+                Some(t) if t.elapsed() > max_age => {
+                    let age = t.elapsed();
+                    *guard = None;
+                    Some(age)
+                }
+                _ => None,
+            }
+        };
+
+        let Some(age) = stale_age else {
+            return;
+        };
+
+        // 第二阶段：CAS 递减计数器，避免与正常 release 路径双重递减
+        let mut current = self.half_open_requests.load(Ordering::SeqCst);
+        let decremented = loop {
+            if current == 0 {
+                break false;
+            }
+            match self.half_open_requests.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break true,
+                Err(actual) => current = actual,
+            }
+        };
+
+        if decremented {
+            log::warn!(
+                "[{}] HalfOpen permit 超时未释放 (age={:?} > max={:?})，强制回收",
+                log_cb::HALF_OPEN_PERMIT_STALE,
+                age,
+                max_age,
+            );
+        } else {
+            // 计数器已经为 0（被 record_success/failure 清掉了），但时间戳没及时清，
+            // 此时仅日志告知，不重复递减
+            log::debug!(
+                "[{}] HalfOpen permit 超时但计数器已为 0（已通过 record_* 路径释放），仅清理时间戳",
+                log_cb::HALF_OPEN_PERMIT_STALE,
+            );
         }
     }
 
@@ -372,8 +478,11 @@ impl CircuitBreaker {
 
         *state = CircuitState::HalfOpen;
         self.consecutive_successes.store(0, Ordering::SeqCst);
-        // 重置半开状态的请求限流计数
+        // 重置半开状态的请求限流计数与 permit 时间戳
         self.half_open_requests.store(0, Ordering::SeqCst);
+        if let Ok(mut guard) = self.half_open_permit_acquired_at.lock() {
+            *guard = None;
+        }
     }
 
     /// 转换到关闭状态
@@ -491,5 +600,161 @@ mod tests {
         breaker.reset().await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
         assert!(breaker.allow_request().await.allowed);
+    }
+
+    /// P0.2 核心场景：HalfOpen permit 占用超过 max_age 后被强制回收，
+    /// 下一次 allow_request 能再次拿到 permit（不被旧 permit 卡死）。
+    #[tokio::test]
+    async fn test_stale_half_open_permit_is_force_released() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            half_open_permit_max_age_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        // 进入 Open，再让 allow_request 触发 Open → HalfOpen 并占用 permit
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.allowed);
+        assert!(first.used_half_open_permit);
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+
+        // 模拟探测挂起：稍等让 elapsed > max_age(=0)
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // 关键断言：第二次 allow_request 应被允许（旧 permit 超时自释放）
+        // 这里模拟的是"探测挂起很久后新的探测请求"
+        let second = breaker.allow_request().await;
+        assert!(
+            second.allowed,
+            "stale HalfOpen permit must be force-released so new probe can proceed"
+        );
+        assert!(second.used_half_open_permit);
+    }
+
+    /// 反向场景：permit 尚未超时，不应被强制回收。
+    #[tokio::test]
+    async fn test_fresh_half_open_permit_is_not_released() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            half_open_permit_max_age_seconds: 300, // 5 分钟，足够长
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.allowed);
+        assert!(first.used_half_open_permit);
+
+        // permit 远未超时，第二次必须被拒
+        let second = breaker.allow_request().await;
+        assert!(!second.allowed);
+        assert!(!second.used_half_open_permit);
+    }
+
+    /// record_success 必须清理 permit 时间戳，避免后续 allow_request 误判为 stale。
+    #[tokio::test]
+    async fn test_record_success_clears_half_open_permit_timestamp() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            success_threshold: 1,
+            failure_threshold: 1,
+            half_open_permit_max_age_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        // 进入 HalfOpen 并占用 permit
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.used_half_open_permit);
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+
+        // 探测成功：应触发 HalfOpen → Closed；同时 time_stamp 已被清掉
+        breaker.record_success(true).await;
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
+
+        // 重新打开 + 切换到 HalfOpen：此时 half_open_permit_acquired_at 应为 None
+        breaker.record_failure(false).await;
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+
+        // 再走一次 HalfOpen 探测：必须能正常拿到 permit（时间戳干净）
+        let second = breaker.allow_request().await;
+        assert!(second.allowed);
+        assert!(second.used_half_open_permit);
+    }
+
+    /// release_half_open_permit 与 maybe_release_stale_half_open_permit 同时调用时，
+    /// 计数器不能被双重递减（防计数变负）。
+    #[tokio::test]
+    async fn test_stale_release_and_explicit_release_do_not_double_decrement() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            failure_threshold: 1,
+            half_open_permit_max_age_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        // 占用 permit
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.used_half_open_permit);
+
+        // 等 permit 超时
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // 先走 record_success 路径显式释放（counter: 1→0, ts: Some→None）
+        breaker.record_success(true).await;
+
+        // 再调用一次自释放检查：time_stamp 已为 None，应当 no-op 不再递减
+        breaker.maybe_release_stale_half_open_permit().await;
+
+        // 走一次完整 Closed → Open → HalfOpen 链路，验证计数没被错误减成负数
+        breaker.reset().await;
+        breaker.record_failure(false).await;
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+
+        let probe = breaker.allow_request().await;
+        assert!(probe.allowed, "permit counter must not be left negative");
+        assert!(probe.used_half_open_permit);
+    }
+
+    /// transition_to_half_open 必须清理 permit 时间戳，
+    /// 否则同一熔断器在 Open → HalfOpen → Closed → Open → HalfOpen 后第二次切换会
+    /// 带着上一次的 permit 时间戳，触发误判 stale。
+    #[tokio::test]
+    async fn test_transition_to_half_open_clears_permit_timestamp() {
+        let config = CircuitBreakerConfig {
+            timeout_seconds: 0,
+            failure_threshold: 1,
+            half_open_permit_max_age_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        // 第一次 Open → HalfOpen + permit
+        breaker.transition_to_open().await;
+        let first = breaker.allow_request().await;
+        assert!(first.used_half_open_permit);
+
+        // 等 permit 超时
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // 不走 record_success；直接 reset → Closed，模拟 Open→Closed
+        breaker.reset().await;
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
+
+        // 再次 Open → HalfOpen：旧时间戳应已被 transition_to_half_open 清掉，
+        // 否则 maybe_release_stale_half_open_permit 会基于"陈旧时间戳"误判 stale
+        breaker.record_failure(false).await;
+        let second = breaker.allow_request().await;
+        assert!(
+            second.allowed,
+            "transition_to_half_open must reset permit timestamp so stale-check starts fresh"
+        );
+        assert!(second.used_half_open_permit);
     }
 }

@@ -224,7 +224,8 @@ impl Database {
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests,
+                        circuit_half_open_permit_max_age_seconds
                  FROM proxy_config WHERE app_type = ?1",
                 [app_type],
                 |row| {
@@ -241,6 +242,7 @@ impl Database {
                         circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                        circuit_half_open_permit_max_age_seconds: row.get::<_, i32>(12)? as u32,
                     })
                 },
             )
@@ -265,6 +267,7 @@ impl Database {
                     circuit_timeout_seconds: 60,
                     circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
+                    circuit_half_open_permit_max_age_seconds: 30,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -291,6 +294,7 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
+                circuit_half_open_permit_max_age_seconds = ?13,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
@@ -306,6 +310,7 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                config.circuit_half_open_permit_max_age_seconds as i32,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -714,7 +719,8 @@ impl Database {
             let conn = lock_conn!(self.conn);
             conn.query_row(
                 "SELECT circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests,
+                        circuit_half_open_permit_max_age_seconds
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -724,6 +730,7 @@ impl Database {
                         timeout_seconds: row.get::<_, i64>(2)? as u64,
                         error_rate_threshold: row.get(3)?,
                         min_requests: row.get::<_, i32>(4)? as u32,
+                        half_open_permit_max_age_seconds: row.get::<_, i32>(5)? as u64,
                     })
                 },
             )
@@ -759,6 +766,7 @@ impl Database {
                 circuit_timeout_seconds = ?3,
                 circuit_error_rate_threshold = ?4,
                 circuit_min_requests = ?5,
+                circuit_half_open_permit_max_age_seconds = ?6,
                 updated_at = datetime('now')",
             rusqlite::params![
                 config.failure_threshold as i32,
@@ -766,6 +774,7 @@ impl Database {
                 config.timeout_seconds as i64,
                 config.error_rate_threshold,
                 config.min_requests as i32,
+                config.half_open_permit_max_age_seconds as i32,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

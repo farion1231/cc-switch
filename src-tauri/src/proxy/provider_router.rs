@@ -280,6 +280,8 @@ impl ProviderRouter {
                 timeout_seconds: app_config.circuit_timeout_seconds as u64,
                 error_rate_threshold: app_config.circuit_error_rate_threshold,
                 min_requests: app_config.circuit_min_requests,
+                half_open_permit_max_age_seconds: app_config
+                    .circuit_half_open_permit_max_age_seconds as u64,
             },
             Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
         };

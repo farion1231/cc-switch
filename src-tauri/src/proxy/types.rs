@@ -184,6 +184,10 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+    /// HalfOpen permit 最大占用时长（秒）。
+    /// 探测请求超过该时长未通过 record_success/record_failure 释放，
+    /// 会在下一次 allow_request 时被强制回收，防止上游挂起导致 HalfOpen 卡死。
+    pub circuit_half_open_permit_max_age_seconds: u32,
 }
 
 /// 整流器配置

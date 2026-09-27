@@ -135,6 +135,7 @@ impl Database {
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
             circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            circuit_half_open_permit_max_age_seconds INTEGER NOT NULL DEFAULT 30,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -402,6 +403,12 @@ impl Database {
         );
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN non_streaming_timeout INTEGER NOT NULL DEFAULT 600",
+            [],
+        );
+
+        // 兼容旧库：HalfOpen permit 最大占用时长（秒），默认 30
+        let _ = conn.execute(
+            "ALTER TABLE proxy_config ADD COLUMN circuit_half_open_permit_max_age_seconds INTEGER NOT NULL DEFAULT 30",
             [],
         );
 
