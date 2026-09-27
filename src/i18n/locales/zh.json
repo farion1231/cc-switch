@@ -890,19 +890,15 @@
       "testSuccess": "连接成功！延迟 {{latency}}ms",
       "testFailed": "连接失败：{{error}}",
       "pricingDefaultsTitle": "计费默认配置",
-      "pricingDefaultsDescription": "设置各应用的默认倍率与计费模式来源。",
+      "pricingDefaultsDescription": "设置各应用按请求模型还是返回模型匹配定价，仅对经本地路由的请求生效。",
       "pricingAppLabel": "应用",
-      "defaultCostMultiplierLabel": "默认倍率",
-      "defaultCostMultiplierHint": "用于成本计算的倍率，支持小数。",
       "pricingModelSourceLabel": "计费模式",
       "pricingModelSourceRequest": "请求模型",
       "pricingModelSourceResponse": "返回模型",
       "pricingSave": "保存计费配置",
       "pricingSaved": "计费配置已保存",
       "pricingSaveFailed": "保存计费配置失败：{{error}}",
-      "pricingLoadFailed": "加载计费配置失败：{{error}}",
-      "defaultCostMultiplierRequired": "默认倍率不能为空",
-      "defaultCostMultiplierInvalid": "默认倍率格式不正确"
+      "pricingLoadFailed": "加载计费配置失败：{{error}}"
     },
     "saveFailedGeneric": "保存失败，请重试"
   },
@@ -1502,19 +1498,6 @@
     "noResult": "未返回结果",
     "testFailed": "测速失败: {{error}}",
     "empty": "暂无端点"
-  },
-  "providerAdvanced": {
-    "pricingConfig": "计费配置",
-    "useCustomPricing": "使用单独配置",
-    "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
-    "costMultiplier": "成本倍率",
-    "costMultiplierPlaceholder": "留空使用全局默认（1）",
-    "costMultiplierHint": "实际成本 = 基础成本 × 倍率，支持小数如 1.5",
-    "pricingModelSourceLabel": "计费模式",
-    "pricingModelSourceInherit": "继承全局默认",
-    "pricingModelSourceRequest": "请求模型",
-    "pricingModelSourceResponse": "返回模型",
-    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

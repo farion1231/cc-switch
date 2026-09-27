@@ -1,5 +1,4 @@
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
-import type { PricingModelSourceOption } from "../ProviderAdvancedConfig";
 
 // ── Default configs ──────────────────────────────────────────────────
 
@@ -158,8 +157,3 @@ export function toOpencodeExtraOptions(
 }
 
 export { buildOmoProfilePreview } from "@/types/omo";
-
-export const normalizePricingSource = (
-  value?: string,
-): PricingModelSourceOption =>
-  value === "request" || value === "response" ? value : "inherit";

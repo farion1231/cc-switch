@@ -14,7 +14,6 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
-use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
@@ -1740,35 +1739,6 @@ GEMINI_TIMEOUT_MS=30000
             Some("true")
         );
         assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
-    }
-
-    #[test]
-    fn validate_provider_settings_rejects_negative_cost_multiplier() {
-        let mut provider = Provider::with_id(
-            "claude".into(),
-            "Claude".into(),
-            json!({
-                "env": {
-                    "ANTHROPIC_AUTH_TOKEN": "token",
-                    "ANTHROPIC_BASE_URL": "https://claude.example"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            cost_multiplier: Some("-1".to_string()),
-            ..ProviderMeta::default()
-        });
-
-        let err = ProviderService::validate_provider_settings(&AppType::Claude, &provider)
-            .expect_err("negative multiplier should be rejected");
-        assert!(matches!(
-            err,
-            AppError::Localized {
-                key: "error.invalidMultiplier",
-                ..
-            }
-        ));
     }
 
     #[test]
@@ -7348,12 +7318,6 @@ impl ProviderService {
 
         // Validate and clean UsageScript configuration (common for all app types)
         if let Some(meta) = &provider.meta {
-            if let Some(multiplier) = meta.cost_multiplier.as_deref() {
-                validate_cost_multiplier(multiplier)?;
-            }
-            if let Some(source) = meta.pricing_model_source.as_deref() {
-                validate_pricing_source(source)?;
-            }
             if let Some(usage_script) = &meta.usage_script {
                 validate_usage_script(usage_script)?;
             }

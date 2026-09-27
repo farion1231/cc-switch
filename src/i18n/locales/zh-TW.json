@@ -891,19 +891,15 @@
       "testSuccess": "連線成功！延遲 {{latency}}ms",
       "testFailed": "連線失敗：{{error}}",
       "pricingDefaultsTitle": "計費預設設定",
-      "pricingDefaultsDescription": "設定各應用程式的預設倍率與計費模式來源。",
+      "pricingDefaultsDescription": "設定各應用程式依請求模型還是回傳模型比對定價，僅對經本機路由的請求生效。",
       "pricingAppLabel": "應用程式",
-      "defaultCostMultiplierLabel": "預設倍率",
-      "defaultCostMultiplierHint": "用於成本計算的倍率，支援小數。",
       "pricingModelSourceLabel": "計費模式",
       "pricingModelSourceRequest": "請求模型",
       "pricingModelSourceResponse": "回傳模型",
       "pricingSave": "儲存計費設定",
       "pricingSaved": "計費設定已儲存",
       "pricingSaveFailed": "儲存計費設定失敗：{{error}}",
-      "pricingLoadFailed": "載入計費設定失敗：{{error}}",
-      "defaultCostMultiplierRequired": "預設倍率不能為空",
-      "defaultCostMultiplierInvalid": "預設倍率格式不正確"
+      "pricingLoadFailed": "載入計費設定失敗：{{error}}"
     },
     "saveFailedGeneric": "儲存失敗，請重試"
   },
@@ -1503,19 +1499,6 @@
     "noResult": "未回傳結果",
     "testFailed": "測速失敗：{{error}}",
     "empty": "暫無端點"
-  },
-  "providerAdvanced": {
-    "pricingConfig": "計費設定",
-    "useCustomPricing": "使用獨立設定",
-    "pricingConfigDesc": "為此供應商設定獨立的計費參數，不啟用時使用全域預設設定。",
-    "costMultiplier": "成本倍率",
-    "costMultiplierPlaceholder": "留空使用全域預設（1）",
-    "costMultiplierHint": "實際成本 = 基礎成本 × 倍率，支援小數如 1.5",
-    "pricingModelSourceLabel": "計費模式",
-    "pricingModelSourceInherit": "繼承全域預設",
-    "pricingModelSourceRequest": "請求模型",
-    "pricingModelSourceResponse": "回傳模型",
-    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
