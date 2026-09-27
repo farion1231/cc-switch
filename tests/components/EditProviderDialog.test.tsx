@@ -196,6 +196,7 @@ describe("EditProviderDialog", () => {
       "codex",
       provider.settingsConfig,
       "aggregator",
+      provider.id,
     );
     expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
 
@@ -255,6 +256,7 @@ describe("EditProviderDialog", () => {
         appId,
         provider.settingsConfig,
         "custom",
+        provider.id,
       );
       expect(apiMocks.getCurrent).not.toHaveBeenCalled();
       expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
@@ -340,6 +342,7 @@ describe("EditProviderDialog", () => {
       "codex",
       provider.settingsConfig,
       "custom",
+      provider.id,
     );
   });
 

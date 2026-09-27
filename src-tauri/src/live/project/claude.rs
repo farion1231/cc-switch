@@ -128,7 +128,13 @@ pub fn project_onto(
 
 /// 把关键字段和独有字段存回供应商行：行里这两类键换成 `projection` 的，其余内容原样
 /// 保留（降级后旧版会整份使用这些行）。
+///
+/// 存量 Bedrock API Key 行（顶层 `apiKey`，`env` 里没有 `AWS_BEARER_TOKEN_BEDROCK`）的 Key
+/// 仍存回顶层：投影把它挪进了 `env`，编辑器显示的也是 `env` 里的，但旧版的代理只从顶层
+/// 读，存进 `env` 的话降级后代理模式就找不到 Key。
 pub fn store_into_row(row: &Value, projection: &ClaudeProjection) -> Value {
+    let legacy = legacy_bedrock_shape(row, projection);
+    let projection = legacy.as_ref().unwrap_or(projection);
     let mut row = if row.is_object() {
         row.clone()
     } else {
@@ -166,6 +172,27 @@ pub fn store_into_row(row: &Value, projection: &ClaudeProjection) -> Value {
             .expect("env is an object now");
     }
     row
+}
+
+/// 行是存量 Bedrock API Key 的写法、存回的内容还是 Bedrock 带 Key 时，把 Key 放回顶层
+/// `apiKey`（投影的反向转换）。
+fn legacy_bedrock_shape(row: &Value, projection: &ClaudeProjection) -> Option<ClaudeProjection> {
+    let legacy_row = row.get("apiKey").is_some()
+        && row
+            .get("env")
+            .and_then(|env| env.get(BEDROCK_BEARER_ENV))
+            .is_none();
+    let bedrock = projection
+        .env
+        .get("CLAUDE_CODE_USE_BEDROCK")
+        .is_some_and(is_truthy);
+    if !legacy_row || !bedrock || projection.top.contains_key("apiKey") {
+        return None;
+    }
+    let mut projection = projection.clone();
+    let key = projection.env.shift_remove(BEDROCK_BEARER_ENV)?;
+    projection.top.insert("apiKey".to_string(), key);
+    Some(projection)
 }
 
 /// 代理模式下写进客户端的凭据占位符。旧版只认这个字面值来识别接管态，不能改。
@@ -553,6 +580,44 @@ mod tests {
         assert_eq!(
             store_into_row(&json!({ "env": "oops" }), &edited)["env"],
             json!({ "ANTHROPIC_BASE_URL": "https://new.example", "ENABLE_TOOL_SEARCH": "true" })
+        );
+    }
+
+    #[test]
+    fn a_legacy_bedrock_row_keeps_its_key_at_the_top_level() {
+        let row = json!({
+            "apiKey": "old-key",
+            "env": { "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-east-1" }
+        });
+        let projected = ClaudeProjection::of(&row);
+        assert_eq!(projected.env[BEDROCK_BEARER_ENV], "old-key");
+        assert_eq!(store_into_row(&row, &projected), row, "round trip");
+
+        // 编辑器里改了 Key：新值还存回顶层。
+        let mut edited = projected.clone();
+        edited
+            .env
+            .insert(BEDROCK_BEARER_ENV.to_string(), json!("new-key"));
+        let stored = store_into_row(&row, &edited);
+        assert_eq!(stored["apiKey"], "new-key");
+        assert!(stored["env"].get(BEDROCK_BEARER_ENV).is_none());
+
+        // 删了 Key、不再用 Bedrock、或者行本来就是 env 写法：按投影存。
+        let mut removed = projected.clone();
+        removed.env.shift_remove(BEDROCK_BEARER_ENV);
+        assert!(store_into_row(&row, &removed).get("apiKey").is_none());
+        let mut not_bedrock = projected.clone();
+        not_bedrock.env.shift_remove("CLAUDE_CODE_USE_BEDROCK");
+        let stored = store_into_row(&row, &not_bedrock);
+        assert!(stored.get("apiKey").is_none());
+        assert_eq!(stored["env"][BEDROCK_BEARER_ENV], "old-key");
+        let env_row = json!({ "env": {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            BEDROCK_BEARER_ENV: "env-key"
+        }});
+        assert_eq!(
+            store_into_row(&env_row, &ClaudeProjection::of(&env_row)),
+            env_row
         );
     }
 }

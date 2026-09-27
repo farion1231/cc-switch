@@ -64,7 +64,8 @@ describe("useDraftEditorProjection", () => {
 
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({ config: "B" });
-    expect(onBase).toHaveBeenLastCalledWith({ config: "B" });
+    // 底和投影成它的草稿一起交出去，保存时后端按草稿分开预设带的字段。
+    expect(onBase).toHaveBeenLastCalledWith({ config: "B" }, { config: "b" });
   });
 
   it("投影失败时提示并保持没有底", async () => {

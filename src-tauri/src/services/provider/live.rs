@@ -892,8 +892,9 @@ pub(crate) enum LiveSyncOutcome {
 ///   就不动）；其余供应商（包括直连指针那家）只在退出代理时写回，这里不碰 live。
 ///
 /// `prev` 是 live 现在对应的那一版供应商行（编辑前的行），Claude 按它删上一版带进来的
-/// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。调用方不能持有这个应用的
-/// 代理切换锁（代理模式下这里要拿它）。
+/// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。调用方持有这个应用的代理切换锁
+/// （`controller::lock_settled_blocking`），并且在拿锁之后才读谁是当前供应商：不拿锁的
+/// 话，读完模式到写完 live 之间进入代理，直连的关键字段会盖掉刚写的代理契约。
 pub(crate) fn sync_live_for_provider_respecting_mode(
     state: &AppState,
     app_type: &AppType,
@@ -903,8 +904,10 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
     let mode = crate::mode::current::mode_state(app_type);
     if mode.is_proxy() {
         if mode.proxy_route.as_deref() == Some(provider.id.as_str()) {
-            futures::executor::block_on(crate::mode::controller::resync_route(state, app_type))
-                .map_err(AppError::Message)?;
+            futures::executor::block_on(crate::mode::controller::resync_route_locked(
+                state, app_type,
+            ))
+            .map_err(AppError::Message)?;
         }
         return Ok(LiveSyncOutcome::ProxyMode);
     }
@@ -924,6 +927,7 @@ fn sync_current_provider_for_app_respecting_mode(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    let _switch_guard = crate::mode::controller::lock_settled_blocking(state, app_type)?;
     let current_id = match crate::mode::current::provider_for(
         &state.db,
         app_type,

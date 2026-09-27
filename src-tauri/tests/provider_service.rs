@@ -3430,6 +3430,93 @@ fn claude_editor_leaves_exclusive_fields_from_live_to_the_user() {
     );
 }
 
+/// 存量 Bedrock API Key 行在编辑器里保存后，Key 还在顶层 `apiKey`：旧版的代理只从那里
+/// 读，降级后照样能用。
+#[test]
+fn claude_editor_keeps_a_legacy_bedrock_key_where_older_versions_read_it() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let legacy = json!({
+        "apiKey": "bedrock-key",
+        "env": { "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-east-1" }
+    });
+    let state = seed_claude_switch_state(&[("bedrock", legacy.clone())], "bedrock", "{}");
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch");
+
+    let (row, base) = open_claude_editor(&state, "bedrock");
+    assert_eq!(
+        base["env"]["AWS_BEARER_TOKEN_BEDROCK"],
+        json!("bedrock-key")
+    );
+    save_claude_editor(&state, &row, &base, base.clone(), "refuse").expect("save as is");
+    assert_eq!(claude_row(&state, "bedrock"), legacy);
+
+    let (row, base) = open_claude_editor(&state, "bedrock");
+    let mut edited = base.clone();
+    edited["env"]["AWS_BEARER_TOKEN_BEDROCK"] = json!("rotated-key");
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("rotate the key");
+    let stored = claude_row(&state, "bedrock");
+    assert_eq!(stored["apiKey"], json!("rotated-key"), "{stored}");
+    assert!(stored["env"].get("AWS_BEARER_TOKEN_BEDROCK").is_none());
+    assert_eq!(
+        claude_live()["env"]["AWS_BEARER_TOKEN_BEDROCK"],
+        json!("rotated-key")
+    );
+}
+
+/// 旧版没有 `category` 的 Google 卡：编辑器按库里那一行认出官方卡，预览的登录方式和切换
+/// 写的相同；新增时没有行，只看草稿的 `category`。
+#[test]
+fn gemini_editor_recognizes_a_legacy_google_card_like_switching_does() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    let mut google = Provider::with_id(
+        "google".to_string(),
+        "Google".to_string(),
+        json!({ "env": {} }),
+        None,
+    );
+    google.category = None;
+    state
+        .db
+        .save_provider(AppType::Gemini.as_str(), &google)
+        .expect("save legacy google card");
+
+    let category = ProviderService::editor_category(&state, &AppType::Gemini, Some("google"), None)
+        .expect("category");
+    assert_eq!(category.as_deref(), Some("official"));
+    let shown = ProviderService::editor_view(
+        &state,
+        AppType::Gemini,
+        &google.settings_config,
+        category.as_deref(),
+    )
+    .expect("view")
+    .settings;
+    ProviderService::switch(&state, AppType::Gemini, "google").expect("switch");
+    let live = read_json_file::<serde_json::Value>(&home.join(".gemini/settings.json"))
+        .expect("read gemini settings");
+    assert_eq!(
+        shown.pointer("/config/security/auth/selectedType"),
+        live.pointer("/security/auth/selectedType"),
+    );
+    assert_eq!(
+        live.pointer("/security/auth/selectedType"),
+        Some(&json!("oauth-personal"))
+    );
+
+    assert_eq!(
+        ProviderService::editor_category(&state, &AppType::Gemini, None, Some("third".into()))
+            .expect("category for a draft"),
+        Some("third".to_string())
+    );
+}
+
 /// 新增对话框：底是还没套预设的 live，预设带的独有字段归新供应商，live 里用户自己的
 /// 独有字段不归它。
 #[test]

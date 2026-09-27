@@ -7,7 +7,8 @@
 //!
 //! 只调换「先写文件、后改指针」的顺序不够：文件写成 B、指针更新失败，照样不一致。
 //! 恢复规则（按文件比对当前内容和写前、写后的 hash。文件按顺序发布，有一个是写后内容，
-//! 就说明已经开始发布了）：
+//! 就说明已经开始发布了；换进第一个文件之前 pending 里还会先记下「已开始发布」，发布过的
+//! 文件之后又被客户端改掉——比如 Codex 刷新了刚写的 `auth.json`——也认得出来）：
 //! - 没有文件是写后内容：还没开始发布，丢弃。有文件被外部改过也一样，什么都不动；
 //! - 已经开始发布：用备好的临时文件补完还是写前内容的文件，再落定状态。被外部改过
 //!   （两者都不是）的文件以外部为准，不再动，状态照样落定：停在半路的话，已经发布的
@@ -109,6 +110,7 @@ pub fn run(
             .map(|((planned, _), staged)| pending_file(planned, staged.clone()))
             .collect(),
         target,
+        published: false,
     };
     if let Err(err) = state::set_pending(store, guard.app(), Some(pending.clone())) {
         discard_all(&staged);
@@ -126,6 +128,20 @@ pub fn run(
             let current = read_current(&current_planned.file.path)?;
             if digest(current.as_deref()) == current_planned.pre {
                 ensure_first_write_backup(store, &current_planned.file.path, current.as_deref())?;
+                // 换进第一个文件之前先记下「已开始发布」，记不下来就不发布：换进去之后才记的
+                // 话，中间崩溃、这个文件又被客户端改掉（Codex 刷新登录），恢复时就分不出发布
+                // 开始过没有，还没发布的登录暂存会被当成没用的丢掉。
+                if !pending.published {
+                    pending.published = true;
+                    let marked = failpoint::hit("mark").and_then(|()| {
+                        state::set_pending(store, guard.app(), Some(pending.clone()))
+                    });
+                    if let Err(err) = marked {
+                        drop_unpublished(store, guard, &pending);
+                        return Err(err);
+                    }
+                    failpoint::hit("marked")?;
+                }
                 // 替换失败（文件被占用、只读）时临时文件还在：已发布过就留着 pending 等前滚，
                 // 还没发布过就整体放弃（什么都没改）。
                 if let Err(err) = publish(&pending.files[index]) {
@@ -224,7 +240,7 @@ pub fn recover(
             .collect()
     };
 
-    if !positions.iter().any(|at| matches!(at, At::Planned)) {
+    if !pending.published && !positions.iter().any(|at| matches!(at, At::Planned)) {
         discard_pending_files(&pending);
         state::set_pending(store, guard.app(), None)?;
         let paths = elsewhere();
@@ -257,6 +273,7 @@ pub fn recover(
         ensure_first_write_backup(store, &file.path, current.as_deref())?;
         publish(file)?;
     }
+    failpoint::hit("recover:target")?;
     commit_target(&pending.target)?;
     // 发布过的临时文件已经换进去了；剩下的（被外部改过、内容不对）不再有用。
     discard_pending_files(&pending);
@@ -273,6 +290,15 @@ pub fn recover(
     Ok(Some(RecoveryOutcome::RolledForwardExcept {
         paths: skipped,
     }))
+}
+
+/// 这个应用有没有已经发布、还没落定的操作。写入失败后用来判断要不要撤回刚存的供应商行：
+/// 有的话下次操作或启动时会按它补完，行要留着。读不了状态文件按没有算。
+pub(crate) fn has_pending(app: &str) -> bool {
+    state::pending(&DeviceStore::for_device(), app)
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// 读指针、模式或「live 现在归谁」之前调用：先补完这个应用上一次没做完的操作，读到的
@@ -813,6 +839,51 @@ mod tests {
         assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "old"}));
         assert_eq!(fx.read(&fx.b), json!({"key": "user edit"}));
         assert_eq!(*pointer.borrow(), None, "target is not committed");
+        assert!(fx.temp_files().is_empty());
+        assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
+    }
+
+    /// 「已开始发布」记不下来（这里模拟状态文件写失败）就不发布：什么都没改，意图也清掉。
+    #[test]
+    fn nothing_is_published_when_the_publish_marker_cannot_be_recorded() {
+        let fx = Fixture::new();
+        let pointer = RefCell::new(None);
+        failpoint::crash_at(Some("mark"));
+        switch(&fx, &pointer).expect_err("marker not recorded");
+        failpoint::crash_at(None);
+
+        assert_old(&fx);
+        assert_eq!(*pointer.borrow(), None);
+        assert!(fx.temp_files().is_empty());
+        assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
+    }
+
+    /// 「已开始发布」在换进第一个文件之前就记下了：这之后崩溃、第一个文件又被外部改掉，
+    /// 恢复时照样前滚，改掉的文件不动，其余文件的暂存内容照样发布，不会被当成「还没开始」
+    /// 丢掉。
+    #[test]
+    fn a_file_changed_after_the_publish_marker_still_rolls_forward() {
+        let fx = Fixture::new();
+        let pointer = RefCell::new(None);
+        failpoint::crash_at(Some("marked"));
+        switch(&fx, &pointer).expect_err("crash");
+        assert!(
+            state::pending(&fx.store, &fx.app)
+                .unwrap()
+                .unwrap()
+                .published
+        );
+        fs::write(&fx.a, "{\"user\": 1, \"key\": \"client refresh\"}").unwrap();
+
+        assert_eq!(
+            recover_now(&fx, &pointer),
+            Some(RecoveryOutcome::RolledForwardExcept {
+                paths: vec![fx.a.clone()]
+            })
+        );
+        assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "client refresh"}));
+        assert_eq!(fx.read(&fx.b), json!({"key": "new"}));
+        assert_eq!(*pointer.borrow(), Some("B".into()));
         assert!(fx.temp_files().is_empty());
         assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
     }

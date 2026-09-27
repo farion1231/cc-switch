@@ -71,6 +71,10 @@ pub enum ConflictPolicy {
 pub struct EditorSave {
     /// 打开编辑器时显示的完整配置（新增对话框里是还没套预设的 live）。
     pub base: Value,
+    /// 新增对话框（Codex、Gemini CLI、Grok Build）：投影成 `base` 的那份草稿（预设或模板）。
+    /// 显示里有、草稿里没有的独有字段是从 live 带进来的，不归新供应商。
+    #[serde(default)]
+    pub draft: Option<Value>,
     #[serde(default)]
     pub on_conflict: ConflictPolicy,
 }

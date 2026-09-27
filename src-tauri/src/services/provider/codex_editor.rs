@@ -125,23 +125,10 @@ pub fn view(
     let mut provider =
         Provider::with_id(String::new(), String::new(), settings_config.clone(), None);
     provider.category = category.map(str::to_string);
-    let mode = crate::mode::current::mode_state(&AppType::Codex);
-    let direct = crate::mode::current::provider_for(
-        &state.db,
-        &AppType::Codex,
-        crate::mode::current::Purpose::Direct,
-    )?
-    .and_then(|id| state.db.get_provider_by_id(&id, app()).ok().flatten());
-    let owner = match (&mode.contract, mode.attached) {
-        (Some(contract), true) => Owner::Contract {
-            contract,
-            route: None,
-        },
-        _ => direct.as_ref().map_or(Owner::None, Owner::Provider),
-    };
+    let live_owner = LiveOwner::read(state)?;
     let planned = codex_direct::plan(
         &state.db,
-        &owner,
+        &live_owner.owner(),
         &Target::Direct(Some(&provider)),
         &Prepared::default(),
     )?;
@@ -206,14 +193,55 @@ pub(crate) struct CodexEditorPlan {
     pub edits: TomlEdits,
 }
 
-/// 不套任何供应商时 live 里的独有字段（live 现在对应的那家带进来的已经去掉）：编辑器显示里的
-/// 独有字段和它一样、行里又没有的，是从 live 带进来的。新增对话框的底已经套了预设，
-/// 只能这样和预设带的分开。
+/// live 现在归谁：接上代理时是契约，否则是直连指针那家。
+struct LiveOwner {
+    mode: crate::mode::state::ModeState,
+    direct: Option<Provider>,
+}
+
+impl LiveOwner {
+    fn read(state: &AppState) -> Result<Self, AppError> {
+        let direct = crate::mode::current::provider_for(
+            &state.db,
+            &AppType::Codex,
+            crate::mode::current::Purpose::Direct,
+        )?
+        .and_then(|id| state.db.get_provider_by_id(&id, app()).ok().flatten());
+        Ok(Self {
+            mode: crate::mode::current::mode_state(&AppType::Codex),
+            direct,
+        })
+    }
+
+    fn owner(&self) -> Owner<'_> {
+        match (&self.mode.contract, self.mode.attached) {
+            (Some(contract), true) => Owner::Contract {
+                contract,
+                route: None,
+            },
+            _ => self.direct.as_ref().map_or(Owner::None, Owner::Provider),
+        }
+    }
+}
+
+/// live 里用户自己的独有字段：live 现在对应的那家带进来的（值还相同的）不算。只给不知道
+/// 草稿的新增用（见 [`Origin::Live`]）。
+///
+/// 只读 live、按值去掉那一家的，不走投影：投影会校验生效的 profile，而空行不写
+/// `model_provider`，profile 选了路由表就会被当成覆盖路由拒绝。
 pub(crate) fn live_exclusive(state: &AppState) -> Result<Vec<Entry>, AppError> {
-    let empty = serde_json::json!({ "auth": {}, "config": "" });
-    let view = view(state, &empty, None)?;
-    let doc = parse_text(config_text(&view.settings), "live")?;
-    Ok(exclusive_entries(&doc))
+    let path = get_codex_config_path();
+    let pre = read_current(&path)?;
+    let doc = parse(&path, pre.as_deref())?;
+    let owned = codex_direct::outgoing_exclusive(&LiveOwner::read(state)?.owner());
+    Ok(exclusive_entries(&doc)
+        .into_iter()
+        .filter(|entry| {
+            !owned.iter().any(|(key, value)| {
+                entry.path[0] == *key && render(&entry.item) == render(&Item::Value(value.clone()))
+            })
+        })
+        .collect())
 }
 
 fn exclusive_entries(doc: &DocumentMut) -> Vec<Entry> {
@@ -228,23 +256,40 @@ fn exclusive_entries(doc: &DocumentMut) -> Vec<Entry> {
         .collect()
 }
 
+/// 编辑器显示里的独有字段是从哪来的：显示的是某份配置投影到 live 上的样子，这份配置里没有
+/// 的独有字段就是从 live 带进来的。
+pub(crate) enum Origin {
+    /// 投影成底的那份配置：编辑已有供应商时是它的行，新增时是预设草稿。
+    Row(DocumentMut),
+    /// 新增时不知道草稿（旧的调用方）：和 live 里用户自己的独有字段比值，打开之后 live 被
+    /// 改过就分不准。
+    Live(Vec<Entry>),
+}
+
+impl Origin {
+    /// `settings` 是行或草稿的 `settings_config`。
+    pub(crate) fn row(settings: &Value) -> Result<Self, AppError> {
+        Ok(Self::Row(parse_text(config_text(settings), "origin")?))
+    }
+}
+
 /// 把编辑器里的完整配置拆开：关键字段、独有字段换进行（行里其余内容原样保留），其余部分
 /// 和 `base` 比，得出用户改过的全局设置。行有问题（会把官方登录发给第三方等）在这里报错。
 ///
-/// `live_exclusive` 见 [`live_exclusive`]。从 live 带进来的独有字段不归这个供应商：用户
-/// 没动就不收进行（否则切走时会把用户自己的设置删掉），用户删了就从 live 删。
+/// 从 live 带进来的独有字段不归这个供应商：用户没动就不收进行、也不写（否则切走时会把
+/// 用户自己的设置删掉，打开编辑器之后客户端改的值也会被盖回去），用户删了就从 live 删。
+/// 哪些是从 live 带进来的见 [`Origin`]。
 pub(crate) fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
     base: &Value,
-    live_exclusive: &[Entry],
+    origin: &Origin,
     official: bool,
     proxy_injected_oauth: bool,
     on_conflict: ConflictPolicy,
 ) -> Result<CodexEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
     let base_doc = parse_text(config_text(base), "base")?;
-    let stored_doc = parse_text(stored_row.map(config_text).unwrap_or(""), "stored")?;
     let mut projection = CodexProjection::of(&RowInput {
         settings: edited,
         official,
@@ -254,12 +299,11 @@ pub(crate) fn plan_save(
     let rendered = |doc: &DocumentMut, key: &str| doc.get(key).map(render);
     let from_live: Vec<Entry> = exclusive_entries(&base_doc)
         .into_iter()
-        .filter(|entry| {
-            let key = entry.path[0].as_str();
-            stored_doc.get(key).is_none()
-                && live_exclusive.iter().any(|live| {
-                    live.path == entry.path && render(&live.item) == render(&entry.item)
-                })
+        .filter(|entry| match origin {
+            Origin::Row(row) => row.get(&entry.path[0]).is_none(),
+            Origin::Live(live_exclusive) => live_exclusive
+                .iter()
+                .any(|live| live.path == entry.path && render(&live.item) == render(&entry.item)),
         })
         .collect();
     projection.exclusive.retain(|(key, _)| {
@@ -508,7 +552,7 @@ mod tests {
             Some(&stored),
             &edited,
             &edited,
-            &[],
+            &Origin::row(&stored).unwrap(),
             false,
             false,
             ConflictPolicy::Refuse,

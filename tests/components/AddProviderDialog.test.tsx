@@ -36,6 +36,8 @@ let mockFormValues: ProviderFormValues;
 let mockFormReady = true;
 // 表单把预设投影到配置文件上之后交给对话框的底（Codex、Gemini CLI、Grok Build）。
 let mockProjectedBase: Record<string, unknown> | null = null;
+// 投影成那份底的草稿（预设或模板）。
+let mockProjectedDraft: Record<string, unknown> | undefined;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
@@ -48,7 +50,10 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
     onManageAuthAccounts?: (target: "codex_oauth") => void;
-    onEditorBaseChange?: (base: Record<string, unknown> | null) => void;
+    onEditorBaseChange?: (
+      base: Record<string, unknown> | null,
+      draft?: Record<string, unknown>,
+    ) => void;
   }) => {
     useEffect(() => {
       if (onSubmitReadyChange) {
@@ -57,7 +62,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       }
     }, [onSubmitReadyChange]);
     useEffect(() => {
-      onEditorBaseChange?.(mockProjectedBase);
+      onEditorBaseChange?.(mockProjectedBase, mockProjectedDraft);
     }, [onEditorBaseChange]);
     return (
       <form
@@ -87,6 +92,7 @@ describe("AddProviderDialog", () => {
   beforeEach(() => {
     mockFormReady = true;
     mockProjectedBase = null;
+    mockProjectedDraft = undefined;
     submitReadyCallbacks = [];
     mockFormValues = {
       name: "Test Provider",
@@ -180,7 +186,9 @@ describe("AddProviderDialog", () => {
     async (appId) => {
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
       const projected = { config: "[ui]\ntheme = \"dark\"\n" };
+      const draft = { config: "" };
       mockProjectedBase = projected;
+      mockProjectedDraft = draft;
       mockFormValues = {
         name: "Draft",
         websiteUrl: "",
@@ -202,6 +210,7 @@ describe("AddProviderDialog", () => {
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
       expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
         base: projected,
+        draft,
         onConflict: "refuse",
       });
     },

@@ -68,6 +68,7 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 /// 使开关即时生效，无需等下一次切换。当前供应商非官方（或不存在）时为 no-op：开关只
 /// 影响官方直连的选路。代理模式下 live 是代理契约，不受这个开关影响。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &AppType::Codex)?;
     let current_id = ProviderService::current(state, AppType::Codex)?;
     if current_id.is_empty() {
         return Ok(false);
@@ -4218,7 +4219,7 @@ wire_api = "responses"
                 .get_provider_by_id(&provider.id, AppType::Codex.as_str())
                 .expect("query provider")
                 .is_some());
-            assert!(codex_direct::has_pending());
+            assert!(crate::mode::operation::has_pending(AppType::Codex.as_str()));
             assert_ne!(
                 crate::codex_config::CodexLiveStateSnapshot::capture().expect("capture live"),
                 live_before
@@ -4232,7 +4233,9 @@ wire_api = "responses"
                 .execute_batch("DROP TRIGGER reject_first_managed_current_update;")
                 .expect("drop trigger");
             crate::mode::operation::recover_on_startup(&state.db);
-            assert!(!codex_direct::has_pending());
+            assert!(!crate::mode::operation::has_pending(
+                AppType::Codex.as_str()
+            ));
             assert_eq!(
                 state
                     .db
@@ -4467,7 +4470,7 @@ wire_api = "responses"
                 .expect("check managed marker"),
                 "auth.json and the marker belong to the target account"
             );
-            assert!(codex_direct::has_pending());
+            assert!(crate::mode::operation::has_pending(AppType::Codex.as_str()));
 
             state
                 .db
@@ -4477,7 +4480,9 @@ wire_api = "responses"
                 .execute_batch("DROP TRIGGER reject_managed_b_current_update;")
                 .expect("drop trigger");
             crate::mode::operation::recover_on_startup(&state.db);
-            assert!(!codex_direct::has_pending());
+            assert!(!crate::mode::operation::has_pending(
+                AppType::Codex.as_str()
+            ));
             assert_eq!(
                 crate::settings::get_current_provider(&AppType::Codex).as_deref(),
                 Some(provider_b.id.as_str())
@@ -4860,6 +4865,9 @@ impl ProviderService {
             return Self::save_mcode_provider(state, &provider, add_to_live);
         }
 
+        // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
@@ -4921,7 +4929,7 @@ impl ProviderService {
         let app_type = AppType::Codex;
         // 和切换互斥：等着的切换不能看到只存了一半的托管账号绑定。
         let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
         let current = crate::mode::current::provider_for(
             &state.db,
             &app_type,
@@ -4952,7 +4960,7 @@ impl ProviderService {
         if let Err(error) = written {
             // 文件已经发布、只是落定状态失败时，pending 会在下次操作或启动时补完指针，
             // 行要留着；还没发布就失败，撤回刚存的行。
-            if codex_direct::has_pending() {
+            if crate::mode::operation::has_pending(AppType::Codex.as_str()) {
                 return Err(error);
             }
             let rollback = match &previous {
@@ -4988,6 +4996,34 @@ impl ProviderService {
                 other.as_str()
             ))),
         }
+    }
+
+    /// 编辑已有供应商时给 [`Self::editor_view`] 的 `category`：按库里那一行，用切换时同一个
+    /// 判断认官方卡。Gemini 还按合作方标记和名字认出旧版没有 `category` 的 Google 卡，Codex
+    /// 还认固定 id 和托管账号；只看 `category` 的话，这些卡预览里的登录方式和切换写的不同。
+    /// 没有 `provider_id`（新增）或行不存在时原样用 `category`。
+    pub fn editor_category(
+        state: &AppState,
+        app_type: &AppType,
+        provider_id: Option<&str>,
+        category: Option<String>,
+    ) -> Result<Option<String>, AppError> {
+        let Some(id) = provider_id else {
+            return Ok(category);
+        };
+        let Some(row) = state.db.get_provider_by_id(id, app_type.as_str())? else {
+            return Ok(category);
+        };
+        let official = match app_type {
+            AppType::Codex => codex_direct::is_official(&row),
+            AppType::Gemini => gemini_direct::is_official(&row),
+            _ => false,
+        };
+        Ok(if official {
+            Some("official".to_string())
+        } else {
+            category
+        })
     }
 
     /// 从编辑器新增供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
@@ -5065,7 +5101,7 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5074,7 +5110,11 @@ impl ProviderService {
             existing.as_ref().map(|row| &row.settings_config),
             &provider.settings_config,
             &editor.base,
-            &codex_editor::live_exclusive(state)?,
+            &match (existing.as_ref(), editor.draft.as_ref()) {
+                (Some(row), _) => codex_editor::Origin::row(&row.settings_config)?,
+                (None, Some(draft)) => codex_editor::Origin::row(draft)?,
+                (None, None) => codex_editor::Origin::Live(codex_editor::live_exclusive(state)?),
+            },
             codex_direct::is_official(&provider),
             provider.uses_proxy_injected_oauth(),
             editor.on_conflict,
@@ -5121,7 +5161,7 @@ impl ProviderService {
             })
         };
         if let Err(error) = written {
-            if !codex_direct::has_pending() {
+            if !crate::mode::operation::has_pending(AppType::Codex.as_str()) {
                 Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
             return Err(error);
@@ -5141,7 +5181,7 @@ impl ProviderService {
         kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
         let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5208,11 +5248,7 @@ impl ProviderService {
             }
         });
         if let Err(error) = written {
-            let pending = match app_type {
-                AppType::Gemini => gemini_direct::has_pending(),
-                _ => grok_direct::has_pending(),
-            };
-            if !pending {
+            if !crate::mode::operation::has_pending(app_type.as_str()) {
                 Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
             return Err(error);
@@ -5248,7 +5284,7 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
         let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
         let mut provider = provider;
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         let plan = claude_editor::plan_save(None, &provider.settings_config, &editor.base)?;
@@ -5276,7 +5312,7 @@ impl ProviderService {
         if let Err(error) =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
         {
-            if !claude_direct::has_pending() {
+            if !crate::mode::operation::has_pending(AppType::Claude.as_str()) {
                 Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
             return Err(error);
@@ -5293,7 +5329,7 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
         let _switch_guard =
-            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type))?;
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5340,7 +5376,7 @@ impl ProviderService {
                     }
                 });
         if let Err(error) = written {
-            if !claude_direct::has_pending() {
+            if !crate::mode::operation::has_pending(AppType::Claude.as_str()) {
                 Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
             return Err(error);
@@ -5362,19 +5398,10 @@ impl ProviderService {
         let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
         let provider_id_changed = original_id != provider.id;
-        // Serialize the read/decide/commit window for every Codex update. We do
-        // not yet know whether the stored row is managed (the request may be an
-        // unbind), so the existing row and effective current must both be read
-        // only after this lock is held. Non-managed Codex updates release it
-        // before entering the legacy path, whose proxy helpers take the lock
-        // themselves.
-        let codex_update_switch_guard = if matches!(app_type, AppType::Codex) {
-            Some(futures::executor::block_on(
-                crate::mode::controller::lock_settled(state, &app_type),
-            ))
-        } else {
-            None
-        };
+        // 读旧行、判断谁是当前供应商、存行、写 live 都在切换锁里：进入代理和切换都等这次
+        // 保存写完，这里也不会在读完模式之后、写 live 之前被它们改掉模式（否则直连的关键
+        // 字段会盖掉刚写的代理契约）。Codex 还要在锁里读旧行，看它是不是托管账号的行。
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let existing_provider = state
             .db
             .get_provider_by_id(&original_id, app_type.as_str())?;
@@ -5546,8 +5573,6 @@ impl ProviderService {
             );
         }
 
-        drop(codex_update_switch_guard);
-
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
@@ -5619,7 +5644,7 @@ impl ProviderService {
             .map(|_| ())
         };
         if let Err(error) = written {
-            if codex_direct::has_pending() {
+            if crate::mode::operation::has_pending(AppType::Codex.as_str()) {
                 return Err(error);
             }
             if let Some(existing) = existing {
@@ -5814,7 +5839,7 @@ impl ProviderService {
         let _switch_guard = if app_type.supports_local_proxy() {
             Some(futures::executor::block_on(
                 crate::mode::controller::lock_settled(state, &app_type),
-            ))
+            )?)
         } else {
             None
         };
@@ -6074,6 +6099,7 @@ impl ProviderService {
             return sync_current_provider_for_app_to_live(state, &app_type);
         }
 
+        let switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let current_id = match crate::mode::current::provider_for(
             &state.db,
             &app_type,
@@ -6090,6 +6116,7 @@ impl ProviderService {
 
         let outcome =
             live::sync_live_for_provider_respecting_mode(state, &app_type, provider, None)?;
+        drop(switch_guard);
         if outcome == LiveSyncOutcome::ProxyMode {
             return Ok(());
         }

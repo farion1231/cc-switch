@@ -88,6 +88,7 @@ import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   useProviderCategory,
   useDraftEditorProjection,
+  type EditorBaseChange,
   useApiKeyState,
   useBaseUrlState,
   useModelState,
@@ -275,7 +276,7 @@ export interface ProviderFormProps {
    * Codex、Gemini CLI、Grok Build 新增：预设或模板投影到当前配置文件上之后的内容，保存时
    * 作为三方比较的底；投影进行中或失败时为 `null`。
    */
-  onEditorBaseChange?: (base: Record<string, unknown> | null) => void;
+  onEditorBaseChange?: EditorBaseChange;
 }
 
 export function ProviderForm(props: ProviderFormProps) {

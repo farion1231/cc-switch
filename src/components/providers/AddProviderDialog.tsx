@@ -89,11 +89,17 @@ export function AddProviderDialog({
   > | null>(null);
   const [claudeBaseLoaded, setClaudeBaseLoaded] = useState(false);
   // Codex、Gemini CLI、Grok Build：表单把预设投影到当前配置文件上显示，投影结果就是保存时
-  // 三方比较的底（投影进行中或失败时为 null，保存只存供应商）。
-  const [draftEditorBase, setDraftEditorBase] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
+  // 三方比较的底（投影进行中或失败时为 null，保存只存供应商）。投影成它的草稿一起留着，
+  // 后端按草稿分开预设带的字段和从 live 带进来的字段。
+  const [draftEditorBase, setDraftEditorBase] = useState<{
+    base: Record<string, unknown>;
+    draft?: Record<string, unknown>;
+  } | null>(null);
+  const handleDraftEditorBase = useCallback(
+    (base: Record<string, unknown> | null, draft?: Record<string, unknown>) =>
+      setDraftEditorBase(base ? { base, draft } : null),
+    [],
+  );
   const projectsDraft = DRAFT_EDITOR_APPS.includes(appId);
   const [pendingConflict, setPendingConflict] = useState<{
     keys: string[];
@@ -419,16 +425,14 @@ export function AddProviderDialog({
 
       const editorBase =
         appId === "claude"
-          ? claudeLiveBase
+          ? claudeLiveBase && { base: claudeLiveBase }
           : projectsDraft
             ? draftEditorBase
             : null;
       const submit = async (onConflict: EditorConflictPolicy) => {
         await onSubmit({
           ...providerData,
-          ...(editorBase
-            ? { editorSave: { base: editorBase, onConflict } }
-            : {}),
+          ...(editorBase ? { editorSave: { ...editorBase, onConflict } } : {}),
         });
         closeDialog();
       };
@@ -554,7 +558,7 @@ export function AddProviderDialog({
                 showButtons={false}
                 claudeLiveBase={claudeLiveBase ?? undefined}
                 onEditorBaseChange={
-                  projectsDraft ? setDraftEditorBase : undefined
+                  projectsDraft ? handleDraftEditorBase : undefined
                 }
               />
             )}
@@ -575,7 +579,7 @@ export function AddProviderDialog({
           onSubmittingChange={setIsFormSubmitting}
           onSubmitReadyChange={handleSubmitReadyChange}
           showButtons={false}
-          onEditorBaseChange={projectsDraft ? setDraftEditorBase : undefined}
+          onEditorBaseChange={projectsDraft ? handleDraftEditorBase : undefined}
         />
       )}
 

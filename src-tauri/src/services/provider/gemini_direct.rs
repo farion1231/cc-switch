@@ -118,11 +118,3 @@ pub(crate) fn run_with_edits(
     }
     operation::run(&store, &guard, op, &changes, target, &commit)
 }
-
-/// 有上一次没做完的操作（启动或下次操作时补完）。
-pub(crate) fn has_pending() -> bool {
-    crate::mode::state::pending(&DeviceStore::for_device(), app())
-        .ok()
-        .flatten()
-        .is_some()
-}

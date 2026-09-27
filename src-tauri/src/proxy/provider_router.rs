@@ -43,9 +43,6 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        let mut result = Vec::new();
-        let mut total_providers = 0usize;
-        let mut circuit_open_count = 0usize;
         // 代理模式下路由到代理路由那家，和直连指针无关。
         let current_id = AppType::from_str(app_type).ok().and_then(|app_enum| {
             crate::mode::current::provider_for(
@@ -56,6 +53,20 @@ impl ProviderRouter {
             .ok()
             .flatten()
         });
+        self.select_providers_with_current(app_type, current_id)
+            .await
+    }
+
+    /// 同 [`Self::select_providers`]，正在用的那家由调用方给出：处理请求时上下文已经读过
+    /// 一次（要读 `live-state.json`），不用每个请求再读一遍，两处用的也一定是同一家。
+    pub async fn select_providers_with_current(
+        &self,
+        app_type: &str,
+        current_id: Option<String>,
+    ) -> Result<Vec<Provider>, AppError> {
+        let mut result = Vec::new();
+        let mut total_providers = 0usize;
+        let mut circuit_open_count = 0usize;
         let current_provider = current_id
             .as_deref()
             .map(|id| self.db.get_provider_by_id(id, app_type))

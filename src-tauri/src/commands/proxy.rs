@@ -103,9 +103,7 @@ pub async fn update_proxy_config(
 ) -> Result<(), String> {
     if state.proxy_service.update_config(&config).await? {
         // 代理换了地址：按新地址重写接上代理的客户端。
-        for app in crate::mode::controller::PROXY_APPS {
-            crate::mode::controller::resync_route(state.inner(), &app).await?;
-        }
+        crate::mode::controller::resync_routes(state.inner()).await?;
     }
     Ok(())
 }

@@ -297,23 +297,7 @@ fn write_direct(
     match app {
         AppType::Claude => {
             let empty = ClaudeProjection::default();
-            // 行里本身带着占位符（旧版接管期间被导入的残留）时不能照写，否则客户端会
-            // 一直指着已经不在的本地代理：只清空关键字段。
-            let projection = direct
-                .as_ref()
-                .filter(|provider| {
-                    let polluted = crate::services::ProxyService::config_has_proxy_placeholder(
-                        app,
-                        &provider.settings_config,
-                    );
-                    if polluted {
-                        log::warn!(
-                            "直连供应商 {} 的行里带着代理占位符，只清空关键字段",
-                            provider.id
-                        );
-                    }
-                    !polluted
-                })
+            let projection = usable_direct(app, direct.as_ref())
                 .map(|provider| ClaudeProjection::of(&provider.settings_config));
             let patch = direct_patch(
                 live_now.claude_exclusive_owner().as_ref(),
@@ -332,13 +316,7 @@ fn write_direct(
                 commit_state(state, app, &pending_target)?;
                 return Ok(());
             }
-            // 行里本身带着占位符（旧版接管期间被导入的残留）时不能照写：只清空关键字段。
-            let target = direct.as_ref().filter(|provider| {
-                !crate::services::ProxyService::config_has_proxy_placeholder(
-                    app,
-                    &provider.settings_config,
-                )
-            });
+            let target = usable_direct(app, direct.as_ref());
             let owner = live_now.codex_owner();
             if let Err(error) = codex_direct::write_direct(
                 &state.db,
@@ -442,20 +420,48 @@ fn require_proxy_app(app: &AppType) -> Result<(), String> {
 /// 拿这个应用的代理切换锁，再补完它上一次没做完的写入。之后读到的模式、路由和直连
 /// 指针都是落定过的。写入函数在写锁里发现还有没补完的操作会补完后拒绝这次写入（见
 /// `operation::recover_before_write`），入口先补完，用户就不用重试一次。
-pub(crate) async fn lock_settled(state: &AppState, app: &AppType) -> OwnedMutexGuard<()> {
+///
+/// 补不完（比如本机设置文件写不进去、改不了指针）就拒绝这次操作：这时读到的还是补完前的
+/// 指针和模式，照着做下去（比如只存了一行、以为它不是当前供应商），等那次操作补完就和刚
+/// 做的对不上了。
+pub(crate) async fn lock_settled(
+    state: &AppState,
+    app: &AppType,
+) -> Result<OwnedMutexGuard<()>, AppError> {
     let guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
-    if let Err(error) = operation::settle(&state.db, app.as_str()) {
-        log::warn!("补完 {} 上一次没做完的写入失败: {error}", app.as_str());
+    operation::settle(&state.db, app.as_str()).map_err(|error| {
+        AppError::localized(
+            "mode.unsettled",
+            format!(
+                "{} 上一次写配置文件的操作没做完，现在也补不完：{error}。本次什么都没做，请排查后重试",
+                app.as_str()
+            ),
+            format!(
+                "The previous write to {}'s config files is unfinished and cannot be completed now: {error}. Nothing was done; fix the cause and retry",
+                app.as_str()
+            ),
+        )
+    })?;
+    Ok(guard)
+}
+
+/// 同步代码里用的 [`lock_settled`]。不支持代理的应用没有模式可以被并发改掉，不拿锁。
+pub(crate) fn lock_settled_blocking(
+    state: &AppState,
+    app: &AppType,
+) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
+    if !app.supports_local_proxy() {
+        return Ok(None);
     }
-    guard
+    futures::executor::block_on(lock_settled(state, app)).map(Some)
 }
 
 /// 进入代理模式。
 pub async fn enter(state: &AppState, app: &AppType) -> Result<(), String> {
     require_proxy_app(app)?;
-    let result = {
-        let _guard = lock_settled(state, app).await;
-        enter_locked(state, app, op::ENTER).await
+    let result = match lock_settled(state, app).await {
+        Ok(_guard) => enter_locked(state, app, op::ENTER).await,
+        Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
         stop_server_if_unused(state).await;
@@ -516,7 +522,7 @@ async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provide
 pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
     require_proxy_app(app)?;
     {
-        let _guard = lock_settled(state, app).await;
+        let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
         exit_locked(state, app, false)?;
     }
     if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
@@ -570,8 +576,11 @@ async fn stop_server_if_unused(state: &AppState) {
 pub async fn exit_all(state: &AppState) -> Result<(), String> {
     let mut errors = Vec::new();
     for app in PROXY_APPS {
-        let _guard = lock_settled(state, &app).await;
-        if let Err(error) = exit_locked(state, &app, false) {
+        let result = match lock_settled(state, &app).await {
+            Ok(_guard) => exit_locked(state, &app, false),
+            Err(error) => Err(error.to_string()),
+        };
+        if let Err(error) = result {
             errors.push(format!("{}: {error}", app.as_str()));
         }
     }
@@ -594,8 +603,11 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 /// 代理服务。
 pub async fn detach_all(state: &AppState) {
     for app in PROXY_APPS {
-        let _guard = lock_settled(state, &app).await;
-        if let Err(error) = exit_locked(state, &app, true) {
+        let result = match lock_settled(state, &app).await {
+            Ok(_guard) => exit_locked(state, &app, true),
+            Err(error) => Err(error.to_string()),
+        };
+        if let Err(error) = result {
             log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
         }
     }
@@ -647,7 +659,7 @@ pub async fn switch_route(
     let target =
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     reject_unsupported_official(app, &target)?;
-    let _guard = lock_settled(state, app).await;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     switch_route_locked(state, app, &target).await
 }
 
@@ -678,8 +690,25 @@ pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), 
 }
 
 pub async fn resync_route(state: &AppState, app: &AppType) -> Result<(), String> {
-    let _guard = lock_settled(state, app).await;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     resync_route_locked(state, app).await
+}
+
+/// 代理换了地址之后，按新地址重写每个接上代理的应用。一个应用失败（比如配置文件解析
+/// 不了）不影响其余应用：旧地址已经没人监听，跳过的应用会一直连不上。失败的汇总报错。
+pub async fn resync_routes(state: &AppState) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for app in PROXY_APPS {
+        if let Err(error) = resync_route(state, &app).await {
+            log::warn!("按新的代理地址重写 {} 失败: {error}", app.as_str());
+            failures.push(format!("{}: {error}", app.as_str()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 /// 故障转移成功后记下新路由：只换代理的上游，不写客户端文件（契约兼容性本轮不检查）。
@@ -689,7 +718,7 @@ pub async fn record_failover_route(
     app: &AppType,
     provider_id: &str,
 ) -> Result<bool, String> {
-    let _guard = lock_settled(state, app).await;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     let mode = current::mode_state(app);
     if !mode.is_proxy() || mode.proxy_route.as_deref() == Some(provider_id) {
         return Ok(false);
@@ -726,8 +755,11 @@ pub async fn record_failover_route(
 /// 为准，它还没有值就按 `enabled` 定。
 pub async fn startup(state: &AppState) {
     for app in PROXY_APPS {
-        let _guard = lock_settled(state, &app).await;
-        if let Err(error) = startup_app(state, &app).await {
+        let result = match lock_settled(state, &app).await {
+            Ok(_guard) => startup_app(state, &app).await,
+            Err(error) => Err(error.to_string()),
+        };
+        if let Err(error) = result {
             log::error!("启动时恢复 {} 的模式失败: {error}", app.as_str());
         }
     }
@@ -1643,6 +1675,141 @@ mod mode_tests {
         exit(&state, &AppType::Claude).await.expect("exit");
     }
 
+    /// 保存当前供应商要等进入代理写完契约，之后按代理模式处理，不能拿进入前读到的直连
+    /// 模式把关键字段写回 live。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn saving_the_current_provider_waits_for_entering_proxy_mode() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state: &'static AppState = Box::leak(Box::new(
+            state_with(
+                AppType::Claude,
+                &[claude("a", "https://a.example", json!({}))],
+                "a",
+            )
+            .await,
+        ));
+
+        let guard = lock_settled(state, &AppType::Claude).await.unwrap();
+        let updater = std::thread::spawn(move || {
+            ProviderService::update(
+                state,
+                AppType::Claude,
+                None,
+                claude("a", "https://a2.example", json!({})),
+            )
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!updater.is_finished(), "the save waits for the switch lock");
+        assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
+
+        enter_locked(state, &AppType::Claude, op::ENTER)
+            .await
+            .expect("enter");
+        drop(guard);
+        tokio::task::spawn_blocking(move || updater.join())
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("save");
+
+        let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
+        let live = settings();
+        assert_eq!(live["env"]["ANTHROPIC_BASE_URL"], proxy_url.as_str());
+        assert_eq!(live["env"]["ANTHROPIC_AUTH_TOKEN"], PROXY_TOKEN_PLACEHOLDER);
+
+        exit(state, &AppType::Claude).await.expect("exit");
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_BASE_URL"],
+            "https://a2.example",
+            "the saved row is what leaving proxy mode writes back"
+        );
+
+        // 同步当前供应商（导入、云同步、统一供应商）同样等进入代理写完。
+        let guard = lock_settled(state, &AppType::Claude).await.unwrap();
+        let syncer = std::thread::spawn(move || {
+            ProviderService::sync_current_provider_for_app(state, AppType::Claude)
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!syncer.is_finished(), "the sync waits for the switch lock");
+        enter_locked(state, &AppType::Claude, op::ENTER)
+            .await
+            .expect("enter");
+        drop(guard);
+        tokio::task::spawn_blocking(move || syncer.join())
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("sync");
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_AUTH_TOKEN"],
+            PROXY_TOKEN_PLACEHOLDER
+        );
+        exit(state, &AppType::Claude).await.expect("exit");
+    }
+
+    /// 上一次的操作补不完（这里是落定状态失败）时，保存编辑器直接拒绝、行不动。否则按补完
+    /// 之前的指针判断「b 不是当前供应商」只存了行，等那次操作补完 b 成了当前供应商，live
+    /// 里却是它的旧 Key。
+    #[tokio::test]
+    #[serial]
+    async fn nothing_is_saved_while_the_previous_write_cannot_be_finished() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[
+                claude("a", "https://a.example", json!({})),
+                claude("b", "https://b.example", json!({})),
+            ],
+            "a",
+        )
+        .await;
+        failpoint::crash_at(Some("published:0"));
+        let interrupted = ProviderService::switch(&state, AppType::Claude, "b");
+        failpoint::crash_at(None);
+        assert!(interrupted.is_err());
+
+        let mut row = state.db.get_provider_by_id("b", "claude").unwrap().unwrap();
+        let base =
+            ProviderService::editor_view(&state, AppType::Claude, &row.settings_config, None)
+                .expect("view")
+                .settings;
+        let mut edited = base.clone();
+        edited["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("sk-b-new");
+        row.settings_config = edited;
+        failpoint::crash_at(Some("recover:target"));
+        let refused = ProviderService::update_from_editor(
+            &state,
+            AppType::Claude,
+            None,
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        );
+        failpoint::crash_at(None);
+        let error = refused.expect_err("refused while unsettled");
+        assert!(error.to_string().contains("补不完"), "{error}");
+        let b_token = |state: &AppState| {
+            state
+                .db
+                .get_provider_by_id("b", "claude")
+                .unwrap()
+                .unwrap()
+                .settings_config["env"]["ANTHROPIC_AUTH_TOKEN"]
+                .clone()
+        };
+        assert_eq!(b_token(&state), "sk-b", "the row is untouched");
+
+        crate::mode::operation::recover_on_startup(&state.db);
+        assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("b"));
+        assert_eq!(settings()["env"]["ANTHROPIC_AUTH_TOKEN"], b_token(&state));
+    }
+
     #[tokio::test]
     #[serial]
     async fn failover_moves_the_route_without_writing_client_files() {
@@ -1829,6 +1996,52 @@ mod mode_tests {
         let text = fs::read_to_string(&env_path).unwrap();
         assert!(text.contains("GEMINI_API_KEY=real-key"), "{text}");
         assert!(!text.contains("PROXY_MANAGED"), "{text}");
+    }
+
+    /// 代理换了端口：一个应用重写失败（配置文件解析不了），其余接上代理的应用照样按新
+    /// 地址重写，失败的应用在报错里。
+    #[tokio::test]
+    #[serial]
+    async fn a_new_proxy_address_reaches_every_app_even_if_one_fails() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        seed_gemini(
+            "GEMINI_API_KEY=real-key\nGOOGLE_GEMINI_BASE_URL=https://g.example\n",
+            "{}",
+        );
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let row = gemini(
+            "g",
+            json!({ "GEMINI_API_KEY": "real-key", "GOOGLE_GEMINI_BASE_URL": "https://g.example" }),
+            json!({}),
+        );
+        state.db.save_provider("gemini", &row).unwrap();
+        state.db.set_current_provider("gemini", "g").unwrap();
+        crate::settings::set_current_provider(&AppType::Gemini, Some("g")).unwrap();
+        enter(&state, &AppType::Claude).await.expect("enter claude");
+        enter(&state, &AppType::Gemini).await.expect("enter gemini");
+        let old_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
+
+        fs::write(settings_path(), "not json").unwrap();
+        let mut config = state.db.get_proxy_config().await.unwrap();
+        config.listen_port = 0;
+        assert!(state.proxy_service.update_config(&config).await.unwrap());
+        let new_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
+        assert_ne!(new_url, old_url);
+
+        let error = resync_routes(&state).await.expect_err("claude fails");
+        assert!(error.starts_with("claude:"), "{error}");
+        assert!(
+            gemini_env().contains(&format!("GOOGLE_GEMINI_BASE_URL={new_url}\n")),
+            "{}",
+            gemini_env()
+        );
+        state.proxy_service.stop().await.unwrap();
     }
 
     #[tokio::test]
@@ -2108,6 +2321,55 @@ command = "fs-server"
         assert_eq!(codex_text(), on_a);
     }
 
+    /// 行里自己指定的模型目录指针跟着这一家走：切走时删掉，切到生成了目录的那家就换成
+    /// CC Switch 自己的指针；代理契约带进来的，退出代理时同样删掉。用户直接写进 live 的
+    /// 指针一直留着。
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_row_catalog_pointer_leaves_with_its_provider() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let a = codex_row(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"/work/a-catalog.json\"",
+        );
+        let mut b = codex_row("b", "https://b.example/v1", "");
+        b.settings_config["modelCatalog"] = json!({ "models": [{ "model": "gpt-b" }] });
+        let c = codex_row("c", "https://c.example/v1", "");
+        let state = state_with(AppType::Codex, &[a, b, c], "c").await;
+        let pointer = || {
+            codex_doc()
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str().map(str::to_string))
+        };
+        let ours = crate::live::project::codex::CATALOG_FILENAME;
+
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
+        ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
+        assert_eq!(pointer(), None, "{}", codex_text());
+
+        // 代理模式：路由从 c 换到 a，契约带进 a 的指针；退出代理写回直连 c 时删掉。
+        enter(&state, &AppType::Codex).await.expect("enter");
+        ProviderService::switch(&state, AppType::Codex, "a").expect("route to a");
+        assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(pointer(), None, "{}", codex_text());
+
+        // 用户自己写进 live 的指针不认领、不删，也不被 CC Switch 的指针替换。
+        let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
+        fs::write(codex_config_path(), with_user).unwrap();
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+        assert_eq!(pointer().as_deref(), Some("/work/mine.json"));
+        ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
+        assert_eq!(pointer().as_deref(), Some("/work/mine.json"));
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_exclusive_fields_the_user_changed_stay() {
@@ -2193,6 +2455,37 @@ command = "fs-server"
             mtime
         );
         assert_eq!(direct(&state, &AppType::Codex).as_deref(), Some("a"));
+    }
+
+    /// 生效的 profile 显式选了内置的 `openai`：和官方卡不写 model_provider 去的是同一个
+    /// 地方，切到官方卡不拒绝；切到第三方仍然拒绝。
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_profile_selecting_the_built_in_openai_allows_the_official_card() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = format!(
+            "profile = \"work\"\n{CODEX_USER_LIVE}\n[profiles.work]\nmodel_provider = \"openai\"\n"
+        );
+        seed_codex(&live, Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let state = state_with(AppType::Codex, &[a, b, codex_official()], "a").await;
+
+        ProviderService::switch(
+            &state,
+            AppType::Codex,
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+        )
+        .expect("switch to official");
+        let doc = codex_doc();
+        assert!(doc.get("model_provider").is_none());
+        assert_eq!(
+            doc["profiles"]["work"]["model_provider"].as_str(),
+            Some("openai")
+        );
+
+        let err = ProviderService::switch(&state, AppType::Codex, "b").expect_err("refused");
+        assert!(err.to_string().contains("work"), "{err}");
     }
 
     #[tokio::test]
@@ -2405,6 +2698,28 @@ model_provider = "c"
         );
     }
 
+    /// 发布过的文件在补完之前又被客户端改掉（这里是用户在 Codex 里重新登录、写了新的
+    /// auth.json）：单看文件分不出发布开始过没有，按 pending 里的「已开始发布」照样前滚，
+    /// 还没写出去的登录暂存不能丢，客户端写的 auth.json 不动。
+    #[tokio::test]
+    #[serial]
+    async fn codex_an_interrupted_switch_keeps_the_stash_when_the_published_file_changed_again() {
+        let _home = Home::new();
+        let (state, _official) = codex_switch_interrupted_after_auth_json().await;
+        fs::write(codex_auth_path(), chatgpt_login("other").to_string()).unwrap();
+
+        crate::mode::operation::recover_on_startup(&state.db);
+        assert_eq!(direct(&state, &AppType::Codex).as_deref(), Some("a"));
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-a"));
+        let stash = fs::read_to_string(DeviceStore::for_device().file("codex-login-stash.json"))
+            .expect("the stash was published");
+        assert!(stash.contains("refresh-acct"), "{stash}");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(codex_auth_path()).unwrap()).unwrap(),
+            chatgpt_login("other")
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_an_unreadable_login_stash_is_never_overwritten() {
@@ -2613,6 +2928,7 @@ model_provider = "c"
                 row,
                 Some(crate::services::provider::EditorSave {
                     base,
+                    draft: None,
                     on_conflict: Default::default(),
                 }),
             )
@@ -2724,6 +3040,7 @@ model_provider = "c"
                 row,
                 Some(crate::services::provider::EditorSave {
                     base,
+                    draft: None,
                     on_conflict: Default::default(),
                 }),
             )
@@ -2784,6 +3101,163 @@ model_provider = "c"
         assert!(live.get("model_context_window").is_none());
     }
 
+    /// 打开编辑器之后客户端改了一个从 live 带进来的独有字段：用户没动它，保存时不收进行，
+    /// 也不把打开时的值写回去。live 里生效的 profile 选着路由表时，编辑和新增都照样能存。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_leaves_what_the_user_did_not_touch_to_the_client() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = CODEX_USER_LIVE.replace(
+            "model = \"gpt-a\"\n",
+            "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
+        );
+        seed_codex(
+            &format!("profile = \"work\"\n{live}\n[profiles.work]\nmodel_provider = \"custom\"\n"),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        let mut row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let base = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view")
+            .settings;
+        let changed =
+            codex_text().replace("model_verbosity = \"high\"", "model_verbosity = \"low\"");
+        fs::write(codex_config_path(), &changed).unwrap();
+        row.name = "renamed".into();
+        row.settings_config = base.clone();
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            None,
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save with the profile active");
+        let doc = codex_doc();
+        assert_eq!(
+            doc["model_verbosity"].as_str(),
+            Some("low"),
+            "{}",
+            codex_text()
+        );
+        assert_eq!(
+            doc["profiles"]["work"]["model_provider"].as_str(),
+            Some("custom")
+        );
+        let stored = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        assert!(!stored.settings_config["config"]
+            .as_str()
+            .unwrap()
+            .contains("model_verbosity"));
+
+        let draft = codex_row("c", "https://c.example/v1", "");
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &draft.settings_config, None)
+                .expect("draft view");
+        add_from_editor(
+            &state,
+            AppType::Codex,
+            draft,
+            view.settings.clone(),
+            view.settings,
+        )
+        .expect("add with the profile active");
+    }
+
+    /// 新增对话框打开之后，客户端改了一个从 live 带进来的独有字段：草稿里没有它，保存时不
+    /// 收进新供应商，切到新供应商再切走，客户端改的值还在。预设自己带的独有字段照样归新
+    /// 供应商。
+    #[tokio::test]
+    #[serial]
+    async fn codex_add_dialog_leaves_a_live_field_changed_after_opening_to_the_client() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(
+            &CODEX_USER_LIVE.replace(
+                "model = \"gpt-a\"\n",
+                "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
+            ),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let config_of = |id: &str| {
+            state
+                .db
+                .get_provider_by_id(id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config["config"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        let draft = codex_row(
+            "c",
+            "https://c.example/v1",
+            "model_auto_compact_token_limit = 90000",
+        );
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &draft.settings_config, None)
+                .expect("draft view");
+        let changed =
+            codex_text().replace("model_verbosity = \"high\"", "model_verbosity = \"low\"");
+        fs::write(codex_config_path(), changed).unwrap();
+        add_from_editor(
+            &state,
+            AppType::Codex,
+            draft,
+            view.settings.clone(),
+            view.settings,
+        )
+        .expect("add c");
+        let stored = config_of("c");
+        assert!(
+            stored.contains("model_auto_compact_token_limit = 90000")
+                && !stored.contains("model_verbosity"),
+            "{stored}"
+        );
+        ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
+        ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
+        assert_eq!(codex_doc()["model_verbosity"].as_str(), Some("low"));
+
+        // 旧的调用方不带草稿：退回和 live 里用户自己的值比（live 没被改过时分得清）。
+        let mut legacy = codex_row(
+            "d",
+            "https://d.example/v1",
+            "model_auto_compact_token_limit = 80000",
+        );
+        let base =
+            ProviderService::editor_view(&state, AppType::Codex, &legacy.settings_config, None)
+                .expect("legacy view")
+                .settings;
+        legacy.settings_config = base.clone();
+        ProviderService::add_from_editor(
+            &state,
+            AppType::Codex,
+            legacy,
+            true,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("add d");
+        let stored = config_of("d");
+        assert!(
+            stored.contains("model_auto_compact_token_limit = 80000")
+                && !stored.contains("model_verbosity"),
+            "{stored}"
+        );
+    }
+
     /// 编辑器里把路由表从 custom 改名成别的表：那张表归供应商（按内容收成 custom 表），
     /// 不当成全局设置写进 live，切走后表和里面的 Key 都不会留下。
     #[tokio::test]
@@ -2817,6 +3291,7 @@ model_provider = "c"
             row,
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
+                draft: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3095,6 +3570,7 @@ model_provider = "c"
             row,
             Some(crate::services::provider::EditorSave {
                 base: view.settings.clone(),
+                draft: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3136,6 +3612,7 @@ model_provider = "c"
             row,
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
+                draft: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3421,6 +3898,7 @@ model_provider = "c"
             row,
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
+                draft: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3465,7 +3943,8 @@ model_provider = "c"
         edited: Value,
         base: Value,
     ) -> Result<bool, AppError> {
-        row.settings_config = edited;
+        // 和新增对话框一样：`row` 是投影成 `base` 的草稿。
+        let draft = std::mem::replace(&mut row.settings_config, edited);
         ProviderService::add_from_editor(
             state,
             app,
@@ -3473,6 +3952,7 @@ model_provider = "c"
             true,
             Some(crate::services::provider::EditorSave {
                 base,
+                draft: Some(draft),
                 on_conflict: Default::default(),
             }),
         )

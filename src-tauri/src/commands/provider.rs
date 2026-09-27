@@ -91,12 +91,20 @@ pub async fn get_provider_editor_view(
     app: String,
     #[allow(non_snake_case)] settingsConfig: serde_json::Value,
     category: Option<String>,
+    #[allow(non_snake_case)] providerId: Option<String>,
 ) -> Result<EditorView, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
+        let category = ProviderService::editor_category(
+            state.inner(),
+            &app_type,
+            providerId.as_deref(),
+            category,
+        )
+        .map_err(|e| e.to_string())?;
         ProviderService::editor_view(
             state.inner(),
             app_type,

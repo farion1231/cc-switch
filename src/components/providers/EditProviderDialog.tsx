@@ -147,6 +147,7 @@ export function EditProviderDialog({
             appId,
             asRecord(provider.settingsConfig) ?? {},
             provider.category,
+            provider.id,
           );
           if (!cancelled) {
             setEditorView(view);

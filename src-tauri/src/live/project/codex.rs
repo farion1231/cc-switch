@@ -40,6 +40,8 @@ const BUILT_IN_IDS: &[&str] = &[
 ];
 /// 这几个 id 的表会让 Codex 0.148 起整份拒绝加载（bedrock 两个允许覆盖）。
 const RESERVED_TABLE_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
+/// 不写 `model_provider` 时 Codex 用的内置 provider。
+const DEFAULT_PROVIDER_ID: &str = "openai";
 const BEDROCK_IDS: &[&str] = &["amazon-bedrock", "amazon-bedrock-runtime"];
 /// 旧版把顶层 `openai_base_url` 归一成的表 id（`cc-switch`、`cc-switch-2`…）。
 const LEGACY_REROUTE_ID: &str = "cc-switch";
@@ -504,7 +506,7 @@ pub struct CodexConfigPatch {
     pub nested: Vec<(Vec<String>, TomlValue)>,
     /// 独有字段的目标值（含 `web_search`）。
     pub exclusive: Vec<(String, TomlValue)>,
-    /// 上一家带进来的独有字段：live 里的值还相同才删。
+    /// 上一家带进来的独有字段和它行里指定的模型目录指针：live 里的值还相同才删。
     pub outgoing: Vec<(String, TomlValue)>,
     pub route: RouteWrite,
     /// 指向 CC Switch 生成的模型目录（用户自己的指针不认领、不删除）。
@@ -552,6 +554,13 @@ fn is_cc_switch_catalog(value: &str) -> bool {
     Path::new(value).file_name().and_then(|name| name.to_str()) == Some(CATALOG_FILENAME)
 }
 
+/// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和独有字段
+/// 一样跟着这一家走：切走时 live 里的值还相同就删（见 [`CodexConfigPatch::outgoing`]），
+/// 否则第 1 步会把它当成用户的指针留下，之后每一家都用它的模型目录。
+pub fn row_catalog_pointer(top: &[(String, TomlValue)]) -> Option<&(String, TomlValue)> {
+    top.iter().find(|(key, _)| key == MODEL_CATALOG_JSON)
+}
+
 impl CodexConfigPatch {
     pub fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
         let target_top: Vec<&str> = self
@@ -563,7 +572,8 @@ impl CodexConfigPatch {
         let selector = self.route.selector();
         let root = doc.as_table_mut();
 
-        // 1. 清空顶层关键字段。目标里也有的留给后面原位改值；模型目录指针只认自己的。
+        // 1. 清空顶层关键字段。目标里也有的留给后面原位改值；模型目录指针只认自己的，
+        //    上一家行里指定的指针在第 3 步按值删。
         let doomed: Vec<String> = root
             .iter()
             .map(|(key, _)| key.to_string())
@@ -607,7 +617,7 @@ impl CodexConfigPatch {
             }
         }
 
-        // 3. 上一家带进来的独有字段：值还相同才删。
+        // 3. 上一家带进来的独有字段和模型目录指针：值还相同才删。
         for (key, value) in &self.outgoing {
             if target_top.contains(&key.as_str()) {
                 continue;
@@ -885,7 +895,9 @@ fn check_effective_route(doc: &DocumentMut, selector: Option<&str>) -> Result<()
     .into_iter()
     .find(|key| match (*key, non_empty_str(profile.get(key))) {
         (_, None) => false,
-        ("model_provider", Some(id)) => Some(id.as_str()) != selector,
+        // 顶层不写 model_provider 时 Codex 用内置的 `openai`：profile 显式选它，请求去的
+        // 还是官方卡要的地方。
+        ("model_provider", Some(id)) => id != selector.unwrap_or(DEFAULT_PROVIDER_ID),
         _ => true,
     });
     match overridden {

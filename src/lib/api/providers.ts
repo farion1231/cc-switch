@@ -46,6 +46,8 @@ export type EditorConflictPolicy = "refuse" | "keepMine" | "keepTheirs";
 /** 编辑器保存随供应商一起提交：打开时显示的完整配置，用来三方比较。 */
 export interface ProviderEditorSave {
   base: Record<string, unknown>;
+  /** 新增对话框：投影成 `base` 的那份草稿（预设或模板）。后端按它区分预设带的和从 live 带进来的字段。 */
+  draft?: Record<string, unknown>;
   onConflict?: EditorConflictPolicy;
 }
 
@@ -104,16 +106,18 @@ export const providersApi = {
     });
   },
 
-  /** 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的编辑器显示内容。`settingsConfig` 是供应商的行，新增时传空对象。 */
+  /** 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的编辑器显示内容。`settingsConfig` 是供应商的行，新增时传空对象。编辑已有供应商时传 `providerId`：后端按库里那一行认官方卡，和切换的判断一致。 */
   async getEditorView(
     appId: AppId,
     settingsConfig: Record<string, unknown>,
     category?: string,
+    providerId?: string,
   ): Promise<ProviderEditorView> {
     return await invoke("get_provider_editor_view", {
       app: appId,
       settingsConfig,
       ...(category ? { category } : {}),
+      ...(providerId ? { providerId } : {}),
     });
   },
 

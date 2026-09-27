@@ -31,9 +31,9 @@ use crate::error::AppError;
 use crate::live::engine::{digest, lock_app, read_current, DeviceStore, LiveFile};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
-    official_mirror_table, proxy_route_table, requires_openai_auth, CodexConfigPatch,
-    CodexProjection, KnownTable, Route, RouteAuth, RouteWrite, RowInput, ROUTE_ID,
-    WEB_SEARCH_DISABLED,
+    official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
+    CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth, RouteWrite, RowInput,
+    ROUTE_ID, WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{self, FileChange, OperationReport};
@@ -196,11 +196,15 @@ fn exclusive_of(provider: &Provider, projection: &CodexProjection) -> Vec<(Strin
     exclusive
 }
 
-/// live 现在的独有字段：切走时值还相同就删。
-fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> {
+/// live 现在对应的那一家带进来的独有字段和行里指定的模型目录指针：切走时值还相同就删。
+pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> {
     match owner {
         Owner::Provider(provider) => match project(provider) {
-            Ok(projection) => exclusive_of(provider, &projection),
+            Ok(projection) => {
+                let mut fields = exclusive_of(provider, &projection);
+                fields.extend(row_catalog_pointer(&projection.top).cloned());
+                fields
+            }
             Err(err) => {
                 log::warn!(
                     "无法投影 Codex 供应商 {} 的独有字段，切走时不清理它们: {err}",
@@ -564,6 +568,7 @@ fn contract_of(
         exclusive: config
             .exclusive
             .iter()
+            .chain(row_catalog_pointer(&config.top))
             .map(|(key, value)| (key.clone(), Value::String(value_literal(value))))
             .collect(),
     }
@@ -842,12 +847,4 @@ pub(crate) fn write_direct(
 pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
     let target = Target::Direct(Some(provider));
     plan(db, &Owner::None, &target, &Prepared::default()).map(|_| ())
-}
-
-/// 上一次 Codex 写入还有没补完的部分（文件已经发布、状态还没落定）。
-pub(crate) fn has_pending() -> bool {
-    crate::mode::state::pending(&DeviceStore::for_device(), app())
-        .ok()
-        .flatten()
-        .is_some()
 }
