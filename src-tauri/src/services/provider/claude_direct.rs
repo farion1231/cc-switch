@@ -81,6 +81,9 @@ pub(crate) fn run(
 ) -> Result<OperationReport, AppError> {
     let guard = lock_app(app());
     let store = DeviceStore::for_device();
+    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
+    // 补丁是按调用方读到的指针算的（要删上一家的独有字段）：先补完上一次的操作。
+    operation::recover_before_write(&store, &guard, &commit)?;
     let changes: Vec<FileChange<'_>> = patch
         .into_iter()
         .map(|patch| FileChange {
@@ -88,7 +91,5 @@ pub(crate) fn run(
             patch,
         })
         .collect();
-    operation::run(&store, &guard, op, &changes, target, &|target| {
-        operation::commit_target(db, &store, app(), target)
-    })
+    operation::run(&store, &guard, op, &changes, target, &commit)
 }

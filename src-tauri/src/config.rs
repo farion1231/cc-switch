@@ -428,7 +428,9 @@ impl StagedWrite {
 
     /// 用临时文件替换目标（失败时删掉临时文件）。
     pub fn commit(self) -> Result<(), AppError> {
-        commit_staged(&self.tmp, &self.path)
+        commit_staged(&self.tmp, &self.path).inspect_err(|_| {
+            let _ = fs::remove_file(&self.tmp);
+        })
     }
 }
 
@@ -520,6 +522,9 @@ pub(crate) fn stage_write(
 }
 
 /// 原子写的后半步：用 `tmp` 替换 `path`。崩溃恢复也用它提交上次留下的临时文件。
+///
+/// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
+/// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
 pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
     #[cfg(windows)]
     {
@@ -591,7 +596,6 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
 
         if !completed {
             let source = last_error.unwrap_or_else(std::io::Error::last_os_error);
-            let _ = fs::remove_file(tmp);
             return Err(AppError::IoContext {
                 context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
                 source,
@@ -602,7 +606,6 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
     #[cfg(not(windows))]
     {
         if let Err(source) = fs::rename(tmp, path) {
-            let _ = fs::remove_file(tmp);
             return Err(AppError::IoContext {
                 context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
                 source,
@@ -641,6 +644,24 @@ mod tests {
     fn atomic_write_replaces_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         assert_atomic_write_replaces_existing_file(dir.path());
+    }
+
+    #[test]
+    fn a_failed_replace_keeps_the_staged_file_for_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        // 目标是个非空目录：替换一定失败。
+        let path = dir.path().join("target");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("occupied"), b"x").unwrap();
+        let staged = stage_write(&path, b"new contents", Some(0o600), false).unwrap();
+        let tmp = staged.tmp_path().to_path_buf();
+
+        assert!(commit_staged(&tmp, &path).is_err());
+        assert_eq!(std::fs::read(&tmp).unwrap(), b"new contents");
+
+        // 一次性的原子写不留临时文件。
+        assert!(staged.commit().is_err());
+        assert!(!tmp.exists());
     }
 
     #[cfg(windows)]

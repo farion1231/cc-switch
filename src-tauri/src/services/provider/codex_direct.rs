@@ -469,7 +469,17 @@ pub(crate) fn plan(
         catalog: catalog.is_some(),
         retired: facts.retired,
     };
-    let contract = contract_of(target, &config, catalog.as_deref(), prepared);
+    let official_login = match &auth {
+        AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),
+        _ => None,
+    };
+    let contract = contract_of(
+        target,
+        &config,
+        catalog.as_deref(),
+        prepared,
+        official_login.as_deref(),
+    );
     Ok(Planned {
         config,
         stamp,
@@ -497,12 +507,14 @@ fn table_text(table: &Table) -> String {
 }
 
 /// 代理契约：路由供应商在客户端那一侧的全部要求。摘要相同，换路由时客户端文件就不读
-/// 也不写。`requires_openai_auth` 跟着盘上的登录走，不算进契约。
+/// 也不写。`requires_openai_auth` 跟着盘上的登录走，不算进契约；官方路由要的是谁的登录
+/// （托管账号，或 `official_login`：没绑托管账号的官方卡行里的账号）算进去。
 fn contract_of(
     target: &Target<'_>,
     config: &CodexConfigPatch,
     catalog: Option<&[u8]>,
     prepared: &Prepared,
+    official_login: Option<&str>,
 ) -> Contract {
     let base_url = match target {
         Target::Proxy { base_url, .. } => *base_url,
@@ -540,6 +552,7 @@ fn contract_of(
         "table": table,
         "catalog": digest(catalog),
         "managed": prepared.target_login.as_ref().map(|(account, _)| account),
+        "login": official_login,
     });
     let key = digest(Some(
         &serde_json::to_vec(&parts).expect("contract parts serialize"),
@@ -556,21 +569,43 @@ fn contract_of(
     }
 }
 
-fn load_stash(store: &DeviceStore, official_logins: &[Value]) -> (LoginStash, Option<Vec<u8>>) {
+/// 读登录暂存。
+struct LoadedStash {
+    stash: LoginStash,
+    pre: Option<Vec<u8>>,
+    /// 文件在但解析不了（截断、半截拷贝）：里面可能还有登录，不能覆盖。按空的用，这次
+    /// 要往里存登录就停下。
+    unreadable: Option<String>,
+}
+
+fn load_stash(store: &DeviceStore, official_logins: &[Value]) -> LoadedStash {
     let path = store.file(STASH_FILENAME);
     let pre = read_current(&path).ok().flatten();
-    let stash = match pre.as_deref().map(serde_json::from_slice::<LoginStash>) {
-        Some(Ok(stash)) => LoginStash {
-            initialized: true,
-            ..stash
-        },
+    let (stash, unreadable) = match pre.as_deref().map(serde_json::from_slice::<LoginStash>) {
+        Some(Ok(stash)) => (
+            LoginStash {
+                initialized: true,
+                ..stash
+            },
+            None,
+        ),
         Some(Err(err)) => {
-            log::warn!("Codex 登录暂存无法解析，重新开始: {err}");
-            LoginStash::default()
+            log::warn!("Codex 登录暂存 {} 无法解析: {err}", path.display());
+            (
+                LoginStash {
+                    initialized: true,
+                    ..LoginStash::default()
+                },
+                Some(err.to_string()),
+            )
         }
-        None => LoginStash::seeded_from_rows(official_logins),
+        None => (LoginStash::seeded_from_rows(official_logins), None),
     };
-    (stash, pre)
+    LoadedStash {
+        stash,
+        pre,
+        unreadable,
+    }
 }
 
 fn guarded(pre: Option<&[u8]>, then: WholeFile) -> Guarded {
@@ -603,6 +638,10 @@ pub(crate) fn run_with_edits(
 ) -> Result<OperationReport, AppError> {
     let guard = lock_app(app());
     let store = DeviceStore::for_device();
+    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
+    // 先补完上一次的操作，再读 auth.json 和登录暂存：补完会改写它们，按补完前读到的内容
+    // 写下去会被当成外部修改；`owner` 也是调用方按补完前的指针定的。
+    operation::recover_before_write(&store, &guard, &commit)?;
 
     // 切走的托管账号：采纳之后 CLI 又刷新了就停下，免得删掉新 token。
     if let Some((account, outgoing)) = &prepared.outgoing {
@@ -644,7 +683,11 @@ pub(crate) fn run_with_edits(
         .as_ref()
         .is_some_and(|(_, guard)| matches!(guard, CodexLiveAuthSwitchGuard::MissingAccount));
 
-    let (stash, stash_pre) = load_stash(&store, &planned.official_logins);
+    let LoadedStash {
+        stash,
+        pre: stash_pre,
+        unreadable: stash_unreadable,
+    } = load_stash(&store, &planned.official_logins);
     let preserve = crate::settings::preserve_codex_official_auth_on_switch();
     let target = match &planned.auth {
         AuthGoal::ThirdParty => AuthTarget::ThirdParty { preserve },
@@ -660,6 +703,22 @@ pub(crate) fn run_with_edits(
         target,
         stash,
     });
+    // 暂存坏了只当它是空的读；要往里存登录（`auth.json` 里的登录要被删掉或换掉）时照写
+    // 会覆盖掉里面原有的登录，停下。
+    if let (Some(err), Some(_)) = (&stash_unreadable, &auth_plan.stash) {
+        let path = store.file(STASH_FILENAME);
+        return Err(AppError::localized(
+            "codex.login_stash_unreadable",
+            format!(
+                "Codex 登录暂存 {} 无法解析（{err}）。这次切换要把 auth.json 里的登录存进去，照写会覆盖暂存里原有的登录。请修复或移走这个文件后重试。本次没有写入任何文件",
+                path.display()
+            ),
+            format!(
+                "The Codex login stash {} cannot be parsed ({err}). This switch needs to save the login from auth.json into it, and writing it would overwrite the logins it already holds. Repair or move the file away and try again. Nothing was written",
+                path.display()
+            ),
+        ));
+    }
 
     // Codex 把登录存在哪由 `cli_auth_credentials_store` 决定：只存 auth.json 时看它；
     // 存在系统钥匙串（keyring、auto）或认不出时看不到登录，直连按保留登录开关、代理按
@@ -761,9 +820,7 @@ pub(crate) fn run_with_edits(
         });
     }
 
-    operation::run(&store, &guard, op, &changes, pending, &|target| {
-        operation::commit_target(db, &store, app(), target)
-    })
+    operation::run(&store, &guard, op, &changes, pending, &commit)
 }
 
 /// 直连写入：`prepare` → `plan` → `run`。

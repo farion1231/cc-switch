@@ -4921,7 +4921,7 @@ impl ProviderService {
         let app_type = AppType::Codex;
         // 和切换互斥：等着的切换不能看到只存了一半的托管账号绑定。
         let _switch_guard =
-            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
         let current = crate::mode::current::provider_for(
             &state.db,
             &app_type,
@@ -5065,7 +5065,7 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         let _switch_guard =
-            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5146,7 +5146,7 @@ impl ProviderService {
         kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
         let _switch_guard =
-            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5352,7 +5352,7 @@ impl ProviderService {
         // themselves.
         let codex_update_switch_guard = if matches!(app_type, AppType::Codex) {
             Some(futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+                crate::mode::controller::lock_settled(state, &app_type),
             ))
         } else {
             None
@@ -5790,11 +5790,12 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
-        // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁之后再读
-        // 模式，刚进入代理的应用不会被一次直连写入覆盖。
+        // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
+        // 没做完的写入之后再读模式和指针：刚进入代理的应用不会被一次直连写入覆盖，上次
+        // 失败后重试也按补完后的指针删上一家的独有字段。
         let _switch_guard = if app_type.supports_local_proxy() {
             Some(futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+                crate::mode::controller::lock_settled(state, &app_type),
             ))
         } else {
             None

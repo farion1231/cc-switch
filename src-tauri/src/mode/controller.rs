@@ -19,6 +19,7 @@
 //! 写锁在更里面拿，两把锁不反向嵌套。
 
 use serde_json::{json, Value};
+use tokio::sync::OwnedMutexGuard;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -438,11 +439,22 @@ fn require_proxy_app(app: &AppType) -> Result<(), String> {
     }
 }
 
+/// 拿这个应用的代理切换锁，再补完它上一次没做完的写入。之后读到的模式、路由和直连
+/// 指针都是落定过的。写入函数在写锁里发现还有没补完的操作会补完后拒绝这次写入（见
+/// `operation::recover_before_write`），入口先补完，用户就不用重试一次。
+pub(crate) async fn lock_settled(state: &AppState, app: &AppType) -> OwnedMutexGuard<()> {
+    let guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+    if let Err(error) = operation::settle(&state.db, app.as_str()) {
+        log::warn!("补完 {} 上一次没做完的写入失败: {error}", app.as_str());
+    }
+    guard
+}
+
 /// 进入代理模式。
 pub async fn enter(state: &AppState, app: &AppType) -> Result<(), String> {
     require_proxy_app(app)?;
     let result = {
-        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        let _guard = lock_settled(state, app).await;
         enter_locked(state, app, op::ENTER).await
     };
     if result.is_err() {
@@ -504,7 +516,7 @@ async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provide
 pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
     require_proxy_app(app)?;
     {
-        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        let _guard = lock_settled(state, app).await;
         exit_locked(state, app, false)?;
     }
     if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
@@ -558,7 +570,7 @@ async fn stop_server_if_unused(state: &AppState) {
 pub async fn exit_all(state: &AppState) -> Result<(), String> {
     let mut errors = Vec::new();
     for app in PROXY_APPS {
-        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        let _guard = lock_settled(state, &app).await;
         if let Err(error) = exit_locked(state, &app, false) {
             errors.push(format!("{}: {error}", app.as_str()));
         }
@@ -582,7 +594,7 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 /// 代理服务。
 pub async fn detach_all(state: &AppState) {
     for app in PROXY_APPS {
-        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        let _guard = lock_settled(state, &app).await;
         if let Err(error) = exit_locked(state, &app, true) {
             log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
         }
@@ -635,7 +647,7 @@ pub async fn switch_route(
     let target =
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     reject_unsupported_official(app, &target)?;
-    let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+    let _guard = lock_settled(state, app).await;
     switch_route_locked(state, app, &target).await
 }
 
@@ -666,7 +678,7 @@ pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), 
 }
 
 pub async fn resync_route(state: &AppState, app: &AppType) -> Result<(), String> {
-    let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+    let _guard = lock_settled(state, app).await;
     resync_route_locked(state, app).await
 }
 
@@ -677,7 +689,7 @@ pub async fn record_failover_route(
     app: &AppType,
     provider_id: &str,
 ) -> Result<bool, String> {
-    let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+    let _guard = lock_settled(state, app).await;
     let mode = current::mode_state(app);
     if !mode.is_proxy() || mode.proxy_route.as_deref() == Some(provider_id) {
         return Ok(false);
@@ -714,7 +726,7 @@ pub async fn record_failover_route(
 /// 为准，它还没有值就按 `enabled` 定。
 pub async fn startup(state: &AppState) {
     for app in PROXY_APPS {
-        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        let _guard = lock_settled(state, &app).await;
         if let Err(error) = startup_app(state, &app).await {
             log::error!("启动时恢复 {} 的模式失败: {error}", app.as_str());
         }
@@ -2328,6 +2340,177 @@ model_provider = "c"
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
         ProviderService::switch(&state, AppType::Codex, &official.id).expect("to official");
         assert_eq!(login(), None, "logging out sticks");
+    }
+
+    fn codex_login_on_disk() -> Value {
+        crate::config::read_json_file(&codex_auth_path()).unwrap()
+    }
+
+    /// 官方 → a：删掉 auth.json 之后失败。登录只在暂存的临时文件里，指针没动。
+    async fn codex_switch_interrupted_after_auth_json() -> (AppState, Provider) {
+        set_preservation(false);
+        seed_codex(CODEX_USER_LIVE, Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, b, official.clone()], &official.id).await;
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("official");
+        failpoint::crash_at(Some("published:0"));
+        let failed = ProviderService::switch(&state, AppType::Codex, "a");
+        failpoint::crash_at(None);
+        assert!(failed.is_err());
+        assert!(!codex_auth_path().exists());
+        assert_eq!(
+            direct(&state, &AppType::Codex).as_deref(),
+            Some(official.id.as_str())
+        );
+        (state, official)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_retry_after_a_failed_switch_finishes_it_first() {
+        let _home = Home::new();
+        let (state, official) = codex_switch_interrupted_after_auth_json().await;
+
+        // 重试切到 b：先补完到 a，再按补完后的 auth.json 和暂存从 a 切到 b。
+        ProviderService::switch(&state, AppType::Codex, "b").expect("retry");
+        assert_eq!(direct(&state, &AppType::Codex).as_deref(), Some("b"));
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-b"));
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("to official");
+        assert_eq!(codex_login_on_disk(), chatgpt_login("acct"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_an_interrupted_switch_keeps_the_login_when_codex_changed_config_toml() {
+        let _home = Home::new();
+        let (state, official) = codex_switch_interrupted_after_auth_json().await;
+        // 补完之前 Codex 自己改了 config.toml（信任了一个新项目）。
+        let mut text = codex_text();
+        text.push_str("\n[projects.\"/new\"]\ntrust_level = \"trusted\"\n");
+        fs::write(codex_config_path(), &text).unwrap();
+
+        crate::mode::operation::recover_on_startup(&state.db);
+        assert_eq!(
+            direct(&state, &AppType::Codex).as_deref(),
+            Some("a"),
+            "the pointer follows the auth.json already deleted"
+        );
+        assert_eq!(codex_text(), text, "Codex's own change is left alone");
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("to official");
+        assert_eq!(
+            codex_login_on_disk(),
+            chatgpt_login("acct"),
+            "the login made it into the stash"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_an_unreadable_login_stash_is_never_overwritten() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex(CODEX_USER_LIVE, Some(&chatgpt_login("acct")));
+        let stash = DeviceStore::for_device().file("codex-login-stash.json");
+        fs::create_dir_all(stash.parent().unwrap()).unwrap();
+        let broken = br#"{"logins":{"account:old":{"tokens":{"refresh_token":"salvageable"}}},"#;
+        fs::write(&stash, broken).unwrap();
+        let [a, b] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, b, official.clone()], &official.id).await;
+
+        // 切到第三方要把 auth.json 里的登录存进暂存：停下，什么都不写。
+        let err = ProviderService::switch(&state, AppType::Codex, "a").expect_err("refused");
+        assert!(err.to_string().contains("codex-login-stash.json"), "{err}");
+        assert_eq!(fs::read(&stash).unwrap(), broken);
+        assert_eq!(codex_login_on_disk(), chatgpt_login("acct"));
+        assert_eq!(codex_text(), CODEX_USER_LIVE);
+
+        // 用不着暂存的切换照常。
+        fs::remove_file(codex_auth_path()).unwrap();
+        ProviderService::switch(&state, AppType::Codex, "b").expect("nothing to stash");
+        assert_eq!(fs::read(&stash).unwrap(), broken);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_routes_for_different_accounts_swap_the_login() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex("", Some(&chatgpt_login("acct-a")));
+        // 两张没绑托管账号的官方卡，行里各存着一个账号（旧版回填的，暂存第一次建立时
+        // 收进去）。
+        let official = |id: &str| {
+            let mut row = Provider::with_id(
+                id.to_string(),
+                id.to_uppercase(),
+                json!({ "auth": chatgpt_login(id), "config": "" }),
+                None,
+            );
+            row.category = Some("official".to_string());
+            row
+        };
+        let state = state_with(
+            AppType::Codex,
+            &[official("acct-a"), official("acct-b")],
+            "acct-a",
+        )
+        .await;
+        let account = || codex_login_on_disk()["tokens"]["account_id"].clone();
+        ProviderService::switch(&state, AppType::Codex, "acct-a").expect("direct a");
+        assert_eq!(account(), json!("acct-a"));
+        ProviderService::switch(&state, AppType::Codex, "acct-b").expect("direct b");
+        assert_eq!(
+            account(),
+            json!("acct-b"),
+            "the direct switch swaps accounts"
+        );
+        ProviderService::switch(&state, AppType::Codex, "acct-a").expect("direct a again");
+
+        enter(&state, &AppType::Codex).await.expect("enter");
+        switch_route(&state, &AppType::Codex, "acct-b")
+            .await
+            .expect("route to b");
+        assert_eq!(
+            account(),
+            json!("acct-b"),
+            "Codex signs in as the route's account"
+        );
+        switch_route(&state, &AppType::Codex, "acct-a")
+            .await
+            .expect("route back to a");
+        assert_eq!(account(), json!("acct-a"));
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_a_retry_after_a_failed_switch_removes_the_failed_targets_exclusive_fields() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let a = claude("a", "https://a.example", json!({}));
+        let b = claude(
+            "b",
+            "https://b.example",
+            json!({ "CLAUDE_CODE_DISABLE_ARTIFACT": "1" }),
+        );
+        let c = claude("c", "https://c.example", json!({}));
+        let state = state_with(AppType::Claude, &[a, b, c], "a").await;
+
+        // 切到 b：settings.json 已经写好，指针落定前失败。
+        failpoint::crash_at(Some("published:0"));
+        let failed = ProviderService::switch(&state, AppType::Claude, "b");
+        failpoint::crash_at(None);
+        assert!(failed.is_err());
+        assert_eq!(settings()["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], "1");
+        assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("a"));
+
+        // 重试切到 c：先补完到 b，再按 b 删它带进来的独有字段。
+        ProviderService::switch(&state, AppType::Claude, "c").expect("retry");
+        assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("c"));
+        let env = &settings()["env"];
+        assert_eq!(env["ANTHROPIC_BASE_URL"], "https://c.example");
+        assert!(env.get("CLAUDE_CODE_DISABLE_ARTIFACT").is_none(), "{env}");
     }
 
     #[tokio::test]

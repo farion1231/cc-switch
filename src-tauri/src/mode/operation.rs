@@ -6,15 +6,19 @@
 //!   应用或下次启动时按 pending 补完剩下的文件和状态（指针等）。
 //!
 //! 只调换「先写文件、后改指针」的顺序不够：文件写成 B、指针更新失败，照样不一致。
-//! 恢复规则（按文件比对当前内容和写前、写后的 hash）：
-//! - 每个文件都还是写前内容：还没开始发布，丢弃；
-//! - 每个文件都是写前或写后内容：前滚，用备好的临时文件补完剩下的文件，再落定状态；
-//! - 有文件两者都不是：已被外部修改，放弃这次操作，不自动处理。
+//! 恢复规则（按文件比对当前内容和写前、写后的 hash。文件按顺序发布，有一个是写后内容，
+//! 就说明已经开始发布了）：
+//! - 没有文件是写后内容：还没开始发布，丢弃。有文件被外部改过也一样，什么都不动；
+//! - 已经开始发布：用备好的临时文件补完还是写前内容的文件，再落定状态。被外部改过
+//!   （两者都不是）的文件以外部为准，不再动，状态照样落定：停在半路的话，已经发布的
+//!   文件和指针、模式就对不上了。比如 Codex 已经删了 `auth.json`、登录还没写进暂存，
+//!   指针还指着官方卡，下一次切换会当成用户在官方卡上登出了，把登录一起忘掉。
 
 use std::fs;
 use std::path::PathBuf;
 
 use crate::config::{commit_staged, delete_file};
+use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::{
     digest, ensure_first_write_backup, plan, plan_from, read_current, stage, AppWriteGuard,
@@ -42,7 +46,9 @@ pub enum RecoveryOutcome {
     Discarded,
     /// 补完了剩下的文件和状态。
     RolledForward,
-    /// 文件被外部改过（或临时文件丢了），放弃这次操作。
+    /// 补完了其余文件和状态；这些文件被外部改过（或临时文件不可用），保持原样。
+    RolledForwardExcept { paths: Vec<PathBuf> },
+    /// 还没开始发布，这些文件就被外部改过了：丢弃这次操作，什么都没改。
     Abandoned { paths: Vec<PathBuf> },
 }
 
@@ -120,7 +126,14 @@ pub fn run(
             let current = read_current(&current_planned.file.path)?;
             if digest(current.as_deref()) == current_planned.pre {
                 ensure_first_write_backup(store, &current_planned.file.path, current.as_deref())?;
-                publish(&pending.files[index])?;
+                // 替换失败（文件被占用、只读）时临时文件还在：已发布过就留着 pending 等前滚，
+                // 还没发布过就整体放弃（什么都没改）。
+                if let Err(err) = publish(&pending.files[index]) {
+                    if !published_any {
+                        drop_unpublished(store, guard, &pending);
+                    }
+                    return Err(err);
+                }
                 published_any = true;
                 report.changed.push(current_planned.file.path.clone());
                 break;
@@ -142,10 +155,7 @@ pub fn run(
                 Ok(replanned) => replanned,
                 Err(err) => {
                     if !published_any {
-                        discard_pending_files(&pending);
-                        if let Err(clear) = state::set_pending(store, guard.app(), None) {
-                            log::warn!("清除写前意图失败: {clear}");
-                        }
+                        drop_unpublished(store, guard, &pending);
                     }
                     return Err(err.into());
                 }
@@ -204,45 +214,100 @@ pub fn recover(
             At::Elsewhere
         });
     }
+    let elsewhere = || -> Vec<PathBuf> {
+        pending
+            .files
+            .iter()
+            .zip(&positions)
+            .filter(|(_, at)| matches!(at, At::Elsewhere))
+            .map(|(file, _)| file.path.clone())
+            .collect()
+    };
 
-    let changed_elsewhere: Vec<PathBuf> = pending
-        .files
-        .iter()
-        .zip(&positions)
-        .filter(|(_, at)| matches!(at, At::Elsewhere))
-        .map(|(file, _)| file.path.clone())
-        .collect();
-    if !changed_elsewhere.is_empty() {
-        return abandon(store, guard, &pending, changed_elsewhere);
-    }
-
-    if positions.iter().all(|at| matches!(at, At::Pre)) {
+    if !positions.iter().any(|at| matches!(at, At::Planned)) {
         discard_pending_files(&pending);
         state::set_pending(store, guard.app(), None)?;
-        log::info!("[{}] 丢弃未开始发布的操作 {}", guard.app(), pending.op);
-        return Ok(Some(RecoveryOutcome::Discarded));
+        let paths = elsewhere();
+        if paths.is_empty() {
+            log::info!("[{}] 丢弃未开始发布的操作 {}", guard.app(), pending.op);
+            return Ok(Some(RecoveryOutcome::Discarded));
+        }
+        log::warn!(
+            "[{}] 上次未完成的操作 {} 还没开始发布，这些文件就被外部修改了，丢弃: {paths:?}",
+            guard.app(),
+            pending.op
+        );
+        return Ok(Some(RecoveryOutcome::Abandoned { paths }));
     }
 
+    let mut skipped = elsewhere();
     for (file, at) in pending.files.iter().zip(&positions) {
         if !matches!(at, At::Pre) {
             continue;
         }
-        if let Some(staged) = &file.staged {
-            let staged = read_current(staged)?;
-            if digest(staged.as_deref()) != file.planned {
-                return abandon(store, guard, &pending, vec![file.path.clone()]);
-            }
-        } else if file.planned.is_some() {
-            return abandon(store, guard, &pending, vec![file.path.clone()]);
+        let staged_ok = match &file.staged {
+            Some(staged) => digest(read_current(staged)?.as_deref()) == file.planned,
+            None => file.planned.is_none(),
+        };
+        if !staged_ok {
+            skipped.push(file.path.clone());
+            continue;
         }
         let current = read_current(&file.path)?;
         ensure_first_write_backup(store, &file.path, current.as_deref())?;
         publish(file)?;
     }
     commit_target(&pending.target)?;
+    // 发布过的临时文件已经换进去了；剩下的（被外部改过、内容不对）不再有用。
+    discard_pending_files(&pending);
     state::set_pending(store, guard.app(), None)?;
-    log::info!("[{}] 已补完上次未完成的操作 {}", guard.app(), pending.op);
-    Ok(Some(RecoveryOutcome::RolledForward))
+    if skipped.is_empty() {
+        log::info!("[{}] 已补完上次未完成的操作 {}", guard.app(), pending.op);
+        return Ok(Some(RecoveryOutcome::RolledForward));
+    }
+    log::warn!(
+        "[{}] 已补完上次未完成的操作 {}；这些文件被外部修改过或临时文件不可用，保持原样: {skipped:?}",
+        guard.app(),
+        pending.op
+    );
+    Ok(Some(RecoveryOutcome::RolledForwardExcept {
+        paths: skipped,
+    }))
+}
+
+/// 读指针、模式或「live 现在归谁」之前调用：先补完这个应用上一次没做完的操作，读到的
+/// 才是落定过的状态。调用方不能持有这个应用的写锁（不可重入）；要拿代理切换锁时先拿它。
+pub fn settle(db: &Database, app: &str) -> Result<Option<RecoveryOutcome>, AppError> {
+    let store = DeviceStore::for_device();
+    let guard = crate::live::engine::lock_app(app);
+    recover(&store, &guard, &|target| {
+        commit_target(db, &store, app, target)
+    })
+}
+
+/// 应用的写入函数拿到写锁后、读任何文件之前调用。
+///
+/// 调用方在拿锁之前按指针算好了 live 现在归谁、要删哪些独有字段。这时才补完上一次的
+/// 操作，指针、模式和文件可能已经变了，照旧写下去会留下上一家的独有字段、把刚补完的
+/// 文件当成外部修改。所以补完过就停下，让调用方按新状态重来（入口处先调 [`settle`]
+/// 的不会走到这一步）。
+pub fn recover_before_write(
+    store: &DeviceStore,
+    guard: &AppWriteGuard,
+    commit_target: CommitTarget<'_>,
+) -> Result<(), AppError> {
+    match recover(store, guard, commit_target)? {
+        // 丢弃的操作什么都没改（指针、模式都没动）。
+        None | Some(RecoveryOutcome::Discarded | RecoveryOutcome::Abandoned { .. }) => Ok(()),
+        Some(outcome) => {
+            log::info!("[{}] 写入前补完了上一次的操作: {outcome:?}", guard.app());
+            Err(AppError::localized(
+                "live.recovered_before_write",
+                "上一次没做完的写入刚刚补完，当前状态已经变了。这次什么都没改，请重新操作一次",
+                "An unfinished write from last time was just completed, so the current state has changed. Nothing was changed this time; please try again",
+            ))
+        }
+    }
 }
 
 /// 启动时补完所有应用未完成的操作。
@@ -315,7 +380,12 @@ pub fn recover_on_startup(db: &crate::database::Database) {
     }) {
         match outcome {
             Ok(RecoveryOutcome::Abandoned { paths }) => {
-                log::warn!("[{app}] 上次未完成的写入无法补完，这些文件已被外部修改: {paths:?}")
+                log::warn!("[{app}] 上次未完成的写入还没开始就有文件被外部修改，已丢弃: {paths:?}")
+            }
+            Ok(RecoveryOutcome::RolledForwardExcept { paths }) => {
+                log::warn!(
+                    "[{app}] 上次未完成的写入已补完，这些文件被外部修改过，保持原样: {paths:?}"
+                )
             }
             Ok(outcome) => log::info!("[{app}] 上次未完成的写入: {outcome:?}"),
             Err(err) => log::error!("[{app}] 补完上次未完成的写入失败: {err}"),
@@ -358,21 +428,12 @@ fn discard_pending_files(pending: &Pending) {
     }
 }
 
-fn abandon(
-    store: &DeviceStore,
-    guard: &AppWriteGuard,
-    pending: &Pending,
-    paths: Vec<PathBuf>,
-) -> Result<Option<RecoveryOutcome>, AppError> {
+/// 还没发布过任何文件时放弃：删掉临时文件和 pending，什么都没改。
+fn drop_unpublished(store: &DeviceStore, guard: &AppWriteGuard, pending: &Pending) {
     discard_pending_files(pending);
-    state::set_pending(store, guard.app(), None)?;
-    log::warn!(
-        "[{}] 上次未完成的操作 {} 无法补完，这些文件已被外部修改: {:?}",
-        guard.app(),
-        pending.op,
-        paths
-    );
-    Ok(Some(RecoveryOutcome::Abandoned { paths }))
+    if let Err(err) = state::set_pending(store, guard.app(), None) {
+        log::warn!("清除写前意图失败: {err}");
+    }
 }
 
 /// 一直冲突：还没发布过任何文件就整体放弃（什么都没改）；已经发布过就留着 pending
@@ -385,10 +446,7 @@ fn give_up_on_conflict(
     path: &std::path::Path,
 ) -> AppError {
     if !published_any {
-        discard_pending_files(pending);
-        if let Err(err) = state::set_pending(store, guard.app(), None) {
-            log::warn!("清除写前意图失败: {err}");
-        }
+        drop_unpublished(store, guard, pending);
     }
     LiveWriteError::Conflict {
         path: path.to_path_buf(),
@@ -714,10 +772,35 @@ mod tests {
     }
 
     #[test]
-    fn a_file_changed_after_a_crash_is_left_alone() {
+    fn a_file_changed_after_publishing_started_is_left_alone_and_the_rest_rolls_forward() {
         let fx = Fixture::new();
         let pointer = RefCell::new(None);
         failpoint::crash_at(Some("published:0"));
+        switch(&fx, &pointer).expect_err("crash");
+        fs::write(&fx.b, "{\"key\": \"user edit\"}").unwrap();
+
+        assert_eq!(
+            recover_now(&fx, &pointer),
+            Some(RecoveryOutcome::RolledForwardExcept {
+                paths: vec![fx.b.clone()]
+            })
+        );
+        assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "new"}));
+        assert_eq!(fx.read(&fx.b), json!({"key": "user edit"}));
+        assert_eq!(
+            *pointer.borrow(),
+            Some("B".into()),
+            "the target follows the files already published"
+        );
+        assert!(fx.temp_files().is_empty());
+        assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
+    }
+
+    #[test]
+    fn a_file_changed_before_anything_was_published_discards_the_operation() {
+        let fx = Fixture::new();
+        let pointer = RefCell::new(None);
+        failpoint::crash_at(Some("pending"));
         switch(&fx, &pointer).expect_err("crash");
         fs::write(&fx.b, "{\"key\": \"user edit\"}").unwrap();
 
@@ -727,8 +810,200 @@ mod tests {
                 paths: vec![fx.b.clone()]
             })
         );
+        assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "old"}));
         assert_eq!(fx.read(&fx.b), json!({"key": "user edit"}));
         assert_eq!(*pointer.borrow(), None, "target is not committed");
+        assert!(fx.temp_files().is_empty());
+        assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
+    }
+
+    /// 放弃的时候不能连带丢掉还没发布的文件：Codex 删掉 `auth.json` 之后，登录只在暂存
+    /// 的临时文件里。
+    #[test]
+    fn files_still_waiting_to_be_published_are_finished_even_if_another_file_changed() {
+        let fx = Fixture::new();
+        let stash = fx.store.file("stash.json");
+        fs::create_dir_all(stash.parent().unwrap()).unwrap();
+        fs::write(&stash, "old stash").unwrap();
+        let pointer = RefCell::new(None);
+        let delete = crate::live::patch::WholeFile::Delete;
+        let patch = set_key("new");
+        let write_stash = crate::live::patch::WholeFile::Write(b"login".to_vec());
+        failpoint::crash_at(Some("published:0"));
+        let guard = lock_app(&fx.app);
+        let result = run(
+            &fx.store,
+            &guard,
+            state::op::SWITCH,
+            &[
+                FileChange {
+                    file: LiveFile::private(&fx.a),
+                    patch: &delete,
+                },
+                FileChange {
+                    file: LiveFile::shared(&fx.b),
+                    patch: &patch,
+                },
+                FileChange {
+                    file: LiveFile::private(&stash),
+                    patch: &write_stash,
+                },
+            ],
+            PendingTarget {
+                pointer: Some("B".into()),
+                ..PendingTarget::default()
+            },
+            &|_| Ok(()),
+        );
+        failpoint::crash_at(None);
+        drop(guard);
+        result.expect_err("crash");
+        assert!(!fx.a.exists(), "the login already left a");
+        fs::write(&fx.b, "{\"key\": \"client edit\"}").unwrap();
+
+        assert_eq!(
+            recover_now(&fx, &pointer),
+            Some(RecoveryOutcome::RolledForwardExcept {
+                paths: vec![fx.b.clone()]
+            })
+        );
+        assert_eq!(fs::read(&stash).unwrap(), b"login");
+        assert_eq!(fx.read(&fx.b), json!({"key": "client edit"}));
+        assert_eq!(*pointer.borrow(), Some("B".into()));
+    }
+
+    #[test]
+    fn a_missing_staged_file_is_skipped_and_the_rest_rolls_forward() {
+        let fx = Fixture::new();
+        let pointer = RefCell::new(None);
+        failpoint::crash_at(Some("published:0"));
+        switch(&fx, &pointer).expect_err("crash");
+        for tmp in fx.temp_files() {
+            fs::remove_file(tmp).unwrap();
+        }
+
+        assert_eq!(
+            recover_now(&fx, &pointer),
+            Some(RecoveryOutcome::RolledForwardExcept {
+                paths: vec![fx.b.clone()]
+            })
+        );
+        assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "new"}));
+        assert_eq!(fx.read(&fx.b), json!({"key": "old"}));
+        assert_eq!(*pointer.borrow(), Some("B".into()));
+    }
+
+    #[test]
+    fn a_write_that_finds_an_unfinished_operation_finishes_it_and_asks_to_retry() {
+        let fx = Fixture::new();
+        let pointer = RefCell::new(None);
+        let commit = |target: &PendingTarget| {
+            *pointer.borrow_mut() = target.pointer.clone();
+            Ok(())
+        };
+        let guard = lock_app(&fx.app);
+        recover_before_write(&fx.store, &guard, &commit).expect("nothing pending");
+        drop(guard);
+
+        failpoint::crash_at(Some("published:0"));
+        switch(&fx, &pointer).expect_err("crash");
+        failpoint::crash_at(None);
+        let guard = lock_app(&fx.app);
+        let err = recover_before_write(&fx.store, &guard, &commit).expect_err("state moved");
+        assert!(
+            matches!(
+                err,
+                AppError::Localized {
+                    key: "live.recovered_before_write",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        assert_new(&fx);
+        assert_eq!(*pointer.borrow(), Some("B".into()));
+        recover_before_write(&fx.store, &guard, &commit).expect("finished now");
+
+        // 丢弃的操作什么都没改，照常往下写。
+        drop(guard);
+        fs::write(&fx.a, "{\"user\": 1, \"key\": \"old\"}").unwrap();
+        fs::write(&fx.b, "{\"key\": \"old\"}").unwrap();
+        failpoint::crash_at(Some("pending"));
+        switch(&fx, &pointer).expect_err("crash");
+        failpoint::crash_at(None);
+        let guard = lock_app(&fx.app);
+        recover_before_write(&fx.store, &guard, &commit).expect("discarded");
+    }
+
+    /// macOS 上用不可变标志让替换失败（目标被占用、只读时的样子）。
+    #[cfg(target_os = "macos")]
+    struct Immutable(PathBuf);
+
+    #[cfg(target_os = "macos")]
+    impl Immutable {
+        fn set(path: &Path, on: bool) {
+            let status = std::process::Command::new("/usr/bin/chflags")
+                .arg(if on { "uchg" } else { "nouchg" })
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for Immutable {
+        fn drop(&mut self) {
+            Self::set(&self.0, false);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn switch_with_locked_file(fx: &Fixture, index: usize) -> RefCell<Option<String>> {
+        let path = if index == 0 {
+            fx.a.clone()
+        } else {
+            fx.b.clone()
+        };
+        let _unlock = Immutable(path.clone());
+        let pointer = RefCell::new(None);
+        failpoint::on_before_publish(Some(Box::new(move |at, _| {
+            if at == index {
+                Immutable::set(&path, true);
+            }
+        })));
+        let result = switch(fx, &pointer);
+        failpoint::on_before_publish(None);
+        result.expect_err("the file cannot be replaced");
+        pointer
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_publish_that_fails_midway_keeps_its_staged_file_and_rolls_forward_later() {
+        let fx = Fixture::new();
+        let pointer = switch_with_locked_file(&fx, 1);
+        assert_eq!(fx.read(&fx.a), json!({"user": 1, "key": "new"}));
+        assert_eq!(fx.temp_files().len(), 1, "b's staged file is kept");
+        assert!(state::pending(&fx.store, &fx.app).unwrap().is_some());
+
+        assert_eq!(
+            recover_now(&fx, &pointer),
+            Some(RecoveryOutcome::RolledForward)
+        );
+        assert_new(&fx);
+        assert_eq!(*pointer.borrow(), Some("B".into()));
+        assert!(fx.temp_files().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_publish_that_fails_on_the_first_file_changes_nothing() {
+        let fx = Fixture::new();
+        let pointer = switch_with_locked_file(&fx, 0);
+        assert_old(&fx);
+        assert_eq!(*pointer.borrow(), None);
+        assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
         assert!(fx.temp_files().is_empty());
     }
 

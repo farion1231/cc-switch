@@ -92,6 +92,9 @@ pub(crate) fn run_with_edits(
 ) -> Result<OperationReport, AppError> {
     let guard = lock_app(app());
     let store = DeviceStore::for_device();
+    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
+    // 写不写、写成谁是调用方按读到的指针定的：先补完上一次的操作。
+    operation::recover_before_write(&store, &guard, &commit)?;
     let env = EnvWrite {
         edits,
         key_fields: projection.map(GeminiProjection::env_patch),
@@ -113,9 +116,7 @@ pub(crate) fn run_with_edits(
             patch: &settings,
         });
     }
-    operation::run(&store, &guard, op, &changes, target, &|target| {
-        operation::commit_target(db, &store, app(), target)
-    })
+    operation::run(&store, &guard, op, &changes, target, &commit)
 }
 
 /// 有上一次没做完的操作（启动或下次操作时补完）。

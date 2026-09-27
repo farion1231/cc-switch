@@ -138,8 +138,8 @@ pub(crate) fn run_with_edits(
     let guard = lock_app(app());
     let store = DeviceStore::for_device();
     let commit = |target: &PendingTarget| operation::commit_target(db, &store, app(), target);
-    // 先补完上一次没做完的操作：它可能改了写入记录，下面要按最新的记录删表。
-    operation::recover(&store, &guard, &commit)?;
+    // 先补完上一次没做完的操作：它可能改了写入记录和指针，下面要按最新的记录删表。
+    operation::recover_before_write(&store, &guard, &commit)?;
     let patch = match projection {
         Some(projection) => {
             target.written = Some(Written {
