@@ -7,6 +7,10 @@ use super::{
     body_filter::filter_private_params_with_whitelist,
     content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
+    failover_jitter::{
+        compute_failover_delay, thread_local_rand_unit, FAILOVER_JITTER_BASE_MS,
+        FAILOVER_JITTER_PCT,
+    },
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
@@ -467,6 +471,32 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+
+            // Anti-thundering-herd：跨 Provider 切换前的小固定延迟 + 抖动。
+            //
+            // 仅当 `attempted_providers > 0`（即已至少对一家发起过实际请求）
+            // 才施加延迟。原因：
+            // - 熔断器 Open 导致全部被拒绝时，全部 `continue` 走这条路径，
+            //    此时 `attempted_providers` 永远是 0 → 不引入排队浪费；
+            // - 单 Provider 场景（auto_failover 关闭时只有 1 个 provider），
+            //    永远进不了本分支 → 行为保持原样；
+            // - 客户端 4xx 直接 `return` 的路径在本循环之外 → 不受影响。
+            //
+            // `base_ms = 0` 时 `compute_failover_delay` 返回 0，行为等价于关闭。
+            if attempted_providers > 0 {
+                let delay_ms = compute_failover_delay(
+                    FAILOVER_JITTER_BASE_MS,
+                    FAILOVER_JITTER_PCT,
+                    thread_local_rand_unit(),
+                );
+                if delay_ms > 0 {
+                    log::debug!(
+                        "[{app_type_str}] failover anti-herd delay: {delay_ms}ms before provider={}",
+                        provider.id
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
+                }
+            }
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
