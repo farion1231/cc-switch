@@ -82,10 +82,11 @@ docs/guides/codex-self-hosted-gateway-ja.md                 (新增 105 行)
 ### 8. Git 状态
 
 ```
-本地 commit 5973d334 feat(codex): self-hosted llm-gateway-go presets + end-to-end catalog regression
-推到 halfking/cc-switch fork
-PR #7714 已开到 farion1231/cc-switch（基线 main，待 review）
-未合并到上游 main（无写权限）
+本轮（2026-09-28 02:xx）：与 proxy PR 合并成一个 PR 推送。
+- proxy PR @ 0e9736e8：3 个 commit（feat(proxy) + docs(handoff) + merge），
+  cargo test --lib proxy:: 1500/1500 + vitest 6/6 全绿。
+- codex 自建网关：作为第 4 个 commit 加到同一 PR 顶（feat(codex)）。
+- 上一轮（2026-09-28 凌晨）原计划单开 PR #7714，已撤回（本仓库本轮才统一合一次推送）。
 ```
 
 ### 9. 已知限制（不属于本 PR）
@@ -99,10 +100,11 @@ PR #7714 已开到 farion1231/cc-switch（基线 main，待 review）
 
 ## 下一轮提示词
 
-> 在 PR #7714 上继续推进下列事项，按优先级：
+> 在 anti-thundering-herd delay PR（含 codex 自建网关第 4 个 commit）上继续推进：
 >
-> 1. 等待 reviewer 对 PR #7714 的反馈，重点是预设的 catalog 数量（19/21）是否合适、
->    是否要把 SSOT 校验改成都用 `/v1/models` 而不是依赖 config.yaml。
+> 1. 等 reviewer 对 4-commit PR 的反馈：proxy 部分的 jitter 行为 + codex 部分的
+>    catalog 数量（19/21）是否合适，是否要把 SSOT 校验改成都用 `/v1/models` 而不是依赖
+>    config.yaml。
 > 2. 把 cc-switch UI 的"网关档"图标/品牌补一下：现在 cc-switch 列表里显示的是
 >    "开轩 LLM 网关" / "本地 LLM 网关 (8782)" 的纯文本，可以加 SVG 图标。
 > 3. 把"代码生成 model catalog"的端到端测试作为常规 CI step —— 当前只在 Rust 单元测试
@@ -116,10 +118,13 @@ PR #7714 已开到 farion1231/cc-switch（基线 main，待 review）
 >    "为什么我们误以为这三个键生效了" 的复盘，避免后续 contributor 重蹈覆辙。
 > 6. （可选）补一个 dry-run 模式：切档前打印目标 live config 差异，让用户能 diff
 >    当前档与目标档，避免"以为切对了"但其实没生效的情况。
+> 7. 下一步 ROI 最高：**P0.2 HalfOpen permit 自释放（~1 人天）** —— proxy 模块
+>    HalfOpen 状态当前靠外部 timeout 才回收，可加 in-band 自释放（请求成功时
+>    自动 decrement），可观测性 + 容量利用率都受益。
 
 ## 产物路径
 
-- 项目 commit：`/Users/xutaohuang/workspace/ai/cc-switch` `5973d334`
-- PR：`https://github.com/farion1231/cc-switch/pull/7714`
+- 项目 commit：`/Users/xutaohuang/workspace/ai/cc-switch` `0e9736e8` + 第 4 个 feat(codex) commit
+- PR：与 proxy PR 合并推送（anti-thundering-herd delay PR，4 个 commit，单 PR）
 - 运行实例：`/Users/xutaohuang/.cc-switch/cc-switch.db` + `/Users/xutaohuang/.codex/config.toml`
 - 证据包：`/Users/xutaohuang/.cc-switch/backups/gateway-codex-20260928-003325/verification/`
