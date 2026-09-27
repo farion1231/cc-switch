@@ -20,6 +20,13 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
+/// Claude Code 插件提供的 skills 的来源标签。
+///
+/// 刻意不复用 `"claude"`：前端 `ImportSkillsDialog` 以 `foundIn.includes("claude")`
+/// 预勾选导入目标，而这些 skills 已经由 Claude Code 的插件系统加载；再导入一份到
+/// SSOT 并同步回 `~/.claude/skills/`，同一个 skill 会被加载两遍。
+const CLAUDE_PLUGIN_SOURCE: &str = "claude-plugin";
+
 // ========== Skills state coordination ==========
 
 /// Coordinates the database `skills` state with the filesystem SSOT.
@@ -2020,6 +2027,110 @@ impl SkillService {
         Ok(())
     }
 
+    /// 单个插件实际暴露的 skill 目录。
+    ///
+    /// 以 `.claude-plugin/plugin.json` 的 `skills` 数组为准：插件仓库里常常还有
+    /// 未被声明的 `SKILL.md`（示例、内部草稿），Claude Code 并不会加载它们，
+    /// 报给用户只会造成"装了 25 个却显示 35 个"的困惑。
+    /// 没有声明 `skills` 的插件回退到递归扫描。
+    fn claude_plugin_skill_dirs(root: &Path) -> Vec<PathBuf> {
+        let manifest = root.join(".claude-plugin").join("plugin.json");
+        if let Ok(content) = fs::read_to_string(&manifest) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(entries) = parsed.get("skills").and_then(|v| v.as_array()) {
+                    let declared: Vec<PathBuf> = entries
+                        .iter()
+                        .filter_map(|entry| entry.as_str())
+                        .filter_map(|rel| Self::resolve_plugin_skill_entry(root, rel))
+                        .collect();
+                    if !declared.is_empty() {
+                        return declared;
+                    }
+                }
+            }
+        }
+
+        Self::scan_skills_in_dir(root).unwrap_or_default()
+    }
+
+    /// 把 `plugin.json` 的一条 skills 相对路径解析为插件目录内的绝对路径。
+    ///
+    /// 清单由插件作者提供，按不可信输入处理：
+    /// - `/` 和 `\` 都当分隔符切分。`\` 在 Linux/macOS 上不是分隔符，放行后
+    ///   同一份清单同步到 Windows 就会变成嵌套路径（同 `sanitize_install_name`）。
+    /// - 只接受单段的 `Component::Normal`，因此 `..`、盘符前缀、根路径一律拒绝，
+    ///   条目无法逃出插件的安装目录。
+    fn resolve_plugin_skill_entry(root: &Path, raw: &str) -> Option<PathBuf> {
+        let mut resolved = root.to_path_buf();
+        let mut has_segment = false;
+
+        for part in raw.split(['/', '\\']) {
+            if part.is_empty() || part == "." {
+                continue;
+            }
+
+            let mut components = Path::new(part).components();
+            match (components.next(), components.next()) {
+                (Some(Component::Normal(name)), None) => {
+                    resolved.push(name);
+                    has_segment = true;
+                }
+                _ => {
+                    log::warn!("跳过越界或非法的插件 skill 条目: {raw}");
+                    return None;
+                }
+            }
+        }
+
+        (has_segment && resolved.join("SKILL.md").is_file()).then_some(resolved)
+    }
+
+    /// Claude Code 已安装插件的安装根目录。
+    ///
+    /// 插件装在 `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`，
+    /// 路径里带版本号，且每条安装都记录在
+    /// `~/.claude/plugins/installed_plugins.json` 的 `installPath` 上，
+    /// 所以只认这份清单、不去猜目录结构。
+    ///
+    /// 刻意不扫 `~/.claude/plugins/marketplaces/`：那是市场目录的完整检出，
+    /// 其中的 `SKILL.md` 属于用户**未安装**的插件，扫进来只会变成噪音。
+    fn claude_plugin_skill_roots() -> Vec<PathBuf> {
+        let manifest = crate::config::get_claude_config_dir()
+            .join("plugins")
+            .join("installed_plugins.json");
+        let Ok(content) = fs::read_to_string(&manifest) else {
+            return Vec::new();
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(err) => {
+                log::warn!("解析 {} 失败，跳过插件 skills：{err}", manifest.display());
+                return Vec::new();
+            }
+        };
+
+        let Some(plugins) = parsed.get("plugins").and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+
+        let mut roots = Vec::new();
+        for installs in plugins.values() {
+            let Some(installs) = installs.as_array() else {
+                continue;
+            };
+            for install in installs {
+                let Some(path) = install.get("installPath").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let path = PathBuf::from(path);
+                if path.is_dir() {
+                    roots.push(path);
+                }
+            }
+        }
+        roots
+    }
+
     /// 扫描未管理的 Skills
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
@@ -2077,6 +2188,36 @@ impl SkillService {
                         description,
                         found_in: vec![label.clone()],
                         path: path.display().to_string(),
+                    });
+            }
+        }
+
+        // 插件 skills 嵌套在 <installPath>/skills/<分类>/<skill>/ 下，深度不固定，
+        // 因此走递归扫描。上面按应用目录的一层平铺扫描保持原样，避免改动既有来源的语义。
+        for root in Self::claude_plugin_skill_roots() {
+            for skill_dir in Self::claude_plugin_skill_dirs(&root) {
+                let Some(dir_name) = skill_dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                else {
+                    continue;
+                };
+                if dir_name.starts_with('.') || managed_dirs.contains(&dir_name) {
+                    continue;
+                }
+
+                let skill_md = skill_dir.join("SKILL.md");
+                let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
+
+                unmanaged
+                    .entry(dir_name.clone())
+                    .and_modify(|s| s.found_in.push(CLAUDE_PLUGIN_SOURCE.to_string()))
+                    .or_insert(UnmanagedSkill {
+                        directory: dir_name,
+                        name,
+                        description,
+                        found_in: vec![CLAUDE_PLUGIN_SOURCE.to_string()],
+                        path: skill_dir.display().to_string(),
                     });
             }
         }
@@ -5185,6 +5326,131 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn scan_unmanaged_reports_only_declared_skills_of_installed_claude_plugins() {
+        // 回归 #5582：Claude Code 的插件 skills 装在
+        // ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/... 下，
+        // 而 scan_unmanaged 只看 ~/.claude/skills —— 装了插件的机器上那个目录并不存在，
+        // 扫描必然为空。
+        //
+        // 同时锁定一条边界：~/.claude/plugins/marketplaces/ 是市场清单（货架），
+        // 其中的 SKILL.md 属于用户**未安装**的插件，不能混入扫描结果。
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+
+        let plugins_root = temp.path().join(".claude").join("plugins");
+        let install_path = plugins_root
+            .join("cache")
+            .join("official")
+            .join("demo-skills")
+            .join("1.2.3");
+        write_skill(
+            &install_path
+                .join("skills")
+                .join("engineering")
+                .join("alpha"),
+            "alpha",
+        );
+
+        // 插件仓库里未被 plugin.json 声明的 SKILL.md：Claude Code 不加载，也不该上报
+        write_skill(
+            &install_path.join("skills").join("internal").join("gamma"),
+            "gamma",
+        );
+        fs::create_dir_all(install_path.join(".claude-plugin")).expect("create manifest dir");
+        fs::write(
+            install_path.join(".claude-plugin").join("plugin.json"),
+            serde_json::json!({
+                "name": "demo-skills",
+                "version": "1.2.3",
+                "skills": ["./skills/engineering/alpha"]
+            })
+            .to_string(),
+        )
+        .expect("write plugin.json");
+
+        // 货架噪音：未安装插件自带的 SKILL.md
+        write_skill(
+            &plugins_root
+                .join("marketplaces")
+                .join("official")
+                .join("plugins")
+                .join("not-installed")
+                .join("skills")
+                .join("beta"),
+            "beta",
+        );
+
+        fs::write(
+            plugins_root.join("installed_plugins.json"),
+            serde_json::json!({
+                "version": 2,
+                "plugins": {
+                    "demo-skills@official": [{
+                        "scope": "user",
+                        "installPath": install_path.to_string_lossy(),
+                        "version": "1.2.3"
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write installed_plugins.json");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let found = SkillService::scan_unmanaged(&db).expect("scan");
+        let names: Vec<&str> = found.iter().map(|s| s.directory.as_str()).collect();
+
+        assert!(
+            names.contains(&"alpha"),
+            "installed plugin skill must be discovered, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"beta"),
+            "catalog-only marketplace skills must not be reported, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"gamma"),
+            "skills not declared in plugin.json must not be reported, got {names:?}"
+        );
+
+        let alpha = found
+            .iter()
+            .find(|s| s.directory == "alpha")
+            .expect("alpha entry");
+        assert!(
+            alpha.found_in.iter().any(|label| label == "claude-plugin"),
+            "plugin skills must be labelled as plugin-provided, got {:?}",
+            alpha.found_in
+        );
+    }
+
+    #[test]
+    fn plugin_manifest_skill_entries_reject_escaping_the_install_dir() {
+        // plugin.json 由插件作者提供，越界条目不能把扫描带出插件安装目录。
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("plugin");
+        write_skill(&temp.path().join("outside"), "outside");
+        write_skill(&root.join("skills").join("inside"), "inside");
+
+        fs::create_dir_all(root.join(".claude-plugin")).expect("create manifest dir");
+        fs::write(
+            root.join(".claude-plugin").join("plugin.json"),
+            serde_json::json!({
+                "skills": ["../outside", "./skills/inside"]
+            })
+            .to_string(),
+        )
+        .expect("write plugin.json");
+
+        assert_eq!(
+            SkillService::claude_plugin_skill_dirs(&root),
+            vec![root.join("skills").join("inside")],
+            "only in-tree manifest entries may be resolved"
+        );
     }
 
     #[test]
