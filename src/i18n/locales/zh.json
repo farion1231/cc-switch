@@ -357,10 +357,6 @@
         "running": "运行中",
         "stopped": "已停止"
       },
-      "connectivityCheck": {
-        "title": "连通检测配置",
-        "description": "配置供应商地址探测的超时、重试和较慢阈值"
-      },
       "failover": {
         "title": "自动故障转移",
         "description": "配置故障转移队列和熔断策略"
@@ -2949,13 +2945,6 @@
     "reachableSlow": "{{providerName}} 连通但较慢 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} 无法连通: {{message}}",
     "unreachableHint": "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
-    "connectivityNote": "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
-    "configSaved": "连通检测配置已保存",
-    "configSaveFailed": "保存失败",
-    "checkParams": "检查参数",
-    "timeout": "超时时间（秒）",
-    "maxRetries": "最大重试次数",
-    "degradedThreshold": "较慢阈值（毫秒）",
     "error": "{{providerName}} 检查出错: {{error}}"
   },
   "proxyConfig": {

@@ -357,10 +357,6 @@
         "running": "執行中",
         "stopped": "已停止"
       },
-      "connectivityCheck": {
-        "title": "連通檢測設定",
-        "description": "設定供應商位址探測的逾時、重試與緩慢閾值"
-      },
       "failover": {
         "title": "自動故障轉移",
         "description": "設定故障轉移佇列和斷路器策略"
@@ -2950,13 +2946,6 @@
     "reachableSlow": "{{providerName}} 連通但較慢 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} 無法連通: {{message}}",
     "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
-    "connectivityNote": "連通檢測僅探測供應商位址是否可達，不發送真實模型請求。收到任意回應即視為「可達」——這不代表驗證或模型設定一定正確。",
-    "configSaved": "連通檢測設定已儲存",
-    "configSaveFailed": "儲存失敗",
-    "checkParams": "檢查參數",
-    "timeout": "逾時時間（秒）",
-    "maxRetries": "最大重試次數",
-    "degradedThreshold": "緩慢閾值（毫秒）",
     "error": "{{providerName}} 檢查出錯：{{error}}"
   },
   "proxyConfig": {

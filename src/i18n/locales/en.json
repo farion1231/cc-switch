@@ -357,10 +357,6 @@
         "running": "Running",
         "stopped": "Stopped"
       },
-      "connectivityCheck": {
-        "title": "Connectivity Check Settings",
-        "description": "Configure timeout, retries, and the slow-response threshold for provider reachability checks"
-      },
       "failover": {
         "title": "Auto Failover",
         "description": "Configure failover queue and circuit breaker strategy"
@@ -2949,13 +2945,6 @@
     "reachableSlow": "{{providerName}} reachable but slow ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
-    "connectivityNote": "Connectivity check only probes whether the provider address is reachable; it does not send a real model request. Any response counts as \"reachable\" — which does not guarantee that auth or model settings are correct.",
-    "configSaved": "Connectivity check settings saved",
-    "configSaveFailed": "Save failed",
-    "checkParams": "Check Parameters",
-    "timeout": "Timeout (seconds)",
-    "maxRetries": "Max Retries",
-    "degradedThreshold": "Slow-response threshold (ms)",
     "error": "{{providerName}} check error: {{error}}"
   },
   "proxyConfig": {

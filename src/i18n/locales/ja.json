@@ -357,10 +357,6 @@
         "running": "実行中",
         "stopped": "停止中"
       },
-      "connectivityCheck": {
-        "title": "接続チェック設定",
-        "description": "プロバイダー接続チェックのタイムアウト、リトライ、低速判定しきい値を設定"
-      },
       "failover": {
         "title": "自動フェイルオーバー",
         "description": "フェイルオーバーキューとサーキットブレーカー戦略を設定"
@@ -2949,13 +2945,6 @@
     "reachableSlow": "{{providerName}} は接続可能だが低速 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} に接続できません: {{message}}",
     "unreachableHint": "接続を確立できませんでした（DNS / 接続 / TLS / タイムアウト）。base_url とネットワークを確認してください。",
-    "connectivityNote": "接続チェックはプロバイダーのアドレスに到達できるかを確認するだけで、実際のモデルリクエストは送信しません。何らかの応答があれば「到達可能」とみなされますが、認証やモデル設定が正しいことを保証するものではありません。",
-    "configSaved": "接続チェック設定を保存しました",
-    "configSaveFailed": "保存に失敗しました",
-    "checkParams": "チェックパラメーター",
-    "timeout": "タイムアウト（秒）",
-    "maxRetries": "最大リトライ回数",
-    "degradedThreshold": "低速判定しきい値（ミリ秒）",
     "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
   },
   "proxyConfig": {
