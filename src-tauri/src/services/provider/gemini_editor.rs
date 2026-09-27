@@ -471,21 +471,32 @@ fn store_into_row(stored_row: Option<&Value>, edited: &Value) -> Value {
 }
 
 /// 把编辑器保存的改动写进 live。`key_fields` 有值时（直连模式下编辑当前供应商）关键
-/// 字段在同一次写入里换成它的。
+/// 字段在同一次写入里换成它的；`set_pointer` 为新增第一个供应商，指针随操作落定。
 pub(crate) fn write_live(
     db: &Database,
     edits: &GeminiEdits,
     key_fields: Option<&Provider>,
+    set_pointer: bool,
 ) -> Result<(), AppError> {
     let projection = key_fields.map(gemini_direct::projection).transpose()?;
     if projection.is_none() && !edits.touches_env() && !edits.touches_settings() {
         return Ok(());
     }
+    let pointer = key_fields
+        .filter(|_| set_pointer)
+        .map(|target| target.id.clone());
     gemini_direct::run_with_edits(
         db,
-        op::APPLY,
+        if pointer.is_some() {
+            op::SWITCH
+        } else {
+            op::APPLY
+        },
         projection.as_ref(),
-        PendingTarget::default(),
+        PendingTarget {
+            pointer,
+            ..PendingTarget::default()
+        },
         Some(edits),
     )?;
     Ok(())

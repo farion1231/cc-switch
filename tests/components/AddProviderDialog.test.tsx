@@ -34,6 +34,8 @@ vi.mock("@/components/ui/dialog", () => ({
 
 let mockFormValues: ProviderFormValues;
 let mockFormReady = true;
+// 表单把预设投影到配置文件上之后交给对话框的底（Codex、Gemini CLI、Grok Build）。
+let mockProjectedBase: Record<string, unknown> | null = null;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
@@ -41,10 +43,12 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onSubmit,
     onSubmitReadyChange,
     onManageAuthAccounts,
+    onEditorBaseChange,
   }: {
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
     onManageAuthAccounts?: (target: "codex_oauth") => void;
+    onEditorBaseChange?: (base: Record<string, unknown> | null) => void;
   }) => {
     useEffect(() => {
       if (onSubmitReadyChange) {
@@ -52,6 +56,9 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
         onSubmitReadyChange(mockFormReady);
       }
     }, [onSubmitReadyChange]);
+    useEffect(() => {
+      onEditorBaseChange?.(mockProjectedBase);
+    }, [onEditorBaseChange]);
     return (
       <form
         id="provider-form"
@@ -79,6 +86,7 @@ vi.mock("@/components/providers/AuthSettingsPanel", () => ({
 describe("AddProviderDialog", () => {
   beforeEach(() => {
     mockFormReady = true;
+    mockProjectedBase = null;
     submitReadyCallbacks = [];
     mockFormValues = {
       name: "Test Provider",
@@ -165,6 +173,63 @@ describe("AddProviderDialog", () => {
         lastUsed: undefined,
       },
     });
+  });
+
+  it.each(["codex", "gemini", "grokbuild"] as const)(
+    "%s 新增时带上表单投影出的底，和编辑器同一套保存规则",
+    async (appId) => {
+      const handleSubmit = vi.fn().mockResolvedValue(undefined);
+      const projected = { config: "[ui]\ntheme = \"dark\"\n" };
+      mockProjectedBase = projected;
+      mockFormValues = {
+        name: "Draft",
+        websiteUrl: "",
+        settingsConfig: JSON.stringify(projected),
+      };
+
+      render(
+        <AddProviderDialog
+          open
+          onOpenChange={vi.fn()}
+          appId={appId}
+          onSubmit={handleSubmit}
+        />,
+      );
+
+      await screen.findByRole("button", { name: "manage-auth" });
+      fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+
+      await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+      expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
+        base: projected,
+        onConflict: "refuse",
+      });
+    },
+  );
+
+  it("投影还没回来或失败时只存供应商，不带底", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    mockProjectedBase = null;
+    mockFormValues = {
+      name: "Draft",
+      websiteUrl: "",
+      settingsConfig: JSON.stringify({ auth: {}, config: "" }),
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="codex"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "manage-auth" });
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].editorSave).toBeUndefined();
   });
 
   it("submits the optional managed account from the Codex Official preset", async () => {

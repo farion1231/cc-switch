@@ -83,6 +83,47 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     Ok(true)
 }
 
+/// 新版不再读通用配置片段，但旧设备经云同步拿到新建的行时仍按这个标记合并片段；不写的
+/// 话，旧版切到它会把 hooks、MCP 等共享设置整份抹掉。
+fn keep_common_config_for_old_versions(provider: &mut Provider) {
+    provider
+        .meta
+        .get_or_insert_with(Default::default)
+        .common_config_enabled = Some(true);
+}
+
+/// 编辑器保存的是新增的供应商，还是已有的。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditorSaveKind {
+    Add,
+    Update,
+}
+
+impl EditorSaveKind {
+    /// 这次保存要不要把关键字段也换进 live：直连模式下编辑的是当前供应商，或者新增的是
+    /// 第一个供应商。代理模式下 live 的关键字段是代理契约，只写全局改动。
+    fn writes_key_fields(
+        self,
+        state: &AppState,
+        app_type: &AppType,
+        mode: &crate::mode::state::ModeState,
+        id: &str,
+    ) -> Result<bool, AppError> {
+        if mode.is_proxy() {
+            return Ok(false);
+        }
+        let direct = crate::mode::current::provider_for(
+            &state.db,
+            app_type,
+            crate::mode::current::Purpose::Direct,
+        )?;
+        Ok(match self {
+            Self::Add => direct.is_none(),
+            Self::Update => direct.as_deref() == Some(id),
+        })
+    }
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -4808,12 +4849,7 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
         if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
-            // 新版不再读通用配置片段，但旧设备经云同步拿到这一行时仍按这个标记合并
-            // 片段；不写的话，旧版切到它会把 hooks、MCP 等共享设置整份抹掉。
-            provider
-                .meta
-                .get_or_insert_with(Default::default)
-                .common_config_enabled = Some(true);
+            keep_common_config_for_old_versions(&mut provider);
         }
 
         if matches!(app_type, AppType::Codex) {
@@ -4954,8 +4990,8 @@ impl ProviderService {
         }
     }
 
-    /// 从编辑器新增供应商。Claude Code 按关键字段拆开保存（见 `claude_editor`），其余
-    /// 应用和 `add` 一样。
+    /// 从编辑器新增供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
+    /// （见各自的 `*_editor`），其余应用和 `add` 一样。
     pub fn add_from_editor(
         state: &AppState,
         app_type: AppType,
@@ -4967,12 +5003,24 @@ impl ProviderService {
             (AppType::Claude, Some(editor)) => {
                 Self::add_claude_from_editor(state, provider, editor)
             }
+            (AppType::Codex, Some(editor)) => {
+                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Add)
+            }
+            (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor)) => {
+                Self::save_gemini_or_grok_from_editor(
+                    state,
+                    app_type,
+                    provider,
+                    editor,
+                    EditorSaveKind::Add,
+                )
+            }
             (app_type, _) => Self::add(state, app_type, provider, add_to_live),
         }
     }
 
-    /// 从编辑器保存供应商。Claude Code 按关键字段拆开保存（见 `claude_editor`），其余
-    /// 应用和 `update` 一样。
+    /// 从编辑器保存供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
+    /// （见各自的 `*_editor`），其余应用和 `update` 一样。
     pub fn update_from_editor(
         state: &AppState,
         app_type: AppType,
@@ -4989,24 +5037,31 @@ impl ProviderService {
             (AppType::Codex, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
-                Self::update_codex_from_editor(state, provider, editor)
+                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Update)
             }
             (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
-                Self::update_gemini_or_grok_from_editor(state, app_type, provider, editor)
+                Self::save_gemini_or_grok_from_editor(
+                    state,
+                    app_type,
+                    provider,
+                    editor,
+                    EditorSaveKind::Update,
+                )
             }
             (app_type, _) => Self::update(state, app_type, original_id, provider),
         }
     }
 
-    /// 从编辑器保存 Codex 供应商：关键字段、独有字段存回行，其余改动作为全局设置写进
-    /// live（三方比较）。直连模式下编辑当前供应商时，关键字段在同一次写入里换进 live；
-    /// 代理模式下编辑路由那家，全局设置写完后按新行重写代理契约。
-    fn update_codex_from_editor(
+    /// 从编辑器新增或保存 Codex 供应商：关键字段、独有字段存回行，其余改动作为全局设置
+    /// 写进 live（三方比较）。直连模式下编辑当前供应商、或新增第一个供应商时，关键字段在
+    /// 同一次写入里换进 live；代理模式下编辑路由那家，全局设置写完后按新行重写代理契约。
+    fn save_codex_from_editor(
         state: &AppState,
         provider: Provider,
         editor: EditorSave,
+        kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         let _switch_guard =
@@ -5026,19 +5081,16 @@ impl ProviderService {
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if kind == EditorSaveKind::Add {
+            keep_common_config_for_old_versions(&mut provider);
+        }
 
         let mode = crate::mode::current::mode_state(&app_type);
-        let is_direct_current = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?
-        .as_deref()
-            == Some(provider.id.as_str());
+        let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
 
         state.db.save_provider(app_type.as_str(), &provider)?;
-        let written = if !mode.is_proxy() && is_direct_current {
+        let written = if key_fields {
             codex_editor::write_live(
                 state.db.as_ref(),
                 &state.codex_oauth_manager,
@@ -5046,7 +5098,7 @@ impl ProviderService {
                 codex_editor::KeyFields::Direct {
                     prev: existing.as_ref(),
                     target: &provider,
-                    set_pointer: false,
+                    set_pointer: kind == EditorSaveKind::Add,
                 },
             )
         } else {
@@ -5082,14 +5134,16 @@ impl ProviderService {
         Ok(true)
     }
 
-    /// 从编辑器保存 Gemini CLI、Grok Build 供应商：关键字段存回行，其余改动作为全局设置
-    /// 写进 live（三方比较）。直连模式下编辑当前供应商时，关键字段在同一次写入里换进
-    /// live；代理模式下编辑路由那家，全局设置写完后按新行重写代理契约。
-    fn update_gemini_or_grok_from_editor(
+    /// 从编辑器新增或保存 Gemini CLI、Grok Build 供应商：关键字段存回行，其余改动作为全局
+    /// 设置写进 live（三方比较）。直连模式下编辑当前供应商、或新增第一个供应商时，关键
+    /// 字段在同一次写入里换进 live；代理模式下编辑路由那家，全局设置写完后按新行重写代理
+    /// 契约。
+    fn save_gemini_or_grok_from_editor(
         state: &AppState,
         app_type: AppType,
         provider: Provider,
         editor: EditorSave,
+        kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
         let _switch_guard =
             futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
@@ -5124,28 +5178,28 @@ impl ProviderService {
         };
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if kind == EditorSaveKind::Add && matches!(app_type, AppType::Gemini) {
+            keep_common_config_for_old_versions(&mut provider);
+        }
 
         let mode = crate::mode::current::mode_state(&app_type);
-        let is_direct_current = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?
-        .as_deref()
-            == Some(provider.id.as_str());
+        let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
+        let set_pointer = kind == EditorSaveKind::Add;
         let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
-        // 代理模式下 live 的关键字段是代理契约，这里只写全局改动。
-        let key_fields = !mode.is_proxy() && is_direct_current;
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = match &edits {
-            Edits::Gemini(edits) => {
-                gemini_editor::write_live(state.db.as_ref(), edits, key_fields.then_some(&provider))
-            }
+            Edits::Gemini(edits) => gemini_editor::write_live(
+                state.db.as_ref(),
+                edits,
+                key_fields.then_some(&provider),
+                set_pointer,
+            ),
             Edits::Grok(edits) => grok_editor::write_live(
                 state.db.as_ref(),
                 edits,
                 key_fields.then_some((existing.as_ref(), &provider)),
+                set_pointer,
             ),
         }
         .and_then(|()| {
@@ -5195,10 +5249,7 @@ impl ProviderService {
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-        provider
-            .meta
-            .get_or_insert_with(Default::default)
-            .common_config_enabled = Some(true);
+        keep_common_config_for_old_versions(&mut provider);
 
         let existed = state
             .db

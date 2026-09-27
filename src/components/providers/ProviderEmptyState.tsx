@@ -19,8 +19,11 @@ export function ProviderEmptyState({
   // live 节点里），没有可导入的内容，列表也不提供导入按钮，因此不能沿用
   // "请点击导入当前配置"的通用文案。
   const emptyCopyNs = appId === "pi" || appId === "mcode" ? appId : null;
-  const showSnippetHint =
-    appId === "claude" || appId === "codex" || appId === "gemini";
+  const showKeyFieldsHint =
+    appId === "claude" ||
+    appId === "codex" ||
+    appId === "gemini" ||
+    appId === "grokbuild";
 
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">
@@ -37,9 +40,9 @@ export function ProviderEmptyState({
           ? t(`${emptyCopyNs}.empty.description`)
           : t("provider.noProvidersDescription")}
       </p>
-      {showSnippetHint && (
+      {showKeyFieldsHint && (
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-          {t("provider.noProvidersDescriptionSnippet")}
+          {t("provider.noProvidersDescriptionKeyFields")}
         </p>
       )}
       <div className="mt-6 flex flex-col gap-2">

@@ -226,11 +226,13 @@ fn store_into_row(
 }
 
 /// 把编辑器保存的改动写进 live。`key_fields` 有值时（直连模式下编辑当前供应商）模型表在
-/// 同一次写入里换成它的；`prev` 是编辑前的行，没有写入记录时用来推断旧表。
+/// 同一次写入里换成它的；`prev` 是编辑前的行，没有写入记录时用来推断旧表。`set_pointer`
+/// 为新增第一个供应商，指针随操作落定。
 pub(crate) fn write_live(
     db: &Database,
     edits: &TomlEdits,
     key_fields: Option<(Option<&Provider>, &Provider)>,
+    set_pointer: bool,
 ) -> Result<(), AppError> {
     let (prev, projection) = match key_fields {
         Some((prev, target)) => (prev, Some(grok_direct::projection(target)?)),
@@ -239,12 +241,22 @@ pub(crate) fn write_live(
     if projection.is_none() && edits.is_empty() {
         return Ok(());
     }
+    let pointer = key_fields
+        .filter(|_| set_pointer)
+        .map(|(_, target)| target.id.clone());
     grok_direct::run_with_edits(
         db,
-        op::APPLY,
+        if pointer.is_some() {
+            op::SWITCH
+        } else {
+            op::APPLY
+        },
         prev,
         projection.as_ref(),
-        PendingTarget::default(),
+        PendingTarget {
+            pointer,
+            ..PendingTarget::default()
+        },
         Some(edits),
     )?;
     Ok(())

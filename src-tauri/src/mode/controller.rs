@@ -3120,4 +3120,173 @@ model_provider = "c"
             "{row_text}"
         );
     }
+
+    // ---------- 新增对话框：和编辑器同一套规则 ----------
+
+    async fn state_without_providers() -> AppState {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("ephemeral port");
+        AppState::new(db)
+    }
+
+    fn add_from_editor(
+        state: &AppState,
+        app: AppType,
+        mut row: Provider,
+        edited: Value,
+        base: Value,
+    ) -> Result<bool, AppError> {
+        row.settings_config = edited;
+        ProviderService::add_from_editor(
+            state,
+            app,
+            row,
+            true,
+            Some(crate::services::provider::EditorSave {
+                base,
+                on_conflict: Default::default(),
+            }),
+        )
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_add_dialog_saves_key_fields_to_the_row_and_global_edits_to_live() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        // 新增 c：显示的是切到 c 之后的 config.toml，全局部分来自 live。
+        let draft = codex_row("c", "https://c.example/v1", "");
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &draft.settings_config, None)
+                .expect("view c");
+        let shown = view.settings["config"].as_str().unwrap().to_string();
+        assert!(
+            shown.contains("gpt-c") && shown.contains("approval_policy"),
+            "{shown}"
+        );
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(shown.replace("\"on-request\"", "\"never\""));
+        add_from_editor(&state, AppType::Codex, draft, edited, view.settings).expect("add c");
+
+        let live = codex_text();
+        assert!(live.contains("approval_policy = \"never\""), "{live}");
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-a"), "{live}");
+        let c = state.db.get_provider_by_id("c", "codex").unwrap().unwrap();
+        let c_config = c.settings_config["config"].as_str().unwrap();
+        assert!(
+            c_config.contains("gpt-c") && !c_config.contains("approval_policy"),
+            "{c_config}"
+        );
+        assert_eq!(
+            c.meta.as_ref().and_then(|meta| meta.common_config_enabled),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn gemini_add_dialog_first_provider_writes_key_fields_and_sets_the_pointer() {
+        let _home = Home::new();
+        seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
+        let state = state_without_providers().await;
+
+        let draft = Provider::with_id(
+            "c".to_string(),
+            "C".to_string(),
+            json!({ "env": {
+                "GEMINI_API_KEY": "key-c",
+                "GOOGLE_GEMINI_BASE_URL": "https://c.example",
+                "GEMINI_MODEL": "m-c",
+            }, "config": {} }),
+            None,
+        );
+        let view =
+            ProviderService::editor_view(&state, AppType::Gemini, &draft.settings_config, None)
+                .expect("view c");
+        assert_eq!(view.settings["env"]["GEMINI_SANDBOX"], json!("docker"));
+        let mut edited = view.settings.clone();
+        edited["env"]["DEBUG"] = json!("5");
+        edited["config"]["ui"] = json!({ "theme": "dark" });
+        add_from_editor(&state, AppType::Gemini, draft, edited, view.settings).expect("add c");
+
+        let env = gemini_env();
+        assert!(
+            env.contains("GEMINI_API_KEY=key-c")
+                && env.contains("GEMINI_MODEL=m-c")
+                && env.contains("DEBUG=5")
+                && env.contains("# my notes"),
+            "{env}"
+        );
+        assert_eq!(gemini_settings()["ui"], json!({ "theme": "dark" }));
+        assert_eq!(
+            crate::mode::current::provider_for(
+                &state.db,
+                &AppType::Gemini,
+                crate::mode::current::Purpose::Direct
+            )
+            .unwrap()
+            .as_deref(),
+            Some("c")
+        );
+        let c = state.db.get_provider_by_id("c", "gemini").unwrap().unwrap();
+        assert!(c.settings_config["env"].get("DEBUG").is_none());
+        assert!(c.settings_config["config"].get("ui").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn grok_add_dialog_first_provider_records_the_written_table() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_without_providers().await;
+
+        let draft = grok_row("a", "grok-4.5", "");
+        let view =
+            ProviderService::editor_view(&state, AppType::GrokBuild, &draft.settings_config, None)
+                .expect("view a");
+        let shown = view.settings["config"].as_str().unwrap().to_string();
+        assert!(
+            shown.contains("[model.mine]") && shown.contains("key-a"),
+            "{shown}"
+        );
+        let edited = json!({ "config": shown.replace("theme = \"dark\"", "theme = \"light\"") });
+        add_from_editor(&state, AppType::GrokBuild, draft, edited, view.settings).expect("add a");
+
+        let doc = grok_doc();
+        assert_eq!(doc["ui"]["theme"].as_str(), Some("light"));
+        assert_eq!(doc["models"]["default"].as_str(), Some("grok-4.5"));
+        assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+        let written = crate::mode::state::written(&DeviceStore::for_device(), "grokbuild")
+            .unwrap()
+            .expect("write record");
+        assert_eq!(written.tables, vec!["grok-4.5".to_string()]);
+        let a = state
+            .db
+            .get_provider_by_id("a", "grokbuild")
+            .unwrap()
+            .unwrap();
+        let row_text = a.settings_config["config"].as_str().unwrap();
+        assert!(
+            !row_text.contains("[ui]") && !row_text.contains("[model.mine]"),
+            "{row_text}"
+        );
+
+        // 第二个新增的供应商不动 live 的关键字段。
+        let draft = grok_row("b", "b", "");
+        let view =
+            ProviderService::editor_view(&state, AppType::GrokBuild, &draft.settings_config, None)
+                .expect("view b");
+        let edited = view.settings.clone();
+        add_from_editor(&state, AppType::GrokBuild, draft, edited, view.settings).expect("add b");
+        assert_eq!(grok_doc()["models"]["default"].as_str(), Some("grok-4.5"));
+        assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+    }
 }

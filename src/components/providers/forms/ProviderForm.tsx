@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
@@ -87,6 +87,7 @@ import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   useProviderCategory,
+  useDraftEditorProjection,
   useApiKeyState,
   useBaseUrlState,
   useModelState,
@@ -231,6 +232,11 @@ const normalizeCodexChatReasoningForSave = (
 const normalizeProviderKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
 type LocalProxyRequestOverridesBuildResult = ReturnType<
   typeof buildLocalProxyRequestOverrides
 >;
@@ -258,14 +264,18 @@ export interface ProviderFormProps {
   };
   showButtons?: boolean;
   isProxyTakeover?: boolean;
-  /** Claude：行里保存着、但不随切换生效的字段（编辑器底部提示）。 */
-  /** 编辑器里行保存着、但不随切换生效的字段（Claude Code、Codex）。 */
+  /** 编辑器里行保存着、但不随切换生效的字段（Claude Code、Codex、Gemini CLI、Grok Build）。 */
   inactiveFields?: ProviderEditorInactiveField[];
   /**
    * Claude 新增：当前 live 去掉当前供应商的关键字段后的样子。预设的关键字段套在它上面
    * 显示，保存时其余部分的改动写进 live。
    */
   claudeLiveBase?: Record<string, unknown>;
+  /**
+   * Codex、Gemini CLI、Grok Build 新增：预设或模板投影到当前配置文件上之后的内容，保存时
+   * 作为三方比较的底；投影进行中或失败时为 `null`。
+   */
+  onEditorBaseChange?: (base: Record<string, unknown> | null) => void;
 }
 
 export function ProviderForm(props: ProviderFormProps) {
@@ -298,6 +308,7 @@ function ProviderFormFull({
   isProxyTakeover = false,
   inactiveFields,
   claudeLiveBase,
+  onEditorBaseChange,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
@@ -685,14 +696,32 @@ function ProviderFormFull({
     [setCodexConfig, debouncedValidate],
   );
 
+  // 新增：预设或模板投影到当前配置文件上显示。每次重置显示内容都要重新投影，否则保存时
+  // 三方比较的底和显示内容对不上。
+  const { projectDraft } = useDraftEditorProjection(appId, onEditorBaseChange);
+  const projectCodexDraft = useCallback(
+    (auth: Record<string, unknown>, config: string, category?: string) =>
+      projectDraft({ auth, config }, category, (shown) =>
+        setCodexConfig(typeof shown.config === "string" ? shown.config : ""),
+      ),
+    [projectDraft, setCodexConfig],
+  );
+
   useEffect(() => {
     if (appId === "codex" && !initialData && selectedPresetId === "custom") {
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
+      projectCodexDraft(template.auth, template.config);
     }
-  }, [appId, initialData, selectedPresetId, resetCodexConfig]);
+  }, [
+    appId,
+    initialData,
+    selectedPresetId,
+    resetCodexConfig,
+    projectCodexDraft,
+  ]);
 
   useEffect(() => {
     form.reset(defaultValues);
@@ -820,6 +849,28 @@ function ProviderFormFull({
   } = useGeminiConfigState({
     initialData: appId === "gemini" ? initialData : undefined,
   });
+
+  const projectGeminiDraft = useCallback(
+    (
+      env: Record<string, unknown>,
+      config: Record<string, unknown>,
+      category?: string,
+    ) =>
+      projectDraft({ env, config }, category, (shown) =>
+        resetGeminiConfig(asRecord(shown.env), asRecord(shown.config)),
+      ),
+    [projectDraft, resetGeminiConfig],
+  );
+  // resetGeminiConfig 随编辑内容变，不能放进下面的依赖，否则每次编辑都会重新投影、冲掉
+  // 输入；只在打开和切回「自定义」时投影。
+  const projectGeminiDraftRef = useRef(projectGeminiDraft);
+  projectGeminiDraftRef.current = projectGeminiDraft;
+
+  useEffect(() => {
+    if (appId === "gemini" && !initialData && selectedPresetId === "custom") {
+      projectGeminiDraftRef.current({}, {});
+    }
+  }, [appId, initialData, selectedPresetId]);
 
   const updateGeminiEnvField = useCallback(
     (
@@ -1843,9 +1894,11 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
         );
+        projectCodexDraft(template.auth, template.config);
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
+        projectGeminiDraft({}, {});
       }
       if (appId === "opencode") {
         opencodeForm.resetOpencodeState();
@@ -1894,6 +1947,7 @@ function ProviderFormFull({
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
+      projectCodexDraft(auth, config, preset.category);
       return;
     }
 
@@ -1911,6 +1965,7 @@ function ProviderFormFull({
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
+      projectGeminiDraft(env, config, preset.category);
       return;
     }
 

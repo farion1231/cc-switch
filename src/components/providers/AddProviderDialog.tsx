@@ -33,6 +33,9 @@ import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { ManagedAuthProvider } from "@/lib/api";
 
+// 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见下）。
+const DRAFT_EDITOR_APPS: readonly AppId[] = ["codex", "gemini", "grokbuild"];
+
 interface AddProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -85,6 +88,13 @@ export function AddProviderDialog({
     unknown
   > | null>(null);
   const [claudeBaseLoaded, setClaudeBaseLoaded] = useState(false);
+  // Codex、Gemini CLI、Grok Build：表单把预设投影到当前配置文件上显示，投影结果就是保存时
+  // 三方比较的底（投影进行中或失败时为 null，保存只存供应商）。
+  const [draftEditorBase, setDraftEditorBase] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const projectsDraft = DRAFT_EDITOR_APPS.includes(appId);
   const [pendingConflict, setPendingConflict] = useState<{
     keys: string[];
     retry: (policy: EditorConflictPolicy) => Promise<void>;
@@ -126,6 +136,8 @@ export function AddProviderDialog({
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
+    // 表单每次打开都会重新投影；这里清掉，免得下次打开时先用上一次的底。
+    setDraftEditorBase(null);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -405,11 +417,17 @@ export function AddProviderDialog({
         providerData.suggestedDefaults = values.suggestedDefaults;
       }
 
+      const editorBase =
+        appId === "claude"
+          ? claudeLiveBase
+          : projectsDraft
+            ? draftEditorBase
+            : null;
       const submit = async (onConflict: EditorConflictPolicy) => {
         await onSubmit({
           ...providerData,
-          ...(appId === "claude" && claudeLiveBase
-            ? { editorSave: { base: claudeLiveBase, onConflict } }
+          ...(editorBase
+            ? { editorSave: { base: editorBase, onConflict } }
             : {}),
         });
         closeDialog();
@@ -423,7 +441,14 @@ export function AddProviderDialog({
         setPendingConflict({ keys: conflict.keys, retry: submit });
       }
     },
-    [appId, onSubmit, closeDialog, claudeLiveBase],
+    [
+      appId,
+      onSubmit,
+      closeDialog,
+      claudeLiveBase,
+      projectsDraft,
+      draftEditorBase,
+    ],
   );
 
   const handleResolveConflict = useCallback(
@@ -528,6 +553,9 @@ export function AddProviderDialog({
                 onSubmitReadyChange={handleSubmitReadyChange}
                 showButtons={false}
                 claudeLiveBase={claudeLiveBase ?? undefined}
+                onEditorBaseChange={
+                  projectsDraft ? setDraftEditorBase : undefined
+                }
               />
             )}
           </TabsContent>
@@ -547,6 +575,7 @@ export function AddProviderDialog({
           onSubmittingChange={setIsFormSubmitting}
           onSubmitReadyChange={handleSubmitReadyChange}
           showButtons={false}
+          onEditorBaseChange={projectsDraft ? setDraftEditorBase : undefined}
         />
       )}
 
