@@ -321,14 +321,23 @@ export function useCommonConfigSnippet({
     setUseCommonConfig(hasCommon);
   }, [enabled, settingsConfig, commonConfigSnippet, isLoading]);
 
-  // 从编辑器当前内容提取通用配置片段
+  // 从当前供应商提取通用配置片段
   const handleExtract = useCallback(async () => {
     setIsExtracting(true);
     setCommonConfigError("");
 
     try {
+      // 编辑模式下，表单内容可能已被通用配置的自动合并覆盖（初始化 effect 在
+      // 打开表单时就会把片段 merge 进来）。从这份被覆盖的内容里提取，只会把
+      // 刚合并进去的片段原样提回来，捕获不到供应商自有配置。改从未被污染的
+      // 已保存副本提取——与切换路径"先提取再覆盖"的时序一致（#7712）。
+      const sourceConfig =
+        initialData?.settingsConfig &&
+        Object.keys(initialData.settingsConfig).length > 0
+          ? JSON.stringify(initialData.settingsConfig, null, 2)
+          : settingsConfig;
       const extracted = await configApi.extractCommonConfigSnippet("claude", {
-        settingsConfig,
+        settingsConfig: sourceConfig,
       });
 
       if (!extracted || extracted === "{}") {
@@ -356,7 +365,7 @@ export function useCommonConfigSnippet({
     } finally {
       setIsExtracting(false);
     }
-  }, [settingsConfig, t]);
+  }, [initialData, settingsConfig, t]);
 
   return {
     useCommonConfig,
