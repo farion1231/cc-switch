@@ -2692,6 +2692,147 @@ model_provider = "c"
         assert_eq!(codex_text(), outside);
     }
 
+    /// live 里用户自己写的独有字段（`model_verbosity` 这类）不归当前供应商：原样保存不会
+    /// 把它收进行，切走时也就不会删掉；在编辑器里删掉它就从 live 删；新加的独有字段归
+    /// 供应商。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_leaves_exclusive_fields_from_live_to_the_user() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(
+            &CODEX_USER_LIVE.replace(
+                "model = \"gpt-a\"\n",
+                "model = \"gpt-a\"\nmodel_verbosity = \"high\"\nmodel_supports_reasoning_summaries = true\n",
+            ),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let open = |id: &str| {
+            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let view =
+                ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+                    .expect("view");
+            (row, view.settings)
+        };
+        let save = |mut row: Provider, edited: Value, base: Value| {
+            row.settings_config = edited;
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                None,
+                row,
+                Some(crate::services::provider::EditorSave {
+                    base,
+                    on_conflict: Default::default(),
+                }),
+            )
+        };
+        let a_config = |state: &AppState| {
+            state
+                .db
+                .get_provider_by_id("a", "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config["config"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        // 只改名、配置原样保存。
+        let (mut row, base) = open("a");
+        row.name = "renamed".into();
+        save(row, base.clone(), base).expect("save as is");
+        let config = a_config(&state);
+        assert!(
+            config.contains("model_context_window = 200000")
+                && !config.contains("model_verbosity")
+                && !config.contains("model_supports_reasoning_summaries"),
+            "{config}"
+        );
+
+        // 删掉一个从 live 带进来的，再加一个供应商自己的。
+        let (row, base) = open("a");
+        let mut edited = base.clone();
+        edited["config"] = json!(base["config"]
+            .as_str()
+            .unwrap()
+            .replace("model_supports_reasoning_summaries = true\n", "")
+            .replace(
+                "model_verbosity",
+                "model_auto_compact_token_limit = 100000\nmodel_verbosity"
+            ));
+        save(row, edited, base).expect("save edits");
+        let live = codex_text();
+        assert!(
+            !live.contains("model_supports_reasoning_summaries")
+                && live.contains("model_auto_compact_token_limit = 100000"),
+            "{live}"
+        );
+        let config = a_config(&state);
+        assert!(
+            config.contains("model_auto_compact_token_limit = 100000")
+                && !config.contains("model_verbosity"),
+            "{config}"
+        );
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let live = codex_doc();
+        assert_eq!(live["model_verbosity"].as_str(), Some("high"));
+        assert!(live.get("model_auto_compact_token_limit").is_none());
+        assert!(live.get("model_context_window").is_none());
+    }
+
+    /// 编辑器里把路由表从 custom 改名成别的表：那张表归供应商（按内容收成 custom 表），
+    /// 不当成全局设置写进 live，切走后表和里面的 Key 都不会留下。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_route_table_renamed_in_the_editor_stays_with_the_provider() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        let mut row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view a");
+        let shown = view.settings["config"].as_str().unwrap();
+        assert!(shown.contains("[model_providers.custom]\n"), "{shown}");
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(shown
+            .replace(
+                "model_provider = \"custom\"",
+                "model_provider = \"deepseek\""
+            )
+            .replace(
+                "[model_providers.custom]\n",
+                "[model_providers.deepseek]\nexperimental_bearer_token = \"sk-secret\"\n",
+            ));
+        row.settings_config = edited;
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            None,
+            row,
+            Some(crate::services::provider::EditorSave {
+                base: view.settings,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save");
+        let live = codex_text();
+        assert!(!live.contains("[model_providers.deepseek]"), "{live}");
+        assert!(live.contains("[model_providers.ollama_local]"), "{live}");
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
+        let live = codex_text();
+        assert!(
+            !live.contains("sk-secret") && !live.contains("deepseek"),
+            "{live}"
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_a_login_refreshed_during_the_switch_is_never_overwritten() {
@@ -3371,6 +3512,52 @@ model_provider = "c"
         assert_eq!(
             c.meta.as_ref().and_then(|meta| meta.common_config_enabled),
             Some(true)
+        );
+    }
+
+    /// 新增对话框的底已经套了预设：预设带的独有字段归新供应商，live 里用户自己写的不归它。
+    #[tokio::test]
+    #[serial]
+    async fn codex_add_dialog_keeps_the_users_exclusive_fields_out_of_the_new_row() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(
+            &CODEX_USER_LIVE.replace(
+                "model = \"gpt-a\"\n",
+                "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
+            ),
+            None,
+        );
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        let draft = codex_row(
+            "c",
+            "https://c.example/v1",
+            "model_auto_compact_token_limit = 90000\n",
+        );
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &draft.settings_config, None)
+                .expect("view c");
+        let shown = view.settings["config"].as_str().unwrap();
+        assert!(
+            shown.contains("model_verbosity") && shown.contains("model_auto_compact_token_limit"),
+            "{shown}"
+        );
+        add_from_editor(
+            &state,
+            AppType::Codex,
+            draft,
+            view.settings.clone(),
+            view.settings,
+        )
+        .expect("add c");
+
+        let c = state.db.get_provider_by_id("c", "codex").unwrap().unwrap();
+        let c_config = c.settings_config["config"].as_str().unwrap();
+        assert!(
+            c_config.contains("model_auto_compact_token_limit = 90000")
+                && !c_config.contains("model_verbosity"),
+            "{c_config}"
         );
     }
 

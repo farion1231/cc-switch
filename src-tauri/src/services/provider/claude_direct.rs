@@ -93,3 +93,11 @@ pub(crate) fn run(
         .collect();
     operation::run(&store, &guard, op, &changes, target, &commit)
 }
+
+/// 有没有已经发布、还没落定的操作（写入失败后判断要不要撤回刚存的行）。
+pub(crate) fn has_pending() -> bool {
+    crate::mode::state::pending(&DeviceStore::for_device(), app())
+        .ok()
+        .flatten()
+        .is_some()
+}

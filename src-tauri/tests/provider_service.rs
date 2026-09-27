@@ -3374,3 +3374,140 @@ fn claude_editor_first_provider_keeps_the_existing_settings() {
         Some("relay")
     );
 }
+
+/// live 里用户自己写的独有字段（`ENABLE_TOOL_SEARCH` 这类）不归当前供应商：原样保存不会
+/// 把它收进行，切走时也就不会删掉；在编辑器里删掉它就从 live 删；新加的独有字段归供应商。
+#[test]
+fn claude_editor_leaves_exclusive_fields_from_live_to_the_user() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let b = json!({ "env": { "ANTHROPIC_BASE_URL": "https://b.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone()), ("b", b)],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ENABLE_TOOL_SEARCH": "true", "DISABLE_INTERLEAVED_THINKING": "1" } }"#,
+    );
+
+    // 只改名、配置原样保存。
+    let (mut row, base) = open_claude_editor(&state, "a");
+    assert_eq!(base["env"]["ENABLE_TOOL_SEARCH"], json!("true"));
+    row.name = "renamed".into();
+    save_claude_editor(&state, &row, &base, base.clone(), "refuse").expect("save as is");
+    assert_eq!(
+        claude_row(&state, "a"),
+        a,
+        "live's exclusive fields stay out of the row"
+    );
+
+    // 删掉一个从 live 带进来的，再加一个供应商自己的。
+    let (row, base) = open_claude_editor(&state, "a");
+    let mut edited = base.clone();
+    edited["env"]
+        .as_object_mut()
+        .unwrap()
+        .remove("DISABLE_INTERLEAVED_THINKING");
+    edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("1");
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save edits");
+    let live = claude_live();
+    assert!(
+        live["env"].get("DISABLE_INTERLEAVED_THINKING").is_none(),
+        "{live}"
+    );
+    assert_eq!(live["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+    let a_row = claude_row(&state, "a");
+    assert_eq!(a_row["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+    assert!(a_row["env"].get("ENABLE_TOOL_SEARCH").is_none(), "{a_row}");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch to b");
+    let live = claude_live();
+    assert_eq!(live["env"]["ENABLE_TOOL_SEARCH"], json!("true"), "{live}");
+    assert!(
+        live["env"].get("CLAUDE_CODE_DISABLE_ARTIFACT").is_none(),
+        "{live}"
+    );
+}
+
+/// 新增对话框：底是还没套预设的 live，预设带的独有字段归新供应商，live 里用户自己的
+/// 独有字段不归它。
+#[test]
+fn claude_add_dialog_keeps_the_users_exclusive_fields_out_of_the_new_row() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a)],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ENABLE_TOOL_SEARCH": "true" } }"#,
+    );
+    let base = ProviderService::editor_view(&state, AppType::Claude, &json!({}), None)
+        .expect("view")
+        .settings;
+    let mut edited = base.clone();
+    edited["env"]["ANTHROPIC_BASE_URL"] = json!("https://relay.example");
+    edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("1");
+    let provider = Provider::with_id("relay".into(), "Relay".into(), edited, None);
+    ProviderService::add_from_editor(
+        &state,
+        AppType::Claude,
+        provider,
+        true,
+        Some(editor_save(&base, "refuse")),
+    )
+    .expect("add");
+
+    let row = claude_row(&state, "relay");
+    assert_eq!(row["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!("1"));
+    assert!(row["env"].get("ENABLE_TOOL_SEARCH").is_none(), "{row}");
+}
+
+/// 编辑当前供应商：先存行再写 live。存行失败时 live 不动；写 live 被冲突拒绝时撤回刚存
+/// 的行。两种情况行和 live 都还是保存前的样子。
+#[test]
+fn claude_editor_never_leaves_the_row_and_live_apart() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-old" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone())],
+        "a",
+        r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-old" }, "x": 1 }"#,
+    );
+    let before = claude_live_text();
+
+    // 行存不进去。
+    let (row, base) = open_claude_editor(&state, "a");
+    let mut edited = base.clone();
+    edited["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("sk-new");
+    let db = rusqlite::Connection::open(home.join(".cc-switch/cc-switch.db")).expect("open db");
+    db.execute_batch(
+        "CREATE TRIGGER fail_edit BEFORE UPDATE OF settings_config ON providers \
+         BEGIN SELECT RAISE(ABORT, 'injected save failure'); END;",
+    )
+    .expect("trigger");
+    save_claude_editor(&state, &row, &base, edited.clone(), "refuse").expect_err("save fails");
+    db.execute_batch("DROP TRIGGER fail_edit;")
+        .expect("drop trigger");
+    assert_eq!(claude_live_text(), before, "live untouched");
+    assert_eq!(claude_row(&state, "a"), a);
+
+    // live 写不进去（外部改了同一个全局键）。
+    std::fs::write(
+        get_claude_settings_path(),
+        before.replace("\"x\": 1", "\"x\": 3"),
+    )
+    .expect("external edit");
+    edited["x"] = json!(2);
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect_err("conflict");
+    assert_eq!(claude_row(&state, "a"), a, "the saved row is taken back");
+    assert_eq!(
+        claude_live()["env"]["ANTHROPIC_AUTH_TOKEN"],
+        json!("sk-old")
+    );
+}

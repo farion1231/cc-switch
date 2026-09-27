@@ -5074,6 +5074,7 @@ impl ProviderService {
             existing.as_ref().map(|row| &row.settings_config),
             &provider.settings_config,
             &editor.base,
+            &codex_editor::live_exclusive(state)?,
             codex_direct::is_official(&provider),
             provider.uses_proxy_injected_oauth(),
             editor.on_conflict,
@@ -5121,13 +5122,7 @@ impl ProviderService {
         };
         if let Err(error) = written {
             if !codex_direct::has_pending() {
-                let rollback = match &existing {
-                    Some(existing) => state.db.save_provider(app_type.as_str(), existing),
-                    None => state.db.delete_provider(app_type.as_str(), &provider.id),
-                };
-                if let Err(rollback) = rollback {
-                    log::warn!("恢复 Codex 供应商 '{}' 失败: {rollback}", provider.id);
-                }
+                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
             return Err(error);
         }
@@ -5217,24 +5212,33 @@ impl ProviderService {
                 AppType::Gemini => gemini_direct::has_pending(),
                 _ => grok_direct::has_pending(),
             };
-            // 文件已经发布、只是落定状态失败时，pending 会在下次操作或启动时补完，行要
-            // 留着；还没发布就失败，撤回刚存的行。
             if !pending {
-                let rollback = match &existing {
-                    Some(existing) => state.db.save_provider(app_type.as_str(), existing),
-                    None => state.db.delete_provider(app_type.as_str(), &provider.id),
-                };
-                if let Err(rollback) = rollback {
-                    log::warn!(
-                        "恢复 {} 供应商 '{}' 失败: {rollback}",
-                        app_type.as_str(),
-                        provider.id
-                    );
-                }
+                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
             return Err(error);
         }
         Ok(true)
+    }
+
+    /// 编辑器保存先存行、再写 live。写 live 失败时：文件已经发布、只是落定状态失败的，
+    /// pending 会在下次操作或启动时补完，行要留着；还没发布就失败（没有 pending），调用方
+    /// 用这个撤回刚存的行。
+    fn restore_row(
+        state: &AppState,
+        app_type: &AppType,
+        provider_id: &str,
+        existing: Option<&Provider>,
+    ) {
+        let rollback = match existing {
+            Some(existing) => state.db.save_provider(app_type.as_str(), existing),
+            None => state.db.delete_provider(app_type.as_str(), provider_id),
+        };
+        if let Err(rollback) = rollback {
+            log::warn!(
+                "恢复 {} 供应商 '{provider_id}' 失败: {rollback}",
+                app_type.as_str()
+            );
+        }
     }
 
     fn add_claude_from_editor(
@@ -5243,6 +5247,8 @@ impl ProviderService {
         editor: EditorSave,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
+        let _switch_guard =
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
         let mut provider = provider;
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         let plan = claude_editor::plan_save(None, &provider.settings_config, &editor.base)?;
@@ -5251,10 +5257,9 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         keep_common_config_for_old_versions(&mut provider);
 
-        let existed = state
+        let existing = state
             .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?
-            .is_some();
+            .get_provider_by_id(&provider.id, app_type.as_str())?;
         let first = crate::mode::current::provider_for(
             &state.db,
             &app_type,
@@ -5268,28 +5273,27 @@ impl ProviderService {
             target: &provider,
             set_pointer: true,
         });
-        if let Err(err) =
+        if let Err(error) =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
         {
-            if !existed {
-                if let Err(rollback) = state.db.delete_provider(app_type.as_str(), &provider.id) {
-                    log::warn!(
-                        "撤回新增的 Claude 供应商 '{}' 失败: {rollback}",
-                        provider.id
-                    );
-                }
+            if !claude_direct::has_pending() {
+                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
             }
-            return Err(err);
+            return Err(error);
         }
         Ok(true)
     }
 
+    /// 和其他编辑器一样先存行、再写 live：写 live 失败且没有 pending 时撤回行；已经发布的
+    /// 由 pending 补完，行和 live 不会对不上。
     fn update_claude_from_editor(
         state: &AppState,
         provider: Provider,
         editor: EditorSave,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
+        let _switch_guard =
+            futures::executor::block_on(crate::mode::controller::lock_settled(state, &app_type));
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
@@ -5312,20 +5316,34 @@ impl ProviderService {
         )?
         .as_deref()
             == Some(provider.id.as_str());
+        let is_route = mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str());
         // 代理模式下 live 的关键字段是代理契约，这里只写全局改动；编辑的是代理路由那家
-        // 时，存行之后按新契约重写（契约没变就不动）。直连指针那家在退出代理时写回。
+        // 时，写完按新行重写契约（契约没变就不动）。直连指针那家在退出代理时写回。
         let key_fields =
             (!mode.is_proxy() && is_direct_current).then_some(claude_editor::KeyFieldWrite {
                 prev: existing.as_ref(),
                 target: &provider,
                 set_pointer: false,
             });
-        claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)?;
-        state.db.save_provider(app_type.as_str(), &provider)?;
 
-        if mode.is_proxy() && mode.proxy_route.as_deref() == Some(provider.id.as_str()) {
-            futures::executor::block_on(crate::mode::controller::resync_route(state, &app_type))
-                .map_err(AppError::Message)?;
+        state.db.save_provider(app_type.as_str(), &provider)?;
+        let written =
+            claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
+                .and_then(|()| {
+                    if is_route {
+                        futures::executor::block_on(crate::mode::controller::switch_route_locked(
+                            state, &app_type, &provider,
+                        ))
+                        .map_err(AppError::Message)
+                    } else {
+                        Ok(())
+                    }
+                });
+        if let Err(error) = written {
+            if !claude_direct::has_pending() {
+                Self::restore_row(state, &app_type, &provider.id, existing.as_ref());
+            }
+            return Err(error);
         }
         Ok(true)
     }

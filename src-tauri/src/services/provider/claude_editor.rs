@@ -169,6 +169,10 @@ pub(crate) struct EditorPlan {
 
 /// 把编辑器里的完整配置拆开：关键字段、独有字段换进 `stored_row`（新增时为 `None`），
 /// 其余部分和 `base` 比，得出用户改过的全局设置。
+///
+/// 显示里有、行里没有的独有字段是从 live 带进来的（用户自己写的，或者上一家留下、值被
+/// 改过的），不归这个供应商：用户没动就不收进行，否则切走时会把用户自己的设置删掉；用户
+/// 删了就从 live 删。新增对话框的 `base` 是还没套预设的 live，预设带的独有字段不在里面。
 pub(crate) fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
@@ -188,13 +192,34 @@ pub(crate) fn plan_save(
         }
     }
     let empty = Value::Object(Map::new());
+    let stored = stored_row.unwrap_or(&empty);
+    let env_value = |doc: &Value, key: &str| doc.get("env").and_then(|env| env.get(key)).cloned();
+    let from_live: Vec<String> = base
+        .get("env")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(Map::keys)
+        .filter(|key| floor::claude_exclusive_env(key) && env_value(stored, key).is_none())
+        .cloned()
+        .collect();
+
+    let mut projection = ClaudeProjection::of(edited);
+    projection.exclusive.retain(|key, value| {
+        !from_live.contains(key) || env_value(base, key).as_ref() != Some(value)
+    });
+    let removed_from_live: Vec<String> = from_live
+        .into_iter()
+        .filter(|key| env_value(edited, key).is_none())
+        .collect();
     Ok(EditorPlan {
-        row_settings: store_into_row(stored_row.unwrap_or(&empty), &ClaudeProjection::of(edited)),
-        changes: global_changes(base, edited),
+        row_settings: store_into_row(stored, &projection),
+        changes: global_changes(base, edited, &removed_from_live),
     })
 }
 
-fn global_changes(base: &Value, edited: &Value) -> Vec<GlobalChange> {
+/// `removed_from_live`：用户删掉的、从 live 带进来的独有字段，从 live 删。其余独有字段
+/// 归供应商行，不算全局改动。
+fn global_changes(base: &Value, edited: &Value, removed_from_live: &[String]) -> Vec<GlobalChange> {
     let top = |doc: &Value| doc.as_object().cloned().unwrap_or_default();
     let env = |doc: &Value| {
         doc.get("env")
@@ -215,7 +240,11 @@ fn global_changes(base: &Value, edited: &Value) -> Vec<GlobalChange> {
         &KeyPath::new(&["env"]),
         &env(base),
         &env(edited),
-        |key| floor::claude_floor_env(key) || floor::claude_exclusive_env(key),
+        |key| {
+            floor::claude_floor_env(key)
+                || (floor::claude_exclusive_env(key)
+                    && !removed_from_live.iter().any(|removed| removed == key))
+        },
         &mut changes,
     );
     changes
@@ -331,6 +360,9 @@ pub(crate) fn write_live(
     let app = AppType::Claude.as_str();
     let guard = lock_app(app);
     let store = DeviceStore::for_device();
+    let commit = |target: &PendingTarget| operation::commit_target(db, &store, app, target);
+    // 关键字段的补丁是按调用方读到的行算的：先补完上一次的操作。
+    operation::recover_before_write(&store, &guard, &commit)?;
     operation::run(
         &store,
         &guard,
@@ -347,7 +379,7 @@ pub(crate) fn write_live(
             pointer,
             ..PendingTarget::default()
         },
-        &|target| operation::commit_target(db, &store, app, target),
+        &commit,
     )?;
     Ok(())
 }
@@ -390,7 +422,7 @@ mod tests {
             "alwaysThinkingEnabled": false,
             "apiFormat": "openai_chat"
         });
-        let changes = global_changes(&base, &edited);
+        let changes = global_changes(&base, &edited, &[]);
         assert_eq!(
             changes,
             vec![

@@ -50,8 +50,9 @@ fn is_nested_floor(parent: &str, key: &str) -> bool {
         .any(|segments| segments.len() == 2 && segments[0] == parent && segments[1] == key)
 }
 
-/// 全局设置的每个位置：关键字段、独有字段、CC Switch 的路由表不算。
-fn entries(doc: &DocumentMut, skip_route: Option<&str>) -> Vec<Entry> {
+/// 全局设置的每个位置：关键字段、独有字段、CC Switch 的路由表不算。`skip_routes` 是
+/// 配置选中的路由表：它归供应商（投影时按内容收成 custom 表），也不算。
+fn entries(doc: &DocumentMut, skip_routes: &[&str]) -> Vec<Entry> {
     let mut entries = Vec::new();
     for (key, item) in doc.as_table().iter() {
         if floor::CODEX_FLOOR_TOP.contains(&key) || floor::CODEX_EXCLUSIVE_TOP.contains(&key) {
@@ -60,7 +61,8 @@ fn entries(doc: &DocumentMut, skip_route: Option<&str>) -> Vec<Entry> {
         if key == "model_providers" {
             if let Some(providers) = item.as_table_like() {
                 for (id, table) in providers.iter() {
-                    if id == ROUTE_ID || id == OFFICIAL_PROXY_ROUTE_ID || Some(id) == skip_route {
+                    if id == ROUTE_ID || id == OFFICIAL_PROXY_ROUTE_ID || skip_routes.contains(&id)
+                    {
                         continue;
                     }
                     entries.push(Entry {
@@ -104,6 +106,10 @@ fn parse_text(text: &str, what: &str) -> Result<DocumentMut, AppError> {
 
 fn config_text(settings: &Value) -> &str {
     settings.get("config").and_then(Value::as_str).unwrap_or("")
+}
+
+fn selected_route(doc: &DocumentMut) -> Option<&str> {
+    doc.get("model_provider").and_then(Item::as_str)
 }
 
 /// 编辑器显示的内容。`settings_config` 是这个供应商的行（新增时是空对象）。
@@ -180,11 +186,7 @@ fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> 
     let Ok(row) = row_text.parse::<DocumentMut>() else {
         return Vec::new();
     };
-    let row_route = row
-        .get("model_provider")
-        .and_then(Item::as_str)
-        .map(str::to_string);
-    entries(&row, row_route.as_deref())
+    entries(&row, selected_route(&row).as_slice())
         .into_iter()
         .filter(|entry| item_at(display, &entry.path).map(render) != Some(render(&entry.item)))
         .map(|entry| {
@@ -204,30 +206,81 @@ pub(crate) struct CodexEditorPlan {
     pub edits: TomlEdits,
 }
 
+/// 不套任何供应商时 live 里的独有字段（live 现在对应的那家带进来的已经去掉）：编辑器显示里的
+/// 独有字段和它一样、行里又没有的，是从 live 带进来的。新增对话框的底已经套了预设，
+/// 只能这样和预设带的分开。
+pub(crate) fn live_exclusive(state: &AppState) -> Result<Vec<Entry>, AppError> {
+    let empty = serde_json::json!({ "auth": {}, "config": "" });
+    let view = view(state, &empty, None)?;
+    let doc = parse_text(config_text(&view.settings), "live")?;
+    Ok(exclusive_entries(&doc))
+}
+
+fn exclusive_entries(doc: &DocumentMut) -> Vec<Entry> {
+    floor::CODEX_EXCLUSIVE_TOP
+        .iter()
+        .filter_map(|key| {
+            Some(Entry {
+                path: vec![(*key).to_string()],
+                item: doc.get(key)?.clone(),
+            })
+        })
+        .collect()
+}
+
 /// 把编辑器里的完整配置拆开：关键字段、独有字段换进行（行里其余内容原样保留），其余部分
 /// 和 `base` 比，得出用户改过的全局设置。行有问题（会把官方登录发给第三方等）在这里报错。
+///
+/// `live_exclusive` 见 [`live_exclusive`]。从 live 带进来的独有字段不归这个供应商：用户
+/// 没动就不收进行（否则切走时会把用户自己的设置删掉），用户删了就从 live 删。
 pub(crate) fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
     base: &Value,
+    live_exclusive: &[Entry],
     official: bool,
     proxy_injected_oauth: bool,
     on_conflict: ConflictPolicy,
 ) -> Result<CodexEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
     let base_doc = parse_text(config_text(base), "base")?;
-    let projection = CodexProjection::of(&RowInput {
+    let stored_doc = parse_text(stored_row.map(config_text).unwrap_or(""), "stored")?;
+    let mut projection = CodexProjection::of(&RowInput {
         settings: edited,
         official,
         proxy_injected_oauth,
     })?;
+
+    let rendered = |doc: &DocumentMut, key: &str| doc.get(key).map(render);
+    let from_live: Vec<Entry> = exclusive_entries(&base_doc)
+        .into_iter()
+        .filter(|entry| {
+            let key = entry.path[0].as_str();
+            stored_doc.get(key).is_none()
+                && live_exclusive.iter().any(|live| {
+                    live.path == entry.path && render(&live.item) == render(&entry.item)
+                })
+        })
+        .collect();
+    projection.exclusive.retain(|(key, _)| {
+        !from_live.iter().any(|entry| entry.path[0] == *key)
+            || rendered(&edited_doc, key) != rendered(&base_doc, key)
+    });
+    let removed_from_live = from_live
+        .into_iter()
+        .filter(|entry| edited_doc.get(&entry.path[0]).is_none());
+
+    // 打开时和保存时选中的路由表都归供应商：用户在编辑器里把 custom 改名成别的表，那张表
+    // 连同里面的 Key 不能当成全局设置留在 live 里。
+    let routes: Vec<&str> = [selected_route(&base_doc), selected_route(&edited_doc)]
+        .into_iter()
+        .flatten()
+        .collect();
+    let mut base_entries = entries(&base_doc, &routes);
+    base_entries.extend(removed_from_live);
     Ok(CodexEditorPlan {
         row_settings: store_into_row(stored_row, edited, &projection)?,
-        edits: TomlEdits::between(
-            &entries(&base_doc, None),
-            &entries(&edited_doc, None),
-            on_conflict,
-        ),
+        edits: TomlEdits::between(&base_entries, &entries(&edited_doc, &routes), on_conflict),
     })
 }
 
@@ -402,8 +455,8 @@ mod tests {
 
     fn global_changes(base: &DocumentMut, edited: &DocumentMut) -> TomlEdits {
         TomlEdits::between(
-            &entries(base, None),
-            &entries(edited, None),
+            &entries(base, &[]),
+            &entries(edited, &[]),
             ConflictPolicy::Refuse,
         )
     }
@@ -455,6 +508,7 @@ mod tests {
             Some(&stored),
             &edited,
             &edited,
+            &[],
             false,
             false,
             ConflictPolicy::Refuse,
