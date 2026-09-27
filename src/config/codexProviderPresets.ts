@@ -3388,6 +3388,8 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     name: "开轩 LLM 网关",
     websiteUrl: "https://llm.kxpms.cn",
     category: "custom",
+    icon: "kxpms_gateway",
+    iconColor: "#0EA5E9",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
 model = "claude-opus-5"
@@ -3571,6 +3573,8 @@ requires_openai_auth = true
     name: "本地 LLM 网关 (8782)",
     websiteUrl: "http://localhost:8782",
     category: "custom",
+    icon: "local_gateway_8782",
+    iconColor: "#6366F1",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
 model = "claude-opus-5"

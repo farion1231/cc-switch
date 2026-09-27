@@ -149,6 +149,8 @@ export const iconUrls: Record<string, string> = {
   unity2: _unity2,
   xycai: _xycai,
   zetaapi: _zetaapi,
+  kxpms_gateway: `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24"><title>Kaixuan Gateway</title><path fill="currentColor" d="M19.5 14.5h-15A4.5 4.5 0 0 1 4 6.13 6 6 0 0 1 15.86 6 4.5 4.5 0 0 1 19.5 14.5z"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M9 11.5l3 3 3-3M12 8v6.5"/></svg>`,
+  local_gateway_8782: `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24"><title>Local Gateway 8782</title><rect x="3" y="4" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="14" width="18" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="7" cy="7" r="1" fill="currentColor"/><circle cx="7" cy="17" r="1" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M14 7h4M14 17h4"/></svg>`,
 };
 
 export const iconList = [

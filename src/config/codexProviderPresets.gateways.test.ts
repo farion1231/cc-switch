@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { codexProviderPresets } from "./codexProviderPresets";
+import { hasIcon } from "../icons/extracted";
 
 // 自建/私有 LLM 网关（llm-gateway-go）预设的回归护栏。
 // 本文件**只做静态断言，不发网络请求**；下面的事实基线是 2026-09-28 的 curl 级实测，
@@ -10,8 +11,18 @@ import { codexProviderPresets } from "./codexProviderPresets";
 // - 经 codex exec 的端到端结果会随网关负载大幅波动（拥塞时 503 / 长尾 60s+），
 //   所以不能把「某个模型此刻通」写成断言；这里只锁「目录必须覆盖它们」这一条。
 const GATEWAYS = [
-  { name: "开轩 LLM 网关", baseUrl: "https://llm.kxpms.cn/v1" },
-  { name: "本地 LLM 网关 (8782)", baseUrl: "http://localhost:8782/v1" },
+  {
+    name: "开轩 LLM 网关",
+    baseUrl: "https://llm.kxpms.cn/v1",
+    icon: "kxpms_gateway",
+    iconColor: "#0EA5E9",
+  },
+  {
+    name: "本地 LLM 网关 (8782)",
+    baseUrl: "http://localhost:8782/v1",
+    icon: "local_gateway_8782",
+    iconColor: "#6366F1",
+  },
 ] as const;
 
 // Codex 支持的思考档位全集；预设里出现表外值时后端生成的 catalog 会被 codex 拒绝。
@@ -82,6 +93,17 @@ describe("codexProviderPresets 自建网关预设", () => {
         `model = "${preset.modelCatalog![0].model}"`,
       );
       expect(preset.modelCatalog![0].model, gateway.name).toBe("claude-opus-5");
+    }
+  });
+
+  it("两个预设都配了 UI 可解析的 SVG 图标 + 品牌色（避免纯文本列表）", () => {
+    for (const gateway of GATEWAYS) {
+      const preset = codexProviderPresets.find((p) => p.name === gateway.name)!;
+      expect(preset.icon, gateway.name).toBe(gateway.icon);
+      expect(preset.iconColor, gateway.name).toBe(gateway.iconColor);
+      // 图标必须真的存在于 icons/extracted，避免「preset 引了一个未注册 icon」的
+      // 静默 fallback 到首字母（曾经压在这条规则上的盲区）。
+      expect(hasIcon(gateway.icon), gateway.name).toBe(true);
     }
   });
 
