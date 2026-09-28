@@ -67,6 +67,7 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -96,6 +97,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -548,6 +550,19 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（会话日志字节游标列）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_mcode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 19)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1639,6 +1654,9 @@ impl Database {
                 "1.00",
                 "12.50",
             ),
+            // Claude Opus 5.5（2026-09-23 发布；缓存读为 0.05x = $0.20，非常规 0.1x 的
+            // $0.40，也非 Opus 5 的 $0.50；fast mode $8/$40 不入表）
+            ("claude-opus-5-5", "Claude Opus 5.5", "4", "20", "0.20", "5"),
             // Claude Opus 5（与 Opus 4.8 同价位；fast mode $10/$50 不入表）
             ("claude-opus-5", "Claude Opus 5", "5", "25", "0.50", "6.25"),
             // Claude 4.8 系列
@@ -1769,12 +1787,15 @@ impl Database {
                 "0.30",
                 "3.75",
             ),
-            // GPT-6 系列（Astra，2026-09-04 发布，1.05M 窗口）
-            // 官方价页 + 模型页 + models.dev 三源一致：10/50，cache read 1，cache write 1.25× 输入 = 12.50。
-            // >272K 长上下文档（20/75/2/25）本表无法表达，与 gpt-5.5 同样忽略。
+            // GPT-6 系列（Astra 2026-09-04 发布，1.05M 窗口；Sol / Luna 2026-09-22 发布）
+            // 2026-09-23 核对官方价页 + 模型页 + models.dev：录入 Standard 短上下文价，
+            // cache read 0.1×、cache write 1.25× 输入价。>272K 长上下文档（输入与缓存 2×、输出 1.5×）、
+            // Batch/Flex、Fast mode、区域加价本表无法表达，与 gpt-5.5 同样忽略。
             // effort 档 low/medium/high/xhigh 由查价剥后缀回落到本行；max 不在剥离列表
             //（会与 *-max 真 id 撞名），不另加后缀行。
             ("gpt-6-astra", "GPT-6 Astra", "10", "50", "1", "12.5"),
+            ("gpt-6-sol", "GPT-6 Sol", "2", "10", "0.20", "2.50"),
+            ("gpt-6-luna", "GPT-6 Luna", "0.10", "0.50", "0.01", "0.125"),
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
             // 5.6 家族起 cache write 收 1.25× 输入价（此前 GPT 模型写缓存免费，勿回填旧系列）
             // 2026-09-06 审计：Sol 改促销价 4/20/0.40/5（OpenAI 价页原文"至少持续到 2026-11-21"），
@@ -1789,6 +1810,17 @@ impl Database {
                 "1.20",
                 "0.02",
                 "0.25",
+            ),
+            // GPT-5.6 Cyber（Daybreak 计划的网安模型，需 Trusted Access；2026-09-23 核对官方价页）。
+            // 别名 gpt-daybreak-red-latest / gpt-daybreak-blue-latest 当前分别指向 gpt-5.6-cyber /
+            // gpt-5.6-sol，官方明说别名改指向时价格随之改变，故别名不入表。
+            (
+                "gpt-5.6-cyber",
+                "GPT-5.6 Cyber",
+                "12.50",
+                "75",
+                "1.25",
+                "15.625",
             ),
             // 裸名 gpt-5.6 是 sol 的官方别名；effort 后缀对齐 gpt-5.5 系列的记账形态。
             // 查价先精确匹配 id 再剥 effort 后缀，这些行必须与 sol 同步改价，否则旧价会压过基础行。
@@ -1984,6 +2016,17 @@ impl Database {
             ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
             ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
             ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // OpenAI 文本模型补全（2026-09-23）：各模型页的标准 token 价。
+            // 来源：https://developers.openai.com/api/docs/models/<model_id>
+            // 已按 /api/docs/deprecations 排除弃用模型；不含工具调用费及多模态价格。
+            // Pro 系列未提供缓存折扣，与 o3-pro 一样将未支持的缓存价格记为 0。
+            // 有意不收：chat-latest 是滚动别名（改指向即改价）；gpt-rosalind-research 官方
+            // 2026-10-05 才开始计费且仅限 Trusted Access，提前入表会给免费期用量记账。
+            ("gpt-5.5-pro", "GPT-5.5 Pro", "30", "180", "0", "0"),
+            ("gpt-5.4-pro", "GPT-5.4 Pro", "30", "180", "0", "0"),
+            ("gpt-5.2-pro", "GPT-5.2 Pro", "21", "168", "0", "0"),
+            ("gpt-4o", "GPT-4o", "2.50", "10", "1.25", "0"),
+            ("gpt-4o-mini", "GPT-4o Mini", "0.15", "0.60", "0.075", "0"),
             // Gemini 3.8 系列（2026-09-02 发布，1M 窗口）
             // 介绍价 0.75/3.75/0.075 至 2026-12-31，2027-01-01 起挂牌价 1.50/7.50/0.15；口径同 3.7 Flash，勿加豁免。
             (
@@ -2112,7 +2155,16 @@ impl Database {
                 "0.025",
                 "0",
             ),
-            // StepFun 系列
+            // StepFun 系列：CNY 按 1 USD ≈ 7.14 CNY 折算，保留两位小数。
+            // Step 5 Preview 官方输入 / 输出 / 缓存读取：7 / 20 / 0.35 元。
+            (
+                "step-5-preview",
+                "Step 5 Preview",
+                "0.98",
+                "2.80",
+                "0.05",
+                "0",
+            ),
             (
                 "step-3.7-flash",
                 "Step 3.7 Flash",
@@ -2236,7 +2288,18 @@ impl Database {
             //   代价=夜间/凌晨用量高估一倍。勿按「阶梯取低档」惯例改成空闲档。
             //
             // input=缓存未命中价，cache_read=缓存命中价；DeepSeek 不单收 cache write → 0。
-            // deepseek-chat / deepseek-reasoner 自 2026-07 起为 V4 Flash 的 legacy 别名（同价）
+            //
+            // ── 2026-09-11：V4 Flash 退役，三个 id 全部由 DeepSeek-V4.1-Flash 承接 ──
+            // 官方价页原文：legacy names `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`
+            // 仍被接受，但「the corresponding models have been retired」，请求由 V4.1-Flash 服务
+            // 并按 Flash 价计费 → 三者同价。V4.1 Flash 高峰档 0.3/1.2/0.006（空闲档 0.15/0.6/0.003
+            // 恰为一半；models.dev 录的正是空闲档，故审计 A 段会长期报这几行，属预期）。
+            // deepseek-flash 是官方当前唯一推荐名，必须单列：查价前缀兜底是 LIKE '{id}-%'，
+            // 只命中更长的行，短 id 匹配不到 deepseek-v4-flash，缺行即静默按 0 计费。
+            //
+            // 🔴 deepseek-chat / deepseek-reasoner 停在 V4 Flash 高峰档不动（2026-09-11 复核）：
+            // 官方文档站已全站搜不到这两个 id、models.dev 第一方条目也已删除 —— 无权威源可证
+            // 「跟随 V4.1 Flash 降价」或「已下线」任一方向，按无源不动原则保留旧值。
             (
                 "deepseek-chat",
                 "DeepSeek Chat",
@@ -2254,11 +2317,19 @@ impl Database {
                 "0",
             ),
             (
+                "deepseek-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",
-                "0.44",
-                "1.32",
-                "0.014",
+                "0.3",
+                "1.2",
+                "0.006",
                 "0",
             ),
             // 部分上游（如阿里百炼）回传 4 位 MMDD 日期变体。查价的
@@ -2267,11 +2338,26 @@ impl Database {
             (
                 "deepseek-v4-flash-0731",
                 "DeepSeek V4 Flash",
-                "0.44",
-                "1.32",
-                "0.014",
+                "0.3",
+                "1.2",
+                "0.006",
                 "0",
             ),
+            // 旧视觉实验名，官方定价页明示「仍被接受、由 V4.1-Flash 承接并按 Flash 价计费」。
+            // 官方安装脚本 ≤1.2.0 写过这个 id，存量供应商仍在用；前缀兜底匹配不到更短的
+            // deepseek-v4-flash，不单列会静默按 0 计费
+            (
+                "deepseek-v4-flash-vision-exp",
+                "DeepSeek V4 Flash Vision Exp",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            // V4 Pro 高峰档 1.32/3.96/0.044（CNY 9/27/0.3）。官方 2026-09-12 撤回了「09-14 起
+            // 路由到 V4.1 Flash」的公告，定价页注(2)：9 月 14 日之后继续提供 V4 Pro API，
+            // 计费方式保持不变（2026-09-15 复核）。
+            // 🔴 勿按未生效的厂商公告提前改价：v3.20.3 曾因此发出 0.3/1.2/0.006 错价。
             (
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
@@ -2323,6 +2409,15 @@ impl Database {
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
+            // Hy4 preview：官方广州地域 CNY 6/18/0.3（1823/130055，2026-09-11 版）按 7.14 折算，无阶梯
+            (
+                "hy4-preview",
+                "Hunyuan Hy4 Preview",
+                "0.84",
+                "2.52",
+                "0.042",
+                "0",
+            ),
             // MiniMax 系列
             // 2026-09-06 审计：官方按量价页（platform.minimax.io/docs/guides/pricing-paygo）
             // M2 / M2.1 / M2.5 均为 0.3/1.2/0.03/0.375，models.dev 一致；旧值 0.27/0.95 与 0.15 为早期误录。
@@ -2391,6 +2486,14 @@ impl Database {
                 "0.03",
                 "0",
             ),
+            (
+                "glm-5.3-flashx",
+                "GLM-5.3-FlashX",
+                "0.37",
+                "1.25",
+                "0.075",
+                "0",
+            ),
             ("glm-5-turbo", "GLM-5-Turbo", "1.2", "4", "0.24", "0"),
             ("glm-5v-turbo", "GLM-5V-Turbo", "1.2", "4", "0.24", "0"),
             // MiMo (小米)
@@ -2403,7 +2506,7 @@ impl Database {
                 "0",
             ),
             ("mimo-v2-pro", "MiMo V2 Pro", "0.435", "0.87", "0.0036", "0"),
-            ("mimo-v2.5", "MiMo V2.5", "0.14", "0.29", "0.0028", "0"),
+            ("mimo-v2.5", "MiMo V2.5", "0.14", "0.28", "0.0028", "0"),
             (
                 "mimo-v2.5-pro",
                 "MiMo V2.5 Pro",
@@ -2424,6 +2527,17 @@ impl Database {
                 "0.016",
                 "0.20",
             ),
+            // 2026-09-15：开放权重两款，取阿里国际站（新加坡）模型页单价，无阶梯；缓存两列为
+            // 隐式缓存命中价与显式缓存创建价，与 qwen3.8-max 同口径
+            (
+                "qwen3.8-2.4t-a95b",
+                "Qwen3.8 2.4T A95B",
+                "2",
+                "6",
+                "0.25",
+                "2.50",
+            ),
+            ("qwen3.8-27b", "Qwen3.8 27B", "0.50", "3", "0.10", "0.625"),
             ("qwen3.7-max", "Qwen3.7 Max", "2.50", "7.50", "0.25", "0"),
             ("qwen3.7-plus", "Qwen3.7 Plus", "0.40", "1.60", "0.08", "0"),
             (
@@ -2496,8 +2610,9 @@ impl Database {
             ("qwq-32b", "QwQ 32B", "0.20", "0.60", "0", "0"),
             ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
             // Grok 系列 (xAI)
-            // 4.5/4.6 均为分档计价：prompt ≥200K 时单价翻倍（4/12，cached 亦翻倍）。
+            // 4.5/4.6/4.7 均为分档计价：prompt ≥200K 时单价翻倍（4/12，cached 亦翻倍）。
             // 本表无档位列，统一取基础档（<200K），与其它分档厂商口径一致
+            ("grok-4.7", "Grok 4.7", "2", "6", "0.50", "0"),
             ("grok-4.6", "Grok 4.6", "2", "6", "0.50", "0"),
             ("grok-4.5", "Grok 4.5", "2", "6", "0.30", "0"),
             // Grok CLI 官方 OAuth 态 modelUsage 上报的内部别名。定价由
@@ -2638,12 +2753,37 @@ impl Database {
             ("command-r", "Cohere Command R", "0.15", "0.60", "0", "0"),
             // OpenAI 补充
             ("o3-pro", "OpenAI o3-pro", "20", "80", "0", "0"),
-            ("o3-mini", "OpenAI o3-mini", "0.55", "2.20", "0.55", "0"),
+            ("o3-mini", "OpenAI o3-mini", "1.10", "4.40", "0.55", "0"),
             ("o1", "OpenAI o1", "15", "60", "7.50", "0"),
             ("o1-mini", "OpenAI o1-mini", "0.55", "2.20", "0.55", "0"),
             ("codex-mini", "Codex Mini", "0.75", "3", "0.025", "0"),
             ("gpt-5-mini", "GPT-5 Mini", "0.25", "2", "0.025", "0"),
             ("gpt-5-nano", "GPT-5 Nano", "0.05", "0.40", "0.005", "0"),
+            // MiMo 2.6：2026-09-23 核对官方标准价格，单位 USD / 百万 tokens。
+            (
+                "mimo-v2.6-pro",
+                "MiMo V2.6 Pro",
+                "0.435",
+                "0.87",
+                "0.0036",
+                "0",
+            ),
+            (
+                "mimo-v2.6-flash",
+                "MiMo V2.6 Flash",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+            ),
+            (
+                "mimo-v2.6-pro-ultraspeed",
+                "MiMo V2.6 Pro UltraSpeed",
+                "4.35",
+                "8.7",
+                "0.036",
+                "0",
+            ),
         ];
 
         let mut stmt = conn
@@ -3285,6 +3425,78 @@ impl Database {
                 "0.15",
                 "0.95",
                 "0.03",
+                "0",
+            ),
+            // 2026-09-11 审计：DeepSeek V4 Flash 退役，打到 deepseek-v4-flash / -0731 的
+            // 请求已由 V4.1-Flash 承接并按 Flash 价计费（官方定价页 quick_start/pricing），
+            // 高峰档 0.44/1.32/0.014 → 0.3/1.2/0.006。
+            //
+            // 🔴 必须排在上方 2026-08-16 峰谷调价五条之后：老库要先被那一组推到
+            // 0.44/1.32/0.014，本组的守卫才能命中；挪到其前老库会停在 0.44 不再前进。
+            // deepseek-chat / deepseek-reasoner 刻意不在本组 —— 官方已全面下架、无权威源
+            // 可证其跟随降价，见 seed_model_pricing 的 DeepSeek V4 段注释。
+            (
+                "deepseek-v4-flash",
+                "DeepSeek V4 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+            ),
+            (
+                "deepseek-v4-flash-0731",
+                "DeepSeek V4 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+                "0.44",
+                "1.32",
+                "0.014",
+                "0",
+            ),
+            // 2026-09-15：撤销 09-11 提前执行的 V4 Pro → Flash 档回调（官方 09-12 撤回迁移公告，
+            // V4 Pro 继续按原价计费）。v3.20.3 已把老库推到 0.3/1.2/0.006，本条修回高峰档。
+            // 🔴 原 1.32→0.3 条目必须删除而非保留：两条并存会让每次启动都来回改写。
+            (
+                "deepseek-v4-pro",
+                "DeepSeek V4 Pro",
+                "1.32",
+                "3.96",
+                "0.044",
+                "0",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            // 2026-09-23 核对标准价格，仅修正仍匹配旧内置值的记录。
+            (
+                "mimo-v2.5",
+                "MiMo V2.5",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+                "0.14",
+                "0.29",
+                "0.0028",
+                "0",
+            ),
+            (
+                "o3-mini",
+                "OpenAI o3-mini",
+                "1.10",
+                "4.40",
+                "0.55",
+                "0",
+                "0.55",
+                "2.20",
+                "0.55",
                 "0",
             ),
         ];

@@ -577,4 +577,32 @@ describe("ProviderList Component", () => {
       screen.queryByRole("button", { name: "provider.addProvider" }),
     ).not.toBeInTheDocument();
   });
+
+  it("does not tell MiniMax Code users to click a missing import button", async () => {
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="mcode"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("mcode.empty.title");
+    expect(screen.getByText("mcode.empty.description")).toBeInTheDocument();
+    expect(
+      screen.queryByText("provider.noProvidersDescription"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.importCurrent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "provider.addProvider" }),
+    ).toBeInTheDocument();
+  });
 });

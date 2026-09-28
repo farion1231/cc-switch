@@ -67,7 +67,21 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
     "xiaomimimo.com", // Xiaomi MiMo (api.xiaomimimo.com, token-plan-cn.xiaomimimo.com)
     "longcat.chat",   // Meituan LongCat (api.longcat.chat)
     "minimax.io",     // MiniMax global (api.minimax.io)
-    "minimaxi.com",   // MiniMax CN (api.minimaxi.com)
+    "minimax.cn",     // MiniMax CN (current official endpoint)
+    "minimaxi.com",   // MiniMax CN (legacy endpoint)
+    // StepFun Responses API currently supports only `function` tools:
+    // platform.stepfun.com/docs/zh/api-reference/responses/responses-create
+    "stepfun.com",
+    "stepfun.ai",
+    // Conservative (unverified, not a confirmed reject): Baidu Qianfan's
+    // pay-as-you-go Responses guide documents only `function` / `mcp` tools
+    // (cloud.baidu.com/doc/qianfan-docs/s/4mi400l1m). Host-exact; Qianfan's
+    // Chat plans on the same domain are ProxyChat and never consult this list.
+    "qianfan.baidubce.com",
+    // Conservative (unverified): iFlytek Astron Coding Plan fronts third-party
+    // models behind one Responses gateway with no documented hosted-tool
+    // support (www.xfyun.cn/doc/spark/CodingPlan.html).
+    "xf-yun.com",
     // Zhipu GLM CN / global (open.bigmodel.cn, api.z.ai): the native Responses
     // gateway's tool-type enum is `function | web_search_preview |
     // code_interpreter | mcp` (verbatim from the #6944 400 body) — Codex's
@@ -737,7 +751,7 @@ pub(crate) fn codex_live_auth_matches_managed_request(
     Ok(live_access_token == Some(request_access_token.trim()))
 }
 
-fn clear_codex_managed_oauth_live_auth_marker_for_account(
+pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
     account_id: &str,
 ) -> Result<(), AppError> {
     let marker_path = get_codex_managed_oauth_live_auth_marker_path();
@@ -1627,6 +1641,14 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
+    }
+
+    if profile == CodexCatalogToolProfile::ProxyChat {
+        // Codex's `original` image detail (full-resolution) is rejected by
+        // strict Chat gateways with `400 invalid_request_error`, param
+        // `messages.N.content`. Never advertise the capability on the
+        // ProxyChat contract so Codex keeps to auto/high.
+        entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
 
     // Per-model reasoning levels override the template's conservative
@@ -4101,9 +4123,9 @@ pub fn restore_codex_settings_for_backfill(
 ///
 /// Supported fields:
 /// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///   otherwise falls back to top-level `base_url`.
+///   otherwise uses `openai_base_url` for Codex's default built-in provider.
 /// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
-///   otherwise falls back to top-level `wire_api`.
+///   otherwise leaves the built-in provider's Responses protocol unchanged.
 /// - `"model"` / `"model_catalog_json"`: writes to top-level field.
 ///
 /// Empty value removes the field.
@@ -4119,7 +4141,9 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
             let model_provider = doc
                 .get("model_provider")
                 .and_then(|item| item.as_str())
-                .map(str::to_string);
+                .map(str::to_string)
+                // Codex defaults to openai when the selector is absent.
+                .or_else(|| (!doc.contains_key("model_provider")).then(|| "openai".to_string()));
 
             if let Some(provider_key) = model_provider {
                 // validate_reserved_model_provider_ids（0.148 起）对配置里出现
@@ -6471,7 +6495,7 @@ model = "gpt-4"
     }
 
     #[test]
-    fn base_url_falls_back_to_top_level_without_model_provider() {
+    fn base_url_uses_openai_override_without_model_provider() {
         let input = r#"model = "gpt-4"
 "#;
 
@@ -6479,10 +6503,18 @@ model = "gpt-4"
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         let base_url = parsed
-            .get("base_url")
+            .get("openai_base_url")
             .and_then(|v| v.as_str())
-            .expect("should set top-level base_url");
+            .expect("should set the built-in provider's URL override");
         assert_eq!(base_url, "https://fallback.api/v1");
+        assert!(parsed.get("base_url").is_none());
+        let responses = update_codex_toml_field(&result, "wire_api", "responses").unwrap();
+        assert_eq!(responses, result);
+        let cleared = update_codex_toml_field(&result, "base_url", "").unwrap();
+        assert_eq!(
+            toml::from_str::<toml::Value>(&cleared).unwrap(),
+            toml::from_str::<toml::Value>(input).unwrap()
+        );
     }
 
     #[test]
@@ -7072,13 +7104,13 @@ base_url = "https://production.api/v1"
     #[test]
     fn vendor_catalog_matched_model_keeps_vendor_modalities() {
         // A model that IS in the official catalog must keep the vendor's
-        // declared modalities (deepseek-v4-flash is text-only).
+        // declared modalities verbatim (deepseek-v4-pro is text-only there).
         let settings = json!({
             "modelCatalog": {
                 "models": [
                     {
-                        "model": "deepseek-v4-flash",
-                        "displayName": "DeepSeek V4 Flash"
+                        "model": "deepseek-v4-pro",
+                        "displayName": "DeepSeek V4 Pro"
                     }
                 ]
             }
@@ -7192,8 +7224,8 @@ base_url = "https://production.api/v1"
                 default_reasoning_level: None,
             },
             CodexCatalogModelSpec {
-                model: "deepseek/deepseek-v4-pro".to_string(),
-                display_name: Some("DeepSeek V4 Pro".to_string()),
+                model: "qwen/qwen3-coder-plus".to_string(),
+                display_name: Some("Qwen3 Coder Plus".to_string()),
                 context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
@@ -7250,7 +7282,7 @@ base_url = "https://production.api/v1"
             };
 
             assert_eq!(modalities("gpt-5.4"), json!(["text", "image"]));
-            assert_eq!(modalities("deepseek/deepseek-v4-pro"), json!(["text"]));
+            assert_eq!(modalities("qwen/qwen3-coder-plus"), json!(["text"]));
             assert_eq!(modalities("glm-5.2v"), json!(["text", "image"]));
             assert_eq!(
                 modalities("deepseek-v4-flash"),
@@ -7309,7 +7341,7 @@ wire_api = "responses"
         let settings = json!({
             "modelCatalog": {
                 "models": [
-                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" },
+                    { "model": "deepseek-flash", "displayName": "DeepSeek Flash" },
                     { "model": "deepseek-v4-pro", "contextWindow": 500_000 }
                 ]
             }
@@ -7326,7 +7358,7 @@ wire_api = "responses"
         let flash = &catalog["models"][0];
         assert_eq!(
             flash.get("slug").and_then(|v| v.as_str()),
-            Some("deepseek-v4-flash")
+            Some("deepseek-flash")
         );
         assert_eq!(
             flash.get("apply_patch_tool_type").and_then(|v| v.as_str()),
@@ -7358,7 +7390,13 @@ wire_api = "responses"
             flash.get("supports_reasoning_summaries"),
             Some(&json!(true))
         );
-        assert_eq!(flash.get("input_modalities"), Some(&json!(["text"])));
+        // deepseek-flash accepts image input per the vendor's own catalog and
+        // vision guide (api-docs.deepseek.com/guides/vision); the legacy
+        // deepseek-v4-flash alias routes to it and must not be gated (#7283).
+        assert_eq!(
+            flash.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
         assert!(
             flash.get("model_messages").is_some(),
             "official entries are mirrored verbatim, incl. model_messages"
@@ -7372,7 +7410,7 @@ wire_api = "responses"
         // Explicit user display name still wins over the official one.
         assert_eq!(
             flash.get("display_name").and_then(|v| v.as_str()),
-            Some("DeepSeek V4 Flash")
+            Some("DeepSeek Flash")
         );
 
         let pro = &catalog["models"][1];
@@ -7443,6 +7481,37 @@ wire_api = "responses"
             .get("base_instructions")
             .and_then(|v| v.as_str())
             .is_some_and(|s| !s.trim().is_empty()));
+    }
+
+    #[test]
+    fn deepseek_official_catalog_legacy_flash_alias_stays_image_capable() {
+        // The vendor's catalog now ships `deepseek-flash` only; the legacy
+        // `deepseek-v4-flash` id the preset defaulted to is still accepted by
+        // the API and routes to the same vision-capable Flash model, so it must
+        // clone the flagship and resolve image-capable instead of being gated
+        // text-only (#7283).
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-flash" }] }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "the legacy alias routes to the vision-capable Flash model and must fail open"
+        );
     }
 
     #[test]
@@ -7659,6 +7728,16 @@ web_search = "disabled"
             ("LongCat-2.0", "https://api.longcat.chat/openai/v1"),
             ("MiniMax-M3", "https://api.minimax.io/v1"),
             ("MiniMax-M3", "https://api.minimaxi.com/v1"),
+            // Use an alias to exercise host detection independently of the
+            // MiniMax model-prefix fallback.
+            ("custom-model", "https://api.minimax.cn/v1"),
+            ("step-4-flash", "https://api.stepfun.com/v1"),
+            ("step-4-flash", "https://api.stepfun.ai/v1"),
+            ("deepseek-v4-pro", "https://qianfan.baidubce.com/v2"),
+            (
+                "astron-code-latest",
+                "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+            ),
             ("glm-5.3", "https://open.bigmodel.cn/api/v1"),
             ("glm-5.3", "https://api.z.ai/api/v1"),
         ] {
@@ -7714,6 +7793,7 @@ web_search = "disabled"
             ("gpt-5.5", "https://viz.ai/v1"),
             ("gpt-5.5", "https://notbigmodel.cn/v1"),
             ("gpt-5.5", "https://z.ai.example.com/v1"),
+            ("gpt-5.5", "https://api.stepfun.com.example.com/v1"),
         ] {
             assert!(
                 !codex_native_gateway_rejects_web_search(&cfg(model, host)),
@@ -7856,9 +7936,9 @@ web_search = "disabled"
         let catalog = r#"{
             "models": [
                 { "slug": "gpt-5.4", "input_modalities": ["text", "image"] },
-                { "slug": "deepseek-v4-pro", "input_modalities": ["text"] },
+                { "slug": "qwen3-coder-plus", "input_modalities": ["text"] },
                 { "slug": "gpt-text-override", "input_modalities": ["text"] },
-                { "slug": "deepseek-v4-flash", "input_modalities": ["text", "image"] }
+                { "slug": "glm-5.2", "input_modalities": ["text", "image"] }
             ]
         }"#;
 

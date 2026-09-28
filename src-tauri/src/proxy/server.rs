@@ -454,6 +454,169 @@ mod tests {
         body: Value,
     }
 
+    /// A base URL pasted as a complete endpoint with the full-URL switch left off
+    /// must derive the sibling standalone endpoint instead of having the
+    /// standalone path appended to it.
+    #[tokio::test]
+    async fn codex_standalone_endpoints_derive_from_pasted_full_base_url() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let capture_handler = {
+            let captured = captured.clone();
+            move |request: axum::extract::Request| {
+                let captured = captured.clone();
+                async move {
+                    let (parts, _body) = request.into_parts();
+                    captured.lock().await.push(CapturedRequest {
+                        path_and_query: parts
+                            .uri
+                            .path_and_query()
+                            .map(|value| value.as_str().to_string())
+                            .unwrap_or_else(|| parts.uri.path().to_string()),
+                        authorization: parts
+                            .headers
+                            .get(header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            .map(ToString::to_string),
+                        body: Value::Null,
+                    });
+
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "application/json")],
+                        r#"{"created":1,"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":7,"output_tokens":11,"total_tokens":18}}"#,
+                    )
+                }
+            }
+        };
+        let mock_app = Router::new()
+            .route("/v1/images/generations", post(capture_handler.clone()))
+            .route("/v1/images/edits", post(capture_handler.clone()))
+            .route("/Gateway/v1/images/edits", post(capture_handler.clone()))
+            .route("/v1/alpha/search", post(capture_handler));
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+
+        let cases = [
+            (
+                "pasted-mixed-case-chat-completions",
+                format!("http://{mock_addr}/v1/Chat/Completions?api-version=CaseValue"),
+                "/v1/images/edits",
+                "/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "pasted-mixed-case-images-generations",
+                format!("http://{mock_addr}/Gateway/v1/Images/Generations/?api-version=CaseValue#fragment"),
+                "/v1/images/edits",
+                "/Gateway/v1/images/edits?api-version=CaseValue&client_version=0.145.0",
+            ),
+            (
+                "pasted-mixed-case-images-edits",
+                format!("http://{mock_addr}/v1/Images/Edits/"),
+                "/v1/images/generations",
+                "/v1/images/generations?client_version=0.145.0",
+            ),
+            (
+                "pasted-mixed-case-responses-compact",
+                format!("http://{mock_addr}/v1/Responses/Compact/"),
+                "/v1/alpha/search",
+                "/v1/alpha/search?client_version=0.145.0",
+            ),
+            (
+                "pasted-chat-completions",
+                format!("http://{mock_addr}/v1/chat/completions"),
+                "/v1/images/generations",
+                "/v1/images/generations?client_version=0.145.0",
+            ),
+            (
+                "pasted-chat-completions",
+                format!("http://{mock_addr}/v1/chat/completions"),
+                "/v1/images/edits",
+                "/v1/images/edits?client_version=0.145.0",
+            ),
+            (
+                "pasted-images-generations",
+                format!("http://{mock_addr}/v1/images/generations?api-version=test"),
+                "/v1/images/edits",
+                "/v1/images/edits?api-version=test&client_version=0.145.0",
+            ),
+            (
+                "pasted-responses",
+                format!("http://{mock_addr}/v1/responses"),
+                "/v1/alpha/search",
+                "/v1/alpha/search?client_version=0.145.0",
+            ),
+        ];
+
+        for (provider_id, base_url, local_path, expected_upstream) in cases {
+            let provider = Provider::with_id(
+                provider_id.to_string(),
+                provider_id.to_string(),
+                json!({
+                    "base_url": base_url,
+                    "auth": {"OPENAI_API_KEY": "upstream-secret"}
+                }),
+                None,
+            );
+            db.save_provider("codex", &provider)
+                .expect("save pasted base URL provider");
+            db.set_current_provider("codex", &provider.id)
+                .expect("select pasted base URL provider");
+
+            let response = client
+                .post(format!(
+                    "http://127.0.0.1:{}{local_path}?client_version=0.145.0",
+                    proxy_info.port
+                ))
+                .header(header::AUTHORIZATION, "Bearer client-secret")
+                .json(&json!({"model": "gpt-image-1", "prompt": "pasted base URL"}))
+                .send()
+                .await
+                .expect("send images request");
+
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{local_path} via {base_url}"
+            );
+            let request = captured
+                .lock()
+                .await
+                .pop()
+                .expect("upstream request captured");
+            assert_eq!(
+                request.path_and_query, expected_upstream,
+                "{local_path} via {base_url}"
+            );
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer upstream-secret")
+            );
+        }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
     #[tokio::test]
     async fn codex_images_generation_aliases_forward_and_record_usage() {
         let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));

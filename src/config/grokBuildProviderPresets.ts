@@ -238,11 +238,12 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "APIKEY.FUN",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
     auth: grokAuth(),
-    config: grokPresetConfig("APIKEY.FUN", "https://api.apikey.fun/v1"),
+    config: grokPresetConfig("APIKEY.FUN", "https://api.apikey.fan/v1"),
     endpointCandidates: [
+      "https://api.apikey.fan/v1",
       "https://api.apikey.fun/v1",
       "https://slb.apikey.fun/v1",
     ],
@@ -481,7 +482,10 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
       "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     auth: grokAuth(),
     config: grokPresetConfig("SudoCode.chat", "https://api.sudocode.chat/v1"),
-    endpointCandidates: ["https://api.sudocode.chat/v1"],
+    endpointCandidates: [
+      "https://api.sudocode.chat/v1",
+      "https://api.sudorelay.com/v1",
+    ],
     apiFormat: "openai_responses",
     category: "third_party",
     isPartner: true,

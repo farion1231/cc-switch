@@ -895,13 +895,14 @@ export function ClaudeFormFields({
                     variant="outline"
                     size="sm"
                     onClick={() => {
+                      // 按面板从上到下取值，默认兜底模型最后使用。
                       const value =
-                        claudeModel ||
                         defaultSonnetModel ||
                         defaultOpusModel ||
                         defaultFableModel ||
                         defaultHaikuModel ||
-                        subagentModel;
+                        subagentModel ||
+                        claudeModel;
                       if (value) {
                         for (const row of modelRoleRows) {
                           const roleValue = row.supportsOneM

@@ -1,16 +1,17 @@
 {
   "models": [
     {
-      "slug": "deepseek-v4-flash",
+      "slug": "deepseek-flash",
       "prefer_websockets": false,
       "support_verbosity": true,
       "default_verbosity": "low",
       "apply_patch_tool_type": "freeform",
       "web_search_tool_type": "text",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
-      "supports_image_detail_original": false,
+      "supports_image_detail_original": true,
       "truncation_policy": {
         "mode": "tokens",
         "limit": 10000
@@ -28,8 +29,8 @@
       "comp_hash": "3000",
       "reasoning_summary_format": "experimental",
       "default_reasoning_summary": "none",
-      "display_name": "DeepSeek-V4-Flash",
-      "description": "Latest frontier agentic coding model.",
+      "display_name": "DeepSeek-Flash",
+      "description": "Latest frontier agentic coding model with image input.",
       "default_reasoning_level": "high",
       "supported_reasoning_levels": [
         {

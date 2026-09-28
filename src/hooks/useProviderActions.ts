@@ -347,7 +347,11 @@ export function useProviderActions(
               messageKey = "notifications.claudeDesktopRestartRequired";
               defaultMessage = "切换成功，重启 Claude Desktop 后生效";
             }
-          } else if (activeApp === "opencode" || activeApp === "openclaw") {
+          } else if (
+            activeApp === "opencode" ||
+            activeApp === "openclaw" ||
+            activeApp === "mcode"
+          ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }
