@@ -1155,8 +1155,14 @@ mod tests {
             "顶层 model_provider 必须被补上并指向 kxpms\n{live_text}"
         );
         assert!(
-            doc["model_providers"].get("custom").is_none(),
-            "老 custom 表必须消失\n{live_text}"
+            doc["model_providers"].get("custom").is_some(),
+            "custom 必须作为别名保留：老 session 的 model_provider 就是 custom，\
+             丢了它 Codex 0.158+ 拒绝 resume（RFC 0002 §2.1）\n{live_text}"
+        );
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            doc["model_providers"]["kxpms"]["base_url"].as_str(),
+            "custom 别名必须与 kxpms 指向同一端点，不能把老 session 改道\n{live_text}"
         );
         assert_eq!(
             doc["model_providers"]["kxpms"]["base_url"].as_str(),

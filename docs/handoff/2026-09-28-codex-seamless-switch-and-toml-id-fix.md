@@ -473,7 +473,108 @@ pid 做 `kill(-pid, …)` 要么 ESRCH、要么把用户整个终端作业组连
 - 分支：`feat/codex-restart-toml-migration-merged-catalog`
 - 第三轮改动已提交并推送。
 
-### 跨模块 env 竞态（**未修**，独立跟踪）
+## 第四轮（2026-09-29 凌晨）：批判式审计 + 修两个真缺陷
+
+本轮起因是「编译 + 本地部署 + 测 Codex 供应商切换」这个任务。测试过程本身是对的，
+但**上一轮我交付的修复只覆盖了症状的一半**——审计推翻了我自己的验收。
+
+### 1. 修复 1（已修）：legacy `custom` id 被改名，老 session 全部无法 resume
+
+**这是本轮最严重的发现，且直接违反本 RFC 的验收标准。**
+
+第二轮引入的按端点区分 id 迁移（`custom` → `kxpms` / `local8782`）解决了「两端点共用
+一个 id 互相覆盖」，但它**只搬走不留副本**。而：
+
+- 老 session 的 `session_meta.payload.model_provider` 记的就是 `custom`；
+- session 元数据不可改（RFC 0002 §2.2）；
+- Codex 0.158+ 加载 session 时严格校验「每个 session 的 `model_provider` 必须有同名表」。
+
+所以「`Model provider 'custom' not found`」有**两个**来源：切到官方时整张表被写掉
+（第三轮 `82a731d9` 修的），以及迁移改名后没有兼容副本 —— 后者把同一个报错换个原因
+再犯一遍，把 RFC 0002 §2.1「`custom` 永远能解析到表」的验收标准直接推翻。
+
+**实测证据**（审计探针，往返 official ↔ kxpms 后打印 live）：
+
+```
+顶层 model_provider = None
+live 里的 provider 表 id = ["kxpms", "local8782"]     ← custom 没了
+```
+
+**修法**：搬家时在 `custom` 下留一份**逐字相同**的副本。副本内容与原表一致，所以老
+session 解析到的端点和迁移前完全一致，不会被静默改道；顶层 `model_provider` 已被改指
+到新 id，副本保持 inert。`codex_config.rs::migrate_legacy_codex_toml_ids_with_policy`。
+
+**回归门**：`codex_switch_to_official_keeps_legacy_custom_id_resolvable`
+（同时断言别名与新表指向同一端点、且顶层不指向别名）。
+
+### 2. 修复 2（已修）：我自己上一轮的改动弄瞎了 catalog 端点归属
+
+**这是我自己引入的回归，第三轮没发现，因为没测到它。**
+
+上一轮我把「非激活端点抽表」从 `migrate_legacy_codex_toml_ids` 换成
+`renaming_only`（不补顶层）。而 `collect_codex_catalog_source_for_provider` 判定
+toml_id 的顺序是：① 顶层 `model_provider`；② 回退「唯一一张自定义表」。换成
+`renaming_only` 后非激活端点**没有顶层**，落到回退；而我同时加了 `custom` 别名，
+于是它有**两张**自定义表 → 回退永远判不出 toml_id → 该端点的模型目录被**静默丢弃**
+（`MERGED_CATALOG_SOURCES_KEY` 整个消失）。
+
+暴露它的失败用例：`provider_bundle::tests::legacy_custom_toml_id_bundle_is_migrated_on_switch`。
+
+**修法**：回退判据先剔除 `custom` 别名（别名不算独立端点），再套「唯一一张」；剔完为空
+时退回「只有一张 `custom`」的第三方形态，行为与之前一致。`live.rs`。
+
+**教训**：改「非激活 provider 的投影」时，要连着看**谁在消费那份投影**。这里消费者是
+catalog 素材收集，它靠顶层 + 表唯一性做归属判定，两条隐式契约都被我动过。
+
+### 3. 复核：用户真实 DB 没被污染（但属于运气）
+
+用户真实 `~/.cc-switch/cc-switch.db` 里 `codex-official` 存档顶层**没有** `model_provider`，
+即那版有 bug 的二进制**没有**把 `model_provider = "kxpms"` 持久化进去。
+
+**不是因为设计正确，而是因为用户当时处于代理接管模式**：`ProviderService::switch` 在
+接管态走 `hot_switch_provider_inner` 后直接 return（`services/provider/mod.rs:5807`），
+从不进入 `switch_normal`，而 DB 迁移挂在 `switch_normal` 的
+`build_effective_provider_for_live*` 里。**一旦关掉接管做一次切换，中招就是必然的。**
+
+### 4. 顺带确认：并发会话在我提交时改了同一批文件
+
+提交 `6ca72675` 时 `codex_config.rs` / `live.rs` 已被另一个会话写入（catalog 共存
+特性）。我按 hunk 行号切分暂存，只提交自己的 12 个 hunk，它改的两处 provider 类别判断
+（换成既有 helper `is_codex_official_provider`）在我自己的函数内、属同源修正，一并纳入
+并在 commit message 里写明。**仍然建议按上一轮 §下一轮提示词 item 5 用 worktree 隔离。**
+
+## 本轮测试证据（第四轮）
+
+- `cargo test --lib` —— **3025 passed / 0 failed / 10 ignored**。
+- `cargo test --test codex_switch_e2e` —— **4 passed**（roundtrip / 不得顶掉官方 /
+  category 为 NULL 的官方卡 / legacy `custom` 可解析）。
+- `cargo test --test provider_service` —— **43 passed**。
+- `cargo test --test provider_commands` —— **10 passed**。
+- `cargo clippy --lib` —— 2 条 warning，均在 `commands/codex_runtime.rs:131` 与
+  `provider_bundle.rs:414`，**非本轮引入**（本轮改动行不在这两处）。
+- 环境竞态 flaky（`openclaw_config::tests::default_model_noop_write_skips_backup`）本轮
+  又出现 1 次，见下方独立跟踪项；干净 HEAD 对照 1/4 失败，**先于本轮存在**。
+
+## 第四轮遗留
+
+1. **legacy `custom` 别名是「能解析」而非「精确还原端点」**：两端点各自带一份 `custom`
+   副本时，合并按既有 "live wins" 取先到者。`custom` 本就一义多指（迁移前两个端点共用
+   它），所以这不比迁移前更差，但**恢复的 session 可能落到与当初不同的端点**。彻底解决
+   需要改写 session 元数据（RFC 0002 §方案 B，已被否）或让 Codex 侧升级。
+2. **DB 行会变大**：每个迁移过的 codex provider 存档多一份 `custom` 副本（6 行左右）。
+3. **跨模块 env 竞态仍未根治**（见下节），本轮未动，理由同上轮。
+
+### 跨模块 env 竞态（**仍未修**，独立跟踪）
+
+`openclaw_config::tests::default_model_noop_write_skips_backup` 全量并行下间歇失败，
+失败时会把开发者**真实的 `~/.openclaw/openclaw.json` 整份**（含各 provider 的 API key）
+打进 panic 输出——CI 日志里有泄露风险，这一点比 flaky 本身更值得处理。
+
+根因与修法见下方「已知遗留（第三轮之后）」与本节历史；本轮再次量到 **HEAD 1/4 失败**，
+确认先于本轮存在。**本轮仍未修**：涉及约 70 个 env 改写点、跨多个模块，且与并发会话在
+同一批文件上作业，做一半的「隔离」比不做更危险。
+
+
 
 `openclaw_config::tests::with_test_paths` 报 `written.contains("// top-level comment")`
 间歇性失败。**根因不是断言，是进程级 env 的多套互不协调的锁**：
@@ -502,15 +603,21 @@ pid 做 `kill(-pid, …)` 要么 ESRCH、要么把用户整个终端作业组连
 
 ## 下一轮提示词
 
-> 在「第三轮审计已合入 main（9f35e086）」的基础上继续，**先读本文件 §第三轮**，
-> 不要重复第二轮那些已被推翻的结论。
+> 在第四轮（legacy `custom` 别名 + catalog 归属修复）已合入 main 的基础上继续，
+> **先读本文件 §第四轮 与 RFC 0002 §2.4b / §2.4c**，不要重复第三轮已被推翻的结论。
 >
-> 1. **根治跨模块 env 竞态**（实测干净 main 3/5 次全量失败，本轮只降到 1/5）：
+> 0. **本轮最重要的一条纪律**：上一轮我做「按 provider 类别决定要不要补顶层路由」时，
+>    只验证了自己写的那条用例，**没验证我改动对下游消费者（catalog 素材收集）的影响**，
+>    结果引入静默丢数据的回归。**改「provider 投影」时必须列出所有消费者并逐个核**，
+>    验收不能只看「我这次的用例绿了」。
+> 1. **根治跨模块 env 竞态**（第四轮仍量到 HEAD 1/4 失败；此前记录 3/5）：
 >    新增一把**全 crate 共享**的 env 锁（如 `crate::test_support::env_lock()`，
 >    `OnceLock<Mutex<()>>`），让 `openclaw_config::test_guard()`、
 >    `hermes_config::test_guard()` 与所有改 `CC_SWITCH_TEST_HOME`/`HOME`/`CODEX_HOME`
->    的测试（`codex_config` 4 处、`provider_bundle` 14 处）统一持有它。
->    验收：`cargo test --lib` 连跑 10 次全绿。
+>    的测试统一持有它。验收：`cargo test --lib` 连跑 10 次全绿。
+>    **附加动机（比 flaky 本身更要紧）**：该失败会把开发者真实的
+>    `~/.openclaw/openclaw.json`（含各 provider 的 API key）打进 panic 输出，CI 日志
+>    有泄露风险。修的时候顺带把该用例的断言输出截断，别再整份 dump。
 > 2. **proxy 绑端口的测试改成 `listen_port = 0`**（让 OS 分配），修掉
 >    `update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active`
 >    在「开发者本地正跑着 cc-switch」时必红的问题。
@@ -522,8 +629,12 @@ pid 做 `kill(-pid, …)` 要么 ESRCH、要么把用户整个终端作业组连
 >    设计要点：① 后缀剥离必须发生在 failover 队列**之前**，否则 failover 可能把
 >    带后缀的模型名原样发到不支持的 provider；② 鉴权要按**目标端点**取 key，
 >    不能沿用 active 端点的。
+>    ⚠️ 注意第四轮新增的 `custom` 别名**也会进 catalog 归属判定**，改动这一层时
+>    要沿用 §2.4b「别名不算独立端点」的规则。
 > 4. **`local8782` 这个 TOML id 与端口解耦**：改端口不该作废历史 session 的
 >    `session_meta.model_provider`（现状是对的），但 id 字面带 8782 有误导性。
 >    建议改成 `local` 或加显式注释说明「id 是稳定的，端口由 base_url 承载」。
-> 5. **协作纪律**：本仓库已出现并发会话互相冲掉未提交改动的事故（第三轮 §并发事故）。
->    未提交的新代码一律先建 `git worktree` 隔离，不要在共享工作区攒。
+> 5. **协作纪律**：本仓库已出现并发会话互相冲掉未提交改动的事故（第三轮 §并发事故），
+>    第四轮提交时又遇到一次（第四轮 §并发会话在我提交时改了同一批文件）。
+>    未提交的新代码一律先建 `git worktree` 隔离，不要在共享工作区攒；
+>    提交前用 `git diff` 的 hunk 头（`@@` 行号）确认暂存区只有自己的 hunk。

@@ -366,3 +366,51 @@ fn codex_switch_to_category_less_official_card_still_ignores_inert_gateway() {
         read_live_text()
     );
 }
+
+/// **回归门（RFC 0002 §2.1 验收标准）**：切到官方后，live 里必须仍能按 legacy id
+/// `custom` 解析到表。
+///
+/// 老 session 的 `session_meta.payload.model_provider` 记的是 `custom`，而 session
+/// 元数据不可改（RFC 0002 §2.2），Codex 0.158+ 加载时又严格校验「每个 session 的
+/// model_provider 必须有同名表」。所以「`Model provider 'custom' not found`」有两个
+/// 来源：切到官方时整张表被写掉（82a731d9 修的），以及 legacy id 迁移把 `custom`
+/// 改名成 `kxpms` 之后没有留兼容副本 —— 后者会把同一个报错换个原因再犯一遍，
+/// 直接推翻 RFC 的验收标准。
+#[test]
+fn codex_switch_to_official_keeps_legacy_custom_id_resolvable() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    write_codex_live_atomic(&chatgpt_auth(), Some(SEED_LIVE_CONFIG))
+        .expect("seed codex live state");
+    let initial = seed_three_provider_config();
+    let state = create_test_state_with_config(&initial).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "kxpms-gateway")
+        .expect("switch away from official");
+    ProviderService::switch(&state, AppType::Codex, "codex-official")
+        .expect("switch back to official");
+
+    let live = read_live_toml();
+    let legacy = provider_table(&live, "custom").unwrap_or_else(|| {
+        panic!(
+            "老 session 的 model_provider=\"custom\" 必须在 live 里有同名表，否则无法 resume；实际：\n{}",
+            read_live_text()
+        )
+    });
+    // 别名必须与按端点区分的新表指向同一处，否则老 session 会被静默改道。
+    assert_eq!(
+        legacy.get("base_url").and_then(|v| v.as_str()),
+        provider_table(&live, "kxpms")
+            .and_then(|t| t.get("base_url"))
+            .and_then(|v| v.as_str()),
+        "custom 别名必须与 [model_providers.kxpms] 指向同一端点，不能把老 session 改道"
+    );
+    assert_eq!(
+        top_level_str(&live, "model_provider").as_deref(),
+        None,
+        "别名必须保持 inert：顶层不得指向 custom"
+    );
+}

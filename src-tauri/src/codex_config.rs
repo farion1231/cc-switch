@@ -1228,14 +1228,28 @@ fn migrate_legacy_codex_toml_ids_with_policy(
         }
     }
 
-    // 搬家：把 `custom` 整表（含注释/格式 decor）挪到新 id 下。
+    // 搬家：把 `custom` 整表（含注释/格式 decor）挪到新 id 下，**并在 `custom`
+    // 下留一份完全相同的兼容副本**。
+    //
+    // 别名不是冗余，是刚需：老 session 的 `session_meta.payload.model_provider`
+    // 记的是 `custom`，而 session 元数据不可改（RFC 0002 §2.2），Codex 0.158+
+    // 又在加载时严格校验「每个 session 的 model_provider 必须有同名表」——只搬走
+    // 不留副本，就等于把「`Model provider 'custom' not found`」从「切到官方时
+    // 丢表」换成「迁移后丢表」，RFC 0002 §2.1 的验收标准（`custom` 永远能解析到
+    // 表）直接被推翻。
+    //
+    // 副本内容与原表逐字相同，所以它解析到的端点和迁移前完全一致，不会把老
+    // session 悄悄改道到别的端点。副本保持 inert：顶层 `model_provider` 已被
+    // 改指到按端点区分的新 id，不会指向这份别名。
     {
         let root = doc.as_table_mut();
         let mp = root
             .get_mut("model_providers")
             .and_then(Item::as_table_mut)?;
         let item = mp.remove("custom")?;
+        let legacy_alias = item.clone();
         mp.insert(new_id, item);
+        mp.insert("custom", legacy_alias);
     }
 
     // 顶层本来就指向 legacy `custom` 时，把它改指到新 id；顶层缺失时按 policy
@@ -4725,14 +4739,8 @@ mod tests {
                 Some(expected_id),
                 "{legacy_name}: 网关档顶层缺失时必须补上并指向 {expected_id}\n{migrated}"
             );
-            // 老表消失，新表在，且字段完整搬过去
-            assert!(
-                parsed
-                    .get("model_providers")
-                    .and_then(|mp| mp.get("custom"))
-                    .is_none(),
-                "{legacy_name}: 老的 custom 表必须消失\n{migrated}"
-            );
+            // 新表在，且字段完整搬过去；`custom` 保留为**逐字相同的别名**（老 session
+            // 的 model_provider 就是 `custom`，少了它 Codex 拒绝 resume）。
             let new_table = parsed["model_providers"][expected_id]
                 .as_table()
                 .unwrap_or_else(|| panic!("{legacy_name}: 必须存在 [{expected_id}] 表\n{migrated}"));
@@ -4745,6 +4753,12 @@ mod tests {
                 new_table.get("base_url").and_then(|v| v.as_str()),
                 Some("https://llm.kxpms.cn/v1"),
                 "base_url 必须原样保留"
+            );
+            // 别名表与新表逐字相同，且不会让迁移跑第二遍
+            assert_eq!(
+                parsed["model_providers"]["custom"]["base_url"].as_str(),
+                parsed["model_providers"][expected_id]["base_url"].as_str(),
+                "{legacy_name}: custom 别名必须与 [{expected_id}] 指向同一端点，老 session 才不会被改道\n{migrated}"
             );
             // 无关顶层键不丢
             assert_eq!(
@@ -4789,13 +4803,18 @@ mod tests {
                 parsed
                     .get("model_providers")
                     .and_then(|mp| mp.get("custom"))
-                    .is_none(),
-                "{legacy_name}: 老的 custom 表必须消失\n{migrated}"
+                    .is_some(),
+                "{legacy_name}: custom 必须作为别名保留，老 session 的 model_provider 靠它解析\n{migrated}"
             );
             assert_eq!(
                 parsed["model_providers"][expected_id]["base_url"].as_str(),
                 Some("https://llm.kxpms.cn/v1"),
                 "表 id 照常搬家、内容不变\n{migrated}"
+            );
+            assert_eq!(
+                parsed["model_providers"]["custom"]["base_url"].as_str(),
+                parsed["model_providers"][expected_id]["base_url"].as_str(),
+                "{legacy_name}: custom 别名必须与新表指向同一端点\n{migrated}"
             );
             assert!(
                 migrate_legacy_codex_toml_ids_renaming_only(&migrated).is_none(),

@@ -901,14 +901,32 @@ fn collect_codex_catalog_source_for_provider(
         .or_else(|| {
             // 回退：唯一一张自定义 provider 表的 id。多张表时无法判定归属，
             // 宁可不收——猜错会把模型挂到错误的端点上。
+            //
+            // 先剔除 legacy `custom` 别名：老 bundle 迁移后同一份存档里会同时存在
+            // `custom`（老 session 兼容副本）和按端点区分的稳定 id（`kxpms` /
+            // `local8782`）。别名不算一个独立端点，留着会把「唯一一张」这条判据
+            // 变成永远不成立，模型目录就被静默丢掉。
             let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
             let ids: Vec<&str> = mp
                 .iter()
                 .map(|(id, _)| id)
                 .filter(|id| crate::codex_config::is_custom_codex_model_provider_id(id))
+                .filter(|id| *id != "custom")
                 .collect();
             match ids.as_slice() {
                 [only] => Some((*only).to_string()),
+                // 只有 legacy 别名（第三方 custom 表，没被迁移改名）时按原样归属。
+                [] => {
+                    let legacy: Vec<&str> = mp
+                        .iter()
+                        .map(|(id, _)| id)
+                        .filter(|id| *id == "custom")
+                        .collect();
+                    match legacy.as_slice() {
+                        [only] => Some((*only).to_string()),
+                        _ => None,
+                    }
+                }
                 _ => None,
             }
         });

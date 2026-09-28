@@ -122,6 +122,41 @@ live config 缺失 provider 表导致旧 session 永远卡死。
 4. inert provider 的 stored `config.toml` 不含任何 `[model_providers.*]` 表
    （说明该 provider 是 `codex-official` 类型的内置档，本身不需要表）
 
+### 2.4b legacy `custom` id 必须保留为别名（2026-09-29 审计追加）
+
+老 bundle 把两个端点都写进 `[model_providers.custom]`，靠表里的 `name` 区分归属。
+按端点区分的 id 迁移（`custom` → `kxpms` / `local8782`）解决了共存问题，但**改名本身
+会推翻本 RFC 的验收标准**：老 session 的 `session_meta.payload.model_provider` 记的
+就是 `custom`，而 session 元数据不可改（§2.2），Codex 0.158+ 又在加载时严格校验
+「每个 session 的 `model_provider` 必须有同名表」——只搬走不补副本，等于把
+「`Model provider 'custom' not found`」从「切到官方时丢表」换个原因再犯一遍。
+
+因此迁移必须**在按端点区分的新 id 之外，保留一份逐字相同的 `custom` 副本**：
+
+| 规则 | 内容 |
+|---|---|
+| 副本内容 | 与新表**逐字相同**（含 `base_url` / `experimental_bearer_token`），老 session 才不会被静默改道 |
+| 副本状态 | 保持 inert：顶层 `model_provider` 已被改指到新 id，不会指向副本 |
+| 多端点冲突 | 两端点各自带一份 `custom` 副本时，合并按既有 "live wins" 规则取先到者；能解析即可，不保证端点归属（`custom` 本就一义多指） |
+| 归属判定 | catalog 素材收集的「唯一一张自定义表」回退判据必须**先剔除 `custom` 副本**，否则多端点场景永远判不出 toml_id，模型目录被静默丢弃 |
+
+### 2.4c 顶层 `model_provider` 的补写必须分 provider 类别（2026-09-29 审计追加）
+
+legacy id 迁移在「顶层 `model_provider` 缺失」时是否补写，取决于**那张表是不是该
+provider 的路由意图**：
+
+| provider 类别 | 顶层缺失时 | 理由 |
+|---|---|---|
+| 网关档（`category != "official"`） | **补写** | 那张表就是它的路由。老 bundle 的残缺形态，Codex 0.149+ 会回退 `openai`、整张表变孤儿、CLI 起不来 |
+| 官方档（`category == "official"`） | **保持缺失** | 那张表是切换回填带进存档的 inert 残留。补顶层等于凭空创建一条路由，把 inert 表提升成激活端点，新会话打到网关而不是选中的官方 |
+
+两条都违反本 RFC 时，**inert 表"不影响新流量路由"（§2.1）优先**：官方档不能被 inert
+表劫持路由。
+
+「是不是官方档」必须用 `proxy::providers::is_codex_official_provider(provider)` 判定，
+**不能裸判 `category == "official"`**：早期 OAuth 版本可能在 category 落库前就把固定卡
+绑上，那批 DB 行 category 是 NULL，裸判会把它们误当网关档，老用户照样中招。
+
 ### 2.5 实现 hook 点
 
 `src-tauri/src/codex_config.rs::plan_codex_live_write` 返回
