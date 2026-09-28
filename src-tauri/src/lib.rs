@@ -1396,6 +1396,8 @@ pub fn run() {
             commands::delete_provider,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
+            commands::detect_codex_running,
+            commands::restart_codex_process,
             commands::import_default_config,
             commands::list_provider_bundles,
             commands::install_provider_bundle,

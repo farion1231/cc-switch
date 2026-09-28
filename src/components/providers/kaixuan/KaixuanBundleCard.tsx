@@ -1,11 +1,5 @@
 import { useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  Loader2,
-  Play,
-  Wifi,
-  WifiOff,
-} from "lucide-react";
+import { AlertTriangle, Loader2, Play, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -54,6 +48,15 @@ export function KaixuanBundleCard() {
     return map;
   }, [health]);
 
+  // 实际探测的本机端口。后端从 `KAIXUAN_LOCAL_GATEWAY_PORT` 推导（默认 8782），
+  // 端点还没加载出来时先退回 8782 —— 只是文案占位，端点到达后立刻被真值替换。
+  //
+  // 为什么不用字面量：端口是**运行时**值。用户在 ~/.zshenv 里改了 env var 后
+  // 界面仍写「本地 8782」会让人以为「改 env var 没生效」，其实探针早就打在新
+  // 端口上了，只是文案没跟上。端点的 `localPort` 由后端权威给出。
+  const localPort =
+    endpoints?.find((ep) => ep.role === "secondary")?.localPort ?? 8782;
+
   const onInstall = () => {
     const apiKeys: Record<string, string> = {};
     if (primaryKey.trim()) apiKeys.primary = primaryKey.trim();
@@ -80,8 +83,9 @@ export function KaixuanBundleCard() {
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              装好后开轩 kxpms.cn 是主端点，本地 8782 自动接管故障；
-              也支持 <code className="bg-muted px-1 rounded">$MY_ENV_VAR</code> 占位符从环境变量读密钥。
+              装好后开轩 kxpms.cn 是主端点，本地 {localPort} 自动接管故障；
+              也支持 <code className="bg-muted px-1 rounded">$MY_ENV_VAR</code>{" "}
+              占位符从环境变量读密钥。
             </p>
           </div>
           <Button
@@ -126,10 +130,22 @@ export function KaixuanBundleCard() {
                       )}
                     </div>
                     <div className="text-[11px] text-muted-foreground truncate">
+                      {/* 端口徽章：把「我现在探的是 X 端口」摆在最显眼处。
+                          探针 URL 也一并展示——用户怀疑「到底打的是哪个口」时，
+                          这里给的是完整答案而不是一个需要推断的数字。 */}
+                      {ep.localPort ? (
+                        <span
+                          data-testid={`gateway-port-${ep.id}`}
+                          className="font-mono text-foreground/80"
+                        >
+                          127.0.0.1:{ep.localPort}
+                        </span>
+                      ) : null}
+                      {ep.localPort ? " · " : ""}
                       {h
                         ? h.reachable
                           ? `${h.httpStatus ?? "200"} · ${h.latencyMs ?? 0}ms`
-                          : h.error ?? "不可达"
+                          : (h.error ?? "不可达")
                         : "探测中…"}
                     </div>
                   </div>
@@ -141,7 +157,7 @@ export function KaixuanBundleCard() {
                     className="h-7 px-2 text-xs"
                     onClick={() => startLocal.mutate()}
                     disabled={startLocal.isPending}
-                    title="重启本机 8782 网关"
+                    title={`重启本机 ${localPort} 网关`}
                   >
                     {startLocal.isPending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -177,7 +193,7 @@ export function KaixuanBundleCard() {
               htmlFor="kaixuan-key-secondary"
               className="text-xs text-muted-foreground"
             >
-              备用端点 API Key（本地 8782，留空复用）
+              备用端点 API Key（本地 {localPort}，留空复用）
             </Label>
             <Input
               id="kaixuan-key-secondary"
@@ -204,8 +220,8 @@ export function KaixuanBundleCard() {
             )}
             <div>
               <div>
-                P1 = <code>{install.data.primaryProviderId}</code>，
-                已装 {install.data.installedProviderIds.length} 个端点，
+                P1 = <code>{install.data.primaryProviderId}</code>， 已装{" "}
+                {install.data.installedProviderIds.length} 个端点，
                 auto_failover={String(install.data.autoFailoverEnabled)}
               </div>
               {install.data.missingEnvVars.length > 0 && (

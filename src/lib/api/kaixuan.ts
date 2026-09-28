@@ -36,6 +36,15 @@ export interface GatewayEndpointMeta {
   label: string;
   url: string;
   role: "primary" | "secondary" | string;
+  /**
+   * The local port actually being probed (`KAIXUAN_LOCAL_GATEWAY_PORT`, default
+   * 8782); `null` for the public endpoint.
+   *
+   * Surfaced so the UI can show the real port instead of a hardcoded 8782 —
+   * the port is resolved at runtime from an env var, so any literal baked into
+   * the UI goes stale the moment the user overrides it.
+   */
+  localPort: number | null;
 }
 
 export interface GatewayHealth {

@@ -21,6 +21,31 @@ export interface SwitchResult {
   warnings: string[];
 }
 
+export interface CodexRuntimeStatus {
+  running: boolean;
+  checked_at_ms: number;
+  method: string;
+}
+
+/**
+ * Outcome of a `restart_codex_process` call.
+ *
+ * `refused` is the important one: it means we deliberately did NOT kill anything
+ * because a session was still active. `killed` with `running_before === false` is
+ * the idempotent no-op (Codex was not running, so "restart target reached").
+ */
+export interface CodexRestartResult {
+  running_before: boolean;
+  killed: boolean;
+  /** "SIGTERM" | "SIGKILL" | "taskkill" | "none" */
+  signalled: string;
+  pids: number[];
+  refused: boolean;
+  refusal_reason: string | null;
+  active_session_path: string | null;
+  checked_at_ms: number;
+}
+
 export interface OpenTerminalOptions {
   cwd?: string;
 }
@@ -89,6 +114,39 @@ export const providersApi = {
 
   async switch(id: string, appId: AppId): Promise<SwitchResult> {
     return await invoke("switch_provider", { id, app: appId });
+  },
+
+  /**
+   * Probe whether the Codex CLI process is currently running on this machine.
+   *
+   * Used after a successful provider switch to decide whether the toast should
+   * say "switched, new sessions use new provider" (Codex not running → seamless)
+   * or "switched, current session still uses old provider; restart Codex to apply"
+   * (Codex running → restart required for the live session).
+   *
+   * - macOS / Linux: pgrep -x codex, fallback to ps
+   * - Windows: tasklist /FI "IMAGENAME eq codex.exe"
+   */
+  async detectCodexRunning(): Promise<CodexRuntimeStatus> {
+    return await invoke("detect_codex_running");
+  },
+
+  /**
+   * Actually terminate the running Codex CLI so the new `~/.codex/config.toml`
+   * applies to the current session too.
+   *
+   * Backend refuses (`refused: true`) when any
+   * `~/.codex/sessions/**\/*.jsonl` was written within the last 30s — an active
+   * conversation would lose its context, so the user must `/exit` first. The
+   * refusal carries the offending session path so the UI can name it.
+   *
+   * Killing is TERM-then-SIGKILL on macOS/Linux and `taskkill /T /F` on Windows
+   * (matching `commands::misc::terminate_child_tree`). We stop at "process is
+   * gone" — the user re-runs `codex` in their own terminal, since spawning it
+   * from the app would fight for TTY focus.
+   */
+  async restartCodexProcess(): Promise<CodexRestartResult> {
+    return await invoke("restart_codex_process");
   },
 
   async importDefault(appId: AppId): Promise<boolean> {

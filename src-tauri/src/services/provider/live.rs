@@ -740,12 +740,18 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     }
     // Pre-flight: need a parseable live config to mutate. Anything else
     // (empty, non-strings) is treated as "no inert merge" and forwarded.
-    let Some(live_text) = settings_config.get("config").and_then(Value::as_str) else {
+    let Some(raw_live_text) = settings_config.get("config").and_then(Value::as_str) else {
         return Ok(settings_config.clone());
     };
-    if live_text.trim().is_empty() {
+    if raw_live_text.trim().is_empty() {
         return Ok(settings_config.clone());
     }
+    // 老 bundle 迁移：把 `[model_providers.custom]`（按表里的 name 判定归属）
+    // 改成按端点区分的稳定 id。放在 parse 之前，这样下面所有逻辑（active id
+    // 判定、inert 合并、catalog 合并）看到的都是迁移后的形态。幂等：已是新
+    // 形态时原样返回。
+    let live_text = crate::codex_config::migrate_legacy_codex_toml_ids(raw_live_text)
+        .unwrap_or_else(|| raw_live_text.to_string());
     let Ok(mut live_doc) = live_text.parse::<DocumentMut>() else {
         return Ok(settings_config.clone());
     };
@@ -769,20 +775,43 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     };
 
     let mut merged_count: usize = 0;
+    // 同 slug 多端点共存的 catalog 素材：`(toml_id, models)`。与 inert 表合并
+    // 同一趟遍历里收集，因为两者读的是同一批 provider 行 —— 两趟遍历会让
+    // 「表合并了但模型没合并」这种半拉子状态很难排查。
+    let mut merged_catalog_sources: Vec<Value> = Vec::new();
     for (db_id, provider) in providers.iter() {
+        // active provider 自己不参与：它的表就是 live 的主体（下面的
+        // active_toml_id 碰撞检查只挡「别的 provider 恰好同名」），它的模型目录
+        // 也由 `codex_model_catalog_from_settings` 原样生成、不该带 `@` 后缀。
         if db_id == current_provider_db_id {
             continue;
         }
-        let Some(stored_text) = provider
+        // 老 bundle 的 DB 行同样是 `[model_providers.custom]` 形态，先迁移再
+        // 抽表，否则 inert 合并会把两个端点的表撞进同一个 `custom` id。
+        let stored_text = provider
             .settings_config
             .get("config")
             .and_then(Value::as_str)
-        else {
+            .map(|text| {
+                crate::codex_config::migrate_legacy_codex_toml_ids(text)
+                    .unwrap_or_else(|| text.to_string())
+            });
+        let Some(stored_text) = stored_text else {
             continue;
         };
         if stored_text.trim().is_empty() {
             continue;
         }
+        // 收集该 provider 的模型目录（供 catalog 合并），按 TOML id 归属。
+        collect_codex_catalog_source_for_provider(
+            &mut merged_catalog_sources,
+            &stored_text,
+            provider
+                .settings_config
+                .get("modelCatalog")
+                .and_then(|catalog| catalog.get("models"))
+                .and_then(Value::as_array),
+        );
         let Ok(stored_doc) = stored_text.parse::<DocumentMut>() else {
             log::warn!(
                 "惰性合并 inert [model_providers.*] 表：DB 供应商 '{db_id}' 的 config.toml 解析失败，跳过"
@@ -806,18 +835,77 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
         }
     }
 
-    if merged_count == 0 {
+    if merged_count == 0 && merged_catalog_sources.is_empty() {
         return Ok(settings_config.clone());
     }
-    log::info!(
-        "惰性合并 inert [model_providers.*] 表：保留 {merged_count} 个第三方 provider 表用于历史 session 恢复"
-    );
+    if merged_count > 0 {
+        log::info!(
+            "惰性合并 inert [model_providers.*] 表：保留 {merged_count} 个第三方 provider 表用于历史 session 恢复"
+        );
+    }
 
     let mut new_settings = settings_config.clone();
     if let Some(obj) = new_settings.as_object_mut() {
         obj.insert("config".to_string(), Value::String(live_doc.to_string()));
+        if !merged_catalog_sources.is_empty() {
+            obj.insert(
+                crate::codex_config::MERGED_CATALOG_SOURCES_KEY.to_string(),
+                Value::Array(merged_catalog_sources),
+            );
+        }
     }
     Ok(new_settings)
+}
+
+/// 把一个 provider 的模型目录收进同 slug 多端点 catalog 的素材列表。
+///
+/// 只收**非 active** 端点（active 的模型由 `codex_model_catalog_from_settings`
+/// 自己从 `settings.modelCatalog` 生成，不带后缀）。归属 TOML id 取该 provider
+/// config 的顶层 `model_provider`，回退到它唯一一张 `[model_providers.*]` 表的
+/// id —— 老 bundle 常缺顶层字段（那正是 Codex 起不来的原因之一）。
+fn collect_codex_catalog_source_for_provider(
+    sources: &mut Vec<Value>,
+    stored_text: &str,
+    models: Option<&Vec<Value>>,
+) {
+    let Some(models) = models.filter(|models| !models.is_empty()) else {
+        return;
+    };
+    let Ok(doc) = stored_text.parse::<DocumentMut>() else {
+        return;
+    };
+    let toml_id = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            // 回退：唯一一张自定义 provider 表的 id。多张表时无法判定归属，
+            // 宁可不收——猜错会把模型挂到错误的端点上。
+            let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
+            let ids: Vec<&str> = mp
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| crate::codex_config::is_custom_codex_model_provider_id(id))
+                .collect();
+            match ids.as_slice() {
+                [only] => Some((*only).to_string()),
+                _ => None,
+            }
+        });
+    let Some(toml_id) = toml_id else {
+        log::debug!("同 slug catalog 合并：某 provider 无法判定 TOML id，跳过其模型目录");
+        return;
+    };
+    // 同一 toml_id 重复出现（多张 DB 行指向同一个端点）时保留先到的。
+    if sources
+        .iter()
+        .any(|source| source.get("toml_id").and_then(Value::as_str) == Some(toml_id.as_str()))
+    {
+        return;
+    }
+    sources.push(json!({ "toml_id": toml_id, "models": models.clone() }));
 }
 
 /// Insert one inert provider table into `live_doc`. Skips when the live
@@ -928,6 +1016,21 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
             effective_provider.id
         );
         return Ok(());
+    }
+
+    // 老 bundle 的 TOML id 迁移：把 DB 行里陈旧的 `[model_providers.custom]`
+    // 永久改写成按端点区分的 id。跑在 inert 合并之前——inert 合并虽然也会对
+    // 读到的文本做一次内存迁移，但只改本次 live 投影、不落 DB；不落 DB 的话
+    // 每次切换都要重算，而且 backfill 会把旧形态又写回 DB 行。
+    //
+    // 迁移失败**不阻断切换**：这是「让老用户自动跟上新形态」的锦上添花，
+    // 一次 DB 写失败不该让用户连切个 provider 都做不到。
+    if matches!(app_type, AppType::Codex) {
+        match crate::codex_config::migrate_legacy_codex_toml_ids_in_db(db) {
+            Ok(0) => {}
+            Ok(n) => log::info!("Codex TOML id 自动迁移：已改写 {n} 个 DB 供应商行"),
+            Err(err) => log::warn!("Codex TOML id 自动迁移失败（不阻断本次切换）: {err}"),
+        }
     }
 
     // RFC 0002: 惰性合并 inert [model_providers.*] 表，确保历史 session
@@ -3734,14 +3837,17 @@ base_url = "https://a.example/v1"
     fn kxpms_settings_config() -> Value {
         json!({
             "auth": { "OPENAI_API_KEY": "sk-kxpms" },
-            "config": "model_provider = \"custom\"\nmodel = \"kx-claude-opus-5\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-jybFTc1\"\n"
+            // TOML id `kxpms` 与 provider_bundle::kaixuan_bundle 一致；早期
+            // 版本用 `custom` 时两个 bundle 端点会撞 id，2026-09-28 修复。
+            "config": "model_provider = \"kxpms\"\nmodel = \"kx-claude-opus-5\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-jybFTc1\"\n"
         })
     }
 
     fn local_settings_config() -> Value {
         json!({
             "auth": { "OPENAI_API_KEY": "sk-local" },
-            "config": "model_provider = \"local\"\nmodel = \"claude-opus-5\"\n\n[model_providers.local]\nname = \"local_gateway\"\nbase_url = \"http://localhost:8782/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+            // TOML id `local8782` 与 provider_bundle::kaixuan_bundle 一致。
+            "config": "model_provider = \"local8782\"\nmodel = \"claude-opus-5\"\n\n[model_providers.local8782]\nname = \"local_gateway\"\nbase_url = \"http://localhost:8782/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
         })
     }
 
@@ -3781,11 +3887,11 @@ base_url = "https://a.example/v1"
         let merged = result.get("config").and_then(Value::as_str).expect("text");
 
         // Official live config didn't carry any [model_providers.*] table.
-        // Inert merge appends kxpms's [model_providers.custom] so historical
-        // sessions with `model_provider = "custom"` can resume.
+        // Inert merge appends kxpms's [model_providers.kxpms] so historical
+        // sessions with `model_provider = "kxpms"` can resume.
         assert!(
-            merged.contains("[model_providers.custom]"),
-            "merged live config missing inert [model_providers.custom]: {merged}"
+            merged.contains("[model_providers.kxpms]"),
+            "merged live config missing inert [model_providers.kxpms]: {merged}"
         );
         assert!(merged.contains("kxpms_gateway"));
         assert!(merged.contains("llm.kxpms.cn"));
@@ -3811,11 +3917,8 @@ base_url = "https://a.example/v1"
         ))
         .expect("save local");
 
-        // Active = kxpms. Inert = local (table id "local").
-        let active = json!({
-            "auth": { "OPENAI_API_KEY": "sk-kxpms" },
-            "config": "model_provider = \"custom\"\nmodel = \"kx-claude-opus-5\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-jybFTc1\"\n"
-        });
+        // Active = kxpms. Inert = local8782 (TOML id 与 active 完全不同)。
+        let active = kxpms_settings_config();
         let result = merge_inert_codex_provider_tables_into_settings_config(
             &db,
             "codex",
@@ -3827,12 +3930,17 @@ base_url = "https://a.example/v1"
 
         // Active table preserved verbatim.
         assert!(merged.contains("kxpms_gateway"));
-        // Inert [model_providers.local] added.
+        // Inert [model_providers.local8782] added（与 active 的 kxpms 不撞 id）。
         assert!(
-            merged.contains("[model_providers.local]"),
-            "missing inert local table: {merged}"
+            merged.contains("[model_providers.local8782]"),
+            "missing inert local8782 table: {merged}"
         );
         assert!(merged.contains("local_gateway"));
+        assert_eq!(
+            merged.matches("[model_providers.").count(),
+            2,
+            "active + inert 各 1 张表，共 2：[model_providers.<id>] 段"
+        );
     }
 
     #[test]
@@ -3864,13 +3972,13 @@ base_url = "https://a.example/v1"
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
 
-        // Both inert and active share TOML id "custom" — collision.
+        // Both inert and active share TOML id "kxpms" — collision.
         // Per §2.4 rule 1, the inert table is skipped (active wins).
-        // Count [model_providers.custom] occurrences: should be exactly 1.
-        let occurrences = merged.matches("[model_providers.custom]").count();
+        // Count [model_providers.kxpms] occurrences: should be exactly 1.
+        let occurrences = merged.matches("[model_providers.kxpms]").count();
         assert_eq!(
             occurrences, 1,
-            "expected single [model_providers.custom] block (id collision rule): {merged}"
+            "expected single [model_providers.kxpms] block (id collision rule): {merged}"
         );
     }
 
@@ -3905,7 +4013,7 @@ base_url = "https://a.example/v1"
         .expect("merge must succeed despite broken DB row");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
         // Kxpms still merged successfully.
-        assert!(merged.contains("[model_providers.custom]"));
+        assert!(merged.contains("[model_providers.kxpms]"));
         assert!(merged.contains("kxpms_gateway"));
     }
 
@@ -3947,7 +4055,7 @@ base_url = "https://a.example/v1"
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
         // kxpms still merged.
-        assert!(merged.contains("[model_providers.custom]"));
+        assert!(merged.contains("[model_providers.kxpms]"));
         // Broken table (no base_url) skipped.
         assert!(!merged.contains("[model_providers.broken]"));
     }

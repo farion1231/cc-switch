@@ -3391,12 +3391,15 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "kxpms_gateway",
     iconColor: "#0EA5E9",
     auth: generateThirdPartyAuth(""),
-    config: `model_provider = "custom"
+    // 顶层 model_provider 必须与 [model_providers.<id>] 的 id 一致；与「本地
+    // LLM 网关 (8782)」预设必须用不同 id（kxpms vs local8782），否则 inert
+    // 合并会按 live wins 把其中一张表静默丢弃（live.rs::merge_inert_*）。
+    config: `model_provider = "kxpms"
 model = "claude-opus-5"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
-[model_providers.custom]
+[model_providers.kxpms]
 name = "kxpms_gateway"
 base_url = "https://llm.kxpms.cn/v1"
 wire_api = "responses"
@@ -3586,12 +3589,16 @@ requires_openai_auth = true
     icon: "local_gateway_8782",
     iconColor: "#6366F1",
     auth: generateThirdPartyAuth(""),
-    config: `model_provider = "custom"
+    // 端口可由 `KAIXUAN_LOCAL_GATEWAY_PORT` 环境变量覆盖（默认 8782），后端
+    // provider_bundle 端会同步替换 base_url；FE 端这里写死的端口仅供展示。
+    // 与「开轩 LLM 网关」预设必须用不同 TOML id (local8782 vs kxpms)，
+    // 否则 inert 合并按 live wins 把其中一张表静默丢弃。
+    config: `model_provider = "local8782"
 model = "claude-opus-5"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
-[model_providers.custom]
+[model_providers.local8782]
 name = "local_gateway"
 base_url = "http://localhost:8782/v1"
 wire_api = "responses"

@@ -5,15 +5,17 @@ use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
 };
+use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use crate::Database;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Stdio};
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item};
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// Temporary model-provider id used while the built-in `codex-official`
@@ -1115,6 +1117,129 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     // Keep in sync with the frontend list in src/utils/providerConfigUtils.ts.
     let id = id.trim();
     !id.is_empty() && !CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&id)
+}
+
+// ---------------------------------------------------------------------------
+// 老 bundle 的 TOML id 自动迁移
+// ---------------------------------------------------------------------------
+
+/// 老的 kaixuan bundle 把两个端点都写进 `[model_providers.custom]`（靠表里的
+/// `name` 区分是公网还是本机）。这有两个致命问题：
+///
+/// 1. 两个端点共用 `custom` id，`merge_inert_codex_provider_tables_*` 的
+///    "live wins" 规则会让切走的那张表被**静默丢弃**（切回时历史 session
+///    无法 resume）；
+/// 2. 老 bundle 常常没有顶层 `model_provider`，Codex 0.149+ 会回退到
+///    `openai`，整张 `[model_providers.custom]` 变孤儿表、CLI 起不来。
+///
+/// 按表里的 `name`（而不是表 id）判定归属，把 id 改成互不冲突的稳定 id：
+/// `kxpms_gateway` → `kxpms`，`local_gateway` → `local8782`。这与
+/// `provider_bundle::kaixuan_bundle()` 当前写出的形态逐字一致，所以迁移后的
+/// DB 行与重装 bundle 的结果等价。
+const LEGACY_CODEX_TOML_ID_MIGRATIONS: &[(&str, &str)] =
+    &[("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")];
+
+/// 把老 bundle 的 `[model_providers.custom]` 迁移到按端点区分的 TOML id。
+///
+/// 幂等：已经是新形态（没有 `custom` 表 / `name` 不在映射表里 / 新 id 已被
+/// 别的表占用）时返回 `None`，调用方无需做任何事。
+///
+/// 保守不动的场景：
+/// - 顶层 `model_provider` 已经指向**别的** id：说明用户手工配过第三方 provider，
+///   改表 id 会让那条路由失效。此时只改表 id、不碰顶层字段更安全——但那样表和
+///   顶层就对不上了，所以干脆整段不动，交给用户走「重装 bundle」。
+/// - 新 id 已被占用：说明用户已有同名表，强行覆盖会丢配置。
+pub fn migrate_legacy_codex_toml_ids(config_text: &str) -> Option<String> {
+    let mut doc = config_text.parse::<DocumentMut>().ok()?;
+    let legacy_name = {
+        let mp = doc
+            .get("model_providers")
+            .and_then(Item::as_table_like)?;
+        mp.get("custom")
+            .and_then(Item::as_table_like)
+            .and_then(|table| table.get("name"))
+            .and_then(Item::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)?
+    };
+    let new_id = LEGACY_CODEX_TOML_ID_MIGRATIONS
+        .iter()
+        .find(|(legacy, _)| *legacy == legacy_name)
+        .map(|(_, new_id)| *new_id)?;
+
+    // 顶层 model_provider 已指向别的 id → 用户的自定义路由，不动。
+    if let Some(current) = active_codex_model_provider_id(&doc) {
+        if current != "custom" {
+            log::info!(
+                "Codex TOML id 迁移跳过：顶层 model_provider 已是 '{current}'，非老 bundle 形态"
+            );
+            return None;
+        }
+    }
+
+    // 新 id 已被别的表占用 → 覆盖会丢配置，不动。
+    {
+        let mp = doc
+            .get("model_providers")
+            .and_then(Item::as_table_like)
+            .expect("custom 表存在即 model_providers 存在");
+        if mp.contains_key(new_id) {
+            log::warn!("Codex TOML id 迁移跳过：目标 id '{new_id}' 已被占用");
+            return None;
+        }
+    }
+
+    // 搬家：把 `custom` 整表（含注释/格式 decor）挪到新 id 下。
+    {
+        let root = doc.as_table_mut();
+        let mp = root
+            .get_mut("model_providers")
+            .and_then(Item::as_table_mut)?;
+        let item = mp.remove("custom")?;
+        mp.insert(new_id, item);
+    }
+
+    // 顶层 model_provider 缺失或仍为 "custom" 时指向新 id。
+    // `toml_edit::Table::insert` 会把标量键插在子表之前，所以不会意外落进
+    // `[model_providers.*]` 作用域里（这条由下方单测 parse 断言守住）。
+    {
+        let root = doc.as_table_mut();
+        root.insert("model_provider", toml_edit::value(new_id));
+    }
+
+    log::info!("Codex TOML id 迁移：custom/{legacy_name} → {new_id}");
+    Some(doc.to_string())
+}
+
+/// 把 DB 里所有 codex 供应商的陈旧 `settings_config.config` 迁移到新 TOML id。
+///
+/// 返回实际被改写条数（供调用方记日志 / 测试断言）。单个 provider 解析失败或
+/// 不需要迁移都不算错——迁移是「让老用户自动跟上新形态」的锦上添花，绝不能
+/// 因此让一次正常的供应商切换失败。
+pub fn migrate_legacy_codex_toml_ids_in_db(db: &Database) -> Result<usize, AppError> {
+    let providers = db.get_all_providers(AppType::Codex.as_str())?;
+    let mut migrated = 0usize;
+    for (db_id, provider) in providers.iter() {
+        let Some(text) = provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Some(updated) = migrate_legacy_codex_toml_ids(text) else {
+            continue;
+        };
+        let mut settings = provider.settings_config.clone();
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(updated));
+        }
+        db.update_provider_settings_config(AppType::Codex.as_str(), db_id, &settings)?;
+        migrated += 1;
+        log::info!("Codex TOML id 迁移：DB 供应商 '{db_id}' 已改写为新形态");
+    }
+    Ok(migrated)
 }
 
 /// Write only Codex `config.toml` for provider switching.
@@ -2279,21 +2404,40 @@ fn load_codex_model_catalog_template() -> Result<Value, AppError> {
     load_codex_model_catalog_template_uncached()
 }
 
+/// `{models:[...]}` 包装形态的便捷入口。生产路径走
+/// `codex_model_catalog_entries_from_specs` + `codex_catalog_with_models`，因为
+/// 跨端点合并必须在包成 `Value` **之前**对裸 entries 做；这里只留给单测断言
+/// 「specs → 完整 catalog」的映射本身。
+#[cfg(test)]
 fn codex_model_catalog_from_specs(
     specs: &[CodexCatalogModelSpec],
     template: &Value,
     profile: CodexCatalogToolProfile,
     default_context_window: u64,
 ) -> Value {
-    let entries: Vec<Value> = specs
+    codex_catalog_with_models(codex_model_catalog_entries_from_specs(
+        specs,
+        template,
+        profile,
+        default_context_window,
+    ))
+}
+
+/// `codex_model_catalog_from_specs` 的裸 entries 形态，让调用方能在包成
+/// `{models:[...]}` 之前先做跨端点合并（见 `append_endpoint_suffixed_entries`）。
+fn codex_model_catalog_entries_from_specs(
+    specs: &[CodexCatalogModelSpec],
+    template: &Value,
+    profile: CodexCatalogToolProfile,
+    default_context_window: u64,
+) -> Vec<Value> {
+    specs
         .iter()
         .enumerate()
         .map(|(index, spec)| {
             codex_catalog_model_entry(template, spec, index, profile, default_context_window)
         })
-        .collect();
-
-    json!({ "models": entries })
+        .collect()
 }
 
 fn codex_model_catalog_from_settings(
@@ -2317,7 +2461,13 @@ fn codex_model_catalog_from_settings(
             .enumerate()
             .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
             .collect();
-        return Ok(Some(json!({ "models": entries })));
+        return Ok(Some(codex_catalog_with_models(append_endpoint_suffixed_entries(
+            entries,
+            settings,
+            ExpansionSource::Vendor(&vendor_models),
+            profile,
+            0,
+        ))));
     }
 
     let default_context_window =
@@ -2332,12 +2482,147 @@ fn codex_model_catalog_from_settings(
         }
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
-    Ok(Some(codex_model_catalog_from_specs(
-        &specs,
-        &template,
+    let entries =
+        codex_model_catalog_entries_from_specs(&specs, &template, profile, default_context_window);
+    Ok(Some(codex_catalog_with_models(append_endpoint_suffixed_entries(
+        entries,
+        settings,
+        ExpansionSource::Template(&template),
         profile,
         default_context_window,
-    )))
+    ))))
+}
+
+/// `merge_inert_codex_provider_tables_into_settings_config` 注入到 effective
+/// settings 里的 key，值是 `[{"toml_id": "local8782", "models": [...]}, ...]`。
+///
+/// 它让 catalog 能**跨端点共存**：kxpms 与本机网关模型池高度重叠（两边都有
+/// `claude-opus-5`），不区分的话写盘时后写的那份整体覆盖前一份，用户在
+/// `/model` picker 里只能看到当前激活端点的模型。这个 key 把「其他已启用
+/// provider 的模型目录」带进 catalog 生成阶段，让两侧都进得来。
+///
+/// 命名带 `__cc_switch_` 前缀：这是 cc-switch 的内部管线信号，不是用户
+/// `settings_config` 的 schema 的一部分，永远不会被 `update_provider` 写进 DB。
+pub const MERGED_CATALOG_SOURCES_KEY: &str = "__cc_switch_merged_catalog_sources";
+
+/// 同 slug 多端点共存时的 slug 后缀分隔符：`claude-opus-5@kxpms`。
+///
+/// 用 `@` 而不是 `/`（路径语义）或 `:`（YAML/URL 语义）：Codex 把 catalog slug
+/// 直接当模型 id 发给 provider，端点后缀的模型**不会**被用户真的请求（路由由
+/// 顶层 `model_provider` 决定），它只服务 `/model` picker 的可见性与可辨识性。
+pub const CATALOG_ENDPOINT_SUFFIX_SEP: char = '@';
+
+/// 把「其他端点」的模型目录以 `slug@toml_id` 后缀追加进已生成的 catalog。
+///
+/// dedup 规则（对应 handoff 里「改 dedup 逻辑」那一条）：
+/// - active provider 的条目**原样保留**（无后缀），因为顶层 `model_provider`
+///   指向它，用户选 `claude-opus-5` 就是走它；
+/// - 其他端点的同 slug 收成 `claude-opus-5@kxpms`，与 active 的条目共存；
+/// - 若某个非 active 端点自己已声明了新 id 表单（`<slug>@<toml_id>`），原样保留，
+///   不再二次加后缀；
+/// - 完全重复的最终 slug 只保留第一条（active 优先，因为它先入列）。
+fn append_endpoint_suffixed_entries(
+    mut entries: Vec<Value>,
+    settings: &Value,
+    source: ExpansionSource<'_>,
+    profile: CodexCatalogToolProfile,
+    default_context_window: u64,
+) -> Vec<Value> {
+    let Some(sources) = settings
+        .get(MERGED_CATALOG_SOURCES_KEY)
+        .and_then(Value::as_array)
+    else {
+        return entries;
+    };
+
+    let active_toml_id = active_toml_id_of_settings_config(settings);
+    let mut seen: HashSet<String> = entries
+        .iter()
+        .filter_map(|entry| entry.get("slug").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+
+    for endpoint in sources {
+        let Some(toml_id) = endpoint
+            .get("toml_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        if Some(toml_id) == active_toml_id.as_deref() {
+            continue;
+        }
+        let Some(models) = endpoint.get("models").and_then(Value::as_array) else {
+            continue;
+        };
+
+        // 关键：合并进来的模型是**前端简化形态**（`{model, displayName,
+        // contextWindow}`），不是 Codex catalog 条目。必须走一遍和 active 端点
+        // 相同的展开管线（spec → template/vendor 展开），否则条目会缺
+        // `base_instructions`（Codex 必填）、工具集、reasoning 档位——在
+        // `/model` picker 里显示成一个半残条目。直接 `entry["slug"]=…` 的写法
+        // 只能改 slug，补不上这些字段。
+        let endpoint_settings = json!({ "modelCatalog": { "models": models } });
+        let specs = codex_catalog_model_specs(&endpoint_settings);
+        if specs.is_empty() {
+            continue;
+        }
+        let expanded = match source {
+            ExpansionSource::Template(template) => {
+                codex_model_catalog_entries_from_specs(
+                    &specs,
+                    template,
+                    profile,
+                    default_context_window,
+                )
+            }
+            ExpansionSource::Vendor(vendor_models) => specs
+                .iter()
+                .enumerate()
+                .map(|(index, spec)| codex_vendor_catalog_model_entry(vendor_models, spec, index))
+                .collect(),
+        };
+
+        for mut entry in expanded {
+            let Some(slug) = entry.get("slug").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            // 已经带后缀的（用户自己写的多端点 id 表单）不再二次加。
+            if slug.contains(CATALOG_ENDPOINT_SUFFIX_SEP) {
+                continue;
+            }
+            let suffixed = format!("{slug}{CATALOG_ENDPOINT_SUFFIX_SEP}{toml_id}");
+            if !seen.insert(suffixed.clone()) {
+                continue;
+            }
+            entry["slug"] = Value::String(suffixed);
+            entries.push(entry);
+        }
+    }
+
+    entries
+}
+
+/// 展开「其他端点」模型时用的模板来源。
+enum ExpansionSource<'a> {
+    /// 中立 / proxy-chat 模板路径。
+    Template(&'a Value),
+    /// 厂商官方 models.json 镜像路径（vendor catalog）。
+    Vendor(&'a [Value]),
+}
+
+/// 该 settings 对应的顶层 TOML provider id（用于判断谁是 active）。
+fn active_toml_id_of_settings_config(settings: &Value) -> Option<String> {
+    let text = settings.get("config").and_then(Value::as_str)?;
+    let doc = text.parse::<DocumentMut>().ok()?;
+    active_codex_model_provider_id(&doc)
+}
+
+/// 把 catalog 里的 `{models:[...]}` 写回一个 Value（供 append 后的重组）。
+pub fn codex_catalog_with_models(entries: Vec<Value>) -> Value {
+    json!({ "models": entries })
 }
 
 fn set_codex_model_catalog_json_field(
@@ -4313,6 +4598,218 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    /// 老 bundle 的 `[model_providers.custom]` 必须被改写成按端点区分的 id，
+    /// 且顶层 `model_provider` 同步指向它。
+    ///
+    /// 这条同时守住一个 TOML 陷阱：`model_provider = "..."` 是**标量**，如果
+    /// `toml_edit::Table::insert` 把它追加到 `[model_providers.*]` 之后，解析回来
+    /// 它就变成了那张表的字段（`model_providers.kxpms.model_provider`），顶层
+    /// 依然是空 —— Codex 于是回退到 `openai`，老 bug 原样复发。断言用 `toml`
+    /// crate 重新解析，专门盯这个。
+    #[test]
+    fn migrate_legacy_toml_id_renames_custom_table_and_sets_top_level() {
+        for (legacy_name, expected_id) in
+            [("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")]
+        {
+            let legacy = format!(
+                "model = \"claude-opus-5\"\n\n[model_providers.custom]\nname = \"{legacy_name}\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\n"
+            );
+            let migrated = migrate_legacy_codex_toml_ids(&legacy)
+                .unwrap_or_else(|| panic!("{legacy_name} 必须被迁移"));
+
+            let parsed: toml::Value = toml::from_str(&migrated)
+                .unwrap_or_else(|e| panic!("迁移结果必须是合法 TOML: {e}\n{migrated}"));
+
+            // 顶层指向新 id（不是 custom、不是缺失）
+            assert_eq!(
+                parsed.get("model_provider").and_then(|v| v.as_str()),
+                Some(expected_id),
+                "{legacy_name}: 顶层 model_provider 必须指向 {expected_id}\n{migrated}"
+            );
+            // 老表消失，新表在，且字段完整搬过去
+            assert!(
+                parsed
+                    .get("model_providers")
+                    .and_then(|mp| mp.get("custom"))
+                    .is_none(),
+                "{legacy_name}: 老的 custom 表必须消失\n{migrated}"
+            );
+            let new_table = parsed["model_providers"][expected_id]
+                .as_table()
+                .unwrap_or_else(|| panic!("{legacy_name}: 必须存在 [{expected_id}] 表\n{migrated}"));
+            assert_eq!(
+                new_table.get("name").and_then(|v| v.as_str()),
+                Some(legacy_name),
+                "name 字段必须原样保留"
+            );
+            assert_eq!(
+                new_table.get("base_url").and_then(|v| v.as_str()),
+                Some("https://llm.kxpms.cn/v1"),
+                "base_url 必须原样保留"
+            );
+            // 标量键没被误吞进 provider 表
+            assert!(
+                new_table.get("model_provider").is_none(),
+                "{legacy_name}: model_provider 不能落进 [{expected_id}] 表里（TOML 作用域陷阱）"
+            );
+            // 无关顶层键不丢
+            assert_eq!(
+                parsed.get("model").and_then(|v| v.as_str()),
+                Some("claude-opus-5")
+            );
+
+            // 幂等：迁移后的文本再跑一次必须返回 None
+            assert!(
+                migrate_legacy_codex_toml_ids(&migrated).is_none(),
+                "{legacy_name}: 迁移必须幂等"
+            );
+        }
+    }
+
+    /// 老 bundle 里顶层 `model_provider = "custom"` 的形态也要能迁移（不是
+    /// 只补字段，还要把指向 custom 的顶层值一起改掉）。
+    #[test]
+    fn migrate_legacy_toml_id_repoints_top_level_from_custom() {
+        let legacy = "model_provider = \"custom\"\nmodel = \"glm-5.2\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n";
+        let migrated = migrate_legacy_codex_toml_ids(legacy).expect("must migrate");
+        let parsed: toml::Value = toml::from_str(&migrated).expect("valid toml");
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("kxpms"),
+            "顶层必须从 custom 改指到 kxpms\n{migrated}"
+        );
+    }
+
+    /// 保守不动：这些形态不能被迁移，动了就是弄坏用户配置。
+    #[test]
+    fn migrate_legacy_toml_id_declines_unsafe_shapes() {
+        // 1) name 不是我们的 → 别人的 provider 表，动不得
+        let third_party = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"some_vendor\"\nbase_url = \"https://api.vendor.com/v1\"\n";
+        assert!(
+            migrate_legacy_codex_toml_ids(third_party).is_none(),
+            "非 kaixuan 的 custom 表必须原样不动"
+        );
+
+        // 2) 顶层已指向别的 id → 用户手工配过的第三方路由，动不得
+        let hand_rolled = "model_provider = \"myproxy\"\n\n[model_providers.myproxy]\nname = \"mine\"\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n";
+        assert!(
+            migrate_legacy_codex_toml_ids(hand_rolled).is_none(),
+            "顶层已指向第三方 id 时必须跳过"
+        );
+
+        // 3) 目标 id 已被占用 → 覆盖会丢配置，动不得
+        let collision = "model_provider = \"custom\"\n\n[model_providers.kxpms]\nname = \"hand_written\"\nbase_url = \"http://127.0.0.1:1/v1\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n";
+        assert!(
+            migrate_legacy_codex_toml_ids(collision).is_none(),
+            "目标 id 冲突时必须跳过而不是覆盖"
+        );
+
+        // 4) 没有 custom 表 / 非 TOML 文本 → 安静不动
+        assert!(migrate_legacy_codex_toml_ids("model = \"gpt-5\"\n").is_none());
+        assert!(migrate_legacy_codex_toml_ids("").is_none());
+        assert!(migrate_legacy_codex_toml_ids("not toml at all {{{").is_none());
+    }
+
+    /// 同 slug 多端点共存：两个端点都有 `claude-opus-5` 时，catalog 必须同时
+    /// 出现裸 slug（active 端）与 `claude-opus-5@<另一端点 id>`。
+    ///
+    /// 这是「同 slug 不同源在 `/model` picker 里都能看见」的直接证据，也是
+    /// 用户问的「自动路由」的前置——没有共存 catalog，挑模型时根本看不到另一侧。
+    #[test]
+    fn merged_catalog_coexists_same_slug_across_endpoints() {
+        let settings = json!({
+            "config": "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n",
+            "modelCatalog": { "models": [
+                { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                { "model": "glm-5.2" }
+            ]},
+            MERGED_CATALOG_SOURCES_KEY: [
+                { "toml_id": "local8782", "models": [
+                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                    { "model": "minimax-m3" }
+                ]},
+                { "toml_id": "kxpms", "models": [
+                    // active 端点自己再来一遍：必须被跳过，不能产生 claude-opus-5@kxpms
+                    { "model": "claude-opus-5" }
+                ]}
+            ]
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            settings["config"].as_str().unwrap(),
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation")
+        .expect("catalog expected");
+        let models = catalog["models"].as_array().expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|e| e["slug"].as_str())
+            .collect();
+
+        assert!(slugs.contains(&"claude-opus-5"), "active 端裸 slug 必须保留: {slugs:?}");
+        assert!(
+            slugs.contains(&"claude-opus-5@local8782"),
+            "另一端点的同 slug 必须带 @toml_id 后缀共存: {slugs:?}"
+        );
+        assert!(slugs.contains(&"glm-5.2"), "active 独占模型保留: {slugs:?}");
+        assert!(
+            slugs.contains(&"minimax-m3@local8782"),
+            "另一端点独占模型也要进来: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"claude-opus-5@kxpms"),
+            "active 端点不得被二次加后缀: {slugs:?}"
+        );
+        // active 2 条 + local8782 2 条 = 4，且无重复
+        assert_eq!(models.len(), 4, "条目数必须与去重后的预期一致: {slugs:?}");
+        let mut dedup = slugs.clone();
+        dedup.sort_unstable();
+        dedup.dedup();
+        assert_eq!(dedup.len(), slugs.len(), "不允许重复 slug: {slugs:?}");
+
+        // 后缀条目必须继承源模型的其他字段（display_name / base_instructions）
+        // 否则 Codex 的 /model picker 会显示成一个空壳条目。
+        let suffixed = models
+            .iter()
+            .find(|e| e["slug"] == "claude-opus-5@local8782")
+            .expect("suffixed entry");
+        assert_eq!(
+            suffixed["display_name"].as_str(),
+            Some("Claude Opus 5"),
+            "后缀条目必须继承源模型的 display_name"
+        );
+        assert!(
+            suffixed.get("base_instructions").is_some(),
+            "后缀条目必须继承 base_instructions（Codex 必填）"
+        );
+    }
+
+    /// 没有 `__cc_switch_merged_catalog_sources` 时行为必须与改动前逐字一致
+    /// —— 绝大多数 provider（OpenAI 官方、Claude 等）走的是这条路径。
+    #[test]
+    fn merged_catalog_absent_sources_leaves_active_entries_untouched() {
+        let settings = json!({
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"v\"\nbase_url = \"https://x/v1\"\n",
+            "modelCatalog": { "models": [ { "model": "claude-opus-5" } ] },
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            settings["config"].as_str().unwrap(),
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation")
+        .expect("catalog expected");
+        let slugs: Vec<&str> = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["slug"].as_str())
+            .collect();
+        assert_eq!(slugs, vec!["claude-opus-5"], "无合并源时不得加任何后缀");
+    }
 
     #[test]
     fn codex_id_token_user_identity_requires_a_nonempty_subject() {
@@ -8353,6 +8850,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
     /// 路径，必须真的产出 N 条目，且条目里包含我们宣称的非 OpenAI 主力模型，
     /// 不能因为预设长度（19/21 条）踩到路径分支而漏生成。
     #[test]
+    #[serial]
     fn self_hosted_gateway_presets_round_trip_through_catalog_pipeline() {
         // Each test module ships its own TempHome helper; here we inline the equivalent
         // so we don't depend on internal helpers from sibling modules. The tempdir
@@ -8475,6 +8973,21 @@ model_catalog_json = "cc-switch-model-catalog.json"
 
         // 4) 反向：读完的内容能被 round-trip 回 settings 简化形态（前端表格用），
         //    证明 db ↔ live ↔ 表格的链路在两次往返里没有信息丢失。
+        //
+        //    `read_codex_model_catalog_simplified_from_live()` 读的是**磁盘上的**
+        //    `~/.codex/config.toml`，而 `prepare_codex_config_text_with_model_catalog`
+        //    只**返回**加工后的文本、不负责写盘（写盘是调用方
+        //    `write_codex_live_for_provider` 的职责）。所以这里必须先把文本落盘，
+        //    否则第 4 步会对着空 config 解析出 `None` —— 这正是这条测试此前一直红
+        //    的原因（fixture 少模拟了一步写盘，而不是生产代码有 bug）。
+        write_text_file(&get_codex_config_path(), &out)
+            .expect("write live config.toml before reverse read");
+        assert_eq!(
+            read_codex_config_text().expect("read back live config"),
+            out,
+            "写盘的 config.toml 必须与 prepare 返回的文本逐字一致"
+        );
+
         let simplified = read_codex_model_catalog_simplified_from_live()
             .expect("read_codex_model_catalog_simplified_from_live")
             .expect("should be Some for cc-switch-owned catalog");

@@ -60,12 +60,14 @@ pub fn known_endpoints() -> Vec<GatewayEndpointMeta> {
             label: "开轩 kxpms.cn".to_string(),
             url: "https://llm.kxpms.cn/v1/models".to_string(),
             role: "primary".to_string(),
+            local_port: None,
         },
         GatewayEndpointMeta {
             id: "local-8782".to_string(),
             label: format!("本地 {local_port}"),
             url: format!("http://127.0.0.1:{local_port}/v1/models"),
             role: "secondary".to_string(),
+            local_port: Some(local_port),
         },
     ]
 }
@@ -77,6 +79,12 @@ pub struct GatewayEndpointMeta {
     pub label: String,
     pub url: String,
     pub role: String,
+    /// 实际探测的本机端口（`KAIXUAN_LOCAL_GATEWAY_PORT`，默认 8782）。
+    /// 公网端点为 `None`。
+    ///
+    /// 前端把它透出到 UI，是为了消掉「改了 env var 但界面还写 8782」的迷惑：
+    /// 端口是**运行时**推导的，编译进 bundle 的字面量必然过期。
+    pub local_port: Option<u16>,
 }
 
 /// 共享 reqwest Client（probe_all 复用，避免每个 endpoint 起新连接池）。

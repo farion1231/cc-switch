@@ -1,0 +1,288 @@
+# Handoff: Codex 切换流程优化 + TOML id 冲突修复（2026-09-28）
+
+## 任务背景
+
+用户在 r0928 末提出 Codex 供应商切换流程的优化需求：
+
+1. **可切换到 OpenAI Official 或开轩 LLM 网关**（kxpms / 本地 8782），
+   切换过程「不能导致配置文件出错」。
+2. **切换后自动重启 Codex，或无感切换更好** —— 用户明确表示「无缝切换更好」。
+3. **kx- 前缀 vs cc-switch 自动路由同模型不同源** —— 用户问要不要给 llm-gateway-go
+   的模型加 `kx-` 前缀，或 cc-switch 是否会按相同模型名自动路由。
+
+## 本轮做了什么（按重要性）
+
+### 1. 修复 TOML id 冲突（关键 bug）
+
+**两个端点都用 `model_provider = "custom"` + `[model_providers.custom]`**，
+且都没写顶层 `model_provider` 字段。两个并发问题：
+
+- Codex 0.149+ 没有顶层 `model_provider` 时默认回退到 `openai`，导致
+  `[model_providers.custom]` 变孤儿表，**CLI 起不来**（实际是连接走错 base_url，
+  但表面看像 auth 失败）。
+- 即便补了顶层 model_provider，两端共用 `custom` id 也会让
+  `merge_inert_codex_provider_tables_into_settings_config` 的
+  "live wins" 规则把次写入的整表**静默丢弃**，切回时历史 session 无法 resume
+  （RFC 0002 §2.4 rule 1 副作用）。
+
+**修复**：
+- `provider_bundle.rs:323-340` —— kxpms 用 `model_provider = "kxpms"` +
+  `[model_providers.kxpms]`；local 用 `model_provider = "local8782"` +
+  `[model_providers.local8782]`。
+- `codexProviderPresets.ts:3394-3411, 3589-3605` —— FE 预设同步切到
+  各自的 TOML id。
+- `live.rs:3734-3756` —— 测试 fixture 也对齐新 shape。
+
+**新测试**：
+- `kaixuan_bundle_distinct_toml_ids_and_top_level_model_provider`：单元测，
+  验证两端点 TOML id 不同 + 顶层 model_provider 存在。
+- `kaixuan_bundle_inert_merge_preserves_inactive_endpoint_table`：端到端，
+  用真实 `kaixuan_bundle()` 输出过 `merge_inert_*`，验证切 kxpms 时
+  local8782 的 inert 表被合并进 live（base_url 完整保留），反向同理。
+- `kaixuan_bundle_full_switch_lifecycle_no_config_errors`：**真实磁盘**E2E
+  测试。装 bundle → 切 kxpms → 切 local8782 → 切回 kxpms → 再切
+  local8782，每步核：
+    1. live `~/.codex/config.toml` 是合法 TOML
+    2. 顶层 `model_provider` 等于目标端点 TOML id
+    3. `[model_providers.kxpms]` 和 `[model_providers.local8782]` 两张表
+       **都**在 live 里（active + inert 不丢）
+    4. 每张表有 `base_url` + `wire_api = "responses"`
+    5. `model_catalog_json = "cc-switch-model-catalog.json"` 指针到位
+    6. `~/.codex/cc-switch-model-catalog.json` 存在、是合法 JSON、含 8
+       个模型（claude-opus-5 / minimax-m3 / glm-5.2 / auto 等必含）
+    7. `auth.json` 写的是明文 key（不再含 `$VAR` 字面）
+  这条测试是用户要求「确保切换时不会导致配置文件中的错误」的实测
+  守护——单测 fixture 守住 inert merge 行为，**真磁盘读写**才是终验。
+
+**额外修复**：跑 E2E 时发现 bundle 的 `modelCatalog` 字段存的是**扁平数组**
+`[{model:...}, ...]`，但 `codex_config.rs::codex_catalog_model_specs`（live.rs:1701-1708）
+要求 `{models: [...]}` 形态。结果：`prepare_codex_config_text_with_model_catalog`
+找不到模型 → 不写 `model_catalog_json` 指针 → Codex `/model` picker 没数据。
+
+修复：把 `provider_bundle.rs:348-368` 的 `model_catalog` 包成 `{models: [...]}`，
+对齐生产路径（FE 的 `update_provider` 测试 fixture 与 `managed_provider` 测试
+fixture 都用 `{models: [...]}` 形态，provider.rs:1992-2011、mod.rs:3679-3681）。
+同步把 `kaixuan_bundle_settings_have_required_keys` 的 `as_array()` 断言
+改成 `.modelCatalog.models` 取数组。
+
+### 2. 加 Codex 运行时探测（无缝切换的支撑）
+
+`src-tauri/src/commands/codex_runtime.rs`（新文件）—— 跨平台探测
+Codex CLI 进程是否在跑：
+
+- macOS / Linux：`pgrep -x codex`（comm basename 精确匹配，避免误命中
+  `codex-config` 等），fallback 到 `ps -A -o comm=`。
+- Windows：`tasklist /FI "IMAGENAME eq codex.exe"`。
+- 探测在 `tauri::async_runtime::spawn_blocking` 里跑，500ms 阈值，超时
+  警告 + 不阻塞 UI。
+
+注册为 `commands::detect_codex_running` Tauri 命令，FE `providersApi.detectCodexRunning()` 暴露。
+
+### 3. 无缝切换的 toast 分态（用户体验）
+
+`useProviderActions.ts:332-407` 在 codex 分支加了**三态 toast**：
+
+- `probeOk && !codexRunning` → 「切换成功。Codex 未在运行，下次启动即可生效」
+  （**真正的无缝**：新会话自动用新配置）。
+- `probeOk && codexRunning` → 「切换成功。Codex 正在运行：当前会话仍用旧
+  配置，新会话已用新配置；点此重启 Codex 让当前会话也生效」+ 「复制重启命令」
+  CTA。CTA 不再是占位符——点了之后把可粘贴的 kill 命令写到剪贴板：
+  - macOS / Linux：`pkill -f "codex"; sleep 1; echo "..."`
+  - Windows：`taskkill /IM codex.exe /T /F 2>nul & echo 重启请运行 codex`
+  - 极旧浏览器（无 `navigator.clipboard`）走降级路径：把命令直接贴到
+    toast.warning 里给用户复制（8s 显示）。
+  - 用户**在终端粘贴**即生效——比 cc-switch 直接 fork+exec 杀进程更安全
+    （不会丢未保存的 session 内容，也不会「自己的进程被外人杀掉」反直觉）。
+- 探测失败 / 非 codex app → 退回到旧的「切换成功，请重启客户端以生效」
+  （保守路径，避免给用户错误的无缝承诺）。
+
+i18n 键（4 个 locale 都加了）：
+- `notifications.codexSeamlessSwitched`（未运行）
+- `notifications.codexSeamlessSwitchedRunning`（正在运行）
+- `notifications.codexRestartCta`（「复制重启命令」按钮文案）
+- `notifications.codexRestartCopied`（「已复制重启命令到剪贴板」二次确认）
+
+### 4. 关于 kx- 前缀 vs cc-switch 自动路由（用户提问的回答）
+
+**答：不用 kx- 前缀，用「TOML id 区分」代替；cc-switch 不做同模型跨源路由。**
+
+理由：
+
+- **kx- 前缀会污染模型命名空间**：用户已经在用 `claude-opus-5` 这个 slug，
+  加前缀变成 `kx-claude-opus-5`，FE 表 / `/model` picker / 历史 session
+  metadata 全要换。无收益（不解决底层问题）。
+- **TOML id 区分（已落地）**：`kxpms` vs `local8782` 两个独立
+  `[model_providers.*]` 表，session_meta.model_provider 直接引用其中一个，
+  Codex 启动时按 id 找表，不再撞路由。
+- **cc-switch 当前不做同模型跨源路由**：
+  - 模型目录按 active provider 写一次到 `~/.codex/cc-switch-model-catalog.json`，
+    切换会**整体覆写**该文件（不是合并）。
+  - 切回时再写一份新的覆盖回来——所以「同模型不同源」在 UI 上确实
+    看着像「同一个 claude-opus-5 slug 切换后端」。
+  - 这是**当前实现的选择**，不是 bug。Codex 的 catalog 模型只服务于
+    `/model` picker 的补全 + 档位提示，路由仍由 active provider 决定。
+
+**未来如果要做「同 slug 多端点共存」**（用户提到的「自动路由」）：需要把
+catalog 合并写入，slug 加 `@<toml_id>` 后缀（例如 `claude-opus-5@kxpms`
+vs `claude-opus-5@local8782`），并加新的 TOML 字段把 slug 反查回
+`[model_providers.*]` 表。这是 1-2 天工作量，**本轮不做**。
+
+### 4b. 真机烟雾验证（macOS）
+
+`commands::codex_runtime::tests::detect_codex_running_real_machine_smoke`（`#[ignore]`），
+在 r0928 末本机 (macOS) 实测：
+
+- `pgrep -lx codex` → exit 0, stdout `"67526 codex"`（命中 ChatGPT.app
+  内置 Codex CLI）
+- `ps -A -o comm= | grep '^codex$'` → false（macOS `comm` 列截断，不暴露
+  完整 basename，所以 ps fallback 在 macOS 上漏报——这就是为什么我们
+  把 pgrep 作为主路径：pgrep 用 `comm basename` 精确匹配，命中正常）
+- `detect_unix()` → true（与 pgrep 真值源一致）
+
+结论：本机当前 codex 是「在跑」态，前端 toast 走「Codex 正在运行：当前
+会话仍用旧配置，点此重启 Codex 让当前会话也生效」分支，CTA 把可粘贴的
+`pkill -f "codex"` 命令写到剪贴板——用户粘贴即生效。
+
+### 5. 关于未来切 minimax / zcode（用户的潜在意图）
+
+当前 cc-switch 的「auto-switch」能力是**故障转移**（auto_failover_enabled），
+不是任务路由：
+
+- 已落地：proxy takeover + anti-herd delay + half-open permit + 故障转移队列。
+- **没落地**：按任务类型自动挑 provider / 模型。
+
+要做到「minimax / zcode 自动切换」，需要新加一层 routing policy：
+
+- 输入：用户的当前 prompt / session context / 任务分类
+- 决策：策略（cost / latency / capability / 用户偏好 / 任务类型）
+- 输出：路由到某个 provider + 模型
+- 触发：可手动「auto-route」开关，也可结合 session_history 标签
+
+这个独立于本次 codex 切换优化。**本轮未实现**。
+
+## 第二轮（同一文档续写）：真重启 / 自动迁移 / 多端点 catalog / 端口可见
+
+上一节「已知遗留」的 3 条本轮全部处理，外加 handoff「下一轮提示词」的 5 项。
+
+### 1. 真自动重启 Codex（`commands::restart_codex_process`）
+
+CTA 从「把 `pkill` 命令复制到剪贴板」升级为**后端真动手杀进程**。
+
+- `src-tauri/src/commands/codex_runtime.rs` 新增 `restart_codex_process`。
+- **不丢上下文红线**：任何 `~/.codex/sessions/**/rollout-*.jsonl` 在
+  **30s 内**被写过就**拒绝**重启（`refused = true` + 命中文件路径），要求用户
+  先 `/exit`。rollout 目录按 `YYYY/MM/DD/` 分层，探测递归深度 4（Codex 真实
+  布局就是 4 层，见 `recent_session_activity_detects_nested_rollout_and_respects_window`）。
+- 跨平台终止：macOS/Linux 先 `SIGTERM`，等 2s 仍存活才升级 `SIGKILL`；Windows
+  复用 `taskkill /PID <pid> /T /F`（与 `commands::misc::terminate_child_tree`
+  同语义，防 `codex app-server` 子进程变孤儿占端口）。
+- **整棵树而非只杀根进程**：Codex 0.158+ 是 app-server 架构，CLI 主进程只是
+  wrapper，真正占资源/端口的会话在子进程里。用 `pgrep -P <pid>` 逐层展开
+  完整后代树后统一发信号。
+- **有意偏离：不用 process_group（`kill(-pgid, …)`）**。`terminate_child_tree`
+  那样做安全，是因为 cc-switch 自己 `setsid()` 拉子进程、保证它是组长。但这里要杀
+  的是**用户从终端启动**的 Codex——它是 shell 作业组的**成员**，组长是那个 shell。
+  对非组长 pid 做 `kill(-pid, …)` 要么 ESRCH 失败，要么在 pid 恰好撞上某个存活组
+  id 时把用户**整个终端作业组**（连他的 shell）一起干掉。`pgrep -P` 拿到的是确切
+  子孙 pid，既能整树清理又完全不碰用户的 shell。
+  `process_tree_collection_picks_up_descendants` 里有一条断言专门盯这个红线：
+  进程树绝不能包含测试进程自己（即 cc-switch）。
+- **只杀不拉起**：Codex CLI 抢 TTY，从 GUI fork 新的会抢焦点也拿不到用户终端
+  环境变量。用户回到终端敲 `codex` 即可。
+- pid 只来自 `pgrep -x codex` / `tasklist` 的精确名匹配；`parse_pids` 额外过滤
+  `pid 0`——`kill(0, SIGTERM)` 是 POSIX 里「向调用者所在进程组发信号」的保留
+  写法，混进来等于 cc-switch 给自己发信号。
+
+新增 i18n：`codexRestartDone` / `codexRestartNotRunning` / `codexRestartRefused` /
+`codexRestartFailed`。删除死键 `codexRestartCopied`（剪贴板路径已下线）。
+
+### 2. 老用户 TOML 自动迁移（`custom` → `kxpms` / `local8782`）
+
+`codex_config::migrate_legacy_codex_toml_ids`（纯文本函数）+ `..._in_db`（落库）。
+
+- 判定依据是表里的 **`name`**（`kxpms_gateway` / `local_gateway`）而不是表 id，
+  迁移目标与 `kaixuan_bundle()` 当前写出的形态**逐字一致**——所以「迁移」与
+  「重装 bundle」结果等价。
+- 挂在 `write_live_with_common_config_for_codex_oauth_manager`，**每次 codex 切换
+  跑一次**；`merge_inert_codex_provider_tables_into_settings_config` 里也做一次
+  内存迁移（覆盖 live 文本与每个 DB 行），保证即便 DB 迁移失败本次投影仍正确。
+- **失败不阻断切换**：一次 DB 写失败不该让用户连切 provider 都做不到。
+- 保守不动（宁可让用户走「重装 bundle」也不弄坏配置）：表 `name` 不是我们的 /
+  顶层 `model_provider` 已指向别的 id（用户手工配的第三方路由）/ 目标 id 已被占用。
+
+**踩过的 TOML 陷阱**：`model_provider` 是**标量**，若 `toml_edit::Table::insert`
+把它追加到 `[model_providers.*]` 之后，解析回来它就成了那张表的字段，顶层仍空
+——Codex 于是回退到 `openai`，老 bug 原样复发。单测用 `toml` crate 重新解析
+专门盯这条。
+
+### 3. 同 slug 多端点共存 catalog
+
+`merge_inert_...` 在同一趟 provider 遍历里额外收集「其他端点的模型目录」，以
+`__cc_switch_merged_catalog_sources` 注入 effective settings；`codex_model_catalog_from_settings`
+据此生成 `claude-opus-5@kxpms` / `claude-opus-5@local8782` 形态的条目。
+
+- dedup 规则：active 端点条目**原样保留**（顶层 `model_provider` 指向它）；其他
+  端点同 slug 加 `@<toml_id>` 后缀共存；完全重复的最终 slug 只留第一条。
+- **合并进来的模型必须走一遍和 active 相同的展开管线**。来源是前端**简化形态**
+  (`{model, displayName, contextWindow}`)，不是 Codex catalog 条目——只改 slug
+  的话条目会缺 `base_instructions`（Codex 必填）、工具集、reasoning 档位，在
+  `/model` picker 里是个半残壳。`ExpansionSource::{Template, Vendor}` 两条路径
+  分别对应中立模板与厂商官方 models.json 镜像。
+- 这是「自动路由」的**前置**，不是自动路由本身：catalog 只服务 `/model` picker 的
+  可见性，路由仍由顶层 `model_provider` 决定。带 `@` 后缀的模型不会被真请求。
+
+### 4. 修 `self_hosted_gateway_presets_round_trip_through_catalog_pipeline`（老红转绿）
+
+**根因是 fixture 少模拟一步写盘，不是生产代码有 bug**：
+`prepare_codex_config_text_with_model_catalog` 只**返回**加工后的文本，写盘是调用方
+`write_codex_live_for_provider` 的职责；而第 4 步的
+`read_codex_model_catalog_simplified_from_live()` 读的是**磁盘上的** `~/.codex/config.toml`，
+对着空 config 自然解析出 `None`。fixture 补上写盘 + 逐字回读断言即转绿。
+
+顺带把这条测试加 `#[serial]`：它改 `CODEX_HOME`/`CC_SWITCH_TEST_HOME`，而
+`get_home_dir()` 读的是 `CC_SWITCH_TEST_HOME`/`HOME`、不是 `CODEX_HOME`——两个都得改，
+且不改 `#[serial]` 会和其他改同一批 env var 的测试互相串（这是本轮真实踩到的一次
+flaky：新增的 session 探测测试一度让这条老测报 `No such file or directory`）。
+
+### 5. UI 显示实际探测端口
+
+`GatewayEndpointMeta` 新增 `local_port: Option<u16>`（后端从
+`KAIXUAN_LOCAL_GATEWAY_PORT` 权威推导）。`KaixuanBundleCard` 里所有硬编码的
+「8782」换成实际端口，并在端点行加 `127.0.0.1:<port>` 徽章（带 `data-testid`）。
+
+端口是**运行时**值：用户在 `~/.zshenv` 改了 env var 后界面仍写 8782，会让人以为
+「改 env var 没生效」，其实探针早就打在新端口上，只是文案没跟上。
+
+## 本轮测试证据
+
+- `cargo test --lib` —— **3020 passed / 1 failed**。
+  唯一红的是 `services::provider::tests::update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active`，
+  与本轮改动**无关**：它 `state.proxy_service.start()` 绑默认端口 15721，而本机
+  正在运行的 cc-switch 桌面端（PID 11820）占着这个口 → `Address already in use`。
+  已在 `git worktree` 的干净 HEAD 上单独复现，确认是**环境性 pre-existing**，不是回归。
+- `cargo test --lib commands::codex_runtime -- --include-ignored` —— 6/6 通过，含真机
+  烟雾测试（`pgrep -lx codex` 命中 PID 67526，`detect_unix()` 同步返回 true）。
+- 目标项 1:1 对应的 14 条测试单独跑 —— 14/14 通过。
+- `npx tsc --noEmit` —— 通过。
+- `npx prettier --check` —— 通过。
+- 本仓库**没有 eslint 配置**（无 `eslint.config.*`），`npx eslint` 直接报错，属预期，
+  不代表代码有问题。
+
+## 已知遗留（本轮之后）
+
+1. **真重启只杀不拉起**（有意为之，见上）。用户需要回终端敲 `codex`。
+2. **`local8782` 这个 TOML id 与端口解耦**：`KAIXUAN_LOCAL_GATEWAY_PORT=8899` 时
+   TOML id 仍是 `local8782`（bundle 硬编码）。这是**有意的**——改端口不该让历史
+   session 的 `session_meta.model_provider` 失效；但 id 字面上带 8782 确实容易误读，
+   值得后续考虑改成 `local` 或加注释说明。
+3. **共存 catalog 只解决「看得见」，没解决「自动选」**：用户在 `/model` picker 里能
+   同时看到 `claude-opus-5` 和 `claude-opus-5@kxpms`，但选中后者不会真的路由到
+   kxpms。真正的按端点路由仍需新增 TOML 字段把 slug 反查回 `[model_providers.*]`，
+   这部分未做。
+4. 上面那条 15721 端口的环境性红测建议单开一个 issue：proxy 测试应改用临时端口
+   （或 `listen_port = 0` 让 OS 分配），否则开发者本地跑着 cc-switch 就必红。
+
+## Git 状态
+
+- 分支：`feat/codex-restart-toml-migration-merged-catalog`
+- 本轮改动已提交（未推送）。

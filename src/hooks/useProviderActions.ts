@@ -332,9 +332,95 @@ export function useProviderActions(
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
+          // codex 分支会自己弹 success（带 CTA/无 CTA）并把该 flag 置 false
+          // 跳过末尾的默认 toast，避免重复弹窗。
+          let continueWithSwitchToast = true;
           if (activeApp === "codex") {
-            messageKey = "notifications.codexRestartRequired";
-            defaultMessage = "切换成功，请重启客户端以生效";
+            // Codex 不像 Claude Desktop 那样需要 cc-switch 持续运行；切完配置
+            // 写进 `~/.codex/config.toml` 即视为生效。Codex 运行中读 config 是
+            // session 启动时一次加载，运行中不重新加载，所以**当前** session
+            // 仍用旧配置；**新** session 立即生效。把 toast 拆成两态：
+            //   - 未在运行 → 「下次启动生效」（无缝）
+            //   - 正在运行 → 「当前会话仍用旧配置」+ 提供「立即重启」CTA
+            // 探测失败（pgrep 不在 PATH、跨平台兼容问题）时保守退回到旧的
+            // 「请重启客户端」措辞，避免给用户错误的「无缝」承诺。
+            let codexRunning = false;
+            let probeOk = false;
+            try {
+              const status = await providersApi.detectCodexRunning();
+              codexRunning = status.running;
+              probeOk = true;
+            } catch (probeErr) {
+              console.warn(
+                "detect_codex_running 失败，保守走重启提示",
+                probeErr,
+              );
+            }
+            if (probeOk && !codexRunning) {
+              messageKey = "notifications.codexSeamlessSwitched";
+              defaultMessage = "切换成功。Codex 未在运行，下次启动即可生效";
+              toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+                closeButton: true,
+              });
+              continueWithSwitchToast = false;
+            } else if (probeOk && codexRunning) {
+              messageKey = "notifications.codexSeamlessSwitchedRunning";
+              defaultMessage =
+                "切换成功。Codex 正在运行：当前会话仍用旧配置，新会话已用新配置；点此重启 Codex 让当前会话也生效";
+              const cta = t("notifications.codexRestartCta", {
+                defaultValue: "重启 Codex",
+              });
+              const ctaDone = t("notifications.codexRestartDone", {
+                defaultValue: "Codex 已重启，请运行 codex 继续",
+              });
+              const ctaNoop = t("notifications.codexRestartNotRunning", {
+                defaultValue: "Codex 未在运行，无需重启",
+              });
+              toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+                closeButton: true,
+                action: {
+                  label: cta,
+                  // 真重启：调用后端 restart_codex_process 跨平台杀进程。
+                  // 后端在检测到活跃 session（~/.codex/sessions/**.jsonl
+                  // 30s 内被写过）时**拒绝**并回传原因，避免丢对话上下文。
+                  //
+                  // 只杀不拉起：Codex CLI 抢 TTY，从 GUI 里 fork 新的会抢焦点、
+                  // 也拿不到用户的终端环境变量。用户在原终端敲 `codex` 即可。
+                  onClick: async () => {
+                    try {
+                      const result = await providersApi.restartCodexProcess();
+                      if (result.refused) {
+                        toast.warning(
+                          t("notifications.codexRestartRefused", {
+                            defaultValue:
+                              result.refusal_reason ??
+                              "检测到活跃 Codex session，为避免丢上下文已取消自动重启；请先在 Codex 里 /exit，再点重启。",
+                          }),
+                          { duration: 9000 },
+                        );
+                        return;
+                      }
+                      toast.success(result.running_before ? ctaDone : ctaNoop, {
+                        duration: 4000,
+                      });
+                    } catch (restartErr) {
+                      console.error("restart_codex_process 失败", restartErr);
+                      toast.warning(
+                        t("notifications.codexRestartFailed", {
+                          defaultValue:
+                            "自动重启 Codex 失败，请在终端手动执行 pkill -f codex 后重试",
+                        }),
+                        { duration: 6000 },
+                      );
+                    }
+                  },
+                },
+              });
+              continueWithSwitchToast = false;
+            } else {
+              messageKey = "notifications.codexRestartRequired";
+              defaultMessage = "切换成功，请重启客户端以生效";
+            }
           } else if (activeApp === "grokbuild") {
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
@@ -355,9 +441,11 @@ export function useProviderActions(
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }
-          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
-            closeButton: true,
-          });
+          if (continueWithSwitchToast) {
+            toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+              closeButton: true,
+            });
+          }
         }
       } catch {
         // 错误提示由 mutation 处理
