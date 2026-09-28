@@ -3510,6 +3510,15 @@ fn codex_unified_official_provider_table() -> toml_edit::Table {
     codex_official_provider_table(None, true)
 }
 
+fn codex_unified_official_provider_inline_value() -> toml_edit::Value {
+    let mut table = toml_edit::InlineTable::new();
+    table.insert("name", toml_edit::Value::from("OpenAI"));
+    table.insert("requires_openai_auth", toml_edit::Value::from(true));
+    table.insert("supports_websockets", toml_edit::Value::from(true));
+    table.insert("wire_api", toml_edit::Value::from("responses"));
+    toml_edit::Value::InlineTable(table)
+}
+
 fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
     for (_, item) in providers.iter_mut() {
         if let Some(table) = item.as_table_mut() {
@@ -3624,7 +3633,7 @@ pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, Ap
     Ok(doc.to_string())
 }
 
-fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
+fn table_matches_codex_unified_official_provider(table: &dyn toml_edit::TableLike) -> bool {
     table.len() == 4
         && table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
         && table
@@ -3647,21 +3656,41 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
 /// - 配置已有形态不同的 `[model_providers.custom]` 表：设置 `model_provider`
 ///   会激活这张我们不认识的表（可能带第三方 base_url/token，会把 ChatGPT
 ///   OAuth 流量路由到错误后端），宁可让开关对该配置不生效。
+///
+/// 另外带顶层 `openai_base_url` 覆盖的旧式官方中转也拒绝注入：无论选择器
+/// 显式还是缺省，实际路由都指向自定义端点，不能被悄悄切到无覆盖的共享桶。
 pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
-    if doc.get("model_provider").is_some() {
+    if doc.get("openai_base_url").is_some() {
+        log::warn!(
+            "Codex 配置带顶层 openai_base_url 覆盖（实际路由指向自定义端点），跳过统一会话路由注入以保持原路由"
+        );
+        return Ok(config_text.to_string());
+    }
+    if let Some(model_provider) = doc.get("model_provider") {
+        if model_provider.as_str() != Some("openai") {
+            return Ok(config_text.to_string());
+        }
+    }
+    if doc
+        .get("model_providers")
+        .is_some_and(|item| item.as_table_like().is_none())
+    {
         return Ok(config_text.to_string());
     }
 
     let existing_custom_conflicts = doc
         .get("model_providers")
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
-        .and_then(|item| item.as_table())
-        .is_some_and(|table| !table_matches_codex_unified_official_provider(table));
+        .map(|item| {
+            item.as_table_like()
+                .is_none_or(|table| !table_matches_codex_unified_official_provider(table))
+        })
+        .unwrap_or(false);
     if existing_custom_conflicts {
         log::warn!(
             "官方 Codex 配置已存在自定义 [model_providers.custom]，跳过统一会话路由注入以避免激活未知路由"
@@ -3676,11 +3705,20 @@ pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, 
         parent.set_implicit(true);
         doc["model_providers"] = toml_edit::Item::Table(parent);
     }
-    if let Some(providers) = doc["model_providers"].as_table_mut() {
-        if !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) {
+    let needs_custom_entry = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .is_none_or(|providers| !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID));
+    if needs_custom_entry {
+        if let Some(providers) = doc["model_providers"].as_table_mut() {
             providers.insert(
                 CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
                 toml_edit::Item::Table(codex_unified_official_provider_table()),
+            );
+        } else if let Some(providers) = doc["model_providers"].as_inline_table_mut() {
+            providers.insert(
+                CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+                codex_unified_official_provider_inline_value(),
             );
         }
     }
@@ -3706,9 +3744,9 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
     }
     let matches_injected = doc
         .get("model_providers")
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
-        .and_then(|item| item.as_table())
+        .and_then(|item| item.as_table_like())
         .is_some_and(table_matches_codex_unified_official_provider);
     if !matches_injected {
         return Ok(config_text.to_string());
@@ -3724,6 +3762,105 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
         .unwrap_or(false);
     if providers_empty {
         doc.as_table_mut().remove("model_providers");
+    }
+    Ok(doc.to_string())
+}
+
+/// 统一共享桶条目是否处于注入形态（标准表与内联表均可）。
+fn unified_bucket_entry_matches_injected_shape(doc: &toml_edit::Table) -> bool {
+    doc.get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+        .and_then(|item| item.as_table_like())
+        .is_some_and(table_matches_codex_unified_official_provider)
+}
+
+/// `inject_codex_unified_session_bucket` 的逆向操作，以**存储的原始供应商
+/// 配置**为还原依据：只撤销这次注入真正引入的字段——共享桶选择器，以及
+/// 原始没有 `custom` 条目时才引入的共享桶条目。live 里的其余内容（用户
+/// 手改、写入期规范化产物、`model_catalog_json` 指针等）全部保留。
+///
+/// 与按形状匹配的 `strip_codex_unified_session_bucket` 相比，这里能区分
+/// “原始选择器缺省”（删除注入的选择器）与“原始显式内置官方 `openai`”
+/// （恢复原值），也不会吃掉用户自己写入的同形 `custom` 表。
+///
+/// 归属判断与注入的准入条件逐条镜像：原始配置带第三方显式路由、
+/// `openai_base_url` 覆盖、非表 `model_providers` 或异形 `custom` 时，注入
+/// 当场就会早退，live 里的共享桶选择器必然另有来源——保持原样并告警，
+/// 不做猜测性回填。
+pub fn strip_codex_unified_session_bucket_with_original(
+    config_text: &str,
+    original_config_text: &str,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    if doc.get("model_provider").and_then(|item| item.as_str())
+        != Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+    {
+        // 共享桶选择器不在（开关未生效、第三方或接管 live），无可回退。
+        return Ok(config_text.to_string());
+    }
+    if !unified_bucket_entry_matches_injected_shape(&doc) {
+        log::warn!(
+            "Live Codex config points at the unified bucket but its entry no longer matches the injected shape; keep it unchanged while backfilling"
+        );
+        return Ok(config_text.to_string());
+    }
+
+    let original: DocumentMut = original_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let original_providers = original
+        .get("model_providers")
+        .and_then(|item| item.as_table_like());
+    let original_has_custom = original_providers
+        .is_some_and(|providers| providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID));
+    let original_bucket_matches = original_providers
+        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+        .and_then(|item| item.as_table_like())
+        .is_some_and(table_matches_codex_unified_official_provider);
+    let injection_was_possible = original.get("openai_base_url").is_none()
+        && original
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            .is_none_or(|selector| selector == "openai")
+        && original
+            .get("model_providers")
+            .is_none_or(|item| item.as_table_like().is_some())
+        && (!original_has_custom || original_bucket_matches);
+    if !injection_was_possible {
+        log::warn!(
+            "Stored official config could not have produced the unified-bucket injection; keep live config unchanged while backfilling"
+        );
+        return Ok(config_text.to_string());
+    }
+
+    // 选择器恢复原始归属：缺省则删除注入的选择器；显式（只可能是内置
+    // 官方 `openai`）恢复原值。
+    match original
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+    {
+        Some(original_selector) => doc["model_provider"] = toml_edit::value(original_selector),
+        None => {
+            doc.as_table_mut().remove("model_provider");
+        }
+    }
+    // 桶条目只在原始没有 `custom` 时由注入引入；原本存在（含用户自己的
+    // 同形官方桶）则原样保留。
+    if !original_has_custom {
+        if let Some(providers_item) = doc.get_mut("model_providers") {
+            if let Some(providers) = providers_item.as_table_mut() {
+                providers.remove(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+            } else if let Some(providers) = providers_item.as_inline_table_mut() {
+                providers.remove(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+            }
+        }
+        if !original.contains_key("model_providers") {
+            // 父表同样是注入创建的（隐式），一并移除。
+            doc.as_table_mut().remove("model_providers");
+        }
     }
     Ok(doc.to_string())
 }
@@ -3768,6 +3905,33 @@ pub fn strip_codex_unified_session_bucket_from_settings(
         return Ok(());
     };
     let stripped = strip_codex_unified_session_bucket(&config_text)?;
+    if stripped != config_text {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(stripped));
+        }
+    }
+    Ok(())
+}
+
+/// Backfill 变体：以数据库存储的原始供应商设置为还原依据调用
+/// `strip_codex_unified_session_bucket_with_original`，只撤销注入字段。
+pub fn strip_codex_unified_session_bucket_from_settings_with_original(
+    settings: &mut Value,
+    original_settings: &Value,
+) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let original_config_text = original_settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let stripped =
+        strip_codex_unified_session_bucket_with_original(&config_text, original_config_text)?;
     if stripped != config_text {
         if let Some(obj) = settings.as_object_mut() {
             obj.insert("config".to_string(), Value::String(stripped));
@@ -4615,6 +4779,62 @@ model_providers = { rightcode = { name = "RightCode", experimental_bearer_token 
     }
 
     #[test]
+    fn unified_session_bucket_injects_for_explicit_openai_route() {
+        let config = "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n";
+        let injected = inject_codex_unified_session_bucket(config).expect("inject");
+        let doc: toml::Table = toml::from_str(&injected).expect("parse injected config");
+
+        assert_eq!(
+            doc.get("model_provider").and_then(|value| value.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        assert_eq!(
+            doc.get("model").and_then(|value| value.as_str()),
+            Some("gpt-5.4")
+        );
+        assert!(
+            doc["model_providers"][CC_SWITCH_CODEX_MODEL_PROVIDER_ID]
+                .get("base_url")
+                .is_none(),
+            "the unified route must keep native official auth and endpoint"
+        );
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_openai_reroute_with_base_url() {
+        // 旧式官方中转的两种形态：选择器显式，或缺省（缺省时 openai_base_url
+        // 覆盖内置 openai 路由）。两者都必须保持原路由，不能被切到共享桶。
+        for config in [
+            "model_provider = \"openai\"\nopenai_base_url = \"https://relay.example/v1\"\n",
+            "openai_base_url = \"https://relay.example/v1\"\n",
+        ] {
+            let unchanged = inject_codex_unified_session_bucket(config).expect("inject");
+            assert_eq!(unchanged, config);
+        }
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_conflicting_inline_custom_entry() {
+        let config = "model_provider = \"openai\"\nmodel_providers = { custom = { name = \"Relay\", base_url = \"https://relay.example/v1\" } }\n";
+        let unchanged = inject_codex_unified_session_bucket(config).expect("inject");
+        assert_eq!(unchanged, config);
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_non_table_model_providers() {
+        let config = "model_provider = \"openai\"\nmodel_providers = 3\n";
+        let unchanged = inject_codex_unified_session_bucket(config).expect("inject");
+        assert_eq!(unchanged, config);
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_non_table_custom_entry() {
+        let config = "model_provider = \"openai\"\nmodel_providers = { custom = 3 }\n";
+        let unchanged = inject_codex_unified_session_bucket(config).expect("inject");
+        assert_eq!(unchanged, config);
+    }
+
+    #[test]
     fn unified_session_bucket_skips_conflicting_custom_table() {
         // 残留的非注入形态 custom 表：设置 model_provider 会把官方流量
         // 路由到表里的第三方端点，必须整体拒绝注入。
@@ -4641,6 +4861,129 @@ base_url = "https://relay.example/v1"
         let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
         let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
         assert_eq!(stripped, with_catalog);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_restores_explicit_openai_route() {
+        let original = "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let stripped = strip_codex_unified_session_bucket_with_original(&injected, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, original);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_round_trips_default_route() {
+        // 原始选择器缺省：删除注入的选择器与桶条目后必须逐字节还原。
+        let original = "model = \"gpt-5.4\"\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let stripped = strip_codex_unified_session_bucket_with_original(&injected, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, original);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_keeps_user_custom_table() {
+        let original =
+            "model_provider = \"openai\"\nmodel_providers.custom = { name = \"OpenAI\", requires_openai_auth = true, supports_websockets = true, wire_api = \"responses\" }\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let stripped = strip_codex_unified_session_bucket_with_original(&injected, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, original);
+    }
+
+    #[test]
+    fn unified_session_bucket_injects_into_empty_inline_model_providers() {
+        // 空内联映射：必须生成完整合法配置（选择器与桶条目同时出现），
+        // 不能留下悬空选择器；回填时逐字节还原原始内联表。
+        let original = "model_provider = \"openai\"\nmodel_providers = {}\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let doc: toml::Table = toml::from_str(&injected).expect("parse injected config");
+
+        assert_eq!(
+            doc.get("model_provider").and_then(|value| value.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        assert!(
+            doc["model_providers"]
+                .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+                .is_some(),
+            "empty inline model_providers must gain the unified bucket entry"
+        );
+
+        let stripped = strip_codex_unified_session_bucket_with_original(&injected, original)
+            .expect("strip with original config");
+        assert_eq!(stripped, original);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_keeps_write_time_additions() {
+        // 写入路径在注入前会给配置补应用自有增量（如 model_catalog_json
+        // 指针、写入期规范化）。回填必须保留这些增量、只撤销注入字段，
+        // 而不是因整份文本不一致就把投影整体留在存储配置里。
+        let original = "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n";
+        let written = format!("{original}model_catalog_json = \"cc-switch-model-catalog.json\"\n");
+        let live = inject_codex_unified_session_bucket(&written).expect("inject");
+
+        let stripped = strip_codex_unified_session_bucket_with_original(&live, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, written);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_reverts_injection_and_keeps_user_edit() {
+        // 用户改动了 live 的非注入字段：注入字段照常回退，用户修改保留。
+        let original = "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let changed = injected.replace("gpt-5.4", "user-model");
+
+        let stripped = strip_codex_unified_session_bucket_with_original(&changed, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, original.replace("gpt-5.4", "user-model"));
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_keeps_unrelated_provider_tables() {
+        // 原始已有自己的 model_providers 子表：只移除注入的共享桶条目，
+        // 父表与其余子表原样保留。
+        let original = "model_provider = \"openai\"\n\n[model_providers.myrelay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let stripped = strip_codex_unified_session_bucket_with_original(&injected, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, original);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_keeps_rewritten_bucket_entry() {
+        // 共享桶条目被改成其他形态：无法区分是用户改写还是外部写入，
+        // 保持原样并告警，不做猜测性回退。
+        let original = "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n";
+        let injected = inject_codex_unified_session_bucket(original).expect("inject");
+        let rewritten = injected.replace("wire_api = \"responses\"", "wire_api = \"chat\"");
+
+        let stripped = strip_codex_unified_session_bucket_with_original(&rewritten, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, rewritten);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_with_original_keeps_live_when_injection_was_impossible() {
+        // 存储配置带第三方显式路由：注入当时就会早退，live 的共享桶选择器
+        // 不可能来自本应用，保持原样。
+        let original = "model_provider = \"openai_https\"\n";
+        let live = inject_codex_unified_session_bucket("").expect("inject");
+
+        let stripped = strip_codex_unified_session_bucket_with_original(&live, original)
+            .expect("strip with original config");
+
+        assert_eq!(stripped, live);
     }
 
     #[test]

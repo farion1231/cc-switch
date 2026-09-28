@@ -1346,6 +1346,16 @@ base_url = "https://aihubmix.example/v1"
         assert!(!codex_config_text_routes_custom("not toml ["));
     }
 
+    #[test]
+    fn explicit_openai_projection_passes_unify_gate() {
+        let projected = crate::codex_config::inject_codex_unified_session_bucket(
+            "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n",
+        )
+        .expect("project explicit official route");
+
+        assert!(codex_config_text_routes_custom(&projected));
+    }
+
     fn migrate_provider_templates_for_test(
         db: &Database,
     ) -> (

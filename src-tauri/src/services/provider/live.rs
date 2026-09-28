@@ -1113,7 +1113,10 @@ fn restore_live_settings_for_provider_backfill(
         || crate::proxy::providers::is_codex_official_provider(provider)
     {
         if let Err(err) =
-            crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
+            crate::codex_config::strip_codex_unified_session_bucket_from_settings_with_original(
+                &mut settings,
+                &provider.settings_config,
+            )
         {
             log::warn!(
                 "Failed to strip unified session bucket while backfilling '{}': {err}",
@@ -3161,6 +3164,30 @@ base_url = "https://a.example/v1"
                 "a legacy official card must not restore the stored login after logout"
             );
         }
+    }
+
+    #[test]
+    fn official_backfill_restores_explicit_openai_route() {
+        let original_config = "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n";
+        let injected_config =
+            crate::codex_config::inject_codex_unified_session_bucket(original_config)
+                .expect("inject unified session bucket");
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": original_config }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        let live_settings = json!({
+            "auth": { "auth_mode": "chatgpt", "tokens": { "refresh_token": "live-refresh-secret" } },
+            "config": injected_config
+        });
+
+        let backfilled =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert_eq!(backfilled["config"], json!(original_config));
     }
 
     #[test]
