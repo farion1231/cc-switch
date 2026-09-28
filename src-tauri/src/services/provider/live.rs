@@ -984,15 +984,14 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         return Ok(false);
     }
 
-    // 拒绝把"代理模式下的 Live"导入为供应商：代理模式下 Live 里只有
-    // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
-    // 它会成为直连指针（SSOT），退出代理时会把占位符当真实配置写回 Live。
+    // 拒绝导入代理占位符或同形官方镜像：后者沿用官方登录，没有占位符。
+    // 导入会把派生代理地址持久化为直连配置；同形检查不用于认领或改写 Live。
     // 典型触发场景：代理模式下切换 app_config_dir 并重启，新数据库首启导入。
-    if state.proxy_service.live_has_proxy_placeholder(&app_type) {
+    if state.proxy_service.live_has_proxy_import_risk(&app_type) {
         return Err(AppError::localized(
             "provider.import.live_taken_over",
-            "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",
-            "The live config is currently taken over by the proxy (contains placeholders) and cannot be imported as a provider. Disable proxy takeover or restore the live config first.",
+            "当前配置包含代理占位符，或与代理投影形态相同，无法安全导入为供应商。请检查并恢复实际配置后重试。",
+            "The current config contains proxy placeholders or matches a proxy projection, so it cannot be safely imported as a provider. Check and restore the intended configuration before retrying.",
         ));
     }
 

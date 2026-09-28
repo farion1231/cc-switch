@@ -4109,4 +4109,352 @@ model_provider = "c"
         assert_eq!(grok_doc()["models"]["default"].as_str(), Some("grok-4.5"));
         assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
     }
+
+    fn codex_unified_proxy_mirror() -> &'static str {
+        "model_provider = 'custom'\n[model_providers.custom]\nname = 'OpenAI'\nrequires_openai_auth = true\nsupports_websockets = false\nwire_api = 'responses'\nbase_url = 'http://127.0.0.1:15721/v1'\n"
+    }
+    fn codex_unified_proxy_toggle(value: bool) {
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = value;
+        crate::settings::update_settings(settings).unwrap();
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_manual_shape_does_not_authorize_startup_write() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        commit_state(
+            &s,
+            &AppType::Codex,
+            &PendingTarget::mode(ModeState {
+                mode: Some(Mode::Direct),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        seed_codex(codex_unified_proxy_mirror(), Some(&json!({})));
+        startup_app(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(codex_text(), codex_unified_proxy_mirror());
+    }
+
+    #[test]
+    #[serial]
+    fn codex_unified_proxy_manual_row_is_not_polluted() {
+        let mut row = codex_official();
+        row.settings_config["config"] = json!(codex_unified_proxy_mirror());
+        assert!(usable_direct(&AppType::Codex, Some(&row)).is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_real_resync_keeps_native_auth_and_switches_bucket() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        let auth = json!({"auth_mode":"chatgpt", "tokens":{"id_token":"proof-id", "access_token":"proof-access", "refresh_token":"proof-refresh", "account_id":"proof-account"}});
+        seed_codex("model = 'gpt-5.4'\n", Some(&auth));
+        codex_unified_proxy_toggle(false);
+        enter(&s, &AppType::Codex).await.unwrap();
+        let old_key = mode(&AppType::Codex).contract.unwrap().key;
+        codex_unified_proxy_toggle(true);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        let text = codex_text();
+        let d: toml::Table = toml::from_str(&text).unwrap();
+        let bucket = d["model_provider"].as_str().unwrap().to_string();
+        let new_key = mode(&AppType::Codex).contract.unwrap().key;
+        let auth_after: Value =
+            serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
+        let marked = format!("# external comment proves unchanged contract skips writes\n{text}");
+        fs::write(codex_config_path(), &marked).unwrap();
+        failpoint::crash_at(Some("staged"));
+        let no_write = resync_route(&s, &AppType::Codex).await;
+        failpoint::crash_at(None);
+        no_write.unwrap();
+        let unchanged = codex_text() == marked;
+        codex_unified_proxy_toggle(false);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        let back: toml::Table = toml::from_str(&codex_text()).unwrap();
+        // Release the real local listener before assertions can panic.
+        exit(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(bucket, "custom");
+        assert_ne!(old_key, new_key);
+        assert_eq!(auth_after, auth);
+        assert!(unchanged);
+        assert_eq!(back["model_provider"].as_str(), Some("cc-switch-official"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_managed_account_auth_and_marker_survive_projection_change() {
+        let _home = Home::new();
+        let mut row = codex_official();
+        row.meta = Some(crate::provider::ProviderMeta {
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".into()),
+                account_id: Some("proof-managed".into()),
+            }),
+            ..Default::default()
+        });
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        s.codex_oauth_manager
+            .add_test_account_with_user_identity(
+                "proof-managed",
+                "synthetic-access",
+                "synthetic-user",
+            )
+            .await
+            .unwrap();
+        seed_codex("", Some(&json!({})));
+        codex_unified_proxy_toggle(false);
+        enter(&s, &AppType::Codex).await.unwrap();
+        let before_auth = fs::read(codex_auth_path()).unwrap();
+        let marker = crate::codex_config::get_codex_managed_oauth_live_auth_marker_path();
+        let before_marker = fs::read(&marker).unwrap();
+        codex_unified_proxy_toggle(true);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        let after_auth = fs::read(codex_auth_path()).unwrap();
+        let after_marker = fs::read(&marker).unwrap();
+        let doc: toml::Table = toml::from_str(&codex_text()).unwrap();
+        exit(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(before_auth, after_auth);
+        assert_eq!(before_marker, after_marker);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_generated_shapes_import_and_copy_are_explicit() {
+        use crate::live::project::codex::official_mirror_table;
+        for url in [
+            "http://127.0.0.1:15721/v1",
+            "http://[::1]:23456/v1",
+            "http://192.168.1.23:23456/v1",
+            "http://remote.example/v1",
+        ] {
+            for inline in [false, true] {
+                let _home = Home::new();
+                let s = AppState::new(Arc::new(Database::memory().unwrap()));
+                let table = official_mirror_table(Some(url), false);
+                let mut providers = toml_edit::Table::new();
+                providers.insert(
+                    "custom",
+                    if inline {
+                        toml_edit::Item::Value(toml_edit::Value::InlineTable(
+                            table.into_inline_table(),
+                        ))
+                    } else {
+                        toml_edit::Item::Table(table)
+                    },
+                );
+                let mut doc = toml_edit::DocumentMut::new();
+                doc.insert("model_provider", toml_edit::value("custom"));
+                doc.insert("model_providers", toml_edit::Item::Table(providers));
+                let text = doc.to_string();
+                seed_codex(&text, Some(&json!({})));
+                let error = ProviderService::import_default_config(&s, AppType::Codex).unwrap_err();
+                match error {
+                    AppError::Localized { key, zh, en } => {
+                        assert_eq!(key, "provider.import.live_taken_over");
+                        assert!(zh.contains("或与代理投影形态相同"));
+                        assert!(en.contains("or matches a proxy projection"));
+                    }
+                    other => panic!("unexpected error: {other}"),
+                }
+                assert_eq!(codex_text(), text);
+                assert!(s.db.get_all_providers("codex").unwrap().is_empty());
+            }
+        }
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_disabling_unify_restores_complete_dormant_table() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        let prepared = codex_direct::Prepared::default();
+        codex_unified_proxy_toggle(true);
+        let target = codex_direct::Target::Proxy {
+            route: &row,
+            base_url: "http://127.0.0.1:23456/v1",
+        };
+        let before = codex_direct::plan(&s.db, &Owner::None, &target, &prepared).unwrap();
+        let path = codex_config_path();
+        let mut doc = toml_edit::DocumentMut::new();
+        before.config().apply_to(&path, &mut doc).unwrap();
+        codex_unified_proxy_toggle(false);
+        let after = codex_direct::plan(&s.db, &Owner::None, &target, &prepared).unwrap();
+        after.config().apply_to(&path, &mut doc).unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("cc-switch-official"));
+        let t = doc["model_providers"]["custom"].as_table().unwrap();
+        assert_eq!(t.len(), 4);
+        assert_eq!(t["name"].as_str(), Some("custom"));
+        assert_eq!(t["base_url"].as_str(), Some("http://127.0.0.1:23456/v1"));
+        assert_eq!(t["wire_api"].as_str(), Some("responses"));
+        assert_eq!(
+            t["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(!t.contains_key("requires_openai_auth"));
+        assert!(!t.contains_key("supports_websockets"));
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_real_address_change_rewrites_endpoint_and_preserves_auth() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        codex_unified_proxy_toggle(true);
+        seed_codex("", Some(&json!({})));
+        enter(&s, &AppType::Codex).await.unwrap();
+        let before = codex_text();
+        let auth_before = fs::read(codex_auth_path()).unwrap();
+        let key_before = mode(&AppType::Codex).contract.unwrap().key;
+        let mut config = s.proxy_service.get_config().await.unwrap();
+        // Real service restart, port 0 requests a fresh isolated listener; all-interface bind is
+        // not needed. Loopback address change alone makes the emitted endpoint observably different.
+        config.listen_address = "127.0.0.2".into();
+        config.listen_port = 0;
+        assert!(s.proxy_service.update_config(&config).await.unwrap());
+        resync_route(&s, &AppType::Codex).await.unwrap();
+        let after = codex_text();
+        let expected = s.proxy_service.build_proxy_urls().await.unwrap().1;
+        let key_after = mode(&AppType::Codex).contract.unwrap().key;
+        let auth_after = fs::read(codex_auth_path()).unwrap();
+        exit(&s, &AppType::Codex).await.unwrap();
+        assert_ne!(before, after);
+        assert_ne!(key_before, key_after);
+        let doc: toml::Table = toml::from_str(&after).unwrap();
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some(expected.as_str())
+        );
+        assert_eq!(auth_before, auth_after);
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_official_third_party_roundtrip() {
+        let _home = Home::new();
+        let official = codex_official();
+        let relay = codex_row("proof-relay", "https://relay.example/v1", "");
+        let s = state_with(
+            AppType::Codex,
+            &[official.clone(), relay.clone()],
+            &official.id,
+        )
+        .await;
+        codex_unified_proxy_toggle(true);
+        let auth = json!({"auth_mode":"chatgpt", "tokens":{"id_token":"proof-id", "access_token":"proof-access", "refresh_token":"proof-refresh", "account_id":"proof-account"}});
+        seed_codex("", Some(&auth));
+        enter(&s, &AppType::Codex).await.unwrap();
+        ProviderService::switch(&s, AppType::Codex, &relay.id).unwrap();
+        let relay_text = codex_text();
+        let relay_auth: Value =
+            serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
+        ProviderService::switch(&s, AppType::Codex, &official.id).unwrap();
+        let official_text = codex_text();
+        let official_auth: Value =
+            serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
+        exit(&s, &AppType::Codex).await.unwrap();
+        let r: toml::Table = toml::from_str(&relay_text).unwrap();
+        let o: toml::Table = toml::from_str(&official_text).unwrap();
+        assert_eq!(r["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            r["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert_eq!(o["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            o["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(o["model_providers"]["custom"]
+            .get("experimental_bearer_token")
+            .is_none());
+        assert_eq!(relay_auth, auth);
+        assert_eq!(official_auth, auth);
+        assert_eq!(
+            s.db.get_provider_by_id(&relay.id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config,
+            relay.settings_config
+        );
+        assert_eq!(
+            s.db.get_provider_by_id(&official.id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config,
+            official.settings_config
+        );
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_safe_snippet_fields_remain_in_extractor_but_startup_skips() {
+        let _home = Home::new();
+        let s = AppState::new(Arc::new(Database::memory().unwrap()));
+        let text = format!(
+            "sandbox_mode = 'read-only'\n{}",
+            codex_unified_proxy_mirror()
+        );
+        let extracted = ProviderService::extract_common_config_snippet_from_settings(
+            AppType::Codex,
+            &json!({"config":text}),
+        )
+        .unwrap();
+        let d: toml::Table = toml::from_str(&extracted).unwrap();
+        assert_eq!(d["sandbox_mode"].as_str(), Some("read-only"));
+        seed_codex(&text, Some(&json!({})));
+        crate::initialize_common_config_snippets(&s);
+        assert!(s.db.get_config_snippet("codex").unwrap().is_none());
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_actual_save_rollback_then_full_mode_startup() {
+        use tauri::Manager;
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        codex_unified_proxy_toggle(false);
+        seed_codex("", Some(&json!({})));
+        enter(&s, &AppType::Codex).await.unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(s)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let mut requested = crate::settings::get_settings();
+        requested.unify_codex_session_history = true;
+        requested.unify_codex_migrate_existing = Some(false);
+        failpoint::crash_at(Some("published:0"));
+        let result = crate::commands::save_settings(app.state(), requested).await;
+        failpoint::crash_at(None);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("injected crash at published:0"));
+        assert!(!crate::settings::unify_codex_session_history());
+        assert!(operation::has_pending("codex"));
+        let d: toml::Table = toml::from_str(&codex_text()).unwrap();
+        assert_eq!(d["model_provider"].as_str(), Some("custom"));
+        // Saving the already-rolled-back value does not re-enter the changed-toggle branch.
+        crate::commands::save_settings(app.state(), crate::settings::get_settings())
+            .await
+            .unwrap();
+        assert!(operation::has_pending("codex"));
+        let s = app.state::<AppState>();
+        operation::settle(&s.db, "codex").unwrap();
+        assert!(!operation::has_pending("codex"));
+        let still_new: toml::Table = toml::from_str(&codex_text()).unwrap();
+        assert_eq!(still_new["model_provider"].as_str(), Some("custom"));
+        // Exercise the actual startup sequence, including forced attach, not just settle.
+        startup(s.inner()).await;
+        let repaired: toml::Table = toml::from_str(&codex_text()).unwrap();
+        exit(s.inner(), &AppType::Codex).await.unwrap();
+        assert_eq!(
+            repaired["model_provider"].as_str(),
+            Some("cc-switch-official")
+        );
+        assert!(!crate::settings::unify_codex_session_history());
+    }
 }

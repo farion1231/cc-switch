@@ -398,11 +398,13 @@ pub(crate) fn plan(
                     Some(login) => AuthGoal::Managed(login.clone()),
                     None => AuthGoal::Official(row_auth(route)),
                 };
-                (
-                    RouteWrite::OfficialProxy(official_mirror_table(Some(base_url), false)),
-                    None,
-                    auth,
-                )
+                let table = official_mirror_table(Some(base_url), false);
+                let route = if crate::settings::unify_codex_session_history() {
+                    RouteWrite::Custom(table)
+                } else {
+                    RouteWrite::OfficialProxy(table)
+                };
+                (route, None, auth)
             } else {
                 (
                     RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
@@ -809,4 +811,66 @@ pub(crate) fn write_direct(
 pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
     let target = Target::Direct(Some(provider));
     plan(db, &Owner::None, &target, &Prepared::default()).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_unified_proxy_contract_tracks_selector_endpoint_and_account() {
+        let row = Provider::with_id(
+            "official".into(),
+            "Official".into(),
+            serde_json::json!({}),
+            None,
+        );
+        let url = "http://127.0.0.1:12345/v1";
+        let target = Target::Proxy {
+            route: &row,
+            base_url: url,
+        };
+        let table = official_mirror_table(Some(url), false);
+        let mut config = CodexConfigPatch {
+            top: vec![],
+            nested: vec![],
+            exclusive: vec![],
+            outgoing: vec![],
+            route: RouteWrite::OfficialProxy(table.clone()),
+            catalog: false,
+            retired: vec![],
+        };
+        let prepared = Prepared::default();
+        let legacy = contract_of(&target, &config, None, &prepared, None);
+        config.route = RouteWrite::Custom(table);
+        let shared = contract_of(&target, &config, None, &prepared, None);
+        assert_ne!(legacy.key, shared.key);
+        let moved = Target::Proxy {
+            route: &row,
+            base_url: "http://[::1]:23456/v1",
+        };
+        assert_ne!(
+            shared.key,
+            contract_of(&moved, &config, None, &prepared, None).key
+        );
+
+        let mut managed = Prepared {
+            target_login: Some((
+                "account-a".into(),
+                serde_json::json!({"access_token":"test-a"}),
+            )),
+            outgoing: None,
+        };
+        let before = contract_of(&target, &config, None, &managed, None);
+        managed.target_login.as_mut().unwrap().1 = serde_json::json!({"access_token":"test-b"});
+        assert_eq!(
+            before.key,
+            contract_of(&target, &config, None, &managed, None).key
+        );
+        managed.target_login.as_mut().unwrap().0 = "account-b".into();
+        assert_ne!(
+            before.key,
+            contract_of(&target, &config, None, &managed, None).key
+        );
+    }
 }

@@ -66,7 +66,7 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的选路（关键字段），
 /// 使开关即时生效，无需等下一次切换。当前供应商非官方（或不存在）时为 no-op：开关只
-/// 影响官方直连的选路。代理模式下 live 是代理契约，不受这个开关影响。
+/// 影响官方直连和代理的会话选路，代理模式仍保持官方认证契约。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
     let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &AppType::Codex)?;
     let current_id = ProviderService::current(state, AppType::Codex)?;

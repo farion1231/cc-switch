@@ -440,7 +440,7 @@ pub enum RouteWrite {
     Official { dormant_base_url: String },
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
     OfficialMirror,
-    /// 第三方（直连或代理契约）：选路写 custom。
+    /// 共享槽（第三方，或统一历史的官方代理）：选路写 custom，认证由调用方决定。
     Custom(Table),
     /// Codex 内置的其他 provider。
     BuiltIn { id: String, table: Option<Table> },
