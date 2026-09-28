@@ -750,8 +750,24 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     // 改成按端点区分的稳定 id。放在 parse 之前，这样下面所有逻辑（active id
     // 判定、inert 合并、catalog 合并）看到的都是迁移后的形态。幂等：已是新
     // 形态时原样返回。
-    let live_text = crate::codex_config::migrate_legacy_codex_toml_ids(raw_live_text)
-        .unwrap_or_else(|| raw_live_text.to_string());
+    //
+    // active 是官方档时只搬表 id、不补顶层 `model_provider`：那张表是切换回填
+    // 带进存档的 inert 残留，补顶层等于凭空创建一条路由，把 inert 表顶成激活
+    // 端点（RFC 0002 §2.1）。
+    //
+    // 同 `migrate_legacy_codex_toml_ids_in_db`：用 `is_codex_official_provider`
+    // 而不是裸判 category，早期 OAuth 版本可能在 category 落库前就绑上固定卡。
+    let active_is_official = db
+        .get_provider_by_id(current_provider_db_id, app_type_str)
+        .ok()
+        .flatten()
+        .is_some_and(|provider| crate::proxy::providers::is_codex_official_provider(&provider));
+    let live_text = if active_is_official {
+        crate::codex_config::migrate_legacy_codex_toml_ids_renaming_only(raw_live_text)
+    } else {
+        crate::codex_config::migrate_legacy_codex_toml_ids(raw_live_text)
+    }
+    .unwrap_or_else(|| raw_live_text.to_string());
     let Ok(mut live_doc) = live_text.parse::<DocumentMut>() else {
         return Ok(settings_config.clone());
     };
@@ -788,12 +804,14 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
         }
         // 老 bundle 的 DB 行同样是 `[model_providers.custom]` 形态，先迁移再
         // 抽表，否则 inert 合并会把两个端点的表撞进同一个 `custom` id。
+        // 这里只抽表、不看顶层路由，所以用 renaming-only 变体：非激活端点缺顶层
+        // 是常态，补出来只会制造一条谁都不该走的路由。
         let stored_text = provider
             .settings_config
             .get("config")
             .and_then(Value::as_str)
             .map(|text| {
-                crate::codex_config::migrate_legacy_codex_toml_ids(text)
+                crate::codex_config::migrate_legacy_codex_toml_ids_renaming_only(text)
                     .unwrap_or_else(|| text.to_string())
             });
         let Some(stored_text) = stored_text else {

@@ -1129,8 +1129,8 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 /// 1. 两个端点共用 `custom` id，`merge_inert_codex_provider_tables_*` 的
 ///    "live wins" 规则会让切走的那张表被**静默丢弃**（切回时历史 session
 ///    无法 resume）；
-/// 2. 老 bundle 常常没有顶层 `model_provider`，Codex 0.149+ 会回退到
-///    `openai`，整张 `[model_providers.custom]` 变孤儿表、CLI 起不来。
+/// 2. `kxpms_gateway` / `local_gateway` 这两个 name 对用户没有可读性，排障时
+///    看表名看不出指向哪个端点。
 ///
 /// 按表里的 `name`（而不是表 id）判定归属，把 id 改成互不冲突的稳定 id：
 /// `kxpms_gateway` → `kxpms`，`local_gateway` → `local8782`。这与
@@ -1139,7 +1139,28 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 const LEGACY_CODEX_TOML_ID_MIGRATIONS: &[(&str, &str)] =
     &[("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")];
 
+/// 顶层 `model_provider` 缺失时，迁移该不该把它补上。
+///
+/// 取决于这张表**是不是该 provider 的路由意图**：
+/// - 网关档（`category != "official"`）的存档里那张表就是它自己的路由。缺顶层是
+///   老 bundle 的残缺形态，Codex 0.149+ 会回退 `openai`、整张表变孤儿，必须补。
+/// - 官方档（`category == "official"`）存档里那张表是**切换回填带进来的 inert 残留**
+///   （用户手工补回过、或切走时 live 被回填）。补顶层等于凭空创建一条路由，把
+///   inert 表提升成激活端点，新会话打到网关而不是选中的官方 —— 违反
+///   RFC 0002 §2.1「inert 表不影响新流量路由」。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MissingTopLevelPolicy {
+    /// 补写 `model_provider = <新 id>`（网关档的修复语义）。
+    Repair,
+    /// 顶层缺失就保持缺失，只搬表 id（inert 投影语义）。
+    KeepAbsent,
+}
+
 /// 把老 bundle 的 `[model_providers.custom]` 迁移到按端点区分的 TOML id。
+///
+/// 顶层缺失时按 `MissingTopLevelPolicy::Repair` 补写顶层——适用于**网关档**，
+/// 那张表就是它自己的路由意图。当前形态的 `kaixuan_bundle()` 永远同时写顶层与表，
+/// 所以新装用户走不到这条补写；它守的是老 bundle 的残缺形态。
 ///
 /// 幂等：已经是新形态（没有 `custom` 表 / `name` 不在映射表里 / 新 id 已被
 /// 别的表占用）时返回 `None`，调用方无需做任何事。
@@ -1150,6 +1171,21 @@ const LEGACY_CODEX_TOML_ID_MIGRATIONS: &[(&str, &str)] =
 ///   顶层就对不上了，所以干脆整段不动，交给用户走「重装 bundle」。
 /// - 新 id 已被占用：说明用户已有同名表，强行覆盖会丢配置。
 pub fn migrate_legacy_codex_toml_ids(config_text: &str) -> Option<String> {
+    migrate_legacy_codex_toml_ids_with_policy(config_text, MissingTopLevelPolicy::Repair)
+}
+
+/// 同 [`migrate_legacy_codex_toml_ids`]，但顶层缺失时**不补写**
+/// （`MissingTopLevelPolicy::KeepAbsent`）。
+///
+/// 用于「这张表只是 inert 残留」的投影场景：官方档存档、以及非激活端点的表抽取。
+pub fn migrate_legacy_codex_toml_ids_renaming_only(config_text: &str) -> Option<String> {
+    migrate_legacy_codex_toml_ids_with_policy(config_text, MissingTopLevelPolicy::KeepAbsent)
+}
+
+fn migrate_legacy_codex_toml_ids_with_policy(
+    config_text: &str,
+    policy: MissingTopLevelPolicy,
+) -> Option<String> {
     let mut doc = config_text.parse::<DocumentMut>().ok()?;
     let legacy_name = {
         let mp = doc
@@ -1169,6 +1205,8 @@ pub fn migrate_legacy_codex_toml_ids(config_text: &str) -> Option<String> {
         .map(|(_, new_id)| *new_id)?;
 
     // 顶层 model_provider 已指向别的 id → 用户的自定义路由，不动。
+    let top_level_points_at_legacy =
+        matches!(active_codex_model_provider_id(&doc).as_deref(), Some("custom"));
     if let Some(current) = active_codex_model_provider_id(&doc) {
         if current != "custom" {
             log::info!(
@@ -1200,10 +1238,11 @@ pub fn migrate_legacy_codex_toml_ids(config_text: &str) -> Option<String> {
         mp.insert(new_id, item);
     }
 
-    // 顶层 model_provider 缺失或仍为 "custom" 时指向新 id。
+    // 顶层本来就指向 legacy `custom` 时，把它改指到新 id；顶层缺失时按 policy
+    // 决定补不补（见 `MissingTopLevelPolicy`）。
     // `toml_edit::Table::insert` 会把标量键插在子表之前，所以不会意外落进
     // `[model_providers.*]` 作用域里（这条由下方单测 parse 断言守住）。
-    {
+    if top_level_points_at_legacy || policy == MissingTopLevelPolicy::Repair {
         let root = doc.as_table_mut();
         root.insert("model_provider", toml_edit::value(new_id));
     }
@@ -1228,7 +1267,21 @@ pub fn migrate_legacy_codex_toml_ids_in_db(db: &Database) -> Result<usize, AppEr
         else {
             continue;
         };
-        let Some(updated) = migrate_legacy_codex_toml_ids(text) else {
+        // 官方档存档里的 `[model_providers.*]` 是切换回填带进来的 inert 残留，
+        // 补顶层会把它变成激活端点并**永久写回 DB 行**，之后每次切官方新会话都
+        // 打到网关（RFC 0002 §2.1）。所以官方档只搬表 id，不补路由。
+        //
+        // 必须用 `is_codex_official_provider` 而不是裸判 `category == "official"`：
+        // 早期 OAuth 版本可能在 category 落库前就把固定卡绑上（见
+        // `live.rs` 里 apply_codex_official_auth 的同款说明），那批 DB 行的
+        // `category` 是 NULL。裸判会把它们误当网关档补顶层，老用户照样中招。
+        let is_official = crate::proxy::providers::is_codex_official_provider(provider);
+        let migrated_text = if is_official {
+            migrate_legacy_codex_toml_ids_renaming_only(text)
+        } else {
+            migrate_legacy_codex_toml_ids(text)
+        };
+        let Some(updated) = migrated_text else {
             continue;
         };
         let mut settings = provider.settings_config.clone();
@@ -4599,16 +4652,12 @@ mod tests {
     use serial_test::serial;
     use std::ffi::OsString;
 
-    /// 老 bundle 的 `[model_providers.custom]` 必须被改写成按端点区分的 id，
-    /// 且顶层 `model_provider` 同步指向它。
+    /// 老 bundle 的 `[model_providers.custom]` 必须被改写成按端点区分的 id。
     ///
-    /// 这条同时守住一个 TOML 陷阱：`model_provider = "..."` 是**标量**，如果
-    /// `toml_edit::Table::insert` 把它追加到 `[model_providers.*]` 之后，解析回来
-    /// 它就变成了那张表的字段（`model_providers.kxpms.model_provider`），顶层
-    /// 依然是空 —— Codex 于是回退到 `openai`，老 bug 原样复发。断言用 `toml`
-    /// crate 重新解析，专门盯这个。
+    /// 网关档（默认策略）：顶层缺失时**补上**——那正是 Codex 0.149+ 起不来的
+    /// 残缺形态，整张表会变孤儿表。
     #[test]
-    fn migrate_legacy_toml_id_renames_custom_table_and_sets_top_level() {
+    fn migrate_legacy_toml_id_renames_custom_table_and_repairs_missing_top_level() {
         for (legacy_name, expected_id) in
             [("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")]
         {
@@ -4621,11 +4670,11 @@ mod tests {
             let parsed: toml::Value = toml::from_str(&migrated)
                 .unwrap_or_else(|e| panic!("迁移结果必须是合法 TOML: {e}\n{migrated}"));
 
-            // 顶层指向新 id（不是 custom、不是缺失）
+            // 顶层缺失时补上，否则 Codex 0.149+ 会回退 openai、整张表变孤儿
             assert_eq!(
                 parsed.get("model_provider").and_then(|v| v.as_str()),
                 Some(expected_id),
-                "{legacy_name}: 顶层 model_provider 必须指向 {expected_id}\n{migrated}"
+                "{legacy_name}: 网关档顶层缺失时必须补上并指向 {expected_id}\n{migrated}"
             );
             // 老表消失，新表在，且字段完整搬过去
             assert!(
@@ -4648,11 +4697,6 @@ mod tests {
                 Some("https://llm.kxpms.cn/v1"),
                 "base_url 必须原样保留"
             );
-            // 标量键没被误吞进 provider 表
-            assert!(
-                new_table.get("model_provider").is_none(),
-                "{legacy_name}: model_provider 不能落进 [{expected_id}] 表里（TOML 作用域陷阱）"
-            );
             // 无关顶层键不丢
             assert_eq!(
                 parsed.get("model").and_then(|v| v.as_str()),
@@ -4667,18 +4711,80 @@ mod tests {
         }
     }
 
-    /// 老 bundle 里顶层 `model_provider = "custom"` 的形态也要能迁移（不是
-    /// 只补字段，还要把指向 custom 的顶层值一起改掉）。
+    /// `renaming_only` 变体（官方档 / 非激活端点抽表用）：只搬表 id，顶层缺失
+    /// 就保持缺失。
+    ///
+    /// 官方档存档里那张 `[model_providers.custom]` 是切换回填带进来的 inert 残留，
+    /// 补顶层等于凭空创建一条路由，把 inert 表提升成激活端点 —— 新会话会打到
+    /// 网关而不是 UI 上选中的 OpenAI Official（RFC 0002 §2.1）。
+    #[test]
+    fn migrate_legacy_toml_id_renaming_only_never_invents_top_level() {
+        for (legacy_name, expected_id) in
+            [("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")]
+        {
+            let legacy = format!(
+                "model = \"claude-opus-5\"\n\n[model_providers.custom]\nname = \"{legacy_name}\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\n"
+            );
+            let migrated = migrate_legacy_codex_toml_ids_renaming_only(&legacy)
+                .unwrap_or_else(|| panic!("{legacy_name} 必须被迁移"));
+
+            let parsed: toml::Value = toml::from_str(&migrated)
+                .unwrap_or_else(|e| panic!("迁移结果必须是合法 TOML: {e}\n{migrated}"));
+
+            assert_eq!(
+                parsed.get("model_provider"),
+                None,
+                "{legacy_name}: 顶层原本缺失，renaming_only 不得补写\n{migrated}"
+            );
+            assert!(
+                parsed
+                    .get("model_providers")
+                    .and_then(|mp| mp.get("custom"))
+                    .is_none(),
+                "{legacy_name}: 老的 custom 表必须消失\n{migrated}"
+            );
+            assert_eq!(
+                parsed["model_providers"][expected_id]["base_url"].as_str(),
+                Some("https://llm.kxpms.cn/v1"),
+                "表 id 照常搬家、内容不变\n{migrated}"
+            );
+            assert!(
+                migrate_legacy_codex_toml_ids_renaming_only(&migrated).is_none(),
+                "{legacy_name}: 迁移必须幂等"
+            );
+        }
+    }
+
+    /// 老 bundle 里顶层 `model_provider = "custom"` 的形态要能把顶层改指到新 id。
+    ///
+    /// 这条同时守住一个 TOML 陷阱：`model_provider = "..."` 是**标量**，如果
+    /// `toml_edit::Table::insert` 把它追加到 `[model_providers.*]` 之后，解析回来
+    /// 它就变成了那张表的字段（`model_providers.kxpms.model_provider`），顶层
+    /// 依然是空 —— Codex 于是回退到 `openai`，老 bug 原样复发。断言用 `toml`
+    /// crate 重新解析，专门盯这个。
     #[test]
     fn migrate_legacy_toml_id_repoints_top_level_from_custom() {
-        let legacy = "model_provider = \"custom\"\nmodel = \"glm-5.2\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n";
-        let migrated = migrate_legacy_codex_toml_ids(legacy).expect("must migrate");
-        let parsed: toml::Value = toml::from_str(&migrated).expect("valid toml");
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("kxpms"),
-            "顶层必须从 custom 改指到 kxpms\n{migrated}"
-        );
+        for (legacy_name, expected_id) in
+            [("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")]
+        {
+            let legacy = format!(
+                "model_provider = \"custom\"\nmodel = \"glm-5.2\"\n\n[model_providers.custom]\nname = \"{legacy_name}\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n"
+            );
+            let migrated = migrate_legacy_codex_toml_ids(&legacy).expect("must migrate");
+            let parsed: toml::Value = toml::from_str(&migrated).expect("valid toml");
+            assert_eq!(
+                parsed.get("model_provider").and_then(|v| v.as_str()),
+                Some(expected_id),
+                "顶层必须从 custom 改指到 {expected_id}\n{migrated}"
+            );
+            // 标量键没被误吞进 provider 表（TOML 作用域陷阱）
+            assert!(
+                parsed["model_providers"][expected_id]
+                    .get("model_provider")
+                    .is_none(),
+                "{legacy_name}: model_provider 不能落进 [{expected_id}] 表里\n{migrated}"
+            );
+        }
     }
 
     /// 保守不动：这些形态不能被迁移，动了就是弄坏用户配置。
