@@ -605,17 +605,22 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
 ///
 /// 策略：
-/// 1. 核心字段（type, command, args, url, headers, env, cwd）使用强类型处理
+/// 1. 核心字段（command, args, url, headers, env, cwd）使用强类型处理
 /// 2. 扩展字段（timeout、retry 等）通过白名单列表自动转换
 /// 3. 其他未知字段使用通用转换器尝试转换
+///
+/// 注意：**不向 Codex 写出 `type`**。`[mcp_servers.*]` 没有 `type` 字段，
+/// Codex 由 `command`（stdio）或 `url`（streamable HTTP）推断传输方式；
+/// 写出 `type = "stdio"` 会被 Codex 0.158+ 的配置校验当作未知字段告警
+/// （`unknown configuration field mcp_servers.<id>.type`）。DB 中仍保留 `type`
+/// 以便在各客户端之间共享同一份 server 规范。
 pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
     use toml_edit::{Array, Item, Table};
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
-    t["type"] = toml_edit::value(typ);
 
-    // 定义核心字段（已在下方处理，跳过通用转换）
+    // 定义核心字段（已在下方处理，跳过通用转换；`type` 仅为兼容 DB 规范而跳过）
     let core_fields = match typ {
         "stdio" => vec!["type", "command", "args", "env", "cwd"],
         "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
@@ -844,5 +849,21 @@ mod tests {
             table.get("timeout").and_then(|item| item.as_integer()),
             Some(30)
         );
+    }
+
+    #[test]
+    fn codex_mcp_table_omits_type_field() {
+        // Codex 的 [mcp_servers.*] 没有 `type` 字段：传输方式由 command / url 推断。
+        // 写出 `type` 会被 Codex 0.158+ 当作未知配置字段告警。
+        for spec in [
+            json!({ "type": "stdio", "command": "echo", "args": ["hi"] }),
+            json!({ "type": "http", "url": "https://mcp.example.com/mcp" }),
+        ] {
+            let table = json_server_to_toml_table(&spec).unwrap();
+            assert!(
+                table.get("type").is_none(),
+                "Codex MCP table must not contain a `type` field"
+            );
+        }
     }
 }
