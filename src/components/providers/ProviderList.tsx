@@ -46,7 +46,7 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { isTextEditableTarget } from "@/utils/domUtils";
+import { hasOpenFullScreenPanel, isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
 
@@ -277,7 +277,9 @@ export function ProviderList({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      // 编辑/添加供应商等全屏面板会覆盖列表，但仍与列表共存于 DOM。
+      // 此时不能在隐藏的列表上打开搜索，否则后续输入会写入不可见的搜索框。
+      if (event.defaultPrevented || hasOpenFullScreenPanel()) return;
 
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
