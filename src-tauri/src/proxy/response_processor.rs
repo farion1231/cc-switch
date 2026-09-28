@@ -1463,4 +1463,64 @@ mod tests {
         assert_eq!(count, 1);
         Ok(())
     }
+
+    /// Gemini `alt=sse` 流式响应（Antigravity 等 Gemini 客户端）经透传流后，
+    /// 尾 chunk 的 usageMetadata 必须能被收集并解析成 token usage。
+    #[tokio::test]
+    async fn gemini_sse_stream_feeds_collector_and_parses_usage() {
+        use crate::proxy::handler_config::GEMINI_PARSER_CONFIG;
+        use crate::proxy::usage::parser::TokenUsage;
+        use futures::StreamExt;
+
+        let sse_body = concat!(
+            "data: {\"responseId\":\"resp_1\",\"modelVersion\":\"gemini-3.8-flash\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"he\"}]}}]}\n\n",
+            "data: {\"responseId\":\"resp_1\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"llo\"}]}}]}\n\n",
+            "data: {\"responseId\":\"resp_1\",\"candidates\":[],\"usageMetadata\":{\"promptTokenCount\":258,\"totalTokenCount\":277,\"cachedContentTokenCount\":160}}\n\n",
+        );
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(
+            std::time::Instant::now(),
+            GEMINI_PARSER_CONFIG.stream_event_filter,
+            {
+                let collected = collected.clone();
+                move |events, _| {
+                    *collected.lock().unwrap() = events;
+                }
+            },
+        );
+
+        let stream = futures::stream::iter(vec![Ok::<_, std::io::Error>(
+            sse_body.as_bytes().to_vec().into(),
+        )]);
+        let passthrough = create_logged_passthrough_stream(
+            stream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        futures::pin_mut!(passthrough);
+        while let Some(chunk) = passthrough.next().await {
+            chunk.expect("passthrough chunk");
+        }
+
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(
+            events.len(),
+            2,
+            "含 modelVersion 的首 chunk 与含 usageMetadata 的尾 chunk 都应被收集: {events:?}"
+        );
+        let usage =
+            TokenUsage::from_gemini_stream_chunks(&events).expect("Gemini 流式 usage 应可解析");
+        assert_eq!(usage.input_tokens, 258);
+        assert_eq!(usage.output_tokens, 19);
+        assert_eq!(usage.cache_read_tokens, 160);
+        assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
+        assert_eq!(usage.message_id.as_deref(), Some("resp_1"));
+
+    }
 }
