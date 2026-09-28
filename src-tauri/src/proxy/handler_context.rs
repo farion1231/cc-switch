@@ -86,9 +86,7 @@ pub(crate) fn resolve_forwarder_timeouts(config: &AppProxyConfig) -> (u64, u64, 
 }
 
 /// 解析流式超时配置（同上：始终跟随用户配置，0 表示禁用）。
-pub(crate) fn resolve_streaming_timeout_config(
-    config: &AppProxyConfig,
-) -> StreamingTimeoutConfig {
+pub(crate) fn resolve_streaming_timeout_config(config: &AppProxyConfig) -> StreamingTimeoutConfig {
     StreamingTimeoutConfig {
         first_byte_timeout: config.streaming_first_byte_timeout as u64,
         idle_timeout: config.streaming_idle_timeout as u64,
