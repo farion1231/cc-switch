@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
@@ -8,6 +8,25 @@ import { ProviderList } from "@/components/providers/ProviderList";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+const toastErrorMock = vi.fn();
+const importDefaultMock = vi.fn();
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    info: vi.fn(),
+    error: (...args: unknown[]) => toastErrorMock(...args),
+  },
+}));
+
+vi.mock("@/lib/api/providers", () => ({
+  providersApi: {
+    importDefault: (...args: unknown[]) => importDefaultMock(...args),
+    importOpenCodeFromLive: vi.fn(),
+    importOpenClawFromLive: vi.fn(),
+    getOpenCodeLiveProviderIds: vi.fn().mockResolvedValue([]),
+  },
+}));
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -124,6 +143,8 @@ beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
+  toastErrorMock.mockReset();
+  importDefaultMock.mockReset();
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -235,12 +256,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -305,5 +326,61 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  it("shows the backend's own error detail when importing the current config fails", async () => {
+    importDefaultMock.mockRejectedValueOnce({
+      detail: "Claude config file is not readable",
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.importCurrent" }),
+    );
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Claude config file is not readable",
+      );
+    });
+  });
+
+  it("falls back to the generic message when the import error has nothing to extract", async () => {
+    importDefaultMock.mockRejectedValueOnce({});
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.importCurrent" }),
+    );
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "provider.importCurrentFailed",
+      );
+    });
   });
 });
