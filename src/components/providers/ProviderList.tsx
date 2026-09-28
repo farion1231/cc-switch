@@ -33,6 +33,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { KaixuanBundleCard } from "@/components/providers/kaixuan/KaixuanBundleCard";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -441,6 +442,9 @@ export function ProviderList({
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-3">
+          {appId === "codex" && (
+            <KaixuanBundleCard />
+          )}
           {filteredProviders.map((provider) => {
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";

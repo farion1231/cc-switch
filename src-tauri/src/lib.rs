@@ -29,7 +29,10 @@ mod panic_hook;
 mod pi_config;
 mod prompt;
 mod prompt_files;
+mod env_expand;
+mod gateway_health;
 mod provider;
+mod provider_bundle;
 mod proxy;
 mod services;
 mod session_manager;
@@ -1394,6 +1397,12 @@ pub fn run() {
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
+            commands::list_provider_bundles,
+            commands::install_provider_bundle,
+            commands::list_gateway_endpoints,
+            commands::probe_gateway,
+            commands::probe_all_gateways,
+            commands::start_local_gateway,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,

@@ -429,6 +429,31 @@ impl Database {
         Ok(())
     }
 
+    /// 仅刷新 sort_index（不动 settings_config / in_failover_queue）。
+    /// 用于「bundle 重新安装时保留用户已改的 settings_config」场景。
+    pub fn update_provider_sort_index(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        sort_index: usize,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE providers SET sort_index = ?1 WHERE id = ?2 AND app_type = ?3",
+                params![sort_index as i64, provider_id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if affected == 0 {
+            // 不报错（idempotent：用户可能手动删除了 bundle 的端点）；
+            // 这种情况调用方会在外层根据 existing.contains() 决定要不要写。
+            log::debug!(
+                "update_provider_sort_index: provider '{provider_id}' ({app_type}) 不存在，跳过"
+            );
+        }
+        Ok(())
+    }
+
     pub fn add_custom_endpoint(
         &self,
         app_type: &str,
