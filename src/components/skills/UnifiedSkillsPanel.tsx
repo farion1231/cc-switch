@@ -10,6 +10,7 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Wrench,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,6 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { SkillsIcon } from "@/components/BrandIcons";
 import {
   type ImportSkillSelection,
   type InstalledSkill,
@@ -901,7 +901,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
   const header = (
     <AppPageHeader
-      icon={<SkillsIcon size={20} />}
+      icon={<Wrench size={20} />}
       title="Skills"
       titleExtra={
         <>

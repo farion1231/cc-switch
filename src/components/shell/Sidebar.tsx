@@ -20,13 +20,13 @@ import {
   Server,
   Settings,
   SlidersHorizontal,
+  Wrench,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { APP_IDS } from "@/config/appConfig";
 import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
 import { isAppPage } from "@/lib/navigation";
-import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
@@ -225,7 +225,7 @@ function MainDirectory({
     alert?: string;
   }[] = [
     { page: "mcp", label: "MCP", icon: Server },
-    { page: "skills", label: "Skills", icon: SkillsIcon },
+    { page: "skills", label: "Skills", icon: Wrench },
     { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
     { page: "sessions", label: t("nav.sessions"), icon: History },
     {
