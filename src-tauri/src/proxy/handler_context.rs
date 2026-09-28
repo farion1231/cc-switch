@@ -72,6 +72,29 @@ pub struct RequestContext {
     pub copilot_optimizer_config: CopilotOptimizerConfig,
 }
 
+/// 解析 forwarder 超时配置。
+///
+/// 超时始终跟随用户配置（0 表示禁用），与故障转移开关无关。
+/// failover 关闭只决定 max_retries（强制 0，不切换供应商），不禁用超时报错，
+/// 避免上游 hanging 导致无限等待（桌面转圈、无报错）。
+pub(crate) fn resolve_forwarder_timeouts(config: &AppProxyConfig) -> (u64, u64, u64) {
+    (
+        config.non_streaming_timeout as u64,
+        config.streaming_first_byte_timeout as u64,
+        config.streaming_idle_timeout as u64,
+    )
+}
+
+/// 解析流式超时配置（同上：始终跟随用户配置，0 表示禁用）。
+pub(crate) fn resolve_streaming_timeout_config(
+    config: &AppProxyConfig,
+) -> StreamingTimeoutConfig {
+    StreamingTimeoutConfig {
+        first_byte_timeout: config.streaming_first_byte_timeout as u64,
+        idle_timeout: config.streaming_idle_timeout as u64,
+    }
+}
+
 impl RequestContext {
     /// 创建请求上下文
     ///
@@ -196,27 +219,14 @@ impl RequestContext {
     /// 使用共享的 ProviderRouter，确保熔断器状态跨请求保持
     ///
     /// 配置生效规则：
-    /// - 故障转移开启：超时配置正常生效（0 表示禁用超时）
-    /// - 故障转移关闭：超时配置不生效（全部传入 0）
+    /// - 超时配置始终生效（0 表示禁用超时），与故障转移开关无关
+    /// - 故障转移关闭：强制 max_retries=0（仅尝试 1 个 provider，不切换）
     pub fn create_forwarder(&self, state: &ProxyState) -> RequestForwarder {
         let (non_streaming_timeout, first_byte_timeout, idle_timeout) =
-            if self.app_config.auto_failover_enabled {
-                // 故障转移开启：使用配置的值（0 = 禁用超时）
-                (
-                    self.app_config.non_streaming_timeout as u64,
-                    self.app_config.streaming_first_byte_timeout as u64,
-                    self.app_config.streaming_idle_timeout as u64,
-                )
-            } else {
-                // 故障转移关闭：不启用超时配置
-                log::debug!(
-                    "[{}] Failover disabled, timeout configs are bypassed",
-                    self.tag
-                );
-                (0, 0, 0)
-            };
+            resolve_forwarder_timeouts(&self.app_config);
 
-        // 故障转移关闭时强制 max_retries=0（仅尝试 1 个 provider），与「不超时 + 不切换」语义一致。
+        // 故障转移关闭时强制 max_retries=0（仅尝试 1 个 provider）；超时保持生效，
+        // hanging 会报错而非无限等待。
         let max_retries = if self.app_config.auto_failover_enabled {
             self.app_config.max_retries
         } else {
@@ -259,24 +269,10 @@ impl RequestContext {
 
     /// 获取流式超时配置
     ///
-    /// 配置生效规则：
-    /// - 故障转移开启：返回配置的值（0 表示禁用超时检查）
-    /// - 故障转移关闭：返回 0（禁用超时检查）
+    /// 始终返回用户配置的值（0 表示禁用超时检查），与故障转移开关无关。
     #[inline]
     pub fn streaming_timeout_config(&self) -> StreamingTimeoutConfig {
-        if self.app_config.auto_failover_enabled {
-            // 故障转移开启：使用配置的值（0 = 禁用超时）
-            StreamingTimeoutConfig {
-                first_byte_timeout: self.app_config.streaming_first_byte_timeout as u64,
-                idle_timeout: self.app_config.streaming_idle_timeout as u64,
-            }
-        } else {
-            // 故障转移关闭：禁用流式超时检查
-            StreamingTimeoutConfig {
-                first_byte_timeout: 0,
-                idle_timeout: 0,
-            }
-        }
+        resolve_streaming_timeout_config(&self.app_config)
     }
 }
 
@@ -300,7 +296,55 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_model_from_path;
+    use super::{
+        extract_gemini_model_from_path, resolve_forwarder_timeouts,
+        resolve_streaming_timeout_config,
+    };
+    use crate::proxy::types::AppProxyConfig;
+
+    fn test_config(auto_failover_enabled: bool) -> AppProxyConfig {
+        AppProxyConfig {
+            app_type: "codex".to_string(),
+            enabled: true,
+            auto_failover_enabled,
+            max_retries: 5,
+            streaming_first_byte_timeout: 90,
+            streaming_idle_timeout: 60,
+            non_streaming_timeout: 120,
+            circuit_failure_threshold: 5,
+            circuit_success_threshold: 1,
+            circuit_timeout_seconds: 60,
+            circuit_error_rate_threshold: 0.5,
+            circuit_min_requests: 10,
+        }
+    }
+
+    #[test]
+    fn failover_off_keeps_configured_timeouts() {
+        // failover 关闭只禁用“切换供应商”，不能禁用“超时报错”，
+        // 否则上游 hanging 会导致无限等待（桌面转圈、无报错）。
+        let config = test_config(false);
+        assert_eq!(resolve_forwarder_timeouts(&config), (120, 90, 60));
+        let streaming = resolve_streaming_timeout_config(&config);
+        assert_eq!(streaming.first_byte_timeout, 90);
+        assert_eq!(streaming.idle_timeout, 60);
+    }
+
+    #[test]
+    fn failover_on_timeouts_unchanged() {
+        let config = test_config(true);
+        assert_eq!(resolve_forwarder_timeouts(&config), (120, 90, 60));
+    }
+
+    #[test]
+    fn zero_timeout_still_disables() {
+        // 0 依然表示禁用：用户显式关超时不受影响。
+        let mut config = test_config(false);
+        config.non_streaming_timeout = 0;
+        config.streaming_first_byte_timeout = 0;
+        config.streaming_idle_timeout = 0;
+        assert_eq!(resolve_forwarder_timeouts(&config), (0, 0, 0));
+    }
 
     #[test]
     fn extract_model_with_action() {
