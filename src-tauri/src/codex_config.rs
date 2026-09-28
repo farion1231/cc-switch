@@ -1074,6 +1074,11 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 /// that are NOT present in the new config (i.e., not managed by CC Switch),
 /// and merges them back in. This preserves user-added provider aliases that
 /// old Codex threads may reference.
+/// Takeover placeholder bearer token (must match
+/// `crate::services::proxy::PROXY_TOKEN_PLACEHOLDER`). It is transient
+/// per-switch state, not user config.
+const TAKEOVER_PLACEHOLDER_BEARER_TOKEN: &str = "PROXY_MANAGED";
+
 pub fn merge_live_non_managed_provider_sections(new_config: &str) -> Result<String, AppError> {
     if new_config.trim().is_empty() {
         return Ok(new_config.to_string());
@@ -1119,6 +1124,18 @@ pub fn merge_live_non_managed_provider_sections(new_config: &str) -> Result<Stri
         if let Some(table) = patched_section.as_table_like_mut() {
             if !table.contains_key("name") {
                 table.insert("name", toml_edit::Item::Value(toml_edit::Value::from(id)));
+            }
+            // Strip a takeover placeholder bearer token: it is transient
+            // per-switch state, not user config. Carrying it into an unrelated
+            // (e.g. official) write would contaminate that config and break
+            // the takeover invariant (official config must not contain the
+            // placeholder). Real user-supplied tokens are preserved verbatim.
+            let is_placeholder = table
+                .get("experimental_bearer_token")
+                .and_then(|item| item.as_str())
+                .is_some_and(|token| token.trim() == TAKEOVER_PLACEHOLDER_BEARER_TOKEN);
+            if is_placeholder {
+                table.remove("experimental_bearer_token");
             }
         }
 
@@ -7753,5 +7770,47 @@ model_catalog_json = "cc-switch-model-catalog.json"
             result.is_err(),
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn merge_preserves_alias_structure_but_strips_takeover_placeholder_token() {
+        let _home = CodexLiveTestHome::new();
+        let live = r#"model_provider = "official"
+model = "gpt-5.4"
+
+[model_providers.proxy]
+name = "proxy"
+base_url = "http://127.0.0.1:15721/v1"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[model_providers.mykey]
+name = "MyKey"
+base_url = "https://example.com/v1"
+experimental_bearer_token = "sk-real-123"
+"#;
+        crate::config::write_text_file(&get_codex_config_path(), live).expect("seed live config");
+
+        let new_config = "[model_providers.official]\nname = \"Official\"\n";
+        let merged =
+            merge_live_non_managed_provider_sections(new_config).expect("merge must succeed");
+
+        // Alias structure preserved…
+        assert!(merged.contains("[model_providers.proxy]"));
+        assert!(merged.contains("[model_providers.rightcode]"));
+        assert!(merged.contains("[model_providers.official]"));
+        // …placeholder tokens stripped so an official write stays clean…
+        assert!(
+            !merged.contains("PROXY_MANAGED"),
+            "takeover placeholder must not leak into merged config"
+        );
+        // …but a real user-supplied token is preserved verbatim.
+        assert!(merged.contains("sk-real-123"));
     }
 }
