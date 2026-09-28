@@ -1521,6 +1521,5 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 160);
         assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
         assert_eq!(usage.message_id.as_deref(), Some("resp_1"));
-
     }
 }
