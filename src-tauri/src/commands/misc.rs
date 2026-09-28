@@ -234,8 +234,12 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    let bat_file =
-        std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
+    // 每次调用使用独立目录，避免同进程并发升级时覆盖或删除另一工具的脚本。
+    let script_dir = tempfile::Builder::new()
+        .prefix("cc_switch_lifecycle_")
+        .tempdir()
+        .map_err(|e| format!("创建批处理目录失败: {e}"))?;
+    let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let output = Command::new("cmd")
@@ -243,7 +247,6 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
         .arg(&bat_file)
         .creation_flags(CREATE_NO_WINDOW)
         .output();
-    let _ = std::fs::remove_file(&bat_file);
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
 }
@@ -5250,6 +5253,37 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn concurrent_lifecycle_runs_use_independent_scripts() {
+        let output_dir = tempfile::tempdir().unwrap();
+        let outputs = [
+            output_dir.path().join("first.txt"),
+            output_dir.path().join("second.txt"),
+        ];
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for output in &outputs {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let command = format!("@echo off\r\n>\"{}\" echo %~f0\r\n", output.display());
+                    barrier.wait();
+                    run_tool_lifecycle_silently(&command, "tool_update").unwrap();
+                });
+            }
+        });
+        let script_paths =
+            outputs.map(|output| PathBuf::from(std::fs::read_to_string(output).unwrap().trim()));
+        assert_ne!(script_paths[0], script_paths[1]);
+        for script_path in script_paths {
+            assert!(!script_path.exists(), "temporary script must be cleaned up");
+            assert!(
+                !script_path.parent().unwrap().exists(),
+                "temporary directory must be cleaned up"
+            );
+        }
+    }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
     /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。
