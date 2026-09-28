@@ -145,6 +145,227 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
     })
 }
 
+/// openai_chat 类上游会把思考内容以内联标签混进 content 文本：
+/// `<think>`（MiniMax M3 等）与 `<thinking>`（DeepSeek 系等）。两种都剥离。
+const INLINE_THINK_TAG_PAIRS: [(&str, &str); 2] =
+    [("<think>", "</think>"), ("<thinking>", "</thinking>")];
+
+/// 流式 content 里流首 inline think 块剥离状态机所处阶段。
+/// 只识别流首的块（与 Codex Chat 路径语义一致）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum InlineThinkMode {
+    #[default]
+    Detecting,
+    Reasoning,
+    Text,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThinkPrefixDecision {
+    NeedMore,
+    Reasoning,
+    Text,
+}
+
+/// 判断缓冲区开头是否最终会构成某个 think 开标签。
+fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
+    let trimmed = buffer.trim_start();
+    if trimmed.is_empty() {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    if INLINE_THINK_TAG_PAIRS
+        .iter()
+        .any(|(open_tag, _)| trimmed.starts_with(open_tag))
+    {
+        return ThinkPrefixDecision::Reasoning;
+    }
+
+    if INLINE_THINK_TAG_PAIRS
+        .iter()
+        .any(|(open_tag, _)| open_tag.starts_with(trimmed))
+    {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    ThinkPrefixDecision::Text
+}
+
+/// 在文本里找最早出现的闭合标签。容忍开闭不配对（如 `<think>` 开、`</thinking>` 闭）：
+/// 只认配对闭合会让整段连正文一起被当成推理吞掉。
+fn find_think_close_tag(text: &str) -> Option<(usize, &'static str)> {
+    INLINE_THINK_TAG_PAIRS
+        .iter()
+        .filter_map(|(_, close_tag)| text.find(close_tag).map(|index| (index, *close_tag)))
+        .min_by_key(|(index, _)| *index)
+}
+
+/// 剥离缓冲区开头的 inline think 块，返回 (思考内容, 剩余正文)。
+fn split_leading_inline_think_block(buffer: &str) -> Option<(String, String)> {
+    let leading_ws_len = buffer.len() - buffer.trim_start().len();
+    let after_ws = &buffer[leading_ws_len..];
+    let open_tag = INLINE_THINK_TAG_PAIRS
+        .iter()
+        .find_map(|(open_tag, _)| after_ws.starts_with(open_tag).then_some(*open_tag))?;
+
+    let body_start = leading_ws_len + open_tag.len();
+    let (close_relative, close_tag) = find_think_close_tag(&buffer[body_start..])?;
+    let close_start = body_start + close_relative;
+    let answer_start = close_start + close_tag.len();
+
+    Some((
+        buffer[body_start..close_start].trim().to_string(),
+        buffer[answer_start..]
+            .trim_start_matches(['\r', '\n', '\t', ' '])
+            .to_string(),
+    ))
+}
+
+/// 剥掉缓冲区开头的开标签，剩余部分按思考内容处理（流结束时块未闭合的兜底）。
+fn strip_leading_inline_think_open_tag(buffer: &str) -> Option<String> {
+    let leading_ws_len = buffer.len() - buffer.trim_start().len();
+    let after_ws = &buffer[leading_ws_len..];
+    INLINE_THINK_TAG_PAIRS.iter().find_map(|(open_tag, _)| {
+        after_ws
+            .strip_prefix(open_tag)
+            .map(|value| value.trim().to_string())
+    })
+}
+
+fn non_empty(text: &str) -> Option<String> {
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+/// 流式 content 里流首 inline think 块的剥离状态（含跨 chunk 前缀缓冲：
+/// 标签被 chunk 边界切开时扣住不下发，等前缀判定明朗再放行）。
+#[derive(Debug, Default)]
+struct InlineThinkSseState {
+    mode: InlineThinkMode,
+    buffer: String,
+}
+
+impl InlineThinkSseState {
+    /// 喂入一个 content 增量，返回 (thinking 增量, 正文增量)。
+    fn push(&mut self, delta: &str) -> (Option<String>, Option<String>) {
+        match self.mode {
+            InlineThinkMode::Text => (None, non_empty(delta)),
+            InlineThinkMode::Detecting => {
+                self.buffer.push_str(delta);
+                match leading_think_prefix_decision(&self.buffer) {
+                    ThinkPrefixDecision::NeedMore => (None, None),
+                    ThinkPrefixDecision::Reasoning => {
+                        self.mode = InlineThinkMode::Reasoning;
+                        self.drain_complete_block()
+                    }
+                    ThinkPrefixDecision::Text => {
+                        self.mode = InlineThinkMode::Text;
+                        let text = std::mem::take(&mut self.buffer);
+                        (None, non_empty(&text))
+                    }
+                }
+            }
+            InlineThinkMode::Reasoning => {
+                self.buffer.push_str(delta);
+                self.drain_complete_block()
+            }
+        }
+    }
+
+    /// 缓冲区内出现完整闭合标签时立刻拆出，避免整段攒到流结束。
+    fn drain_complete_block(&mut self) -> (Option<String>, Option<String>) {
+        let Some((reasoning, answer)) = split_leading_inline_think_block(&self.buffer) else {
+            return (None, None);
+        };
+        self.mode = InlineThinkMode::Text;
+        self.buffer.clear();
+        (non_empty(&reasoning), non_empty(&answer))
+    }
+
+    /// 流边界（finish_reason / [DONE]）冲刷残留：
+    /// 未闭合的 think 块按思考内容下发，Detecting 缓冲按正文下发。幂等。
+    fn flush(&mut self) -> (Option<String>, Option<String>) {
+        match self.mode {
+            InlineThinkMode::Text => (None, None),
+            InlineThinkMode::Detecting => {
+                self.mode = InlineThinkMode::Text;
+                let text = std::mem::take(&mut self.buffer);
+                (None, non_empty(&text))
+            }
+            InlineThinkMode::Reasoning => {
+                let buffered = std::mem::take(&mut self.buffer);
+                self.mode = InlineThinkMode::Text;
+                if let Some((reasoning, answer)) = split_leading_inline_think_block(&buffered) {
+                    return (non_empty(&reasoning), non_empty(&answer));
+                }
+                let reasoning = strip_leading_inline_think_open_tag(&buffered).unwrap_or(buffered);
+                (non_empty(&reasoning), None)
+            }
+        }
+    }
+}
+
+fn sse_event_string(event: Value) -> String {
+    format!(
+        "event: {}\ndata: {}\n\n",
+        event.get("type").and_then(|v| v.as_str()).unwrap_or(""),
+        serde_json::to_string(&event).unwrap_or_default()
+    )
+}
+
+/// 生成一个 thinking/text 增量所需的 Anthropic SSE 事件序列
+/// （必要时先关闭当前块：content_block_stop? + content_block_start + content_block_delta）。
+fn non_tool_block_events(
+    block_type: &'static str,
+    delta: &str,
+    next_content_index: &mut u32,
+    current_type: &mut Option<&'static str>,
+    current_index: &mut Option<u32>,
+) -> Vec<String> {
+    let mut events = Vec::new();
+
+    if *current_type != Some(block_type) {
+        if let Some(index) = current_index.take() {
+            events.push(sse_event_string(json!({
+                "type": "content_block_stop",
+                "index": index
+            })));
+        }
+        let index = *next_content_index;
+        *next_content_index += 1;
+        let content_block = if block_type == "thinking" {
+            json!({"type": "thinking", "thinking": ""})
+        } else {
+            json!({"type": "text", "text": ""})
+        };
+        events.push(sse_event_string(json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": content_block
+        })));
+        *current_type = Some(block_type);
+        *current_index = Some(index);
+    }
+
+    if let Some(index) = *current_index {
+        let delta_payload = if block_type == "thinking" {
+            json!({"type": "thinking_delta", "thinking": delta})
+        } else {
+            json!({"type": "text_delta", "text": delta})
+        };
+        events.push(sse_event_string(json!({
+            "type": "content_block_delta",
+            "index": index,
+            "delta": delta_payload
+        })));
+    }
+
+    events
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -168,6 +389,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
+        let mut inline_think = InlineThinkSseState::default();
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
@@ -187,6 +409,25 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                             if let Some(data) = strip_sse_field(l, "data") {
                                 if data.trim() == "[DONE]" {
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
+
+                                    // 流结束边界：冲刷 inline think 残留（幂等，通常已在前面的
+                                    // finish_reason 边界冲刷过）。
+                                    let (thinking, text) = inline_think.flush();
+                                    for (block_type, delta) in
+                                        [("thinking", thinking), ("text", text)]
+                                    {
+                                        if let Some(delta) = &delta {
+                                            for sse_data in non_tool_block_events(
+                                                block_type,
+                                                delta,
+                                                &mut next_content_index,
+                                                &mut current_non_tool_block_type,
+                                                &mut current_non_tool_block_index,
+                                            ) {
+                                                yield Ok(Bytes::from(sse_data));
+                                            }
+                                        }
+                                    }
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
@@ -278,91 +519,37 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             .as_ref()
                                             .filter(|r| !r.is_empty())
                                         {
-                                            if current_non_tool_block_type != Some("thinking") {
-                                                if let Some(index) = current_non_tool_block_index.take() {
-                                                    let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
-                                                    });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                let event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {
-                                                        "type": "thinking",
-                                                        "thinking": ""
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                                current_non_tool_block_type = Some("thinking");
-                                                current_non_tool_block_index = Some(index);
-                                            }
-
-                                            if let Some(index) = current_non_tool_block_index {
-                                                let event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {
-                                                        "type": "thinking_delta",
-                                                        "thinking": reasoning
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
+                                            for sse_data in non_tool_block_events(
+                                                "thinking",
+                                                reasoning,
+                                                &mut next_content_index,
+                                                &mut current_non_tool_block_type,
+                                                &mut current_non_tool_block_index,
+                                            ) {
                                                 yield Ok(Bytes::from(sse_data));
                                             }
                                         }
 
-                                        // 处理文本内容
+                                        // 处理文本内容。content 里流首内联的 <think>/<thinking>
+                                        // 块（DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
+                                        // thinking，剩余正文按原逻辑下发。
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
-                                                if current_non_tool_block_type != Some("text") {
-                                                    if let Some(index) = current_non_tool_block_index.take() {
-                                                        let event = json!({
-                                                            "type": "content_block_stop",
-                                                            "index": index
-                                                        });
-                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                            serde_json::to_string(&event).unwrap_or_default());
-                                                        yield Ok(Bytes::from(sse_data));
+                                                let (thinking, text) = inline_think.push(content);
+                                                for (block_type, delta) in
+                                                    [("thinking", thinking), ("text", text)]
+                                                {
+                                                    if let Some(delta) = &delta {
+                                                        for sse_data in non_tool_block_events(
+                                                            block_type,
+                                                            delta,
+                                                            &mut next_content_index,
+                                                            &mut current_non_tool_block_type,
+                                                            &mut current_non_tool_block_index,
+                                                        ) {
+                                                            yield Ok(Bytes::from(sse_data));
+                                                        }
                                                     }
-
-                                                    let index = next_content_index;
-                                                    next_content_index += 1;
-                                                    let event = json!({
-                                                        "type": "content_block_start",
-                                                        "index": index,
-                                                        "content_block": {
-                                                            "type": "text",
-                                                            "text": ""
-                                                        }
-                                                    });
-                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                    current_non_tool_block_type = Some("text");
-                                                    current_non_tool_block_index = Some(index);
-                                                }
-
-                                                if let Some(index) = current_non_tool_block_index {
-                                                    let event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": index,
-                                                        "delta": {
-                                                            "type": "text_delta",
-                                                            "text": content
-                                                        }
-                                                    });
-                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
                                                 }
                                             }
                                         }
@@ -537,6 +724,25 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 continue;
                                             }
                                             has_emitted_message_delta = true;
+
+                                            // finish_reason 边界：冲刷 inline think 残留
+                                            // （未闭合的 think 块按思考内容下发），再统一关块。
+                                            let (thinking, text) = inline_think.flush();
+                                            for (block_type, delta) in
+                                                [("thinking", thinking), ("text", text)]
+                                            {
+                                                if let Some(delta) = &delta {
+                                                    for sse_data in non_tool_block_events(
+                                                        block_type,
+                                                        delta,
+                                                        &mut next_content_index,
+                                                        &mut current_non_tool_block_type,
+                                                        &mut current_non_tool_block_index,
+                                                    ) {
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                }
+                                            }
 
                                             if let Some(index) = current_non_tool_block_index.take() {
                                                 let event = json!({
@@ -1365,6 +1571,127 @@ mod tests {
         assert_eq!(
             collect_delta_text(&events, "text_delta", "/delta/text"),
             "答案是 42"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_inline_thinking_split_across_chunks() {
+        // 回归（#7722）：DeepSeek 系 openai_chat 上游把思考内容以 <thinking>...</thinking>
+        // 内联进 content，且开闭标签会被 SSE chunk 边界任意切开。修复前整段连同标签
+        // 一起当正文（text 块）泄漏；修复后思考进 thinking 块，正文进 text 块。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"nking>tool call</thin\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"king>\\n日志很大。我先看当前配置。\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "tool call"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "日志很大。我先看当前配置。"
+        );
+
+        // 块顺序：thinking 块在前、text 块在后，各恰好一个
+        let block_types: Vec<&str> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .filter_map(|event| {
+                event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+            })
+            .collect();
+        assert_eq!(block_types, vec!["thinking", "text"]);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_inline_think_block_single_chunk() {
+        // <think> 变体（MiniMax M3 等）在单个 content 增量内完整出现时同样剥离。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>the ball costs 0.05</think>The ball is $0.05\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "the ball costs 0.05"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "The ball is $0.05"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_unclosed_thinking_flushed_as_thinking() {
+        // 流结束时 <thinking> 未闭合：缓冲内容按思考内容下发，不再泄漏标签本体。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thinking>partial reasoning\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "partial reasoning"
+        );
+        assert_eq!(collect_delta_text(&events, "text_delta", "/delta/text"), "");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_prose_containing_thinking_tag_not_stripped() {
+        // 流首不是 <thinking> 的正文里出现 "<thinking>" 字样，保持原样不剥离
+        //（只识别流首块，与 Codex Chat 路径语义一致）。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a <thinking> looks like \"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a tag in prose\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "a <thinking> looks like a tag in prose"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_mismatched_think_tag_pairs_still_split() {
+        // 上游偶尔用不配对的标签收尾（<think> 开、</thinking> 闭）。
+        // 只认配对闭合会让整段连正文一起被当推理吞掉；取最早出现的任一闭合标签。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<think>checking</thinking>Done\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "checking"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "Done"
         );
     }
 }
