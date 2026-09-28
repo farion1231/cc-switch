@@ -14,7 +14,7 @@ import {
   X,
   Book,
   Brain,
-  Wrench,
+  Sparkles,
   History,
   BarChart2,
   Download,
@@ -1628,7 +1628,7 @@ function App() {
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("skills.manage")}
                               >
-                                <Wrench className="w-4 h-4" />
+                                <Sparkles className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1723,7 +1723,7 @@ function App() {
                                 )}
                                 title={t("skills.manage")}
                               >
-                                <Wrench className="flex-shrink-0 w-4 h-4" />
+                                <Sparkles className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
