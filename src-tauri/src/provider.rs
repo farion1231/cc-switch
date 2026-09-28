@@ -264,7 +264,7 @@ pub struct ProviderManager {
 }
 
 /// 用量查询脚本配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UsageScript {
     pub enabled: bool,
     pub language: String,

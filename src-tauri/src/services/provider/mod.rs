@@ -4746,6 +4746,164 @@ wire_api = "responses"
                 .contains_key(child_id));
         });
     }
+
+    #[test]
+    #[serial]
+    fn sync_universal_to_apps_preserves_hermes_child_metadata() {
+        with_test_home(|state, _home| {
+            let mut universal = UniversalProvider::new(
+                "hermes-meta".to_string(),
+                "Hermes Relay".to_string(),
+                "custom".to_string(),
+                "https://api.example.com/v1".to_string(),
+                "api-key".to_string(),
+            );
+            universal.apps.hermes = true;
+            universal.models.hermes = Some(HermesModelConfig {
+                model: Some("model-a".to_string()),
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+            ProviderService::sync_universal_to_apps(state, "hermes-meta")
+                .expect("seed Hermes child");
+
+            // 应用专属配置（usage_script、排序）只属于子供应商，重同步不得清除。
+            let mut child = state
+                .db
+                .get_provider_by_id("universal-hermes-hermes-meta", "hermes")
+                .expect("query Hermes child")
+                .expect("Hermes child exists");
+            child.meta = Some(crate::provider::ProviderMeta {
+                usage_script: Some(
+                    serde_json::from_value(json!({
+                        "enabled": true, "language": "javascript", "code": "child-script"
+                    }))
+                    .unwrap(),
+                ),
+                ..Default::default()
+            });
+            child.created_at = Some(123);
+            child.sort_index = Some(7);
+            state
+                .db
+                .save_provider("hermes", &child)
+                .expect("set child meta");
+
+            universal.name = "Updated".to_string();
+            universal.models.hermes = Some(HermesModelConfig {
+                model: Some("model-b".to_string()),
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("update universal provider");
+            ProviderService::sync_universal_to_apps(state, "hermes-meta")
+                .expect("re-sync Hermes child");
+
+            let after = state
+                .db
+                .get_provider_by_id("universal-hermes-hermes-meta", "hermes")
+                .expect("query re-synced Hermes child")
+                .expect("Hermes child still exists");
+            assert_eq!(
+                after.meta.as_ref().and_then(|m| m.usage_script.clone()),
+                child.meta.as_ref().and_then(|m| m.usage_script.clone()),
+                "child usage_script must survive a re-sync"
+            );
+            assert_eq!(after.created_at, Some(123));
+            assert_eq!(after.sort_index, Some(7));
+            assert_eq!(after.name, "Updated");
+            // 模型字段按新配置更新，不受元数据保留影响。
+            assert_eq!(
+                after
+                    .settings_config
+                    .pointer("/models/0/id")
+                    .and_then(Value::as_str),
+                Some("model-b")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn sync_universal_to_apps_skips_hermes_live_when_child_never_existed() {
+        with_test_home(|state, home| {
+            // 旧格式统一供应商（serde default: apps.hermes == false）+ 一份损坏的
+            // Hermes config.yaml：同步必须成功，不得被无关的 Hermes 配置拖垮。
+            let mut universal = UniversalProvider::new(
+                "legacy".to_string(),
+                "Legacy Relay".to_string(),
+                "custom".to_string(),
+                "https://api.example.com".to_string(),
+                "api-key".to_string(),
+            );
+            universal.apps.claude = true;
+            universal.models.claude = Some(ClaudeModelConfig {
+                model: Some("claude-sonnet-4".to_string()),
+                ..Default::default()
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+
+            let hermes_dir = home.join(".hermes");
+            std::fs::create_dir_all(&hermes_dir).expect("create hermes dir");
+            std::fs::write(hermes_dir.join("config.yaml"), "{{{{invalid yaml")
+                .expect("write broken hermes config");
+
+            ProviderService::sync_universal_to_apps(state, "legacy")
+                .expect("sync must not fail on unrelated broken Hermes config");
+            assert!(state
+                .db
+                .get_provider_by_id("universal-claude-legacy", "claude")
+                .expect("query Claude child")
+                .is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn delete_universal_keeps_records_when_hermes_live_removal_fails() {
+        with_test_home(|state, home| {
+            let mut universal = UniversalProvider::new(
+                "doomed".to_string(),
+                "Doomed Relay".to_string(),
+                "custom".to_string(),
+                "https://api.example.com/v1".to_string(),
+                "api-key".to_string(),
+            );
+            universal.apps.hermes = true;
+            universal.models.hermes = Some(HermesModelConfig {
+                model: Some("model-a".to_string()),
+            });
+            state
+                .db
+                .save_universal_provider(&universal)
+                .expect("save universal provider");
+            ProviderService::sync_universal_to_apps(state, "doomed").expect("seed Hermes child");
+
+            // 让 live 删除失败：把 config.yaml 换成损坏内容。
+            let hermes_dir = home.join(".hermes");
+            std::fs::write(hermes_dir.join("config.yaml"), "{{{{invalid yaml")
+                .expect("break hermes config");
+
+            let result = ProviderService::delete_universal(state, "doomed");
+            assert!(
+                result.is_err(),
+                "delete must fail when Hermes live removal fails"
+            );
+            // 失败时父记录与子记录都必须保留，用户才能重试。
+            assert!(state.db.get_universal_provider("doomed").unwrap().is_some());
+            assert!(state
+                .db
+                .get_provider_by_id("universal-hermes-doomed", "hermes")
+                .expect("query Hermes child")
+                .is_some());
+        });
+    }
 }
 
 impl ProviderService {
@@ -7504,6 +7662,16 @@ impl ProviderService {
         // 获取统一供应商（用于删除生成的子供应商）
         let provider = state.db.get_universal_provider(id)?;
 
+        // Hermes 的 live 配置（config.yaml）必须最先删除且失败时中止：
+        // 父记录与子记录都保留，用户才能重试；否则会在 config.yaml 中
+        // 残留带 API Key 的供应商且无法再通过统一供应商重试删除。
+        if let Some(p) = &provider {
+            if p.apps.hermes {
+                let hermes_id = format!("universal-hermes-{id}");
+                remove_hermes_provider_from_live(&hermes_id)?;
+            }
+        }
+
         // 删除统一供应商
         state.db.delete_universal_provider(id)?;
 
@@ -7523,7 +7691,6 @@ impl ProviderService {
             }
             if p.apps.hermes {
                 let hermes_id = format!("universal-hermes-{id}");
-                let _ = remove_hermes_provider_from_live(&hermes_id);
                 let _ = state.db.delete_provider("hermes", &hermes_id);
             }
         }
@@ -7622,6 +7789,11 @@ impl ProviderService {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &hermes_provider.settings_config);
                 hermes_provider.settings_config = merged;
+                // 已有子供应商的应用专属配置与排序不属于统一供应商管理的字段，
+                // 与 Claude/Codex/Gemini 分支保持同一保留约定（usage_script、排序等）。
+                hermes_provider.meta = existing.meta;
+                hermes_provider.created_at = existing.created_at;
+                hermes_provider.sort_index = existing.sort_index;
             }
             Self::set_provider_live_config_managed(&mut hermes_provider, false);
             state.db.save_provider("hermes", &hermes_provider)?;
@@ -7638,13 +7810,18 @@ impl ProviderService {
             }
         } else {
             let hermes_id = format!("universal-hermes-{id}");
-            match remove_hermes_provider_from_live(&hermes_id) {
-                Ok(()) => {
-                    let _ = state.db.delete_provider("hermes", &hermes_id);
-                }
-                Err(err) => {
-                    log::warn!("禁用统一供应商的 Hermes 子项失败: {err}");
-                    live_failures.push("hermes".to_string());
+            // 仅在存在需要清理的 Hermes 子项时才触碰 live 配置：从未启用过
+            // Hermes 的统一供应商不应因一份损坏/不可读的 config.yaml 而
+            // 导致整个同步失败（读取 hermes 配置发生在存在性检查之前）。
+            if state.db.get_provider_by_id(&hermes_id, "hermes")?.is_some() {
+                match remove_hermes_provider_from_live(&hermes_id) {
+                    Ok(()) => {
+                        let _ = state.db.delete_provider("hermes", &hermes_id);
+                    }
+                    Err(err) => {
+                        log::warn!("禁用统一供应商的 Hermes 子项失败: {err}");
+                        live_failures.push("hermes".to_string());
+                    }
                 }
             }
         }
