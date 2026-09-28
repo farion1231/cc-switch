@@ -3784,8 +3784,9 @@ impl ProxyService {
                         // Unguarded provider writes preserve an existing login;
                         // only restore transactions interpret empty auth as an
                         // exact-generation deletion.
-                        let merged = crate::codex_config::merge_live_non_managed_provider_sections(cfg)
-                            .map_err(|e| format!("merge legacy providers failed: {e}"))?;
+                        let merged =
+                            crate::codex_config::merge_live_non_managed_provider_sections(cfg)
+                                .map_err(|e| format!("merge legacy providers failed: {e}"))?;
                         crate::config::write_text_file(&get_codex_config_path(), &merged)
                             .map_err(|e| format!("写入 Codex config 失败: {e}"))
                     } else {
