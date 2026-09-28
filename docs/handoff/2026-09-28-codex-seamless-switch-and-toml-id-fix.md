@@ -499,3 +499,31 @@ pid 做 `kill(-pid, …)` 要么 ESRCH、要么把用户整个终端作业组连
 `CC_SWITCH_TEST_HOME`/`HOME`/`CODEX_HOME` 的测试统一持有，并让两处 `test_guard()`
 改为取同一把锁。
 
+
+## 下一轮提示词
+
+> 在「第三轮审计已合入 main（9f35e086）」的基础上继续，**先读本文件 §第三轮**，
+> 不要重复第二轮那些已被推翻的结论。
+>
+> 1. **根治跨模块 env 竞态**（实测干净 main 3/5 次全量失败，本轮只降到 1/5）：
+>    新增一把**全 crate 共享**的 env 锁（如 `crate::test_support::env_lock()`，
+>    `OnceLock<Mutex<()>>`），让 `openclaw_config::test_guard()`、
+>    `hermes_config::test_guard()` 与所有改 `CC_SWITCH_TEST_HOME`/`HOME`/`CODEX_HOME`
+>    的测试（`codex_config` 4 处、`provider_bundle` 14 处）统一持有它。
+>    验收：`cargo test --lib` 连跑 10 次全绿。
+> 2. **proxy 绑端口的测试改成 `listen_port = 0`**（让 OS 分配），修掉
+>    `update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active`
+>    在「开发者本地正跑着 cc-switch」时必红的问题。
+> 3. **真正落地「按 `@<toml_id>` 分发」**——这是 `CC_SWITCH_CODEX_ENDPOINT_CATALOG`
+>    开关默认关的唯一原因。落点在 proxy：请求进来时解析模型名尾部的 `@<id>`，
+>    按 id 选目标 provider，**转发前剥离后缀**。落成后打开开关，并把
+>    `merged_catalog_enabled_path_produces_well_formed_suffixed_entries` 的断言
+>    升级成端到端（真起 proxy、真发请求、断言确实打到了另一端点）。
+>    设计要点：① 后缀剥离必须发生在 failover 队列**之前**，否则 failover 可能把
+>    带后缀的模型名原样发到不支持的 provider；② 鉴权要按**目标端点**取 key，
+>    不能沿用 active 端点的。
+> 4. **`local8782` 这个 TOML id 与端口解耦**：改端口不该作废历史 session 的
+>    `session_meta.model_provider`（现状是对的），但 id 字面带 8782 有误导性。
+>    建议改成 `local` 或加显式注释说明「id 是稳定的，端口由 base_url 承载」。
+> 5. **协作纪律**：本仓库已出现并发会话互相冲掉未提交改动的事故（第三轮 §并发事故）。
+>    未提交的新代码一律先建 `git worktree` 隔离，不要在共享工作区攒。
