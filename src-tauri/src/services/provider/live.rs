@@ -1619,6 +1619,27 @@ impl LiveSnapshot {
     }
 }
 
+/// 老 bundle TOML 迁移在**写盘前**的应用，official 感知。
+///
+/// 与 `merge_inert_codex_provider_tables_into_settings_config` 必须用**同一套**
+/// 判据（6ca72675 引入 `renaming_only` 的原因）：
+///
+/// - active 是第三方网关档 → 用全量迁移，搬表 id **并**补顶层 `model_provider`
+///   （老 bundle 常缺顶层，Codex 0.149+ 会回退到 `openai` 导致孤儿表、CLI 起不来）；
+/// - active 是**官方**档 → 只能搬表 id，**不得**补顶层。那张 `[model_providers.custom]`
+///   往往是切换回填带进存档的 **inert 残留**，补顶层等于凭空造一条路由、把 inert 表
+///   顶成激活端点（RFC 0002 §2.1）。
+///
+/// 纯函数：不碰文件系统、不改全局状态，可直接单测。
+pub(crate) fn migrate_codex_live_config_text(config_text: &str, provider: &Provider) -> String {
+    let migrated = if crate::proxy::providers::is_codex_official_provider(provider) {
+        crate::codex_config::migrate_legacy_codex_toml_ids_renaming_only(config_text)
+    } else {
+        crate::codex_config::migrate_legacy_codex_toml_ids(config_text)
+    };
+    migrated.unwrap_or_else(|| config_text.to_string())
+}
+
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
@@ -1646,11 +1667,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             // 切换路径上，是因为它不是**唯一**的 live 写入入口：
             // `write_preflighted_or_current_live` 对托管 Codex OAuth provider 直接
             // 调本函数、绕过 `merge_inert_*`。幂等、纯函数、已是新形态时零开销。
-            let config_str = obj.get("config").and_then(Value::as_str).map(|text| {
-                crate::codex_config::migrate_legacy_codex_toml_ids(text)
-                    .unwrap_or_else(|| text.to_string())
-            });
-            let config_str = config_str.as_deref();
+            let migrated_config: Option<String> = obj
+                .get("config")
+                .and_then(Value::as_str)
+                .map(|text| migrate_codex_live_config_text(text, provider));
+            let config_str = migrated_config.as_deref();
 
             // Native (direct) Responses and Anthropic providers must suppress Codex's
             // freeform apply_patch custom tool via the generated catalog; chat/proxy
@@ -2737,6 +2758,59 @@ mod tests {
     use super::*;
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
+
+    /// 写盘前的迁移闸必须**official 感知**：官方档只搬表 id、不补顶层路由。
+    ///
+    /// 这条守的是第三轮自己踩的坑：当初在 `write_live_snapshot` 里用的是无条件的
+    /// `migrate_legacy_codex_toml_ids`（补顶层），等于把 6ca72675 刚修好的
+    /// 「inert 网关表不得顶成激活端点」又从后门放回来 —— 官方档下那张 custom 表
+    /// 多半是切换回填带进存档的 inert 残留，补顶层等于凭空造一条路由。
+    #[test]
+    fn live_migration_gate_is_official_aware() {
+        let legacy = "model = \"claude-opus-5\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n";
+
+        // 官方档：只搬 id，**不补**顶层 model_provider。
+        let official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": legacy }),
+            Some("official".to_string()),
+        );
+        assert!(
+            crate::proxy::providers::is_codex_official_provider(&official),
+            "前置条件：这张卡必须被判成官方档"
+        );
+        let migrated = migrate_codex_live_config_text(legacy, &official);
+        let parsed: toml::Value = toml::from_str(&migrated).expect("valid toml");
+        assert!(
+            parsed["model_providers"]["kxpms"].is_table(),
+            "官方档也要搬表 id（历史 session 仍要能 resume）: {migrated}"
+        );
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            None,
+            "官方档**绝不能**补顶层 model_provider（会把 inert 表顶成激活端点）:\n{migrated}"
+        );
+
+        // 第三方网关档：搬 id **并**补顶层（否则 Codex 回退 openai、孤儿表起不来）。
+        let gateway = Provider::with_id(
+            "kxpms".to_string(),
+            "开轩网关".to_string(),
+            json!({ "auth": {}, "config": legacy }),
+            Some("custom".to_string()),
+        );
+        assert!(
+            !crate::proxy::providers::is_codex_official_provider(&gateway),
+            "前置条件：网关档不能被判成官方"
+        );
+        let migrated = migrate_codex_live_config_text(legacy, &gateway);
+        let parsed: toml::Value = toml::from_str(&migrated).expect("valid toml");
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("kxpms"),
+            "网关档必须补顶层 model_provider:\n{migrated}"
+        );
+    }
 
     #[test]
     fn proxy_oauth_codex_snapshot_neutralizes_official_auth_fallback() {

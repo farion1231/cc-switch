@@ -337,18 +337,30 @@ fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>, depth: u8, max_dept
 #[cfg(not(target_os = "windows"))]
 fn terminate_unix() -> Result<(String, Vec<u32>), String> {
     let roots = list_unix_codex_pids()?;
+    terminate_unix_roots(&roots)
+}
+
+/// 对给定 pid 集合执行 TERM → 宽限 → KILL 的终止流程。
+///
+/// **pid 是参数而不是内部 glob 出来的**，这是刻意的：直接调 `terminate_unix()`
+/// 会走 `pgrep -x codex`，而在开发机上那只可能是**用户真实在跑的 Codex**
+/// （本机 ChatGPT.app 内置的 codex-cli 就在 `pgrep -x codex` 的结果里）。任何
+/// 直接调它的测试都会**杀掉开发者自己的会话**。抽成可注入后，单测能拿一棵自己
+/// 拉起的假进程树真跑一遍 kill，真实验证「TERM 能杀干净整棵树」，且绝不误伤。
+#[cfg(not(target_os = "windows"))]
+fn terminate_unix_roots(roots: &[u32]) -> Result<(String, Vec<u32>), String> {
     if roots.is_empty() {
         return Ok(("none".to_string(), Vec::new()));
     }
     // 整棵树：根 pid + 递归子进程。Codex 0.158+ 是 app-server 架构，CLI 主进程
-    // 只是 wrapper，真正的会话在子进程里；只杀根会留下一堆孤儿占着内存/端口。
-    let pids = collect_unix_process_tree(&roots);
+    // 只是 wrapper，真正的会话在子进程里；只杀根会留下孤儿占内存/端口。
+    let pids = collect_unix_process_tree(roots);
     log::info!("重启 Codex：命中 {} 个 codex 进程（含子进程）", pids.len());
 
     // 第一轮：SIGTERM，给 Codex 走完 in-flight 请求的机会。
     for pid in &pids {
-        // SAFETY: kill(2) 只读 pid 与信号号，不触碰内存；pid 来自 pgrep 的解析
-        // 结果，即使已被回收也只是返回 ESRCH。
+        // SAFETY: kill(2) 只读 pid 与信号号，不触碰内存；pid 由调用方给出，
+        // 即使已被回收也只是返回 ESRCH。
         unsafe {
             libc::kill(*pid as libc::pid_t, libc::SIGTERM);
         }
@@ -356,24 +368,40 @@ fn terminate_unix() -> Result<(String, Vec<u32>), String> {
 
     let deadline = Instant::now() + Duration::from_secs(TERM_GRACE_SECS);
     while Instant::now() < deadline {
-        if list_unix_codex_pids()?.is_empty() {
+        if !pids.iter().any(|pid| process_alive(*pid)) {
             return Ok(("SIGTERM".to_string(), pids));
         }
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(100));
     }
 
-    // 第二轮：根进程还在 → 它的子进程也大概率还在，升级 SIGKILL。这里是强杀，
-    // 用户可能丢最后一条 in-flight 响应；但 30s 活跃窗口已经拦掉了「正在打字/
-    // 正在流式」的情况，剩下的都是空闲残留进程，强杀是安全的。
-    let survivors = list_unix_codex_pids()?;
-    let survivor_tree = collect_unix_process_tree(&survivors);
-    for pid in &survivor_tree {
+    // 第二轮：还有残留 → 升级 SIGKILL。这里是强杀，用户可能丢最后一条 in-flight
+    // 响应；但 30s 活跃窗口已经拦掉了「正在打字/正在流式」的情况，剩下的都是空闲
+    // 残留进程，强杀是安全的。
+    for pid in pids.iter().filter(|pid| process_alive(**pid)) {
         // SAFETY: 同上。
         unsafe {
             libc::kill(*pid as libc::pid_t, libc::SIGKILL);
         }
     }
     Ok(("SIGKILL".to_string(), pids))
+}
+
+/// `kill(pid, 0)` 存在性探测（信号 0 不投递任何信号，只做权限/存在性检查）。
+///
+/// **已知局限：僵尸进程会被判为「活着」。** 实测（macOS）：被 SIGTERM 杀掉但
+/// 尚未被父进程 `wait()` 回收的子进程进入 `Z` 状态，此时 `kill(pid, 0)` 仍然成功。
+///
+/// 生产路径不受影响：这里探测的 Codex 是**用户从终端启动**的，不是 cc-switch 的
+/// 子进程，它退出后由 launchd 收养并回收，不会变成我们的僵尸。所以宽限轮询与
+/// SIGKILL 升级在生产里都按预期工作。
+///
+/// 只有**测试**会踩到——测试自己拉起的进程就是自己的子进程，不回收就永远是僵尸。
+/// 故 `terminate_unix_roots_actually_kills_the_whole_tree` 在等待循环里显式
+/// `try_wait()` 回收。
+#[cfg(not(target_os = "windows"))]
+fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 是 POSIX 规定的纯探测调用，无副作用。
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
 /// 展开 pid 的整棵后代树。
@@ -561,6 +589,90 @@ mod tests {
             result, pgrep_hit,
             "detect_unix 必须与 pgrep -lx codex 一致（pgrep 是真值源）"
         );
+    }
+
+    /// **真跑一次 kill**：拉起一棵真实的**嵌套**进程树（root → sh → sleep，
+    /// 镜像 Codex wrapper → app-server 的形状），调 `terminate_unix_roots` 走完整
+    /// TERM → 宽限 → KILL 流程，然后断言**采集到的每一个 pid 都真的死了**。
+    ///
+    /// 这条补上的是此前最大的验证缺口：重构前 `terminate_unix()` 内部直接
+    /// `pgrep -x codex`，**任何测试都不敢调它**——本机 ChatGPT.app 的 Codex 就在
+    /// 那个匹配里，一调就杀掉开发者自己的会话。于是「真自动重启」的杀死路径
+    /// 实际上从未被执行过一次，只有 pid 解析和树展开被测到。
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn terminate_unix_roots_actually_kills_the_whole_tree() {
+        use std::process::{Command as StdCommand, Stdio};
+
+        // 真正的三层：root sh → (sleep, mid sh) → (sleep, sleep)
+        let mut root = StdCommand::new("sh")
+            .arg("-c")
+            .arg("sleep 300 & sh -c 'sleep 300 & sleep 300 & wait' & wait")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn root sh");
+        let root_pid = root.id();
+
+        // 等后代都 fork 出来，否则树是空的、断言会假绿。
+        let mut tree = Vec::new();
+        for _ in 0..60 {
+            std::thread::sleep(Duration::from_millis(50));
+            tree = collect_unix_process_tree(&[root_pid]);
+            if tree.len() >= 3 {
+                break;
+            }
+        }
+        assert!(
+            tree.len() >= 3,
+            "前置条件：必须真的长出一棵嵌套树（root→sh→sleep），实际 {:?}",
+            tree
+        );
+        // 后代都不是我们的子进程，退出后由 launchd 收养回收 —— 所以可以直接用
+        // process_alive 判断它们是否真的死了（只有 root 需要 try_wait 回收）。
+        let descendants: Vec<u32> = tree.iter().copied().filter(|pid| *pid != root_pid).collect();
+        assert!(!descendants.is_empty(), "树里必须有后代");
+
+        // 真杀。根是我们拉起的这棵假树，绝不是开发者的 Codex。
+        let (signalled, killed) =
+            terminate_unix_roots(&[root_pid]).expect("terminate_unix_roots should succeed");
+        assert!(!killed.is_empty(), "必须报告杀掉的 pid");
+        assert!(
+            signalled == "SIGTERM" || signalled == "SIGKILL",
+            "signalled 只能是 SIGTERM/SIGKILL，实际 {signalled}"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if !descendants.iter().any(|pid| process_alive(*pid)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // 关键断言：**每一个**采集到的后代都得死。只杀根会让它们变孤儿。
+        let survivors: Vec<u32> = descendants
+            .iter()
+            .copied()
+            .filter(|pid| process_alive(*pid))
+            .collect();
+        assert!(
+            survivors.is_empty(),
+            "这些后代必须全死（只杀根会留孤儿）：{survivors:?} / 树 {tree:?}"
+        );
+
+        // 回收 root（我们自己的子进程，否则它会以僵尸态挂在进程表里）。
+        let _ = root.kill();
+        let _ = root.wait();
+    }
+
+    /// 空 pid 集合必须是无害 no-op，不能 panic、不能声称杀过什么。
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn terminate_unix_roots_on_empty_set_is_noop() {
+        let (signalled, pids) = terminate_unix_roots(&[]).expect("empty set must not error");
+        assert_eq!(signalled, "none");
+        assert!(pids.is_empty());
     }
 
     #[test]

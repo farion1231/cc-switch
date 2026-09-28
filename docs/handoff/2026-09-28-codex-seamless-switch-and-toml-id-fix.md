@@ -601,6 +601,65 @@ catalog 素材收集，它靠顶层 + 表唯一性做归属判定，两条隐式
 改为取同一把锁。
 
 
+## 第四轮：补上「从未被执行过」的验证（2026-09-29）
+
+第三轮集中查了 item 3，其余四项只做了代码阅读。**第四轮专门查「说做了、其实
+没验证过」的部分**，结果挖出一条更要紧的：**item 1 的杀死路径从未被执行过一次。**
+
+### 4.1 「真自动重启」其实从来没真杀过
+
+`terminate_unix()` 内部直接 `pgrep -x codex`。而在开发机上（本机 ChatGPT.app
+内置的 codex-cli 就在 `pgrep -x codex` 结果里，PID 67526），**任何测试调它都会
+杀掉开发者自己的会话**——所以没人敢调。于是：
+
+- 被测到的只有 `parse_pids`（pid 解析）和 `collect_unix_process_tree`（树展开）；
+- **真正的 SIGTERM → 宽限 → SIGKILL 流程一次都没跑过**；
+- 第二轮我写「真自动重启」时，依据的是代码形状而不是实际行为。
+
+**修法**：抽出 `terminate_unix_roots(roots: &[u32])`（pid 注入），
+`terminate_unix()` 只负责 glob 再委托。测试拿一棵**自己拉起的假进程树**真跑一遍。
+
+这条测试**第一次运行就是红的**（`根进程必须死`），而且是两次不同的原因：
+1. 未回收的子进程停在 `Z`（僵尸）态，`kill(pid,0)` 仍成功 → `process_alive` 判活。
+   实测确认：SIGTERM 后不 `wait()`，`ps` 显示 `Z`、`kill -0` 成功。**生产不受影响**
+   （真实 Codex 不是我们的子进程，由 launchd 收养回收），但测试必须自己回收。
+2. 我第一版测试把 root/mid/leaf 拉成**兄弟**而非嵌套，mid 根本不在 root 的树里，
+   却断言它该死——**测试自己写错了**，不是代码错。
+
+两次都靠「真跑」才暴露；写形状断言的话两条都会悄悄绿过去。
+
+顺带修掉我自己在 `process_alive` 上写的一句假注释（声称处理 EPERM，实际没处理）。
+
+### 4.2 第三轮我自己开的口子，被并发会话的修复堵上了又差点 reopen
+
+第三轮我在 `write_live_snapshot` 补了「写盘前最后一道老形态闸」，用的是**无条件**的
+`migrate_legacy_codex_toml_ids`（会补顶层 `model_provider`）。而并发会话的 `6ca72675`
+恰好修的是同一根因的另一面：官方档下那张 `custom` 表多半是切换回填带进存档的
+**inert 残留**，补顶层等于把 inert 表顶成激活端点（RFC 0002 §2.1）。
+
+**两条代码互相矛盾**，我那条在 `write_live_snapshot` 这条路径上绕过了对方的保护。
+已统一为 `migrate_codex_live_config_text(text, provider)`（纯函数、official 感知），
+并加回归门 `live_migration_gate_is_official_aware`。
+
+**该门已验证非空转**：把实现改回无条件版本后它真的红
+（`官方档**绝不能**补顶层 model_provider`），改回来即绿。
+
+**诚实标注**：这条目前是**潜在**缺陷而非现网 bug——正常切换路径会先经过
+`merge_inert`（已是 official 感知），文本到 `write_live_snapshot` 时已是新形态，
+迁移是 no-op。只有 `write_preflighted_or_current_live`（托管 OAuth 绕过
+`merge_inert`）才可能命中，而官方卡的 config 里本不会有 `custom` 网关表。
+属于「当时没爆、但地雷还在」，修掉并加门是划算的。
+
+### 4.3 item 5 的前端契约此前只有「读代码推断」
+
+`GatewayEndpointMeta.local_port` → 前端 `localPort` 靠
+`#[serde(rename_all = "camelCase")]`。这是**前端能不能看到端口**的唯一契约点，
+一旦 rename 被去掉，UI 会静默退回硬编码 8782——正是 item 5 要消灭的那个迷惑。
+
+原先没有测试。补 `local_port_serializes_as_camel_case_for_the_frontend`：
+真做一次 `serde_json::to_value`，断言公网端 `localPort` 为 `null`、
+本机端为数字且与 `url`/`label` 里的端口三者一致。
+
 ## 下一轮提示词
 
 > 在第四轮（legacy `custom` 别名 + catalog 归属修复）已合入 main 的基础上继续，

@@ -388,6 +388,53 @@ mod tests {
         }
     }
 
+    /// 前端读的是 `ep.localPort`（`KaixuanBundleCard` 里 `localPort` 变量）。
+    /// `#[serde(rename_all = "camelCase")]` 理论上把 `local_port` 变成
+    /// `localPort`，但这是**前端能不能看到端口**的唯一契约点——一旦 rename 被
+    /// 去掉或字段名对不上，UI 会静默退回硬编码 8782，正是 item 5 要消灭的迷惑。
+    /// 所以这里做一次真实序列化断言，而不是靠读代码推断。
+    #[test]
+    fn local_port_serializes_as_camel_case_for_the_frontend() {
+        let endpoints = known_endpoints();
+        let json = serde_json::to_value(&endpoints).expect("serialize endpoints");
+        let arr = json.as_array().expect("array").clone();
+
+        let primary = arr
+            .iter()
+            .find(|e| e["role"] == "primary")
+            .expect("primary endpoint");
+        let local = arr
+            .iter()
+            .find(|e| e["role"] == "secondary")
+            .expect("secondary endpoint");
+
+        // 公网端点没有本机端口，必须是 null（前端 `?? 8782` 才不会误显示）。
+        assert!(
+            primary.get("localPort").is_some(),
+            "primary 必须带 localPort 键（值为 null），实际 {primary}"
+        );
+        assert!(
+            primary["localPort"].is_null(),
+            "primary 的 localPort 应为 null，实际 {}",
+            primary["localPort"]
+        );
+        // 本机端点必须带**数字**端口，且与探测 url / label 一致。
+        let port = local["localPort"].as_u64().unwrap_or_else(|| {
+            panic!("local 的 localPort 必须是数字，实际 {}", local["localPort"])
+        });
+        assert!(port > 0, "端口必须为正");
+        let url = local["url"].as_str().expect("url");
+        assert!(
+            url.contains(&format!("127.0.0.1:{port}")),
+            "localPort={port} 必须与探测 url 一致：{url}"
+        );
+        assert!(
+            local["label"].as_str().unwrap_or("").contains(&port.to_string()),
+            "label 必须含真实端口：{}",
+            local["label"]
+        );
+    }
+
     #[test]
     #[serial(env)]
     fn known_endpoints_honors_local_port_env() {
