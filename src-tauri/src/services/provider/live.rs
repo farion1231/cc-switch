@@ -1624,7 +1624,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let auth = obj
                 .get("auth")
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
-            let config_str = obj.get("config").and_then(|v| v.as_str());
+            // 写盘前的最后一道老形态闸。放在 `write_live_snapshot` 而不是只放在
+            // 切换路径上，是因为它不是**唯一**的 live 写入入口：
+            // `write_preflighted_or_current_live` 对托管 Codex OAuth provider 直接
+            // 调本函数、绕过 `merge_inert_*`。幂等、纯函数、已是新形态时零开销。
+            let config_str = obj.get("config").and_then(Value::as_str).map(|text| {
+                crate::codex_config::migrate_legacy_codex_toml_ids(text)
+                    .unwrap_or_else(|| text.to_string())
+            });
+            let config_str = config_str.as_deref();
 
             // Native (direct) Responses and Anthropic providers must suppress Codex's
             // freeform apply_patch custom tool via the generated catalog; chat/proxy

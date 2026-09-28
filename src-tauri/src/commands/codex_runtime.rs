@@ -278,20 +278,28 @@ fn now_unix_millis() -> u64 {
 /// 递归（深度上限 4，够用且不会被 symlink 环拖死）。没有 `walkdir` 依赖，直接手写
 /// `read_dir` —— 与 `codex_history_migration::collect_files_with_extension` 同款做法。
 pub fn recent_codex_session_activity() -> Option<PathBuf> {
-    recent_codex_session_activity_within(
+    let sessions_dir = crate::codex_config::get_codex_config_dir().join("sessions");
+    recent_codex_session_activity_in(
+        &sessions_dir,
         RECENT_SESSION_ACTIVITY_WINDOW_SECS,
         std::time::SystemTime::now(),
     )
 }
 
-/// 可注入窗口/时钟的纯函数形态，便于单测（不依赖真实文件系统的时钟）。
-fn recent_codex_session_activity_within(
+/// 可注入目录/窗口/时钟的纯函数形态。
+///
+/// **目录是参数而不是内部推导的**，这是刻意的：本仓库里 `CC_SWITCH_TEST_HOME` /
+/// `HOME` 是**进程级**共享状态，多个测试模块会并发改写它（已知会与
+/// `openclaw_config::tests::with_test_paths` 相互串扰）。让目录可注入，单测就能
+/// 指向自己的 tempdir，**完全不去碰全局 env**，也就不会给那条既有竞态再添一个
+/// 参与者。
+fn recent_codex_session_activity_in(
+    sessions_dir: &Path,
     window_secs: u64,
     now: std::time::SystemTime,
 ) -> Option<PathBuf> {
-    let sessions_dir = crate::codex_config::get_codex_config_dir().join("sessions");
     let mut files = Vec::new();
-    collect_jsonl_files(&sessions_dir, &mut files, 0, 4);
+    collect_jsonl_files(sessions_dir, &mut files, 0, 4);
 
     let window = Duration::from_secs(window_secs);
     files
@@ -629,39 +637,13 @@ mod tests {
 
     /// 活跃 session 探测：窗口内的 `.jsonl` 必须被认出来，窗口外的必须被忽略。
     ///
-    /// 用真实 HOME sandbox 而不是 mock —— 这条测试守的是「rollout 目录按
-    /// `YYYY/MM/DD/` 分层也要能扫到」，分层深度写错（比如只扫一层）在这里会红。
+    /// 目录是**参数**（`recent_codex_session_activity_in`），所以本测试不碰
+    /// `CC_SWITCH_TEST_HOME` / `HOME` 任何全局 env —— 既不需要 `#[serial]`，
+    /// 也不会给 `openclaw_config` 那条既有的 env 竞态再添参与者。
     #[test]
-    #[serial_test::serial]
     fn recent_session_activity_detects_nested_rollout_and_respects_window() {
-        struct RestoreEnv(Vec<(&'static str, Option<String>)>);
-        impl Drop for RestoreEnv {
-            fn drop(&mut self) {
-                for (key, value) in &self.0 {
-                    match value {
-                        Some(v) => std::env::set_var(key, v),
-                        None => std::env::remove_var(key),
-                    }
-                }
-            }
-        }
-
-        // `get_codex_config_dir()` 走 `get_codex_override_dir()`（读 CODEX_HOME）
-        // 再回退 `get_home_dir()`（读 CC_SWITCH_TEST_HOME / HOME）——两个都得改，
-        // 只设一个会让探测扫到真实用户的 ~/.codex/sessions。
-        let prev: Vec<(&'static str, Option<String>)> = ["CODEX_HOME", "CC_SWITCH_TEST_HOME"]
-            .iter()
-            .map(|key| (*key, std::env::var(key).ok()))
-            .collect();
-        let temp_home = tempfile::tempdir().expect("tempdir for CODEX_HOME");
-        let home_path = temp_home.path().to_path_buf();
-        let _keep_alive = temp_home;
-        std::env::set_var("CODEX_HOME", home_path.to_string_lossy().to_string());
-        std::env::set_var("CC_SWITCH_TEST_HOME", &home_path);
-        crate::settings::reload_settings().expect("reload settings");
-        let _restore = RestoreEnv(prev);
-
-        let sessions = home_path.join(".codex").join("sessions");
+        let temp_home = tempfile::tempdir().expect("tempdir");
+        let sessions = temp_home.path().join("sessions");
         // 模拟 Codex 真实的 rollout 分层：sessions/YYYY/MM/DD/rollout-<id>.jsonl
         let nested = sessions.join("2026").join("09").join("28");
         std::fs::create_dir_all(&nested).expect("create nested rollout dir");
@@ -671,26 +653,51 @@ mod tests {
         let now = std::time::SystemTime::now();
 
         // 1) 刚写过 → 命中，且路径正是那个嵌套文件。
-        let hit = recent_codex_session_activity_within(RECENT_SESSION_ACTIVITY_WINDOW_SECS, now)
-            .expect("fresh rollout must be treated as an active session");
+        let hit = recent_codex_session_activity_in(
+            &sessions,
+            RECENT_SESSION_ACTIVITY_WINDOW_SECS,
+            now,
+        )
+        .expect("fresh rollout must be treated as an active session");
         assert_eq!(hit, rollout, "必须命中嵌套 4 层的 rollout 文件");
 
         // 2) 窗口真的生效：把「现在」推到 1 小时之后，该 rollout 的 mtime 距
         //    那时已远超 30s 窗口 → 不算活跃。证明窗口不是恒真。
         let future_now = now + Duration::from_secs(3600);
         assert!(
-            recent_codex_session_activity_within(RECENT_SESSION_ACTIVITY_WINDOW_SECS, future_now)
-                .is_none(),
+            recent_codex_session_activity_in(
+                &sessions,
+                RECENT_SESSION_ACTIVITY_WINDOW_SECS,
+                future_now
+            )
+            .is_none(),
             "窗口必须真的生效：1 小时后的时间点看这份 rollout 已过期"
         );
 
-        // 2b) 时钟漂移 fail-safe：mtime 晚于「现在」（NTP 回拨 / 跨时区）时保守
-        //     判成活跃，宁可多拒一次重启也不误杀对话。
+        // 3) 时钟漂移 fail-safe：mtime 晚于「现在」（NTP 回拨 / 跨时区）时保守
+        //    判成活跃，宁可多拒一次重启也不误杀对话。
         let long_ago = now - Duration::from_secs(3600);
         assert!(
-            recent_codex_session_activity_within(RECENT_SESSION_ACTIVITY_WINDOW_SECS, long_ago)
-                .is_some(),
+            recent_codex_session_activity_in(
+                &sessions,
+                RECENT_SESSION_ACTIVITY_WINDOW_SECS,
+                long_ago
+            )
+            .is_some(),
             "mtime 晚于 now（时钟漂移）必须保守判为活跃"
         );
+
+        // 4) 没有 sessions 目录时必须安静返回 None，绝不 panic。
+        let empty = tempfile::tempdir().expect("tempdir without sessions");
+        assert!(
+            recent_codex_session_activity_in(
+                &empty.path().join("sessions"),
+                RECENT_SESSION_ACTIVITY_WINDOW_SECS,
+                now
+            )
+            .is_none(),
+            "目录不存在时必须安静返回 None"
+        );
     }
+
 }

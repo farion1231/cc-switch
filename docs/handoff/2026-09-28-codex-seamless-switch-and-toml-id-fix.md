@@ -215,21 +215,53 @@ CTA 从「把 `pkill` 命令复制到剪贴板」升级为**后端真动手杀�
 ——Codex 于是回退到 `openai`，老 bug 原样复发。单测用 `toml` crate 重新解析
 专门盯这条。
 
-### 3. 同 slug 多端点共存 catalog
+### 3. 同 slug 多端点共存 catalog —— ⚠️ 采集侧已实现，**下发侧默认关闭**（第三轮审计推翻）
 
-`merge_inert_...` 在同一趟 provider 遍历里额外收集「其他端点的模型目录」，以
-`__cc_switch_merged_catalog_sources` 注入 effective settings；`codex_model_catalog_from_settings`
-据此生成 `claude-opus-5@kxpms` / `claude-opus-5@local8782` 形态的条目。
+这一节在第二轮结束时是**错的**。第三轮批判式审计查证后推翻，结论与证据如下。
+
+**第二轮宣称**：catalog 会生成 `claude-opus-5@kxpms` / `claude-opus-5@local8782`
+条目，两端模型在 `/model` picker 里共存。
+
+**审计结论：那是一个功能回归。** 关键事实——
+
+1. **Codex 的 catalog 只有 `slug` 一个身份字段，没有「仅显示的别名」。**
+   `codex_catalog_model_entry` 把 `spec.model` 写进 `slug`；而
+   `read_codex_model_catalog_simplified_from_live` 又把 `slug` **原样**还原成前端表格的
+   `model` 字段（`codex_config.rs` 的 simplified 反解析里就是
+   `obj.insert("model", json!(entry["slug"]))`）。那个 `model` 就是请求体里发给
+   provider 的模型名。所以 `claude-opus-5@kxpms` 的真实含义是
+   「向当前 provider 请求一个叫 `claude-opus-5@kxpms` 的模型」。
+2. **按后缀路由的那一半不存在。**
+   - Codex 的 `model_provider` 是**配置级全局**，一个 `config.toml` 只能一个 provider，
+     配置层表达不了「按模型分发」；
+   - cc-switch 侧无任何代码剥离/归一化模型名里的 `@<id>`（仅有两处
+     `rsplit_once('@')`，都是解析 URL 的 userinfo，与模型名无关）；
+   - llm-gateway-go 侧也没有：`autoroute.promoteCanonical` 用**精确相等**匹配
+     `CanonicalName`，带后缀的名字匹配不到任何 candidate。
+3. **兜底比报错更危险。** 匹配失败会落到网关的通用评分兜底，于是用户选中
+   「local8782 的 claude-opus-5」，实际拿到的是 kxpms 的**某个**模型——看起来
+   「能用」，实则静默错路由。这比直接报错糟糕得多。
+
+**修法**：`codex_endpoint_catalog_coexist_enabled()` 总开关**默认关**，
+`maybe_merge_endpoint_catalog` 在关闭时原样返回，**绝不写出无法路由的条目**。
+采集侧（`MERGED_CATALOG_SOURCES_KEY` + `append_endpoint_suffixed_entries` +
+dedup）全部保留并保持测试覆盖，等后缀路由真正落到请求路径上（proxy 侧剥离后缀
+并分发，或网关支持该语法）再一行打开。
+
+- 开关：`CC_SWITCH_CODEX_ENDPOINT_CATALOG=1|true|on`。
+- `kaixuan_bundle_full_switch_lifecycle_no_config_errors` 的断言随之回退为
+  **8 条**（只含 active 端点），并新增一条**红线断言**：写盘 catalog 里出现任何
+  带 `@` 的 slug 即判失败。
+
+#### 3.1 采集侧实现要点（仍有效）
 
 - dedup 规则：active 端点条目**原样保留**（顶层 `model_provider` 指向它）；其他
-  端点同 slug 加 `@<toml_id>` 后缀共存；完全重复的最终 slug 只留第一条。
+  端点同 slug 加 `@<toml_id>` 后缀；完全重复的最终 slug 只保留第一条。
 - **合并进来的模型必须走一遍和 active 相同的展开管线**。来源是前端**简化形态**
   (`{model, displayName, contextWindow}`)，不是 Codex catalog 条目——只改 slug
   的话条目会缺 `base_instructions`（Codex 必填）、工具集、reasoning 档位，在
   `/model` picker 里是个半残壳。`ExpansionSource::{Template, Vendor}` 两条路径
   分别对应中立模板与厂商官方 models.json 镜像。
-- 这是「自动路由」的**前置**，不是自动路由本身：catalog 只服务 `/model` picker 的
-  可见性，路由仍由顶层 `model_provider` 决定。带 `@` 后缀的模型不会被真请求。
 
 ### 4. 修 `self_hosted_gateway_presets_round_trip_through_catalog_pipeline`（老红转绿）
 
@@ -373,6 +405,50 @@ membership + sort_index，不覆盖用户改过的 `settings_config`。
 - `npx tsc --noEmit` —— 通过。
 - `npx prettier --check docs/guides/kaixuan-bundle-*.md` —— 通过。
 
+## 第三轮：批判式审计（2026-09-28 深夜）
+
+对第二轮自己的产出做查证式复核，**推翻了一条结论**。
+
+### 推翻：item 3「同 slug 多端点共存 catalog」是功能回归
+
+第二轮把它写成「已落地，两端模型在 `/model` picker 共存」。查证后不成立，详见上文
+§3。根因是 **Codex 的 `slug` 就是发出去的模型名**（simplified 反解析把 `slug`
+原样还原成 `model` 字段），而后缀路由那一半压根不存在（cc-switch 无剥离、网关
+`promoteCanonical` 精确相等），匹配失败还会落到评分兜底造成**静默错路由**。
+
+已改为默认关闭下发（`CC_SWITCH_CODEX_ENDPOINT_CATALOG`），采集侧保留 + 测试覆盖。
+E2E 断言从 16 条回退为 8 条，并新增「live catalog 不得出现带 `@` 的 slug」红线。
+
+### 修正：item 1 漏杀子进程
+
+第二轮只杀 `pgrep -x codex` 命中的根 pid。Codex 0.158+ 是 app-server 架构，主进程
+只是 wrapper，只杀根会留下占资源的孤儿。改为 `pgrep -P` 逐层展开**完整后代树**。
+
+**有意偏离原提示词**：没用 `process_group`（`kill(-pgid, …)`）。`terminate_child_tree`
+那样做安全是因为 cc-switch 自己 `setsid()` 拉子进程、保证它是组长；而这里杀的是
+**用户从终端启动**的 Codex，它是 shell 作业组的**成员**（组长是 shell），对非组长
+pid 做 `kill(-pid, …)` 要么 ESRCH、要么把用户整个终端作业组连 shell 一起干掉。
+`process_tree_collection_picks_up_descendants` 有断言盯这条红线：进程树绝不能
+包含 cc-switch 自己的 pid。
+
+### 修正：item 2 有一入口没被覆盖
+
+`write_preflighted_or_current_live` 对托管 Codex OAuth provider 直接调
+`write_live_snapshot`、**绕过** `merge_inert_*` 与 DB 迁移。把内存迁移补到
+`write_live_snapshot` 的 Codex 分支（写盘前最后一道闸），覆盖所有入口。幂等。
+
+### 我的测试曾给一条既有竞态加参与者
+
+新增的 session 探测测试原本改 `CODEX_HOME` + `CC_SWITCH_TEST_HOME`/`HOME`。已改为
+**目录注入**（`recent_codex_session_activity_in(&sessions_dir, window, now)`），
+完全不碰全局 env——不再给那条竞态添参与者。见下方 flake 数据。
+
+### 并发事故（须知）
+
+审计中途另一个会话把我的分支 fast-forward 进了 `main` 并提交，导致我**未提交的
+`codex_config.rs` / `live.rs` 两处改动被冲掉**（一度只剩 worktree 备份可救）。
+后续改用 `git worktree` 隔离作业。**教训同前：共享工作区攒未提交改动不可靠。**
+
 ## 已知遗留（第三轮之后）
 
 1. **真重启只杀不拉起**（有意为之，见上）。用户需要回终端敲 `codex`。
@@ -396,3 +472,30 @@ membership + sort_index，不覆盖用户改过的 `settings_config`。
 
 - 分支：`feat/codex-restart-toml-migration-merged-catalog`
 - 第三轮改动已提交并推送。
+
+### 跨模块 env 竞态（**未修**，独立跟踪）
+
+`openclaw_config::tests::with_test_paths` 报 `written.contains("// top-level comment")`
+间歇性失败。**根因不是断言，是进程级 env 的多套互不协调的锁**：
+
+- `CC_SWITCH_TEST_HOME` / `HOME` 是**进程全局**，被多个模块的测试并发改写；
+- 保护机制有**三套且互不通信**：`openclaw_config::test_guard()`（模块内
+  `OnceLock<Mutex>`）、`hermes_config::test_guard()`（另一把）、以及
+  `serial_test::#[serial]`（只协调同样标了 `#[serial]` 的测试，**不会**挡住没标的）；
+- 于是一个 `#[serial]` 的 codex 测试与一个用本地 mutex 的 openclaw 测试可以真并发。
+
+**实测**（各 5 次全量 `cargo test --lib`）：
+- 干净 `main`（6ca72675）：**3/5 次失败**
+- 本分支（+第三轮修正）：**1/5 次失败**
+
+即：**该 flaky 先于本轮存在**，第三轮把我自己的测试移出竞态后频率下降，但**没有
+根治**。
+
+**为什么本轮不修**：涉及 `openclaw_config`(4 处) / `hermes_config`(2 处) /
+`codex_config`(4 处) / `provider_bundle`(14 处) 共约 24 个 env 改写点、4 个模块，
+需要引入一把**全 crate 共享**的 env 锁并统一改造。改动面大、且与并发会话在同一批
+文件上作业，风险高于收益。**建议单开一个 issue/PR 专门做**，修法：新增
+`crate::test_support::env_lock()` 全局 `OnceLock<Mutex<()>>`，所有改
+`CC_SWITCH_TEST_HOME`/`HOME`/`CODEX_HOME` 的测试统一持有，并让两处 `test_guard()`
+改为取同一把锁。
+

@@ -1431,11 +1431,14 @@ mod tests {
             return Err(format!("model_catalog_json 指针={ptr} ≠ 期望"));
         }
 
-        // (e) catalog 文件存在且合法 JSON。
+        // (e) catalog 文件存在且合法 JSON，且只含 **active 端点** 的 8 个模型。
         //
-        // 长度断言：active 端点 8 条 + 另一端点 8 条（全部带 `@<toml_id>` 后缀）=
-        // 16 条。这正是「同 slug 多端点共存」：两端模型池高度重叠（都有
-        // claude-opus-5），不共存的话 `/model` picker 里只能看到当前激活端。
+        // 回归红线（2026-09-28 审计）：曾经这里是 16 条（active 8 + 另一端 8 条
+        // `@<toml_id>` 后缀），是**错的**。Codex 的 catalog `slug` 就是发出去的
+        // `model` 值，没有「仅显示的别名」字段；而按后缀路由的那一半还不存在
+        // （cc-switch 与 llm-gateway-go 都不剥离 `@<id>`，网关 `promoteCanonical`
+        // 用的是精确相等）。写出去的用户一点就**静默路由到别的模型**，比报错更糟。
+        // 详见 `codex_config::codex_endpoint_catalog_coexist_enabled`。
         let catalog_path = get_codex_model_catalog_path();
         let catalog_text = std::fs::read_to_string(&catalog_path)
             .map_err(|e| format!("read {}: {e}", catalog_path.display()))?;
@@ -1445,12 +1448,10 @@ mod tests {
             .get("models")
             .and_then(|v| v.as_array())
             .ok_or_else(|| "catalog.models 非数组".to_string())?;
-        let other_id = if active == "kxpms" { "local8782" } else { "kxpms" };
-        if models.len() != 16 {
+        if models.len() != 8 {
             return Err(format!(
-                "catalog.models 长度 {} ≠ 期望 16（active 端点 8 + @{} 端点 8）",
-                models.len(),
-                other_id
+                "catalog.models 长度 {} ≠ 期望 8（只含 active 端点模型）",
+                models.len()
             ));
         }
         let slugs: Vec<&str> = models
@@ -1462,17 +1463,11 @@ mod tests {
                 return Err(format!("catalog 缺 {must}：{slugs:?}"));
             }
         }
-        // 同 slug 必须在另一端点下也以 `@<toml_id>` 形态共存，且 active 端点不得
-        // 被二次加后缀。
-        for shared in ["claude-opus-5", "glm-5.2", "auto"] {
-            let suffixed = format!("{shared}@{other_id}");
-            if !slugs.contains(&suffixed.as_str()) {
-                return Err(format!("catalog 缺共存条目 {suffixed}：{slugs:?}"));
-            }
-            let self_suffixed = format!("{shared}@{active}");
-            if slugs.contains(&self_suffixed.as_str()) {
-                return Err(format!("active 端点不得被二次加后缀 {self_suffixed}：{slugs:?}"));
-            }
+        // 写盘的每一条都必须能真被路由：绝不允许带 `@` 的 slug 混进 live catalog。
+        if let Some(bad) = slugs.iter().find(|s| s.contains('@')) {
+            return Err(format!(
+                "live catalog 出现无法路由的带后缀 slug {bad:?}：{slugs:?}"
+            ));
         }
         let mut dedup = slugs.clone();
         dedup.sort_unstable();

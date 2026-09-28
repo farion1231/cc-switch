@@ -2514,13 +2514,14 @@ fn codex_model_catalog_from_settings(
             .enumerate()
             .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
             .collect();
-        return Ok(Some(codex_catalog_with_models(append_endpoint_suffixed_entries(
+        let entries = maybe_merge_endpoint_catalog(
             entries,
             settings,
             ExpansionSource::Vendor(&vendor_models),
             profile,
             0,
-        ))));
+        );
+        return Ok(Some(codex_catalog_with_models(entries)));
     }
 
     let default_context_window =
@@ -2537,13 +2538,61 @@ fn codex_model_catalog_from_settings(
     };
     let entries =
         codex_model_catalog_entries_from_specs(&specs, &template, profile, default_context_window);
-    Ok(Some(codex_catalog_with_models(append_endpoint_suffixed_entries(
+    let entries = maybe_merge_endpoint_catalog(
         entries,
         settings,
         ExpansionSource::Template(&template),
         profile,
         default_context_window,
-    ))))
+    );
+    Ok(Some(codex_catalog_with_models(entries)))
+}
+
+/// 同 slug 多端点共存的**总开关**，默认**关闭**。
+///
+/// 为什么默认关（2026-09-28 审计结论，别急着打开）：Codex 的 catalog 条目只有
+/// `slug` 一个身份字段，**没有**「仅用于显示的别名」——`slug` 就是发出去的
+/// `model` 值（`read_codex_model_catalog_simplified_from_live` 把它原样还原成前端
+/// 表格的 `model` 字段，而那就是请求体里的模型名）。于是 `claude-opus-5@kxpms`
+/// 这类 slug 意味着「向当前 provider 请求一个叫 `claude-opus-5@kxpms` 的模型」。
+///
+/// 而按后缀路由的那一半**还不存在**：
+/// - Codex 的 `model_provider` 是**配置级全局**的，一个 config.toml 只能一个
+///   provider，配置层表达不了「按模型分发」；
+/// - cc-switch 侧没有任何代码剥离/归一化模型名里的 `@<id>` 后缀（仅有的两处
+///   `rsplit_once('@')` 是解析 URL 的 userinfo，与模型名无关）；
+/// - llm-gateway-go 侧也没有：`autoroute.promoteCanonical` 用的是**精确相等**，
+///   带后缀的名字匹配不到任何 candidate，会落到通用评分兜底。
+///
+/// 兜底才是真正危险的地方：不是干脆报错，而是**静默路由到别的模型**——用户以为
+/// 选中了「local8782 的 claude-opus-5」，实际拿到的是 kxpms 的某个模型，看起来
+/// 「能用」。这比直接报错糟糕得多。
+///
+/// 所以：收集 + 去重逻辑保留并保持测试覆盖（`append_endpoint_suffixed_entries`），
+/// 但**写盘前默认不过闸**。等「按 `@<toml_id>` 分发」真正落到请求路径上（proxy
+/// 侧剥离后缀并分发，或网关支持该语法）再打开，届时本函数是那半边的现成素材。
+fn codex_endpoint_catalog_coexist_enabled() -> bool {
+    matches!(
+        std::env::var("CC_SWITCH_CODEX_ENDPOINT_CATALOG")
+            .ok()
+            .as_deref()
+            .map(str::trim),
+        Some("1") | Some("true") | Some("on")
+    )
+}
+
+/// 开关关闭时**原样返回**，绝不写出无法路由的条目。
+fn maybe_merge_endpoint_catalog(
+    entries: Vec<Value>,
+    settings: &Value,
+    source: ExpansionSource<'_>,
+    profile: CodexCatalogToolProfile,
+    default_context_window: u64,
+) -> Vec<Value> {
+    if !codex_endpoint_catalog_coexist_enabled() {
+        return entries;
+    }
+    append_endpoint_suffixed_entries(entries, settings, source, profile, default_context_window)
 }
 
 /// `merge_inert_codex_provider_tables_into_settings_config` 注入到 effective
@@ -4842,6 +4891,9 @@ mod tests {
             ]
         });
 
+        // **默认（开关关）**：只写 active 端点的条目，绝不产出无法路由的
+        // `@<toml_id>` slug。理由见 `codex_endpoint_catalog_coexist_enabled`：
+        // Codex 的 slug 就是发出去的模型名，而后缀路由那一半还不存在。
         let catalog = codex_model_catalog_from_settings(
             &settings,
             settings["config"].as_str().unwrap(),
@@ -4854,6 +4906,50 @@ mod tests {
             .iter()
             .filter_map(|e| e["slug"].as_str())
             .collect();
+
+        assert_eq!(slugs, vec!["claude-opus-5", "glm-5.2"], "默认只出 active 端点模型");
+        assert_eq!(
+            slugs.iter().filter(|s| s.contains('@')).count(),
+            0,
+            "默认绝不能写出带 @ 的 slug（无法路由 = 静默错路由）: {slugs:?}"
+        );
+    }
+
+    /// 开关打开时，纯合并函数产出的条目必须形态正确——它是「后缀路由那一半」
+    /// 落地时要用的现成素材，所以形状必须先被测试钉住。
+    #[test]
+    fn merged_catalog_enabled_path_produces_well_formed_suffixed_entries() {
+        let settings = json!({
+            "config": "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n",
+            "modelCatalog": { "models": [
+                { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                { "model": "glm-5.2" }
+            ]},
+            MERGED_CATALOG_SOURCES_KEY: [
+                { "toml_id": "local8782", "models": [
+                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                    { "model": "minimax-m3" }
+                ]},
+                { "toml_id": "kxpms", "models": [ { "model": "claude-opus-5" } ] }
+            ]
+        });
+        let template = load_codex_native_responses_template();
+        let active = codex_catalog_model_specs(&settings);
+        let entries = codex_model_catalog_entries_from_specs(
+            &active,
+            &template,
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+
+        let merged = append_endpoint_suffixed_entries(
+            entries,
+            &settings,
+            ExpansionSource::Template(&template),
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+        let slugs: Vec<&str> = merged.iter().filter_map(|e| e["slug"].as_str()).collect();
 
         assert!(slugs.contains(&"claude-opus-5"), "active 端裸 slug 必须保留: {slugs:?}");
         assert!(
@@ -4870,7 +4966,7 @@ mod tests {
             "active 端点不得被二次加后缀: {slugs:?}"
         );
         // active 2 条 + local8782 2 条 = 4，且无重复
-        assert_eq!(models.len(), 4, "条目数必须与去重后的预期一致: {slugs:?}");
+        assert_eq!(merged.len(), 4, "条目数必须与去重后的预期一致: {slugs:?}");
         let mut dedup = slugs.clone();
         dedup.sort_unstable();
         dedup.dedup();
@@ -4878,7 +4974,7 @@ mod tests {
 
         // 后缀条目必须继承源模型的其他字段（display_name / base_instructions）
         // 否则 Codex 的 /model picker 会显示成一个空壳条目。
-        let suffixed = models
+        let suffixed = merged
             .iter()
             .find(|e| e["slug"] == "claude-opus-5@local8782")
             .expect("suffixed entry");
