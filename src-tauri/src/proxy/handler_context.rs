@@ -3,6 +3,7 @@
 //! 提供请求生命周期的上下文管理，封装通用初始化逻辑
 
 use crate::app_config::AppType;
+use crate::mode::pool::PoolTarget;
 use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
@@ -70,6 +71,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 附加模型的请求（`mode::pool`）：直达附加的那一家，不读也不写任何路由状态。
+    pub is_pool: bool,
 }
 
 impl RequestContext {
@@ -82,6 +85,7 @@ impl RequestContext {
     /// * `app_type` - 应用类型
     /// * `tag` - 日志标签
     /// * `app_type_str` - 应用类型字符串
+    /// * `pool` - 附加模型的目标（请求体里的 `model` 已换成上游名）
     ///
     /// # Errors
     /// 返回 `ProxyError` 如果 Provider 选择失败
@@ -92,11 +96,12 @@ impl RequestContext {
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
+        pool: Option<PoolTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
         // 从数据库读取应用级代理配置（per-app）
-        let app_config = state
+        let mut app_config = state
             .db
             .get_proxy_config_for_app(app_type_str)
             .await
@@ -106,6 +111,51 @@ impl RequestContext {
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+
+        // 提取 Session ID
+        let session_result = extract_session_id(headers, body, app_type_str);
+        let session_id = session_result.session_id.clone();
+
+        log::debug!(
+            "[{}] Session ID: {} (from {:?}, client_provided: {})",
+            tag,
+            session_id,
+            session_result.source,
+            session_result.client_provided
+        );
+
+        if let Some(target) = pool {
+            // 附加模型：只发往附加的那一家，不读代理路由、不经熔断器选家。超时和重试按
+            // 「单家、不转移」：换成有效副本，转发和读响应两个阶段都从这里取，自动生效。
+            app_config.auto_failover_enabled = false;
+            app_config.max_retries = 0;
+            log::debug!(
+                "[{}] Attached model {} → provider {}, upstream model {}, session: {}",
+                tag,
+                target.original_model,
+                target.provider.name,
+                target.upstream_model,
+                session_id
+            );
+            return Ok(Self {
+                start_time,
+                app_config,
+                current_provider_id: target.provider.id.clone(),
+                provider: target.provider.clone(),
+                providers: vec![target.provider],
+                request_model: target.original_model,
+                outbound_model: None,
+                tag,
+                app_type_str,
+                app_type,
+                session_id,
+                session_client_provided: session_result.client_provided,
+                rectifier_config,
+                optimizer_config,
+                copilot_optimizer_config,
+                is_pool: true,
+            });
+        }
 
         let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
             .ok()
@@ -121,18 +171,6 @@ impl RequestContext {
             .and_then(|m| m.as_str())
             .unwrap_or("unknown")
             .to_string();
-
-        // 提取 Session ID
-        let session_result = extract_session_id(headers, body, app_type_str);
-        let session_id = session_result.session_id.clone();
-
-        log::debug!(
-            "[{}] Session ID: {} (from {:?}, client_provided: {})",
-            tag,
-            session_id,
-            session_result.source,
-            session_result.client_provided
-        );
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
@@ -178,6 +216,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            is_pool: false,
         })
     }
 
@@ -247,6 +286,7 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
+        .pool_request(self.is_pool)
     }
 
     /// 获取 Provider 列表（用于故障转移）

@@ -2,6 +2,7 @@
 //!
 //! - `mode`、`attached`、`proxy_route`、`contract`：直连 / 代理模式（`mode::controller`）；
 //! - `written`：CC Switch 上次写进客户端文件、之后要按记录删掉的东西（Grok 的模型表）；
+//! - `pool`：代理模式的附加模型（`mode::pool`）；
 //! - `pending`：一次写客户端文件的操作在发布前写下的意图，按文件记录写前、写后的
 //!   hash 和已备好的临时文件，崩溃后据此前滚或丢弃（`mode::operation`）。
 //!
@@ -112,6 +113,39 @@ pub struct Written {
     pub extra: Map<String, Value>,
 }
 
+/// 代理模式的附加模型：这些供应商的模型以带前缀的 id 发布给客户端，选中后请求直达那一家
+/// （`mode::pool`）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PoolState {
+    /// 当前附加的供应商 id，按加入顺序。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+    /// key 登记簿：key → 供应商 id。一经分配永久归这家，移除成员、删除供应商都不回收：
+    /// 客户端会一直带着选中过的 id，key 改了指向，旧 id 就会被悄悄发到另一家。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl PoolState {
+    pub fn is_empty(&self) -> bool {
+        self.members.is_empty() && self.keys.is_empty() && self.extra.is_empty()
+    }
+
+    /// 这家在登记簿里的 key。
+    pub fn key_of(&self, provider_id: &str) -> Option<&str> {
+        self.keys
+            .iter()
+            .find(|(_, id)| id.as_str() == provider_id)
+            .map(|(key, _)| key.as_str())
+    }
+
+    pub fn is_member(&self, provider_id: &str) -> bool {
+        self.members.iter().any(|id| id == provider_id)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppLiveState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,6 +161,8 @@ pub struct AppLiveState {
     pub written: Option<Written>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
+    #[serde(default, skip_serializing_if = "PoolState::is_empty")]
+    pub pool: PoolState,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -135,6 +171,7 @@ impl AppLiveState {
     fn is_empty(&self) -> bool {
         self.pending.is_none()
             && self.written.is_none()
+            && self.pool.is_empty()
             && self.mode_state() == ModeState::default()
             && self.extra.is_empty()
     }
@@ -172,6 +209,8 @@ pub mod op {
     pub const ATTACH: &str = "attach";
     /// 代理模式下换路由（契约变了时同一操作里先改写客户端）。
     pub const ROUTE: &str = "route";
+    /// 增删附加模型（契约变了时同一操作里先改写客户端）。
+    pub const POOL: &str = "pool";
 }
 
 /// 一次操作的写前意图。
@@ -213,6 +252,10 @@ pub struct PendingTarget {
     /// 写入记录：有值时整体替换。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub written: Option<Written>,
+    /// 附加模型：有值时整体替换这个应用的 `pool`（成员和登记簿一起）。不放进 `state`：
+    /// `state` 会整体替换，不认识 `pool` 的版本写下的 pending 前滚时就会把名单清空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<PoolState>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -238,6 +281,7 @@ impl PendingTarget {
         self.pointer.is_none()
             && self.state.is_none()
             && self.written.is_none()
+            && self.pool.is_none()
             && self.extra.is_empty()
     }
 }
@@ -338,6 +382,16 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
         .apps
         .get(app)
         .and_then(|state| state.written.clone()))
+}
+
+/// 这个应用的附加模型（成员和 key 登记簿）。
+pub fn pool(store: &DeviceStore, app: &str) -> Result<PoolState, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(load(store)?
+        .apps
+        .get(app)
+        .map(|state| state.pool.clone())
+        .unwrap_or_default())
 }
 
 /// 有未完成操作的应用。

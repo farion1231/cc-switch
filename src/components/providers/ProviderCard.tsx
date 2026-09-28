@@ -40,7 +40,7 @@ import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
-import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
+import { getAppLabel, isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -76,6 +76,9 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  isPoolMember?: boolean; // 附加模型：这家的模型出现在客户端的模型选择器里
+  poolModelIds?: string[]; // 附加模型：发布给客户端的模型 id
+  onTogglePool?: (enabled: boolean) => void; // 附加模型开关（不显示时为空）
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -194,6 +197,9 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  isPoolMember = false,
+  poolModelIds = [],
+  onTogglePool,
   // OpenClaw: default model
   isDefaultModel,
   isRemovalProtected,
@@ -498,6 +504,21 @@ export function ProviderCard({
                 />
               )}
 
+              {isPoolMember && (
+                <ProviderStatusBadge
+                  tone="success"
+                  label={t("provider.poolBadge")}
+                  title={
+                    poolModelIds.length > 0
+                      ? t("provider.poolBadgeHint", {
+                          client: getAppLabel(appId),
+                          models: poolModelIds.join(", "),
+                        })
+                      : t("provider.poolBadgeNoModels")
+                  }
+                />
+              )}
+
               {appId === "claude" && provider.category === "official" && (
                 <ProviderStatusBadge
                   label={t("provider.noRoutingSupport", {
@@ -745,6 +766,8 @@ export function ProviderCard({
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
+              isPoolMember={isPoolMember}
+              onTogglePool={onTogglePool}
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={

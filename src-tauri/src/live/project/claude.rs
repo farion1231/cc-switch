@@ -204,7 +204,7 @@ const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
 const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
 const PROXY_FABLE_ALIAS: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+pub(crate) const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
 /// 代理契约里怎么写凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,7 +354,7 @@ fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
-fn has_one_m_marker(model: &str) -> bool {
+pub(crate) fn has_one_m_marker(model: &str) -> bool {
     model
         .trim_end()
         .to_ascii_lowercase()

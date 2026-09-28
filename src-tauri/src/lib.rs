@@ -1579,6 +1579,8 @@ pub fn run() {
             commands::is_proxy_running,
             commands::is_live_takeover_active,
             commands::switch_proxy_provider,
+            commands::get_proxy_pool,
+            commands::set_proxy_pool_member,
             // Proxy failover commands
             commands::get_provider_health,
             commands::reset_circuit_breaker,

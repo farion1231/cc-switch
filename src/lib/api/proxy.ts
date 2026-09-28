@@ -5,6 +5,7 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  ProxyPoolMember,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -48,6 +49,22 @@ export const proxyApi = {
   // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
   async getDirectProvider(appType: string): Promise<string | null> {
     return invoke("get_direct_provider", { appType });
+  },
+
+  // ========== 附加模型 API ==========
+
+  // 附加模型名单：每一家和它发布的模型 id
+  async getProxyPool(appType: string): Promise<ProxyPoolMember[]> {
+    return invoke("get_proxy_pool", { appType });
+  },
+
+  // 把一家加入或移出附加模型（enabled 是目标值）；失败时抛出 ProxyPoolWriteError
+  async setProxyPoolMember(
+    appType: string,
+    providerId: string,
+    enabled: boolean,
+  ): Promise<ProxyPoolMember[]> {
+    return invoke("set_proxy_pool_member", { appType, providerId, enabled });
   },
 
   // ========== v3+ 全局/应用级配置 API ==========

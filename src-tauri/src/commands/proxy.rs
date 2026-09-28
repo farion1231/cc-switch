@@ -83,6 +83,41 @@ pub fn get_direct_provider(
     crate::mode::controller::direct_provider_id(state.inner(), &app).map_err(|e| e.to_string())
 }
 
+/// 附加模型：名单里的每一家和它发布的模型 id
+#[tauri::command]
+pub fn get_proxy_pool(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<Vec<crate::mode::pool::PoolMemberView>, String> {
+    let app = require_proxy_app(&app_type)?;
+    crate::mode::controller::pool_views(state.inner(), &app)
+}
+
+/// 附加模型：把一家加入或移出名单（`enabled` 是目标值）。失败时 `partial` 为真表示已部分
+/// 写入，下次操作或重启 CC Switch 时补完。
+#[tauri::command]
+pub async fn set_proxy_pool_member(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+    enabled: bool,
+) -> Result<Vec<crate::mode::pool::PoolMemberView>, crate::mode::controller::PoolWriteError> {
+    let unchanged = |message: String| crate::mode::controller::PoolWriteError {
+        partial: false,
+        message,
+    };
+    let app = require_proxy_app(&app_type).map_err(unchanged)?;
+    // Codex 的模型目录合并还没做，先只开放 Claude Code。
+    if app != crate::app_config::AppType::Claude {
+        return Err(unchanged(format!(
+            "{} 暂不支持附加模型 ({} does not support attached models yet)",
+            app.as_str(),
+            app.as_str()
+        )));
+    }
+    crate::mode::controller::set_pool_member(state.inner(), &app, &provider_id, enabled).await
+}
+
 /// 获取代理服务器状态
 #[tauri::command]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {

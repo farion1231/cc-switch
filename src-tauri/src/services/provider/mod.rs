@@ -5337,13 +5337,20 @@ impl ProviderService {
         app_type: &AppType,
         provider: &Provider,
     ) -> Result<(), AppError> {
-        if !is_route {
-            return Ok(());
+        if is_route {
+            return futures::executor::block_on(crate::mode::controller::switch_route_locked(
+                state, app_type, provider,
+            ))
+            .map_err(AppError::Message);
         }
-        futures::executor::block_on(crate::mode::controller::switch_route_locked(
-            state, app_type, provider,
-        ))
-        .map_err(AppError::Message)
+        // 附加名单里的那家：它发布的模型、窗口在契约里，按当前路由重算（行已经存好）。
+        if crate::mode::pool::is_member_in_proxy(app_type, &provider.id) {
+            return futures::executor::block_on(crate::mode::controller::resync_route_locked(
+                state, app_type,
+            ))
+            .map_err(AppError::Message);
+        }
+        Ok(())
     }
 
     fn add_claude_from_editor(
@@ -5602,6 +5609,7 @@ impl ProviderService {
             == Some(provider.id.as_str());
         let is_route = mode.routes_to(&provider.id);
         let is_current = is_direct_current || is_route;
+        let in_pool = crate::mode::pool::is_member_in_proxy(&app_type, &provider.id);
 
         if matches!(app_type, AppType::Codex) {
             return Self::update_codex(
@@ -5616,7 +5624,7 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        if is_current {
+        if is_current || in_pool {
             let outcome = live::sync_live_for_provider_respecting_mode(
                 state,
                 &app_type,
@@ -5767,6 +5775,15 @@ impl ProviderService {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
+        }
+
+        // 附加名单里的先移出（和客户端文件同一个操作提交，key 留在登记簿里），成功了再删行。
+        // 删行失败时它已经不在名单里，重新加入即可。
+        if crate::mode::pool::is_member(&app_type, id)? {
+            futures::executor::block_on(crate::mode::controller::set_pool_member(
+                state, &app_type, id, false,
+            ))
+            .map_err(|error| AppError::Message(error.message))?;
         }
 
         state.db.delete_provider(app_type.as_str(), id)

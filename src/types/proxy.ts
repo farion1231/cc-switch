@@ -52,6 +52,19 @@ export interface ProxyTakeoverStatus {
   hermes: boolean;
 }
 
+/** 附加模型：名单里的一家和它发布给客户端的模型 id。 */
+export interface ProxyPoolMember {
+  providerId: string;
+  key: string;
+  modelIds: string[];
+}
+
+/** 增删附加模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
+export interface ProxyPoolWriteError {
+  partial: boolean;
+  message: string;
+}
+
 export interface ProviderHealth {
   provider_id: string;
   app_type: string;

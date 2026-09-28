@@ -188,6 +188,9 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 附加模型的请求（`mode::pool`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
+    /// 生效。见 [`Self::routing_state_enabled`]。
+    pool_request: bool,
 }
 
 impl RequestForwarder {
@@ -278,7 +281,21 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            pool_request: false,
         }
+    }
+
+    /// 标记为附加模型的请求。
+    pub fn pool_request(mut self, pool_request: bool) -> Self {
+        self.pool_request = pool_request;
+        self
+    }
+
+    /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
+    /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。附加模型的请求
+    /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
+    fn routing_state_enabled(&self) -> bool {
+        !self.pool_request
     }
 
     async fn record_success_result(
@@ -368,6 +385,9 @@ impl RequestForwarder {
 
     /// 开始尝试一家：界面上显示正在尝试哪家。
     async fn note_attempt(&self, provider: &Provider) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let mut status = self.status.write().await;
         status.current_provider = Some(provider.name.clone());
         status.current_provider_id = Some(provider.id.clone());
@@ -386,6 +406,17 @@ impl RequestForwarder {
             Option<String>,
         ),
     ) -> ForwardResult {
+        let result = ForwardResult {
+            response,
+            provider: provider.clone(),
+            claude_api_format,
+            outbound_model,
+            connection_guard: None,
+        };
+        if !self.routing_state_enabled() {
+            return result;
+        }
+
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
         // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
         self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -418,13 +449,7 @@ impl RequestForwarder {
             refresh_success_rate(&mut status);
         }
 
-        ForwardResult {
-            response,
-            provider: provider.clone(),
-            claude_api_format,
-            outbound_model,
-            connection_guard: None,
-        }
+        result
     }
 
     /// 这家本身出了问题（下一家可能可用）：记熔断器失败，更新最近错误。调用方接着试下一家。
@@ -436,6 +461,9 @@ impl RequestForwarder {
         error: &ProxyError,
         last_error: String,
     ) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let _ = self
             .router
             .record_result(
@@ -457,10 +485,12 @@ impl RequestForwarder {
         app_type_str: &str,
         used_half_open_permit: bool,
     ) -> ForwardError {
-        self.router
-            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
-            .await;
-        self.record_failed_request(error.to_string()).await;
+        if self.routing_state_enabled() {
+            self.router
+                .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+                .await;
+            self.record_failed_request(error.to_string()).await;
+        }
         ForwardError {
             error,
             provider: Some(provider.clone()),
@@ -469,6 +499,9 @@ impl RequestForwarder {
 
     /// 这个客户端请求最终失败：失败数加一，记下错误，重算成功率。
     async fn record_failed_request(&self, last_error: String) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let mut status = self.status.write().await;
         status.failed_requests += 1;
         status.last_error = Some(last_error);
@@ -492,6 +525,13 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
+        if !self.routing_state_enabled() {
+            return self
+                .forward_with_retry_inner(
+                    app_type, method, endpoint, body, headers, extensions, providers,
+                )
+                .await;
+        }
         let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         {
             let mut s = self.status.write().await;
@@ -553,8 +593,8 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；附加模型的请求不碰熔断器。
+        let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -1081,6 +1121,9 @@ impl RequestForwarder {
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else if self.pool_request {
+            // 附加模型：请求体里已经是这家的上游模型名，不按角色映射成行里配置的模型。
+            body.clone()
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -3732,6 +3775,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            pool_request: false,
         }
     }
 
@@ -5949,6 +5993,105 @@ mod tests {
             assert!(requests[1]
                 .to_string()
                 .contains(crate::proxy::media_sanitizer::UNSUPPORTED_IMAGE_MARKER));
+        }
+
+        // ---- 附加模型：不读也不写任何路由状态 ----
+
+        fn untouched() -> Books {
+            Books {
+                total: 0,
+                success: 0,
+                failed: 0,
+                success_rate: 0.0,
+                failover_count: 0,
+                last_error: None,
+                attempting: None,
+                in_use: None,
+            }
+        }
+
+        /// 熔断器从没为这家建过记录（成功是异步记的，给它时间落下）。
+        async fn breaker_untouched(forwarder: &RequestForwarder, provider_id: &str) -> bool {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            forwarder
+                .router
+                .get_circuit_breaker_stats(provider_id, "claude")
+                .await
+                .is_none()
+        }
+
+        fn pool_forwarder() -> RequestForwarder {
+            // 请求开始时的「当前供应商」是别家：普通请求成功后会记一次故障转移并切路由。
+            forwarder(4, "route").pool_request(true)
+        }
+
+        #[tokio::test]
+        async fn attached_requests_leave_every_routing_state_alone() {
+            for script in [
+                vec![ok()],
+                vec![error(503, "overloaded")],
+                vec![error(400, "bad request")],
+            ] {
+                let status = script[0].0;
+                let up = upstream(script).await;
+                let fwd = pool_forwarder();
+
+                let result = send(&fwd, vec![provider("kimi", &up)], plain_body()).await;
+
+                assert_eq!(result.is_ok(), status == 200, "{status}");
+                if let Ok(result) = &result {
+                    assert!(result.connection_guard.is_none(), "no active connection");
+                }
+                assert_eq!(books(&fwd).await, untouched(), "{status}");
+                assert_eq!(fwd.status.read().await.active_connections, 0);
+                assert!(breaker_untouched(&fwd, "kimi").await, "{status}");
+                assert_eq!(up.requests.lock().await.len(), 1, "{status}");
+            }
+        }
+
+        #[tokio::test]
+        async fn attached_requests_keep_their_model() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
+            let mut body = plain_body();
+            body["model"] = json!("kimi-k3");
+
+            // 对照：普通请求按角色映射成行里配置的模型。
+            send(&forwarder(1, "kimi"), vec![kimi.clone()], body.clone())
+                .await
+                .map_err(|e| e.error)
+                .expect("routed");
+            send(&pool_forwarder(), vec![kimi], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("attached");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn attached_requests_stay_attached_through_rectifier_retries() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
+            let mut body = body_with_thinking_signature();
+            body["model"] = json!("kimi-k3");
+            let fwd = pool_forwarder();
+
+            send(&fwd, vec![kimi], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("retried");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[1]["model"], "kimi-k3");
+            assert!(!requests[1].to_string().contains("\"signature\""));
+            assert_eq!(books(&fwd).await, untouched());
+            assert!(breaker_untouched(&fwd, "kimi").await);
         }
     }
 }

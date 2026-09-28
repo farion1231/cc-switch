@@ -37,7 +37,8 @@ use crate::store::AppState;
 use super::contract;
 use super::current::{self, Purpose};
 use super::operation;
-use super::state::{op, Contract, Mode, ModeState, PendingTarget};
+use super::pool::{self, PoolMemberView, PoolModel};
+use super::state::{op, Contract, Mode, ModeState, PendingTarget, PoolState};
 
 /// 支持代理模式的应用。
 pub const PROXY_APPS: [AppType; 4] = [
@@ -162,14 +163,77 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
     }
 }
 
-fn claude_contract(route: &Provider, proxy_url: &str) -> (ClaudeProjection, Contract) {
-    let projection = proxy_projection(
+fn claude_contract(
+    route: &Provider,
+    proxy_url: &str,
+    pool: &[PoolModel],
+) -> (ClaudeProjection, Contract) {
+    let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
         proxy_url,
         claude_proxy_auth(route),
     );
+    with_pool_models(&mut projection, pool);
     let contract = contract::claude(&projection);
     (projection, contract)
+}
+
+/// Claude Code 的模型发现开关：打开后启动时向 `ANTHROPIC_BASE_URL/v1/models` 取模型列表，
+/// 附加模型才会出现在 `/model` 里。关键字段，退出代理、切换时都会被清掉。
+const CLAUDE_GATEWAY_DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
+const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+
+/// 发布了附加模型时：打开模型发现；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由附加模型决定，取
+/// 非 1M 模型里最小的窗口（等于默认 200K 时不写）。路由用的是 `claude-*` 别名，Claude Code
+/// 本来就不对它们用 MAX，所以不影响路由；1M 的附加模型也不受 MAX 影响。没有发布附加模型时
+/// 契约和原来逐字节一致。
+fn with_pool_models(projection: &mut ClaudeProjection, pool: &[PoolModel]) {
+    if pool.is_empty() {
+        return;
+    }
+    projection.env.insert(
+        CLAUDE_GATEWAY_DISCOVERY_ENV.to_string(),
+        Value::String("1".to_string()),
+    );
+    projection.exclusive.shift_remove(CLAUDE_MAX_CONTEXT_ENV);
+    let smallest = pool
+        .iter()
+        .filter(|model| !model.one_m)
+        .map(|model| model.window)
+        .min();
+    if let Some(window) = smallest.filter(|window| *window != pool::CLAUDE_DEFAULT_WINDOW) {
+        projection.exclusive.insert(
+            CLAUDE_MAX_CONTEXT_ENV.to_string(),
+            Value::String(window.to_string()),
+        );
+    }
+}
+
+/// 契约计算用的附加名单。
+enum PoolInput {
+    /// 已落定的名单。
+    Current,
+    /// 这次操作之后的名单：参与契约计算，随同一个操作落定（`PendingTarget::pool`）。
+    Next(PoolState),
+}
+
+/// 这个应用已落定的附加名单。
+fn settled_pool(app: &AppType) -> Result<PoolState, String> {
+    super::state::pool(&DeviceStore::for_device(), app.as_str()).map_err(err)
+}
+
+/// 发布给客户端的附加模型（路由那家跳过）。
+fn published_pool(
+    state: &AppState,
+    app: &AppType,
+    pool: &PoolState,
+    route: &Provider,
+) -> Result<Vec<PoolModel>, String> {
+    if pool.members.is_empty() || !pool::supports_pool(app) {
+        return Ok(Vec::new());
+    }
+    let members = pool::members(&state.db, app, pool).map_err(err)?;
+    Ok(pool::published(&members, Some(route.id.as_str())))
 }
 
 /// 只落定状态，不碰客户端文件（未接上时换路由、故障转移记下新路由等）。
@@ -188,12 +252,24 @@ async fn write_proxy(
     route: &Provider,
     live_now: &LiveNow,
     mut target: ModeState,
+    pool_input: PoolInput,
 ) -> Result<(), String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
+    let (pool, next_pool) = match pool_input {
+        PoolInput::Current => (settled_pool(app)?, None),
+        PoolInput::Next(next) => (next.clone(), Some(next)),
+    };
+    // 各应用把 `contract` 填进 `target` 之后，模式状态和新名单一起落定。
+    let pending = |target: ModeState| PendingTarget {
+        state: Some(target),
+        pool: next_pool.clone(),
+        ..PendingTarget::default()
+    };
     match app {
         AppType::Claude => {
-            let (projection, contract) = claude_contract(route, &proxy_url);
+            let published = published_pool(state, app, &pool, route)?;
+            let (projection, contract) = claude_contract(route, &proxy_url, &published);
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
@@ -201,7 +277,7 @@ async fn write_proxy(
                 &state.db,
                 op_name,
                 (!unchanged).then_some(&patch),
-                PendingTarget::mode(target),
+                pending(target),
             )
             .map_err(err)?;
         }
@@ -218,7 +294,7 @@ async fn write_proxy(
                 &state.db,
                 op_name,
                 (!unchanged).then_some(&projection),
-                PendingTarget::mode(target),
+                pending(target),
             )
             .map_err(err)?;
         }
@@ -233,7 +309,7 @@ async fn write_proxy(
             let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
             let unchanged = !force && live_now.has_contract(&planned.contract.key);
             target.contract = Some(planned.contract.clone());
-            let pending = PendingTarget::mode(target);
+            let pending = pending(target);
             if unchanged {
                 commit_state(state, app, &pending)?;
             } else {
@@ -256,7 +332,7 @@ async fn write_proxy(
                 op_name,
                 live_now.direct_owner(),
                 (!unchanged).then_some(&projection),
-                PendingTarget::mode(target),
+                pending(target),
             )
             .map_err(err)?;
         }
@@ -481,6 +557,7 @@ async fn enter_locked(state: &AppState, app: &AppType, op_name: &str) -> Result<
             proxy_route: Some(route.id.clone()),
             contract: None,
         },
+        PoolInput::Current,
     )
     .await?;
     state.proxy_service.set_active_target(app, &route).await;
@@ -620,7 +697,16 @@ pub async fn switch_route_locked(
         commit_state(state, app, &PendingTarget::mode(new_state))?;
     } else {
         let live_now = LiveNow::of(state, app, &mode)?;
-        write_proxy(state, app, op::ROUTE, target, &live_now, new_state).await?;
+        write_proxy(
+            state,
+            app,
+            op::ROUTE,
+            target,
+            &live_now,
+            new_state,
+            PoolInput::Current,
+        )
+        .await?;
     }
     state.proxy_service.set_active_target(app, target).await;
     Ok(())
@@ -651,6 +737,140 @@ pub fn reject_unsupported_official(app: &AppType, provider: &Provider) -> Result
         );
     }
     Ok(())
+}
+
+/// 增删附加模型失败。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolWriteError {
+    /// 已部分写入：客户端文件可能一半新一半旧，下次操作这个应用或重启 CC Switch 时按
+    /// pending 补完，最终是新名单。为假时什么都没改。
+    pub partial: bool,
+    pub message: String,
+}
+
+impl PoolWriteError {
+    fn unchanged(message: impl Into<String>) -> Self {
+        Self {
+            partial: false,
+            message: message.into(),
+        }
+    }
+}
+
+/// 附加模型不能是官方账号：Claude 官方订阅本来就不进代理；Codex 官方可以做路由，但它
+/// 靠客户端自己的登录做账号校验，不能当附加目标。
+fn reject_official_pool_member(app: &AppType, provider: &Provider) -> Result<(), String> {
+    let official = match app {
+        AppType::Codex => crate::proxy::providers::is_codex_official_provider(provider),
+        _ => provider.category.as_deref() == Some("official"),
+    };
+    if official {
+        return Err(
+            "官方账号不能作为附加模型 (An official account cannot be an attached model)"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// 增删一家附加供应商。`enabled` 是目标值，不是「切换一下」：以为失败又点一次时，先补完
+/// 上一次的操作再应用同一个目标值，结果是空操作，不会反过来撤销。
+///
+/// 代理模式且已接上时，新名单参与契约计算，和客户端文件在同一个操作里提交（契约没变就
+/// 只落定名单）；否则只落定名单，下次进入代理模式时生效。移除时 key 留在登记簿里。
+///
+/// 失败分两种（见 [`PoolWriteError::partial`]）：操作还没开始发布就失败，什么都没改；
+/// 已经开始发布，pending 留着等前滚。
+pub async fn set_pool_member(
+    state: &AppState,
+    app: &AppType,
+    provider_id: &str,
+    enabled: bool,
+) -> Result<Vec<PoolMemberView>, PoolWriteError> {
+    if !pool::supports_pool(app) {
+        return Err(PoolWriteError::unchanged(format!(
+            "{} 不支持附加模型 ({} does not support attached models)",
+            app.as_str(),
+            app.as_str()
+        )));
+    }
+    let _guard = lock_settled(state, app)
+        .await
+        .map_err(|error| PoolWriteError::unchanged(error.to_string()))?;
+    if let Err(message) = set_pool_member_locked(state, app, provider_id, enabled).await {
+        let partial = operation::pending_published(&DeviceStore::for_device(), app.as_str())
+            .unwrap_or_else(|error| {
+                log::warn!("读取 {} 的写前意图失败: {error}", app.as_str());
+                None
+            })
+            == Some(true);
+        return Err(PoolWriteError { partial, message });
+    }
+    pool_views(state, app).map_err(PoolWriteError::unchanged)
+}
+
+async fn set_pool_member_locked(
+    state: &AppState,
+    app: &AppType,
+    provider_id: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let current = settled_pool(app)?;
+    let mut next = current.clone();
+    if enabled {
+        let target = provider(state, app, provider_id)?
+            .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+        reject_official_pool_member(app, &target)?;
+        pool::allocate_key(&mut next, &target);
+        if !next.is_member(provider_id) {
+            next.members.push(provider_id.to_string());
+        }
+    } else {
+        next.members.retain(|id| id != provider_id);
+    }
+    if next == current {
+        return Ok(());
+    }
+
+    let mode = current::mode_state(app);
+    let route = if mode.is_proxy() && mode.attached {
+        route_provider(state, app, &mode)?
+    } else {
+        None
+    };
+    match route {
+        Some(route) => {
+            let live_now = LiveNow::of(state, app, &mode)?;
+            write_proxy(
+                state,
+                app,
+                op::POOL,
+                &route,
+                &live_now,
+                mode,
+                PoolInput::Next(next),
+            )
+            .await
+        }
+        None => commit_state(
+            state,
+            app,
+            &PendingTarget {
+                pool: Some(next),
+                ..PendingTarget::default()
+            },
+        ),
+    }
+}
+
+/// 名单里的每一家和它发布的模型 id（给前端）。
+pub fn pool_views(state: &AppState, app: &AppType) -> Result<Vec<PoolMemberView>, String> {
+    if !pool::supports_pool(app) {
+        return Ok(Vec::new());
+    }
+    let members = pool::members(&state.db, app, &settled_pool(app)?).map_err(err)?;
+    Ok(pool::member_views(&members))
 }
 
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
@@ -876,7 +1096,7 @@ mod tests {
 
     /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
     fn takeover(live: &Value, provider: &Provider) -> Value {
-        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721");
+        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[]);
         let mut doc = live.clone();
         direct_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -4108,5 +4328,242 @@ model_provider = "c"
         add_from_editor(&state, AppType::GrokBuild, draft, edited, view.settings).expect("add b");
         assert_eq!(grok_doc()["models"]["default"].as_str(), Some("grok-4.5"));
         assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+    }
+
+    // ---- 附加模型（`mode::pool`） ----
+
+    fn pool_rows() -> [Provider; 3] {
+        [
+            claude("a", "https://a.example", json!({})),
+            claude(
+                "kimi",
+                "https://kimi.example",
+                json!({
+                    "ANTHROPIC_MODEL": "kimi-k3",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "128000"
+                }),
+            ),
+            claude(
+                "zhipu",
+                "https://zhipu.example",
+                json!({ "ANTHROPIC_MODEL": "glm-5.2[1M]" }),
+            ),
+        ]
+    }
+
+    fn pool_state() -> PoolState {
+        state::pool(&DeviceStore::for_device(), "claude").unwrap()
+    }
+
+    async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<PoolMemberView> {
+        set_pool_member(state, &AppType::Claude, id, enabled)
+            .await
+            .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"))
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn attached_models_join_the_claude_contract_and_leave_with_it() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        enter(&state, &AppType::Claude).await.expect("enter");
+        let plain_bytes = fs::read(settings_path()).unwrap();
+        let plain_contract = mode(&AppType::Claude).contract.unwrap();
+
+        let views = set_member(&state, "kimi", true).await;
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].key, "kimi");
+        assert_eq!(views[0].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
+        let env = settings()["env"].clone();
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
+        assert_eq!(
+            mode(&AppType::Claude).contract.unwrap().exclusive[CLAUDE_MAX_CONTEXT_ENV],
+            "128000"
+        );
+
+        // 1M 的附加模型不影响 MAX。
+        set_member(&state, "zhipu", true).await;
+        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
+        set_member(&state, "kimi", false).await;
+        let env = settings()["env"].clone();
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+
+        // 名单清空：客户端文件和契约回到没有附加模型时的样子，登记簿保留。
+        set_member(&state, "zhipu", false).await;
+        assert_eq!(fs::read(settings_path()).unwrap(), plain_bytes);
+        assert_eq!(mode(&AppType::Claude).contract.unwrap(), plain_contract);
+        let pool = pool_state();
+        assert!(pool.members.is_empty());
+        assert_eq!(pool.key_of("kimi"), Some("kimi"));
+        assert_eq!(pool.key_of("zhipu"), Some("zhipu"));
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn attached_models_leave_the_client_file_on_exit_and_come_back_on_enter() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+
+        // 不在代理模式：只存名单，客户端文件不动。
+        set_member(&state, "kimi", true).await;
+        assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
+        assert!(pool_state().is_member("kimi"));
+
+        enter(&state, &AppType::Claude).await.expect("enter");
+        assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
+        assert!(
+            pool_state().is_member("kimi"),
+            "the list outlives proxy mode"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn the_route_is_not_published_and_repeating_a_target_changes_nothing() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        enter(&state, &AppType::Claude).await.expect("enter");
+        let before = fs::read(settings_path()).unwrap();
+
+        // 路由那家在名单里：它的模型已经通过默认路由出现，不再发布，契约不变。
+        let views = set_member(&state, "a", true).await;
+        assert_eq!(views.len(), 1);
+        assert_eq!(fs::read(settings_path()).unwrap(), before);
+
+        set_member(&state, "kimi", true).await;
+        let with_kimi = fs::read(settings_path()).unwrap();
+        set_member(&state, "kimi", true).await;
+        assert_eq!(fs::read(settings_path()).unwrap(), with_kimi);
+        assert_eq!(pool_state().members, vec!["a", "kimi"]);
+
+        // 换路由到名单里的 kimi：它不再发布，a 的模型开始发布。
+        ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
+        let env = settings()["env"].clone();
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn official_accounts_cannot_be_attached() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let mut official = claude("official", "https://api.anthropic.com", json!({}));
+        official.category = Some("official".to_string());
+        let rows = [claude("a", "https://a.example", json!({})), official];
+        let state = state_with(AppType::Claude, &rows, "a").await;
+        let error = set_pool_member(&state, &AppType::Claude, "official", true)
+            .await
+            .expect_err("official");
+        assert!(!error.partial);
+        assert!(pool_state().is_empty());
+        let error = set_pool_member(&state, &AppType::Claude, "missing", true)
+            .await
+            .expect_err("missing");
+        assert!(!error.partial);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn a_failed_pool_change_says_whether_it_will_be_finished() {
+        for (point, partial) in [
+            ("pending", false),
+            ("marked", true),
+            ("published:0", true),
+            ("target", true),
+        ] {
+            let _home = Home::new();
+            seed_settings(USER_SETTINGS);
+            let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+            enter(&state, &AppType::Claude).await.expect("enter");
+
+            failpoint::crash_at(Some(point));
+            let error = set_pool_member(&state, &AppType::Claude, "kimi", true)
+                .await
+                .expect_err(point);
+            failpoint::crash_at(None);
+            assert_eq!(error.partial, partial, "{point}: {error:?}");
+            // 状态落定之前失败，已落定的名单还是旧的。
+            assert_eq!(pool_state().is_member("kimi"), point == "target", "{point}");
+
+            // 再发一次同样的目标值：先补完（或丢弃）上一次，再应用，结果都是新名单。
+            set_member(&state, "kimi", true).await;
+            assert!(pool_state().is_member("kimi"), "{point}");
+            assert_eq!(
+                settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV],
+                "1",
+                "{point}"
+            );
+            assert!(state::pending(&DeviceStore::for_device(), "claude")
+                .unwrap()
+                .is_none());
+            state.proxy_service.stop().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn operations_that_do_not_touch_the_list_keep_it() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        set_member(&state, "kimi", true).await;
+        let pool = pool_state();
+
+        // 一个不带 `pool` 的 pending（旧版本写的、或者换路由这类操作）前滚时不清名单。
+        commit_state(
+            &state,
+            &AppType::Claude,
+            &PendingTarget::mode(mode(&AppType::Claude)),
+        )
+        .unwrap();
+        enter(&state, &AppType::Claude).await.expect("enter");
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_eq!(pool_state(), pool);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn editing_or_deleting_an_attached_provider_rewrites_the_contract() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        enter(&state, &AppType::Claude).await.expect("enter");
+        set_member(&state, "kimi", true).await;
+
+        let mut kimi = state
+            .db
+            .get_provider_by_id("kimi", "claude")
+            .unwrap()
+            .unwrap();
+        kimi.settings_config["env"][CLAUDE_MAX_CONTEXT_ENV] = json!("64000");
+        ProviderService::update(&state, AppType::Claude, None, kimi).expect("update kimi");
+        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "64000");
+
+        ProviderService::delete(&state, AppType::Claude, "kimi").expect("delete kimi");
+        let env = settings()["env"].clone();
+        assert!(env.get(CLAUDE_GATEWAY_DISCOVERY_ENV).is_none(), "{env}");
+        assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+        assert!(state
+            .db
+            .get_provider_by_id("kimi", "claude")
+            .unwrap()
+            .is_none());
+        let pool = pool_state();
+        assert!(pool.members.is_empty());
+        assert_eq!(pool.key_of("kimi"), Some("kimi"), "the key stays taken");
     }
 }

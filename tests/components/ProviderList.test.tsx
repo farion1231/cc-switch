@@ -307,6 +307,120 @@ describe("ProviderList Component", () => {
     expect(lastProps("b")?.isDirectProvider).toBe(false);
   });
 
+  it("offers attached models for third-party providers in Claude routing mode", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    const kimi = createProvider({ id: "kimi", name: "Kimi" });
+    const other = createProvider({ id: "other", name: "Other" });
+    const official = createProvider({
+      id: "official",
+      name: "Official",
+      category: "official",
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, kimi, other, official],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const setCalls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+        HttpResponse.json([
+          {
+            providerId: "kimi",
+            key: "kimi",
+            modelIds: ["ccs-claude-kimi--kimi-k3"],
+          },
+        ]),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_pool_member`,
+        async ({ request }) => {
+          setCalls.push(await request.json());
+          return HttpResponse.json([]);
+        },
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, kimi, other, official }}
+        currentProviderId="route"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    const lastProps = (id: string) =>
+      providerCardRenderSpy.mock.calls
+        .map((call) => call[0])
+        .filter((props) => props.provider.id === id)
+        .at(-1);
+    await waitFor(() => expect(lastProps("kimi")?.isPoolMember).toBe(true));
+    expect(lastProps("kimi")?.poolModelIds).toEqual([
+      "ccs-claude-kimi--kimi-k3",
+    ]);
+    expect(lastProps("other")?.isPoolMember).toBe(false);
+    expect(lastProps("other")?.onTogglePool).toBeTypeOf("function");
+    // 路由那家的模型已经在默认路由里；官方账号不能附加。
+    expect(lastProps("route")?.onTogglePool).toBeUndefined();
+    expect(lastProps("official")?.onTogglePool).toBeUndefined();
+
+    lastProps("kimi")?.onTogglePool(false);
+    await waitFor(() => expect(setCalls).toHaveLength(1));
+    expect(setCalls[0]).toEqual({
+      appType: "claude",
+      providerId: "kimi",
+      enabled: false,
+    });
+  });
+
+  it("hides attached models outside routing mode and for apps without them", async () => {
+    const provider = createProvider({ id: "a", name: "A" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    let poolReads = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () => {
+        poolReads += 1;
+        return HttpResponse.json([]);
+      }),
+    );
+
+    for (const [appId, isProxyTakeover] of [
+      ["claude", false],
+      ["codex", true],
+    ] as const) {
+      providerCardRenderSpy.mockClear();
+      const { unmount } = renderWithQueryClient(
+        <ProviderList
+          providers={{ a: provider }}
+          currentProviderId="b"
+          appId={appId}
+          isProxyTakeover={isProxyTakeover}
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+      const props = providerCardRenderSpy.mock.calls.at(-1)?.[0];
+      expect(props?.onTogglePool, appId).toBeUndefined();
+      expect(props?.isPoolMember, appId).toBe(false);
+      unmount();
+    }
+    expect(poolReads).toBe(0);
+  });
+
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });

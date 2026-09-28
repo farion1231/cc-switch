@@ -42,6 +42,8 @@ pub const CLAUDE_FLOOR_ENV_KEYS: &[&str] = &[
     "CLAUDE_CODE_OAUTH_SCOPES",
     // 与顶层 apiKeyHelper 配套。
     "CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+    // 向 ANTHROPIC_BASE_URL 取模型列表：属于当时指向的那个网关（代理模式下是附加模型）。
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
 ];
 
 /// Claude Code `settings.json` 的 `env` 里，这个键是否是关键字段。

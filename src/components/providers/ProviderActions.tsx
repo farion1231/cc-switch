@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Copy,
   Edit,
+  Layers,
   Loader2,
   Minus,
   Play,
@@ -24,7 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { AppId } from "@/lib/api";
-import { isAdditiveAppId } from "@/config/appConfig";
+import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
 
 interface OpenClawDefaultModelOption {
   id: string;
@@ -50,6 +51,9 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
+  // 附加模型：有值时显示开关（路由模式下的第三方供应商，路由那家除外）
+  isPoolMember?: boolean;
+  onTogglePool?: (enabled: boolean) => void;
   isOfficialBlockedByProxy?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
@@ -92,6 +96,8 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
+  isPoolMember = false,
+  onTogglePool,
   isOfficialBlockedByProxy = false,
   isReadOnly = false,
   // OpenClaw: default model
@@ -385,6 +391,37 @@ export function ProviderActions({
       </span>
 
       <div className="flex items-center gap-1">
+        {onTogglePool && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => onTogglePool(!isPoolMember)}
+            aria-pressed={isPoolMember}
+            aria-label={
+              isPoolMember
+                ? t("provider.poolDetach")
+                : t("provider.poolAttach", {
+                    client: getAppLabel(appId ?? ""),
+                  })
+            }
+            title={
+              isPoolMember
+                ? t("provider.poolDetach")
+                : t("provider.poolAttach", {
+                    client: getAppLabel(appId ?? ""),
+                  })
+            }
+            className={cn(
+              iconButtonClass,
+              isPoolMember
+                ? "text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+                : "hover:text-violet-600 dark:hover:text-violet-400",
+            )}
+          >
+            <Layers className="h-4 w-4" />
+          </Button>
+        )}
+
         <Button
           size="icon"
           variant="ghost"

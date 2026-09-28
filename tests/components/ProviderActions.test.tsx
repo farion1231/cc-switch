@@ -148,3 +148,73 @@ describe("ProviderActions Pi provider switching", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ProviderActions attached models", () => {
+  it("offers the toggle only when the caller passes one", () => {
+    const { rerender } = render(
+      <ProviderActions
+        appId="claude"
+        isCurrent={false}
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "provider.poolAttach" }),
+    ).toBeNull();
+
+    const onTogglePool = vi.fn();
+    rerender(
+      <ProviderActions
+        appId="claude"
+        isCurrent={false}
+        isProxyTakeover
+        onTogglePool={onTogglePool}
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    const attach = screen.getByRole("button", { name: "provider.poolAttach" });
+    expect(attach.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("asks for the opposite of the current membership", async () => {
+    const user = userEvent.setup();
+    const onTogglePool = vi.fn();
+    const { rerender } = render(
+      <ProviderActions
+        appId="claude"
+        isCurrent={false}
+        isProxyTakeover
+        onTogglePool={onTogglePool}
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "provider.poolAttach" }),
+    );
+    expect(onTogglePool).toHaveBeenLastCalledWith(true);
+
+    rerender(
+      <ProviderActions
+        appId="claude"
+        isCurrent={false}
+        isProxyTakeover
+        isPoolMember
+        onTogglePool={onTogglePool}
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    const detach = screen.getByRole("button", { name: "provider.poolDetach" });
+    expect(detach.getAttribute("aria-pressed")).toBe("true");
+    await user.click(detach);
+    expect(onTogglePool).toHaveBeenLastCalledWith(false);
+  });
+});

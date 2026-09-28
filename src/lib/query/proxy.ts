@@ -5,8 +5,11 @@ import { useTranslation } from "react-i18next";
 import type {
   GlobalProxyConfig,
   AppProxyConfig,
+  ProxyPoolWriteError,
   ProxyTakeoverStatus,
 } from "@/types/proxy";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { getAppLabel } from "@/config/appConfig";
 
 export const proxyKeys = {
   status: ["proxyStatus"] as const,
@@ -57,6 +60,77 @@ export function useDirectProviderId(appType: string, enabled: boolean) {
     queryKey: ["providers", appType, "direct"] as const,
     queryFn: () => proxyApi.getDirectProvider(appType),
     enabled,
+  });
+}
+
+/**
+ * 附加模型名单。放在 ["providers", appId] 前缀下：编辑、删除供应商时随列表一起失效。
+ */
+export function useProxyPool(appType: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["providers", appType, "pool"] as const,
+    queryFn: () => proxyApi.getProxyPool(appType),
+    enabled,
+  });
+}
+
+function isPoolWriteError(error: unknown): error is ProxyPoolWriteError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as ProxyPoolWriteError).partial === "boolean"
+  );
+}
+
+/**
+ * 把一家加入或移出附加模型。客户端只在启动时读模型列表，成功后提示重启。失败分两种：
+ * 什么都没改（弹后端的错误），已部分写入（下次操作或重启 CC Switch 时补完）。两种都按
+ * 后端的状态重新显示，不在前端假设名单不变。
+ */
+export function useSetProxyPoolMember() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+      enabled,
+    }: {
+      appType: string;
+      providerId: string;
+      enabled: boolean;
+    }) => proxyApi.setProxyPoolMember(appType, providerId, enabled),
+    onSuccess: (_data, variables) => {
+      toast.success(
+        t("provider.poolSaved", {
+          client: getAppLabel(variables.appType),
+        }),
+        {
+          description: variables.enabled
+            ? t("provider.poolReselectHint")
+            : undefined,
+          closeButton: true,
+        },
+      );
+    },
+    onError: (error: unknown) => {
+      if (isPoolWriteError(error) && error.partial) {
+        toast.warning(t("provider.poolPartial"), {
+          description: error.message,
+          closeButton: true,
+        });
+        return;
+      }
+      toast.error(
+        t("provider.poolFailed", { error: extractErrorMessage(error) }),
+      );
+    },
+    onSettled: (_data, _error, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
+    },
   });
 }
 

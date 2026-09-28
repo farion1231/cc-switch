@@ -106,6 +106,10 @@ let settingsState: Settings = {
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
+
+/** 附加模型：每个应用的名单（后端 `get_proxy_pool` 的形状）。 */
+type PoolMember = { providerId: string; key: string; modelIds: string[] };
+let poolState: Partial<Record<AppId, PoolMember[]>> = {};
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
@@ -227,6 +231,7 @@ export const resetProviderState = () => {
     language: "zh",
   };
   appConfigDirOverride = null;
+  poolState = {};
   mcpConfigs = {
     claude: {
       sample: {
@@ -442,4 +447,22 @@ export const setSessionFixtures = (
     string,
     SessionMessage[]
   >;
+};
+
+export const getProxyPool = (appType: AppId) =>
+  deepClone(poolState[appType] ?? []) as PoolMember[];
+
+export const setProxyPoolMember = (
+  appType: AppId,
+  providerId: string,
+  enabled: boolean,
+) => {
+  const members = (poolState[appType] ?? []).filter(
+    (member) => member.providerId !== providerId,
+  );
+  if (enabled) {
+    members.push({ providerId, key: providerId, modelIds: [] });
+  }
+  poolState[appType] = members;
+  return getProxyPool(appType);
 };

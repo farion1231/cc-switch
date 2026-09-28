@@ -48,7 +48,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
-import { useDirectProviderId } from "@/lib/query/proxy";
+import {
+  useDirectProviderId,
+  useProxyPool,
+  useSetProxyPoolMember,
+} from "@/lib/query/proxy";
 import { isProxyAppId } from "@/config/appConfig";
 
 interface ProviderListProps {
@@ -171,6 +175,19 @@ export function ProviderList({
   const { data: directProviderId } = useDirectProviderId(
     appId,
     supportsFailover && isProxyTakeover === true,
+  );
+
+  // 附加模型：路由模式下把第三方供应商的模型挂进客户端的模型选择器（Codex 在后续版本）。
+  const isPoolActive = appId === "claude" && isProxyTakeover === true;
+  const { data: poolMembers } = useProxyPool(appId, isPoolActive);
+  const setPoolMember = useSetProxyPoolMember();
+  const poolModelIdsOf = useCallback(
+    (providerId: string): string[] | undefined =>
+      isPoolActive
+        ? poolMembers?.find((member) => member.providerId === providerId)
+            ?.modelIds
+        : undefined,
+    [isPoolActive, poolMembers],
   );
 
   const isOpenCode = appId === "opencode";
@@ -466,6 +483,13 @@ export function ProviderList({
                     : appId === "hermes"
                       ? isHermesCurrent
                       : provider.id === currentProviderId;
+            const poolModelIds = poolModelIdsOf(provider.id);
+            const isPoolMember = poolModelIds !== undefined;
+            // 路由那家的模型已经在默认路由里，不再附加；已经在名单里的仍可移出。
+            const showPoolToggle =
+              isPoolActive &&
+              provider.category !== "official" &&
+              (!isCurrent || isPoolMember);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -509,6 +533,18 @@ export function ProviderList({
                 }
                 activeProviderId={
                   supportsFailover ? activeProviderId : undefined
+                }
+                isPoolMember={isPoolMember}
+                poolModelIds={poolModelIds}
+                onTogglePool={
+                  showPoolToggle
+                    ? (enabled) =>
+                        setPoolMember.mutate({
+                          appType: appId,
+                          providerId: provider.id,
+                          enabled,
+                        })
+                    : undefined
                 }
                 isDefaultModel={
                   appId === "hermes"
@@ -662,6 +698,9 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover?: (enabled: boolean) => void;
   activeProviderId?: string;
+  isPoolMember: boolean;
+  poolModelIds?: string[];
+  onTogglePool?: (enabled: boolean) => void;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -696,6 +735,9 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
+  isPoolMember,
+  poolModelIds,
+  onTogglePool,
   isDefaultModel,
   isRemovalProtected,
   isStateChangeProtected,
@@ -751,6 +793,9 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
+        isPoolMember={isPoolMember}
+        poolModelIds={poolModelIds}
+        onTogglePool={onTogglePool}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         isRemovalProtected={isRemovalProtected}
