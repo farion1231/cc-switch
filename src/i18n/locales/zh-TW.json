@@ -2623,6 +2623,7 @@
     "discover": "發現技能",
     "import": "匯入已有",
     "importDescription": "選擇要匯入至 CC Switch 統一管理的技能",
+    "providedByPlugin": "由外掛 {{plugin}} 提供，歸 Claude Code 管理，不可匯入",
     "importSuccess": "成功匯入 {{count}} 個技能",
     "importSelected": "匯入已選 ({{count}})",
     "noUnmanagedFound": "未發現需要匯入的技能。所有技能已在 CC Switch 統一管理中。",

@@ -265,6 +265,12 @@ pub struct UnmanagedSkill {
     pub found_in: Vec<String>,
     /// 发现路径（首个匹配的完整路径）
     pub path: String,
+    /// 只读来源：由外部系统（如 Claude Code 插件）管理，不可导入到 SSOT
+    #[serde(default)]
+    pub read_only: bool,
+    /// 提供该 skill 的插件标识（`plugin@marketplace`），仅插件来源有值
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
 }
 
 /// MCP 服务器定义（v3.7.0 统一结构）

@@ -2622,6 +2622,7 @@
     "discover": "スキルを発見",
     "import": "既存をインポート",
     "importDescription": "CC Switch 統合管理にインポートするスキルを選択してください",
+    "providedByPlugin": "プラグイン {{plugin}} が提供 — Claude Code が管理するためインポートできません",
     "importSuccess": "{{count}} 件のスキルをインポートしました",
     "importSelected": "選択をインポート ({{count}})",
     "noUnmanagedFound": "インポートするスキルが見つかりませんでした。すべてのスキルは CC Switch で管理されています。",
