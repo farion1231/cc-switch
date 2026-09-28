@@ -4814,13 +4814,18 @@ impl ProviderService {
         state: &AppState,
         provider: &Provider,
         write_live: bool,
+        create: bool,
     ) -> Result<bool, AppError> {
         let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
         state.db.save_provider("mcode", provider)?;
         if write_live {
-            if let Err(error) =
-                crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())
-            {
+            let config = provider.settings_config.clone();
+            let written = if create {
+                crate::mcode_config::add_provider(&provider.id, config)
+            } else {
+                crate::mcode_config::set_provider(&provider.id, config)
+            };
+            if let Err(error) = written {
                 match previous {
                     Some(previous) => state.db.save_provider("mcode", &previous)?,
                     None => state.db.delete_provider("mcode", &provider.id)?,
@@ -4859,7 +4864,23 @@ impl ProviderService {
         }
 
         if app_type == AppType::Mcode {
-            return Self::save_mcode_provider(state, &provider, add_to_live);
+            // The key is user-chosen, and saving would overwrite an existing row or live node.
+            // Adds are serialized here; the live write repeats the check under MCode's file lock.
+            let _guard = futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            );
+            if state
+                .db
+                .get_provider_by_id(&provider.id, "mcode")?
+                .is_some()
+                || crate::mcode_config::provider_key_exists(&provider.id)?
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "MCode provider key '{}' already exists",
+                    provider.id
+                )));
+            }
+            return Self::save_mcode_provider(state, &provider, add_to_live, true);
         }
 
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
@@ -5494,7 +5515,7 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
             if app_type == AppType::Mcode {
-                return Self::save_mcode_provider(state, &provider, live_config_managed);
+                return Self::save_mcode_provider(state, &provider, live_config_managed, false);
             }
 
             // Save to database after live-config presence is resolved so parse errors

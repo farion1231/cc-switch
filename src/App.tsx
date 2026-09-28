@@ -887,6 +887,13 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+    } else if (activeApp === "mcode") {
+      // The MCode list already includes its live custom nodes; the backend
+      // rejects a key that MCode itself owns.
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
     }
 
     if (provider.sortIndex !== undefined) {
