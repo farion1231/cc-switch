@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,9 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import {
-  providersApi,
-  settingsApi,
-  type AppId,
-  type ManagedAuthProvider,
-} from "@/lib/api";
+import { providersApi, type AppId, type ManagedAuthProvider } from "@/lib/api";
+import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { overlayClaudeProviderFields } from "@/utils/claudeEditorOverlay";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -71,7 +68,6 @@ import {
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
-import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -90,23 +86,18 @@ import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
-  ProviderAdvancedConfig,
-  type PricingModelSourceOption,
-} from "./ProviderAdvancedConfig";
-import {
   useProviderCategory,
+  useDraftEditorProjection,
+  type EditorBaseChange,
   useApiKeyState,
   useBaseUrlState,
   useModelState,
   useCodexConfigState,
   useApiKeyLink,
   useTemplateValues,
-  useCommonConfigSnippet,
-  useCodexCommonConfig,
   useSpeedTestEndpoints,
   useCodexTomlValidation,
   useGeminiConfigState,
-  useGeminiCommonConfig,
   useOmoModelSource,
   useOpencodeFormState,
   useOmoDraftState,
@@ -117,14 +108,12 @@ import {
   useXaiOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { useSettingsQuery } from "@/lib/query";
 import {
   CLAUDE_DEFAULT_CONFIG,
   CODEX_DEFAULT_CONFIG,
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
-  normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -244,6 +233,11 @@ const normalizeCodexChatReasoningForSave = (
 const normalizeProviderKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
 type LocalProxyRequestOverridesBuildResult = ReturnType<
   typeof buildLocalProxyRequestOverrides
 >;
@@ -271,6 +265,18 @@ export interface ProviderFormProps {
   };
   showButtons?: boolean;
   isProxyTakeover?: boolean;
+  /** 编辑器里行保存着、但不随切换生效的字段（Claude Code、Codex、Gemini CLI、Grok Build）。 */
+  inactiveFields?: ProviderEditorInactiveField[];
+  /**
+   * Claude 新增：当前 live 去掉当前供应商的关键字段后的样子。预设的关键字段套在它上面
+   * 显示，保存时其余部分的改动写进 live。
+   */
+  claudeLiveBase?: Record<string, unknown>;
+  /**
+   * Codex、Gemini CLI、Grok Build 新增：预设或模板投影到当前配置文件上之后的内容，保存时
+   * 作为三方比较的底；投影进行中或失败时为 `null`。
+   */
+  onEditorBaseChange?: EditorBaseChange;
 }
 
 export function ProviderForm(props: ProviderFormProps) {
@@ -301,6 +307,9 @@ function ProviderFormFull({
   initialData,
   showButtons = true,
   isProxyTakeover = false,
+  inactiveFields,
+  claudeLiveBase,
+  onEditorBaseChange,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
@@ -320,23 +329,7 @@ function ProviderFormFull({
   const hasExistingCodexOfficialIdentity =
     initialCodexOfficialIdentity !== null &&
     initialCodexOfficialIdentity !== "api_key";
-  const queryClient = useQueryClient();
-  const { data: settingsData } = useSettingsQuery();
-  const showCommonConfigNotice =
-    settingsData != null && settingsData.commonConfigConfirmed !== true;
   const isDarkMode = useDarkMode();
-
-  const handleCommonConfigConfirm = async () => {
-    try {
-      if (settingsData) {
-        const { webdavSync: _, ...rest } = settingsData;
-        await settingsApi.save({ ...rest, commonConfigConfirmed: true });
-        await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      }
-    } catch (error) {
-      console.error("Failed to save commonConfigConfirmed:", error);
-    }
-  };
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
@@ -367,20 +360,6 @@ function ProviderFormFull({
     return initialData?.meta?.isFullUrl ?? false;
   });
 
-  const [pricingConfig, setPricingConfig] = useState<{
-    enabled: boolean;
-    costMultiplier?: string;
-    pricingModelSource: PricingModelSourceOption;
-  }>(() => ({
-    enabled:
-      initialData?.meta?.costMultiplier !== undefined ||
-      initialData?.meta?.pricingModelSource !== undefined,
-    costMultiplier: initialData?.meta?.costMultiplier,
-    pricingModelSource: normalizePricingSource(
-      initialData?.meta?.pricingModelSource,
-    ),
-  }));
-
   const { category } = useProviderCategory({
     appId,
     selectedPresetId,
@@ -404,15 +383,6 @@ function ProviderFormFull({
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
-    setPricingConfig({
-      enabled:
-        initialData?.meta?.costMultiplier !== undefined ||
-        initialData?.meta?.pricingModelSource !== undefined,
-      costMultiplier: initialData?.meta?.costMultiplier,
-      pricingModelSource: normalizePricingSource(
-        initialData?.meta?.pricingModelSource,
-      ),
-    });
     setSelectedGitHubAccountId(
       resolveManagedAccountId(initialData?.meta, "github_copilot"),
     );
@@ -443,21 +413,30 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "codex"
-          ? CODEX_DEFAULT_CONFIG
-          : appId === "gemini"
-            ? GEMINI_DEFAULT_CONFIG
-            : appId === "opencode"
-              ? OPENCODE_DEFAULT_CONFIG
-              : appId === "openclaw"
-                ? OPENCLAW_DEFAULT_CONFIG
-                : appId === "hermes"
-                  ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+        : appId === "claude" && claudeLiveBase
+          ? JSON.stringify(
+              overlayClaudeProviderFields(
+                claudeLiveBase,
+                JSON.parse(CLAUDE_DEFAULT_CONFIG) as Record<string, unknown>,
+              ),
+              null,
+              2,
+            )
+          : appId === "codex"
+            ? CODEX_DEFAULT_CONFIG
+            : appId === "gemini"
+              ? GEMINI_DEFAULT_CONFIG
+              : appId === "opencode"
+                ? OPENCODE_DEFAULT_CONFIG
+                : appId === "openclaw"
+                  ? OPENCLAW_DEFAULT_CONFIG
+                  : appId === "hermes"
+                    ? HERMES_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
-    [initialData, appId],
+    [initialData, appId, claudeLiveBase],
   );
 
   const form = useForm<ProviderFormData>({
@@ -718,14 +697,32 @@ function ProviderFormFull({
     [setCodexConfig, debouncedValidate],
   );
 
+  // 新增：预设或模板投影到当前配置文件上显示。每次重置显示内容都要重新投影，否则保存时
+  // 三方比较的底和显示内容对不上。
+  const { projectDraft } = useDraftEditorProjection(appId, onEditorBaseChange);
+  const projectCodexDraft = useCallback(
+    (auth: Record<string, unknown>, config: string, category?: string) =>
+      projectDraft({ auth, config }, category, (shown) =>
+        setCodexConfig(typeof shown.config === "string" ? shown.config : ""),
+      ),
+    [projectDraft, setCodexConfig],
+  );
+
   useEffect(() => {
     if (appId === "codex" && !initialData && selectedPresetId === "custom") {
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
+      projectCodexDraft(template.auth, template.config);
     }
-  }, [appId, initialData, selectedPresetId, resetCodexConfig]);
+  }, [
+    appId,
+    initialData,
+    selectedPresetId,
+    resetCodexConfig,
+    projectCodexDraft,
+  ]);
 
   useEffect(() => {
     form.reset(defaultValues);
@@ -836,42 +833,6 @@ function ProviderFormFull({
   });
 
   const {
-    useCommonConfig,
-    commonConfigSnippet,
-    commonConfigError,
-    handleCommonConfigToggle,
-    handleCommonConfigSnippetChange,
-    isExtracting: isClaudeExtracting,
-    handleExtract: handleClaudeExtract,
-  } = useCommonConfigSnippet({
-    settingsConfig: form.getValues("settingsConfig"),
-    onConfigChange: handleSettingsConfigChange,
-    initialData: appId === "claude" ? initialData : undefined,
-    initialEnabled:
-      appId === "claude" ? initialData?.meta?.commonConfigEnabled : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-    enabled: appId === "claude",
-  });
-
-  const {
-    useCommonConfig: useCodexCommonConfigFlag,
-    commonConfigSnippet: codexCommonConfigSnippet,
-    commonConfigError: codexCommonConfigError,
-    handleCommonConfigToggle: handleCodexCommonConfigToggle,
-    handleCommonConfigSnippetChange: handleCodexCommonConfigSnippetChange,
-    isExtracting: isCodexExtracting,
-    handleExtract: handleCodexExtract,
-    clearCommonConfigError: clearCodexCommonConfigError,
-  } = useCodexCommonConfig({
-    codexConfig,
-    onConfigChange: handleCodexConfigChange,
-    initialData: appId === "codex" ? initialData : undefined,
-    initialEnabled:
-      appId === "codex" ? initialData?.meta?.commonConfigEnabled : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-  });
-
-  const {
     geminiEnv,
     geminiConfig,
     geminiApiKey,
@@ -886,10 +847,31 @@ function ProviderFormFull({
     handleGeminiConfigChange,
     resetGeminiConfig,
     envStringToObj,
-    envObjToString,
   } = useGeminiConfigState({
     initialData: appId === "gemini" ? initialData : undefined,
   });
+
+  const projectGeminiDraft = useCallback(
+    (
+      env: Record<string, unknown>,
+      config: Record<string, unknown>,
+      category?: string,
+    ) =>
+      projectDraft({ env, config }, category, (shown) =>
+        resetGeminiConfig(asRecord(shown.env), asRecord(shown.config)),
+      ),
+    [projectDraft, resetGeminiConfig],
+  );
+  // resetGeminiConfig 随编辑内容变，不能放进下面的依赖，否则每次编辑都会重新投影、冲掉
+  // 输入；只在打开和切回「自定义」时投影。
+  const projectGeminiDraftRef = useRef(projectGeminiDraft);
+  projectGeminiDraftRef.current = projectGeminiDraft;
+
+  useEffect(() => {
+    if (appId === "gemini" && !initialData && selectedPresetId === "custom") {
+      projectGeminiDraftRef.current({}, {});
+    }
+  }, [appId, initialData, selectedPresetId]);
 
   const updateGeminiEnvField = useCallback(
     (
@@ -936,26 +918,6 @@ function ProviderFormFull({
     },
     [originalHandleGeminiModelChange, updateGeminiEnvField],
   );
-
-  const {
-    useCommonConfig: useGeminiCommonConfigFlag,
-    commonConfigSnippet: geminiCommonConfigSnippet,
-    commonConfigError: geminiCommonConfigError,
-    handleCommonConfigToggle: handleGeminiCommonConfigToggle,
-    handleCommonConfigSnippetChange: handleGeminiCommonConfigSnippetChange,
-    isExtracting: isGeminiExtracting,
-    handleExtract: handleGeminiExtract,
-    clearCommonConfigError: clearGeminiCommonConfigError,
-  } = useGeminiCommonConfig({
-    envValue: geminiEnv,
-    onEnvChange: handleGeminiEnvChange,
-    envStringToObj,
-    envObjToString,
-    initialData: appId === "gemini" ? initialData : undefined,
-    initialEnabled:
-      appId === "gemini" ? initialData?.meta?.commonConfigEnabled : undefined,
-    selectedPresetId: selectedPresetId ?? undefined,
-  });
 
   // ── Extracted hooks: OpenCode / OMO / OpenClaw ─────────────────────
 
@@ -1108,8 +1070,6 @@ function ProviderFormFull({
     providerId,
   ]);
 
-  const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
-
   const shouldApplyLocalProxyRequestOverrides =
     (appId === "claude" || appId === "codex") && category !== "official";
 
@@ -1153,20 +1113,6 @@ function ProviderFormFull({
           defaultValue: "请填写供应商名称",
         }),
       );
-    }
-
-    const costMultiplier = pricingConfig.costMultiplier?.trim();
-    if (
-      pricingConfig.enabled &&
-      costMultiplier &&
-      !isNonNegativeDecimalString(costMultiplier)
-    ) {
-      toast.error(
-        t("settings.globalProxy.defaultCostMultiplierInvalid", {
-          defaultValue: "成本倍率必须为非负数",
-        }),
-      );
-      return;
     }
 
     // opencode / openclaw / hermes: providerKey 相关
@@ -1715,14 +1661,12 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
+      // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
+      // 由后端写 true（兼容旧版）。
       commonConfigEnabled:
-        appId === "claude"
-          ? useCommonConfig
-          : appId === "codex"
-            ? useCodexCommonConfigFlag
-            : appId === "gemini"
-              ? useGeminiCommonConfigFlag
-              : undefined,
+        appId === "claude" || appId === "codex" || appId === "gemini"
+          ? initialData?.meta?.commonConfigEnabled
+          : undefined,
       endpointAutoSelect,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
@@ -1778,13 +1722,6 @@ function ProviderFormFull({
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
-      costMultiplier: pricingConfig.enabled
-        ? pricingConfig.costMultiplier
-        : undefined,
-      pricingModelSource:
-        pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
-          ? pricingConfig.pricingModelSource
-          : undefined,
       apiFormat:
         appId === "claude" && category !== "official"
           ? isXaiOauthProvider
@@ -1958,9 +1895,11 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
         );
+        projectCodexDraft(template.auth, template.config);
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
+        projectGeminiDraft({}, {});
       }
       if (appId === "opencode") {
         opencodeForm.resetOpencodeState();
@@ -2009,6 +1948,7 @@ function ProviderFormFull({
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
+      projectCodexDraft(auth, config, preset.category);
       return;
     }
 
@@ -2026,6 +1966,7 @@ function ProviderFormFull({
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
+      projectGeminiDraft(env, config, preset.category);
       return;
     }
 
@@ -2102,10 +2043,18 @@ function ProviderFormFull({
     }
 
     const preset = entry.preset as ProviderPreset;
-    const config = applyTemplateValues(
+    const templated = applyTemplateValues(
       preset.settingsConfig,
       preset.templateValues,
     );
+    // 预设只带关键字段和独有字段，套在当前 live 上显示（和切换的结果一致）。
+    const config =
+      appId === "claude" && claudeLiveBase
+        ? overlayClaudeProviderFields(
+            claudeLiveBase,
+            templated as Record<string, unknown>,
+          )
+        : templated;
 
     if (preset.apiFormat) {
       setLocalApiFormat(preset.apiFormat);
@@ -2642,18 +2591,9 @@ function ProviderFormFull({
                 isProxyTakeover={isProxyTakeover}
                 onAuthChange={setCodexAuth}
                 onConfigChange={handleCodexConfigChange}
-                useCommonConfig={useCodexCommonConfigFlag}
-                onCommonConfigToggle={handleCodexCommonConfigToggle}
-                commonConfigSnippet={codexCommonConfigSnippet}
-                onCommonConfigSnippetChange={
-                  handleCodexCommonConfigSnippetChange
-                }
-                onCommonConfigErrorClear={clearCodexCommonConfigError}
-                commonConfigError={codexCommonConfigError}
                 authError={codexAuthError}
                 configError={codexConfigError}
-                onExtract={handleCodexExtract}
-                isExtracting={isCodexExtracting}
+                inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}
             </>
@@ -2664,18 +2604,9 @@ function ProviderFormFull({
                 configValue={geminiConfig}
                 onEnvChange={handleGeminiEnvChange}
                 onConfigChange={handleGeminiConfigChange}
-                useCommonConfig={useGeminiCommonConfigFlag}
-                onCommonConfigToggle={handleGeminiCommonConfigToggle}
-                commonConfigSnippet={geminiCommonConfigSnippet}
-                onCommonConfigSnippetChange={
-                  handleGeminiCommonConfigSnippetChange
-                }
-                onCommonConfigErrorClear={clearGeminiCommonConfigError}
-                commonConfigError={geminiCommonConfigError}
                 envError={envError}
                 configError={geminiConfigError}
-                onExtract={handleGeminiExtract}
-                isExtracting={isGeminiExtracting}
+                inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}
             </>
@@ -2763,30 +2694,11 @@ function ProviderFormFull({
               <CommonConfigEditor
                 value={form.getValues("settingsConfig")}
                 onChange={(value) => form.setValue("settingsConfig", value)}
-                useCommonConfig={useCommonConfig}
-                onCommonConfigToggle={handleCommonConfigToggle}
-                commonConfigSnippet={commonConfigSnippet}
-                onCommonConfigSnippetChange={handleCommonConfigSnippetChange}
-                commonConfigError={commonConfigError}
-                onEditClick={() => setIsCommonConfigModalOpen(true)}
-                isModalOpen={isCommonConfigModalOpen}
-                onModalClose={() => setIsCommonConfigModalOpen(false)}
-                onExtract={handleClaudeExtract}
-                isExtracting={isClaudeExtracting}
+                inactiveFields={inactiveFields}
               />
               {settingsConfigErrorField}
             </>
           )}
-
-          {!isAnyOmoCategory &&
-            appId !== "opencode" &&
-            appId !== "openclaw" &&
-            appId !== "hermes" && (
-              <ProviderAdvancedConfig
-                pricingConfig={pricingConfig}
-                onPricingConfigChange={setPricingConfig}
-              />
-            )}
 
           {showButtons && (
             <div className="flex justify-end gap-2">
@@ -2803,16 +2715,6 @@ function ProviderFormFull({
           )}
         </form>
       </Form>
-
-      <ConfirmDialog
-        isOpen={showCommonConfigNotice}
-        variant="info"
-        title={t("confirm.commonConfig.title")}
-        message={t("confirm.commonConfig.message")}
-        confirmText={t("confirm.commonConfig.confirm")}
-        onConfirm={() => void handleCommonConfigConfirm()}
-        onCancel={() => void handleCommonConfigConfirm()}
-      />
 
       <ConfirmDialog
         isOpen={softIssues !== null && softIssues.length > 0}

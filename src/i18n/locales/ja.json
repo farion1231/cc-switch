@@ -60,32 +60,18 @@
     "mustBeObject": "設定はオブジェクト形式の JSON で入力してください（配列や他の型は不可）",
     "invalidJson": "JSON 形式が正しくありません"
   },
-  "commonConfig": {
-    "guideTitle": "共通設定スニペットとは？",
-    "guidePurpose": "異なるプロバイダー間でプラグインや環境変数などの非機密設定を共有するための機能です。プロバイダーを切り替えてもこれらの設定は失われません。",
-    "guideUsage": "使い方：① 「編集内容から抽出」をクリックして共通部分を保存  ② 新規プロバイダー作成時に「共通設定を適用」をチェック",
-    "guideReExtract": "新しいプラグインや Hook をインストールした場合は、共通設定を再抽出して他のプロバイダーに同期してください。",
-    "guideReassurance": "ご安心ください：元の設定はデフォルトプロバイダーに安全に保存されており、失われることはありません。",
-    "emptyTitle": "共通設定スニペットがまだありません",
-    "emptyHint": "下の「編集内容から抽出」ボタンをクリックして、現在の設定から再利用可能な部分を抽出してください"
-  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
-    "writeCommonConfig": "共通設定を適用",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を適用」がオンのとき settings.json にマージされます",
     "fullSettingsHint": "Claude Code の settings.json 全文",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
-    "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}",
     "hideAttribution": "AI署名を非表示",
     "enableTeammates": "Teammates モード",
     "enableToolSearch": "Tool Search を有効化",
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "自動アップグレードを無効化",
-    "disableArtifact": "Artifact ツールを無効化"
+    "disableArtifact": "Artifact ツールを無効化",
+    "keyFieldsHint": "エンドポイント、キー、モデル、コンテキストウィンドウ、互換スイッチはプロバイダーの切り替えに従います。それ以外のフィールドは Claude Code のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
+    "inactiveFieldsHint": "このプロバイダーには、切り替えても反映されないフィールドが {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
+    "addToGlobalSettings": "グローバル設定に追加"
   },
   "header": {
     "viewOnGithub": "GitHub で見る",
@@ -107,7 +93,7 @@
     "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
     "noProvidersDescription": "既存の設定がある場合は「現在の設定をインポート」をクリックしてください。すべてのデータが default プロバイダーに安全に保存されます",
-    "noProvidersDescriptionSnippet": "API キーとリクエスト URL 以外のデータ（プラグインなど）は共通設定スニペットに保存され、プロバイダー間で共有できます",
+    "noProvidersDescriptionKeyFields": "プロバイダーを切り替えても置き換わるのはキー、リクエスト URL、モデルだけです。プラグインなどのその他の設定は設定ファイルに残り、すべてのプロバイダーに適用されます",
     "importCurrent": "現在の設定をインポート",
     "importFromClaude": "Claude Code の既存プロバイダーをインポート",
     "importCurrentDescription": "現在使用中の設定をデフォルトプロバイダーとしてインポート",
@@ -115,6 +101,8 @@
     "enable": "有効化",
     "inUse": "使用中",
     "needsRouting": "ルーティングが必要",
+    "directProvider": "直接接続",
+    "directProviderHint": "ルーティングを終了するとこのプロバイダに戻ります",
     "noRoutingSupport": "ルーティング非対応",
     "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
@@ -160,11 +148,7 @@
     "notes": "メモ",
     "notesPlaceholder": "例: 会社用アカウント",
     "configJson": "Config JSON",
-    "writeCommonConfig": "共通設定を適用",
-    "editCommonConfigButton": "共通設定を編集",
     "configJsonHint": "Claude Code の設定をすべて入力してください",
-    "editCommonConfigTitle": "共通設定スニペットを編集",
-    "editCommonConfigHint": "共通設定スニペットは、この機能をオンにしたすべてのプロバイダーへマージされます",
     "addProvider": "プロバイダーを追加",
     "sortUpdated": "並び順を更新しました",
     "usageSaved": "利用状況の設定を保存しました",
@@ -179,7 +163,14 @@
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
     },
-    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください"
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
+    "editorViewFailed": "クライアントの設定ファイルを読み込めないため、保存済みのプロバイダー設定を表示しています：{{error}}",
+    "editConflict": {
+      "title": "編集中に設定ファイルが変更されました",
+      "message": "エディターを開いた後、以下の設定が他のプログラム（Claude Code など）によって変更されました。自分の編集で上書きしますか？それとも外部の変更を残しますか？その他の編集はどちらでも保存されます。",
+      "keepTheirs": "外部の変更を残す",
+      "keepMine": "自分の編集で上書き"
+    }
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",
@@ -250,6 +241,7 @@
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
     "codexRestartRequired": "切り替えました。反映するにはクライアントを再起動してください",
+    "geminiRestartRequired": "切り替えました。反映するには Gemini CLI を再起動してください",
     "grokBuildRestartRequired": "切り替えました。反映するには Grok Build を再起動してください",
     "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
     "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
@@ -333,11 +325,6 @@
       "title": "自動同期を有効にする",
       "message": "自動同期を有効にすると、データベースの変更ごとに WebDAV サーバーへ自動アップロードされます。\n\nネットワークトラフィックが大幅に増加する可能性があります。ネットワーク環境と WebDAV サービスが頻繁なデータ転送に対応できることをご確認ください。",
       "confirm": "理解しました、有効にする"
-    },
-    "commonConfig": {
-      "title": "共通設定について",
-      "message": "「共通設定スニペット」を使うと、プラグインや環境変数などの設定を異なるプロバイダー間で共有でき、切り替え時に失われることがありません。\n\n使い方：\n① プロバイダーを編集 →「共通設定を編集」→「編集内容から抽出」\n② 新規プロバイダー作成時に「共通設定を適用」をチェック（デフォルトでオン）\n\n新しいプラグインや Hook をインストールした場合は、共通設定を再抽出してください。",
-      "confirm": "わかりました"
     }
   },
   "settings": {
@@ -369,10 +356,6 @@
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
         "stopped": "停止中"
-      },
-      "connectivityCheck": {
-        "title": "接続チェック設定",
-        "description": "プロバイダー接続チェックのタイムアウト、リトライ、低速判定しきい値を設定"
       },
       "failover": {
         "title": "自動フェイルオーバー",
@@ -890,19 +873,15 @@
       "testSuccess": "接続成功！遅延 {{latency}}ms",
       "testFailed": "接続に失敗しました: {{error}}",
       "pricingDefaultsTitle": "課金のデフォルト設定",
-      "pricingDefaultsDescription": "アプリごとのデフォルト倍率と課金モードを設定します。",
+      "pricingDefaultsDescription": "アプリごとに、リクエストモデルとレスポンスモデルのどちらで価格を照合するかを設定します。ローカルルーティングを経由するリクエストにのみ適用されます。",
       "pricingAppLabel": "アプリ",
-      "defaultCostMultiplierLabel": "デフォルト倍率",
-      "defaultCostMultiplierHint": "コスト計算用の倍率（小数対応）。",
       "pricingModelSourceLabel": "課金モード",
       "pricingModelSourceRequest": "リクエストモデル",
       "pricingModelSourceResponse": "レスポンスモデル",
       "pricingSave": "課金設定を保存",
       "pricingSaved": "課金設定を保存しました",
       "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
-      "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}",
-      "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
-      "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
+      "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}"
     },
     "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
   },
@@ -1081,7 +1060,10 @@
     "defaultModelHint": "Grok Build がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。",
     "advancedSectionHint": "上流フォーマット、思考機能、カスタム User-Agent の設定を含みます。Chat Completions / Anthropic Messages プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、リクエストの reasoning effort を上流の Chat パラメータに変換します。",
-    "maxOutputTokensHint": "デフォルト上限 8192 では長い回答や深い思考時に切り詰められることがあります（stop_reason=max_tokens）。この値は Anthropic 経路で max_tokens を上書きします。モデル／ゲートウェイの実際の出力上限を超えると 400 になる場合があります。空欄でデフォルトの 8192 を使用します。"
+    "maxOutputTokensHint": "デフォルト上限 8192 では長い回答や深い思考時に切り詰められることがあります（stop_reason=max_tokens）。この値は Anthropic 経路で max_tokens を上書きします。モデル／ゲートウェイの実際の出力上限を超えると 400 になる場合があります。空欄でデフォルトの 8192 を使用します。",
+    "keyFieldsHint": "デフォルトモデル（models.default）とそれが指すモデルテーブルはプロバイダーに合わせて切り替わります。それ以外は Grok Build のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
+    "inactiveFieldsHint": "このプロバイダーには切り替えで反映されない設定が {{count}} 件保存されています。クリックすると TOML がコピーされるので、必要に応じて上に貼り付けてください。プロバイダーに保存された元の値は削除されません。",
+    "inactiveFieldCopied": "コピーしました"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1503,19 +1485,6 @@
     "testFailed": "速度テストに失敗しました: {{error}}",
     "empty": "エンドポイントがありません"
   },
-  "providerAdvanced": {
-    "pricingConfig": "課金設定",
-    "useCustomPricing": "個別設定を使用",
-    "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
-    "costMultiplier": "コスト倍率",
-    "costMultiplierPlaceholder": "空白の場合はグローバル設定を使用（1）",
-    "costMultiplierHint": "実際のコスト = 基本コスト × 倍率、1.5 などの小数をサポート",
-    "pricingModelSourceLabel": "課金モード",
-    "pricingModelSourceInherit": "グローバル設定を継承",
-    "pricingModelSourceRequest": "リクエストモデル",
-    "pricingModelSourceResponse": "レスポンスモデル",
-    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
-  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
@@ -1525,15 +1494,9 @@
     "configTomlHint": "Codex の config.toml 設定内容",
     "configTomlStorageHint": "プロキシ引き継ぎ中は保存済みの config を表示しており、実際の config.toml ではありません。",
     "proxyTakeoverStorageNotice": "💡 このアプリはプロキシ引き継ぎ中です。ここで編集しているのは保存済みのプロバイダー設定で、実際の live 設定はすでにプロキシが一時的に引き継いでいます。",
-    "writeCommonConfig": "共通設定を適用",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を適用」がオンの場合、config.toml の末尾に追記されます",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
     "apiUrlLabel": "API リクエスト URL",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
     "extractFailed": "抽出に失敗しました: {{error}}",
     "saveFailed": "保存に失敗しました: {{error}}",
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
@@ -1596,28 +1559,18 @@
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
     "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
-    "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません"
+    "keyFieldsHint": "エンドポイント、キー、モデル、推論レベル、コンテキストウィンドウ、互換スイッチはプロバイダーに合わせて切り替わります。それ以外は Codex のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
+    "inactiveFieldsHint": "このプロバイダーには切り替え時に適用されない設定が {{count}} 件保存されています。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。保存済みの値は削除されません。",
+    "inactiveFieldCopied": "コピーしました"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
     "envFileHint": ".env 形式で Gemini の環境変数を設定",
-    "configJson": "設定ファイル (config.json)",
-    "configJsonHint": "Gemini 拡張パラメーターを JSON 形式で設定（任意）",
-    "writeCommonConfig": "共通設定を適用",
-    "editCommonConfig": "共通設定を編集",
-    "editCommonConfigTitle": "Gemini 共通設定スニペットを編集",
-    "commonConfigHint": "「共通設定を適用」がオンのとき Gemini の .env に書き込みます（GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY は使用できません）",
-    "extractFromCurrent": "編集内容から抽出",
-    "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
-    "extractFailed": "抽出に失敗しました: {{error}}",
-    "saveFailed": "保存に失敗しました: {{error}}",
-    "extractedConfigInvalid": "抽出した設定のフォーマットが不正です",
-    "invalidJsonFormat": "共通設定スニペットの形式が不正です（有効な JSON でなければなりません）",
-    "commonConfigInvalidKeys": "共通設定スニペットに GOOGLE_GEMINI_BASE_URL または GEMINI_API_KEY を含めることはできません（検出: {{keys}}）",
-    "commonConfigInvalidValues": "共通設定スニペットの値は文字列である必要があります",
-    "noCommonConfigToApply": "共通設定スニペットが空、または適用できる項目がありません",
-    "configMergeFailed": "設定のマージに失敗しました: {{error}}",
-    "configReplaceFailed": "設定の置換に失敗しました: {{error}}"
+    "configJson": "設定ファイル (settings.json)",
+    "configJsonHint": "Gemini CLI の settings.json（MCP サーバーは MCP パネルで管理します）",
+    "keyFieldsHint": "エンドポイント、キー、モデル名、認証方式はプロバイダーに合わせて切り替わります。その他の環境変数と settings.json は Gemini CLI のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
+    "inactiveFieldsHint": "このプロバイダーには切り替えで反映されない設定が {{count}} 件保存されています。クリックすると上のグローバル設定に追加され、保存時に設定ファイルへ書き込まれます。プロバイダーに保存された元の値は削除されません。",
+    "addToGlobalSettings": "グローバル設定に追加"
   },
   "opencode": {
     "npmPackage": "API フォーマット",
@@ -2909,7 +2862,7 @@
       "disabled": "{{app}} ルーティング無効",
       "failed": "ルーティングの切り替えに失敗しました: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nホットスイッチングのためプロバイダを切り替え",
+        "active": "{{appLabel}} がルーティング中 - {{address}}:{{port}}\nプロバイダを切り替えるとルートだけが変わり、直接接続のプロバイダはそのままです",
         "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
         "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
@@ -2984,7 +2937,7 @@
       "stopped": "ルーティングサービスが停止しました",
       "stopFailed": "ルーティングサービスの停止に失敗しました: {{detail}}"
     },
-    "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
+    "stoppedWithRestore": "ルーティングサービスを停止し、すべてのアプリを直接接続に戻しました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
   },
   "streamCheck": {
@@ -2992,13 +2945,6 @@
     "reachableSlow": "{{providerName}} は接続可能だが低速 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} に接続できません: {{message}}",
     "unreachableHint": "接続を確立できませんでした（DNS / 接続 / TLS / タイムアウト）。base_url とネットワークを確認してください。",
-    "connectivityNote": "接続チェックはプロバイダーのアドレスに到達できるかを確認するだけで、実際のモデルリクエストは送信しません。何らかの応答があれば「到達可能」とみなされますが、認証やモデル設定が正しいことを保証するものではありません。",
-    "configSaved": "接続チェック設定を保存しました",
-    "configSaveFailed": "保存に失敗しました",
-    "checkParams": "チェックパラメーター",
-    "timeout": "タイムアウト（秒）",
-    "maxRetries": "最大リトライ回数",
-    "degradedThreshold": "低速判定しきい値（ミリ秒）",
     "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
   },
   "proxyConfig": {

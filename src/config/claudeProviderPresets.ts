@@ -217,7 +217,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://apinebula.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       },
     },
     endpointCandidates: ["https://apinebula.ai"],
@@ -416,7 +415,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.apikey.fan",
         ANTHROPIC_AUTH_TOKEN: "",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       },
     },
     endpointCandidates: [
@@ -614,7 +612,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/compatible",
         ANTHROPIC_AUTH_TOKEN: "",
-        API_TIMEOUT_MS: "3000000",
         ANTHROPIC_MODEL: "doubao-seed-2-1-pro-260628",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "doubao-seed-2-1-pro-260628",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "doubao-seed-2-1-pro-260628",
@@ -885,7 +882,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.sudocode.chat",
         ANTHROPIC_AUTH_TOKEN: "",
-        API_TIMEOUT_MS: "300000",
       },
     },
     endpointCandidates: [
@@ -905,7 +901,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://sudocode.us",
         ANTHROPIC_AUTH_TOKEN: "",
-        API_TIMEOUT_MS: "300000",
       },
     },
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
@@ -1513,7 +1508,6 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-2.0",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "LongCat-2.0",
         CLAUDE_CODE_MAX_OUTPUT_TOKENS: "131072",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       },
     },
     category: "cn_official",
@@ -1528,8 +1522,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.minimax.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        API_TIMEOUT_MS: "3000000",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
         ANTHROPIC_MODEL: "MiniMax-M3[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
@@ -1553,8 +1545,6 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        API_TIMEOUT_MS: "3000000",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
         ANTHROPIC_MODEL: "MiniMax-M3[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
@@ -1640,17 +1630,11 @@ export const providerPresets: ProviderPreset[] = [
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
     settingsConfig: {
-      effortLevel: "high",
       env: {
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_BASE_URL: "https://e-flowcode.cc",
+        ENABLE_TOOL_SEARCH: "true",
       },
-      enabledPlugins: {
-        "superpowers@superpowers-marketplace": true,
-      },
-      includeCoAuthoredBy: false,
-      ENABLE_TOOL_SEARCH: true,
-      skipWebFetchPreflight: true,
     },
     category: "third_party",
     endpointCandidates: ["https://e-flowcode.cc"],
@@ -1816,7 +1800,6 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
       },
-      includeCoAuthoredBy: false,
     },
     category: "aggregator",
     icon: "pipellm",
@@ -1900,10 +1883,11 @@ export const providerPresets: ProviderPreset[] = [
     name: "AWS Bedrock (API Key)",
     websiteUrl: "https://aws.amazon.com/bedrock/",
     settingsConfig: {
-      apiKey: "",
       env: {
         ANTHROPIC_BASE_URL:
           "https://bedrock-runtime.${AWS_REGION}.amazonaws.com",
+        // Claude Code 只从这个变量读 Bedrock API Key，顶层 apiKey 它不认
+        AWS_BEARER_TOKEN_BEDROCK: "",
         AWS_REGION: "${AWS_REGION}",
         ANTHROPIC_MODEL: "global.anthropic.claude-opus-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL:

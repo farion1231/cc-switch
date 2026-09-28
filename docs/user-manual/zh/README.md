@@ -61,7 +61,7 @@
 |------|------|
 | [2.1-add.md](./2-providers/2.1-add.md) | 使用预设、自定义配置、统一供应商 |
 | [2.2-switch.md](./2-providers/2.2-switch.md) | 主界面切换、托盘切换、生效方式 |
-| [2.3-edit.md](./2-providers/2.3-edit.md) | 编辑配置、修改 API Key、回填机制 |
+| [2.3-edit.md](./2-providers/2.3-edit.md) | 编辑配置、修改 API Key、全局设置与编辑冲突 |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | 拖拽排序、复制供应商、删除 |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | 用量查询、剩余额度、多套餐显示 |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop 第三方供应商、直连与模型映射 |

@@ -60,32 +60,18 @@
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
     "invalidJson": "Invalid JSON format"
   },
-  "commonConfig": {
-    "guideTitle": "What is a Common Config Snippet?",
-    "guidePurpose": "It lets you share non-sensitive settings (plugins, environment variables, etc.) across different providers. These settings won't be lost when you switch providers.",
-    "guideUsage": "How to use: ① Click \"Extract from Editor\" to save the common parts  ② Check \"Apply Common Config\" when creating a new provider",
-    "guideReExtract": "If you've newly installed plugins or hooks, re-extract the common config so they sync to other providers.",
-    "guideReassurance": "Don't worry — your original configuration is safely stored in the default provider and won't be lost.",
-    "emptyTitle": "No common config snippet yet",
-    "emptyHint": "Click \"Extract from Editor\" below to extract reusable parts from your current configuration"
-  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
-    "writeCommonConfig": "Apply Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Common Config Snippet",
-    "commonConfigHint": "This snippet will be merged into settings.json when 'Apply Common Config' is checked",
     "fullSettingsHint": "Full Claude Code settings.json content",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
     "hideAttribution": "Hide AI Attribution",
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
     "disableAutoUpgrade": "Disable Auto-Upgrade",
-    "disableArtifact": "Disable Artifact Tool"
+    "disableArtifact": "Disable Artifact Tool",
+    "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
+    "inactiveFieldsHint": "This provider still stores {{count}} field(s) that do not take effect when switching. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
+    "addToGlobalSettings": "Add to global settings"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
@@ -107,7 +93,7 @@
     "tabUniversal": "Universal",
     "noProviders": "No providers added yet",
     "noProvidersDescription": "If you already have a config, click \"Import Current Config\" — all data will be safely saved in a default provider",
-    "noProvidersDescriptionSnippet": "Settings other than API key and endpoint (e.g. plugins) will be saved to a common config snippet for sharing across providers",
+    "noProvidersDescriptionKeyFields": "Switching providers only replaces the key, endpoint and model; plugins and other settings stay in the config file and apply to every provider",
     "importCurrent": "Import Current Config",
     "importFromClaude": "Import existing providers from Claude Code",
     "importCurrentDescription": "Import current live config as default provider",
@@ -115,6 +101,8 @@
     "enable": "Enable",
     "inUse": "In Use",
     "needsRouting": "Needs Routing",
+    "directProvider": "Direct",
+    "directProviderHint": "Leaving routing mode switches back to this provider",
     "noRoutingSupport": "No Routing Support",
     "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
     "editProvider": "Edit Provider",
@@ -160,11 +148,7 @@
     "notes": "Notes",
     "notesPlaceholder": "e.g., Company dedicated account",
     "configJson": "Config JSON",
-    "writeCommonConfig": "Apply Common Config",
-    "editCommonConfigButton": "Edit common config",
     "configJsonHint": "Please fill in complete Claude Code configuration",
-    "editCommonConfigTitle": "Edit common config snippet",
-    "editCommonConfigHint": "Common config snippet will be merged into all providers that enable it",
     "addProvider": "Add Provider",
     "sortUpdated": "Sort order updated",
     "usageSaved": "Usage query configuration saved",
@@ -179,7 +163,14 @@
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again"
+    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
+    "editorViewFailed": "Cannot read the client config file, so the saved provider configuration is shown below: {{error}}",
+    "editConflict": {
+      "title": "The config file changed while you were editing",
+      "message": "After the editor opened, the settings below were changed by another program (such as Claude Code). Overwrite them with your edits, or keep the external changes? Your other edits are saved either way.",
+      "keepTheirs": "Keep external changes",
+      "keepMine": "Overwrite with my edits"
+    }
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",
@@ -250,6 +241,7 @@
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
+    "geminiRestartRequired": "Switched successfully. Restart Gemini CLI to apply changes.",
     "grokBuildRestartRequired": "Switched successfully. Restart Grok Build to apply changes.",
     "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
     "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
@@ -333,11 +325,6 @@
       "title": "Enable Auto Sync",
       "message": "When auto sync is enabled, every database change will be automatically uploaded to the WebDAV server.\n\nThis may result in significant network traffic. Please ensure your network and WebDAV service can handle frequent data transfers.",
       "confirm": "I understand, enable"
-    },
-    "commonConfig": {
-      "title": "About Common Config",
-      "message": "The \"Common Config Snippet\" lets you share plugins, environment variables, and other settings across different providers — so they won't be lost when you switch.\n\nHow to use:\n① Edit a provider → click \"Edit Common Config\" → \"Extract from Editor\"\n② When creating a new provider, check \"Apply Common Config\" (enabled by default)\n\nIf you've newly installed plugins or hooks, re-extract the common config to keep them in sync.",
-      "confirm": "Got it"
     }
   },
   "settings": {
@@ -369,10 +356,6 @@
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
         "stopped": "Stopped"
-      },
-      "connectivityCheck": {
-        "title": "Connectivity Check Settings",
-        "description": "Configure timeout, retries, and the slow-response threshold for provider reachability checks"
       },
       "failover": {
         "title": "Auto Failover",
@@ -890,19 +873,15 @@
       "testSuccess": "Connected! Latency {{latency}}ms",
       "testFailed": "Connection failed: {{error}}",
       "pricingDefaultsTitle": "Pricing Defaults",
-      "pricingDefaultsDescription": "Set the default multiplier and pricing model source per app.",
+      "pricingDefaultsDescription": "Choose whether each app matches pricing by the request model or the response model. Only applies to requests that go through local routing.",
       "pricingAppLabel": "App",
-      "defaultCostMultiplierLabel": "Default Multiplier",
-      "defaultCostMultiplierHint": "Multiplier for cost calculation, decimals supported.",
       "pricingModelSourceLabel": "Pricing Model Source",
       "pricingModelSourceRequest": "Request model",
       "pricingModelSourceResponse": "Response model",
       "pricingSave": "Save Pricing Defaults",
       "pricingSaved": "Pricing defaults saved",
       "pricingSaveFailed": "Failed to save pricing defaults: {{error}}",
-      "pricingLoadFailed": "Failed to load pricing defaults: {{error}}",
-      "defaultCostMultiplierRequired": "Default multiplier is required",
-      "defaultCostMultiplierInvalid": "Invalid multiplier format"
+      "pricingLoadFailed": "Failed to load pricing defaults: {{error}}"
     },
     "saveFailedGeneric": "Save failed, please try again"
   },
@@ -1081,7 +1060,10 @@
     "defaultModelHint": "The model Grok Build requests by default; change it anytime without waiting for a preset update.",
     "advancedSectionHint": "Includes upstream format, reasoning overrides and custom User-Agent. Providers using the Chat Completions or Anthropic Messages protocol require routing takeover to be enabled.",
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts the request's reasoning effort into the upstream Chat parameter.",
-    "maxOutputTokensHint": "The default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192."
+    "maxOutputTokensHint": "The default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192.",
+    "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
+    "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to copy its TOML and paste it above if you need it; the value stored in the provider is kept.",
+    "inactiveFieldCopied": "Copied"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1503,19 +1485,6 @@
     "testFailed": "Speed test failed: {{error}}",
     "empty": "No endpoints"
   },
-  "providerAdvanced": {
-    "pricingConfig": "Pricing Config",
-    "useCustomPricing": "Use separate config",
-    "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
-    "costMultiplier": "Cost Multiplier",
-    "costMultiplierPlaceholder": "Leave empty to use global default (1)",
-    "costMultiplierHint": "Actual cost = Base cost × Multiplier, supports decimals like 1.5",
-    "pricingModelSourceLabel": "Pricing Mode",
-    "pricingModelSourceInherit": "Inherit global default",
-    "pricingModelSourceRequest": "Request model",
-    "pricingModelSourceResponse": "Response model",
-    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
-  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
@@ -1525,15 +1494,9 @@
     "configTomlHint": "Codex config.toml configuration content",
     "configTomlStorageHint": "Proxy takeover is showing the stored config, not the live config.toml.",
     "proxyTakeoverStorageNotice": "💡 This app is under proxy takeover. You are editing the stored provider config; the live config is already temporarily managed by the proxy.",
-    "writeCommonConfig": "Apply Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Codex Common Config Snippet",
-    "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Apply Common Config' is checked",
     "enableRemoteCompaction": "Enable remote compaction",
     "remoteCompactionHint": "When enabled, the active model_providers entry name is written as OpenAI so Codex can try remote compaction.",
     "apiUrlLabel": "API Request URL",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
     "extractFailed": "Extract failed: {{error}}",
     "saveFailed": "Save failed: {{error}}",
     "modelNameHint": "Specify the model to use, will be auto-updated in config.toml",
@@ -1596,28 +1559,18 @@
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
     "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled.",
-    "noCommonConfigToApply": "The common config snippet is empty or contains nothing to write"
+    "keyFieldsHint": "The endpoint, key, model, reasoning effort, context window and compatibility switches follow the provider; everything else is a global Codex setting that applies to every provider once saved.",
+    "inactiveFieldsHint": "This provider still stores {{count}} settings that are not applied when switching. Click one to copy its TOML and paste it above if you need it; the stored values are kept.",
+    "inactiveFieldCopied": "Copied"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
     "envFileHint": "Configure Gemini environment variables in .env format",
-    "configJson": "Configuration File (config.json)",
-    "configJsonHint": "Configure Gemini extended parameters in JSON format (optional)",
-    "writeCommonConfig": "Apply Common Config",
-    "editCommonConfig": "Edit Common Config",
-    "editCommonConfigTitle": "Edit Gemini Common Config Snippet",
-    "commonConfigHint": "This snippet writes to Gemini .env when 'Apply Common Config' is checked (GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY are not allowed)",
-    "extractFromCurrent": "Extract from Editor",
-    "extractNoCommonConfig": "No common config available to extract from editor",
-    "extractFailed": "Extract failed: {{error}}",
-    "saveFailed": "Save failed: {{error}}",
-    "extractedConfigInvalid": "Extracted config format is invalid",
-    "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
-    "commonConfigInvalidKeys": "Common config snippet must not include GOOGLE_GEMINI_BASE_URL or GEMINI_API_KEY (found: {{keys}})",
-    "commonConfigInvalidValues": "Common config snippet values must be strings",
-    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
-    "configMergeFailed": "Config merge failed: {{error}}",
-    "configReplaceFailed": "Config replace failed: {{error}}"
+    "configJson": "Settings file (settings.json)",
+    "configJsonHint": "Gemini CLI's settings.json (MCP servers are managed in the MCP panel)",
+    "keyFieldsHint": "The endpoint, key, model name and auth type follow the provider; the other environment variables and settings.json are Gemini CLI global settings and apply to every provider after saving.",
+    "inactiveFieldsHint": "This provider still stores {{count}} settings that do not follow the provider. Click one to add it to the global settings above; it is written to the config file on save, and the value stored in the provider is kept.",
+    "addToGlobalSettings": "Add to global settings"
   },
   "opencode": {
     "npmPackage": "API Format",
@@ -2909,7 +2862,7 @@
       "disabled": "{{app}} routing disabled",
       "failed": "Failed to toggle routing: {{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitch provider for hot switching",
+        "active": "{{appLabel}} is routing - {{address}}:{{port}}\nSwitching providers changes the route only; the direct provider stays",
         "broken": "{{appLabel}} is routing, but routing service is not running",
         "inactive": "Route {{appLabel}}'s requests through local routing"
       }
@@ -2984,7 +2937,7 @@
       "stopped": "Routing service stopped",
       "stopFailed": "Failed to stop routing service: {{detail}}"
     },
-    "stoppedWithRestore": "Routing service stopped, all routing configs restored",
+    "stoppedWithRestore": "Routing service stopped; all apps are back on direct connections",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
   },
   "streamCheck": {
@@ -2992,13 +2945,6 @@
     "reachableSlow": "{{providerName}} reachable but slow ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
-    "connectivityNote": "Connectivity check only probes whether the provider address is reachable; it does not send a real model request. Any response counts as \"reachable\" — which does not guarantee that auth or model settings are correct.",
-    "configSaved": "Connectivity check settings saved",
-    "configSaveFailed": "Save failed",
-    "checkParams": "Check Parameters",
-    "timeout": "Timeout (seconds)",
-    "maxRetries": "Max Retries",
-    "degradedThreshold": "Slow-response threshold (ms)",
     "error": "{{providerName}} check error: {{error}}"
   },
   "proxyConfig": {

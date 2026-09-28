@@ -60,32 +60,18 @@
     "mustBeObject": "設定必須是 JSON 物件，不能是陣列或其他類型",
     "invalidJson": "JSON 格式錯誤"
   },
-  "commonConfig": {
-    "guideTitle": "什麼是通用設定片段？",
-    "guidePurpose": "用來在不同供應商之間共用外掛程式、環境變數等非敏感設定。切換供應商時不會遺失這些設定。",
-    "guideUsage": "用法：① 點擊「從編輯內容擷取」儲存通用部分 ② 新增供應商時勾選「套用通用設定」",
-    "guideReExtract": "如果您新安裝了外掛程式或 Hook，請重新擷取一次通用設定，以便同步至其他供應商。",
-    "guideReassurance": "請放心：您的原始設定已儲存在預設供應商中，不會遺失。",
-    "emptyTitle": "尚未建立通用設定片段",
-    "emptyHint": "點擊下方「從編輯內容擷取」按鈕，從目前設定中擷取可重複使用的部分"
-  },
   "claudeConfig": {
     "configLabel": "Claude Code 設定 (JSON) *",
-    "writeCommonConfig": "套用通用設定",
-    "editCommonConfig": "編輯通用設定",
-    "editCommonConfigTitle": "編輯通用設定片段",
-    "commonConfigHint": "該片段會在勾選「套用通用設定」時合併到 settings.json 中",
     "fullSettingsHint": "完整的 Claude Code settings.json 設定內容",
-    "extractFromCurrent": "從編輯內容擷取",
-    "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",
-    "extractFailed": "擷取失敗：{{error}}",
-    "saveFailed": "儲存失敗：{{error}}",
     "hideAttribution": "隱藏 AI 署名",
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "啟用 Tool Search",
     "effortMax": "最大強度思考",
     "disableAutoUpgrade": "停用自動升級",
-    "disableArtifact": "停用 Artifact 工具"
+    "disableArtifact": "停用 Artifact 工具",
+    "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的欄位。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
+    "addToGlobalSettings": "加入全域設定"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上檢視",
@@ -107,7 +93,7 @@
     "tabUniversal": "通用供應商",
     "noProviders": "尚未新增任何供應商",
     "noProvidersDescription": "如果您已有設定，請點擊「匯入目前設定」，所有資料將安全儲存在 default 供應商中",
-    "noProvidersDescriptionSnippet": "除 API Key 和請求位址外的資料（如外掛程式設定）會被儲存至通用設定片段，用於在不同供應商之間共用",
+    "noProvidersDescriptionKeyFields": "切換供應商只會替換 Key、請求位址和模型，外掛程式等其他設定會保留在設定檔中，對所有供應商生效",
     "importCurrent": "匯入目前設定",
     "importFromClaude": "將 Claude Code 中已有的供應商匯入",
     "importCurrentDescription": "將目前正在使用的設定匯入為預設供應商",
@@ -115,6 +101,8 @@
     "enable": "啟用",
     "inUse": "使用中",
     "needsRouting": "需要路由",
+    "directProvider": "直連",
+    "directProviderHint": "退出路由後恢復為這個供應商",
     "noRoutingSupport": "不支援路由",
     "blockedByProxyHint": "代理接管模式下無法切換至官方供應商",
     "editProvider": "編輯供應商",
@@ -160,11 +148,7 @@
     "notes": "備註",
     "notesPlaceholder": "例如：公司專用帳號",
     "configJson": "設定 JSON",
-    "writeCommonConfig": "套用通用設定",
-    "editCommonConfigButton": "編輯通用設定",
     "configJsonHint": "請填寫完整的 Claude Code 設定",
-    "editCommonConfigTitle": "編輯通用設定片段",
-    "editCommonConfigHint": "通用設定片段將合併至所有啟用它的供應商設定中",
     "addProvider": "新增供應商",
     "sortUpdated": "排序已更新",
     "usageSaved": "用量查詢設定已儲存",
@@ -179,7 +163,14 @@
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試"
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
+    "editorViewFailed": "無法讀取用戶端設定檔，下方顯示的是保存的供應商設定：{{error}}",
+    "editConflict": {
+      "title": "設定檔在編輯期間被修改",
+      "message": "開啟編輯器之後，下面這些設定被其他程式（例如 Claude Code）改過。要用你的修改覆蓋，還是保留外部的修改？其餘變更都會照常儲存。",
+      "keepTheirs": "保留外部修改",
+      "keepMine": "用我的修改覆蓋"
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -250,6 +241,7 @@
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
     "codexRestartRequired": "切換成功，請重新啟動客戶端以套用",
+    "geminiRestartRequired": "切換成功，請重新啟動 Gemini CLI 以套用",
     "grokBuildRestartRequired": "切換成功，請重新啟動 Grok Build 以套用",
     "claudeDesktopRestartRequired": "切換成功，重新啟動 Claude Desktop 後生效",
     "claudeDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Claude Desktop 後生效",
@@ -333,11 +325,6 @@
       "title": "開啟自動同步",
       "message": "開啟自動同步後，每次資料庫變更都會自動上傳至 WebDAV 伺服器。\n\n這可能會產生較高的網路流量消耗，請確保您的網路環境和 WebDAV 服務支援頻繁的資料傳輸。",
       "confirm": "我已了解，繼續開啟"
-    },
-    "commonConfig": {
-      "title": "關於通用設定",
-      "message": "「通用設定片段」可以在不同供應商之間共用外掛程式、環境變數等設定，避免切換供應商時遺失這些設定。\n\n使用方法：\n① 編輯供應商時點擊「編輯通用設定」→「從編輯內容擷取」\n② 新增供應商時勾選「套用通用設定」（預設已勾選）\n\n如果您新安裝了外掛程式或 Hook，請重新擷取一次通用設定。",
-      "confirm": "我了解了"
     }
   },
   "settings": {
@@ -369,10 +356,6 @@
         "enableFailoverToggleDescription": "開啟後，主頁面頂部將獨立顯示故障轉移開關",
         "running": "執行中",
         "stopped": "已停止"
-      },
-      "connectivityCheck": {
-        "title": "連通檢測設定",
-        "description": "設定供應商位址探測的逾時、重試與緩慢閾值"
       },
       "failover": {
         "title": "自動故障轉移",
@@ -891,19 +874,15 @@
       "testSuccess": "連線成功！延遲 {{latency}}ms",
       "testFailed": "連線失敗：{{error}}",
       "pricingDefaultsTitle": "計費預設設定",
-      "pricingDefaultsDescription": "設定各應用程式的預設倍率與計費模式來源。",
+      "pricingDefaultsDescription": "設定各應用程式依請求模型還是回傳模型比對定價，僅對經本機路由的請求生效。",
       "pricingAppLabel": "應用程式",
-      "defaultCostMultiplierLabel": "預設倍率",
-      "defaultCostMultiplierHint": "用於成本計算的倍率，支援小數。",
       "pricingModelSourceLabel": "計費模式",
       "pricingModelSourceRequest": "請求模型",
       "pricingModelSourceResponse": "回傳模型",
       "pricingSave": "儲存計費設定",
       "pricingSaved": "計費設定已儲存",
       "pricingSaveFailed": "儲存計費設定失敗：{{error}}",
-      "pricingLoadFailed": "載入計費設定失敗：{{error}}",
-      "defaultCostMultiplierRequired": "預設倍率不能為空",
-      "defaultCostMultiplierInvalid": "預設倍率格式不正確"
+      "pricingLoadFailed": "載入計費設定失敗：{{error}}"
     },
     "saveFailedGeneric": "儲存失敗，請重試"
   },
@@ -1082,7 +1061,10 @@
     "defaultModelHint": "Grok Build 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。",
     "advancedSectionHint": "包含上游格式、思考能力與自訂 User-Agent。使用 Chat Completions / Anthropic Messages 協定的供應商需開啟路由接管才能使用。",
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把請求中的 reasoning effort 轉成上游 Chat 參數。",
-    "maxOutputTokensHint": "預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。"
+    "maxOutputTokensHint": "預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。",
+    "keyFieldsHint": "預設模型（models.default）和它指向的模型表隨供應商切換；其餘是 Grok Build 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
+    "inactiveFieldCopied": "已複製"
   },
   "sessionManager": {
     "title": "工作階段管理",
@@ -1504,19 +1486,6 @@
     "testFailed": "測速失敗：{{error}}",
     "empty": "暫無端點"
   },
-  "providerAdvanced": {
-    "pricingConfig": "計費設定",
-    "useCustomPricing": "使用獨立設定",
-    "pricingConfigDesc": "為此供應商設定獨立的計費參數，不啟用時使用全域預設設定。",
-    "costMultiplier": "成本倍率",
-    "costMultiplierPlaceholder": "留空使用全域預設（1）",
-    "costMultiplierHint": "實際成本 = 基礎成本 × 倍率，支援小數如 1.5",
-    "pricingModelSourceLabel": "計費模式",
-    "pricingModelSourceInherit": "繼承全域預設",
-    "pricingModelSourceRequest": "請求模型",
-    "pricingModelSourceResponse": "回傳模型",
-    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
-  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n    \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
@@ -1526,15 +1495,9 @@
     "configTomlHint": "Codex config.toml 設定內容",
     "configTomlStorageHint": "代理接管中顯示的是儲存的 config 配置，不是即時 config.toml",
     "proxyTakeoverStorageNotice": "💡 目前應用處於代理接管狀態。這裡編輯的是儲存的供應商配置，真實 live 配置已由代理暫時接管",
-    "writeCommonConfig": "套用通用設定",
-    "editCommonConfig": "編輯通用設定",
-    "editCommonConfigTitle": "編輯 Codex 通用設定片段",
-    "commonConfigHint": "該片段會在勾選「套用通用設定」時附加到 config.toml 末尾",
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
     "apiUrlLabel": "API 請求位址",
-    "extractFromCurrent": "從編輯內容擷取",
-    "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",
     "extractFailed": "擷取失敗：{{error}}",
     "saveFailed": "儲存失敗：{{error}}",
     "modelNameHint": "指定使用的模型，將自動更新到 config.toml 中",
@@ -1597,28 +1560,18 @@
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "預設供應商已自動設定；自訂供應商會按名稱/位址自動推斷。僅當自動識別不準時才需手動覆寫。",
     "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。",
-    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容"
+    "keyFieldsHint": "位址、Key、模型、推理檔位、上下文視窗和相容開關隨供應商切換；其餘是 Codex 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可複製它的 TOML，依需要貼到上方；供應商裡保存的原值不會刪除。",
+    "inactiveFieldCopied": "已複製"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
     "envFileHint": "使用 .env 格式設定 Gemini 環境變數",
-    "configJson": "設定檔 (config.json)",
-    "configJsonHint": "使用 JSON 格式設定 Gemini 擴充參數（選填）",
-    "writeCommonConfig": "套用通用設定",
-    "editCommonConfig": "編輯通用設定",
-    "editCommonConfigTitle": "編輯 Gemini 通用設定片段",
-    "commonConfigHint": "該片段會在勾選「套用通用設定」時寫入 Gemini 的 .env（不允許包含 GOOGLE_GEMINI_BASE_URL、GEMINI_API_KEY）",
-    "extractFromCurrent": "從編輯內容擷取",
-    "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",
-    "extractFailed": "擷取失敗：{{error}}",
-    "saveFailed": "儲存失敗：{{error}}",
-    "extractedConfigInvalid": "擷取的設定格式錯誤",
-    "invalidJsonFormat": "通用設定片段格式錯誤（必須是有效的 JSON）",
-    "commonConfigInvalidKeys": "通用設定片段不能包含 GOOGLE_GEMINI_BASE_URL 或 GEMINI_API_KEY（發現：{{keys}}）",
-    "commonConfigInvalidValues": "通用設定片段的值必須是字串",
-    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容",
-    "configMergeFailed": "設定合併失敗：{{error}}",
-    "configReplaceFailed": "設定替換失敗：{{error}}"
+    "configJson": "設定檔 (settings.json)",
+    "configJsonHint": "Gemini CLI 的 settings.json（MCP 伺服器在 MCP 面板中管理）",
+    "keyFieldsHint": "位址、Key、模型名稱和認證方式隨供應商切換；其餘環境變數和 settings.json 是 Gemini CLI 全域設定，儲存後對所有供應商生效。",
+    "inactiveFieldsHint": "這個供應商還保存著 {{count}} 個不隨切換生效的設定。點擊可加入上方的全域設定，儲存後寫入設定檔；供應商裡保存的原值不會刪除。",
+    "addToGlobalSettings": "加入全域設定"
   },
   "opencode": {
     "npmPackage": "API 格式",
@@ -2910,7 +2863,7 @@
       "disabled": "{{app}} 路由已關閉",
       "failed": "切換路由狀態失敗：{{detail}}",
       "tooltip": {
-        "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切換該應用程式供應商為熱切換",
+        "active": "{{appLabel}} 路由中 - {{address}}:{{port}}\n切換供應商只改路由，直連供應商不變",
         "broken": "{{appLabel}} 路由中，但路由服務未執行",
         "inactive": "路由 {{appLabel}} 的請求，讓該應用程式請求走本地路由"
       }
@@ -2985,7 +2938,7 @@
       "stopped": "路由服務已停止",
       "stopFailed": "停止路由服務失敗：{{detail}}"
     },
-    "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
+    "stoppedWithRestore": "路由服務已關閉，所有應用程式已退回直連",
     "stopWithRestoreFailed": "停止失敗：{{detail}}"
   },
   "streamCheck": {
@@ -2993,13 +2946,6 @@
     "reachableSlow": "{{providerName}} 連通但較慢 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} 無法連通: {{message}}",
     "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
-    "connectivityNote": "連通檢測僅探測供應商位址是否可達，不發送真實模型請求。收到任意回應即視為「可達」——這不代表驗證或模型設定一定正確。",
-    "configSaved": "連通檢測設定已儲存",
-    "configSaveFailed": "儲存失敗",
-    "checkParams": "檢查參數",
-    "timeout": "逾時時間（秒）",
-    "maxRetries": "最大重試次數",
-    "degradedThreshold": "緩慢閾值（毫秒）",
     "error": "{{providerName}} 檢查出錯：{{error}}"
   },
   "proxyConfig": {

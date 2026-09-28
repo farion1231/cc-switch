@@ -61,7 +61,7 @@
 |------|-------------|
 | [2.1-add.md](./2-providers/2.1-add.md) | Using presets, custom configuration, universal providers |
 | [2.2-switch.md](./2-providers/2.2-switch.md) | Main UI switching, tray switching, activation methods |
-| [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, backfill mechanism |
+| [2.3-edit.md](./2-providers/2.3-edit.md) | Edit configuration, modify API Key, global settings and edit conflicts |
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | Drag-to-reorder, duplicate provider, delete |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | Usage query, remaining balance, multi-plan display |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop third-party providers, direct mode, and model mapping |

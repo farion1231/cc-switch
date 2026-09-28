@@ -645,6 +645,17 @@ impl ClaudeAdapter {
                 log::debug!("[Claude] 使用 GEMINI_API_KEY");
                 return Some(key.to_string());
             }
+            // Bedrock API Key：Claude Code 读的变量名。旧版预设写在顶层 apiKey，
+            // 由下面的直接获取兜底。
+            if let Some(key) = env
+                .get("AWS_BEARER_TOKEN_BEDROCK")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                log::debug!("[Claude] 使用 AWS_BEARER_TOKEN_BEDROCK");
+                return Some(key.to_string());
+            }
         }
 
         // 尝试直接获取
@@ -1139,6 +1150,25 @@ mod tests {
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-direct");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_extract_auth_reads_bedrock_bearer_token_env() {
+        // 新版 Bedrock API Key 预设把 Key 放在 env.AWS_BEARER_TOKEN_BEDROCK；
+        // 鉴权策略与旧版顶层 apiKey 保持一致，不在这次改动里变。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiKey": "stale-top-level",
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://bedrock-runtime.us-west-2.amazonaws.com",
+                "AWS_BEARER_TOKEN_BEDROCK": "bedrock-key",
+                "CLAUDE_CODE_USE_BEDROCK": "1"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "bedrock-key");
         assert_eq!(auth.strategy, AuthStrategy::Anthropic);
     }
 

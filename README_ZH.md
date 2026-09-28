@@ -336,6 +336,7 @@ paru -S cc-switch-bin
 ### 供应商管理
 
 - **90+ 供应商预设** — 选择预设、填入 Key 即可添加，也可以创建自定义配置
+- **只改关键字段** — 切换时只替换请求地址、Key、模型等连接信息，插件、Hook、MCP、你自己加的设置和注释都原样保留
 - **项目** — 把 Claude Code 或 Codex 当前的供应商、MCP、Skills 和提示词文件保存为一个项目（Claude Desktop 只保存供应商），之后在主页顶部的项目切换器或托盘里一键整套切换；切到其他项目时，当前状态会自动存回原项目
 - **OAuth 认证中心（Beta）** — 在「设置 → 认证」里登录多个 GitHub Copilot、ChatGPT、xAI（Grok）账号，把订阅当作供应商用在 Claude Code、Claude Desktop 和 Codex 中（除 Codex 的 OpenAI Official 外，都需要开启本地路由）。在官方客户端以外使用订阅可能违反厂商的服务条款，请自行评估风险
 - **Claude Desktop 接入第三方** — 可以直连 Anthropic 兼容端点；非 Claude 模型选“模型映射”，经本地路由把 Sonnet、Opus、Haiku 等档位映射到供应商的实际模型
@@ -345,7 +346,7 @@ paru -S cc-switch-bin
 ### 本地路由与故障转移
 
 - **接口格式转换** — 本地路由在 Anthropic Messages、OpenAI Chat Completions、OpenAI Responses 和 Gemini Native 之间转换请求格式：Claude Code 和 Claude Desktop 可以使用 OpenAI 或 Gemini 格式的供应商，Codex 和 Grok Build 可以使用 Chat Completions 或 Anthropic Messages 格式的供应商
-- **按工具开启** — Claude Code、Codex、Gemini CLI、Grok Build 可以分别开启本地路由；开启后，切换供应商会立即作用于后续请求（如果切换改变了模型，Codex 和 Grok Build 仍可能需要重启）
+- **按工具开启** — Claude Code、Codex、Gemini CLI、Grok Build 可以分别开启本地路由；开启后，切换供应商会立即作用于后续请求（如果切换改变了模型，Codex、Gemini CLI 和 Grok Build 仍可能需要重启）
 - **自动故障转移** — 为每个工具配置故障转移队列，请求失败时按队列顺序自动改用下一个供应商，配合熔断器和供应商健康监控
 - **整流器** — 自动修正部分上游不兼容的请求（如 Thinking 签名、不支持图片时降级）
 - 官方供应商（如 Claude Official）不能走本地路由（Codex 的 OpenAI Official 除外）
@@ -393,16 +394,29 @@ CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**�
 视工具而定：
 
 - **Claude Code**：支持供应商数据的热切换，无需重启。
-- **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（Codex 和 Grok Build 切换成功后会有提示）。开启本地路由后，请求会立即转发到新供应商；但如果切换改变了模型，Codex 和 Grok Build 仍可能需要重启。
+- **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（切换成功后会有提示）。开启本地路由后，请求会立即转发到新供应商；但如果切换改变了模型，这三个工具仍可能需要重启。
 - **Claude Desktop**：需要完全退出并重新打开 Claude Desktop；使用“模型映射”时，还需要保持 CC Switch 运行。
 - **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
 
 </details>
 
 <details>
-<summary><strong>切换供应商之后我的插件配置怎么不见了？</strong></summary>
+<summary><strong>切换供应商会改掉我的插件、Hook 等设置吗？</strong></summary>
 
-CC Switch 使用“通用配置片段”功能（Claude Code、Codex、Gemini CLI 均支持），在不同的供应商之间共享 Key、请求地址和模型之外的配置，例如插件、Hook、环境变量。编辑供应商时点击“编辑通用配置”→“从编辑内容提取”，即可把这些通用部分保存到通用配置片段中；新建供应商时保持勾选“应用通用配置”（默认勾选），片段就会合并到新的供应商配置中。对于勾选了“应用通用配置”的 Claude Code 和 Codex 供应商，切走时 CC Switch 会自动从当前配置重新提取通用部分，你在工具里新装的插件会自动带到下一个供应商。你的原始配置都保存在第一次运行本软件时导入的默认供应商里，不会丢失。
+不会。Claude Code、Codex、Gemini CLI、Grok Build 切换供应商时，CC Switch 只替换配置文件里的**关键字段**：请求地址、Key、模型名和接口协议（Codex 还包括推理档位，Gemini CLI 还包括认证方式），以及少数跟着供应商走的兼容选项（如 Claude Code 的“禁用 Artifact 工具”、上下文窗口）。插件、Hook、权限、MCP、你自己加的环境变量、注释和排版都原样保留，对所有供应商生效。
+
+这些共享设置可以直接在工具里改，或手动编辑配置文件；也可以在 CC Switch 里编辑任意一个供应商：编辑框显示的是“切到这个供应商之后配置文件的样子”，保存时关键字段存进这个供应商，其余改动写进配置文件，对所有供应商生效。
+
+所以以前的“通用配置片段”已经不需要了，相关按钮已移除。升级前片段里的设置在切换时早已写进配置文件，会继续保留。CC Switch 第一次改写每个配置文件之前，还会把原文件备份到 `~/.cc-switch/backups/live-first-write/`。
+
+</details>
+
+<details>
+<summary><strong>在工具里换了模型，切走再切回来怎么又变回去了？</strong></summary>
+
+模型属于关键字段，归供应商所有。在工具里换的模型（如 Claude Code 的 `/model`）会一直生效到下次切换；切换时，配置文件里的模型会换成目标供应商保存的那个，CC Switch 不会把你在工具里换的模型存回原来的供应商。想长期使用某个模型，请在 CC Switch 里编辑这个供应商。
+
+旧版本会在切走时把整份配置文件存回供应商，现在不再这样做：那样会把插件等共享设置冻结进某一个供应商，切到别的供应商时就丢了。
 
 </details>
 
@@ -431,7 +445,9 @@ Codex 还可以在 CC Switch 里用“使用 ChatGPT 登录”登录多个 ChatG
 
 开启本地路由后，工具的请求会先发到 CC Switch 的本地路由（默认 `http://127.0.0.1:15721`），再由 CC Switch 转发给你选中的供应商。所以工具的配置文件里只有本地地址和占位密钥 `PROXY_MANAGED`；Claude Code 的模型名还会写成 `claude-sonnet-5` 之类的固定别名（`/model` 菜单里仍显示真实模型名）。真实的供应商地址、密钥和模型都保存在 CC Switch 里。
 
-在「设置 → 使用统计 → 请求日志」里可以看到每条请求的“请求模型 → 实际模型”。关闭本地路由后，配置文件会恢复为当前供应商的真实配置。
+在「设置 → 使用统计 → 请求日志」里可以看到每条请求的“请求模型 → 实际模型”。
+
+开启本地路由期间，切换的是本地路由使用的供应商，开启前在用的供应商保持不变，卡片上标“直连”。关闭本地路由后，配置文件会写回这个直连供应商的配置。退出 CC Switch 时也会先写回直连供应商，下次启动再重新接上本地路由。
 
 </details>
 
@@ -463,8 +479,10 @@ Codex 还可以在 CC Switch 里用“使用 ChatGPT 登录”登录多个 ChatG
 - **技能备份**：`skill-backups/`（卸载或更新技能前自动创建，保留最近 20 个）
 - **OAuth 登录凭据**：`copilot_auth.json`、`codex_oauth_auth.json`、`xai_oauth_auth.json`
 - **日志**：`logs/cc-switch.log` 和 `crash.log`，反馈问题时请附上
+- **本机状态**：`live-state.json`（各工具是直连还是走本地路由、上一次写入了什么）、`codex-login-stash.json`（切到第三方时被移走的 Codex 官方登录，切回官方时还原）
+- **配置文件原件**：`backups/live-first-write/`（CC Switch 第一次改写各工具配置文件之前的原文件）
 
-在「设置 → 高级 → 配置文件目录」里修改“CC Switch 配置目录”后，除 `settings.json` 以外的上述文件都改为存放在新目录。CC Switch 不会自动搬运已有文件，需要先手动复制过去。
+在「设置 → 高级 → 配置文件目录」里修改“CC Switch 配置目录”后，除 `settings.json`、本机状态和配置文件原件以外的上述文件都改为存放在新目录。CC Switch 不会自动搬运已有文件，需要先手动复制过去。`settings.json`、本机状态和配置文件原件只属于这台电脑，始终在默认目录，也不参与云同步。
 
 </details>
 

@@ -3272,7 +3272,6 @@ requires_openai_auth = true`,
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 disable_response_storage = true
-personality = "pragmatic"
 
 [model_providers.custom]
 name = "E-FlowCode"
