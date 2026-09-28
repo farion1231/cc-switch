@@ -461,6 +461,7 @@ describe("App integration with MSW", () => {
         openclaw: false,
         hermes: false,
         pi: false,
+        mcode: false,
       },
     });
     const { default: App } = await import("@/App");
@@ -507,6 +508,7 @@ describe("App integration with MSW", () => {
         openclaw: false,
         hermes: false,
         pi: false,
+        mcode: false,
       },
     });
     const { default: App } = await import("@/App");
