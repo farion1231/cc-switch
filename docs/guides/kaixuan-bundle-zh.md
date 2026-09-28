@@ -108,7 +108,29 @@ pub fn bundles() -> Vec<BundleSpec> {
 
 UI 端 `useKaixuanBundles()` 已经返回所有 bundle，无需改动。
 
-## 五、与已有「双独立预设」的关系
+## 五、端口覆盖与跨平台
+
+### 5.1 本机网关端口非 8782
+
+```bash
+# 启动 cc-switch 前 export；kxpms 端不受影响
+export KAIXUAN_LOCAL_GATEWAY_PORT=8899
+launchctl setenv KAIXUAN_LOCAL_GATEWAY_PORT 8899  # macOS GUI 也要设
+open -a cc-switch
+```
+
+bundle 安装时会用 `http://127.0.0.1:8899/v1` 作为 base_url；启动入口也会用
+8899 端口。
+
+### 5.2 Windows
+
+`start_local_gateway` 走的是 shell；Windows 上自动用 `cmd.exe /C` 而不是
+`/bin/sh`。但 `~/kaixuan/llm-gateway-local/start.sh` 路径在 Windows 上
+无效——要 Windows 用户用 `KAIXUAN_GATEWAY_START_CMD` 自定义命令，或
+直接走 docker fallback（`docker run -d --name llm-gateway-local-8782
+-p 8782:8782 llm-gateway-go:local`，前提是装了 docker desktop）。
+
+## 六、与已有「双独立预设」的关系
 
 | | 旧方式 | 新 kaixuan bundle |
 |---|---|---|

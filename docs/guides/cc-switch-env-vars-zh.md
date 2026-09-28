@@ -38,6 +38,16 @@ cc-switch 启动 → 用户点「安装/重装」→ 后端把 `$KAIXUAN_KXPMS_K
 3. **占位符 + env 缺失或为空** → 落盘为空字符串；后端返回 `missingEnvVars: [...]`，UI 提示用户。
 4. **混合**（如 `prefix-${A}-suffix`）→ 各自独立展开，缺失的子项变空。
 
+## cc-switch 内置的环境变量
+
+| 变量名 | 用途 | 默认 |
+|---|---|---|
+| `KAIXUAN_KXPMS_KEY` 等 | API Key 占位符（你自己定义任意名） | 无 |
+| `KAIXUAN_LOCAL_GATEWAY_PORT` | 本机 llm-gateway-go 端口覆盖 | `8782` |
+| `KAIXUAN_GATEWAY_START_CMD` | 自定义启动命令（一键启动按钮按下时 `sh -c` 执行） | 无 |
+
+注意 `KAIXUAN_LOCAL_GATEWAY_PORT` 和 `KAIXUAN_GATEWAY_START_CMD` **必须用 `export` 暴露给 GUI 应用**——macOS GUI 不读 `~/.zshenv`（见下文 launchctl 段）。
+
 ## 推荐部署
 
 ### macOS（launchd 持久环境变量）

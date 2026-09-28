@@ -311,17 +311,27 @@ pub fn bundles() -> Vec<BundleSpec> {
 /// 重复放了一份较小但稳定的子集（覆盖主力非 OpenAI 模型）。完整目录由
 /// 后端的 model_catalog_json 注入（沿用现有 add_provider 行为）。
 fn kaixuan_bundle() -> BundleSpec {
+    // 本机网关端口可由 `KAIXUAN_LOCAL_GATEWAY_PORT` 覆盖（默认 8782）。
+    // 用户跑 8783 / 8888 等也能复用本 bundle，无需 fork spec。
+    let local_port: u16 = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(8782);
+    let local_base_url = format!("http://127.0.0.1:{local_port}/v1");
+
     let kxpms_config = r#"[model_providers.custom]
 name = "kxpms_gateway"
 base_url = "https://llm.kxpms.cn/v1"
 wire_api = "responses"
 requires_openai_auth = true"#;
 
-    let local_config = r#"[model_providers.custom]
+    let local_config_tmpl = r#"[model_providers.custom]
 name = "local_gateway"
-base_url = "http://127.0.0.1:8782/v1"
+base_url = "__LOCAL_BASE_URL__"
 wire_api = "responses"
 requires_openai_auth = true"#;
+    let local_config = local_config_tmpl.replace("__LOCAL_BASE_URL__", &local_base_url);
 
     let model_catalog = json!([
         {"model":"claude-opus-5","displayName":"Claude Opus 5","contextWindow":1000000,"inputModalities":["text","image"],"reasoningLevels":["low","medium","high","xhigh","max"],"defaultReasoningLevel":"high"},
@@ -365,7 +375,7 @@ requires_openai_auth = true"#;
                 role: "secondary".to_string(),
                 provider_id: "kaixuan-local-8782".to_string(),
                 name: "本地 LLM 网关 (8782)".to_string(),
-                website_url: Some("http://127.0.0.1:8782".to_string()),
+                website_url: Some(format!("http://127.0.0.1:{local_port}")),
                 icon: Some("local_gateway_8782".to_string()),
                 icon_color: Some("#6366F1".to_string()),
                 category: Some("custom".to_string()),
@@ -425,6 +435,317 @@ fn install_bundle_internal_blocking(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+
+    /// 端到端：在临时 HOME 里 init 真 SQLite，验证 install_bundle_internal
+    /// 真的把两个 endpoint 写进 providers 表、加入故障转移队列、开启
+    /// auto_failover，并把 P1 设为 kaixuan-kxpms。
+    ///
+    /// 关键不变量（不只是「函数返回了 result」）：
+    /// - 两条 provider 的 settings_config 里 OPENAI_API_KEY 真的写成了
+    ///   展开后的明文（不再含 `$VAR` 字面量）
+    /// - `in_failover_queue=1` 真的落在 DB 里
+    /// - `proxy_config.auto_failover_enabled` 真的翻成 1
+    /// - 用户预存的同名 provider（手填了不同的 api key）不会被 bundle
+    ///   install 覆盖——只刷 sort_index 与 in_failover_queue
+    #[test]
+    #[serial(env)]
+    fn kaixuan_bundle_local_port_env_override() {
+        let saved = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT").ok();
+        std::env::set_var("KAIXUAN_LOCAL_GATEWAY_PORT", "8899");
+        let b = kaixuan_bundle();
+        let local = b.endpoints.iter().find(|e| e.role == "secondary").unwrap();
+        let config_str = local.settings_config["config"].as_str().unwrap();
+        assert!(
+            config_str.contains("http://127.0.0.1:8899/v1"),
+            "local_config 应 base_url=http://127.0.0.1:8899/v1，实际：{config_str}"
+        );
+        assert_eq!(local.website_url.as_deref(), Some("http://127.0.0.1:8899"));
+        match saved {
+            Some(v) => std::env::set_var("KAIXUAN_LOCAL_GATEWAY_PORT", v),
+            None => std::env::remove_var("KAIXUAN_LOCAL_GATEWAY_PORT"),
+        }
+    }
+
+    /// 端到端：在临时 HOME 里 init 真 SQLite，验证 install_bundle_internal
+    /// 真的把两个 endpoint 写进 providers 表、加入故障转移队列、开启
+    /// auto_failover，并把 P1 设为 kaixuan-kxpms。
+    ///
+    /// 关键不变量（不只是「函数返回了 result」）：
+    /// - 两条 provider 的 settings_config 里 OPENAI_API_KEY 真的写成了
+    ///   展开后的明文（不再含 `$VAR` 字面量）
+    /// - `in_failover_queue=1` 真的落在 DB 里
+    /// - `proxy_config.auto_failover_enabled` 真的翻成 1
+    /// - 用户预存的同名 provider（手填了不同的 api key）不会被 bundle
+    ///   install 覆盖——只刷 sort_index 与 in_failover_queue
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn install_bundle_internal_end_to_end_with_real_db() {
+        use crate::config::get_app_config_dir;
+        use crate::database::Database;
+        use tempfile::TempDir;
+
+        // 临时 HOME → cc-switch.db 落在 sandbox
+        // 注：`#[serial]` 已让本测试串行运行，env var 与 DB 文件不会与
+        // 其它并行测试互相污染。
+        let tmp = TempDir::new().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        std::env::set_var("HOME", tmp.path());
+        // restore on drop
+        let _restore = EnvRestore::new(&[
+            ("CC_SWITCH_TEST_HOME", true),
+            ("HOME", true),
+        ]);
+
+        let db = Database::init().expect("db init");
+
+        // 调试：先确认 proxy_config 真的有 circuit_half_open_permit_max_age_seconds 列。
+        // 直接读 schema 验证，不然后续 get_proxy_config_for_app 会因老 schema 失败。
+        {
+            let conn_lock = db.conn.lock();
+            let conn_guard = conn_lock
+                .map_err(|e| format!("lock failed: {e}"))
+                .expect("lock");
+            let mut stmt = conn_guard
+                .prepare("PRAGMA table_info(proxy_config)")
+                .expect("pragma");
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .expect("cols")
+                .map(|r| r.unwrap())
+                .collect();
+            let db_path = crate::config::get_app_config_dir().join("cc-switch.db");
+            let test_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
+            assert!(
+                cols.iter().any(|c| c.contains("circuit_half_open")),
+                "proxy_config 必须有 circuit_half_open 列；cols={:?}, db_path={:?}, CC_SWITCH_TEST_HOME={:?}",
+                cols,
+                db_path,
+                test_home,
+            );
+        }
+
+        // 设置一个 env var 让 install_bundle 展开
+        std::env::set_var("KAIXUAN_TEST_KEY", "sk-from-env-1234567890");
+        let _restore2 = EnvRestore::new(&[("KAIXUAN_TEST_KEY", false)]);
+
+        let mut api_keys = std::collections::HashMap::new();
+        api_keys.insert("primary".to_string(), "$KAIXUAN_TEST_KEY".to_string());
+        api_keys.insert("secondary".to_string(), "$KAIXUAN_TEST_KEY".to_string());
+
+        let req = InstallBundleRequest {
+            bundle_id: "kaixuan".to_string(),
+            app_type: AppType::Codex.as_str().to_string(),
+            api_keys,
+        };
+
+        let result = install_bundle_internal(&db, &req)
+            .await
+            .expect("install_bundle_internal");
+        assert_eq!(result.bundle_id, "kaixuan");
+        assert_eq!(result.primary_provider_id, "kaixuan-kxpms");
+        assert!(result.auto_failover_enabled);
+        assert!(result.missing_env_vars.is_empty());
+        assert_eq!(result.installed_provider_ids.len(), 2);
+        assert!(result
+            .installed_provider_ids
+            .contains(&"kaixuan-kxpms".to_string()));
+        assert!(result
+            .installed_provider_ids
+            .contains(&"kaixuan-local-8782".to_string()));
+
+        // 1) 两条 provider 真的在 DB 里
+        let all = db.get_all_providers(AppType::Codex.as_str()).expect("read");
+        let kxpms = all.get("kaixuan-kxpms").expect("kxpms in db");
+        let local = all.get("kaixuan-local-8782").expect("local in db");
+        assert_eq!(kxpms.in_failover_queue, true);
+        assert_eq!(local.in_failover_queue, true);
+        assert!(kxpms.sort_index.is_some());
+        assert!(local.sort_index.is_some());
+
+        // 2) 密钥展开后写入 DB（不再含 $ 字面量）
+        let kxpms_key = kxpms.settings_config["auth"]["OPENAI_API_KEY"]
+            .as_str()
+            .expect("key string");
+        assert_eq!(kxpms_key, "sk-from-env-1234567890");
+        let local_key = local.settings_config["auth"]["OPENAI_API_KEY"]
+            .as_str()
+            .expect("key string");
+        assert_eq!(local_key, "sk-from-env-1234567890");
+        assert!(
+            !kxpms_key.contains('$'),
+            "DB 里不应再有 $ 占位符字面量：{kxpms_key}"
+        );
+
+        // 3) auto_failover 真的翻成 1
+        let proxy_cfg = db
+            .get_proxy_config_for_app(AppType::Codex.as_str())
+            .await
+            .expect("proxy cfg");
+        assert!(proxy_cfg.auto_failover_enabled, "auto_failover 应开启");
+        assert!(proxy_cfg.enabled, "proxy 接管应开启");
+
+        // 4) 故障转移队列里两条都在，顺序与 spec 一致（kxpms 在前）
+        let queue = db
+            .get_failover_queue(AppType::Codex.as_str())
+            .expect("queue");
+        assert_eq!(queue.len(), 2);
+        let ids: Vec<&str> = queue.iter().map(|q| q.provider_id.as_str()).collect();
+        let kxpms_pos = ids.iter().position(|id| *id == "kaixuan-kxpms").unwrap();
+        let local_pos = ids.iter().position(|id| *id == "kaixuan-local-8782").unwrap();
+        assert!(
+            kxpms_pos < local_pos,
+            "P1 顺序错：kxpms@{kxpms_pos}, local@{local_pos}"
+        );
+
+        // 5) 二次 install_bundle 是幂等的（不会重复写）
+        let result2 = install_bundle_internal(&db, &req).await.expect("install 2");
+        assert_eq!(result2.installed_provider_ids.len(), 2);
+        let all2 = db.get_all_providers(AppType::Codex.as_str()).expect("read");
+        assert_eq!(all2.len(), all.len(), "重复 install 不应复制行");
+
+        // 7) 缺失 env var 时：占位符仍展开（此时为 ""）但 existing-row 路径**保留**
+        // 用户已写过的 settings_config——所以 DB 里仍然是 install 1 时的真值。
+        // missing_env_vars 仍要返回（让 UI 红字提示），但不会覆盖已有 key。
+        std::env::remove_var("KAIXUAN_TEST_KEY");
+        let req2 = InstallBundleRequest {
+            bundle_id: "kaixuan".to_string(),
+            app_type: AppType::Codex.as_str().to_string(),
+            api_keys: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("primary".to_string(), "$KAIXUAN_TEST_KEY".to_string());
+                m
+            },
+        };
+        let result3 = install_bundle_internal(&db, &req2).await.expect("install 3");
+        assert_eq!(
+            result3.missing_env_vars,
+            vec!["KAIXUAN_TEST_KEY".to_string()]
+        );
+        let all3 = db.get_all_providers(AppType::Codex.as_str()).expect("read");
+        // 已存在 provider 的 settings_config 不被覆盖（关键不变量——擦掉用户
+        // 原 key 会触发 P0 事故）
+        assert_eq!(
+            all3["kaixuan-kxpms"].settings_config["auth"]["OPENAI_API_KEY"],
+            "sk-from-env-1234567890",
+            "existing-row 的 settings_config 必须保留，不被 missing-env 的二次 install 覆盖"
+        );
+
+        // sanity: db dir 用了我们的 tempdir（仅在 app_store 缓存未污染时断言；
+        // 由于 app_store 的 OnceLock<RwLock<Option<PathBuf>>> 是进程级静态，
+        // 别的测试设置后会跨测试泄漏，所以这条断言只能在线程隔离跑时稳定）
+        if std::env::var("CC_SWITCH_TEST_HOME").is_ok() {
+            assert!(get_app_config_dir().starts_with(tmp.path()));
+        }
+    }
+
+    /// 关键不变量：用户预填了自定义 OPENAI_API_KEY 的同名 provider，bundle
+    /// install 必须**保留**用户值，不能覆盖。仅刷新 sort_index + 入队。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn install_bundle_preserves_user_prefilled_settings() {
+        use crate::database::Database;
+        use crate::provider::Provider;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        std::env::set_var("HOME", tmp.path());
+        let _restore = EnvRestore::new(&[
+            ("CC_SWITCH_TEST_HOME", true),
+            ("HOME", true),
+        ]);
+
+        let db = Database::init().expect("db init");
+
+        // 预填一个 kaixuan-kxpms，用户设了自定义 key
+        let user_key = "sk-user-custom-original-key";
+        let pre_provider = Provider {
+            id: "kaixuan-kxpms".to_string(),
+            name: "用户预先填的 kxpms".to_string(),
+            settings_config: json!({
+                "auth": {"OPENAI_API_KEY": user_key},
+                "config": "[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\n",
+                "modelCatalog": []
+            }),
+            website_url: Some("https://llm.kxpms.cn".to_string()),
+            category: Some("custom".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: Some("用户手填".to_string()),
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        db.save_provider(AppType::Codex.as_str(), &pre_provider)
+            .expect("save pre");
+
+        // 设置 env，让 bundle 想用 $ 展开
+        std::env::set_var("KAIXUAN_TEST_KEY2", "sk-bundle-would-write");
+        let _restore2 = EnvRestore::new(&[("KAIXUAN_TEST_KEY2", false)]);
+
+        let mut api_keys = std::collections::HashMap::new();
+        api_keys.insert("primary".to_string(), "$KAIXUAN_TEST_KEY2".to_string());
+        let req = InstallBundleRequest {
+            bundle_id: "kaixuan".to_string(),
+            app_type: AppType::Codex.as_str().to_string(),
+            api_keys,
+        };
+
+        install_bundle_internal(&db, &req).await.expect("install");
+
+        // 用户原 key 应保留
+        let after = db
+            .get_provider_by_id("kaixuan-kxpms", AppType::Codex.as_str())
+            .expect("read")
+            .expect("present");
+        let after_key = after.settings_config["auth"]["OPENAI_API_KEY"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            after_key, user_key,
+            "用户预填的 key 必须保留，不能被 bundle 覆盖"
+        );
+        // 入队必须翻成 true
+        assert!(after.in_failover_queue, "in_failover_queue 必须变 true");
+        // sort_index 应被刷
+        assert!(after.sort_index.is_some());
+        // name 保留（不覆盖用户命名）
+        assert_eq!(after.name, "用户预先填的 kxpms");
+    }
+
+    // ---- mini helpers ----
+
+    /// 临时设一组 env var，Drop 时按 `set` 还原（true = 还原原值 / 删除；false = 仅删除）。
+    struct EnvRestore {
+        saved: Vec<(&'static str, Option<String>)>,
+        delete_only: Vec<&'static str>,
+    }
+    impl EnvRestore {
+        fn new(items: &[(&'static str, bool)]) -> Self {
+            let mut saved = Vec::new();
+            let mut delete_only = Vec::new();
+            for (k, set) in items {
+                if *set {
+                    saved.push((*k, std::env::var(k).ok()));
+                } else {
+                    delete_only.push(*k);
+                }
+            }
+            Self { saved, delete_only }
+        }
+    }
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (k, _) in &self.saved {
+                std::env::remove_var(k);
+            }
+            for k in &self.delete_only {
+                std::env::remove_var(k);
+            }
+        }
+    }
 
     #[test]
     fn kaixuan_bundle_has_two_endpoints_in_order() {

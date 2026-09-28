@@ -911,6 +911,12 @@ impl Database {
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
             circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            /* 2026-09-28 修复：commit e934ffc3 给 create_tables 加了
+               circuit_half_open_permit_max_age_seconds，但此处的
+               proxy_config_new 重构（v1->v2 迁移里跑）漏加，导致所有
+               老库升级后 get_proxy_config_for_app SELECT 报 no such column。
+               保留 schema 同步：两处定义必须严格一致。 */
+            circuit_half_open_permit_max_age_seconds INTEGER NOT NULL DEFAULT 30,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
             live_takeover_active INTEGER NOT NULL DEFAULT 0,
@@ -1480,6 +1486,9 @@ impl Database {
                 circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
                 circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
                 circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                -- 2026-09-28 修复：与上面 proxy_config_new 同步补上
+                -- circuit_half_open_permit_max_age_seconds；不然 v13→v14 升级会丢。
+                circuit_half_open_permit_max_age_seconds INTEGER NOT NULL DEFAULT 30,
                 default_cost_multiplier TEXT NOT NULL DEFAULT '1',
                 pricing_model_source TEXT NOT NULL DEFAULT 'response',
                 live_takeover_active INTEGER NOT NULL DEFAULT 0,

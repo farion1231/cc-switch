@@ -45,7 +45,15 @@ pub struct StartLocalGatewayResult {
 }
 
 /// 已知网关 endpoint 的 SSOT。前端用它渲染 health 卡片。
+///
+/// 本机端口可由 `KAIXUAN_LOCAL_GATEWAY_PORT` 覆盖（默认 8782）。
+/// 与 `provider_bundle` 的端口推导保持一致——两边任一处改了都得改。
 pub fn known_endpoints() -> Vec<GatewayEndpointMeta> {
+    let local_port: u16 = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(8782);
     vec![
         GatewayEndpointMeta {
             id: "kxpms".to_string(),
@@ -55,8 +63,8 @@ pub fn known_endpoints() -> Vec<GatewayEndpointMeta> {
         },
         GatewayEndpointMeta {
             id: "local-8782".to_string(),
-            label: "本地 8782".to_string(),
-            url: "http://127.0.0.1:8782/v1/models".to_string(),
+            label: format!("本地 {local_port}"),
+            url: format!("http://127.0.0.1:{local_port}/v1/models"),
             role: "secondary".to_string(),
         },
     ]
@@ -134,17 +142,23 @@ pub async fn probe_all() -> Vec<GatewayHealth> {
 /// 启动本机网关（同步函数，由调用方在 spawn_blocking 里跑）。
 ///
 /// 策略：
-/// 1. 先 probe `127.0.0.1:8782`：通了就直接返回 success；
+/// 1. 先 probe `127.0.0.1:$KAIXUAN_LOCAL_GATEWAY_PORT`（默认 8782）：通了就直接返回 success；
 /// 2. 找启动入口：优先级
 ///    (a) `$KAIXUAN_GATEWAY_START_CMD` 环境变量（用户自定义，最灵活）；
 ///    (b) `~/kaixuan/llm-gateway-local/start.sh`（项目惯例路径）；
-///    (c) `docker run -d --name llm-gateway-local-8782 -p 8782:8782
+///    (c) `docker run -d --name llm-gateway-local-8782 -p $PORT:$PORT
 ///         llm-gateway-go:local`（fallback，假设本地有镜像）。
 /// 3. 启动后 wait up to 5 秒，再 probe 一次确认 reachable。
 ///
 /// 失败路径要返回 stderr 让用户看到为什么没起来。
 pub fn start_local_gateway() -> StartLocalGatewayResult {
     let started = Instant::now();
+    let local_port: u16 = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(8782);
+    let probe_url = format!("http://127.0.0.1:{local_port}/v1/models");
 
     // 1. 同步阻塞 probe；Tauri 命令层用 spawn_blocking 包，本函数本身
     //    不能再 await。要更严谨可以传 Client 进来，但 200ms 探针可以接受。
@@ -155,7 +169,7 @@ pub fn start_local_gateway() -> StartLocalGatewayResult {
         let rt = tokio::runtime::Handle::try_current().map_err(|e| format!("no tokio: {e}"))?;
         let resp = rt.block_on(async {
             client
-                .get("http://127.0.0.1:8782/v1/models")
+                .get(&probe_url)
                 .header("User-Agent", "cc-switch/3.20")
                 .send()
                 .await
@@ -248,10 +262,26 @@ pub fn start_local_gateway() -> StartLocalGatewayResult {
 }
 
 /// 选启动命令。返回 (program, args)。
+///
+/// 跨平台注意：本函数在 macOS / Linux 上用 `/bin/sh -c`；Windows 上
+/// 用 `cmd.exe /C`。`KAIXUAN_GATEWAY_START_CMD` 用户自定义时按当前
+/// 平台的 shell 写命令即可。
 fn pick_start_command() -> (String, Vec<String>) {
+    let local_port: u16 = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(8782);
     if let Ok(custom) = std::env::var("KAIXUAN_GATEWAY_START_CMD") {
         if !custom.trim().is_empty() {
-            return ("/bin/sh".to_string(), vec!["-c".to_string(), custom]);
+            #[cfg(windows)]
+            {
+                return ("cmd.exe".to_string(), vec!["/C".to_string(), custom]);
+            }
+            #[cfg(not(windows))]
+            {
+                return ("/bin/sh".to_string(), vec!["-c".to_string(), custom]);
+            }
         }
     }
     if let Some(home) = std::env::var_os("HOME") {
@@ -269,9 +299,9 @@ fn pick_start_command() -> (String, Vec<String>) {
             "run".to_string(),
             "-d".to_string(),
             "--name".to_string(),
-            "llm-gateway-local-8782".to_string(),
+            format!("llm-gateway-local-{local_port}"),
             "-p".to_string(),
-            "8782:8782".to_string(),
+            format!("{local_port}:{local_port}"),
             "llm-gateway-go:local".to_string(),
         ],
     )
@@ -280,6 +310,7 @@ fn pick_start_command() -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn known_endpoints_includes_both() {
@@ -308,13 +339,24 @@ mod tests {
     }
 
     #[test]
+    #[serial(env)]
     fn pick_start_command_prefers_env_var() {
         let saved = std::env::var("KAIXUAN_GATEWAY_START_CMD").ok();
         std::env::set_var("KAIXUAN_GATEWAY_START_CMD", "echo hi");
         let (prog, args) = pick_start_command();
-        assert_eq!(prog, "/bin/sh");
-        assert_eq!(args[0], "-c");
-        assert_eq!(args[1], "echo hi");
+        // macOS / Linux 用 /bin/sh -c；Windows 用 cmd.exe /C（测试机无 Windows 跳过）
+        #[cfg(not(windows))]
+        {
+            assert_eq!(prog, "/bin/sh");
+            assert_eq!(args[0], "-c");
+            assert_eq!(args[1], "echo hi");
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(prog, "cmd.exe");
+            assert_eq!(args[0], "/C");
+            assert_eq!(args[1], "echo hi");
+        }
         match saved {
             Some(v) => std::env::set_var("KAIXUAN_GATEWAY_START_CMD", v),
             None => std::env::remove_var("KAIXUAN_GATEWAY_START_CMD"),
@@ -322,14 +364,47 @@ mod tests {
     }
 
     #[test]
+    #[serial(env)]
     fn pick_start_command_empty_env_falls_through() {
         let saved = std::env::var("KAIXUAN_GATEWAY_START_CMD").ok();
         std::env::set_var("KAIXUAN_GATEWAY_START_CMD", "   ");
         let (prog, _args) = pick_start_command();
-        assert_ne!(prog, "/bin/sh");
+        // 空字符串不应走 env 分支，应当走 docker fallback 或 start.sh
+        assert!(
+            prog != "/bin/sh" && prog != "cmd.exe",
+            "空 env 应跳过 shell 走 docker/start.sh 分支，但拿到 {prog}"
+        );
         match saved {
             Some(v) => std::env::set_var("KAIXUAN_GATEWAY_START_CMD", v),
             None => std::env::remove_var("KAIXUAN_GATEWAY_START_CMD"),
+        }
+    }
+
+    #[test]
+    #[serial(env)]
+    fn known_endpoints_honors_local_port_env() {
+        let saved = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT").ok();
+        std::env::set_var("KAIXUAN_LOCAL_GATEWAY_PORT", "8899");
+        let eps = known_endpoints();
+        let local = eps.iter().find(|e| e.id == "local-8782").unwrap();
+        assert_eq!(local.url, "http://127.0.0.1:8899/v1/models");
+        assert_eq!(local.label, "本地 8899");
+        match saved {
+            Some(v) => std::env::set_var("KAIXUAN_LOCAL_GATEWAY_PORT", v),
+            None => std::env::remove_var("KAIXUAN_LOCAL_GATEWAY_PORT"),
+        }
+    }
+
+    #[test]
+    #[serial(env)]
+    fn known_endpoints_default_port_8782() {
+        let saved = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT").ok();
+        std::env::remove_var("KAIXUAN_LOCAL_GATEWAY_PORT");
+        let eps = known_endpoints();
+        let local = eps.iter().find(|e| e.id == "local-8782").unwrap();
+        assert_eq!(local.url, "http://127.0.0.1:8782/v1/models");
+        if let Some(v) = saved {
+            std::env::set_var("KAIXUAN_LOCAL_GATEWAY_PORT", v);
         }
     }
 }
