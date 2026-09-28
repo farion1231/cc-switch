@@ -54,12 +54,6 @@ const renderEditor = (
       showRemoteModelCatalog={showRemoteModelCatalog}
       onAuthChange={() => {}}
       onConfigChange={onConfigChange}
-      useCommonConfig={false}
-      onCommonConfigToggle={() => {}}
-      commonConfigSnippet=""
-      onCommonConfigSnippetChange={() => false}
-      onCommonConfigErrorClear={() => {}}
-      commonConfigError=""
       authError=""
       configError=""
     />,
