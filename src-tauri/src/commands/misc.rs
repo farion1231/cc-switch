@@ -2,6 +2,7 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::provider::Provider;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -4267,15 +4268,74 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
+    // 需要协议转换的 Claude 卡片必须让终端指向本地代理，否则 Claude Code 会把
+    // Anthropic 请求直接发到上游的 OpenAI/Gemini 端点。见
+    // `claude_terminal_requires_local_proxy`。
+    //
+    // 代理只会把请求发给"当前供应商"，所以只有当前卡片能用这条路：否则终端会打着
+    // A 卡片的模型名，把请求送进 B 卡片的上游。
+    let proxy_backed_claude = app_type == AppType::Claude
+        && claude_terminal_requires_local_proxy(provider)
+        && is_current_provider(state.inner(), &app_type, &providerId);
+    let config = if proxy_backed_claude {
+        if !state.proxy_service.is_running().await {
+            state.proxy_service.start().await?;
+        }
+        state
+            .proxy_service
+            .claude_settings_via_local_proxy(provider)
+            .await?
+    } else {
+        provider.settings_config.clone()
+    };
+
     // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let env_vars = extract_env_vars_from_config(&config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
     launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+/// 该提供商是否为该应用的当前供应商。
+///
+/// 与代理选路保持一致：`ProviderRouter` 只把请求发给当前供应商（故障转移开启时
+/// 才走队列），所以按卡片启动终端时必须先确认它确实是代理会命中的那一个。
+fn is_current_provider(
+    state: &crate::store::AppState,
+    app_type: &AppType,
+    provider_id: &str,
+) -> bool {
+    crate::settings::get_effective_current_provider(&state.db, app_type)
+        .ok()
+        .flatten()
+        .is_some_and(|current| current == provider_id)
+}
+
+/// 该提供商在 Claude 客户端下的终端是否需要指向本地代理。
+///
+/// Claude Code 只会说 Anthropic Messages；`apiFormat` 非 `anthropic` 的卡片
+/// （openai_chat / openai_responses / gemini_native）必须由本地代理做协议转换，
+/// 否则客户端会把 Anthropic 请求直接打到上游的 OpenAI/Gemini 端点。
+///
+/// 上游的 `/v1/messages` 兼容层并不可靠：AgentRouter 会把该路径转成
+/// `/v1/chat/completions`，于是带 `reasoning_effort` 的请求在携带 function
+/// tools 时被上游以 400 拒绝（"Function tools with reasoning_effort are not
+/// supported for gpt-6-astra in /v1/chat/completions. To use function tools, use
+/// /v1/responses"），GPT-6 Astra 下的 Claude Code 完全不可用。走代理则转成
+/// `/v1/responses`，同一请求 200。
+///
+/// 托管 OAuth（github_copilot / codex_oauth / xai_oauth）的凭据由代理逐请求注入，
+/// 同样只能走代理。
+fn claude_terminal_requires_local_proxy(provider: &Provider) -> bool {
+    provider.uses_managed_account_auth()
+        || provider
+            .meta
+            .as_ref()
+            .is_some_and(|meta| meta.is_full_url == Some(true))
+        || crate::proxy::providers::get_claude_api_format(provider) != "anthropic"
 }
 
 /// 从提供商配置中提取环境变量
@@ -5249,7 +5309,55 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
+    use serde_json::json;
+    use serial_test::serial;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    /// 隔离真实用户目录：这些测试会读 `~/.claude` 之类的路径。
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: tempfile::TempDir,
+        original_home: Option<std::ffi::OsString>,
+        original_userprofile: Option<std::ffi::OsString>,
+        original_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("failed to create temp home");
+            let original_home = std::env::var_os("HOME");
+            let original_userprofile = std::env::var_os("USERPROFILE");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            for (key, value) in [
+                ("HOME", &self.original_home),
+                ("USERPROFILE", &self.original_userprofile),
+                ("CC_SWITCH_TEST_HOME", &self.original_test_home),
+            ] {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
     /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。
@@ -8532,5 +8640,260 @@ mod tests {
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
         );
+    }
+
+    /// Claude Code 只会说 Anthropic Messages：`apiFormat` 非 anthropic 的卡片
+    /// （AgentRouter + GPT-6 Astra 用 openai_responses）必须经本地代理转换，
+    /// 否则 Anthropic 请求会被直接打到上游，上游再降级成 /v1/chat/completions 并以
+    /// "Function tools with reasoning_effort are not supported ... use /v1/responses"
+    /// 拒绝每一次带工具的请求。
+    #[test]
+    fn claude_terminal_routes_non_anthropic_formats_through_local_proxy() {
+        let responses = provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_BASE_URL": "https://agentrouter.org",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]"
+                }
+            }),
+            Some("openai_responses"),
+        );
+        assert!(claude_terminal_requires_local_proxy(&responses));
+
+        let chat = provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com"
+                }
+            }),
+            Some("openai_chat"),
+        );
+        assert!(claude_terminal_requires_local_proxy(&chat));
+
+        let gemini = provider_with_meta(
+            json!({
+                "env": { "ANTHROPIC_AUTH_TOKEN": "sk-test" }
+            }),
+            Some("gemini_native"),
+        );
+        assert!(claude_terminal_requires_local_proxy(&gemini));
+
+        // 完整 URL 模式同样只能由代理承接。
+        let mut full_url = provider_with_meta(
+            json!({
+                "env": { "ANTHROPIC_AUTH_TOKEN": "sk-test" }
+            }),
+            Some("anthropic"),
+        );
+        full_url.meta.as_mut().unwrap().is_full_url = Some(true);
+        assert!(claude_terminal_requires_local_proxy(&full_url));
+    }
+
+    /// 原生 Anthropic 上游必须保持直连：代理未运行时，用户仍应能打开终端直接使用。
+    #[test]
+    fn claude_terminal_keeps_native_anthropic_providers_direct() {
+        let anthropic = provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            Some("anthropic"),
+        );
+        assert!(!claude_terminal_requires_local_proxy(&anthropic));
+
+        let no_meta = provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_BASE_URL": "https://relay.example"
+                }
+            }),
+            None,
+        );
+        assert!(!claude_terminal_requires_local_proxy(&no_meta));
+    }
+
+    /// 旧卡片把 API 格式存在 settings_config.api_format 时，也必须沿用代理判断。
+    #[test]
+    fn claude_terminal_routes_legacy_non_anthropic_format_through_local_proxy() {
+        let legacy = provider_with_meta(
+            json!({
+                "api_format": "openai_responses",
+                "env": { "ANTHROPIC_BASE_URL": "https://agentrouter.org" }
+            }),
+            None,
+        );
+        assert!(claude_terminal_requires_local_proxy(&legacy));
+    }
+
+    /// 托管 OAuth 的凭据由代理逐请求注入，即使上游是 Anthropic Messages 也必须走代理。
+    #[test]
+    fn claude_terminal_routes_managed_oauth_providers_through_local_proxy() {
+        let mut copilot = provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-5"
+                }
+            }),
+            Some("anthropic"),
+        );
+        copilot.meta.as_mut().unwrap().provider_type = Some("github_copilot".to_string());
+        assert!(claude_terminal_requires_local_proxy(&copilot));
+
+        let mut xai = provider_with_meta(
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://api.x.ai/v1" }
+            }),
+            Some("openai_responses"),
+        );
+        xai.meta.as_mut().unwrap().provider_type = Some("xai_oauth".to_string());
+        assert!(claude_terminal_requires_local_proxy(&xai));
+    }
+
+    /// 端到端契约：AgentRouter + GPT-6 Astra（openai_responses）的卡片按卡片启动
+    /// 终端时，写进 `claude --settings` 的配置必须指向本地代理，而不是
+    /// `https://agentrouter.org`——后者会让 Claude Code 把 Anthropic 请求直接打到
+    /// 上游，上游再降级成 /v1/chat/completions 并以 400 拒绝所有带工具的请求。
+    ///
+    /// 这是本修复的核心不变量：只有真正发往代理，Anthropic → Responses 的转换
+    /// 才会发生。
+    #[tokio::test]
+    #[serial]
+    async fn claude_terminal_config_for_converted_provider_points_at_local_proxy() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+
+        let db = Arc::new(crate::database::Database::memory().expect("in-memory db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        let provider = {
+            let mut p = provider_with_meta(
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "sk-real-upstream-key",
+                        "ANTHROPIC_BASE_URL": "https://agentrouter.org",
+                        "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]",
+                        "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "GPT 6 Astra"
+                    }
+                }),
+                Some("openai_responses"),
+            );
+            p.id = "agentrouter".to_string();
+            p.name = "AgentRouter".to_string();
+            p
+        };
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "agentrouter")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("agentrouter"))
+            .expect("set local current provider");
+
+        assert!(
+            is_current_provider(&state, &AppType::Claude, "agentrouter"),
+            "provider must be current for the proxy-backed path"
+        );
+
+        let config = state
+            .proxy_service
+            .claude_settings_via_local_proxy(&provider)
+            .await
+            .expect("build proxy-backed claude settings");
+
+        let base_url = config["env"]["ANTHROPIC_BASE_URL"]
+            .as_str()
+            .expect("base url present");
+        assert!(
+            base_url.starts_with("http://127.0.0.1:") || base_url.starts_with("http://localhost:"),
+            "converted providers must be routed through the local proxy, got {base_url}"
+        );
+        assert_ne!(
+            base_url, "https://agentrouter.org",
+            "the terminal must not talk to the upstream directly"
+        );
+        assert_eq!(
+            config["env"]["ANTHROPIC_AUTH_TOKEN"].as_str(),
+            Some("PROXY_MANAGED"),
+            "the real upstream key must be replaced by the proxy placeholder"
+        );
+        // 角色模型别名交给代理映射；真实上游模型名不再出现在客户端配置里。
+        assert_eq!(
+            config["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL"].as_str(),
+            Some("claude-fable-5[1M]"),
+            "role aliases must be the stable Claude ids the proxy maps upstream"
+        );
+
+        let env_vars = extract_env_vars_from_config(&config, &AppType::Claude);
+        let base_url_var = env_vars
+            .iter()
+            .find(|(key, _)| key == "ANTHROPIC_BASE_URL")
+            .map(|(_, value)| value.clone())
+            .expect("ANTHROPIC_BASE_URL exported to the launched client");
+        assert!(
+            base_url_var.starts_with("http://127.0.0.1:")
+                || base_url_var.starts_with("http://localhost:"),
+            "the launched client must be pointed at the proxy, got {base_url_var}"
+        );
+    }
+
+    /// 原生 Anthropic 卡片保持直连：代理没跑也不该拦住用户开终端。
+    #[tokio::test]
+    #[serial]
+    async fn claude_terminal_config_for_native_provider_keeps_direct_endpoint() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+        let db = Arc::new(crate::database::Database::memory().expect("in-memory db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        let provider = provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-native",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            Some("anthropic"),
+        );
+        assert!(!claude_terminal_requires_local_proxy(&provider));
+
+        let config = provider.settings_config.clone();
+        let env_vars = extract_env_vars_from_config(&config, &AppType::Claude);
+        let base_url_var = env_vars
+            .iter()
+            .find(|(key, _)| key == "ANTHROPIC_BASE_URL")
+            .map(|(_, value)| value.clone())
+            .expect("ANTHROPIC_BASE_URL exported");
+        assert_eq!(base_url_var, "https://api.anthropic.com");
+        assert_eq!(
+            env_vars
+                .iter()
+                .find(|(key, _)| key == "ANTHROPIC_AUTH_TOKEN")
+                .map(|(_, value)| value.as_str()),
+            Some("sk-native"),
+            "direct providers keep their real key"
+        );
+        let _ = &state;
+    }
+
+    fn provider_with_meta(
+        settings_config: serde_json::Value,
+        api_format: Option<&str>,
+    ) -> Provider {
+        let mut provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            settings_config,
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: api_format.map(ToString::to_string),
+            ..ProviderMeta::default()
+        });
+        provider
     }
 }

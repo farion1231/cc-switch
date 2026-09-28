@@ -233,6 +233,30 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
+    /// 生成一份指向本地代理的 Claude 配置（不落盘）。
+    ///
+    /// 终端启动路径使用它来复用代理契约：客户端看到稳定的 Claude 角色别名和
+    /// `PROXY_MANAGED` 占位符，真实模型与凭据由代理按当前路由供应商解析。直接把
+    /// 供应商行里的 `ANTHROPIC_BASE_URL` 交给 Claude Code 会绕过 Responses 转换。
+    pub(crate) async fn claude_settings_via_local_proxy(
+        &self,
+        provider: &Provider,
+    ) -> Result<Value, String> {
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+        let route = crate::live::project::claude::ClaudeProjection::of(&provider.settings_config);
+        let auth = if provider.uses_managed_account_auth() {
+            crate::live::project::claude::ProxyAuth::Managed {
+                auth_token: !provider.is_github_copilot() || !provider.claude_uses_api_key_field(),
+            }
+        } else {
+            crate::live::project::claude::ProxyAuth::FollowRow
+        };
+        let projection = crate::live::project::claude::proxy_projection(&route, &proxy_url, auth);
+        let mut env = projection.env;
+        env.extend(projection.exclusive);
+        Ok(json!({ "env": env }))
+    }
+
     /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
     /// 时写的契约）。
     pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
