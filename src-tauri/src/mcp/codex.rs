@@ -42,6 +42,23 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     out
 }
 
+/// 推断 Codex `[mcp_servers.*]` 条目的传输类型。
+///
+/// Codex 没有 `type` 字段：传输方式由 `command`（stdio）或 `url`
+/// （streamable HTTP）推断。手写配置以及新版本工具写出的配置都可能只有
+/// `command`/`url`，因此显式 `type` 缺失时按 `url` 存在与否兜底，
+/// 避免 HTTP server 被误判成 stdio 而丢失 `url`。
+fn codex_entry_transport_type(entry_tbl: &toml::value::Table) -> &str {
+    if let Some(explicit) = entry_tbl.get("type").and_then(|v| v.as_str()) {
+        return explicit;
+    }
+    if entry_tbl.contains_key("url") {
+        "http"
+    } else {
+        "stdio"
+    }
+}
+
 /// 从 ~/.codex/config.toml 导入 MCP 到统一结构（v3.7.0+）
 ///
 /// 格式支持：
@@ -71,11 +88,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
-            let typ = entry_tbl
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+            // 传输类型：显式 `type` 优先；缺失时由 command/url 推断（见 helper）
+            let typ = codex_entry_transport_type(entry_tbl);
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
@@ -865,5 +879,24 @@ mod tests {
                 "Codex MCP table must not contain a `type` field"
             );
         }
+    }
+
+    #[test]
+    fn codex_entry_transport_type_infers_from_url() {
+        // 显式 type 优先
+        let explicit: toml::value::Table =
+            toml::from_str("type = \"sse\"\nurl = \"https://x/sse\"\n").expect("fixture parses");
+        assert_eq!(codex_entry_transport_type(&explicit), "sse");
+
+        // 无 type：有 url → http（否则 HTTP server 会被误判成 stdio）
+        let http: toml::value::Table =
+            toml::from_str("url = \"https://x/mcp\"\n").expect("fixture parses");
+        assert_eq!(codex_entry_transport_type(&http), "http");
+
+        // 无 type：只有 command → stdio
+        let stdio: toml::value::Table =
+            toml::from_str("command = \"npx\"\nargs = [\"-y\", \"server\"]\n")
+                .expect("fixture parses");
+        assert_eq!(codex_entry_transport_type(&stdio), "stdio");
     }
 }
