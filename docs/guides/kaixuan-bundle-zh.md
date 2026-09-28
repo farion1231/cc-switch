@@ -18,11 +18,11 @@ curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 https://llm.kxpms.cn/v1/mo
 
 本机跑 llm-gateway-go 容器。三种部署方式（按优先级）：
 
-| 方式 | 路径 | 触发 |
-|---|---|---|
-| **(a) 自定义命令** | `KAIXUAN_GATEWAY_START_CMD` 环境变量 | cc-switch 在「重启 8782」按钮按下时执行 `sh -c "$KAIXUAN_GATEWAY_START_CMD"` |
-| **(b) 项目惯例脚本** | `~/kaixuan/llm-gateway-local/start.sh` | 文件存在即执行；缺权限请 `chmod +x` |
-| **(c) Docker fallback** | `docker run -d --name llm-gateway-local-8782 -p 8782:8782 llm-gateway-go:local` | 上两条都没找到时执行；要求本地有 `llm-gateway-go:local` 镜像 |
+| 方式                    | 路径                                                                            | 触发                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **(a) 自定义命令**      | `KAIXUAN_GATEWAY_START_CMD` 环境变量                                            | cc-switch 在「重启 8782」按钮按下时执行 `sh -c "$KAIXUAN_GATEWAY_START_CMD"` |
+| **(b) 项目惯例脚本**    | `~/kaixuan/llm-gateway-local/start.sh`                                          | 文件存在即执行；缺权限请 `chmod +x`                                          |
+| **(c) Docker fallback** | `docker run -d --name llm-gateway-local-8782 -p 8782:8782 llm-gateway-go:local` | 上两条都没找到时执行；要求本地有 `llm-gateway-go:local` 镜像                 |
 
 ### 1.3 验证本机网关
 
@@ -54,10 +54,10 @@ curl -s -o /dev/null -w "%{http_code}\n" --max-time 3 http://127.0.0.1:8782/v1/m
 
 卡片上有两盏灯：
 
-| 端点 | 健康 = | 健康 ≠ |
-|---|---|---|
-| `kxpms` | <Wifi/> + `200 · 35ms` | <WifiOff/> + 错误信息 |
-| `local-8782` | 同上 | 同上 |
+| 端点         | 健康 =                 | 健康 ≠                |
+| ------------ | ---------------------- | --------------------- |
+| `kxpms`      | <Wifi/> + `200 · 35ms` | <WifiOff/> + 错误信息 |
+| `local-8782` | 同上                   | 同上                  |
 
 每 15 秒轮询一次，窗口聚焦时立即刷新。8782 不可达时点 8782 行右侧的 ▶ 按钮一键启动。
 
@@ -132,11 +132,11 @@ bundle 安装时会用 `http://127.0.0.1:8899/v1` 作为 base_url；启动入口
 
 ## 六、与已有「双独立预设」的关系
 
-| | 旧方式 | 新 kaixuan bundle |
-|---|---|---|
-| UI 操作 | 选「开轩 LLM 网关」预设 + 选「本地 LLM 网关 (8782)」预设，两次点击 | 点「安装/重装」一次 |
-| 故障转移 | 需要手动把两个都加入队列 | 自动入队 + 开启 auto_failover |
-| 默认模型 | 两个独立 `default` 切换 | bundle 装好后 P1 = kxpms |
-| 配置覆盖 | 重装会覆盖用户编辑的 api key | 同 id 已存在时保留用户 settings_config（只刷新 membership） |
+|          | 旧方式                                                             | 新 kaixuan bundle                                           |
+| -------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| UI 操作  | 选「开轩 LLM 网关」预设 + 选「本地 LLM 网关 (8782)」预设，两次点击 | 点「安装/重装」一次                                         |
+| 故障转移 | 需要手动把两个都加入队列                                           | 自动入队 + 开启 auto_failover                               |
+| 默认模型 | 两个独立 `default` 切换                                            | bundle 装好后 P1 = kxpms                                    |
+| 配置覆盖 | 重装会覆盖用户编辑的 api key                                       | 同 id 已存在时保留用户 settings_config（只刷新 membership） |
 
 旧的两个独立预设（`codexProviderPresets.ts` 里的 `开轩 LLM 网关` / `本地 LLM 网关 (8782)`）保留，可继续单条使用；不冲突。

@@ -105,20 +105,13 @@ pub fn get_bundle(id: &str) -> Option<BundleSpec> {
     bundles().into_iter().find(|b| b.id == id)
 }
 
-/// 列出当前 AppType 下已存在的 provider IDs（用于判断 spec 中的 id 是否冲突）。
-fn existing_provider_ids(db: &Database, app_type: &str) -> Result<Vec<String>, AppError> {
-    Ok(db
-        .get_all_providers(app_type)?
-        .into_keys()
-        .collect::<Vec<_>>())
-}
-
 /// 安装入口（异步，内部函数，便于命令层 + 单测共用）。
 ///
-/// 原子性：当前实现是「单线程顺序写入，每步独立事务」。如果中间失败，
-/// 已写入的 provider 会保留——后续重试会走「id 冲突就跳过」路径，
-/// 不会重复创建（见 [`provision_endpoint`]）。这种弱原子性是当前
-/// `Database` API 的能力上限；要真原子事务需要重写 DAO 层，本 PR 不做。
+/// 原子性：providers 写入 + 入队 + 排序 + auto_failover 开关全部收进
+/// [`Database::install_bundle_endpoints`] 的**同一个** transaction。
+/// 任一步失败 → 整批回滚，不会留下「已写库但未入队 / 未打开 auto_failover」
+/// 的半成品状态。重复安装仍然安全：端点 id 已存在时只刷新 membership 与
+/// sort_index，**不**覆盖用户改过的 `settings_config`（保住本地 api_key）。
 pub async fn install_bundle_internal(
     db: &Database,
     req: &InstallBundleRequest,
@@ -147,9 +140,9 @@ pub async fn install_bundle_internal(
         expanded_endpoints.push((ep, expanded));
     }
 
-    // 2) 写入 providers。id 已存在 → 仅刷新 membership（不覆盖用户已改的
-    //    settings_config，避免擦掉本地 api_key）；id 不存在 → 整条插入。
-    let existing = existing_provider_ids(db, &req.app_type)?;
+    // 2) 原子写入：providers + 入队 + sort_index + auto_failover 开关，
+    //    全部落在**同一个** transaction 里。任一步失败 → 整批回滚，
+    //    DB 回到调用前状态，不会留下「已写库但未入队」的半成品。
     let base_index = db
         .get_all_providers(&req.app_type)?
         .values()
@@ -157,24 +150,14 @@ pub async fn install_bundle_internal(
         .max()
         .map(|m| m + 1)
         .unwrap_or(0);
-    let mut installed_ids: Vec<String> = Vec::new();
-    for (i, (ep, _expanded)) in expanded_endpoints.iter().enumerate() {
-        let sort_index = base_index + i;
-        if existing.contains(&ep.provider_id) {
-            // 已有：保留用户 settings_config，仅刷新入队 + sort_index
-            db.add_to_failover_queue(&req.app_type, &ep.provider_id)?;
-            db.update_provider_sort_index(&req.app_type, &ep.provider_id, sort_index)?;
-        } else {
-            let provider = build_provider_from_spec(ep, sort_index);
-            db.save_provider(&req.app_type, &provider)?;
-        }
-        installed_ids.push(ep.provider_id.clone());
-    }
+    let providers: Vec<Provider> = expanded_endpoints
+        .iter()
+        .enumerate()
+        .map(|(i, (ep, _expanded))| build_provider_from_spec(ep, base_index + i))
+        .collect();
+    let installed_ids = db.install_bundle_endpoints(&req.app_type, &providers, true)?;
 
-    // 3) 开启 auto_failover + proxy（如果尚未开启）
-    enable_auto_failover(db, &req.app_type).await?;
-
-    // 4) P1 = endpoints[0]（bundle 定义顺序即故障转移顺序）
+    // 3) P1 = endpoints[0]（bundle 定义顺序即故障转移顺序）
     let primary_provider_id = spec
         .endpoints
         .first()
@@ -189,17 +172,6 @@ pub async fn install_bundle_internal(
         auto_failover_enabled: true,
         missing_env_vars,
     })
-}
-
-/// 启用 auto_failover 的辅助：若 proxy_config.auto_failover_enabled=false，
-/// 先确保 proxy.enabled=true（auto_failover 依赖 proxy 接管），再打开 auto_failover。
-async fn enable_auto_failover(db: &Database, app_type: &str) -> Result<(), AppError> {
-    let mut cfg = db.get_proxy_config_for_app(app_type).await?;
-    if !cfg.enabled {
-        cfg.enabled = true;
-    }
-    cfg.auto_failover_enabled = true;
-    db.update_proxy_config_for_app(cfg).await
 }
 
 /// 把 spec 渲染成 Provider。
@@ -651,6 +623,94 @@ mod tests {
         if std::env::var("CC_SWITCH_TEST_HOME").is_ok() {
             assert!(get_app_config_dir().starts_with(tmp.path()));
         }
+    }
+
+    /// 原子性护栏：`install_bundle_endpoints` 整批写入必须落在**同一个** transaction。
+    ///
+    /// 构造一个必然失败的批次（第 2 个端点违反 UNIQUE 主键 / NOT NULL 约束），
+    /// 断言第 1 个端点也被回滚——DB 回到调用前的空状态，不留「已写库但未入队」
+    /// 的半成品。这正是旧实现（每步独立事务）做不到的事。
+    #[test]
+    #[serial(env)]
+    fn install_bundle_endpoints_rolls_back_every_endpoint_on_failure() {
+        use crate::database::Database;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        std::env::set_var("HOME", tmp.path());
+        let _restore = EnvRestore::new(&[("CC_SWITCH_TEST_HOME", true), ("HOME", true)]);
+
+        let db = Database::memory().expect("db init");
+
+        let ok = Provider {
+            id: "kaixuan-kxpms".to_string(),
+            name: "开轩 LLM 网关".to_string(),
+            settings_config: serde_json::json!({"auth": {"OPENAI_API_KEY": "sk-a"}}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: true,
+        };
+        // 第二个端点复用同一个 id，且 sort_index 缺失 → INSERT 触发 UNIQUE 冲突。
+        let dupe = Provider {
+            id: "kaixuan-kxpms".to_string(),
+            name: "重复 id".to_string(),
+            settings_config: serde_json::json!({}),
+            sort_index: Some(1),
+            ..ok.clone()
+        };
+
+        let err = db
+            .install_bundle_endpoints(
+                "codex",
+                &[ok.clone(), dupe],
+                true, // enable_auto_failover
+            )
+            .expect_err("duplicate id must fail the whole batch");
+        assert!(
+            matches!(err, AppError::Database(_)),
+            "expected a database error, got {err:?}"
+        );
+
+        // 对照：去掉重复 id 后，同一批必须成功写入——证明上面的回滚不是因为
+        // 「这批数据压根写不进去」，而是因为第 2 个端点失败拖垮了整个事务。
+        let good2 = Provider {
+            id: "kaixuan-local-8782".to_string(),
+            name: "本地 LLM 网关".to_string(),
+            sort_index: Some(1),
+            ..ok.clone()
+        };
+        let db2 = Database::memory().expect("db init");
+        db2.install_bundle_endpoints("codex", &[ok.clone(), good2], true)
+            .expect("clean batch must succeed");
+        let all_ok = db2.get_all_providers("codex").expect("read providers");
+        assert_eq!(
+            all_ok.len(),
+            2,
+            "control: the same batch without a duplicate must write both endpoints"
+        );
+
+        // 关键断言：第一个端点必须已被回滚。
+        let all = db.get_all_providers("codex").expect("read providers");
+        assert!(
+            all.is_empty(),
+            "atomic install must roll back every endpoint on failure, found: {:?}",
+            all.keys().collect::<Vec<_>>()
+        );
+
+        // auto_failover 也不能被打开（它与 provider 写入同属一个事务）。
+        let cfg = futures::executor::block_on(db.get_proxy_config_for_app("codex"))
+            .expect("proxy cfg");
+        assert!(
+            !cfg.auto_failover_enabled,
+            "auto_failover must not be enabled when the batch rolled back"
+        );
     }
 
     /// 关键不变量：用户预填了自定义 OPENAI_API_KEY 的同名 provider，bundle

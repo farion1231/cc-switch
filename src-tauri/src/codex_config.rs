@@ -8856,23 +8856,54 @@ model_catalog_json = "cc-switch-model-catalog.json"
         // so we don't depend on internal helpers from sibling modules. The tempdir
         // handle is held in `_keep_alive` for the entire test so the directory survives
         // the initial drop of the bare expression.
-        let prev_home = std::env::var("CODEX_HOME").ok();
-        let temp_home = tempfile::tempdir().expect("tempdir for CODEX_HOME");
+        //
+        // `CC_SWITCH_TEST_HOME` is the ONLY var that redirects this path. `get_codex_config_dir()`
+        // reads `get_codex_override_dir()` (settings file) then falls back to
+        // `get_home_dir().join(".codex")`, and `get_home_dir()` reads CC_SWITCH_TEST_HOME —
+        // no production code reads `CODEX_HOME`. Setting only CODEX_HOME therefore left this
+        // test writing `~/.codex/config.toml` and `~/.codex/cc-switch-model-catalog.json` on the
+        // developer's real machine (observed 2026-09-28: a 4 KB live config with notify /
+        // mcp_servers / plugins / projects was replaced by this test's 303-byte fixture).
+        // HOME is set too because the settings store and `dirs::home_dir()` fallbacks follow it.
+        let prev_home = [
+            std::env::var("CODEX_HOME").ok(),
+            std::env::var("CC_SWITCH_TEST_HOME").ok(),
+            std::env::var("HOME").ok(),
+        ];
+        let temp_home = tempfile::tempdir().expect("tempdir for CC_SWITCH_TEST_HOME");
         let home_path = temp_home.path().to_path_buf();
         let _keep_alive = temp_home;            // RAII: drop at end of test
         std::env::set_var("CODEX_HOME", home_path.to_string_lossy().to_string());
+        std::env::set_var("CC_SWITCH_TEST_HOME", &home_path);
+        std::env::set_var("HOME", &home_path);
         crate::settings::reload_settings().expect("reload settings");
-        // Restore on drop so other tests keep their original CODEX_HOME.
-        struct RestoreEnv(Option<String>);
+        // Restore on drop so other tests keep their original environment.
+        struct RestoreEnv([Option<String>; 3]);
         impl Drop for RestoreEnv {
             fn drop(&mut self) {
-                match &self.0 {
-                    Some(v) => std::env::set_var("CODEX_HOME", v),
-                    None => std::env::remove_var("CODEX_HOME"),
+                for (key, value) in [
+                    ("CODEX_HOME", &self.0[0]),
+                    ("CC_SWITCH_TEST_HOME", &self.0[1]),
+                    ("HOME", &self.0[2]),
+                ] {
+                    match value {
+                        Some(v) => std::env::set_var(key, v),
+                        None => std::env::remove_var(key),
+                    }
                 }
             }
         }
         let _restore = RestoreEnv(prev_home);
+
+        // Prove the sandbox actually captured this test's home before doing any writes.
+        // `get_home_dir()` reads CC_SWITCH_TEST_HOME, so `get_codex_config_dir()` must now
+        // point inside the tempdir. If a future refactor changes that resolution order,
+        // this fails loudly instead of silently overwriting the developer's real config.
+        assert_eq!(
+            get_codex_config_dir(),
+            home_path.join(".codex"),
+            "test must resolve the Codex config dir inside its sandbox"
+        );
 
         // 内联 fixture：CC Switch 前端 `ProviderForm` 落库到 settings_config 的形态。
         // 不引用前端代码，避免重新引入 Node 工具链。

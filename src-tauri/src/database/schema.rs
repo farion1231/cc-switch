@@ -3794,6 +3794,84 @@ mod tests {
     }
 
     #[test]
+    fn v13_upgrade_path_reaches_current_schema_with_half_open_permit_column() -> Result<(), AppError> {
+        // Regression guard for the real upgrade path, which the fresh-DB tests cannot
+        // cover. A genuine v13 database predates BOTH later schema additions:
+        //   - `circuit_half_open_permit_max_age_seconds` (added in e934ffc3, after v13)
+        //   - the `grokbuild` member of the app_type CHECK constraint (added in v14)
+        // The v13 DDL below is copied verbatim from the v13-era tree (commit f991726f),
+        // so it exercises the real upgrade shape rather than today's create_tables DDL.
+        // If a future edit drops the column from the `proxy_config_v14` rebuild, this
+        // goes red with "no such column" from get_proxy_config_for_app, which is exactly
+        // the failure real users on old databases hit.
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO proxy_config (app_type, enabled, max_retries)
+                VALUES ('claude', 1, 7), ('codex', 1, 5), ('gemini', 0, 3);",
+        )?;
+        Database::set_user_version(&conn, 13)?;
+
+        // Precondition: the v13 fixture really does lack the column under guard.
+        assert!(!Database::has_column(
+            &conn,
+            "proxy_config",
+            "circuit_half_open_permit_max_age_seconds"
+        )?);
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(
+            Database::has_column(&conn, "proxy_config", "circuit_half_open_permit_max_age_seconds")?,
+            "v13 upgrade must land on a schema that still has circuit_half_open_permit_max_age_seconds"
+        );
+
+        // The exact SELECT production uses after an upgrade must parse and read back.
+        let codex_row: (i64, i64, i32) = conn.query_row(
+            "SELECT enabled, max_retries, circuit_half_open_permit_max_age_seconds
+             FROM proxy_config WHERE app_type = 'codex'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            codex_row,
+            (1, 5, 30),
+            "upgraded row must keep user data (enabled/max_retries) and gain the DEFAULT 30 permit age"
+        );
+
+        // v14 must also have widened the CHECK constraint so grokbuild is storable.
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type) VALUES ('grokbuild')",
+            [],
+        )?;
+        let grok_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'grokbuild'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            grok_rows, 1,
+            "v14 must seed exactly one grokbuild row, and the CHECK constraint must accept it"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v14_to_v15_adds_grokbuild_skill_and_mcp_flags() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(

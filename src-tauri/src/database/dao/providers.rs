@@ -454,6 +454,120 @@ impl Database {
         Ok(())
     }
 
+    /// 原子写入一个 bundle 的全部端点 + 入队 + 排序 + 打开 auto_failover。
+    ///
+    /// 之前 `install_bundle_internal` 用「每步独立事务」顺序写：第 N 个端点失败时，
+    /// 前 N-1 个已经落库，留下「已写库但未入队 / 未排序」的半成品状态，用户重试
+    /// 还要靠「id 冲突就跳过」兜底。这里把整批写入收进**一个** transaction：
+    /// 任一步失败 → 全部回滚，DB 回到调用前的样子。
+    ///
+    /// 语义与旧的逐步实现保持一致：
+    /// - 端点 id 已存在 → 只刷新 `in_failover_queue` + `sort_index`，
+    ///   **不**覆盖用户改过的 `settings_config`（保住本地 api_key）；
+    /// - 端点 id 不存在 → 整条插入。
+    ///
+    /// `proxy_config` 的 auto_failover 开关也在同一事务里更新，避免出现
+    /// 「provider 都装好了但 auto_failover 没打开」的中间态。
+    pub fn install_bundle_endpoints(
+        &self,
+        app_type: &str,
+        endpoints: &[Provider],
+        enable_auto_failover: bool,
+    ) -> Result<Vec<String>, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let existing_ids: Vec<String> = {
+            let mut stmt = tx
+                .prepare("SELECT id FROM providers WHERE app_type = ?1")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![app_type], |row| row.get::<_, String>(0))
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+            }
+            ids
+        };
+
+        let mut installed_ids = Vec::with_capacity(endpoints.len());
+        for provider in endpoints {
+            if existing_ids.iter().any(|id| id == &provider.id) {
+                // 已有：保留用户 settings_config，仅刷新入队 + sort_index。
+                tx.execute(
+                    "UPDATE providers
+                        SET in_failover_queue = 1,
+                            sort_index = COALESCE(?3, sort_index)
+                      WHERE id = ?1 AND app_type = ?2",
+                    params![provider.id, app_type, provider.sort_index],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            } else {
+                let mut meta_clone = provider.meta.clone().unwrap_or_default();
+                let custom_endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
+                tx.execute(
+                    "INSERT INTO providers (
+                        id, app_type, name, settings_config, website_url, category,
+                        created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 1)",
+                    params![
+                        provider.id,
+                        app_type,
+                        provider.name,
+                        serde_json::to_string(&provider.settings_config).map_err(|e| {
+                            AppError::Database(format!("Failed to serialize settings_config: {e}"))
+                        })?,
+                        provider.website_url,
+                        provider.category,
+                        provider.created_at,
+                        provider.sort_index,
+                        provider.notes,
+                        provider.icon,
+                        provider.icon_color,
+                        serde_json::to_string(&meta_clone).map_err(|e| {
+                            AppError::Database(format!("Failed to serialize meta: {e}"))
+                        })?,
+                    ],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+                for (url, endpoint) in custom_endpoints {
+                    tx.execute(
+                        "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![provider.id, app_type, url, endpoint.added_at],
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                }
+            }
+            installed_ids.push(provider.id.clone());
+        }
+
+        if enable_auto_failover {
+            // 缺行时按旧行为的兜底：insert or ignore 保证 auto_failover 有地方落。
+            tx.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type) VALUES (?1)",
+                params![app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            tx.execute(
+                "UPDATE proxy_config
+                    SET enabled = 1,
+                        auto_failover_enabled = 1,
+                        updated_at = datetime('now')
+                  WHERE app_type = ?1",
+                params![app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(installed_ids)
+    }
+
     pub fn add_custom_endpoint(
         &self,
         app_type: &str,

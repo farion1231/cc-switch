@@ -268,7 +268,112 @@ flaky：新增的 session 探测测试一度让这条老测报 `No such file or 
 - 本仓库**没有 eslint 配置**（无 `eslint.config.*`），`npx eslint` 直接报错，属预期，
   不代表代码有问题。
 
-## 已知遗留（本轮之后）
+## 第三轮（收口）：遗留清零 + 两个真 bug
+
+上一轮列的 4 条遗留里第 4 条已修；本轮把 kaixuan-bundle handoff 的「下一轮提示词」
+一并做完，并在过程中挖出**两个此前一直没被发现的问题**。
+
+### 1. proxy 测试绑死 15721（遗留 #4，已修）
+
+`update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active`
+硬编码默认端口 15721，开发者本地跑着 cc-switch 桌面端时必然
+`Address already in use`——不是回归，是**必红**。
+
+改法照抄同文件里已有的正确写法（`listen_port = 0` 让 OS 分配），
+并把断言里的 `15721` 换成 `start()` 返回的实际 `info.port`。
+注意：**只改端口不够**，断言里还硬编码着 `:15721`，
+会从「Address already in use」变成「断言 15721 != 62718」继续红。
+
+### 2. v13 升级路径回归测试（新增，变异验证过）
+
+`migrate_v13_to_v14` 的 `proxy_config_v14` 重建 DDL 里带着
+`circuit_half_open_permit_max_age_seconds`。之前只有 fresh-DB 测试覆盖它，
+**没有测过真实升级路径**——而这正是老用户升级会走的分支。
+
+新增 `v13_upgrade_path_reaches_current_schema_with_half_open_permit_column`：
+fixture 用 **v13 时代真实 DDL**（从 commit `f991726f` 逐字取出），而不是今天的
+`create_tables`。两处关键差异让这条测试与 fresh-DB 测试不等价：
+v13 的 CHECK 约束里**没有** `'grokbuild'`，也**没有**那一列。
+
+变异验证：手工从 `proxy_config_v14` DDL 删掉该列 → 测试立刻红在
+「v13 upgrade must land on a schema that still has ...」，证明不是恒真断言。
+（写测试时先踩了一个自己的坑：用裸 `INSERT` 造 `grokbuild` 行会撞 UNIQUE，
+因为 `migrate_v13_to_v14` 自己已经插过了——改 `INSERT OR IGNORE`。）
+
+### 3. ⚠️ `codex_config` 测试写进了用户真实的 `~/.codex/`（真 bug，已修）
+
+**这是本轮最重要的发现。** `self_hosted_gateway_presets_round_trip_through_catalog_pipeline`
+只设了 `CODEX_HOME`，但**没有任何生产代码读这个变量**：
+
+- `get_codex_config_dir()` = `get_codex_override_dir()`（读 settings 文件）
+  → 回退 `get_home_dir().join(".codex")`
+- `get_home_dir()` 读的是 `CC_SWITCH_TEST_HOME`
+
+也就是说这条测试一直在写真实用户的 `~/.codex/config.toml`。
+实测确认：本机 4 KB 的真实配置（notify / mcp_servers / plugins / projects /
+desktop 设置）被替换成了测试 fixture 的 303 字节内容，
+`cc-switch-model-catalog.json` 也是测试写进去的。
+
+修复：
+1. **先把用户的配置还原**——从 cc-switch 自己的 `proxy_live_backup` 表里取出
+   codex 的 `original_config`（JSON 的 `config` 字段），验证 TOML 合法后写回，
+   3994 字节 / 11 个顶层键全部回来。
+2. 测试改为同时设 `CC_SWITCH_TEST_HOME` + `HOME`（`CODEX_HOME` 保留无害）。
+3. 加一条**前置断言**：写任何东西之前先确认
+   `get_codex_config_dir() == tempdir/.codex`。将来谁改了路径解析顺序，
+   测试会当场失败，而不是继续默默覆盖真实配置。
+
+同类测试 `provider_bundle` / `codex_runtime` 早已正确设了两个变量，所以只有这一条漏了。
+
+### 4. `hermes_config` 跨模块 flaky（真 bug，已修）
+
+`set_provider_preserves_unknown_fields_on_update` 单独跑必过、全量跑偶发红
+（`get_provider("acme").unwrap()` 拿到 `None`）。根因不是它自己：
+
+- `get_hermes_dir()` **先**读进程全局 settings 的 `hermes_config_dir`，
+  **再**才看 `CC_SWITCH_TEST_HOME`；
+- 该测试只有 `#[serial]`，但 `serial_test` 把 `#[serial]` 和 `#[serial(env)]`
+  当成**不同的 key**，两组仍然并发跑；
+- 于是别的模块测试设的 `hermes_config_dir`（指向一个马上被删的 tempdir）
+  会漏进来，`get_hermes_config_path()` 指向一个本测试从没写过的目录。
+
+修法：`with_test_home` 在测试期间把 settings 里的 `hermes_config_dir`
+**钉死**到本测试的 hermes 目录，跑完还原。让路径解析自洽，而不是取决于谁最后跑。
+
+### 5. bundle install 真事务化
+
+新增 `Database::install_bundle_endpoints`，把「写 provider + 入队 + sort_index
++ 打开 auto_failover」收进**同一个** `conn.transaction()`。任一步失败整批回滚，
+不再有「已写库但未入队」的半成品。重复安装的安全语义不变：同 id 已存在时只刷
+membership + sort_index，不覆盖用户改过的 `settings_config`。
+
+回归测试 `install_bundle_endpoints_rolls_back_every_endpoint_on_failure`
+用一个必然失败的批次（重复 id 触发 UNIQUE）验证第 1 个端点也被回滚，
+并带一条**对照断言**：去掉重复 id 后同一批必须成功写入 2 条——
+证明回滚不是因为「这批压根写不进去」。
+
+写这条测试时它立刻抓到我自己的实现回归：existing-row 分支第一版只刷了
+`in_failover_queue`，漏了 `sort_index`，把既有的
+`install_bundle_preserves_user_prefilled_settings` 打红了。已修（用
+`COALESCE(?3, sort_index)` 保住 NULL 语义）。
+
+### 6. 文档补 en/ja
+
+新增 `docs/guides/kaixuan-bundle-en.md` / `-ja.md`，并同步更新 `-zh.md`：
+补上「安装是单事务」「端点间切换 / `@` 后缀 catalog 的真实语义」两节
+（这两条之前只在 handoff 里，用户文档没有）。
+
+## 本轮测试证据
+
+- `cargo test --lib` —— **3023 passed / 0 failed**（上一轮是 3020/1）。
+- `cargo test --lib provider_bundle::tests` —— 18/18。
+- `cargo test --lib database::schema::tests` —— 7/7。
+- `cargo test --lib hermes_config::tests` —— 57/57。
+- 全量跑前后 `md5 ~/.codex/config.toml` 一致 → 真实配置不再被测试污染。
+- `npx tsc --noEmit` —— 通过。
+- `npx prettier --check docs/guides/kaixuan-bundle-*.md` —— 通过。
+
+## 已知遗留（第三轮之后）
 
 1. **真重启只杀不拉起**（有意为之，见上）。用户需要回终端敲 `codex`。
 2. **`local8782` 这个 TOML id 与端口解耦**：`KAIXUAN_LOCAL_GATEWAY_PORT=8899` 时
@@ -278,11 +383,16 @@ flaky：新增的 session 探测测试一度让这条老测报 `No such file or 
 3. **共存 catalog 只解决「看得见」，没解决「自动选」**：用户在 `/model` picker 里能
    同时看到 `claude-opus-5` 和 `claude-opus-5@kxpms`，但选中后者不会真的路由到
    kxpms。真正的按端点路由仍需新增 TOML 字段把 slug 反查回 `[model_providers.*]`，
-   这部分未做。
-4. 上面那条 15721 端口的环境性红测建议单开一个 issue：proxy 测试应改用临时端口
-   （或 `listen_port = 0` 让 OS 分配），否则开发者本地跑着 cc-switch 就必红。
+   这部分未做（本轮也不做：需要 Codex 侧配合，不是 cc-switch 单方面能定的）。
+4. **`CODEX_HOME` 是个死变量**：`get_codex_config_dir()` 从不读它，但三处测试仍在
+   设它。本轮已让唯一真正需要隔离的那条测试不再依赖它；更彻底的做法是删掉这些
+   `set_var("CODEX_HOME", ...)`，避免下一个作者再被它误导（这正是本轮这个 bug 的诱因）。
+5. **`hermes_config` 的全局 settings 依赖仍在**：本轮用「测试期间钉死
+   `hermes_config_dir`」消除了症状，但根因是 settings store 进程全局 +
+   `#[serial]` 分组不一致。根治要么给 settings store 加测试隔离层，要么让所有
+   相关测试统一用 `#[serial(env)]` 分组。
 
 ## Git 状态
 
 - 分支：`feat/codex-restart-toml-migration-merged-catalog`
-- 本轮改动已提交（未推送）。
+- 第三轮改动已提交并推送。

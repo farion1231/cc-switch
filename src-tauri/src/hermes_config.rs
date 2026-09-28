@@ -1154,6 +1154,18 @@ mod tests {
     ///
     /// Saves and restores `CC_SWITCH_TEST_HOME` to avoid interfering with
     /// parallel tests in other modules.
+    ///
+    /// Also pins `hermes_config_dir` in the **process-global** settings store for
+    /// the duration of the test. `get_hermes_dir()` consults that store *before*
+    /// `CC_SWITCH_TEST_HOME`, so a leftover override from another test would send
+    /// `get_hermes_config_path()` at a directory this test never wrote to — which
+    /// is how `set_provider_preserves_unknown_fields_on_update` intermittently
+    /// failed with `get_provider(...).unwrap() == None` while passing in
+    /// isolation. `#[serial]` does not prevent it: `serial_test` treats
+    /// `#[serial]` and `#[serial(env)]` as *different* keys, so those two groups
+    /// still run concurrently, and the settings store is shared by every module.
+    /// Pinning the override to this test's own hermes dir makes resolution
+    /// self-consistent instead of depending on who ran last.
     fn with_test_home<T>(test_fn: impl FnOnce() -> T) -> T {
         let _guard = test_guard();
         let tmp = tempfile::tempdir().unwrap();
@@ -1166,7 +1178,20 @@ mod tests {
         let old_local_appdata = std::env::var_os("LOCALAPPDATA");
         std::env::remove_var("HERMES_HOME");
         std::env::remove_var("LOCALAPPDATA");
+        // Pin the settings-store override at this test's own hermes dir, and put
+        // back whatever was there afterwards.
+        let old_override = crate::settings::get_settings().hermes_config_dir.clone();
+        {
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = Some(tmp.path().join(".hermes").to_string_lossy().to_string());
+            let _ = crate::settings::update_settings(s);
+        }
         let result = test_fn();
+        {
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = old_override;
+            let _ = crate::settings::update_settings(s);
+        }
         match old_local_appdata {
             Some(value) => std::env::set_var("LOCALAPPDATA", value),
             None => std::env::remove_var("LOCALAPPDATA"),

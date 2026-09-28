@@ -2082,8 +2082,18 @@ requires_openai_auth = true
                 .await
                 .expect("update app proxy config");
         }
+        // Bind an OS-assigned port instead of the default 15721. The developer's own
+        // cc-switch desktop app occupies 15721 while tests run, and the fixed port turns
+        // this into a guaranteed "Address already in use" for anyone who has the app open.
+        {
+            let mut config = db.get_proxy_config().await.expect("get proxy config");
+            config.listen_port = 0;
+            db.update_proxy_config(config)
+                .await
+                .expect("update proxy config");
+        }
 
-        state
+        let info = state
             .proxy_service
             .start()
             .await
@@ -2131,7 +2141,7 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!("http://127.0.0.1:{}/claude-desktop", info.port)),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
