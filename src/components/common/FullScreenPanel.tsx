@@ -6,7 +6,10 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { isTextEditableTarget } from "@/utils/domUtils";
+import {
+  FULL_SCREEN_PANEL_ATTRIBUTE,
+  isTextEditableTarget,
+} from "@/utils/domUtils";
 import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
 
@@ -152,6 +155,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
+          {...{ [FULL_SCREEN_PANEL_ATTRIBUTE]: "" }}
           initial={
             disableMotion
               ? false
