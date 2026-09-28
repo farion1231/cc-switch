@@ -112,6 +112,8 @@
     "poolReselectHint": "Whenever CC Switch rewrites the client config, pick the attached model again in the model picker",
     "poolPartial": "Partly written; it will be finished on the next change or when CC Switch restarts",
     "poolFailed": "Failed to save attached models: {{error}}",
+    "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
+    "officialModelsUnavailable": "Attached models are unavailable for now: the Codex model list can't be read",
     "noRoutingSupport": "No Routing Support",
     "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
     "editProvider": "Edit Provider",

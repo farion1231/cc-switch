@@ -5,7 +5,7 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
-  ProxyPoolMember,
+  ProxyPool,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -53,8 +53,8 @@ export const proxyApi = {
 
   // ========== 附加模型 API ==========
 
-  // 附加模型名单：每一家和它发布的模型 id
-  async getProxyPool(appType: string): Promise<ProxyPoolMember[]> {
+  // 附加模型名单：每一家和它发布的模型 id，以及提示
+  async getProxyPool(appType: string): Promise<ProxyPool> {
     return invoke("get_proxy_pool", { appType });
   },
 
@@ -63,7 +63,7 @@ export const proxyApi = {
     appType: string,
     providerId: string,
     enabled: boolean,
-  ): Promise<ProxyPoolMember[]> {
+  ): Promise<ProxyPool> {
     return invoke("set_proxy_pool_member", { appType, providerId, enabled });
   },
 

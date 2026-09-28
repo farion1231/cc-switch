@@ -59,6 +59,20 @@ export interface ProxyPoolMember {
   modelIds: string[];
 }
 
+/**
+ * Codex 官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex 自带的列表
+ * （可能缺账号专属的模型），`officialModelsUnavailable` 附加模型暂不可用。
+ */
+export type ProxyPoolNotice =
+  | "officialModelsBundled"
+  | "officialModelsUnavailable";
+
+/** 附加模型名单和提示。 */
+export interface ProxyPool {
+  members: ProxyPoolMember[];
+  notice?: ProxyPoolNotice;
+}
+
 /** 增删附加模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
 export interface ProxyPoolWriteError {
   partial: boolean;

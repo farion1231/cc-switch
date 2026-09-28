@@ -1419,7 +1419,10 @@ impl RequestForwarder {
                     "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
-            super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            // 附加请求已经是这家的上游模型名，不换成行里配置的模型。
+            if !self.pool_request {
+                super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            }
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
@@ -1436,7 +1439,9 @@ impl RequestForwarder {
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            if !self.pool_request {
+                super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            }
             // Per-provider output ceiling override. Codex does not forward its
             // `model_max_output_tokens` in the request body, so honor the value
             // configured on the provider here — it takes precedence over any
@@ -1527,12 +1532,42 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+            // 附加请求不把目录外的模型换成行里配置的模型（只做字段兼容）。
+            let upstream_model = if self.pool_request {
+                None
+            } else {
+                super::providers::codex_provider_upstream_model(provider)
+            };
             super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
                 &mut request_body,
                 &provider.id,
-                super::providers::codex_provider_upstream_model(provider).as_deref(),
+                upstream_model.as_deref(),
                 &provider.settings_config,
             );
+        }
+
+        // 附加请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
+        // Anthropic 转换丢掉托管工具是同一件事。只对附加请求、只对名单上的上游生效；
+        // 路由请求和其他附加请求逐字节不变。
+        if self.pool_request
+            && matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let request_model = request_body
+                .get("model")
+                .and_then(|model| model.as_str())
+                .map(str::to_string);
+            if super::providers::codex_pool_upstream_rejects_web_search(
+                provider,
+                request_model.as_deref(),
+            ) && super::providers::strip_codex_hosted_web_search(&mut request_body)
+            {
+                log::debug!(
+                    "[Codex] Dropped hosted web_search for an attached model (provider={})",
+                    provider.id
+                );
+            }
         }
 
         // Moonshot / Kimi Chat Completions reject `$ref` nodes that carry sibling
@@ -1991,7 +2026,13 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+            // 附加请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
+            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。附加目标不会是官方账号，
+            // 这里仍按上游判断，防止以后放宽。
+            if (codex_responses_to_anthropic
+                || (self.pool_request && !codex_official_auth_passthrough))
+                && is_codex_client_fingerprint_header(key_str)
+            {
                 continue;
             }
 
@@ -5409,6 +5450,250 @@ mod tests {
 
     /// 一次请求结束后留下的记账：代理统计、「正在使用」、熔断器。每条出口路径各断言一次，
     /// 锁住成功、失败、不计入熔断三种收尾对路由状态的影响。
+    /// Codex 附加请求的转发改写：身份头、模型名、托管 web_search。
+    mod codex_pool {
+        use super::*;
+        use tokio::sync::Mutex;
+
+        struct Seen {
+            headers: HeaderMap,
+            body: Value,
+        }
+
+        struct Upstream {
+            base_url: String,
+            seen: Arc<Mutex<Vec<Seen>>>,
+        }
+
+        /// 什么都回 200 的假上游，记下请求头和请求体。
+        async fn upstream() -> Upstream {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        (
+                            StatusCode::OK,
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            json!({ "id": "r1", "object": "response", "output": [] }).to_string(),
+                        )
+                    }
+                })
+            };
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .expect("bind upstream");
+            let addr = listener.local_addr().expect("upstream address");
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.expect("serve upstream");
+            });
+            Upstream {
+                base_url: format!("http://{addr}"),
+                seen,
+            }
+        }
+
+        /// 一家 Codex 第三方供应商：行里的模型是 `row-model`，目录里只有 `listed`。
+        fn provider(upstream: &Upstream, api_format: &str) -> Provider {
+            let mut provider = test_provider_with_type(None);
+            provider.id = format!("p-{api_format}");
+            provider.settings_config = json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": format!(
+                    "model_provider = \"custom\"\nmodel = \"row-model\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"{}/v1\"\nwire_api = \"responses\"\n",
+                    upstream.base_url
+                ),
+                "modelCatalog": { "models": [{ "model": "listed" }] },
+            });
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some(api_format.to_string()),
+                ..Default::default()
+            });
+            provider
+        }
+
+        fn forwarder(pool: bool) -> RequestForwarder {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).pool_request(pool)
+        }
+
+        /// 官方做路由时 Codex 每个请求都带的 ChatGPT 身份。
+        fn chatgpt_headers() -> HeaderMap {
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("authorization", "Bearer chatgpt-access-token"),
+                ("chatgpt-account-id", "acct-workspace"),
+                ("originator", "codex_cli_rs"),
+                ("session_id", "session-1"),
+                ("x-codex-turn-state", "state"),
+                ("openai-beta", "responses=experimental"),
+            ] {
+                headers.insert(
+                    http::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+            }
+            headers
+        }
+
+        fn body(model: &str, tools: Value) -> Value {
+            json!({
+                "model": model,
+                "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
+                "tools": tools,
+                "stream": false
+            })
+        }
+
+        async fn send(
+            forwarder: &RequestForwarder,
+            upstream: &Upstream,
+            provider: Provider,
+            endpoint: &str,
+            body: Value,
+        ) -> Seen {
+            forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    endpoint,
+                    body,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("forward");
+            upstream.seen.lock().await.pop().expect("upstream request")
+        }
+
+        #[tokio::test]
+        async fn attached_requests_never_carry_the_chatgpt_identity() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                for (name, _) in seen.headers.iter() {
+                    assert!(
+                        !is_codex_client_fingerprint_header(name.as_str()),
+                        "{api_format}: {name} reached a third party"
+                    );
+                }
+                let auth = seen
+                    .headers
+                    .get("authorization")
+                    .or_else(|| seen.headers.get("x-api-key"))
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
+                assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
+            }
+
+            // 对照：路由请求发往原生 Responses 时照旧转发这些头。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                body("listed", json!([])),
+            )
+            .await;
+            assert!(seen.headers.contains_key("session_id"));
+        }
+
+        #[tokio::test]
+        async fn attached_requests_are_not_rewritten_to_the_rows_model() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("not-listed", json!([])),
+                )
+                .await;
+                assert_eq!(seen.body["model"], "not-listed", "{api_format}");
+            }
+
+            // 对照：路由请求发往 Chat 转换时，目录外的模型换成行里的模型。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_chat"),
+                "/responses",
+                body("not-listed", json!([])),
+            )
+            .await;
+            assert_eq!(seen.body["model"], "row-model");
+        }
+
+        #[tokio::test]
+        async fn attached_requests_drop_hosted_web_search_only_where_it_is_rejected() {
+            let upstream = upstream().await;
+            let function = json!({ "type": "function", "name": "shell", "parameters": {} });
+            let tools = json!([function.clone(), { "type": "web_search" }]);
+            let with_choice = |model: &str| {
+                let mut body = body(model, tools.clone());
+                body["tool_choice"] = json!({ "type": "web_search" });
+                body
+            };
+
+            // GLM 的原生 Responses 网关不认托管 web_search：去掉工具和指向它的 tool_choice。
+            for endpoint in ["/responses", "/responses/compact"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    endpoint,
+                    with_choice("glm-5.2"),
+                )
+                .await;
+                assert_eq!(seen.body["tools"], json!([function.clone()]), "{endpoint}");
+                assert!(seen.body.get("tool_choice").is_none(), "{endpoint}");
+            }
+
+            // 只剩它一个工具时整个 `tools` 删掉。
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                body("glm-5.2", json!([{ "type": "web_search" }])),
+            )
+            .await;
+            assert!(seen.body.get("tools").is_none(), "{}", seen.body);
+
+            // 对照：支持的上游、路由请求都原样转发。
+            for (pool, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
+                let seen = send(
+                    &forwarder(pool),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    "/responses",
+                    with_choice(model),
+                )
+                .await;
+                assert_eq!(seen.body["tools"], tools, "pool={pool} {model}");
+                assert_eq!(seen.body["tool_choice"]["type"], "web_search");
+            }
+        }
+    }
+
     mod bookkeeping {
         use super::*;
         use std::collections::VecDeque;

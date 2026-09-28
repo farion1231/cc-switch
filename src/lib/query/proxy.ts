@@ -101,7 +101,7 @@ export function useSetProxyPoolMember() {
       providerId: string;
       enabled: boolean;
     }) => proxyApi.setProxyPoolMember(appType, providerId, enabled),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
       toast.success(
         t("provider.poolSaved", {
           client: getAppLabel(variables.appType),
@@ -113,6 +113,9 @@ export function useSetProxyPoolMember() {
           closeButton: true,
         },
       );
+      if (data.notice) {
+        toast.warning(t(`provider.${data.notice}`), { closeButton: true });
+      }
     },
     onError: (error: unknown) => {
       if (isPoolWriteError(error) && error.partial) {

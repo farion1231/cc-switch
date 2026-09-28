@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
+import type { ProxyPoolNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -54,6 +55,7 @@ import {
   useSetProxyPoolMember,
 } from "@/lib/query/proxy";
 import { isProxyAppId } from "@/config/appConfig";
+import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -177,9 +179,12 @@ export function ProviderList({
     supportsFailover && isProxyTakeover === true,
   );
 
-  // 附加模型：路由模式下把第三方供应商的模型挂进客户端的模型选择器（Codex 在后续版本）。
-  const isPoolActive = appId === "claude" && isProxyTakeover === true;
-  const { data: poolMembers } = useProxyPool(appId, isPoolActive);
+  // 附加模型：路由模式下把第三方供应商的模型挂进客户端的模型选择器。
+  const isPoolActive =
+    (appId === "claude" || appId === "codex") && isProxyTakeover === true;
+  const { data: pool } = useProxyPool(appId, isPoolActive);
+  const poolMembers = pool?.members;
+  const poolNotice = isPoolActive ? pool?.notice : undefined;
   const setPoolMember = useSetProxyPoolMember();
   const poolModelIdsOf = useCallback(
     (providerId: string): string[] | undefined =>
@@ -486,10 +491,12 @@ export function ProviderList({
             const poolModelIds = poolModelIdsOf(provider.id);
             const isPoolMember = poolModelIds !== undefined;
             // 路由那家的模型已经在默认路由里，不再附加；已经在名单里的仍可移出。
+            // 官方账号不能附加：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
+            const isOfficialCard =
+              provider.category === "official" ||
+              resolveCodexOfficialIdentity(appId, provider) !== null;
             const showPoolToggle =
-              isPoolActive &&
-              provider.category !== "official" &&
-              (!isCurrent || isPoolMember);
+              isPoolActive && !isOfficialCard && (!isCurrent || isPoolMember);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -536,6 +543,7 @@ export function ProviderList({
                 }
                 isPoolMember={isPoolMember}
                 poolModelIds={poolModelIds}
+                poolNotice={poolNotice}
                 onTogglePool={
                   showPoolToggle
                     ? (enabled) =>
@@ -700,6 +708,7 @@ interface SortableProviderCardProps {
   activeProviderId?: string;
   isPoolMember: boolean;
   poolModelIds?: string[];
+  poolNotice?: ProxyPoolNotice;
   onTogglePool?: (enabled: boolean) => void;
   // OpenClaw: default model
   isDefaultModel?: boolean;
@@ -737,6 +746,7 @@ function SortableProviderCard({
   activeProviderId,
   isPoolMember,
   poolModelIds,
+  poolNotice,
   onTogglePool,
   isDefaultModel,
   isRemovalProtected,
@@ -795,6 +805,7 @@ function SortableProviderCard({
         activeProviderId={activeProviderId}
         isPoolMember={isPoolMember}
         poolModelIds={poolModelIds}
+        poolNotice={poolNotice}
         onTogglePool={onTogglePool}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}

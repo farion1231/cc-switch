@@ -7,6 +7,7 @@ mod claude_editor;
 pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
+pub(crate) mod codex_official_models;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;

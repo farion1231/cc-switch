@@ -12,6 +12,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { OpenClawProviderConfig, Provider } from "@/types";
+import type { ProxyPoolNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -78,6 +79,7 @@ interface ProviderCardProps {
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   isPoolMember?: boolean; // 附加模型：这家的模型出现在客户端的模型选择器里
   poolModelIds?: string[]; // 附加模型：发布给客户端的模型 id
+  poolNotice?: ProxyPoolNotice; // 附加模型：Codex 官方模型列表暂未取到
   onTogglePool?: (enabled: boolean) => void; // 附加模型开关（不显示时为空）
   // OpenClaw: default model
   isDefaultModel?: boolean;
@@ -199,6 +201,7 @@ export function ProviderCard({
   activeProviderId,
   isPoolMember = false,
   poolModelIds = [],
+  poolNotice,
   onTogglePool,
   // OpenClaw: default model
   isDefaultModel,
@@ -506,16 +509,19 @@ export function ProviderCard({
 
               {isPoolMember && (
                 <ProviderStatusBadge
-                  tone="success"
+                  tone={poolNotice ? "warning" : "success"}
                   label={t("provider.poolBadge")}
-                  title={
+                  title={[
                     poolModelIds.length > 0
                       ? t("provider.poolBadgeHint", {
                           client: getAppLabel(appId),
                           models: poolModelIds.join(", "),
                         })
-                      : t("provider.poolBadgeNoModels")
-                  }
+                      : t("provider.poolBadgeNoModels"),
+                    poolNotice ? t(`provider.${poolNotice}`) : null,
+                  ]
+                    .filter(Boolean)
+                    .join("\n")}
                 />
               )}
 

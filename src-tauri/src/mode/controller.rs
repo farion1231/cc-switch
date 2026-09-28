@@ -31,13 +31,14 @@ use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
 use crate::provider::Provider;
 use crate::services::provider::codex_direct::{self, Owner};
+use crate::services::provider::codex_official_models;
 use crate::services::provider::{claude_direct, gemini_direct, grok_direct};
 use crate::store::AppState;
 
 use super::contract;
 use super::current::{self, Purpose};
 use super::operation;
-use super::pool::{self, PoolMemberView, PoolModel};
+use super::pool::{self, PoolModel, PoolView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, PoolState};
 
 /// 支持代理模式的应用。
@@ -222,6 +223,21 @@ fn settled_pool(app: &AppType) -> Result<PoolState, String> {
     super::state::pool(&DeviceStore::for_device(), app.as_str()).map_err(err)
 }
 
+/// 发布附加模型的成员（路由那家跳过：它的模型已经通过默认路由出现，名单保留）。
+fn published_members(
+    state: &AppState,
+    app: &AppType,
+    pool: &PoolState,
+    route: &Provider,
+) -> Result<Vec<pool::Member>, String> {
+    if pool.members.is_empty() || !pool::supports_pool(app) {
+        return Ok(Vec::new());
+    }
+    let mut members = pool::members(&state.db, app, pool).map_err(err)?;
+    members.retain(|member| member.provider.id != route.id);
+    Ok(members)
+}
+
 /// 发布给客户端的附加模型（路由那家跳过）。
 fn published_pool(
     state: &AppState,
@@ -229,10 +245,7 @@ fn published_pool(
     pool: &PoolState,
     route: &Provider,
 ) -> Result<Vec<PoolModel>, String> {
-    if pool.members.is_empty() || !pool::supports_pool(app) {
-        return Ok(Vec::new());
-    }
-    let members = pool::members(&state.db, app, pool).map_err(err)?;
+    let members = published_members(state, app, pool, route)?;
     Ok(pool::published(&members, Some(route.id.as_str())))
 }
 
@@ -300,12 +313,16 @@ async fn write_proxy(
         }
         AppType::Codex => {
             let owner = live_now.codex_owner();
+            let members = published_members(state, app, &pool, route)?;
             let spec = codex_direct::Target::Proxy {
                 route,
                 base_url: &codex_base_url,
+                pool: &members,
             };
-            let prepared =
+            let mut prepared =
                 codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
+            codex_direct::prepare_official_rows(&state.db, &owner, &spec, &mut prepared)
+                .map_err(err)?;
             let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
             let unchanged = !force && live_now.has_contract(&planned.contract.key);
             target.contract = Some(planned.contract.clone());
@@ -762,7 +779,7 @@ impl PoolWriteError {
 /// 靠客户端自己的登录做账号校验，不能当附加目标。
 fn reject_official_pool_member(app: &AppType, provider: &Provider) -> Result<(), String> {
     let official = match app {
-        AppType::Codex => crate::proxy::providers::is_codex_official_provider(provider),
+        AppType::Codex => codex_direct::is_official(provider),
         _ => provider.category.as_deref() == Some("official"),
     };
     if official {
@@ -787,7 +804,7 @@ pub async fn set_pool_member(
     app: &AppType,
     provider_id: &str,
     enabled: bool,
-) -> Result<Vec<PoolMemberView>, PoolWriteError> {
+) -> Result<PoolView, PoolWriteError> {
     if !pool::supports_pool(app) {
         return Err(PoolWriteError::unchanged(format!(
             "{} 不支持附加模型 ({} does not support attached models)",
@@ -865,12 +882,47 @@ async fn set_pool_member_locked(
 }
 
 /// 名单里的每一家和它发布的模型 id（给前端）。
-pub fn pool_views(state: &AppState, app: &AppType) -> Result<Vec<PoolMemberView>, String> {
+pub fn pool_views(state: &AppState, app: &AppType) -> Result<PoolView, String> {
     if !pool::supports_pool(app) {
-        return Ok(Vec::new());
+        return Ok(PoolView {
+            members: Vec::new(),
+            notice: None,
+        });
     }
     let members = pool::members(&state.db, app, &settled_pool(app)?).map_err(err)?;
-    Ok(pool::member_views(&members))
+    let notice = match app {
+        AppType::Codex => codex_pool_notice(state),
+        _ => None,
+    };
+    Ok(PoolView {
+        members: pool::member_views(&members),
+        notice,
+    })
+}
+
+/// Codex 官方做路由、发布了附加模型，而最近一次写目录时没拿到官方列表。
+fn codex_pool_notice(state: &AppState) -> Option<&'static str> {
+    let app = AppType::Codex;
+    let mode = current::mode_state(&app);
+    if !mode.is_proxy() || !mode.attached {
+        return None;
+    }
+    let route = route_provider(state, &app, &mode).ok()??;
+    if !codex_direct::is_official(&route) {
+        return None;
+    }
+    let pool = settled_pool(&app).ok()?;
+    if published_members(state, &app, &pool, &route)
+        .ok()?
+        .is_empty()
+    {
+        return None;
+    }
+    match codex_official_models::last_source()? {
+        codex_official_models::NativeSource::Fetched => None,
+        codex_official_models::NativeSource::Bundled => Some("officialModelsBundled"),
+        codex_official_models::NativeSource::Unavailable => Some("officialModelsUnavailable"),
+    }
 }
 
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
@@ -889,6 +941,62 @@ pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), 
 pub async fn resync_route(state: &AppState, app: &AppType) -> Result<(), String> {
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     resync_route_locked(state, app).await
+}
+
+/// 后台检查（CC Switch 启动时和之后每 15 分钟）：Codex 官方做路由、发布了附加模型时，
+/// 目标登录的官方模型缓存没有或过期了就刷新（一定联网），列表变了就重写客户端文件。
+pub async fn check_codex_official_models(state: &AppState) {
+    let app = AppType::Codex;
+    let login = match codex_official_login_now(state, &app) {
+        Ok(Some(login)) => login,
+        Ok(None) => return,
+        Err(error) => {
+            log::debug!("检查 Codex 官方模型列表时预测登录失败: {error}");
+            return;
+        }
+    };
+    let refreshed = tokio::task::spawn_blocking(move || {
+        codex_official_models::needs_refresh(&login)
+            .map(|version| codex_official_models::refresh(&login, &version))
+    })
+    .await;
+    match refreshed {
+        Ok(Some(Ok(true))) => {
+            if let Err(error) = resync_route(state, &app).await {
+                log::warn!("Codex 官方模型列表更新后重写客户端文件失败: {error}");
+            }
+        }
+        Ok(Some(Err(error))) => log::warn!("刷新 Codex 官方模型列表失败: {error}"),
+        _ => {}
+    }
+}
+
+/// 现在（代理模式、接着、官方做路由、发布了附加模型时）Codex 会用的登录。
+fn codex_official_login_now(
+    state: &AppState,
+    app: &AppType,
+) -> Result<Option<codex_official_models::OfficialLogin>, String> {
+    let mode = current::mode_state(app);
+    if !mode.is_proxy() || !mode.attached {
+        return Ok(None);
+    }
+    let Some(route) = route_provider(state, app, &mode)? else {
+        return Ok(None);
+    };
+    let members = published_members(state, app, &settled_pool(app)?, &route)?;
+    let live_now = LiveNow::of(state, app, &mode)?;
+    let owner = live_now.codex_owner();
+    let base_url = codex_direct::configured_proxy_base_url(&state.db);
+    let spec = codex_direct::Target::Proxy {
+        route: &route,
+        base_url: &base_url,
+        pool: &members,
+    };
+    if !codex_direct::needs_official_rows(&spec) {
+        return Ok(None);
+    }
+    let prepared = codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
+    codex_direct::predicted_official_login(&state.db, &owner, &spec, &prepared).map_err(err)
 }
 
 /// 代理换了地址之后，按新地址重写每个接上代理的应用。一个应用失败（比如配置文件解析
@@ -1560,6 +1668,7 @@ mod mode_tests {
     use crate::database::Database;
     use crate::live::engine::DeviceStore;
     use crate::mode::operation::failpoint;
+    use crate::mode::pool::PoolMemberView;
     use crate::mode::state::{self, Mode};
     use crate::proxy::types::ProxyConfig;
     use crate::services::provider::ProviderService;
@@ -4359,6 +4468,7 @@ model_provider = "c"
         set_pool_member(state, &AppType::Claude, id, enabled)
             .await
             .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"))
+            .members
     }
 
     #[tokio::test]
@@ -4565,5 +4675,374 @@ model_provider = "c"
         let pool = pool_state();
         assert!(pool.members.is_empty());
         assert_eq!(pool.key_of("kimi"), Some("kimi"), "the key stays taken");
+    }
+
+    fn codex_native(id: &str, url: &str, extra: &str, catalog: Option<Value>) -> Provider {
+        let mut provider = codex_row(id, url, extra);
+        if let Some(catalog) = catalog {
+            provider.settings_config["modelCatalog"] = catalog;
+        }
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        provider
+    }
+
+    fn codex_pool_rows() -> [Provider; 3] {
+        [
+            codex_native(
+                "a",
+                "https://a.example/v1",
+                "model_context_window = 200000\nmodel_auto_compact_token_limit = 150000\n",
+                None,
+            ),
+            codex_native(
+                "deepseek",
+                "https://api.deepseek.com/v1",
+                "",
+                Some(json!({ "models": [
+                    { "model": "deepseek-v4-pro", "displayName": "DeepSeek V4 Pro" }
+                ]})),
+            ),
+            codex_native("zhipu", "https://open.bigmodel.cn/api/v1", "", None),
+        ]
+    }
+
+    async fn set_codex_member(state: &AppState, id: &str, enabled: bool) -> Vec<PoolMemberView> {
+        set_pool_member(state, &AppType::Codex, id, enabled)
+            .await
+            .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"))
+            .members
+    }
+
+    fn codex_catalog() -> Value {
+        crate::config::read_json_file(&crate::codex_config::get_codex_model_catalog_path()).unwrap()
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_attached_models_join_the_catalog_and_leave_with_it() {
+        let _home = Home::new();
+        seed_codex("approval_policy = \"on-request\"\n", None);
+        let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
+        enter(&state, &AppType::Codex).await.expect("enter");
+        let plain_text = codex_text();
+        let plain_contract = mode(&AppType::Codex).contract.unwrap();
+        assert_eq!(
+            codex_doc()["model_context_window"].as_integer(),
+            Some(200000)
+        );
+
+        let views = set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(views[0].model_ids, vec!["ccs-deepseek/deepseek-v4-pro"]);
+        let doc = codex_doc();
+        assert_eq!(
+            doc["model"].as_str(),
+            Some("gpt-a"),
+            "the route keeps the default model"
+        );
+        assert_eq!(
+            doc["model_catalog_json"].as_str(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        // 窗口类全局键会覆盖每一行，改写进路由那家自己的行。
+        assert!(doc.get("model_context_window").is_none(), "{doc:?}");
+        assert!(
+            doc.get("model_auto_compact_token_limit").is_none(),
+            "{doc:?}"
+        );
+
+        let catalog = codex_catalog();
+        let models = catalog["models"].as_array().unwrap();
+        let slugs: Vec<&str> = models.iter().map(|m| m["slug"].as_str().unwrap()).collect();
+        assert_eq!(slugs, vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]);
+        let (route, attached) = (&models[0], &models[1]);
+        assert_eq!(route["priority"], 1);
+        assert_eq!(route["context_window"], 200000);
+        assert_eq!(route["auto_compact_token_limit"], 150000);
+        assert_eq!(route["comp_hash"], "cc-switch");
+        assert_eq!(attached["priority"], 2);
+        assert_eq!(attached["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
+        // DeepSeek 官方目录的 "3000" 不带过来，窗口按它自己的行算。
+        assert_eq!(attached["comp_hash"], "cc-switch");
+        let window = attached["context_window"].as_u64().unwrap();
+        assert_eq!(
+            attached["auto_compact_token_limit"].as_u64(),
+            Some(window * 9 / 10)
+        );
+
+        // 没有配置模型目录的行只发布它的 `model`。
+        let views = set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(views[1].model_ids, vec!["ccs-zhipu/gpt-zhipu"]);
+        let slugs: Vec<String> = codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            slugs,
+            vec![
+                "gpt-a",
+                "ccs-deepseek/deepseek-v4-pro",
+                "ccs-zhipu/gpt-zhipu"
+            ]
+        );
+
+        // 名单清空：config.toml 和契约回到没有附加模型时的样子。
+        set_codex_member(&state, "deepseek", false).await;
+        set_codex_member(&state, "zhipu", false).await;
+        assert_eq!(codex_text(), plain_text);
+        assert_eq!(mode(&AppType::Codex).contract.unwrap(), plain_contract);
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert!(!state
+            .proxy_service
+            .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_accounts_cannot_be_attached() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let mut rows = codex_pool_rows().to_vec();
+        rows.push(codex_official());
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        let error = set_pool_member(
+            &state,
+            &AppType::Codex,
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+            true,
+        )
+        .await
+        .expect_err("official");
+        assert!(!error.partial);
+        assert!(pool_state_of(&AppType::Codex).members.is_empty());
+    }
+
+    fn pool_state_of(app: &AppType) -> PoolState {
+        state::pool(&DeviceStore::for_device(), app.as_str()).unwrap()
+    }
+
+    // ---- 附加模型：Codex 官方做路由 ----
+
+    use crate::services::provider::codex_official_models::testing::{
+        login as chatgpt, native_models, Calls, Fake,
+    };
+    use crate::services::provider::codex_official_models::{self as official_models, Fetch};
+
+    /// 换上假的官方接口；结束时换回来。
+    struct FakeModels {
+        calls: Calls,
+        now: Arc<std::sync::Mutex<u64>>,
+        responses: Arc<std::sync::Mutex<Vec<Fetch>>>,
+    }
+
+    impl Drop for FakeModels {
+        fn drop(&mut self) {
+            official_models::reset_test_env();
+        }
+    }
+
+    const NOW: u64 = 1_800_000_000;
+
+    fn fake_models(
+        responses: Vec<Fetch>,
+        keychain: Option<Value>,
+        on_fetch: Option<Box<dyn Fn() + Send + Sync>>,
+    ) -> FakeModels {
+        let calls: Calls = Arc::default();
+        let now = Arc::new(std::sync::Mutex::new(NOW));
+        let responses = Arc::new(std::sync::Mutex::new(responses));
+        Fake {
+            version: Some("0.158.0".to_string()),
+            responses: responses.clone(),
+            bundled: None,
+            keychain,
+            now: now.clone(),
+            calls: calls.clone(),
+            notify: None,
+            on_fetch,
+        }
+        .install();
+        FakeModels {
+            calls,
+            now,
+            responses,
+        }
+    }
+
+    fn official_list(extra: &[(&str, i64)]) -> Fetch {
+        let mut slugs = vec![("gpt-6-sol", 4), ("gpt-5.5", 12)];
+        slugs.extend_from_slice(extra);
+        Fetch::Models {
+            models: native_models(&slugs),
+            etag: Some("\"e1\"".to_string()),
+        }
+    }
+
+    fn catalog_slugs() -> Vec<String> {
+        codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn codex_official_pool_rows() -> Vec<Provider> {
+        let mut rows = vec![codex_official()];
+        rows.extend(codex_pool_rows());
+        rows
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_route_lists_every_official_model_before_the_attached_ones() {
+        let _home = Home::new();
+        let alice = chatgpt("ws", "alice");
+        seed_codex("", Some(&alice));
+        let auth_bytes = fs::read(codex_auth_path()).unwrap();
+        let fake = fake_models(vec![official_list(&[])], None, None);
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        enter(&state, &AppType::Codex).await.expect("enter");
+        assert!(
+            fake.calls.lock().unwrap().is_empty(),
+            "no attached models, no fetch"
+        );
+
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(
+            catalog_slugs(),
+            vec!["gpt-6-sol", "gpt-5.5", "ccs-deepseek/deepseek-v4-pro"]
+        );
+        let catalog = codex_catalog();
+        let sol = &catalog["models"][0];
+        // 原生字段保留，旧的指令字段补上。
+        assert_eq!(sol["comp_hash"], "3000");
+        assert_eq!(sol["base_instructions"], "T");
+        // 取列表用的是 Codex 实际会用的登录；整个过程不写 auth.json。
+        assert_eq!(
+            fake.calls.lock().unwrap().clone(),
+            vec![("ws|sub:alice".to_string(), "0.158.0".to_string(), None)]
+        );
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+        assert!(pool_views(&state, &AppType::Codex)
+            .unwrap()
+            .notice
+            .is_none());
+
+        // 后台检查：一小时后是新的，不联网；七小时后刷新，列表变了就重写目录。
+        *fake.now.lock().unwrap() = NOW + 3600;
+        check_codex_official_models(&state).await;
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+        *fake.now.lock().unwrap() = NOW + 7 * 3600;
+        fake.responses
+            .lock()
+            .unwrap()
+            .push(official_list(&[("gpt-6-luna", 5)]));
+        check_codex_official_models(&state).await;
+        assert_eq!(
+            fake.calls.lock().unwrap().last().unwrap().2.as_deref(),
+            Some("\"e1\""),
+            "the refresh revalidates with the etag"
+        );
+        assert!(catalog_slugs().contains(&"gpt-6-luna".to_string()));
+
+        // 名单清空：不再写目录。
+        set_codex_member(&state, "deepseek", false).await;
+        assert!(codex_doc().get("model_catalog_json").is_none());
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_login_that_changes_before_the_write_stops_it() {
+        let _home = Home::new();
+        seed_codex("", Some(&chatgpt("ws", "alice")));
+        // 拿锁前按 alice 取了列表，之后 Codex 恰好换成同一工作区的 bob 登录。
+        let _fake = fake_models(
+            vec![official_list(&[])],
+            None,
+            Some(Box::new(|| {
+                fs::write(codex_auth_path(), chatgpt("ws", "bob").to_string()).unwrap();
+            })),
+        );
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        enter(&state, &AppType::Codex).await.expect("enter");
+        let before = codex_text();
+
+        let error = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+            .await
+            .expect_err("login changed");
+        assert!(!error.partial, "{}", error.message);
+        assert_eq!(codex_text(), before);
+        assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
+        assert!(pool_state_of(&AppType::Codex).members.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_the_login_comes_from_where_codex_keeps_it() {
+        let _home = Home::new();
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+
+        // keyring：auth.json 里残留 alice，Codex 用的是钥匙串里的 bob。
+        seed_codex(
+            "cli_auth_credentials_store = \"keyring\"\n",
+            Some(&chatgpt("ws", "alice")),
+        );
+        let fake = fake_models(vec![official_list(&[])], Some(chatgpt("ws", "bob")), None);
+        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        enter(&state, &AppType::Codex).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:bob");
+        exit(&state, &AppType::Codex).await.expect("exit");
+        set_codex_member(&state, "deepseek", false).await;
+        drop(fake);
+
+        // ephemeral：登录从不落盘，不拉取；没有自带列表时附加模型暂不可用，也不写目录。
+        seed_codex(
+            "cli_auth_credentials_store = \"ephemeral\"\n",
+            Some(&chatgpt("ws", "alice")),
+        );
+        let fake = fake_models(vec![official_list(&[])], None, None);
+        enter(&state, &AppType::Codex).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert!(fake.calls.lock().unwrap().is_empty());
+        assert!(codex_doc().get("model_catalog_json").is_none());
+        assert_eq!(
+            pool_views(&state, &AppType::Codex).unwrap().notice,
+            Some("officialModelsUnavailable")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_switching_back_to_official_uses_the_login_it_will_restore() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt("ws", "alice")));
+        let fake = fake_models(vec![official_list(&[])], None, None);
+        let state = state_with(AppType::Codex, &codex_official_pool_rows(), "a").await;
+        // 直连切到第三方：登录存进暂存，auth.json 删掉。
+        ProviderService::switch(&state, AppType::Codex, "a").expect("direct a");
+        assert!(!codex_auth_path().exists());
+        set_codex_member(&state, "deepseek", true).await;
+        enter(&state, &AppType::Codex).await.expect("enter");
+        assert!(fake.calls.lock().unwrap().is_empty(), "third-party route");
+
+        // 换路由到官方卡：auth.json 会从暂存还回 alice，列表按 alice 取。
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        ProviderService::switch(&state, AppType::Codex, official).expect("route to official");
+        assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:alice");
+        assert!(catalog_slugs().contains(&"gpt-6-sol".to_string()));
+        let restored: Value = crate::config::read_json_file(&codex_auth_path()).unwrap();
+        assert_eq!(restored["tokens"]["account_id"], "ws");
     }
 }

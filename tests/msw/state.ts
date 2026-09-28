@@ -449,8 +449,9 @@ export const setSessionFixtures = (
   >;
 };
 
-export const getProxyPool = (appType: AppId) =>
-  deepClone(poolState[appType] ?? []) as PoolMember[];
+export const getProxyPool = (appType: AppId) => ({
+  members: deepClone(poolState[appType] ?? []) as PoolMember[],
+});
 
 export const setProxyPoolMember = (
   appType: AppId,

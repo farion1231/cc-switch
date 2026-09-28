@@ -112,6 +112,8 @@
     "poolReselectHint": "CC Switch 每次改寫用戶端設定後，模型選擇器裡選中的附加模型需要重新選擇",
     "poolPartial": "已部分寫入，將在下次操作或重新啟動 CC Switch 時補完",
     "poolFailed": "附加模型儲存失敗：{{error}}",
+    "officialModelsBundled": "官方模型列表暫未取得，暫用 Codex 內建列表，可能缺少帳號專屬模型",
+    "officialModelsUnavailable": "附加模型暫不可用：讀取不到 Codex 模型列表",
     "noRoutingSupport": "不支援路由",
     "blockedByProxyHint": "代理接管模式下無法切換至官方供應商",
     "editProvider": "編輯供應商",

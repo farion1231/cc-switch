@@ -163,7 +163,8 @@ pub struct PoolModel {
     pub description: String,
     /// 上游是 1M 窗口（id 带 `[1M]`）。
     pub one_m: bool,
-    /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
+    /// Claude 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
+    /// Codex 的窗口写在目录条目里，这里是 0。
     pub window: u64,
 }
 
@@ -236,16 +237,44 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
         .into_iter()
         .map(|(model, upstream, name, one_m)| PoolModel {
             id: encode(&AppType::Claude, key, &model, one_m),
-            display_name: format!("{}（{}）", name.as_deref().unwrap_or(&model), provider.name),
-            description: format!(
-                "经 CC Switch 路由到 {} (Routed by CC Switch to {})",
-                provider.name, provider.name
-            ),
+            display_name: display_name(name.as_deref().unwrap_or(&model), &provider.name),
+            description: routed_description(&provider.name),
             upstream,
             one_m,
             window,
         })
         .collect()
+}
+
+/// Codex 行发布的模型：行里的模型目录，没有配置目录时只有行的 `model`。显示名和窗口
+/// 由目录条目决定（`codex_config::plan_codex_pool_catalog`），这里只给 id 和上游模型名。
+pub fn codex_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
+    let config = provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    crate::codex_config::codex_published_models(&provider.settings_config, config)
+        .into_iter()
+        .map(|model| PoolModel {
+            id: encode(&AppType::Codex, key, &model, false),
+            display_name: display_name(&model, &provider.name),
+            description: routed_description(&provider.name),
+            upstream: model,
+            one_m: false,
+            window: 0,
+        })
+        .collect()
+}
+
+/// 选择器里附加模型的显示名：`<模型显示名>（<供应商名>）`。
+pub fn display_name(model: &str, provider_name: &str) -> String {
+    format!("{model}（{provider_name}）")
+}
+
+/// 选择器里附加模型的说明。
+pub fn routed_description(provider_name: &str) -> String {
+    format!("经 CC Switch 路由到 {provider_name} (Routed by CC Switch to {provider_name})")
 }
 
 fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -259,7 +288,7 @@ fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 pub fn models_of(app: &AppType, key: &str, provider: &Provider) -> Vec<PoolModel> {
     match app {
         AppType::Claude => claude_models(key, provider),
-        // Codex 的目录合并在阶段 2 做，现在不发布。
+        AppType::Codex => codex_models(key, provider),
         _ => Vec::new(),
     }
 }
@@ -447,6 +476,17 @@ pub struct PoolMemberView {
     pub key: String,
     /// 发布给客户端的模型 id。
     pub model_ids: Vec<String>,
+}
+
+/// 给前端：附加模型的名单和提示。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolView {
+    pub members: Vec<PoolMemberView>,
+    /// Codex 官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex 自带的
+    /// 列表（可能缺账号专属的模型），`officialModelsUnavailable` 附加模型暂不可用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<&'static str>,
 }
 
 pub fn member_views(members: &[Member]) -> Vec<PoolMemberView> {
@@ -767,6 +807,49 @@ mod tests {
         );
         let message = PoolMiss::Removed.message("ccs-claude-gone--g-1");
         assert!(message.contains("ccs-claude-gone--g-1"), "{message}");
+    }
+
+    #[test]
+    fn codex_ids_resolve_to_the_catalog_model_and_leave_the_routes_names_alone() {
+        let fx = fixture();
+        let mut deepseek = provider("ds", "DeepSeek", Some("deepseek"), json!({}));
+        deepseek.settings_config = json!({
+            "auth": {},
+            "config": "model = \"deepseek-v4-flash\"\n",
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] },
+        });
+        fx.db.save_provider("codex", &deepseek).unwrap();
+        state::update(&fx.store, |live| {
+            let pool = &mut live.apps.entry("codex".to_string()).or_default().pool;
+            pool.members = vec!["ds".to_string()];
+            pool.keys.insert("deepseek".to_string(), "ds".to_string());
+        })
+        .unwrap();
+
+        assert_eq!(
+            codex_models("deepseek", &deepseek)
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>(),
+            vec!["ccs-deepseek/deepseek-v4-pro"]
+        );
+        assert_eq!(
+            hit(resolve_in(
+                &fx,
+                AppType::Codex,
+                "ccs-deepseek/deepseek-v4-pro"
+            )),
+            (
+                "ds".to_string(),
+                "deepseek-v4-pro".to_string(),
+                "ccs-deepseek/deepseek-v4-pro".to_string()
+            )
+        );
+        // 路由那家自己的 `deepseek/...`（OpenRouter 写法）不带保留前缀，照旧走默认路由。
+        assert!(matches!(
+            resolve_in(&fx, AppType::Codex, "deepseek/deepseek-v4-pro"),
+            Resolved::Plain
+        ));
     }
 
     #[test]

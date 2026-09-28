@@ -88,7 +88,7 @@ pub fn get_direct_provider(
 pub fn get_proxy_pool(
     state: tauri::State<'_, AppState>,
     app_type: String,
-) -> Result<Vec<crate::mode::pool::PoolMemberView>, String> {
+) -> Result<crate::mode::pool::PoolView, String> {
     let app = require_proxy_app(&app_type)?;
     crate::mode::controller::pool_views(state.inner(), &app)
 }
@@ -101,16 +101,15 @@ pub async fn set_proxy_pool_member(
     app_type: String,
     provider_id: String,
     enabled: bool,
-) -> Result<Vec<crate::mode::pool::PoolMemberView>, crate::mode::controller::PoolWriteError> {
+) -> Result<crate::mode::pool::PoolView, crate::mode::controller::PoolWriteError> {
     let unchanged = |message: String| crate::mode::controller::PoolWriteError {
         partial: false,
         message,
     };
     let app = require_proxy_app(&app_type).map_err(unchanged)?;
-    // Codex 的模型目录合并还没做，先只开放 Claude Code。
-    if app != crate::app_config::AppType::Claude {
+    if !crate::mode::pool::supports_pool(&app) {
         return Err(unchanged(format!(
-            "{} 暂不支持附加模型 ({} does not support attached models yet)",
+            "{} 不支持附加模型 ({} does not support attached models)",
             app.as_str(),
             app.as_str()
         )));

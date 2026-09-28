@@ -112,6 +112,8 @@
     "poolReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で追加モデルを選び直してください",
     "poolPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
     "poolFailed": "追加モデルの保存に失敗しました：{{error}}",
+    "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
+    "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、追加モデルは現在使用できません",
     "noRoutingSupport": "ルーティング非対応",
     "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",

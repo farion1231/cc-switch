@@ -144,25 +144,23 @@ fn codex_top_level_model(config_text: &str) -> Option<String> {
 /// `web_search` hosted tool — by `base_url` host OR by the active model's brand
 /// (so an aggregator fronting a reject vendor's model is caught too). Driven by
 /// the live `config.toml`, so it applies to existing providers without a re-save.
-fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
+pub(crate) fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     if let Some(base_url) = extract_codex_base_url(config_text) {
         if codex_url_host_matches_any(&base_url, CODEX_WEB_SEARCH_REJECT_HOSTS) {
             return true;
         }
     }
-    if let Some(model) = codex_top_level_model(config_text) {
-        let model = model.to_ascii_lowercase();
-        // Strip any aggregator "vendor/" prefix, e.g. "MiniMaxAI/MiniMax-M3"
-        // or "qwen/qwen3-coder-plus".
-        let model = model.rsplit('/').next().unwrap_or(model.as_str());
-        if CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
-            .iter()
-            .any(|prefix| model.starts_with(prefix))
-        {
-            return true;
-        }
-    }
-    false
+    codex_top_level_model(config_text).is_some_and(|model| codex_model_rejects_web_search(&model))
+}
+
+/// Whether `model`'s brand is on the reject list. Strips any aggregator
+/// "vendor/" prefix first, e.g. "MiniMaxAI/MiniMax-M3" or "qwen/qwen3-coder-plus".
+pub(crate) fn codex_model_rejects_web_search(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    let model = model.rsplit('/').next().unwrap_or(model.as_str());
+    CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
+        .iter()
+        .any(|prefix| model.starts_with(prefix))
 }
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
@@ -1753,6 +1751,90 @@ fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
     Ok(None)
 }
 
+/// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
+/// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
+pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
+    for candidate in codex_cli_candidates() {
+        let candidate_label = candidate.to_string_lossy();
+        let output = match codex_bundled_models_command(&candidate).output() {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
+                continue;
+            }
+            Err(err) => {
+                log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
+                continue;
+            }
+        };
+        let models = serde_json::from_slice::<Value>(&output.stdout)
+            .ok()
+            .and_then(|catalog| catalog.get("models").and_then(Value::as_array).cloned())
+            .filter(|models| !models.is_empty());
+        if models.is_some() {
+            return models;
+        }
+    }
+    None
+}
+
+/// 官方原生行：逐行补 Codex 解析器必需的字段（不覆盖已有值）、补旧的指令字段，再校验。
+/// 原生字段一律保留（不套 profile、`comp_hash` 和工具定义不动）。有一行不合格就整份作废
+/// （`None`），不只丢那一行：那样会悄悄少一个官方模型。
+pub(crate) fn normalize_codex_native_rows(rows: Vec<Value>) -> Option<Vec<Value>> {
+    if rows.is_empty() {
+        return None;
+    }
+    rows.into_iter()
+        .map(|mut row| {
+            fill_template_fields_from_static(&mut row);
+            backfill_codex_base_instructions(&mut row);
+            codex_native_row_is_valid(&row).then_some(row)
+        })
+        .collect()
+}
+
+/// Codex 的指令有新旧两种写法：新的 `model_messages.instructions_template`，旧的顶层
+/// `base_instructions`，有一个就能解析。新版 Codex 写缓存、服务端返回的都只有新的，
+/// 更早的 Codex 只认旧的。缺旧字段、有 template 时原样复制（空串也照抄），和 codex-rs
+/// 的序列化器一样；已有旧字段的不动，新版以 template 为准。
+fn backfill_codex_base_instructions(row: &mut Value) {
+    let Some(obj) = row.as_object_mut() else {
+        return;
+    };
+    if obj.get("base_instructions").is_some_and(Value::is_string) {
+        return;
+    }
+    if let Some(template) = obj
+        .get("model_messages")
+        .and_then(|messages| messages.get("instructions_template"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
+        obj.insert("base_instructions".to_string(), json!(template));
+    }
+}
+
+fn codex_native_row_is_valid(row: &Value) -> bool {
+    let Some(obj) = row.as_object() else {
+        return false;
+    };
+    let has_slug = obj
+        .get("slug")
+        .and_then(Value::as_str)
+        .is_some_and(|slug| !slug.trim().is_empty());
+    let has_required = CODEX_CATALOG_PARSER_REQUIRED_FIELDS
+        .iter()
+        .all(|key| obj.contains_key(*key));
+    let has_instructions = obj.get("base_instructions").is_some_and(Value::is_string)
+        || obj
+            .get("model_messages")
+            .and_then(|messages| messages.get("instructions_template"))
+            .is_some_and(Value::is_string);
+    has_slug && has_required && has_instructions
+}
+
 fn load_codex_model_template_static() -> Option<Value> {
     let text = include_str!("resources/gpt5_5_template.json");
     match serde_json::from_str(text) {
@@ -2023,7 +2105,16 @@ fn codex_model_catalog_from_settings(
     if specs.is_empty() {
         return Ok(None);
     }
+    codex_catalog_from_specs_for_row(&specs, config_text, profile).map(Some)
+}
 
+/// The catalog for one provider's models: its official vendor catalog when the
+/// gateway ships one, otherwise the profile's template.
+fn codex_catalog_from_specs_for_row(
+    specs: &[CodexCatalogModelSpec],
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<Value, AppError> {
     // Vendors that publish an OFFICIAL Codex models.json for their native
     // `/responses` gateway get it mirrored verbatim instead of the neutral
     // template: its freeform apply_patch, vendor harness base_instructions and
@@ -2035,7 +2126,7 @@ fn codex_model_catalog_from_settings(
             .enumerate()
             .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
             .collect();
-        return Ok(Some(json!({ "models": entries })));
+        return Ok(json!({ "models": entries }));
     }
 
     let default_context_window =
@@ -2050,12 +2141,12 @@ fn codex_model_catalog_from_settings(
         }
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
-    Ok(Some(codex_model_catalog_from_specs(
-        &specs,
+    Ok(codex_model_catalog_from_specs(
+        specs,
         &template,
         profile,
         default_context_window,
-    )))
+    ))
 }
 
 /// 一个供应商的模型目录：没有配置模型时为 `None`，不生成、也不指向目录文件。
@@ -2092,6 +2183,194 @@ pub(crate) fn plan_codex_model_catalog(
     Ok(CodexCatalogPlan {
         catalog: codex_model_catalog_from_settings(settings, config_text, profile)?,
     })
+}
+
+/// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
+fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
+    let specs = codex_catalog_model_specs(settings);
+    if !specs.is_empty() {
+        return specs;
+    }
+    codex_top_level_model(config_text)
+        .map(|model| {
+            vec![CodexCatalogModelSpec {
+                model,
+                display_name: None,
+                context_window: None,
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+                reasoning_levels: None,
+                default_reasoning_level: None,
+            }]
+        })
+        .unwrap_or_default()
+}
+
+/// 附加模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
+/// `config`（只读顶层 `model`）。
+pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
+    codex_published_specs(settings, config_text)
+        .into_iter()
+        .map(|spec| spec.model)
+        .collect()
+}
+
+/// 合并目录里的一家第三方供应商。
+pub(crate) struct CodexCatalogRow<'a> {
+    pub settings: &'a Value,
+    /// 这一家归一化后的配置（`CodexProjection::catalog_input_text`）：地址、模型名、窗口。
+    pub config_text: &'a str,
+    /// 这一家自己的工具 profile：各家的请求走各自的转换，目录要和转换对得上。
+    pub profile: CodexCatalogToolProfile,
+}
+
+/// 合并目录里的一家附加供应商。
+pub(crate) struct CodexPoolCatalogMember<'a> {
+    pub key: &'a str,
+    pub provider_name: &'a str,
+    pub row: CodexCatalogRow<'a>,
+}
+
+/// 合并目录里路由那家的行。
+pub(crate) enum CodexPoolRoute<'a> {
+    /// 第三方路由：按它的行生成。
+    ThirdParty(CodexCatalogRow<'a>),
+    /// 官方路由：官方模型列表的原生行（已补齐、已校验），原样保留；`config_text` 是
+    /// 官方卡归一化后的配置，只取窗口键。
+    Official {
+        native: Vec<Value>,
+        config_text: &'a str,
+    },
+}
+
+/// 合并目录里第三方行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
+/// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
+/// 跟着缓存变），固定值才稳定。
+const CODEX_POOL_COMP_HASH: &str = "cc-switch";
+
+/// 附加名单非空时的模型目录：路由那家的行在前，各附加供应商的行按名单顺序在后，
+/// `priority` 统一重新编号。
+///
+/// 窗口类全局键（`model_context_window`、`model_auto_compact_token_limit`）这时不写进
+/// `config.toml`（Codex 会拿它覆盖所有行），改由各家写进自己的行，见 [`sink_row_windows`]。
+pub(crate) fn plan_codex_pool_catalog(
+    route: CodexPoolRoute<'_>,
+    pool: &[CodexPoolCatalogMember<'_>],
+) -> Result<Value, AppError> {
+    let mut entries = match route {
+        CodexPoolRoute::ThirdParty(row) => codex_pool_third_party_rows(&row)?,
+        CodexPoolRoute::Official {
+            mut native,
+            config_text,
+        } => {
+            // 按官方的 priority 排好再重新编号，模型选择器里的顺序和默认模型都不变。
+            native.sort_by_key(|entry| {
+                entry
+                    .get("priority")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(i64::MAX)
+            });
+            for entry in &mut native {
+                sink_row_windows(entry, config_text, false);
+            }
+            native
+        }
+    };
+    for member in pool {
+        for mut entry in codex_pool_third_party_rows(&member.row)? {
+            let Some(obj) = entry.as_object_mut() else {
+                continue;
+            };
+            let Some(model) = obj.get("slug").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            let display = obj
+                .get("display_name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| model.clone());
+            obj.insert(
+                "slug".to_string(),
+                json!(crate::mode::pool::encode(
+                    &crate::app_config::AppType::Codex,
+                    member.key,
+                    &model,
+                    false,
+                )),
+            );
+            obj.insert(
+                "display_name".to_string(),
+                json!(crate::mode::pool::display_name(
+                    &display,
+                    member.provider_name
+                )),
+            );
+            obj.insert(
+                "description".to_string(),
+                json!(crate::mode::pool::routed_description(member.provider_name)),
+            );
+            // 第三方不支持 Responses Lite 协议。
+            if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+            }
+            entries.push(entry);
+        }
+    }
+    for (index, entry) in entries.iter_mut().enumerate() {
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert("priority".to_string(), json!(index + 1));
+        }
+    }
+    Ok(json!({ "models": entries }))
+}
+
+/// 一家第三方供应商在合并目录里的行。
+fn codex_pool_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
+    let specs = codex_published_specs(row.settings, row.config_text);
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let catalog = codex_catalog_from_specs_for_row(&specs, row.config_text, row.profile)?;
+    let mut entries = match catalog {
+        Value::Object(mut obj) => match obj.remove("models") {
+            Some(Value::Array(entries)) => entries,
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    for entry in &mut entries {
+        sink_row_windows(entry, row.config_text, true);
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert("comp_hash".to_string(), json!(CODEX_POOL_COMP_HASH));
+        }
+    }
+    Ok(entries)
+}
+
+/// 把一家行里的窗口类全局键写进它自己的行：`model_context_window` 写成行的窗口，
+/// `model_auto_compact_token_limit` 写成行的压缩点。第三方行没有压缩点时写窗口的 90%
+/// （Codex 自己的默认也是 90%，写出来是为了不受别的来源影响）；官方原生行只写行里
+/// 明确配置的值，其余保持原样。
+fn sink_row_windows(entry: &mut Value, config_text: &str, third_party: bool) {
+    let Some(obj) = entry.as_object_mut() else {
+        return;
+    };
+    if let Some(window) = extract_codex_top_level_u64(config_text, "model_context_window") {
+        obj.insert("context_window".to_string(), json!(window));
+        obj.insert("max_context_window".to_string(), json!(window));
+    }
+    let limit =
+        extract_codex_top_level_u64(config_text, "model_auto_compact_token_limit").or_else(|| {
+            third_party
+                .then(|| obj.get("context_window").and_then(Value::as_u64))
+                .flatten()
+                .filter(|window| *window > 0)
+                .map(|window| window * 9 / 10)
+        });
+    if let Some(limit) = limit {
+        obj.insert("auto_compact_token_limit".to_string(), json!(limit));
+    }
 }
 
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
@@ -2264,6 +2543,13 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         else {
             continue;
         };
+        // 附加模型的行（保留前缀）不属于路由那家，不能进它的编辑表单、再被保存回库里。
+        if !matches!(
+            crate::mode::pool::decode(&crate::app_config::AppType::Codex, model),
+            crate::mode::pool::Decoded::Plain
+        ) {
+            continue;
+        }
 
         let mut obj = serde_json::Map::new();
         obj.insert("model".to_string(), json!(model));
@@ -4127,6 +4413,193 @@ wire_api = "responses"
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
         );
+    }
+
+    fn native_row(slug: &str, extra: Value) -> Value {
+        let mut row = json!({
+            "slug": slug,
+            "priority": 1,
+            "comp_hash": "3000",
+            "supports_reasoning_summaries": true,
+            "supports_parallel_tool_calls": false,
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            if value.is_null() {
+                row.as_object_mut().unwrap().remove(key);
+            } else {
+                row[key] = value.clone();
+            }
+        }
+        row
+    }
+
+    #[test]
+    fn native_rows_get_the_old_instructions_field_and_missing_required_fields() {
+        let rows = normalize_codex_native_rows(vec![
+            // 0.158 缓存的形状：只有新的指令字段。
+            native_row(
+                "gpt-6-sol",
+                json!({ "model_messages": { "instructions_template": "You are Codex." } }),
+            ),
+            // 空串也照抄。
+            native_row(
+                "gpt-6-luna",
+                json!({ "model_messages": { "instructions_template": "" } }),
+            ),
+            // 缺必填字段就补，已有值不覆盖。
+            native_row(
+                "gpt-5.5",
+                json!({
+                    "supports_parallel_tool_calls": null,
+                    "base_instructions": "old",
+                }),
+            ),
+            native_row(
+                "both",
+                json!({
+                    "base_instructions": "old",
+                    "model_messages": { "instructions_template": "new" },
+                }),
+            ),
+        ])
+        .expect("valid rows");
+        assert_eq!(rows[0]["base_instructions"], "You are Codex.");
+        assert_eq!(rows[0]["supports_parallel_tool_calls"], false);
+        assert_eq!(rows[0]["comp_hash"], "3000", "native fields stay");
+        assert_eq!(rows[1]["base_instructions"], "");
+        assert_eq!(rows[2]["base_instructions"], "old");
+        assert!(rows[2]["supports_parallel_tool_calls"].is_boolean());
+        assert_eq!(rows[3]["base_instructions"], "old");
+        assert_eq!(rows[3]["model_messages"]["instructions_template"], "new");
+    }
+
+    #[test]
+    fn one_bad_native_row_rejects_the_whole_source() {
+        let good = native_row("gpt-5.5", json!({ "base_instructions": "x" }));
+        for bad in [
+            native_row("no-instructions", json!({})),
+            native_row("", json!({ "base_instructions": "x" })),
+        ] {
+            assert!(
+                normalize_codex_native_rows(vec![good.clone(), bad.clone()]).is_none(),
+                "{bad}"
+            );
+        }
+        assert!(normalize_codex_native_rows(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn official_rows_stay_native_and_attached_rows_follow() {
+        let native = normalize_codex_native_rows(vec![
+            native_row(
+                "gpt-6-sol",
+                json!({ "priority": 4, "base_instructions": "x", "use_responses_lite": true }),
+            ),
+            native_row(
+                "gpt-5.5",
+                json!({ "priority": 12, "base_instructions": "x" }),
+            ),
+            native_row(
+                "gpt-6-astra",
+                json!({ "priority": 1, "base_instructions": "x", "use_responses_lite": true }),
+            ),
+        ])
+        .unwrap();
+        let attached_settings = json!({});
+        let catalog = plan_codex_pool_catalog(
+            CodexPoolRoute::Official {
+                native,
+                config_text: "",
+            },
+            &[CodexPoolCatalogMember {
+                key: "ds",
+                provider_name: "DS",
+                row: CodexCatalogRow {
+                    settings: &attached_settings,
+                    config_text: "model = \"deepseek-v4-pro\"\n",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                },
+            }],
+        )
+        .unwrap();
+        let models = catalog["models"].as_array().unwrap();
+        let slugs: Vec<&str> = models.iter().map(|m| m["slug"].as_str().unwrap()).collect();
+        // 官方的顺序（按 priority）不变，附加的在后面。
+        assert_eq!(
+            slugs,
+            vec![
+                "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-5.5",
+                "ccs-ds/deepseek-v4-pro"
+            ]
+        );
+        assert_eq!(
+            models[1]["use_responses_lite"], true,
+            "official Lite rows keep Lite"
+        );
+        assert_eq!(models[1]["comp_hash"], "3000");
+        assert!(models[0].get("auto_compact_token_limit").is_none());
+        assert_eq!(models[3]["comp_hash"], "cc-switch");
+    }
+
+    #[test]
+    fn build_simplified_catalog_leaves_attached_models_out_of_the_route_row() {
+        let catalog = r#"{
+            "models": [
+                { "slug": "deepseek/deepseek-v4" },
+                { "slug": "ccs-kimi/kimi-k3" }
+            ]
+        }"#;
+        let result = build_simplified_catalog_from_texts("", catalog).expect("entries");
+        let models: Vec<&str> = result["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["model"].as_str().unwrap())
+            .collect();
+        // 路由那家自己的 `vendor/model` 名字不受影响。
+        assert_eq!(models, vec!["deepseek/deepseek-v4"]);
+    }
+
+    #[test]
+    fn attached_rows_keep_their_own_tool_profile_and_never_use_responses_lite() {
+        let route_settings = json!({ "modelCatalog": { "models": [{ "model": "route-model" }] } });
+        let route_text = "model = \"route-model\"\n";
+        let attached_settings = json!({});
+        let attached_text = "model = \"claude-opus-5\"\nmodel_context_window = 400000\n";
+        let catalog = plan_codex_pool_catalog(
+            CodexPoolRoute::ThirdParty(CodexCatalogRow {
+                settings: &route_settings,
+                config_text: route_text,
+                profile: CodexCatalogToolProfile::NativeResponses,
+            }),
+            &[CodexPoolCatalogMember {
+                key: "anth",
+                provider_name: "Anth",
+                row: CodexCatalogRow {
+                    settings: &attached_settings,
+                    config_text: attached_text,
+                    profile: CodexCatalogToolProfile::Anthropic,
+                },
+            }],
+        )
+        .expect("catalog");
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        let attached = &models[1];
+        assert_eq!(attached["slug"], "ccs-anth/claude-opus-5");
+        assert_eq!(attached["display_name"], "claude-opus-5（Anth）");
+        assert_eq!(attached["shell_type"], "shell_command");
+        assert!(attached.get("apply_patch_tool_type").is_none());
+        assert_eq!(attached["context_window"], 400000);
+        assert_eq!(attached["auto_compact_token_limit"], 360000);
+        assert_ne!(attached["use_responses_lite"], json!(true));
+        let priorities: Vec<u64> = models
+            .iter()
+            .map(|entry| entry["priority"].as_u64().unwrap())
+            .collect();
+        assert_eq!(priorities, vec![1, 2]);
     }
 
     #[test]

@@ -324,19 +324,21 @@ describe("ProviderList Component", () => {
     const setCalls: unknown[] = [];
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
-        HttpResponse.json([
-          {
-            providerId: "kimi",
-            key: "kimi",
-            modelIds: ["ccs-claude-kimi--kimi-k3"],
-          },
-        ]),
+        HttpResponse.json({
+          members: [
+            {
+              providerId: "kimi",
+              key: "kimi",
+              modelIds: ["ccs-claude-kimi--kimi-k3"],
+            },
+          ],
+        }),
       ),
       http.post(
         `${TAURI_ENDPOINT}/set_proxy_pool_member`,
         async ({ request }) => {
           setCalls.push(await request.json());
-          return HttpResponse.json([]);
+          return HttpResponse.json({ members: [] });
         },
       ),
     );
@@ -380,6 +382,94 @@ describe("ProviderList Component", () => {
     });
   });
 
+  it("offers attached models in Codex routing mode but never for ChatGPT accounts", async () => {
+    const thirdParty = (id: string) =>
+      createProvider({
+        id,
+        name: id,
+        settingsConfig: {
+          auth: {},
+          config: `model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://${id}.example/v1"\n`,
+        },
+      });
+    const route = thirdParty("route");
+    const deepseek = thirdParty("deepseek");
+    // 早期绑定托管账号的官方卡没有 category，按身份认。
+    const managed = createProvider({
+      id: "managed",
+      name: "ChatGPT",
+      settingsConfig: { auth: {}, config: "" },
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct",
+        },
+      },
+    } as Partial<Provider>);
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, deepseek, managed],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const setCalls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+        HttpResponse.json({
+          members: [
+            {
+              providerId: "deepseek",
+              key: "deepseek",
+              modelIds: ["ccs-deepseek/deepseek-v4-pro"],
+            },
+          ],
+          notice: "officialModelsBundled",
+        }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_pool_member`,
+        async ({ request }) => {
+          setCalls.push(await request.json());
+          return HttpResponse.json({ members: [] });
+        },
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, deepseek, managed }}
+        currentProviderId="route"
+        appId="codex"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    const lastProps = (id: string) =>
+      providerCardRenderSpy.mock.calls
+        .map((call) => call[0])
+        .filter((props) => props.provider.id === id)
+        .at(-1);
+    await waitFor(() => expect(lastProps("deepseek")?.isPoolMember).toBe(true));
+    expect(lastProps("deepseek")?.onTogglePool).toBeTypeOf("function");
+    // 官方模型列表暂未取到：成员卡片带上提示。
+    expect(lastProps("deepseek")?.poolNotice).toBe("officialModelsBundled");
+    expect(lastProps("route")?.onTogglePool).toBeUndefined();
+    expect(lastProps("managed")?.onTogglePool).toBeUndefined();
+
+    lastProps("deepseek")?.onTogglePool(false);
+    await waitFor(() => expect(setCalls).toHaveLength(1));
+    expect(setCalls[0]).toEqual({
+      appType: "codex",
+      providerId: "deepseek",
+      enabled: false,
+    });
+  });
+
   it("hides attached models outside routing mode and for apps without them", async () => {
     const provider = createProvider({ id: "a", name: "A" });
     useDragSortMock.mockReturnValue({
@@ -391,13 +481,14 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () => {
         poolReads += 1;
-        return HttpResponse.json([]);
+        return HttpResponse.json({ members: [] });
       }),
     );
 
     for (const [appId, isProxyTakeover] of [
       ["claude", false],
-      ["codex", true],
+      ["codex", false],
+      ["gemini", true],
     ] as const) {
       providerCardRenderSpy.mockClear();
       const { unmount } = renderWithQueryClient(

@@ -543,7 +543,7 @@ struct CodexTokens {
 }
 
 /// (access_token, account_id, status, message)
-type CodexCredentials = (
+pub(crate) type CodexCredentials = (
     Option<String>,
     Option<String>,
     CredentialStatus,
@@ -612,8 +612,28 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
     parse_codex_credentials_json(&content)
 }
 
+/// Keychain 里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时 Codex 存在
+/// 这里）。只有 macOS 读得到。
+pub(crate) fn read_codex_keychain_login() -> Option<serde_json::Value> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("security")
+            .args(["find-generic-password", "-s", "Codex Auth", "-w"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        serde_json::from_slice(&output.stdout).ok()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
-fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+pub(crate) fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
     let auth: CodexAuthJson = match serde_json::from_str(content) {
         Ok(a) => a,
         Err(e) => {
