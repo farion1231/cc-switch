@@ -8,6 +8,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
+use indexmap::IndexMap;
+
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
@@ -706,6 +708,165 @@ pub(crate) fn build_effective_settings_with_common_config(
     Ok(effective_settings)
 }
 
+/// Merge inert `[model_providers.*]` tables from non-active DB providers into the
+/// live Codex `config.toml` so that historical sessions whose
+/// `session_meta.payload.model_provider` references those providers can still
+/// resume after a switch.
+///
+/// Codex 0.149+ validates every provider table at load and refuses to load a
+/// session whose `model_provider` lacks a matching table. cc-switch's normal
+/// write semantics emit a "minimal" live config keyed on the active provider,
+/// which loses tables from inactive third-party providers and breaks resume
+/// for any session bound to them.
+///
+/// This function is the inert-merge hook: it reads every non-active codex
+/// provider's stored `config` text, extracts its `[model_providers.*]` tables,
+/// and merges them into the effective settings under rules in §2.4 of
+/// `docs/rfcs/0002-codex-inert-provider-tables.md`.
+///
+/// **Returns** the input `settings_config` unchanged when no inert table
+/// applies (fast path) or when the live config cannot be parsed (defensive:
+/// preserves whatever the caller passed).
+pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
+    db: &Database,
+    app_type_str: &str,
+    settings_config: &Value,
+    current_provider_db_id: &str,
+) -> Result<Value, AppError> {
+    // Pre-flight: only proceed for Codex. Other app types have no
+    // `[model_providers.*]` semantics that session metadata would reference.
+    if app_type_str != "codex" {
+        return Ok(settings_config.clone());
+    }
+    // Pre-flight: need a parseable live config to mutate. Anything else
+    // (empty, non-strings) is treated as "no inert merge" and forwarded.
+    let Some(live_text) = settings_config.get("config").and_then(Value::as_str) else {
+        return Ok(settings_config.clone());
+    };
+    if live_text.trim().is_empty() {
+        return Ok(settings_config.clone());
+    }
+    let Ok(mut live_doc) = live_text.parse::<DocumentMut>() else {
+        return Ok(settings_config.clone());
+    };
+    let active_toml_id = live_doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+
+    // Enumerate DB providers (skips any whose row cannot be read — one bad
+    // provider must not abort the whole switch).
+    let providers: IndexMap<String, Provider> = match db.get_all_providers(app_type_str) {
+        Ok(p) => p,
+        Err(err) => {
+            log::warn!(
+                "惰性合并 inert [model_providers.*] 表失败：枚举 codex 供应商失败: {err}"
+            );
+            return Ok(settings_config.clone());
+        }
+    };
+
+    let mut merged_count: usize = 0;
+    for (db_id, provider) in providers.iter() {
+        if db_id == current_provider_db_id {
+            continue;
+        }
+        let Some(stored_text) = provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if stored_text.trim().is_empty() {
+            continue;
+        }
+        let Ok(stored_doc) = stored_text.parse::<DocumentMut>() else {
+            log::warn!(
+                "惰性合并 inert [model_providers.*] 表：DB 供应商 '{db_id}' 的 config.toml 解析失败，跳过"
+            );
+            continue;
+        };
+        let Some(mp_table) = stored_doc
+            .get("model_providers")
+            .and_then(Item::as_table_like)
+        else {
+            continue;
+        };
+        for (id, item) in mp_table.iter() {
+            // §2.4 rule 1: skip id collision with active TOML provider.
+            if let Some(ref active) = active_toml_id {
+                if id == active {
+                    continue;
+                }
+            }
+            merge_inert_provider_table(&mut live_doc, id, item, &mut merged_count);
+        }
+    }
+
+    if merged_count == 0 {
+        return Ok(settings_config.clone());
+    }
+    log::info!(
+        "惰性合并 inert [model_providers.*] 表：保留 {merged_count} 个第三方 provider 表用于历史 session 恢复"
+    );
+
+    let mut new_settings = settings_config.clone();
+    if let Some(obj) = new_settings.as_object_mut() {
+        obj.insert("config".to_string(), Value::String(live_doc.to_string()));
+    }
+    Ok(new_settings)
+}
+
+/// Insert one inert provider table into `live_doc`. Skips when the live
+/// document already carries a table under the same id (live wins, per §2.4
+/// rule 1) and validates that the inert table has a `base_url` (Codex 0.149+
+/// rejects tables without one — per §3.3 risk note).
+fn merge_inert_provider_table(
+    live_doc: &mut DocumentMut,
+    id: &str,
+    item: &Item,
+    merged_count: &mut usize,
+) {
+    // Per §3.3: Codex 0.149+ rejects tables missing `name` or `base_url`.
+    let Some(table) = item.as_table_like() else {
+        return;
+    };
+    let has_name = table.get("name").and_then(Item::as_str).is_some();
+    let has_base_url = table.get("base_url").and_then(Item::as_str).is_some();
+    if !has_name || !has_base_url {
+        log::warn!(
+            "惰性合并 inert 表：provider id '{id}' 缺少 name/base_url，跳过（避免 Codex 0.149+ 启动校验失败）"
+        );
+        return;
+    }
+
+    // Ensure `model_providers` table exists in live.
+    let live_root = live_doc.as_table_mut();
+    if !live_root.contains_key("model_providers") {
+        live_root.insert(
+            "model_providers",
+            Item::Table(toml_edit::Table::new()),
+        );
+    }
+    let Some(mp) = live_root
+        .get_mut("model_providers")
+        .and_then(Item::as_table_mut)
+    else {
+        return;
+    };
+
+    // Live wins (§2.4 rule 1): skip if live already has this id.
+    if mp.contains_key(id) {
+        return;
+    }
+
+    mp.insert(id, item.clone());
+    *merged_count += 1;
+}
+
 pub(crate) fn write_live_with_common_config_for_state(
     state: &AppState,
     app_type: &AppType,
@@ -752,7 +913,7 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
     provider: &Provider,
     codex_oauth_manager: &Arc<CodexOAuthManager>,
 ) -> Result<(), AppError> {
-    let effective_provider = build_effective_provider_for_live_with_codex_oauth_manager(
+    let mut effective_provider = build_effective_provider_for_live_with_codex_oauth_manager(
         db,
         app_type,
         provider,
@@ -768,6 +929,17 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         );
         return Ok(());
     }
+
+    // RFC 0002: 惰性合并 inert [model_providers.*] 表，确保历史 session
+    // （model_provider 指向已切走的第三方 provider）在新 live config 下仍能 resume。
+    // Codex 0.149+ 严格校验每个 provider 表；不合并 inert 表会导致"Model provider
+    // `custom` not found"。仅对 codex 应用，其他 app_type 跳过。
+    effective_provider.settings_config = merge_inert_codex_provider_tables_into_settings_config(
+        db,
+        app_type.as_str(),
+        &effective_provider.settings_config,
+        &provider.id,
+    )?;
 
     write_live_snapshot(app_type, &effective_provider)
 }
@@ -3549,5 +3721,294 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    // RFC 0002 inert [model_providers.*] merge tests.
+    //
+    // Each test seeds the in-memory DB with the providers whose stored
+    // `settings_config.config` represents the previous live state, then calls
+    // the inert-merge function with one of them as "currently active". The
+    // merge must surface the inactive providers' tables under their original
+    // TOML ids while leaving the active provider's table alone.
+
+    fn kxpms_settings_config() -> Value {
+        json!({
+            "auth": { "OPENAI_API_KEY": "sk-kxpms" },
+            "config": "model_provider = \"custom\"\nmodel = \"kx-claude-opus-5\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-jybFTc1\"\n"
+        })
+    }
+
+    fn local_settings_config() -> Value {
+        json!({
+            "auth": { "OPENAI_API_KEY": "sk-local" },
+            "config": "model_provider = \"local\"\nmodel = \"claude-opus-5\"\n\n[model_providers.local]\nname = \"local_gateway\"\nbase_url = \"http://localhost:8782/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+        })
+    }
+
+    fn official_settings_config() -> Value {
+        json!({
+            "auth": {},
+            "config": "model = \"gpt-reserve\"\nmodel_reasoning_effort = \"medium\"\n"
+        })
+    }
+
+    #[test]
+    fn merge_inert_preserves_custom_table_when_switching_to_official() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("codex", &Provider::with_id(
+            "kxpms-gateway".to_string(),
+            "开轩 LLM 网关".to_string(),
+            kxpms_settings_config(),
+            None,
+        ))
+        .expect("save kxpms");
+        db.save_provider("codex", &Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            official_settings_config(),
+            None,
+        ))
+        .expect("save official");
+
+        // Active provider = codex-official. Inert = kxpms-gateway (custom).
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &official_settings_config(),
+            "codex-official",
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+
+        // Official live config didn't carry any [model_providers.*] table.
+        // Inert merge appends kxpms's [model_providers.custom] so historical
+        // sessions with `model_provider = "custom"` can resume.
+        assert!(
+            merged.contains("[model_providers.custom]"),
+            "merged live config missing inert [model_providers.custom]: {merged}"
+        );
+        assert!(merged.contains("kxpms_gateway"));
+        assert!(merged.contains("llm.kxpms.cn"));
+        // Exactly one table (no duplication).
+        assert_eq!(merged.matches("[model_providers.").count(), 1);
+    }
+
+    #[test]
+    fn merge_inert_preserves_other_third_party_when_switching_third_party() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("codex", &Provider::with_id(
+            "kxpms-gateway".to_string(),
+            "开轩".to_string(),
+            kxpms_settings_config(),
+            None,
+        ))
+        .expect("save kxpms");
+        db.save_provider("codex", &Provider::with_id(
+            "local-gateway-8782".to_string(),
+            "本地 8782".to_string(),
+            local_settings_config(),
+            None,
+        ))
+        .expect("save local");
+
+        // Active = kxpms. Inert = local (table id "local").
+        let active = json!({
+            "auth": { "OPENAI_API_KEY": "sk-kxpms" },
+            "config": "model_provider = \"custom\"\nmodel = \"kx-claude-opus-5\"\n\n[model_providers.custom]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-jybFTc1\"\n"
+        });
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &active,
+            "kxpms-gateway",
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+
+        // Active table preserved verbatim.
+        assert!(merged.contains("kxpms_gateway"));
+        // Inert [model_providers.local] added.
+        assert!(
+            merged.contains("[model_providers.local]"),
+            "missing inert local table: {merged}"
+        );
+        assert!(merged.contains("local_gateway"));
+    }
+
+    #[test]
+    fn merge_inert_skips_active_provider_and_id_collision() {
+        let db = Database::memory().expect("memory db");
+        // Two providers both using model_provider = "custom" (id collision).
+        db.save_provider("codex", &Provider::with_id(
+            "kxpms-gateway".to_string(),
+            "开轩".to_string(),
+            kxpms_settings_config(),
+            None,
+        ))
+        .expect("save kxpms");
+        db.save_provider("codex", &Provider::with_id(
+            "codex-extra".to_string(),
+            "另一个 custom id".to_string(),
+            kxpms_settings_config(),
+            None,
+        ))
+        .expect("save extra");
+
+        let active = kxpms_settings_config();
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &active,
+            "kxpms-gateway",
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+
+        // Both inert and active share TOML id "custom" — collision.
+        // Per §2.4 rule 1, the inert table is skipped (active wins).
+        // Count [model_providers.custom] occurrences: should be exactly 1.
+        let occurrences = merged.matches("[model_providers.custom]").count();
+        assert_eq!(
+            occurrences, 1,
+            "expected single [model_providers.custom] block (id collision rule): {merged}"
+        );
+    }
+
+    #[test]
+    fn merge_inert_handles_invalid_db_config() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("codex", &Provider::with_id(
+            "kxpms-gateway".to_string(),
+            "开轩".to_string(),
+            kxpms_settings_config(),
+            None,
+        ))
+        .expect("save kxpms");
+        // Second provider has unparseable stored config — must be skipped, not abort.
+        db.save_provider("codex", &Provider::with_id(
+            "codex-extra".to_string(),
+            "另一个".to_string(),
+            json!({
+                "config": "this is = not [valid TOML (((((((( ",
+            }),
+            None,
+        ))
+        .expect("save broken");
+
+        let active = official_settings_config();
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &active,
+            "codex-official",
+        )
+        .expect("merge must succeed despite broken DB row");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+        // Kxpms still merged successfully.
+        assert!(merged.contains("[model_providers.custom]"));
+        assert!(merged.contains("kxpms_gateway"));
+    }
+
+    #[test]
+    fn merge_inert_skips_table_without_base_url() {
+        let db = Database::memory().expect("memory db");
+        // Provider with a malformed table (no base_url) — Codex 0.149+ rejects
+        // this; inert merge must skip it.
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "codex-broken-table".to_string(),
+                "broken".to_string(),
+                json!({
+                    "config": "model_provider = \"broken\"\n\n[model_providers.broken]\nname = \"only_name\"\n# no base_url here\n"
+                }),
+                None,
+            ),
+        )
+        .expect("save broken-table");
+
+        let active = official_settings_config();
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &active,
+            "codex-official",
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+        // kxpms still merged.
+        assert!(merged.contains("[model_providers.custom]"));
+        // Broken table (no base_url) skipped.
+        assert!(!merged.contains("[model_providers.broken]"));
+    }
+
+    #[test]
+    fn merge_inert_idempotent() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("codex", &Provider::with_id(
+            "kxpms-gateway".to_string(),
+            "开轩".to_string(),
+            kxpms_settings_config(),
+            None,
+        ))
+        .expect("save kxpms");
+
+        let active = official_settings_config();
+        let merged_once = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &active,
+            "codex-official",
+        )
+        .expect("merge once");
+        let merged_twice = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &merged_once,
+            "codex-official",
+        )
+        .expect("merge twice");
+        assert_eq!(
+            merged_once.get("config").and_then(Value::as_str),
+            merged_twice.get("config").and_then(Value::as_str),
+            "second merge should be a no-op (idempotent)"
+        );
+    }
+
+    #[test]
+    fn merge_inert_skips_non_codex_app_type() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "claude",
+            &Provider::with_id(
+                "kxpms".to_string(),
+                "kxpms".to_string(),
+                json!({
+                    "env": { "ANTHROPIC_BASE_URL": "https://example.com" }
+                }),
+                None,
+            ),
+        )
+        .expect("save claude");
+
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "claude",
+            &json!({"env": {}}),
+            "kxpms",
+        )
+        .expect("merge");
+        // Non-codex path returns input unchanged.
+        assert_eq!(result, json!({"env": {}}));
     }
 }
