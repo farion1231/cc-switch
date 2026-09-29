@@ -733,6 +733,30 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
+/// Isolate the in-memory settings of a serial test without reading or writing
+/// the caller's settings file. Install the test home before creating this guard.
+#[cfg(test)]
+pub(crate) struct TestSettingsGuard(AppSettings);
+
+#[cfg(test)]
+impl TestSettingsGuard {
+    pub(crate) fn new() -> Self {
+        let store = SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::default()));
+        let mut settings = store.write().unwrap_or_else(|err| err.into_inner());
+        Self(std::mem::take(&mut *settings))
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestSettingsGuard {
+    fn drop(&mut self) {
+        let mut settings = settings_store()
+            .write()
+            .unwrap_or_else(|err| err.into_inner());
+        *settings = std::mem::take(&mut self.0);
+    }
+}
+
 pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
     let join_home = |home: PathBuf, suffix: &str| {
         suffix

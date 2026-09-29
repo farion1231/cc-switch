@@ -159,80 +159,51 @@ mod tests {
     use tempfile::TempDir;
 
     struct TempHome {
-        #[allow(dead_code)]
+        // Restore the cache before the temporary directory is removed.
+        _settings: crate::settings::TestSettingsGuard,
         dir: TempDir,
-        original_home: Option<String>,
-        #[cfg(windows)]
-        original_local_app_data: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-        #[cfg(target_os = "linux")]
-        original_xdg_config_home: Option<std::ffi::OsString>,
+        original_env: Vec<(&'static str, Option<std::ffi::OsString>)>,
     }
 
     impl TempHome {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
-            #[cfg(windows)]
-            let original_local_app_data = env::var("LOCALAPPDATA").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
-            #[cfg(target_os = "linux")]
-            let original_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
-
-            env::set_var("HOME", dir.path());
-            #[cfg(windows)]
-            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            // Claude Desktop Linux paths follow XDG_CONFIG_HOME; pin them under the temp home.
-            #[cfg(target_os = "linux")]
-            env::remove_var("XDG_CONFIG_HOME");
+            let paths = [
+                ("HOME", dir.path().to_path_buf()),
+                ("USERPROFILE", dir.path().to_path_buf()),
+                ("CC_SWITCH_TEST_HOME", dir.path().to_path_buf()),
+                // Import now reads credentials and writes live config. Never
+                // inherit a developer's OpenCode DB or XDG data directory.
+                ("OPENCODE_DB", dir.path().join("opencode.db")),
+                ("XDG_DATA_HOME", dir.path().join(".local").join("share")),
+                #[cfg(windows)]
+                ("LOCALAPPDATA", dir.path().join("AppData").join("Local")),
+                #[cfg(target_os = "linux")]
+                ("XDG_CONFIG_HOME", dir.path().join(".config")),
+            ];
+            let original_env = paths
+                .iter()
+                .map(|(key, path)| {
+                    let previous = env::var_os(key);
+                    env::set_var(key, path);
+                    (*key, previous)
+                })
+                .collect();
 
             Self {
+                _settings: crate::settings::TestSettingsGuard::new(),
                 dir,
-                original_home,
-                #[cfg(windows)]
-                original_local_app_data,
-                original_userprofile,
-                original_test_home,
-                #[cfg(target_os = "linux")]
-                original_xdg_config_home,
+                original_env,
             }
         }
     }
 
     impl Drop for TempHome {
         fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-
-            #[cfg(windows)]
-            {
-                match &self.original_local_app_data {
-                    Some(value) => env::set_var("LOCALAPPDATA", value),
-                    None => env::remove_var("LOCALAPPDATA"),
-                }
-            }
-
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                match &self.original_xdg_config_home {
-                    Some(value) => env::set_var("XDG_CONFIG_HOME", value),
-                    None => env::remove_var("XDG_CONFIG_HOME"),
+            for (key, previous) in &self.original_env {
+                match previous {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
                 }
             }
         }
@@ -271,50 +242,12 @@ mod tests {
             .unwrap_or_else(|err| err.into_inner())
     }
 
-    struct OpenCodeDbEnvGuard(Option<std::ffi::OsString>);
-
-    impl OpenCodeDbEnvGuard {
-        fn set(path: &Path) -> Self {
-            let guard = Self(std::env::var_os("OPENCODE_DB"));
-            std::env::set_var("OPENCODE_DB", path);
-            guard
-        }
-    }
-
-    impl Drop for OpenCodeDbEnvGuard {
-        fn drop(&mut self) {
-            match self.0.take() {
-                Some(value) => std::env::set_var("OPENCODE_DB", value),
-                None => std::env::remove_var("OPENCODE_DB"),
-            }
-        }
-    }
-
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        // Import tests must never read real credentials, including when the
-        // developer has OPENCODE_DB or XDG_DATA_HOME set outside the test home.
-        let _opencode_db = OpenCodeDbEnvGuard::set(&temp.path().join("opencode.db"));
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        std::env::set_var("HOME", temp.path());
-
+        let temp = TempHome::new();
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
-        let result = test(&state, temp.path());
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-
-        result
+        test(&state, temp.dir.path())
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
@@ -3593,9 +3526,111 @@ wire_api = "responses"
         });
     }
 
-    fn seed_opencode_credential() {
-        let conn =
-            rusqlite::Connection::open(crate::opencode_config::get_opencode_db_path()).unwrap();
+    #[test]
+    #[serial]
+    fn test_home_isolates_cached_opencode_config_and_restores_settings() {
+        let outer = TempHome::new();
+        let external_dir = outer.dir.path().join("external-opencode");
+        fs::create_dir_all(&external_dir).unwrap();
+        let external_config = external_dir.join("opencode.json");
+        let original = "{\"theme\":\"external-config-must-survive\"}";
+        fs::write(&external_config, original).unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            opencode_config_dir: Some(external_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        // A prior test (or lazy initialization) may have cached an external
+        // override before this fixture changes HOME. Exercise the actual import.
+        let imported_path = with_test_home(|state, home| {
+            seed_opencode_credential(home);
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            let path = crate::opencode_config::get_opencode_config_path();
+            (path, home.to_path_buf())
+        });
+        assert_eq!(fs::read_to_string(&external_config).unwrap(), original);
+        assert!(imported_path.0.starts_with(&imported_path.1));
+        assert_eq!(
+            crate::settings::get_opencode_override_dir(),
+            Some(external_dir)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_home_restores_environment_and_settings_after_panic() {
+        let outer = TempHome::new();
+        let variables = [
+            "HOME",
+            "CC_SWITCH_TEST_HOME",
+            "OPENCODE_DB",
+            "XDG_DATA_HOME",
+            "USERPROFILE",
+            #[cfg(windows)]
+            "LOCALAPPDATA",
+            #[cfg(target_os = "linux")]
+            "XDG_CONFIG_HOME",
+        ];
+        let before: Vec<_> = variables.iter().map(env::var_os).collect();
+        let mut inner_home = None;
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_test_home(|_, home| {
+                inner_home = Some(home.to_path_buf());
+                crate::settings::update_settings(crate::settings::AppSettings {
+                    opencode_config_dir: Some(home.join("override").to_string_lossy().into_owned()),
+                    ..Default::default()
+                })
+                .unwrap();
+                panic!("simulate a failed import assertion");
+            });
+        }));
+
+        assert!(result.is_err());
+        assert!(!inner_home.unwrap().exists());
+        assert_eq!(crate::config::get_home_dir(), outer.dir.path());
+        assert_eq!(
+            variables.iter().map(env::var_os).collect::<Vec<_>>(),
+            before
+        );
+        assert!(crate::settings::get_opencode_override_dir().is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn test_home_does_not_import_ambient_opencode_credentials() {
+        let outer = TempHome::new();
+        seed_opencode_credential(outer.dir.path());
+        let external_db = crate::opencode_config::get_opencode_db_path();
+        let before = fs::read(&external_db).unwrap();
+        let original_data_home = env::var_os("XDG_DATA_HOME");
+
+        with_test_home(|state, home| {
+            assert_eq!(
+                crate::opencode_config::get_opencode_db_path(),
+                home.join("opencode.db")
+            );
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            assert!(state.db.get_provider_ids("opencode").unwrap().is_empty());
+            assert!(!crate::opencode_config::get_opencode_config_path().exists());
+
+            // OpenCode also resolves through XDG_DATA_HOME when OPENCODE_DB is
+            // absent. Both routes must remain within the fixture.
+            env::remove_var("OPENCODE_DB");
+            assert!(crate::opencode_config::get_opencode_db_path().starts_with(home));
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+        });
+
+        assert_eq!(crate::opencode_config::get_opencode_db_path(), external_db);
+        assert_eq!(env::var_os("XDG_DATA_HOME"), original_data_home);
+        assert_eq!(fs::read(&external_db).unwrap(), before);
+    }
+
+    fn seed_opencode_credential(home: &Path) {
+        let path = home.join("opencode.db");
+        assert_eq!(crate::opencode_config::get_opencode_db_path(), path);
+        let conn = rusqlite::Connection::open(path).unwrap();
         conn.execute_batch(
             "CREATE TABLE credential (
                 id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT,
@@ -3618,8 +3653,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn import_opencode_credential_persists_before_import_and_is_idempotent() {
-        with_test_home(|state, _| {
-            seed_opencode_credential();
+        with_test_home(|state, home| {
+            seed_opencode_credential(home);
             assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
             let path = crate::opencode_config::get_opencode_config_path();
             let file: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -3682,8 +3717,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn import_opencode_file_wins_and_extensions_survive_editing() {
-        with_test_home(|state, _| {
-            seed_opencode_credential();
+        with_test_home(|state, home| {
+            seed_opencode_credential(home);
             let mut config = opencode_provider("opencode-go").settings_config;
             config["name"] = json!("Go from file");
             config["options"]["apiKey"] = json!("file-test-key");
@@ -3716,8 +3751,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn import_opencode_credential_does_not_reenable_existing_inactive_provider() {
-        with_test_home(|state, _| {
-            seed_opencode_credential();
+        with_test_home(|state, home| {
+            seed_opencode_credential(home);
             assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
             crate::opencode_config::remove_provider("opencode-go").unwrap();
             assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
@@ -3729,8 +3764,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn import_opencode_partial_file_override_wins_over_credential() {
-        with_test_home(|state, _| {
-            seed_opencode_credential();
+        with_test_home(|state, home| {
+            seed_opencode_credential(home);
             let mut config = json!({
                 "options": {"apiKey": "file-test-key"},
                 "models": {"glm-5.2": {"limit": {"input": 64000}}}
@@ -3791,8 +3826,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn import_opencode_credential_does_not_import_when_file_cannot_be_written() {
-        with_test_home(|state, _| {
-            seed_opencode_credential();
+        with_test_home(|state, home| {
+            seed_opencode_credential(home);
             let dir = crate::opencode_config::get_opencode_dir();
             fs::create_dir_all(dir.parent().unwrap()).unwrap();
             fs::write(&dir, "blocks config directory").unwrap();

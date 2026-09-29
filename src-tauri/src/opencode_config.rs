@@ -502,17 +502,23 @@ pub fn remove_plugins_by_prefixes(path: &Path, prefixes: &[&str]) -> Result<bool
 mod tests {
     use super::*;
 
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    struct TestHomeGuard {
+        previous_home: Option<std::ffi::OsString>,
+        _settings: crate::settings::TestSettingsGuard,
+    }
     impl TestHomeGuard {
         fn set(home: &std::path::Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            guard
+            Self {
+                previous_home,
+                _settings: crate::settings::TestSettingsGuard::new(),
+            }
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            match self.0.take() {
+            match self.previous_home.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
