@@ -1378,7 +1378,7 @@ fn codex_catalog_model_entry(
     entry
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
     /// Explicit user value only. Entries fall back to the model id — except
@@ -1718,6 +1718,23 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
 }
 
 fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
+    Ok(first_bundled_catalog(find_codex_model_template))
+}
+
+/// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
+/// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
+pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
+    first_bundled_catalog(|catalog| {
+        catalog
+            .get("models")
+            .and_then(Value::as_array)
+            .filter(|models| !models.is_empty())
+            .cloned()
+    })
+}
+
+/// 依次跑各个候选的 `codex debug models --bundled`，返回第一份 `pick` 取得出东西的结果。
+fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
     for candidate in codex_cli_candidates() {
         let candidate_label = candidate.to_string_lossy();
         let output = match codex_bundled_models_command(&candidate).output() {
@@ -1743,39 +1760,11 @@ fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
                 continue;
             }
         };
-        if let Some(template) = find_codex_model_template(&catalog) {
-            return Ok(Some(template));
+        if let Some(found) = pick(&catalog) {
+            return Some(found);
         }
     }
 
-    Ok(None)
-}
-
-/// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
-/// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
-pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
-    for candidate in codex_cli_candidates() {
-        let candidate_label = candidate.to_string_lossy();
-        let output = match codex_bundled_models_command(&candidate).output() {
-            Ok(output) if output.status.success() => output,
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
-                continue;
-            }
-            Err(err) => {
-                log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
-                continue;
-            }
-        };
-        let models = serde_json::from_slice::<Value>(&output.stdout)
-            .ok()
-            .and_then(|catalog| catalog.get("models").and_then(Value::as_array).cloned())
-            .filter(|models| !models.is_empty());
-        if models.is_some() {
-            return models;
-        }
-    }
     None
 }
 
@@ -2195,13 +2184,7 @@ fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalo
         .map(|model| {
             vec![CodexCatalogModelSpec {
                 model,
-                display_name: None,
-                context_window: None,
-                supports_parallel_tool_calls: None,
-                input_modalities: None,
-                base_instructions: None,
-                reasoning_levels: None,
-                default_reasoning_level: None,
+                ..CodexCatalogModelSpec::default()
             }]
         })
         .unwrap_or_default()
@@ -2244,9 +2227,10 @@ pub(crate) enum CodexPoolRoute<'a> {
     },
 }
 
-/// 合并目录里第三方行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
+/// 合并目录里附加行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
 /// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
-/// 跟着缓存变），固定值才稳定。
+/// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
+/// 附加第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
 const CODEX_POOL_COMP_HASH: &str = "cc-switch";
 
 /// 附加名单非空时的模型目录：路由那家的行在前，各附加供应商的行按名单顺序在后，
@@ -2271,8 +2255,9 @@ pub(crate) fn plan_codex_pool_catalog(
                     .and_then(Value::as_i64)
                     .unwrap_or(i64::MAX)
             });
+            let windows = RowWindows::of(config_text);
             for entry in &mut native {
-                sink_row_windows(entry, config_text, false);
+                sink_row_windows(entry, &windows, false);
             }
             native
         }
@@ -2282,6 +2267,7 @@ pub(crate) fn plan_codex_pool_catalog(
             let Some(obj) = entry.as_object_mut() else {
                 continue;
             };
+            obj.insert("comp_hash".to_string(), json!(CODEX_POOL_COMP_HASH));
             let Some(model) = obj.get("slug").and_then(Value::as_str).map(str::to_string) else {
                 continue;
             };
@@ -2325,7 +2311,7 @@ pub(crate) fn plan_codex_pool_catalog(
     Ok(json!({ "models": entries }))
 }
 
-/// 一家第三方供应商在合并目录里的行。
+/// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
 fn codex_pool_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
@@ -2339,35 +2325,47 @@ fn codex_pool_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, 
         },
         _ => Vec::new(),
     };
+    let windows = RowWindows::of(row.config_text);
     for entry in &mut entries {
-        sink_row_windows(entry, row.config_text, true);
-        if let Some(obj) = entry.as_object_mut() {
-            obj.insert("comp_hash".to_string(), json!(CODEX_POOL_COMP_HASH));
-        }
+        sink_row_windows(entry, &windows, true);
     }
     Ok(entries)
+}
+
+/// 一家行里配置的窗口类全局键（见 [`sink_row_windows`]）。
+struct RowWindows {
+    window: Option<u64>,
+    limit: Option<u64>,
+}
+
+impl RowWindows {
+    fn of(config_text: &str) -> Self {
+        Self {
+            window: extract_codex_top_level_u64(config_text, "model_context_window"),
+            limit: extract_codex_top_level_u64(config_text, "model_auto_compact_token_limit"),
+        }
+    }
 }
 
 /// 把一家行里的窗口类全局键写进它自己的行：`model_context_window` 写成行的窗口，
 /// `model_auto_compact_token_limit` 写成行的压缩点。第三方行没有压缩点时写窗口的 90%
 /// （Codex 自己的默认也是 90%，写出来是为了不受别的来源影响）；官方原生行只写行里
 /// 明确配置的值，其余保持原样。
-fn sink_row_windows(entry: &mut Value, config_text: &str, third_party: bool) {
+fn sink_row_windows(entry: &mut Value, windows: &RowWindows, third_party: bool) {
     let Some(obj) = entry.as_object_mut() else {
         return;
     };
-    if let Some(window) = extract_codex_top_level_u64(config_text, "model_context_window") {
+    if let Some(window) = windows.window {
         obj.insert("context_window".to_string(), json!(window));
         obj.insert("max_context_window".to_string(), json!(window));
     }
-    let limit =
-        extract_codex_top_level_u64(config_text, "model_auto_compact_token_limit").or_else(|| {
-            third_party
-                .then(|| obj.get("context_window").and_then(Value::as_u64))
-                .flatten()
-                .filter(|window| *window > 0)
-                .map(|window| window * 9 / 10)
-        });
+    let limit = windows.limit.or_else(|| {
+        third_party
+            .then(|| obj.get("context_window").and_then(Value::as_u64))
+            .flatten()
+            .filter(|window| *window > 0)
+            .map(|window| window * 9 / 10)
+    });
     if let Some(limit) = limit {
         obj.insert("auto_compact_token_limit".to_string(), json!(limit));
     }
@@ -4560,6 +4558,43 @@ wire_api = "responses"
             .collect();
         // 路由那家自己的 `vendor/model` 名字不受影响。
         assert_eq!(models, vec!["deepseek/deepseek-v4"]);
+    }
+
+    #[test]
+    fn the_route_rows_keep_the_comp_hash_they_have_without_attached_models() {
+        let route_settings =
+            json!({ "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] } });
+        let route_text = "model_provider = \"deepseek\"\nmodel = \"deepseek-v4-pro\"\n\
+                          [model_providers.deepseek]\nbase_url = \"https://api.deepseek.com/v1\"\n";
+        let profile = CodexCatalogToolProfile::NativeResponses;
+        let plain = codex_model_catalog_from_settings(&route_settings, route_text, profile)
+            .unwrap()
+            .unwrap();
+        assert_eq!(plain["models"][0]["comp_hash"], "3000");
+
+        let attached_settings = json!({});
+        let pooled = plan_codex_pool_catalog(
+            CodexPoolRoute::ThirdParty(CodexCatalogRow {
+                settings: &route_settings,
+                config_text: route_text,
+                profile,
+            }),
+            &[CodexPoolCatalogMember {
+                key: "ds",
+                provider_name: "DS",
+                row: CodexCatalogRow {
+                    settings: &attached_settings,
+                    config_text: route_text,
+                    profile,
+                },
+            }],
+        )
+        .unwrap();
+        let models = pooled["models"].as_array().unwrap();
+        assert_eq!(models[0]["slug"], "deepseek-v4-pro");
+        assert_eq!(models[0]["comp_hash"], plain["models"][0]["comp_hash"]);
+        assert_eq!(models[1]["slug"], "ccs-ds/deepseek-v4-pro");
+        assert_eq!(models[1]["comp_hash"], "cc-switch");
     }
 
     #[test]

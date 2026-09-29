@@ -71,6 +71,15 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
+/** 支持附加模式的应用（后端 `mode::pool::supports_pool` 的镜像）。 */
+export type PoolAppId = Extract<ProxyAppId, "claude" | "codex">;
+
+export const POOL_APP_IDS: PoolAppId[] = ["claude", "codex"];
+
+export function isPoolAppId(appId: string): appId is PoolAppId {
+  return (POOL_APP_IDS as string[]).includes(appId);
+}
+
 export type AdditiveAppId = Extract<
   AppId,
   "opencode" | "openclaw" | "hermes" | "pi" | "mcode"

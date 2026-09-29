@@ -1,10 +1,12 @@
-//! 代理模式的附加模型（UI 叫「附加模型」，代码叫 pool）。
+//! 附加模式（UI 叫「附加模式」，代码叫 pool）。
 //!
-//! 代理模式下，用户把几家第三方供应商标成「附加」：它们的模型以带保留前缀的 id 发布给
-//! 客户端，选中后请求直达那一家；不带前缀的请求照旧走代理路由和故障转移。
+//! 附加模式和路由模式在界面上二选一，内部都是代理模式：附加模式多一个开关位
+//! （[`PoolState::enabled`]）。附加模式下供应商列表是累加式的：添加的每一家（第三方）的
+//! 模型以带保留前缀的 id 发布给客户端，选中后请求直达那一家；不带前缀的请求发往「默认」
+//! 那家（代理路由），不做故障转移。
 //!
 //! - 名单和 key 登记簿存在 `live-state.json`（[`PoolState`]），增删和客户端文件在同一个
-//!   操作里提交（`controller::set_pool_member`）；
+//!   操作里提交（`controller::set_pool_member`）；默认那家也在名单里，不能移除；
 //! - key 一经分配永久归这家（[`allocate_key`]）：客户端会一直带着选中过的 id，key 改了
 //!   指向，旧 id 就会被悄悄发到另一家；
 //! - 带保留前缀的 id 解不出来（成员已移除、供应商已删除、key 没登记）一律报错，不回落到
@@ -19,7 +21,7 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
-use crate::live::project::claude::{has_one_m_marker, ONE_M_MARKER_FOR_CLIENT};
+use crate::live::project::claude::{env_string, has_one_m_marker, ONE_M_MARKER_FOR_CLIENT};
 use crate::provider::Provider;
 use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
 
@@ -150,7 +152,8 @@ pub fn decode<'a>(app: &AppType, id: &'a str) -> Decoded<'a> {
     }
 }
 
-/// 附加供应商发布给客户端的一个模型。
+/// Claude 附加供应商发布给客户端的一个模型（Codex 的由目录条目描述，见
+/// `codex_config::plan_codex_pool_catalog`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolModel {
     /// 发布给客户端的 id（带保留前缀）。
@@ -163,8 +166,7 @@ pub struct PoolModel {
     pub description: String,
     /// 上游是 1M 窗口（id 带 `[1M]`）。
     pub one_m: bool,
-    /// Claude 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
-    /// Codex 的窗口写在目录条目里，这里是 0。
+    /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
     pub window: u64,
 }
 
@@ -206,8 +208,15 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
         .filter(|window| *window > 0)
         .unwrap_or(CLAUDE_DEFAULT_WINDOW);
 
-    // (去掉标记的模型名, 行里的原值, 显示名, 1M)
-    let mut found: Vec<(String, String, Option<String>, bool)> = Vec::new();
+    struct Found {
+        /// 去掉 1M 标记的模型名。
+        model: String,
+        /// 行里的原值。
+        upstream: String,
+        name: Option<String>,
+        one_m: bool,
+    }
+    let mut found: Vec<Found> = Vec::new();
     for (model_key, name_key) in ROLES {
         let Some(upstream) = env_string(env, model_key) else {
             continue;
@@ -218,37 +227,45 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
         }
         let name = name_key.and_then(|name_key| env_string(env, name_key).map(str::to_string));
         let one_m = has_one_m_marker(upstream);
-        match found.iter_mut().find(|entry| entry.0 == model) {
+        match found.iter_mut().find(|entry| entry.model == model) {
             Some(entry) => {
                 // 同一个模型有一处带 1M 标记就按 1M，发往上游的也用带标记的那个写法。
-                if one_m && !entry.3 {
-                    entry.1 = upstream.to_string();
-                    entry.3 = true;
+                if one_m && !entry.one_m {
+                    entry.upstream = upstream.to_string();
+                    entry.one_m = true;
                 }
-                if entry.2.is_none() {
-                    entry.2 = name;
+                if entry.name.is_none() {
+                    entry.name = name;
                 }
             }
-            None => found.push((model, upstream.to_string(), name, one_m)),
+            None => found.push(Found {
+                model,
+                upstream: upstream.to_string(),
+                name,
+                one_m,
+            }),
         }
     }
 
     found
         .into_iter()
-        .map(|(model, upstream, name, one_m)| PoolModel {
-            id: encode(&AppType::Claude, key, &model, one_m),
-            display_name: display_name(name.as_deref().unwrap_or(&model), &provider.name),
+        .map(|found| PoolModel {
+            id: encode(&AppType::Claude, key, &found.model, found.one_m),
+            display_name: display_name(
+                found.name.as_deref().unwrap_or(&found.model),
+                &provider.name,
+            ),
             description: routed_description(&provider.name),
-            upstream,
-            one_m,
+            upstream: found.upstream,
+            one_m: found.one_m,
             window,
         })
         .collect()
 }
 
-/// Codex 行发布的模型：行里的模型目录，没有配置目录时只有行的 `model`。显示名和窗口
-/// 由目录条目决定（`codex_config::plan_codex_pool_catalog`），这里只给 id 和上游模型名。
-pub fn codex_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
+/// Codex 行发布的模型 id：行里的模型目录，没有配置目录时只有行的 `model`。显示名和窗口
+/// 由目录条目决定（`codex_config::plan_codex_pool_catalog`）。
+pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
     let config = provider
         .settings_config
         .get("config")
@@ -256,14 +273,7 @@ pub fn codex_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
         .unwrap_or("");
     crate::codex_config::codex_published_models(&provider.settings_config, config)
         .into_iter()
-        .map(|model| PoolModel {
-            id: encode(&AppType::Codex, key, &model, false),
-            display_name: display_name(&model, &provider.name),
-            description: routed_description(&provider.name),
-            upstream: model,
-            one_m: false,
-            window: 0,
-        })
+        .map(|model| encode(&AppType::Codex, key, &model, false))
         .collect()
 }
 
@@ -277,18 +287,14 @@ pub fn routed_description(provider_name: &str) -> String {
     format!("经 CC Switch 路由到 {provider_name} (Routed by CC Switch to {provider_name})")
 }
 
-fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
-    env.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-/// 一家附加供应商发布的模型。
-pub fn models_of(app: &AppType, key: &str, provider: &Provider) -> Vec<PoolModel> {
+/// 一家附加供应商发布给客户端的模型 id。
+fn model_ids_of(app: &AppType, key: &str, provider: &Provider) -> Vec<String> {
     match app {
-        AppType::Claude => claude_models(key, provider),
-        AppType::Codex => codex_models(key, provider),
+        AppType::Claude => claude_models(key, provider)
+            .into_iter()
+            .map(|model| model.id)
+            .collect(),
+        AppType::Codex => codex_model_ids(key, provider),
         _ => Vec::new(),
     }
 }
@@ -298,7 +304,8 @@ pub fn models_of(app: &AppType, key: &str, provider: &Provider) -> Vec<PoolModel
 pub struct Member {
     pub provider: Provider,
     pub key: String,
-    pub models: Vec<PoolModel>,
+    /// 发布给客户端的模型 id。
+    pub model_ids: Vec<String>,
 }
 
 /// 名单里还在库里的成员，按加入顺序。库里已经没有的跳过（删除供应商会先把它移出名单，
@@ -313,39 +320,53 @@ pub fn members(db: &Database, app: &AppType, pool: &PoolState) -> Result<Vec<Mem
         let Some(provider) = db.get_provider_by_id(id, app.as_str())? else {
             continue;
         };
-        let models = models_of(app, key, &provider);
+        let model_ids = model_ids_of(app, key, &provider);
         members.push(Member {
             key: key.to_string(),
             provider,
-            models,
+            model_ids,
         });
     }
     Ok(members)
 }
 
-/// 发布给客户端的模型：各成员的模型按名单顺序排，路由那家跳过（它的模型已经通过默认
-/// 路由出现，名单保留）。
-pub fn published(members: &[Member], route: Option<&str>) -> Vec<PoolModel> {
+/// 这个成员发布附加模型：路由那家（`route`）不发布，它的模型已经通过默认路由出现，名单
+/// 保留。契约、Codex 目录、Claude Code 的模型发现和给前端的名单都按这一条排除。
+pub fn is_published(member: &Member, route: Option<&str>) -> bool {
+    Some(member.provider.id.as_str()) != route
+}
+
+/// 发布附加模型的成员（按名单顺序，见 [`is_published`]）。附加模式关着（路由模式）时
+/// 没有：名单留着，下次进入附加模式时恢复。
+pub fn published_members(
+    db: &Database,
+    app: &AppType,
+    pool: &PoolState,
+    route: Option<&str>,
+) -> Result<Vec<Member>, AppError> {
+    if !pool.enabled || pool.members.is_empty() || !supports_pool(app) {
+        return Ok(Vec::new());
+    }
+    let mut members = members(db, app, pool)?;
+    members.retain(|member| is_published(member, route));
+    Ok(members)
+}
+
+/// Claude 的这些成员发布给客户端的模型，按名单顺序。
+pub fn claude_published(members: &[Member]) -> Vec<PoolModel> {
     members
         .iter()
-        .filter(|member| Some(member.provider.id.as_str()) != route)
-        .flat_map(|member| member.models.iter().cloned())
+        .flat_map(|member| claude_models(&member.key, &member.provider))
         .collect()
 }
 
-/// 代理模式下 `provider_id` 在附加名单里：它的行变了，客户端契约可能跟着变（发布的模型、
-/// 窗口）。不在代理模式时名单不进契约。
-pub fn is_member_in_proxy(app: &AppType, provider_id: &str) -> bool {
+/// 这个应用在附加模式（代理模式且附加模式开着）。读不出状态按不在处理。
+pub fn pool_mode_now(app: &AppType) -> bool {
     if !supports_pool(app) {
         return false;
     }
-    let store = DeviceStore::for_device();
-    let read = || -> Result<bool, AppError> {
-        Ok(state::mode_state(&store, app.as_str())?.is_proxy()
-            && state::pool(&store, app.as_str())?.is_member(provider_id))
-    };
-    read().unwrap_or_else(|error| {
-        log::warn!("读取 {} 的附加模型失败: {error}", app.as_str());
+    state::pool_mode(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|error| {
+        log::warn!("读取 {} 的附加模式失败，按不在处理: {error}", app.as_str());
         false
     })
 }
@@ -358,24 +379,21 @@ pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
     Ok(state::pool(&DeviceStore::for_device(), app.as_str())?.is_member(provider_id))
 }
 
-/// 这个应用现在发布的附加模型：代理模式下按已落定的名单和路由算，不在代理模式时没有。
-pub fn published_now(db: &Database, app: &AppType) -> Result<Vec<PoolModel>, AppError> {
-    if !supports_pool(app) {
-        return Ok(Vec::new());
-    }
+/// Claude Code 现在发布的附加模型：代理模式下按已落定的名单和路由算，不在代理模式时没有。
+pub fn claude_published_now(db: &Database) -> Result<Vec<PoolModel>, AppError> {
+    let app = AppType::Claude;
     let store = DeviceStore::for_device();
     let mode = state::mode_state(&store, app.as_str())?;
     if !mode.is_proxy() {
         return Ok(Vec::new());
     }
     let pool = state::pool(&store, app.as_str())?;
-    if pool.members.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(published(
-        &members(db, app, &pool)?,
+    Ok(claude_published(&published_members(
+        db,
+        &app,
+        &pool,
         mode.proxy_route.as_deref(),
-    ))
+    )?))
 }
 
 /// 选中附加模型的请求要发往的那一家。
@@ -448,19 +466,24 @@ pub fn resolve(
     if !pool.is_member(provider_id) {
         return Ok(Resolved::Miss(PoolMiss::Removed));
     }
-    // 行里配置的原值（可能带 1M 标记）和路由请求映射出来的一样；行里已经没有这个模型时
-    // 照原样发（上游自己决定认不认）。
-    let upstream_model = models_of(app, key, &provider)
-        .into_iter()
-        .find(|published| strip_one_m_suffix_for_upstream(&published.upstream).trim() == model_part)
-        .map(|published| published.upstream)
-        .unwrap_or_else(|| {
-            if one_m {
-                format!("{model_part}{ONE_M_MARKER_FOR_CLIENT}")
-            } else {
-                model_part.to_string()
-            }
-        });
+    // Claude 发往上游的是行里配置的原值（可能带 1M 标记），和路由请求映射出来的一样；
+    // 行里已经没有这个模型时照原样发（上游自己决定认不认）。Codex 的 id 就是行里的模型名。
+    let upstream_model = match app {
+        AppType::Claude => claude_models(key, &provider)
+            .into_iter()
+            .find(|published| {
+                strip_one_m_suffix_for_upstream(&published.upstream).trim() == model_part
+            })
+            .map(|published| published.upstream),
+        _ => None,
+    }
+    .unwrap_or_else(|| {
+        if one_m {
+            format!("{model_part}{ONE_M_MARKER_FOR_CLIENT}")
+        } else {
+            model_part.to_string()
+        }
+    });
     Ok(Resolved::Hit(Box::new(PoolTarget {
         provider,
         upstream_model,
@@ -473,29 +496,37 @@ pub fn resolve(
 #[serde(rename_all = "camelCase")]
 pub struct PoolMemberView {
     pub provider_id: String,
-    pub key: String,
     /// 发布给客户端的模型 id。
     pub model_ids: Vec<String>,
+    /// 这家是默认那家（代理路由）：它的模型通过默认路由出现，`model_ids` 暂不发布，默认
+    /// 换到别家后才发布。
+    pub route: bool,
 }
 
-/// 给前端：附加模型的名单和提示。
-#[derive(Debug, Clone, Serialize)]
+/// 给前端：附加模式的状态、名单和提示。
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PoolView {
+    /// 在附加模式（代理模式且附加模式开着）。
+    pub active: bool,
     pub members: Vec<PoolMemberView>,
-    /// Codex 官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex 自带的
-    /// 列表（可能缺账号专属的模型），`officialModelsUnavailable` 附加模型暂不可用。
+    /// Codex 附加模型客户端看不到或看不全：`routeOwnsCatalog` 路由那家自己管理模型目录
+    /// 文件，附加模型不发布；`configOwnsCatalog` 用户在 `config.toml` 里指定了自己的模型
+    /// 目录，生成的目录不生效；官方做路由时官方模型列表暂未取到：`officialModelsBundled`
+    /// 暂用 Codex 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` 附加模型
+    /// 暂不可用。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<&'static str>,
 }
 
-pub fn member_views(members: &[Member]) -> Vec<PoolMemberView> {
+/// `route` 是代理模式下的路由供应商（不在代理模式时为 `None`）。
+pub fn member_views(members: &[Member], route: Option<&str>) -> Vec<PoolMemberView> {
     members
         .iter()
         .map(|member| PoolMemberView {
             provider_id: member.provider.id.clone(),
-            key: member.key.clone(),
-            model_ids: member.models.iter().map(|model| model.id.clone()).collect(),
+            model_ids: member.model_ids.clone(),
+            route: !is_published(member, route),
         })
         .collect()
 }
@@ -679,28 +710,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_route_is_not_published_twice() {
-        let a = provider("a", "A", None, json!({ "ANTHROPIC_MODEL": "a-1" }));
-        let b = provider("b", "B", None, json!({ "ANTHROPIC_MODEL": "b-1" }));
-        let members: Vec<Member> = [(a, "a"), (b, "b")]
-            .into_iter()
-            .map(|(provider, key)| Member {
-                models: claude_models(key, &provider),
-                key: key.to_string(),
-                provider,
-            })
-            .collect();
-        let ids = |route| {
-            published(&members, route)
-                .into_iter()
-                .map(|model| model.id)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(ids(None), vec!["ccs-claude-a--a-1", "ccs-claude-b--b-1"]);
-        assert_eq!(ids(Some("a")), vec!["ccs-claude-b--b-1"]);
-    }
-
     struct Fixture {
         _dir: tempfile::TempDir,
         store: DeviceStore,
@@ -731,6 +740,7 @@ mod tests {
         }
         state::update(&store, |live| {
             let pool = &mut live.apps.entry("claude".to_string()).or_default().pool;
+            pool.enabled = true;
             pool.members = ["kimi", "zhipu", "deleted"].map(str::to_string).to_vec();
             for id in ["kimi", "zhipu", "gone", "deleted"] {
                 pool.keys.insert(id.to_string(), id.to_string());
@@ -764,6 +774,36 @@ mod tests {
             Resolved::Miss(miss) => miss,
             other => panic!("expected a miss, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_route_is_not_published_twice() {
+        let fx = fixture();
+        let pool = state::pool(&fx.store, "claude").unwrap();
+        let members = |route| published_members(&fx.db, &AppType::Claude, &pool, route).unwrap();
+        let ids = |route| {
+            claude_published(&members(route))
+                .into_iter()
+                .map(|model| model.id)
+                .collect::<Vec<_>>()
+        };
+        let all = ids(None);
+        assert!(all.contains(&"ccs-claude-kimi--kimi-k3".to_string()));
+        let without_kimi: Vec<String> = all
+            .iter()
+            .filter(|id| !id.starts_with("ccs-claude-kimi--"))
+            .cloned()
+            .collect();
+        assert!(!without_kimi.is_empty());
+        assert_eq!(ids(Some("kimi")), without_kimi);
+
+        // 界面上路由那家仍在名单里，标出来。
+        let views = member_views(&members(None), Some("kimi"));
+        let route_flags: Vec<(&str, bool)> = views
+            .iter()
+            .map(|view| (view.provider_id.as_str(), view.route))
+            .collect();
+        assert_eq!(route_flags, vec![("kimi", true), ("zhipu", false)]);
     }
 
     #[test]
@@ -827,10 +867,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            codex_models("deepseek", &deepseek)
-                .into_iter()
-                .map(|model| model.id)
-                .collect::<Vec<_>>(),
+            codex_model_ids("deepseek", &deepseek),
             vec!["ccs-deepseek/deepseek-v4-pro"]
         );
         assert_eq!(

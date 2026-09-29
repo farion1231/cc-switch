@@ -58,19 +58,31 @@ pub async fn get_proxy_takeover_status(
     state.proxy_service.get_takeover_status().await
 }
 
-/// 为指定应用进入 / 退出代理模式
+/// 为指定应用进入 / 退出代理模式。`pool` 为真时进入的是附加模式（和路由模式二选一），
+/// 退出时不看它。
 #[tauri::command]
 pub async fn set_proxy_takeover_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
     enabled: bool,
+    pool: Option<bool>,
 ) -> Result<(), String> {
     let app = require_proxy_app(&app_type)?;
     if enabled {
-        crate::mode::controller::enter(state.inner(), &app).await
+        crate::mode::controller::enter(state.inner(), &app, pool.unwrap_or(false)).await
     } else {
         crate::mode::controller::exit(state.inner(), &app).await
     }
+}
+
+/// 设置里在路由和附加之间换的时候：处于另一种模式（`pool` 为真是附加模式）的
+/// Claude Code、Codex 先退回直连。返回退回直连的应用。
+#[tauri::command]
+pub async fn exit_proxy_apps_in_mode(
+    state: tauri::State<'_, AppState>,
+    pool: bool,
+) -> Result<Vec<String>, String> {
+    crate::mode::controller::exit_apps_in_mode(state.inner(), pool).await
 }
 
 /// 直连指针：代理模式下退出代理时写回的供应商
@@ -93,27 +105,17 @@ pub fn get_proxy_pool(
     crate::mode::controller::pool_views(state.inner(), &app)
 }
 
-/// 附加模型：把一家加入或移出名单（`enabled` 是目标值）。失败时 `partial` 为真表示已部分
-/// 写入，下次操作或重启 CC Switch 时补完。
+/// 附加模型：把一家加入或移出名单（`enabled` 是目标值）。成功时返回客户端看不到或看不全
+/// 附加模型的提示；失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch 时补完。
 #[tauri::command]
 pub async fn set_proxy_pool_member(
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
     enabled: bool,
-) -> Result<crate::mode::pool::PoolView, crate::mode::controller::PoolWriteError> {
-    let unchanged = |message: String| crate::mode::controller::PoolWriteError {
-        partial: false,
-        message,
-    };
-    let app = require_proxy_app(&app_type).map_err(unchanged)?;
-    if !crate::mode::pool::supports_pool(&app) {
-        return Err(unchanged(format!(
-            "{} 不支持附加模型 ({} does not support attached models)",
-            app.as_str(),
-            app.as_str()
-        )));
-    }
+) -> Result<Option<&'static str>, crate::mode::controller::PoolWriteError> {
+    let app =
+        require_proxy_app(&app_type).map_err(crate::mode::controller::PoolWriteError::unchanged)?;
     crate::mode::controller::set_pool_member(state.inner(), &app, &provider_id, enabled).await
 }
 

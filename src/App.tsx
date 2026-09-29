@@ -110,6 +110,7 @@ import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
+  isPoolAppId,
   isProxyAppId,
 } from "@/config/appConfig";
 
@@ -1433,14 +1434,21 @@ function App() {
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
                   ) : proxyAppId ? (
-                    <>
-                      {settingsData?.enableLocalProxy && (
-                        <ProxyToggle activeApp={proxyAppId} />
-                      )}
-                      {settingsData?.enableFailoverToggle && (
-                        <FailoverToggle activeApp={proxyAppId} />
-                      )}
-                    </>
+                    // 设置里选了附加模式：Claude Code、Codex 的开关换成附加模式开关（不做
+                    // 故障转移），其余应用仍显示路由开关。
+                    settingsData?.enablePoolMode && isPoolAppId(proxyAppId) ? (
+                      <ProxyToggle activeApp={proxyAppId} pool />
+                    ) : (
+                      <>
+                        {(settingsData?.enableLocalProxy ||
+                          settingsData?.enablePoolMode) && (
+                          <ProxyToggle activeApp={proxyAppId} />
+                        )}
+                        {settingsData?.enableFailoverToggle && (
+                          <FailoverToggle activeApp={proxyAppId} />
+                        )}
+                      </>
+                    )
                   ) : null}
                 </div>
               )}

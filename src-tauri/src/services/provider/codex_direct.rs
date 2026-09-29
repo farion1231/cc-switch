@@ -46,6 +46,7 @@ use crate::mode::state::{Contract, PendingTarget};
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::services::subscription::CodexKeychainLogin;
 use std::sync::Arc;
 
 use super::codex_login::{self, AuthInput, AuthPlan, AuthTarget, LoginStash, STASH_FILENAME};
@@ -127,6 +128,9 @@ pub(crate) struct Prepared {
     outgoing: Option<(String, CodexLiveAuthSwitchGuard)>,
     /// 官方做路由、又发布了附加模型时目录里的官方行（[`prepare_official_rows`]）。
     native: Option<NativeRows>,
+    /// 钥匙串里 Codex 的登录，在拿锁之前读好（见 [`prepare_official_rows`]）：钥匙串不归
+    /// 写锁管，`security` 还可能弹出授权对话框，不能让写锁等着用户点。锁里没有就当读不出。
+    keychain: Option<CodexKeychainLogin>,
 }
 
 fn target_provider<'a>(target: &Target<'a>) -> Option<&'a Provider> {
@@ -174,33 +178,61 @@ pub(crate) fn prepare(
     Ok(Prepared {
         target_login,
         outgoing,
-        native: None,
+        ..Prepared::default()
     })
 }
 
 /// 官方做路由、又发布了附加模型时，按操作之后 Codex 会用的登录取官方模型行。可能联网，
 /// 所以和 [`prepare`] 一样在拿写锁之前做；登录是按未加锁读到的内容预测的，拿锁后在
 /// [`run_with_edits`] 里按真实输入再核对一次。
-pub(crate) fn prepare_official_rows(
+///
+/// 读钥匙串（`security` 可能等用户点授权框）和取官方行（跑 Codex 子进程、联网最多
+/// 10 秒）放到阻塞线程池里做，不占异步运行时的工作线程。
+pub(crate) async fn prepare_official_rows(
     db: &Database,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &mut Prepared,
 ) -> Result<(), AppError> {
-    if !needs_official_rows(target) {
+    let Target::Proxy { route, pool, .. } = target else {
+        return Ok(());
+    };
+    if !needs_official_rows(route, pool) {
         return Ok(());
     }
+    if matches!(
+        codex_config_auth_store_mode(&read_config_text()),
+        CodexAuthStoreMode::Keyring | CodexAuthStoreMode::Auto
+    ) {
+        prepared.keychain = Some(off_runtime(codex_official_models::keychain_login).await?);
+    }
     let login = predicted_official_login(db, owner, target, prepared)?;
-    prepared.native = Some(codex_official_models::rows_for_switch(login.as_ref()));
+    let rows = off_runtime(move || codex_official_models::rows_for_switch(login.as_ref())).await?;
+    // 取官方行最多要 10 秒，这期间 Codex 可能在钥匙串里换了号。取完再读一次，拿锁后按
+    // 这次读到的核对（见 `run_with_edits`），换了号就停下。
+    if rows.identity().is_some() && prepared.keychain.is_some() {
+        prepared.keychain = Some(off_runtime(codex_official_models::keychain_login).await?);
+    }
+    prepared.native = Some(rows);
     Ok(())
 }
 
-/// 官方做路由、发布了附加模型：目录里要写全官方模型。
-pub(crate) fn needs_official_rows(target: &Target<'_>) -> bool {
-    matches!(target, Target::Proxy { route, pool, .. } if !pool.is_empty() && is_official(route))
+/// 放到阻塞线程池里做，不占异步运行时的工作线程。
+pub(crate) async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, AppError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| AppError::Message(format!("后台线程异常退出: {error}")))
 }
 
-/// 按未加锁读到的内容预测这次操作之后 Codex 会用的登录（能取官方列表的才返回）。
+/// 官方做路由、发布了附加模型：目录里要写全官方模型。
+pub(crate) fn needs_official_rows(route: &Provider, pool: &[Member]) -> bool {
+    !pool.is_empty() && is_official(route)
+}
+
+/// 按未加锁读到的内容预测这次操作之后 Codex 会用的登录（能取官方列表的才返回）。钥匙串
+/// 没预先读过（[`prepare_official_rows`] 之外的调用方）就在用到时读，调用方要在阻塞线程里。
 pub(crate) fn predicted_official_login(
     db: &Database,
     owner: &Owner<'_>,
@@ -222,15 +254,29 @@ pub(crate) fn predicted_official_login(
         target: auth_target(&planned.auth),
         stash,
     });
-    Ok(login_after(&auth_plan, live.as_ref(), &read_config_text())
-        .as_ref()
-        .and_then(OfficialLogin::of))
+    let keychain = || {
+        prepared
+            .keychain
+            .clone()
+            .unwrap_or_else(codex_official_models::keychain_login)
+    };
+    Ok(
+        login_after(&auth_plan, live.as_ref(), &read_config_text(), keychain)
+            .as_ref()
+            .and_then(OfficialLogin::of),
+    )
 }
 
 /// 操作之后 Codex 实际会用的登录，按 `cli_auth_credentials_store`：file 看操作之后的
-/// `auth.json`；keyring 看系统钥匙串（CC Switch 不改它）；auto 钥匙串里有就用它，没有
-/// 同 file；ephemeral 和认不出的没有。
-fn login_after(auth_plan: &AuthPlan, live: Option<&Value>, config_text: &str) -> Option<Value> {
+/// `auth.json`；keyring 看系统钥匙串（CC Switch 不改它）；auto 钥匙串里有就用它，确定
+/// 没有才同 file（读不出钥匙串时 Codex 可能用着另一个登录，`auth.json` 不能顶替）；
+/// ephemeral 和认不出的没有。`keychain` 只在要看钥匙串时调用。
+fn login_after(
+    auth_plan: &AuthPlan,
+    live: Option<&Value>,
+    config_text: &str,
+    keychain: impl FnOnce() -> CodexKeychainLogin,
+) -> Option<Value> {
     let from_file = || match &auth_plan.auth {
         None => live.cloned(),
         Some(None) => None,
@@ -238,13 +284,21 @@ fn login_after(auth_plan: &AuthPlan, live: Option<&Value>, config_text: &str) ->
     };
     match codex_config_auth_store_mode(config_text) {
         CodexAuthStoreMode::File => from_file(),
-        CodexAuthStoreMode::Keyring => codex_official_models::keychain_login(),
-        CodexAuthStoreMode::Auto => codex_official_models::keychain_login().or_else(from_file),
+        CodexAuthStoreMode::Keyring => match keychain() {
+            CodexKeychainLogin::Found(login) => Some(login),
+            CodexKeychainLogin::Missing | CodexKeychainLogin::Unknown => None,
+        },
+        CodexAuthStoreMode::Auto => match keychain() {
+            CodexKeychainLogin::Found(login) => Some(login),
+            CodexKeychainLogin::Missing => from_file(),
+            CodexKeychainLogin::Unknown => None,
+        },
         CodexAuthStoreMode::Ephemeral | CodexAuthStoreMode::Unknown => None,
     }
 }
 
-fn read_config_text() -> String {
+/// live 的 `config.toml`（读不出时为空）。
+pub(crate) fn read_config_text() -> String {
     read_current(&get_codex_config_path())
         .ok()
         .flatten()
@@ -607,6 +661,22 @@ pub(crate) fn plan(
     })
 }
 
+/// 能不能附加：配置要能解析。之后才坏掉的成员在目录里跳过（见 [`pool_catalog`]）。
+pub(crate) fn check_pool_member(provider: &Provider) -> Result<(), AppError> {
+    project(provider).map(|_| ()).map_err(|error| {
+        AppError::Message(format!(
+            "「{name}」的配置有问题，不能作为附加模型 (The configuration of \"{name}\" is invalid, so it cannot be an attached model): {error}",
+            name = provider.name
+        ))
+    })
+}
+
+/// 路由那家的行指定了自己管理的模型目录文件（`model_catalog_json`）：Codex 只读那个
+/// 文件，附加模型合并不进去。
+pub(crate) fn route_owns_catalog(route: &Provider) -> bool {
+    project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_some())
+}
+
 /// 发布了附加模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。
 const POOL_SUNK_WINDOW_KEYS: &[&str] = &["model_context_window", "model_auto_compact_token_limit"];
 
@@ -621,7 +691,8 @@ fn pool_catalog(
     if pool.is_empty() {
         return Ok(None);
     }
-    // 路由那家的行指定了自己管理的目录文件：Codex 只读那个文件，合并不进去。
+    // 路由那家的行指定了自己管理的目录文件：Codex 只读那个文件，合并不进去（界面上
+    // 由 `route_owns_catalog` 给出提示）。
     if row_catalog_pointer(&projection.top).is_some() {
         log::warn!(
             "Codex 路由供应商 {} 使用自己的模型目录文件，附加模型不发布",
@@ -652,22 +723,25 @@ fn pool_catalog(
         })
     };
 
-    let inputs = pool
+    // 一家的配置坏了（比如云同步带来的行解析不了）只跳过这一家：报错会让进出代理、换
+    // 路由、启动时接上这些 Codex 写入全部失败。
+    let inputs: Vec<_> = pool
         .iter()
-        .map(|member| {
-            let projection = project(&member.provider).map_err(|error| {
-                AppError::Message(format!(
-                    "附加模型「{}」的配置有问题：{error}",
-                    member.provider.name
-                ))
-            })?;
-            Ok((
+        .filter_map(|member| match project(&member.provider) {
+            Ok(projection) => Some((
                 member,
                 projection.catalog_input_text(),
                 crate::proxy::providers::resolve_codex_catalog_tool_profile(&member.provider),
-            ))
+            )),
+            Err(error) => {
+                log::warn!(
+                    "附加模型「{}」的配置有问题，这次不发布它: {error}",
+                    member.provider.name
+                );
+                None
+            }
         })
-        .collect::<Result<Vec<_>, AppError>>()?;
+        .collect();
     let members: Vec<CodexPoolCatalogMember<'_>> = inputs
         .iter()
         .map(|(member, config_text, profile)| CodexPoolCatalogMember {
@@ -867,8 +941,15 @@ pub(crate) fn run_with_edits(
     let config_text = read_config_text();
     // 目录里的官方行是按拿锁前预测的登录取的：实际的目标登录换了人（Codex 恰好重新登录、
     // settle 补完了上一次操作），就停下，什么都不写。不能换成别的来源：目录已经算进契约。
+    // 钥匙串用取完官方行后读到的那次（见 `prepare_official_rows`），不在锁里读。
     if let Some(expected) = &planned.native_identity {
-        let actual = login_after(&auth_plan, live_auth.as_ref(), &config_text)
+        let keychain = || {
+            prepared
+                .keychain
+                .clone()
+                .unwrap_or(CodexKeychainLogin::Unknown)
+        };
+        let actual = login_after(&auth_plan, live_auth.as_ref(), &config_text, keychain)
             .as_ref()
             .and_then(OfficialLogin::of)
             .map(|login| login.identity);

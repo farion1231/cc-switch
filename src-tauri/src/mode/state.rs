@@ -117,6 +117,11 @@ pub struct Written {
 /// （`mode::pool`）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PoolState {
+    /// 附加模式：代理模式下发布附加模型、不做故障转移（界面上和路由模式二选一，见
+    /// `controller::enter`）。只在代理模式下有意义：每次进入代理时按用户选的模式写定，
+    /// 退出代理时不动，名单也留着。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enabled: bool,
     /// 当前附加的供应商 id，按加入顺序。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<String>,
@@ -130,7 +135,7 @@ pub struct PoolState {
 
 impl PoolState {
     pub fn is_empty(&self) -> bool {
-        self.members.is_empty() && self.keys.is_empty() && self.extra.is_empty()
+        !self.enabled && self.members.is_empty() && self.keys.is_empty() && self.extra.is_empty()
     }
 
     /// 这家在登记簿里的 key。
@@ -392,6 +397,15 @@ pub fn pool(store: &DeviceStore, app: &str) -> Result<PoolState, AppError> {
         .get(app)
         .map(|state| state.pool.clone())
         .unwrap_or_default())
+}
+
+/// 这个应用在附加模式（代理模式且附加模式开着），状态文件只读一次。
+pub fn pool_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(load(store)?
+        .apps
+        .get(app)
+        .is_some_and(|state| state.mode == Some(Mode::Proxy) && state.pool.enabled))
 }
 
 /// 有未完成操作的应用。

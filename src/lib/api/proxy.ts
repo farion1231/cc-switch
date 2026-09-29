@@ -6,6 +6,7 @@ import type {
   GlobalProxyConfig,
   AppProxyConfig,
   ProxyPool,
+  ProxyPoolNotice,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -38,12 +39,19 @@ export const proxyApi = {
     return invoke("get_proxy_takeover_status");
   },
 
-  // 为指定应用开启/关闭接管
+  // 为指定应用开启/关闭接管。pool 为真时进入的是附加模式（和路由模式二选一）
   async setProxyTakeoverForApp(
     appType: string,
     enabled: boolean,
+    pool = false,
   ): Promise<void> {
-    return invoke("set_proxy_takeover_for_app", { appType, enabled });
+    return invoke("set_proxy_takeover_for_app", { appType, enabled, pool });
+  },
+
+  // 设置里在路由和附加之间换时：处于另一种模式（pool 为真是附加模式）的 Claude Code、
+  // Codex 先退回直连。返回退回直连的应用
+  async exitProxyAppsInMode(pool: boolean): Promise<string[]> {
+    return invoke("exit_proxy_apps_in_mode", { pool });
   },
 
   // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
@@ -58,12 +66,13 @@ export const proxyApi = {
     return invoke("get_proxy_pool", { appType });
   },
 
-  // 把一家加入或移出附加模型（enabled 是目标值）；失败时抛出 ProxyPoolWriteError
+  // 把一家加入或移出附加模型（enabled 是目标值）。成功时返回客户端看不到或看不全附加模型
+  // 的提示；失败时抛出 ProxyPoolWriteError
   async setProxyPoolMember(
     appType: string,
     providerId: string,
     enabled: boolean,
-  ): Promise<ProxyPool> {
+  ): Promise<ProxyPoolNotice | null> {
     return invoke("set_proxy_pool_member", { appType, providerId, enabled });
   },
 

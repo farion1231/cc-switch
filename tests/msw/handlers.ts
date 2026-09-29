@@ -24,8 +24,6 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
-  getProxyPool,
-  setProxyPoolMember,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -362,19 +360,11 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_direct_provider`, () => success(null)),
 
-  http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, async ({ request }) => {
-    const { appType } = await withJson<{ appType: AppId }>(request);
-    return success(getProxyPool(appType));
-  }),
+  http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+    success({ active: false, members: [] }),
+  ),
 
-  http.post(`${TAURI_ENDPOINT}/set_proxy_pool_member`, async ({ request }) => {
-    const { appType, providerId, enabled } = await withJson<{
-      appType: AppId;
-      providerId: string;
-      enabled: boolean;
-    }>(request);
-    return success(setProxyPoolMember(appType, providerId, enabled));
-  }),
+  http.post(`${TAURI_ENDPOINT}/set_proxy_pool_member`, () => success(null)),
 
   http.post(`${TAURI_ENDPOINT}/get_proxy_takeover_status`, () =>
     success({

@@ -19,8 +19,13 @@
 //! 缓存分两个问题：**能不能用**看身份和本机 Codex 版本；**新不新**看 `fetched_at` 是否在
 //! 6 小时内。切换时能用而过期的条目先照用，同时在后台刷新，不在切换锁里等网络；后台另有
 //! 启动时和每 15 分钟一次的检查（`controller::check_codex_official_models`）。
+//!
+//! 刷新存进了变化的列表之后，客户端文件要按它重写。重写可能失败（登录恰好变了、
+//! `config.toml` 暂时解析不了），而缓存这时已经是新的，之后的刷新只会得到 304 或同样的
+//! 列表。所以「客户端落后于缓存」单独记一个标记，重写成功才清掉，每个检查点都看它。
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -30,12 +35,12 @@ use serde_json::Value;
 use crate::codex_config::{
     extract_codex_auth_user_identity, load_codex_bundled_models, normalize_codex_native_rows,
 };
-use crate::error::AppError;
 use crate::live::engine::DeviceStore;
-use crate::services::subscription::{parse_codex_credentials_json, CredentialStatus};
+use crate::services::subscription::{
+    parse_codex_credentials_json, CodexKeychainLogin, CredentialStatus,
+};
 
 pub(crate) const CACHE_FILENAME: &str = "codex-official-models.json";
-const MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/models";
 /// 离 `fetched_at` 不到这么久算新的。目录只在 Codex 启动时读，刷新得再勤也要重启才看得到。
 const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -94,7 +99,7 @@ pub(crate) struct Env {
     pub codex_version: Box<dyn Fn() -> Option<String> + Send + Sync>,
     pub fetch: Box<FetchFn>,
     pub bundled: Box<dyn Fn() -> Option<Vec<Value>> + Send + Sync>,
-    pub keychain: Box<dyn Fn() -> Option<Value> + Send + Sync>,
+    pub keychain: Box<dyn Fn() -> CodexKeychainLogin + Send + Sync>,
     /// Unix 秒。
     pub now: Box<dyn Fn() -> u64 + Send + Sync>,
 }
@@ -142,6 +147,7 @@ pub(crate) fn reset_test_env() {
     *env_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    CLIENT_BEHIND.store(false, Ordering::SeqCst);
 }
 
 /// 服务端按版本过滤列表：报低了少模型（`0.60.0` 返回 0 条），报高了会列出本机驱动不了的
@@ -157,8 +163,8 @@ fn usable_version(version: &str) -> bool {
         && core.split('.').any(|part| part.bytes().any(|b| b != b'0'))
 }
 
-/// Keychain 里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时）。
-pub(crate) fn keychain_login() -> Option<Value> {
+/// 系统钥匙串里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时）。
+pub(crate) fn keychain_login() -> CodexKeychainLogin {
     (env().keychain)()
 }
 
@@ -170,7 +176,7 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
     let run = move || {
         tauri::async_runtime::block_on(async move {
             let mut request = crate::proxy::http_client::get()
-                .get(MODELS_ENDPOINT)
+                .get(crate::services::codex_oauth_models::CODEX_OAUTH_MODELS_URL)
                 .query(&[("client_version", version.as_str())])
                 .header("Authorization", format!("Bearer {access_token}"))
                 .header("ChatGPT-Account-Id", account_id)
@@ -259,10 +265,7 @@ fn store_entry(identity: &str, entry: Entry) {
     let mut cache = read_cache();
     cache.insert(identity.to_string(), entry);
     let path = DeviceStore::for_device().file(CACHE_FILENAME);
-    let result = serde_json::to_vec_pretty(&cache)
-        .map_err(|error| AppError::Message(error.to_string()))
-        .and_then(|bytes| crate::config::atomic_write_private(&path, &bytes));
-    if let Err(error) = result {
+    if let Err(error) = crate::config::write_json_file_private(&path, &cache) {
         log::warn!("写入 Codex 官方模型缓存失败: {error}");
     }
 }
@@ -306,8 +309,7 @@ impl NativeRows {
 }
 
 /// 最近一次切换用的是哪种来源（界面提示用）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeSource {
     Fetched,
     Bundled,
@@ -347,8 +349,9 @@ fn official_rows(env: &Env, login: &OfficialLogin) -> Option<NativeRows> {
     let version = (env.codex_version)()?;
     let now = (env.now)();
     if let Some(entry) = usable_entry(&login.identity, &version) {
-        if let Some(rows) = normalize_codex_native_rows(entry.models.clone()) {
-            if !is_fresh(&entry, now) {
+        let fresh = is_fresh(&entry, now);
+        if let Some(rows) = normalize_codex_native_rows(entry.models) {
+            if !fresh {
                 // 同一身份、同一版本的旧列表最多少几个新模型，比自带列表准。刷新带的是
                 // 这次的目标登录：切换还没落定，事后重新预测会得到切换前的登录。
                 spawn_refresh(login.clone(), version);
@@ -396,7 +399,8 @@ fn bundled_rows(env: &Env) -> NativeRows {
 }
 
 /// 刷新一个身份的条目：一定联网，带 `If-None-Match`。304 只更新 `fetched_at`；失败保留
-/// 旧条目和旧的 `fetched_at`，等下一个检查点再试。返回列表有没有变。
+/// 旧条目和旧的 `fetched_at`，等下一个检查点再试。返回列表有没有变；变了同时记下客户端
+/// 落后于缓存（见 [`take_client_behind`]）。
 pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, String> {
     let env = env();
     let now = (env.now)();
@@ -429,6 +433,9 @@ pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, Stri
                     models,
                 },
             );
+            if changed {
+                mark_client_behind();
+            }
             Ok(changed)
         }
         Fetch::Failed(error) => Err(error),
@@ -459,17 +466,28 @@ fn state_slot() -> &'static OnceLock<crate::store::AppState> {
     &SLOT
 }
 
-/// 列表变了：按新列表重算契约，变了就重写目录（用户重启 Codex 后看到新模型）。
+/// 刷新存进了变化的列表，客户端文件还没按它重写成功。只记在进程里：CC Switch 重启时
+/// 接上会强制重写，用的就是新缓存。
+static CLIENT_BEHIND: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn mark_client_behind() {
+    CLIENT_BEHIND.store(true, Ordering::SeqCst);
+}
+
+/// 取走「客户端落后于缓存」的标记。取走后重写失败，用 [`mark_client_behind`] 放回去，
+/// 下一个检查点再试；重写期间又刷新出新列表时标记重新立起，不会丢。
+pub(crate) fn take_client_behind() -> bool {
+    CLIENT_BEHIND.swap(false, Ordering::SeqCst)
+}
+
+/// 列表变了：按新列表重算契约，变了就重写目录（用户重启 Codex 后看到新模型）。后台检查
+/// 还没开始时（CC Switch 正在启动）先不写，标记留给第一次检查。
 pub(crate) fn after_refresh() {
     let Some(state) = state_slot().get().cloned() else {
         return;
     };
     tauri::async_runtime::spawn(async move {
-        if let Err(error) =
-            crate::mode::controller::resync_route(&state, &crate::app_config::AppType::Codex).await
-        {
-            log::warn!("Codex 官方模型列表更新后重写客户端文件失败: {error}");
-        }
+        crate::mode::controller::resync_codex_if_behind(&state).await;
     });
 }
 
@@ -488,7 +506,6 @@ pub(crate) fn start_background_checks(state: crate::store::AppState) {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use std::sync::mpsc;
 
     /// 调用记录：拉取时用的身份、版本、带的 etag。
     pub(crate) type Calls = Arc<Mutex<Vec<(String, String, Option<String>)>>>;
@@ -497,11 +514,13 @@ pub(crate) mod testing {
         pub version: Option<String>,
         pub responses: Arc<Mutex<Vec<Fetch>>>,
         pub bundled: Option<Vec<Value>>,
-        pub keychain: Option<Value>,
+        /// 钥匙串里的登录（测试可以中途换掉）。
+        pub keychain: Arc<Mutex<CodexKeychainLogin>>,
+        /// 读了几次钥匙串。
+        pub keychain_reads: Arc<std::sync::atomic::AtomicUsize>,
         pub now: Arc<Mutex<u64>>,
         pub calls: Calls,
-        pub notify: Option<Mutex<mpsc::Sender<()>>>,
-        /// 拉取时顺带做的事（模拟拿锁前后之间登录变了）。
+        /// 拉取时顺带做的事（模拟拿锁前后之间登录变了、通知测试拉取发生了）。
         pub on_fetch: Option<Box<dyn Fn() + Send + Sync>>,
     }
 
@@ -512,12 +531,11 @@ pub(crate) mod testing {
                 responses,
                 bundled,
                 keychain,
+                keychain_reads,
                 now,
                 calls,
-                notify,
                 on_fetch,
             } = self;
-            let notify = notify.map(Arc::new);
             set_test_env(Env {
                 codex_version: Box::new(move || version.clone()),
                 fetch: Box::new(move |login, version, etag| {
@@ -537,13 +555,13 @@ pub(crate) mod testing {
                     if let Some(on_fetch) = &on_fetch {
                         on_fetch();
                     }
-                    if let Some(notify) = &notify {
-                        let _ = notify.lock().unwrap().send(());
-                    }
                     response
                 }),
                 bundled: Box::new(move || bundled.clone()),
-                keychain: Box::new(move || keychain.clone()),
+                keychain: Box::new(move || {
+                    keychain_reads.fetch_add(1, Ordering::SeqCst);
+                    keychain.lock().unwrap().clone()
+                }),
                 now: Box::new(move || *now.lock().unwrap()),
             });
         }
@@ -631,20 +649,6 @@ mod tests {
         }
     }
 
-    fn login_json(account: &str, sub: &str) -> Value {
-        json!({
-            "auth_mode": "chatgpt",
-            "OPENAI_API_KEY": null,
-            "tokens": {
-                "id_token": crate::codex_config::test_codex_id_token(sub),
-                "access_token": format!("access-{sub}"),
-                "refresh_token": format!("refresh-{sub}"),
-                "account_id": account,
-            },
-            "last_refresh": chrono::Utc::now().to_rfc3339(),
-        })
-    }
-
     fn models(slugs: &[&str]) -> Vec<Value> {
         slugs
             .iter()
@@ -694,11 +698,15 @@ mod tests {
             version: version.map(str::to_string),
             responses: responses.clone(),
             bundled,
-            keychain: None,
+            keychain: Arc::new(Mutex::new(CodexKeychainLogin::Missing)),
+            keychain_reads: Arc::default(),
             now: now.clone(),
             calls: calls.clone(),
-            notify: notify.map(Mutex::new),
-            on_fetch: None,
+            on_fetch: notify.map(|notify| -> Box<dyn Fn() + Send + Sync> {
+                Box::new(move || {
+                    let _ = notify.send(());
+                })
+            }),
         }
         .install();
         Setup {
@@ -717,8 +725,8 @@ mod tests {
 
     #[test]
     fn logins_are_told_apart_by_workspace_and_user() {
-        let alice = OfficialLogin::of(&login_json("ws-1", "alice")).unwrap();
-        let bob = OfficialLogin::of(&login_json("ws-1", "bob")).unwrap();
+        let alice = OfficialLogin::of(&login("ws-1", "alice")).unwrap();
+        let bob = OfficialLogin::of(&login("ws-1", "bob")).unwrap();
         assert_ne!(
             alice.identity, bob.identity,
             "same workspace, different people"
@@ -726,11 +734,11 @@ mod tests {
         assert_eq!(alice.identity, "ws-1|sub:alice");
 
         // 没有 id_token：身份不稳定，不拉取。
-        let mut no_id = login_json("ws-1", "alice");
+        let mut no_id = login("ws-1", "alice");
         no_id["tokens"].as_object_mut().unwrap().remove("id_token");
         assert!(OfficialLogin::of(&no_id).is_none());
         // 很久没刷新的 token 不用，等 Codex 自己刷新。
-        let mut stale = login_json("ws-1", "alice");
+        let mut stale = login("ws-1", "alice");
         stale["last_refresh"] = json!("2026-01-01T00:00:00Z");
         assert!(OfficialLogin::of(&stale).is_none());
         // API Key 登录没有官方列表。
@@ -742,7 +750,7 @@ mod tests {
     fn a_missing_entry_is_fetched_once_and_reused_while_fresh() {
         let _scope = Scope::new();
         let setup = install(Some("0.158.0"), vec![fetched(&["gpt-6-sol"])], None);
-        let login = OfficialLogin::of(&login_json("ws", "alice")).unwrap();
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
 
         let rows = rows_for_switch(Some(&login));
         assert_eq!(slugs(&rows), vec!["gpt-6-sol"]);
@@ -767,7 +775,7 @@ mod tests {
         seed_cache("ws|sub:alice", T0, "0.157.1", models(&["old-version"]));
         seed_cache("ws|sub:bob", T0, "0.158.0", models(&["bobs"]));
         install(Some("0.158.0"), vec![fetched(&["alices"])], None);
-        let alice = OfficialLogin::of(&login_json("ws", "alice")).unwrap();
+        let alice = OfficialLogin::of(&login("ws", "alice")).unwrap();
         assert_eq!(slugs(&rows_for_switch(Some(&alice))), vec!["alices"]);
         // 各存各的，互不覆盖。
         assert_eq!(cache_fetched_at("ws|sub:bob"), Some(T0));
@@ -790,7 +798,7 @@ mod tests {
             None,
             Some(tx),
         );
-        let login = OfficialLogin::of(&login_json("ws", "alice")).unwrap();
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
 
         // 这次先用旧条目完成切换，不等网络。
         assert_eq!(slugs(&rows_for_switch(Some(&login))), vec!["cached"]);
@@ -816,6 +824,14 @@ mod tests {
             slugs(&rows_for_switch(Some(&login))),
             vec!["cached", "new-model"]
         );
+        // 后台检查还没开始（CC Switch 正在启动）时刷新完了：不重写，标记留给第一次检查。
+        for _ in 0..50 {
+            if CLIENT_BEHIND.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(take_client_behind());
     }
 
     #[test]
@@ -838,7 +854,7 @@ mod tests {
             ],
             None,
         );
-        let login = OfficialLogin::of(&login_json("ws", "alice")).unwrap();
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
         assert_eq!(needs_refresh(&login).as_deref(), Some("0.158.0"));
 
         // 失败：旧条目和旧的 fetched_at 都留着。
@@ -849,7 +865,11 @@ mod tests {
         assert_eq!(cache_fetched_at("ws|sub:alice"), Some(T0));
         // 条目新了也照样联网（刷新不看新旧）；列表相同不算变化。
         assert_eq!(refresh(&login, "0.158.0"), Ok(false));
+        assert!(!take_client_behind(), "nothing changed yet");
         assert_eq!(refresh(&login, "0.158.0"), Ok(true));
+        // 列表变了：客户端落后于缓存，标记取走一次就没了。
+        assert!(take_client_behind());
+        assert!(!take_client_behind());
         let etags: Vec<Option<String>> = setup
             .calls
             .lock()
@@ -865,7 +885,7 @@ mod tests {
     #[serial]
     fn without_a_usable_official_list_the_bundled_list_is_used() {
         let _scope = Scope::new();
-        let login = OfficialLogin::of(&login_json("ws", "alice")).unwrap();
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
         let bundled = Some(models(&["bundled"]));
 
         // 拿不到版本：不请求。
@@ -913,7 +933,7 @@ mod tests {
         )
         .unwrap();
         install(Some("0.158.0"), Vec::new(), None);
-        let login = OfficialLogin::of(&login_json("ws", "alice")).unwrap();
+        let login = OfficialLogin::of(&login("ws", "alice")).unwrap();
         assert_eq!(rows_for_switch(Some(&login)), NativeRows::Unavailable);
     }
 }

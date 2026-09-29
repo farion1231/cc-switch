@@ -12,7 +12,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { OpenClawProviderConfig, Provider } from "@/types";
-import type { ProxyPoolNotice } from "@/types/proxy";
+import type { ProxyPoolMember, ProxyPoolNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -77,10 +77,10 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
-  isPoolMember?: boolean; // 附加模型：这家的模型出现在客户端的模型选择器里
-  poolModelIds?: string[]; // 附加模型：发布给客户端的模型 id
-  poolNotice?: ProxyPoolNotice; // 附加模型：Codex 官方模型列表暂未取到
-  onTogglePool?: (enabled: boolean) => void; // 附加模型开关（不显示时为空）
+  isPoolMode?: boolean; // 附加模式：卡片按钮是添加 / 移除 / 设为默认
+  poolMember?: ProxyPoolMember; // 附加模式：这家已添加时的名单条目
+  poolNotice?: ProxyPoolNotice; // 附加模式：客户端看不到或看不全附加模型的原因
+  onTogglePool?: (enabled: boolean) => void; // 附加模式下添加 / 移除（不能添加的为空）
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -199,8 +199,8 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
-  isPoolMember = false,
-  poolModelIds = [],
+  isPoolMode = false,
+  poolMember,
   poolNotice,
   onTogglePool,
   // OpenClaw: default model
@@ -507,15 +507,16 @@ export function ProviderCard({
                 />
               )}
 
-              {isPoolMember && (
+              {/* 默认那家的模型走默认路由，不带前缀发布，不标。 */}
+              {poolMember && !poolMember.route && (
                 <ProviderStatusBadge
                   tone={poolNotice ? "warning" : "success"}
                   label={t("provider.poolBadge")}
                   title={[
-                    poolModelIds.length > 0
+                    poolMember.modelIds.length > 0
                       ? t("provider.poolBadgeHint", {
                           client: getAppLabel(appId),
-                          models: poolModelIds.join(", "),
+                          models: poolMember.modelIds.join(", "),
                         })
                       : t("provider.poolBadgeNoModels"),
                     poolNotice ? t(`provider.${poolNotice}`) : null,
@@ -772,7 +773,8 @@ export function ProviderCard({
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
-              isPoolMember={isPoolMember}
+              isPoolMode={isPoolMode}
+              isPoolMember={poolMember !== undefined}
               onTogglePool={onTogglePool}
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}

@@ -10,7 +10,7 @@ use crate::services::model_fetch::FetchedModel;
 use serde_json::Value;
 use std::time::Duration;
 
-const CODEX_OAUTH_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
+pub(crate) const CODEX_OAUTH_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
 const CODEX_OAUTH_FETCH_TIMEOUT_SECS: u64 = 15;
 const ERROR_BODY_MAX_CHARS: usize = 512;
 

@@ -768,16 +768,11 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
     provider: &Provider,
     prev: Option<&Provider>,
 ) -> Result<LiveSyncOutcome, AppError> {
-    let mode = crate::mode::current::mode_state(app_type);
-    if mode.is_proxy() {
-        if mode.proxy_route.as_deref() == Some(provider.id.as_str())
-            || crate::mode::pool::is_member_in_proxy(app_type, &provider.id)
-        {
-            futures::executor::block_on(crate::mode::controller::resync_route_locked(
-                state, app_type,
-            ))
-            .map_err(AppError::Message)?;
-        }
+    if crate::mode::current::is_proxy(app_type) {
+        futures::executor::block_on(crate::mode::controller::resync_saved_row_locked(
+            state, app_type, provider,
+        ))
+        .map_err(AppError::Message)?;
         return Ok(LiveSyncOutcome::ProxyMode);
     }
     if matches!(app_type, AppType::Claude) {

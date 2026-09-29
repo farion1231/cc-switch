@@ -18,7 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
-import type { ProxyPoolNotice } from "@/types/proxy";
+import type { ProxyPoolMember, ProxyPoolNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -54,8 +54,8 @@ import {
   useProxyPool,
   useSetProxyPoolMember,
 } from "@/lib/query/proxy";
-import { isProxyAppId } from "@/config/appConfig";
-import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { isPoolAppId, isProxyAppId } from "@/config/appConfig";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -168,31 +168,35 @@ export function ProviderList({
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
 
+  // 附加模式（设置里和路由模式二选一）：供应商列表是累加式的，添加的各家模型挂进客户端的
+  // 模型选择器，「设为默认」那家承接不带前缀的请求；不做故障转移。
+  const { data: pool } = useProxyPool(
+    appId,
+    isPoolAppId(appId) && isProxyTakeover === true,
+  );
+  const isPoolMode =
+    isPoolAppId(appId) && isProxyTakeover === true && pool?.active === true;
+  const poolMembers = pool?.members;
+  const poolNotice = isPoolMode ? pool?.notice : undefined;
+  const setPoolMember = useSetProxyPoolMember();
+  const poolMemberOf = useCallback(
+    (providerId: string): ProxyPoolMember | undefined =>
+      isPoolMode
+        ? poolMembers?.find((member) => member.providerId === providerId)
+        : undefined,
+    [isPoolMode, poolMembers],
+  );
+
   const isFailoverModeActive =
     supportsFailover &&
     isProxyTakeover === true &&
-    isAutoFailoverEnabled === true;
+    isAutoFailoverEnabled === true &&
+    !isPoolMode;
 
   // 路由模式下「当前」是路由到的那家；直连供应商另外标出来，退出路由时写回它。
   const { data: directProviderId } = useDirectProviderId(
     appId,
     supportsFailover && isProxyTakeover === true,
-  );
-
-  // 附加模型：路由模式下把第三方供应商的模型挂进客户端的模型选择器。
-  const isPoolActive =
-    (appId === "claude" || appId === "codex") && isProxyTakeover === true;
-  const { data: pool } = useProxyPool(appId, isPoolActive);
-  const poolMembers = pool?.members;
-  const poolNotice = isPoolActive ? pool?.notice : undefined;
-  const setPoolMember = useSetProxyPoolMember();
-  const poolModelIdsOf = useCallback(
-    (providerId: string): string[] | undefined =>
-      isPoolActive
-        ? poolMembers?.find((member) => member.providerId === providerId)
-            ?.modelIds
-        : undefined,
-    [isPoolActive, poolMembers],
   );
 
   const isOpenCode = appId === "opencode";
@@ -488,15 +492,8 @@ export function ProviderList({
                     : appId === "hermes"
                       ? isHermesCurrent
                       : provider.id === currentProviderId;
-            const poolModelIds = poolModelIdsOf(provider.id);
-            const isPoolMember = poolModelIds !== undefined;
-            // 路由那家的模型已经在默认路由里，不再附加；已经在名单里的仍可移出。
-            // 官方账号不能附加：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
-            const isOfficialCard =
-              provider.category === "official" ||
-              resolveCodexOfficialIdentity(appId, provider) !== null;
-            const showPoolToggle =
-              isPoolActive && !isOfficialCard && (!isCurrent || isPoolMember);
+            // 附加模式下官方账号只能设为默认，不能添加。
+            const canAttach = isPoolMode && !isOfficialAccount(appId, provider);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -534,18 +531,18 @@ export function ProviderList({
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
                 onToggleFailover={
-                  supportsFailover
+                  supportsFailover && !isPoolMode
                     ? (enabled) => handleToggleFailover(provider.id, enabled)
                     : undefined
                 }
                 activeProviderId={
                   supportsFailover ? activeProviderId : undefined
                 }
-                isPoolMember={isPoolMember}
-                poolModelIds={poolModelIds}
+                isPoolMode={isPoolMode}
+                poolMember={poolMemberOf(provider.id)}
                 poolNotice={poolNotice}
                 onTogglePool={
-                  showPoolToggle
+                  canAttach
                     ? (enabled) =>
                         setPoolMember.mutate({
                           appType: appId,
@@ -706,8 +703,8 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover?: (enabled: boolean) => void;
   activeProviderId?: string;
-  isPoolMember: boolean;
-  poolModelIds?: string[];
+  isPoolMode: boolean;
+  poolMember?: ProxyPoolMember;
   poolNotice?: ProxyPoolNotice;
   onTogglePool?: (enabled: boolean) => void;
   // OpenClaw: default model
@@ -744,8 +741,8 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
-  isPoolMember,
-  poolModelIds,
+  isPoolMode,
+  poolMember,
   poolNotice,
   onTogglePool,
   isDefaultModel,
@@ -803,8 +800,8 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
-        isPoolMember={isPoolMember}
-        poolModelIds={poolModelIds}
+        isPoolMode={isPoolMode}
+        poolMember={poolMember}
         poolNotice={poolNotice}
         onTogglePool={onTogglePool}
         // OpenClaw: default model

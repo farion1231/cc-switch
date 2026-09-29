@@ -103,8 +103,6 @@
     "needsRouting": "ルーティングが必要",
     "directProvider": "直接接続",
     "directProviderHint": "ルーティングを終了するとこのプロバイダに戻ります",
-    "poolAttach": "モデル一覧に追加：{{client}} のモデル選択でこのプロバイダーのモデルを直接使えます",
-    "poolDetach": "追加を解除",
     "poolBadge": "追加済み",
     "poolBadgeHint": "{{client}} のモデル選択で選べます：{{models}}",
     "poolBadgeNoModels": "モデルが設定されていないため、モデル選択には表示されません",
@@ -112,8 +110,11 @@
     "poolReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で追加モデルを選び直してください",
     "poolPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
     "poolFailed": "追加モデルの保存に失敗しました：{{error}}",
+    "poolDefaultCannotRemove": "デフォルトのプロバイダーは削除できません。先に別のプロバイダーをデフォルトに設定してください",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
     "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、追加モデルは現在使用できません",
+    "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、追加モデルは Codex に表示されません",
+    "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、追加モデルは Codex に表示されません",
     "noRoutingSupport": "ルーティング非対応",
     "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
@@ -363,6 +364,8 @@
         "description": "ルーティングサービスの切り替え、ステータスとポート情報を表示",
         "enableFeature": "メインページにルーティング切り替えを表示",
         "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
+        "enablePoolMode": "メインページに追加モードのスイッチを表示",
+        "enablePoolModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが追加モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（クライアント再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
@@ -2886,6 +2889,16 @@
         "broken": "{{appLabel}} がルーティング中ですが、ルーティングサービスが実行されていません",
         "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
+    },
+    "poolMode": {
+      "enabled": "{{app}} を追加モードにしました",
+      "exitedToDirect": "{{apps}} を直接接続に戻しました",
+      "tooltip": {
+        "active": "{{appLabel}} の追加モードがオンです：追加したプロバイダーのモデルがモデル一覧に表示されます（クライアント再起動後に反映）",
+        "inactive": "追加モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
+      },
+      "ariaLabel": "{{appLabel}} の追加モード",
+      "failoverUnavailable": "{{appLabel}} は追加モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります"
     },
     "failover": {
       "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",

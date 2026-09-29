@@ -149,72 +149,66 @@ describe("ProviderActions Pi provider switching", () => {
   });
 });
 
-describe("ProviderActions attached models", () => {
-  it("offers the toggle only when the caller passes one", () => {
-    const { rerender } = render(
+describe("ProviderActions attached mode", () => {
+  const renderPool = (
+    props: Partial<Parameters<typeof ProviderActions>[0]> = {},
+  ) =>
+    render(
       <ProviderActions
         appId="claude"
         isCurrent={false}
         isProxyTakeover
+        isPoolMode
         onSwitch={vi.fn()}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
+        {...props}
       />,
     );
-    expect(
-      screen.queryByRole("button", { name: "provider.poolAttach" }),
-    ).toBeNull();
 
-    const onTogglePool = vi.fn();
-    rerender(
-      <ProviderActions
-        appId="claude"
-        isCurrent={false}
-        isProxyTakeover
-        onTogglePool={onTogglePool}
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />,
-    );
-    const attach = screen.getByRole("button", { name: "provider.poolAttach" });
-    expect(attach.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("asks for the opposite of the current membership", async () => {
+  it("adds a provider that is not in the list", async () => {
     const user = userEvent.setup();
     const onTogglePool = vi.fn();
-    const { rerender } = render(
-      <ProviderActions
-        appId="claude"
-        isCurrent={false}
-        isProxyTakeover
-        onTogglePool={onTogglePool}
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />,
-    );
-    await user.click(
-      screen.getByRole("button", { name: "provider.poolAttach" }),
-    );
-    expect(onTogglePool).toHaveBeenLastCalledWith(true);
+    renderPool({ onTogglePool });
 
-    rerender(
-      <ProviderActions
-        appId="claude"
-        isCurrent={false}
-        isProxyTakeover
-        isPoolMember
-        onTogglePool={onTogglePool}
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />,
-    );
-    const detach = screen.getByRole("button", { name: "provider.poolDetach" });
-    expect(detach.getAttribute("aria-pressed")).toBe("true");
-    await user.click(detach);
+    await user.click(screen.getByRole("button", { name: "添加" }));
+    expect(onTogglePool).toHaveBeenLastCalledWith(true);
+    // 没添加的不能设为默认。
+    expect(screen.queryByRole("button", { name: "设为默认" })).toBeNull();
+  });
+
+  it("removes an added provider and sets it as the default", async () => {
+    const user = userEvent.setup();
+    const onTogglePool = vi.fn();
+    const onSwitch = vi.fn();
+    renderPool({ isPoolMember: true, onTogglePool, onSwitch });
+
+    await user.click(screen.getByRole("button", { name: "设为默认" }));
+    expect(onSwitch).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "移除" }));
     expect(onTogglePool).toHaveBeenLastCalledWith(false);
+  });
+
+  it("keeps the default in the list", () => {
+    renderPool({ isCurrent: true, isPoolMember: true, onTogglePool: vi.fn() });
+
+    expect(screen.getByRole("button", { name: "移除" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "当前默认" })).toBeDisabled();
+  });
+
+  it("only lets an account that cannot be added become the default", async () => {
+    const user = userEvent.setup();
+    const onSwitch = vi.fn();
+    renderPool({ appId: "codex", onSwitch });
+
+    expect(screen.queryByRole("button", { name: "添加" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "设为默认" }));
+    expect(onSwitch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an official account blocked by the proxy blocked", () => {
+    renderPool({ isOfficialBlockedByProxy: true });
+
+    expect(screen.queryByRole("button", { name: "设为默认" })).toBeNull();
   });
 });

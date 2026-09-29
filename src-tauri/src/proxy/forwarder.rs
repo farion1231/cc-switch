@@ -298,6 +298,12 @@ impl RequestForwarder {
         !self.pool_request
     }
 
+    /// 请求体里的模型名已经是这家的上游名（附加模型的请求）：不按角色映射、不换成行里配置
+    /// 的模型。以后新增模型改写也先问它。
+    fn keeps_resolved_model(&self) -> bool {
+        self.pool_request
+    }
+
     async fn record_success_result(
         &self,
         provider_id: &str,
@@ -1072,6 +1078,7 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
+        let codex_pool_request = self.pool_request && matches!(app_type, AppType::Codex);
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1121,8 +1128,7 @@ impl RequestForwarder {
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
-        } else if self.pool_request {
-            // 附加模型：请求体里已经是这家的上游模型名，不按角色映射成行里配置的模型。
+        } else if self.keeps_resolved_model() {
             body.clone()
         } else {
             let (mapped_body, _original_model, _mapped_model) =
@@ -1419,8 +1425,7 @@ impl RequestForwarder {
                     "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
-            // 附加请求已经是这家的上游模型名，不换成行里配置的模型。
-            if !self.pool_request {
+            if !self.keeps_resolved_model() {
                 super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             }
             let reasoning_config =
@@ -1439,7 +1444,7 @@ impl RequestForwarder {
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
-            if !self.pool_request {
+            if !self.keeps_resolved_model() {
                 super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
             }
             // Per-provider output ceiling override. Codex does not forward its
@@ -1532,8 +1537,8 @@ impl RequestForwarder {
                     provider.id
                 );
             }
-            // 附加请求不把目录外的模型换成行里配置的模型（只做字段兼容）。
-            let upstream_model = if self.pool_request {
+            // 附加请求只做字段兼容。
+            let upstream_model = if self.keeps_resolved_model() {
                 None
             } else {
                 super::providers::codex_provider_upstream_model(provider)
@@ -1549,11 +1554,7 @@ impl RequestForwarder {
         // 附加请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
         // Anthropic 转换丢掉托管工具是同一件事。只对附加请求、只对名单上的上游生效；
         // 路由请求和其他附加请求逐字节不变。
-        if self.pool_request
-            && matches!(app_type, AppType::Codex)
-            && !codex_responses_to_chat
-            && !codex_responses_to_anthropic
-        {
+        if codex_pool_request && !codex_responses_to_chat && !codex_responses_to_anthropic {
             let request_model = request_body
                 .get("model")
                 .and_then(|model| model.as_str())
@@ -2026,11 +2027,12 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            // 附加请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
+            // Codex 附加请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
             // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。附加目标不会是官方账号，
-            // 这里仍按上游判断，防止以后放宽。
+            // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
+            // 是 Anthropic SDK 的正常请求头，附加请求照常转发。
             if (codex_responses_to_anthropic
-                || (self.pool_request && !codex_official_auth_passthrough))
+                || (codex_pool_request && !codex_official_auth_passthrough))
                 && is_codex_client_fingerprint_header(key_str)
             {
                 continue;
@@ -5448,9 +5450,19 @@ mod tests {
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
     }
 
-    /// 一次请求结束后留下的记账：代理统计、「正在使用」、熔断器。每条出口路径各断言一次，
-    /// 锁住成功、失败、不计入熔断三种收尾对路由状态的影响。
     /// Codex 附加请求的转发改写：身份头、模型名、托管 web_search。
+    /// 在本机一个空闲端口上起假上游 `app`，返回它的地址。
+    async fn serve_upstream(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
     mod codex_pool {
         use super::*;
         use tokio::sync::Mutex;
@@ -5485,15 +5497,8 @@ mod tests {
                     }
                 })
             };
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-                .await
-                .expect("bind upstream");
-            let addr = listener.local_addr().expect("upstream address");
-            tokio::spawn(async move {
-                axum::serve(listener, app).await.expect("serve upstream");
-            });
             Upstream {
-                base_url: format!("http://{addr}"),
+                base_url: serve_upstream(app).await,
                 seen,
             }
         }
@@ -5615,6 +5620,51 @@ mod tests {
             assert!(seen.headers.contains_key("session_id"));
         }
 
+        /// 剥身份头只针对 Codex：Claude Code 的附加请求照常带着 Anthropic SDK 的请求头。
+        #[tokio::test]
+        async fn claude_attached_requests_keep_sdk_headers() {
+            let upstream = upstream().await;
+            let mut provider = test_provider_with_type(None);
+            provider.settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": upstream.base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "sk-third-party",
+                }
+            });
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("x-stainless-lang", "js"),
+                ("x-stainless-package-version", "0.60.0"),
+            ] {
+                headers.insert(
+                    http::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+            }
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    json!({
+                        "model": "attached-model",
+                        "max_tokens": 16,
+                        "messages": [{ "role": "user", "content": "hi" }]
+                    }),
+                    headers,
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("forward");
+            let seen = upstream.seen.lock().await.pop().expect("upstream request");
+            assert_eq!(seen.headers["x-stainless-lang"], "js");
+            assert_eq!(seen.headers["x-stainless-package-version"], "0.60.0");
+            assert_eq!(seen.body["model"], "attached-model");
+        }
+
         #[tokio::test]
         async fn attached_requests_are_not_rewritten_to_the_rows_model() {
             let upstream = upstream().await;
@@ -5694,6 +5744,8 @@ mod tests {
         }
     }
 
+    /// 一次请求结束后留下的记账：代理统计、「正在使用」、熔断器。每条出口路径各断言一次，
+    /// 锁住成功、失败、不计入熔断三种收尾对路由状态的影响。
     mod bookkeeping {
         use super::*;
         use std::collections::VecDeque;
@@ -5731,15 +5783,8 @@ mod tests {
                     }
                 })
             };
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-                .await
-                .expect("bind upstream");
-            let addr = listener.local_addr().expect("upstream address");
-            tokio::spawn(async move {
-                axum::serve(listener, app).await.expect("serve upstream");
-            });
             Upstream {
-                base_url: format!("http://{addr}"),
+                base_url: serve_upstream(app).await,
                 requests,
             }
         }

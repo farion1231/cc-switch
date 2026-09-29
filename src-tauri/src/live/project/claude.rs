@@ -347,7 +347,7 @@ fn proxy_model_fields(env: &Map<String, Value>) -> Vec<(&'static str, String)> {
     fields
 }
 
-fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+pub(crate) fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
     env.get(key)
         .and_then(Value::as_str)
         .map(str::trim)

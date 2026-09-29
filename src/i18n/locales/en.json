@@ -103,8 +103,6 @@
     "needsRouting": "Needs Routing",
     "directProvider": "Direct",
     "directProviderHint": "Leaving routing mode switches back to this provider",
-    "poolAttach": "Attach to the model list: pick this provider's models directly in {{client}}'s model picker",
-    "poolDetach": "Detach",
     "poolBadge": "Attached",
     "poolBadgeHint": "Pick in {{client}}'s model picker: {{models}}",
     "poolBadgeNoModels": "This provider has no models configured, so nothing shows up in the model picker",
@@ -112,8 +110,11 @@
     "poolReselectHint": "Whenever CC Switch rewrites the client config, pick the attached model again in the model picker",
     "poolPartial": "Partly written; it will be finished on the next change or when CC Switch restarts",
     "poolFailed": "Failed to save attached models: {{error}}",
+    "poolDefaultCannotRemove": "The default provider cannot be removed; set another provider as the default first",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
     "officialModelsUnavailable": "Attached models are unavailable for now: the Codex model list can't be read",
+    "routeOwnsCatalog": "Attached models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
+    "configOwnsCatalog": "Attached models won't show up in Codex: model_catalog_json in config.toml points to a different model catalog file",
     "noRoutingSupport": "No Routing Support",
     "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
     "editProvider": "Edit Provider",
@@ -363,6 +364,8 @@
         "description": "Control routing service toggle, view status and port info",
         "enableFeature": "Show Routing Toggle on Main Page",
         "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
+        "enablePoolMode": "Show the attached mode switch on the main page",
+        "enablePoolModeDescription": "When on, the main-page switch for Claude Code and Codex becomes the attached mode: add several providers like in OpenCode, and all their models appear in the client's model list (after restarting the client). No failover. This and the local routing switch are mutually exclusive; switching sends Claude Code and Codex back to direct first",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
@@ -2886,6 +2889,16 @@
         "broken": "{{appLabel}} is routing, but routing service is not running",
         "inactive": "Route {{appLabel}}'s requests through local routing"
       }
+    },
+    "poolMode": {
+      "enabled": "{{app}} is now in attached mode",
+      "exitedToDirect": "{{apps}} switched back to direct",
+      "tooltip": {
+        "active": "{{appLabel}} attached mode is on: models of the added providers appear in the model list after restarting the client",
+        "inactive": "Enter attached mode: add several providers and all their models appear in the {{appLabel}} model list"
+      },
+      "ariaLabel": "{{appLabel}} attached mode",
+      "failoverUnavailable": "{{appLabel}} is in attached mode, which has no failover. The queue and settings are kept and apply again in routing mode"
     },
     "failover": {
       "proxyRequired": "Routing service must be started to configure failover",

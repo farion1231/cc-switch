@@ -147,11 +147,10 @@ fn is_claude_model_discovery(uri: &axum::http::Uri, headers: &axum::http::Header
 /// Claude Code 的附加模型列表（Anthropic 形状）。只读数据库和 `live-state.json`，不做网络
 /// 请求：客户端只等 3 秒。不在代理模式、名单为空时返回空列表。
 fn claude_model_discovery(state: &ProxyState) -> Value {
-    let models =
-        crate::mode::pool::published_now(&state.db, &AppType::Claude).unwrap_or_else(|error| {
-            log::warn!("[Claude] 读取附加模型失败，返回空列表: {error}");
-            Vec::new()
-        });
+    let models = crate::mode::pool::claude_published_now(&state.db).unwrap_or_else(|error| {
+        log::warn!("[Claude] 读取附加模型失败，返回空列表: {error}");
+        Vec::new()
+    });
     let data: Vec<Value> = models
         .into_iter()
         .map(|model| {
@@ -175,17 +174,19 @@ fn claude_model_discovery(state: &ProxyState) -> Value {
 ///
 /// 只对 Claude Code 和 Codex 生效：同一个 handler 也服务 Claude Desktop、Grok Build，
 /// 它们的模型名不解码。普通模型名不读任何状态，路由请求的路径不变。
+///
+/// `Err` 是在进入路由之前就拒绝的请求，直接返回给客户端（装箱：`Response` 太大）。
 fn resolve_pool_target(
     state: &ProxyState,
     app_type: &AppType,
     body: &mut Value,
-) -> Result<Option<crate::mode::pool::PoolTarget>, PoolRejected> {
-    use crate::mode::pool::{self, Resolved};
+) -> Result<Option<crate::mode::pool::PoolTarget>, Box<axum::response::Response>> {
+    use crate::mode::pool::{self, Decoded, Resolved};
 
     let Some(model) = body.get("model").and_then(Value::as_str) else {
         return Ok(None);
     };
-    if !pool::supports_pool(app_type) {
+    if matches!(pool::decode(app_type, model), Decoded::Plain) {
         return Ok(None);
     }
     let model = model.to_string();
@@ -195,7 +196,7 @@ fn resolve_pool_target(
         app_type,
         &model,
     )
-    .map_err(|error| PoolRejected::Proxy(ProxyError::DatabaseError(error.to_string())))?;
+    .map_err(|error| Box::new(ProxyError::DatabaseError(error.to_string()).into_response()))?;
     match resolved {
         Resolved::Plain => Ok(None),
         Resolved::Hit(target) => {
@@ -205,23 +206,10 @@ fn resolve_pool_target(
         Resolved::Miss(miss) => {
             let message = miss.message(&model);
             log::warn!("[{}] {message}", app_type.as_str());
-            Err(PoolRejected::Miss(pool_miss_body(app_type, &message)))
-        }
-    }
-}
-
-/// 附加模型的请求在进入路由之前就被拒绝，直接返回给客户端。
-enum PoolRejected {
-    /// 带前缀的 id 解不出来：按客户端协议写好的错误体（400）。
-    Miss(Value),
-    Proxy(ProxyError),
-}
-
-impl IntoResponse for PoolRejected {
-    fn into_response(self) -> axum::response::Response {
-        match self {
-            Self::Miss(body) => (StatusCode::BAD_REQUEST, Json(body)).into_response(),
-            Self::Proxy(error) => error.into_response(),
+            let body = pool_miss_body(app_type, &message);
+            Err(Box::new(
+                (StatusCode::BAD_REQUEST, Json(body)).into_response(),
+            ))
         }
     }
 }
@@ -314,7 +302,7 @@ async fn handle_messages_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
     let pool = match resolve_pool_target(&state, &app_type, &mut body) {
         Ok(pool) => pool,
-        Err(rejected) => return Ok(rejected.into_response()),
+        Err(rejected) => return Ok(*rejected),
     };
 
     let mut ctx = RequestContext::new(
@@ -919,7 +907,7 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
     let pool = match resolve_pool_target(&state, &AppType::Codex, &mut body) {
         Ok(pool) => pool,
-        Err(rejected) => return Ok(rejected.into_response()),
+        Err(rejected) => return Ok(*rejected),
     };
 
     let mut ctx = RequestContext::new(
@@ -1021,7 +1009,7 @@ async fn handle_responses_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
     let pool = match resolve_pool_target(&state, &app_type, &mut body) {
         Ok(pool) => pool,
-        Err(rejected) => return Ok(rejected.into_response()),
+        Err(rejected) => return Ok(*rejected),
     };
 
     let mut ctx = RequestContext::new(
@@ -1269,7 +1257,7 @@ async fn handle_responses_compact_for_app(
     // 压缩请求也带着客户端选中的模型：不解码的话，会带着前缀落到默认路由。
     let pool = match resolve_pool_target(&state, &app_type, &mut body) {
         Ok(pool) => pool,
-        Err(rejected) => return Ok(rejected.into_response()),
+        Err(rejected) => return Ok(*rejected),
     };
 
     let mut ctx = RequestContext::new(
@@ -3804,29 +3792,10 @@ mod pool_tests {
     //! `/v1/models` 按请求方返回各自的形状。
     use super::*;
     use crate::database::Database;
-    use crate::proxy::{
-        failover_switch::FailoverSwitchManager,
-        provider_router::ProviderRouter,
-        providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
-    };
-    use std::collections::HashMap;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
 
     fn proxy_state() -> ProxyState {
-        let db = Arc::new(Database::memory().expect("memory db"));
-        ProxyState {
-            db: db.clone(),
-            config: Arc::new(RwLock::new(ProxyConfig::default())),
-            status: Arc::new(RwLock::new(ProxyStatus::default())),
-            start_time: Arc::new(RwLock::new(None)),
-            current_providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_router: Arc::new(ProviderRouter::new(db)),
-            gemini_shadow: Arc::new(GeminiShadowStore::default()),
-            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
-            app_handle: None,
-            failover_manager: Arc::new(FailoverSwitchManager::new()),
-        }
+        ProxyState::for_test(Arc::new(Database::memory().expect("memory db")))
     }
 
     fn post(path: &str, model: &str) -> axum::extract::Request {
@@ -3953,7 +3922,6 @@ mod pool_tests {
         );
         assert_eq!(ctx.request_model, "ccs-claude-kimi--kimi-k3");
         assert!(!ctx.app_config.auto_failover_enabled);
-        assert_eq!(ctx.app_config.max_retries, 0);
         let streaming = ctx.streaming_timeout_config();
         assert_eq!(
             (streaming.first_byte_timeout, streaming.idle_timeout),

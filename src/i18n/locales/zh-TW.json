@@ -103,8 +103,6 @@
     "needsRouting": "需要路由",
     "directProvider": "直連",
     "directProviderHint": "退出路由後恢復為這個供應商",
-    "poolAttach": "附加到模型清單：在 {{client}} 的模型選擇器裡直接選用這家的模型",
-    "poolDetach": "取消附加",
     "poolBadge": "附加",
     "poolBadgeHint": "在 {{client}} 的模型選擇器裡選擇：{{models}}",
     "poolBadgeNoModels": "這家沒有設定模型，不會出現在模型選擇器裡",
@@ -112,8 +110,11 @@
     "poolReselectHint": "CC Switch 每次改寫用戶端設定後，模型選擇器裡選中的附加模型需要重新選擇",
     "poolPartial": "已部分寫入，將在下次操作或重新啟動 CC Switch 時補完",
     "poolFailed": "附加模型儲存失敗：{{error}}",
+    "poolDefaultCannotRemove": "預設供應商不能移除，請先把別的供應商設為預設",
     "officialModelsBundled": "官方模型列表暫未取得，暫用 Codex 內建列表，可能缺少帳號專屬模型",
     "officialModelsUnavailable": "附加模型暫不可用：讀取不到 Codex 模型列表",
+    "routeOwnsCatalog": "附加模型不會出現在 Codex 中：路由供應商使用自己的模型目錄檔案（model_catalog_json）",
+    "configOwnsCatalog": "附加模型不會出現在 Codex 中：config.toml 的 model_catalog_json 指向了別的模型目錄檔案",
     "noRoutingSupport": "不支援路由",
     "blockedByProxyHint": "代理接管模式下無法切換至官方供應商",
     "editProvider": "編輯供應商",
@@ -363,6 +364,8 @@
         "description": "控制路由服務開關、查看狀態與連接埠資訊",
         "enableFeature": "在主頁面顯示本地路由開關",
         "enableFeatureDescription": "開啟後，主頁面頂部將顯示路由和故障轉移開關",
+        "enablePoolMode": "在主頁面顯示附加模式開關",
+        "enablePoolModeDescription": "開啟後，Claude Code 和 Codex 的主頁面開關換成附加模式：像 OpenCode 一樣新增多家供應商，它們的模型都會出現在用戶端的模型清單裡（重新啟動用戶端後生效），不做故障轉移。和本機路由開關二選一，切換時已開啟的 Claude Code、Codex 會先退回直連",
         "enableFailoverToggle": "在主頁面顯示故障轉移開關",
         "enableFailoverToggleDescription": "開啟後，主頁面頂部將獨立顯示故障轉移開關",
         "running": "執行中",
@@ -2887,6 +2890,16 @@
         "broken": "{{appLabel}} 路由中，但路由服務未執行",
         "inactive": "路由 {{appLabel}} 的請求，讓該應用程式請求走本地路由"
       }
+    },
+    "poolMode": {
+      "enabled": "{{app}} 已進入附加模式",
+      "exitedToDirect": "{{apps}} 已退回直連",
+      "tooltip": {
+        "active": "{{appLabel}} 附加模式已開啟：新增的供應商的模型出現在模型清單裡，重新啟動用戶端後生效",
+        "inactive": "進入附加模式：新增多家供應商，它們的模型都出現在 {{appLabel}} 的模型清單裡"
+      },
+      "ariaLabel": "{{appLabel}} 附加模式",
+      "failoverUnavailable": "{{appLabel}} 在附加模式，不做故障轉移。佇列和設定保留，回到路由模式後恢復"
     },
     "failover": {
       "proxyRequired": "需要先啟動路由服務才能設定故障轉移",

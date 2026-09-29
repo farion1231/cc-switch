@@ -795,7 +795,7 @@ async fn check_proxy_exit_keeps_login(current: &str, after_login: Option<&str>) 
         switch(&state, "relay").expect("switch to relay");
     }
     use_ephemeral_proxy_port(&state).await;
-    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex)
+    cc_switch_lib::mode::controller::enter(&state, &AppType::Codex, false)
         .await
         .expect("enter proxy");
     if current == "codex-official" {

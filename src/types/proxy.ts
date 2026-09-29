@@ -55,20 +55,27 @@ export interface ProxyTakeoverStatus {
 /** 附加模型：名单里的一家和它发布给客户端的模型 id。 */
 export interface ProxyPoolMember {
   providerId: string;
-  key: string;
   modelIds: string[];
+  /** 这家是默认那家（代理路由）：模型走默认路由，`modelIds` 等默认换到别家后才发布。 */
+  route: boolean;
 }
 
 /**
- * Codex 官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex 自带的列表
- * （可能缺账号专属的模型），`officialModelsUnavailable` 附加模型暂不可用。
+ * Codex 附加模型客户端看不到或看不全：`routeOwnsCatalog` 路由供应商使用自己的模型目录文件，
+ * 附加模型不发布；`configOwnsCatalog` 用户在 config.toml 里指定了自己的模型目录，生成的目录
+ * 不生效；官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex
+ * 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` 附加模型暂不可用。
  */
 export type ProxyPoolNotice =
+  | "routeOwnsCatalog"
+  | "configOwnsCatalog"
   | "officialModelsBundled"
   | "officialModelsUnavailable";
 
-/** 附加模型名单和提示。 */
+/** 附加模式的状态、名单和提示。 */
 export interface ProxyPool {
+  /** 在附加模式（代理模式且附加模式开着）。 */
+  active: boolean;
   members: ProxyPoolMember[];
   notice?: ProxyPoolNotice;
 }

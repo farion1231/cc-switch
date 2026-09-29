@@ -539,6 +539,17 @@ fn is_cc_switch_catalog(value: &str) -> bool {
     Path::new(value).file_name().and_then(|name| name.to_str()) == Some(CATALOG_FILENAME)
 }
 
+/// live 的 `model_catalog_json` 指向别的目录（路由那家的行指定的，或用户自己写的）：
+/// 写入时照留（见 [`CodexConfigPatch::apply_to`] 第 5 步），Codex 只读那个文件，
+/// CC Switch 生成的目录不生效。
+pub fn live_catalog_is_foreign(config_text: &str) -> bool {
+    config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
+        doc.get(MODEL_CATALOG_JSON)
+            .and_then(Item::as_str)
+            .is_some_and(|path| !is_cc_switch_catalog(path))
+    })
+}
+
 /// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和独有字段
 /// 一样跟着这一家走：切走时 live 里的值还相同就删（见 [`CodexConfigPatch::outgoing`]），
 /// 否则第 1 步会把它当成用户的指针留下，之后每一家都用它的模型目录。

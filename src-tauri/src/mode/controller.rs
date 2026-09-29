@@ -72,6 +72,18 @@ fn route_provider(
     }
 }
 
+/// 代理模式且已接上时的路由供应商和读到的模式状态；否则 `None`。
+fn attached_route(
+    state: &AppState,
+    app: &AppType,
+) -> Result<Option<(ModeState, Provider)>, String> {
+    let mode = current::mode_state(app);
+    if !mode.is_proxy() || !mode.attached {
+        return Ok(None);
+    }
+    Ok(route_provider(state, app, &mode)?.map(|route| (mode, route)))
+}
+
 /// 客户端文件现在对应的是谁。
 enum LiveNow {
     /// 直连投影（或还没写过任何东西）。
@@ -180,7 +192,8 @@ fn claude_contract(
 }
 
 /// Claude Code 的模型发现开关：打开后启动时向 `ANTHROPIC_BASE_URL/v1/models` 取模型列表，
-/// 附加模型才会出现在 `/model` 里。关键字段，退出代理、切换时都会被清掉。
+/// 附加模型才会出现在 `/model` 里。独有字段：记进契约，退出代理时按记录删（同值才删），
+/// 用户自己设的全局值在直连切换时不受影响。
 const CLAUDE_GATEWAY_DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
 const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
@@ -192,7 +205,7 @@ fn with_pool_models(projection: &mut ClaudeProjection, pool: &[PoolModel]) {
     if pool.is_empty() {
         return;
     }
-    projection.env.insert(
+    projection.exclusive.insert(
         CLAUDE_GATEWAY_DISCOVERY_ENV.to_string(),
         Value::String("1".to_string()),
     );
@@ -210,43 +223,19 @@ fn with_pool_models(projection: &mut ClaudeProjection, pool: &[PoolModel]) {
     }
 }
 
-/// 契约计算用的附加名单。
-enum PoolInput {
-    /// 已落定的名单。
-    Current,
-    /// 这次操作之后的名单：参与契约计算，随同一个操作落定（`PendingTarget::pool`）。
-    Next(PoolState),
-}
-
 /// 这个应用已落定的附加名单。
 fn settled_pool(app: &AppType) -> Result<PoolState, String> {
     super::state::pool(&DeviceStore::for_device(), app.as_str()).map_err(err)
 }
 
-/// 发布附加模型的成员（路由那家跳过：它的模型已经通过默认路由出现，名单保留）。
+/// 发布附加模型的成员（见 [`pool::published_members`]）。
 fn published_members(
     state: &AppState,
     app: &AppType,
     pool: &PoolState,
     route: &Provider,
 ) -> Result<Vec<pool::Member>, String> {
-    if pool.members.is_empty() || !pool::supports_pool(app) {
-        return Ok(Vec::new());
-    }
-    let mut members = pool::members(&state.db, app, pool).map_err(err)?;
-    members.retain(|member| member.provider.id != route.id);
-    Ok(members)
-}
-
-/// 发布给客户端的附加模型（路由那家跳过）。
-fn published_pool(
-    state: &AppState,
-    app: &AppType,
-    pool: &PoolState,
-    route: &Provider,
-) -> Result<Vec<PoolModel>, String> {
-    let members = published_members(state, app, pool, route)?;
-    Ok(pool::published(&members, Some(route.id.as_str())))
+    pool::published_members(&state.db, app, pool, Some(route.id.as_str())).map_err(err)
 }
 
 /// 只落定状态，不碰客户端文件（未接上时换路由、故障转移记下新路由等）。
@@ -258,6 +247,9 @@ fn commit_state(state: &AppState, app: &AppType, target: &PendingTarget) -> Resu
 /// 写代理契约。`target` 的 `contract` 由这里填好。契约没变时不碰客户端文件；接上
 /// （启动时）一律重写：顺带核对路由供应商还能用（比如托管账号还在），并修正 CC Switch
 /// 没运行期间客户端文件里的漂移。
+///
+/// `next_pool` 是这次操作之后的附加名单：参与契约计算，随同一个操作落定
+/// （`PendingTarget::pool`）；`None` 按已落定的名单算。
 async fn write_proxy(
     state: &AppState,
     app: &AppType,
@@ -265,13 +257,13 @@ async fn write_proxy(
     route: &Provider,
     live_now: &LiveNow,
     mut target: ModeState,
-    pool_input: PoolInput,
+    next_pool: Option<PoolState>,
 ) -> Result<(), String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
-    let (pool, next_pool) = match pool_input {
-        PoolInput::Current => (settled_pool(app)?, None),
-        PoolInput::Next(next) => (next.clone(), Some(next)),
+    let pool = match &next_pool {
+        Some(next) => next.clone(),
+        None => settled_pool(app)?,
     };
     // 各应用把 `contract` 填进 `target` 之后，模式状态和新名单一起落定。
     let pending = |target: ModeState| PendingTarget {
@@ -281,7 +273,7 @@ async fn write_proxy(
     };
     match app {
         AppType::Claude => {
-            let published = published_pool(state, app, &pool, route)?;
+            let published = pool::claude_published(&published_members(state, app, &pool, route)?);
             let (projection, contract) = claude_contract(route, &proxy_url, &published);
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
@@ -322,6 +314,7 @@ async fn write_proxy(
             let mut prepared =
                 codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
             codex_direct::prepare_official_rows(&state.db, &owner, &spec, &mut prepared)
+                .await
                 .map_err(err)?;
             let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
             let unchanged = !force && live_now.has_contract(&planned.contract.key);
@@ -533,11 +526,20 @@ pub(crate) fn lock_settled_blocking(
     futures::executor::block_on(lock_settled(state, app)).map(Some)
 }
 
-/// 进入代理模式。
-pub async fn enter(state: &AppState, app: &AppType) -> Result<(), String> {
+/// 进入代理模式。`pool_mode` 为真是附加模式（界面上和路由模式二选一，见
+/// [`PoolState::enabled`]）：默认那家（代理路由）随之加入名单，名单里其余各家的模型发布给
+/// 客户端。已经在代理模式时按选的模式重写。
+pub async fn enter(state: &AppState, app: &AppType, pool_mode: bool) -> Result<(), String> {
     require_proxy_app(app)?;
+    if pool_mode && !pool::supports_pool(app) {
+        return Err(format!(
+            "{} 不支持附加模式 ({} does not support the attached mode)",
+            app.as_str(),
+            app.as_str()
+        ));
+    }
     let result = match lock_settled(state, app).await {
-        Ok(_guard) => enter_locked(state, app, op::ENTER).await,
+        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(pool_mode)).await,
         Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
@@ -546,7 +548,13 @@ pub async fn enter(state: &AppState, app: &AppType) -> Result<(), String> {
     result
 }
 
-async fn enter_locked(state: &AppState, app: &AppType, op_name: &str) -> Result<(), String> {
+/// `pool_mode` 为 `None` 时沿用已落定的模式（启动时接上）。
+async fn enter_locked(
+    state: &AppState,
+    app: &AppType,
+    op_name: &str,
+    pool_mode: Option<bool>,
+) -> Result<(), String> {
     if !state.proxy_service.is_running().await {
         state.proxy_service.start().await?;
     }
@@ -561,6 +569,18 @@ async fn enter_locked(state: &AppState, app: &AppType, op_name: &str) -> Result<
             )
         })?,
     };
+    let next_pool = match pool_mode {
+        Some(on) => {
+            let current = settled_pool(app)?;
+            let mut next = current.clone();
+            next.enabled = on;
+            if on {
+                add_default(app, &mut next, &route);
+            }
+            (next != current).then_some(next)
+        }
+        None => None,
+    };
     let live_now = LiveNow::of(state, app, &mode)?;
     write_proxy(
         state,
@@ -574,7 +594,7 @@ async fn enter_locked(state: &AppState, app: &AppType, op_name: &str) -> Result<
             proxy_route: Some(route.id.clone()),
             contract: None,
         },
-        PoolInput::Current,
+        next_pool,
     )
     .await?;
     state.proxy_service.set_active_target(app, &route).await;
@@ -608,6 +628,31 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
     }
     stop_server_if_unused(state).await;
     Ok(())
+}
+
+/// 设置里在路由和附加之间换：处于另一种模式（`pool` 为真是附加模式）的 Claude Code、
+/// Codex 退回直连，名单留着。返回退回直连的应用。
+pub async fn exit_apps_in_mode(state: &AppState, pool: bool) -> Result<Vec<String>, String> {
+    let mut exited = Vec::new();
+    for app in PROXY_APPS.into_iter().filter(pool::supports_pool) {
+        {
+            let _guard = lock_settled(state, &app).await.map_err(|e| e.to_string())?;
+            if !current::is_proxy(&app) || settled_pool(&app)?.enabled != pool {
+                continue;
+            }
+            exit_locked(state, &app, false)?;
+        }
+        if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
+            log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
+        }
+        exited.push(app.as_str().to_string());
+    }
+    // 没有应用退出时服务不是这次用的：可能是用户手动开的，或者 Claude Desktop 的模型映射
+    // 在用，别停。
+    if !exited.is_empty() {
+        stop_server_if_unused(state).await;
+    }
+    Ok(exited)
 }
 
 /// `keep_mode` 为真是分离（退出 CC Switch）：模式和路由不变，只把客户端指回直连。
@@ -710,8 +755,23 @@ pub async fn switch_route_locked(
         proxy_route: Some(target.id.clone()),
         ..mode.clone()
     };
+    // 附加模式下默认那家也在名单里：设为默认的这家（比如托盘里点的）还没添加就一起加上。
+    let current = settled_pool(app)?;
+    let mut next = current.clone();
+    if next.enabled {
+        add_default(app, &mut next, target);
+    }
+    let next_pool = (next != current).then_some(next);
     if !mode.attached {
-        commit_state(state, app, &PendingTarget::mode(new_state))?;
+        commit_state(
+            state,
+            app,
+            &PendingTarget {
+                state: Some(new_state),
+                pool: next_pool,
+                ..PendingTarget::default()
+            },
+        )?;
     } else {
         let live_now = LiveNow::of(state, app, &mode)?;
         write_proxy(
@@ -721,7 +781,7 @@ pub async fn switch_route_locked(
             target,
             &live_now,
             new_state,
-            PoolInput::Current,
+            next_pool,
         )
         .await?;
     }
@@ -735,11 +795,36 @@ pub async fn switch_route(
     app: &AppType,
     provider_id: &str,
 ) -> Result<(), String> {
+    switch_route_checked(state, app, provider_id, false).await
+}
+
+/// 开启故障转移时切到队列 P1（拿切换锁）。附加模式不做故障转移，拒绝：否则会换掉默认
+/// 那家。要在锁内、补完上次没做完的操作之后再看模式，锁外读到的可能是旧的。
+pub async fn switch_route_for_failover(
+    state: &AppState,
+    app: &AppType,
+    provider_id: &str,
+) -> Result<(), String> {
+    switch_route_checked(state, app, provider_id, true).await
+}
+
+async fn switch_route_checked(
+    state: &AppState,
+    app: &AppType,
+    provider_id: &str,
+    reject_attached: bool,
+) -> Result<(), String> {
     require_proxy_app(app)?;
     let target =
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     reject_unsupported_official(app, &target)?;
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    if reject_attached && current::is_proxy(app) && settled_pool(app)?.enabled {
+        return Err(
+            "附加模式不做故障转移，请先换回路由模式 (The attached mode has no failover; switch back to the routing mode first)"
+                .to_string(),
+        );
+    }
     switch_route_locked(state, app, &target).await
 }
 
@@ -767,7 +852,7 @@ pub struct PoolWriteError {
 }
 
 impl PoolWriteError {
-    fn unchanged(message: impl Into<String>) -> Self {
+    pub(crate) fn unchanged(message: impl Into<String>) -> Self {
         Self {
             partial: false,
             message: message.into(),
@@ -775,9 +860,10 @@ impl PoolWriteError {
     }
 }
 
-/// 附加模型不能是官方账号：Claude 官方订阅本来就不进代理；Codex 官方可以做路由，但它
-/// 靠客户端自己的登录做账号校验，不能当附加目标。
-fn reject_official_pool_member(app: &AppType, provider: &Provider) -> Result<(), String> {
+/// 能不能附加。不能是官方账号：Claude 官方订阅本来就不进代理；Codex 官方可以做路由，
+/// 但它靠客户端自己的登录做账号校验，不能当附加目标。Codex 的行还要能解析：它的模型要
+/// 写进目录。
+fn check_pool_member(app: &AppType, provider: &Provider) -> Result<(), String> {
     let official = match app {
         AppType::Codex => codex_direct::is_official(provider),
         _ => provider.category.as_deref() == Some("official"),
@@ -788,7 +874,22 @@ fn reject_official_pool_member(app: &AppType, provider: &Provider) -> Result<(),
                 .to_string(),
         );
     }
+    if matches!(app, AppType::Codex) {
+        codex_direct::check_pool_member(provider).map_err(err)?;
+    }
     Ok(())
+}
+
+/// 附加模式下默认那家也在名单里（界面上是「已添加」）。官方账号只能做默认、不能附加，
+/// 配置解析不了的 Codex 行也不加（它做默认时写入本来就会失败）。
+fn add_default(app: &AppType, pool: &mut PoolState, route: &Provider) {
+    if check_pool_member(app, route).is_err() {
+        return;
+    }
+    pool::allocate_key(pool, route);
+    if !pool.is_member(&route.id) {
+        pool.members.push(route.id.clone());
+    }
 }
 
 /// 增删一家附加供应商。`enabled` 是目标值，不是「切换一下」：以为失败又点一次时，先补完
@@ -797,14 +898,15 @@ fn reject_official_pool_member(app: &AppType, provider: &Provider) -> Result<(),
 /// 代理模式且已接上时，新名单参与契约计算，和客户端文件在同一个操作里提交（契约没变就
 /// 只落定名单）；否则只落定名单，下次进入代理模式时生效。移除时 key 留在登记簿里。
 ///
-/// 失败分两种（见 [`PoolWriteError::partial`]）：操作还没开始发布就失败，什么都没改；
-/// 已经开始发布，pending 留着等前滚。
+/// 成功时返回客户端看不到或看不全附加模型的提示（见 [`PoolView::notice`]）。失败分两种
+/// （见 [`PoolWriteError::partial`]）：操作还没开始发布就失败，什么都没改；已经开始发布，
+/// pending 留着等前滚。
 pub async fn set_pool_member(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
     enabled: bool,
-) -> Result<PoolView, PoolWriteError> {
+) -> Result<Option<&'static str>, PoolWriteError> {
     if !pool::supports_pool(app) {
         return Err(PoolWriteError::unchanged(format!(
             "{} 不支持附加模型 ({} does not support attached models)",
@@ -824,7 +926,13 @@ pub async fn set_pool_member(
             == Some(true);
         return Err(PoolWriteError { partial, message });
     }
-    pool_views(state, app).map_err(PoolWriteError::unchanged)
+    // 名单已经落定：读不出提示也不能报成保存失败（界面会以为什么都没改）。
+    Ok(match app {
+        AppType::Codex => settled_pool(app)
+            .ok()
+            .and_then(|pool| codex_pool_notice(state, &pool)),
+        _ => None,
+    })
 }
 
 async fn set_pool_member_locked(
@@ -838,37 +946,29 @@ async fn set_pool_member_locked(
     if enabled {
         let target = provider(state, app, provider_id)?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
-        reject_official_pool_member(app, &target)?;
+        check_pool_member(app, &target)?;
         pool::allocate_key(&mut next, &target);
         if !next.is_member(provider_id) {
             next.members.push(provider_id.to_string());
         }
     } else {
+        let mode = current::mode_state(app);
+        if current.enabled && mode.routes_to(provider_id) {
+            return Err(
+                "默认供应商不能移除，请先把别的供应商设为默认 (The default provider cannot be removed; set another provider as the default first)"
+                    .to_string(),
+            );
+        }
         next.members.retain(|id| id != provider_id);
     }
     if next == current {
         return Ok(());
     }
 
-    let mode = current::mode_state(app);
-    let route = if mode.is_proxy() && mode.attached {
-        route_provider(state, app, &mode)?
-    } else {
-        None
-    };
-    match route {
-        Some(route) => {
+    match attached_route(state, app)? {
+        Some((mode, route)) => {
             let live_now = LiveNow::of(state, app, &mode)?;
-            write_proxy(
-                state,
-                app,
-                op::POOL,
-                &route,
-                &live_now,
-                mode,
-                PoolInput::Next(next),
-            )
-            .await
+            write_proxy(state, app, op::POOL, &route, &live_now, mode, Some(next)).await
         }
         None => commit_state(
             state,
@@ -881,41 +981,44 @@ async fn set_pool_member_locked(
     }
 }
 
-/// 名单里的每一家和它发布的模型 id（给前端）。
+/// 附加模式的状态、名单里的每一家和它发布的模型 id（给前端）。
 pub fn pool_views(state: &AppState, app: &AppType) -> Result<PoolView, String> {
     if !pool::supports_pool(app) {
-        return Ok(PoolView {
-            members: Vec::new(),
-            notice: None,
-        });
+        return Ok(PoolView::default());
     }
-    let members = pool::members(&state.db, app, &settled_pool(app)?).map_err(err)?;
+    let pool = settled_pool(app)?;
+    let members = pool::members(&state.db, app, &pool).map_err(err)?;
+    let mode = current::mode_state(app);
+    let route = mode.proxy_route.as_deref().filter(|_| mode.is_proxy());
     let notice = match app {
-        AppType::Codex => codex_pool_notice(state),
+        AppType::Codex => codex_pool_notice(state, &pool),
         _ => None,
     };
     Ok(PoolView {
-        members: pool::member_views(&members),
+        active: mode.is_proxy() && pool.enabled,
+        members: pool::member_views(&members, route),
         notice,
     })
 }
 
-/// Codex 官方做路由、发布了附加模型，而最近一次写目录时没拿到官方列表。
-fn codex_pool_notice(state: &AppState) -> Option<&'static str> {
-    let app = AppType::Codex;
-    let mode = current::mode_state(&app);
-    if !mode.is_proxy() || !mode.attached {
+/// Codex 在附加模式下有要发布的附加模型，客户端却看不到或看不全：路由那家自己管理模型
+/// 目录文件（附加模型不发布）；`config.toml` 里用户自己指定了模型目录（生成的目录不生效）；
+/// 或者官方做默认、最近一次写目录时没拿到官方列表。
+fn codex_pool_notice(state: &AppState, pool: &PoolState) -> Option<&'static str> {
+    let (_, route) = attached_route(state, &AppType::Codex).ok()??;
+    let published =
+        pool::published_members(&state.db, &AppType::Codex, pool, Some(&route.id)).ok()?;
+    if published.is_empty() {
         return None;
     }
-    let route = route_provider(state, &app, &mode).ok()??;
+    if codex_direct::route_owns_catalog(&route) {
+        return Some("routeOwnsCatalog");
+    }
+    // 按客户端里实际生效的指针看：用户直接写进 config.toml 的指针写入时照留。
+    if crate::live::project::codex::live_catalog_is_foreign(&codex_direct::read_config_text()) {
+        return Some("configOwnsCatalog");
+    }
     if !codex_direct::is_official(&route) {
-        return None;
-    }
-    let pool = settled_pool(&app).ok()?;
-    if published_members(state, &app, &pool, &route)
-        .ok()?
-        .is_empty()
-    {
         return None;
     }
     match codex_official_models::last_source()? {
@@ -928,14 +1031,35 @@ fn codex_pool_notice(state: &AppState) -> Option<&'static str> {
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
 /// 持有切换锁。
 pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), String> {
-    let mode = current::mode_state(app);
-    if !mode.is_proxy() || !mode.attached {
-        return Ok(());
-    }
-    let Some(route) = route_provider(state, app, &mode)? else {
+    let Some((_, route)) = attached_route(state, app)? else {
         return Ok(());
     };
     switch_route_locked(state, app, &route).await
+}
+
+/// 代理模式下存好了 `provider` 的行：它是代理路由时按新行重写代理契约；在附加名单里时，
+/// 它发布的模型、窗口在契约里，按当前路由重算。契约没变就不碰客户端文件，其余情况什么
+/// 都不做。调用方持有切换锁。
+pub async fn resync_saved_row_locked(
+    state: &AppState,
+    app: &AppType,
+    provider: &Provider,
+) -> Result<(), String> {
+    let mode = current::mode_state(app);
+    if !mode.is_proxy() {
+        return Ok(());
+    }
+    if mode.routes_to(&provider.id) {
+        return switch_route_locked(state, app, provider).await;
+    }
+    let in_pool = pool::is_member(app, &provider.id).unwrap_or_else(|error| {
+        log::warn!("读取 {} 的附加模型失败: {error}", app.as_str());
+        false
+    });
+    if in_pool {
+        return resync_route_locked(state, app).await;
+    }
+    Ok(())
 }
 
 pub async fn resync_route(state: &AppState, app: &AppType) -> Result<(), String> {
@@ -944,30 +1068,44 @@ pub async fn resync_route(state: &AppState, app: &AppType) -> Result<(), String>
 }
 
 /// 后台检查（CC Switch 启动时和之后每 15 分钟）：Codex 官方做路由、发布了附加模型时，
-/// 目标登录的官方模型缓存没有或过期了就刷新（一定联网），列表变了就重写客户端文件。
+/// 目标登录的官方模型缓存没有或过期了就刷新（一定联网）；客户端落后于缓存（列表刚变，
+/// 或者之前重写失败了）就重写客户端文件。
 pub async fn check_codex_official_models(state: &AppState) {
-    let app = AppType::Codex;
-    let login = match codex_official_login_now(state, &app) {
-        Ok(Some(login)) => login,
-        Ok(None) => return,
-        Err(error) => {
-            log::debug!("检查 Codex 官方模型列表时预测登录失败: {error}");
+    refresh_codex_official_models(state).await;
+    resync_codex_if_behind(state).await;
+}
+
+/// 预测登录可能读钥匙串、刷新要跑子进程和联网：整个放到阻塞线程池里。
+async fn refresh_codex_official_models(state: &AppState) {
+    let state = state.clone();
+    let _ = codex_direct::off_runtime(move || {
+        let login = match codex_official_login_now(&state, &AppType::Codex) {
+            Ok(Some(login)) => login,
+            Ok(None) => return,
+            Err(error) => {
+                log::debug!("检查 Codex 官方模型列表时预测登录失败: {error}");
+                return;
+            }
+        };
+        let Some(version) = codex_official_models::needs_refresh(&login) else {
             return;
+        };
+        if let Err(error) = codex_official_models::refresh(&login, &version) {
+            log::warn!("刷新 Codex 官方模型列表失败: {error}");
         }
-    };
-    let refreshed = tokio::task::spawn_blocking(move || {
-        codex_official_models::needs_refresh(&login)
-            .map(|version| codex_official_models::refresh(&login, &version))
     })
     .await;
-    match refreshed {
-        Ok(Some(Ok(true))) => {
-            if let Err(error) = resync_route(state, &app).await {
-                log::warn!("Codex 官方模型列表更新后重写客户端文件失败: {error}");
-            }
-        }
-        Ok(Some(Err(error))) => log::warn!("刷新 Codex 官方模型列表失败: {error}"),
-        _ => {}
+}
+
+/// 缓存里的官方列表比客户端文件新：按当前路由重写（契约没变就什么都不做）。失败时标记
+/// 放回去，下一个检查点再试。
+pub async fn resync_codex_if_behind(state: &AppState) {
+    if !codex_official_models::take_client_behind() {
+        return;
+    }
+    if let Err(error) = resync_route(state, &AppType::Codex).await {
+        codex_official_models::mark_client_behind();
+        log::warn!("Codex 官方模型列表更新后重写客户端文件失败，下次检查再试: {error}");
     }
 }
 
@@ -976,14 +1114,13 @@ fn codex_official_login_now(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<codex_official_models::OfficialLogin>, String> {
-    let mode = current::mode_state(app);
-    if !mode.is_proxy() || !mode.attached {
-        return Ok(None);
-    }
-    let Some(route) = route_provider(state, app, &mode)? else {
+    let Some((mode, route)) = attached_route(state, app)? else {
         return Ok(None);
     };
     let members = published_members(state, app, &settled_pool(app)?, &route)?;
+    if !codex_direct::needs_official_rows(&route, &members) {
+        return Ok(None);
+    }
     let live_now = LiveNow::of(state, app, &mode)?;
     let owner = live_now.codex_owner();
     let base_url = codex_direct::configured_proxy_base_url(&state.db);
@@ -992,9 +1129,6 @@ fn codex_official_login_now(
         base_url: &base_url,
         pool: &members,
     };
-    if !codex_direct::needs_official_rows(&spec) {
-        return Ok(None);
-    }
     let prepared = codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
     codex_direct::predicted_official_login(&state.db, &owner, &spec, &prepared).map_err(err)
 }
@@ -1018,6 +1152,9 @@ pub async fn resync_routes(state: &AppState) -> Result<(), String> {
 
 /// 故障转移成功后记下新路由：只换代理的上游，不写客户端文件（契约兼容性本轮不检查）。
 /// 返回路由是否真的变了。
+///
+/// 附加模式不做故障转移：这时到达的是进入附加模式之前发出的请求的结果，已经过期，丢掉。
+/// 记下它会换掉默认那家，却不把它加进名单、也不重写发布给客户端的模型。
 pub async fn record_failover_route(
     state: &AppState,
     app: &AppType,
@@ -1026,6 +1163,13 @@ pub async fn record_failover_route(
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     let mode = current::mode_state(app);
     if !mode.is_proxy() || mode.proxy_route.as_deref() == Some(provider_id) {
+        return Ok(false);
+    }
+    if settled_pool(app)?.enabled {
+        log::info!(
+            "[Failover] {} 在附加模式，忽略进入之前的请求转移到 {provider_id} 的结果",
+            app.as_str()
+        );
         return Ok(false);
     }
     let Some(target) = provider(state, app, provider_id)? else {
@@ -1096,7 +1240,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             ..mode
         };
         commit_state(state, app, &PendingTarget::mode(mode))?;
-        match enter_locked(state, app, op::ATTACH).await {
+        match enter_locked(state, app, op::ATTACH, None).await {
             Ok(()) => return Ok(()),
             Err(error) => {
                 log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
@@ -1822,7 +1966,7 @@ mod mode_tests {
         )
         .await;
 
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
         let live = settings();
         assert_eq!(live["env"]["ANTHROPIC_BASE_URL"], proxy_url.as_str());
@@ -1848,7 +1992,9 @@ mod mode_tests {
         assert_back_to_user_settings();
         // 第一次写入可能挪动关键字段的位置，之后的往返字节稳定。
         let settled = fs::read(settings_path()).unwrap();
-        enter(&state, &AppType::Claude).await.expect("enter again");
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter again");
         exit(&state, &AppType::Claude).await.expect("exit again");
         assert_eq!(fs::read(settings_path()).unwrap(), settled);
         let left = mode(&AppType::Claude);
@@ -1872,7 +2018,7 @@ mod mode_tests {
             "a",
         )
         .await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         let before = fs::read(settings_path()).unwrap();
         let mtime = fs::metadata(settings_path()).unwrap().modified().unwrap();
 
@@ -1919,7 +2065,7 @@ mod mode_tests {
             "a",
         )
         .await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         ProviderService::switch(&state, AppType::Claude, "deepseek").expect("switch route");
         assert_eq!(settings()["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], "1");
         assert_eq!(
@@ -1951,12 +2097,14 @@ mod mode_tests {
             "a",
         )
         .await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         ProviderService::switch(&state, AppType::Claude, "b").expect("route to b");
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
 
-        enter(&state, &AppType::Claude).await.expect("enter again");
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter again");
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
 
         // 退出 CC Switch 再启动：分离时写回直连，启动时按保存的路由接上。
@@ -2003,7 +2151,7 @@ mod mode_tests {
         assert!(!updater.is_finished(), "the save waits for the switch lock");
         assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
 
-        enter_locked(state, &AppType::Claude, op::ENTER)
+        enter_locked(state, &AppType::Claude, op::ENTER, Some(false))
             .await
             .expect("enter");
         drop(guard);
@@ -2032,7 +2180,7 @@ mod mode_tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert!(!syncer.is_finished(), "the sync waits for the switch lock");
-        enter_locked(state, &AppType::Claude, op::ENTER)
+        enter_locked(state, &AppType::Claude, op::ENTER, Some(false))
             .await
             .expect("enter");
         drop(guard);
@@ -2127,7 +2275,7 @@ mod mode_tests {
             "a",
         )
         .await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         let before = fs::read(settings_path()).unwrap();
 
         assert!(record_failover_route(&state, &AppType::Claude, "b")
@@ -2152,7 +2300,7 @@ mod mode_tests {
             )
             .await;
             failpoint::crash_at(Some(point));
-            let result = enter(&state, &AppType::Claude).await;
+            let result = enter(&state, &AppType::Claude, false).await;
             failpoint::crash_at(None);
             assert!(result.is_err(), "{point}");
 
@@ -2191,7 +2339,7 @@ mod mode_tests {
             "a",
         )
         .await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         failpoint::crash_at(Some("published:0"));
         let result = exit(&state, &AppType::Claude).await;
         failpoint::crash_at(None);
@@ -2283,7 +2431,7 @@ mod mode_tests {
         );
         let state = state_with(AppType::Gemini, &[row], "g").await;
 
-        enter(&state, &AppType::Gemini).await.expect("enter");
+        enter(&state, &AppType::Gemini, false).await.expect("enter");
         let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
         assert_eq!(
             fs::read_to_string(&env_path).unwrap(),
@@ -2322,8 +2470,12 @@ mod mode_tests {
         state.db.save_provider("gemini", &row).unwrap();
         state.db.set_current_provider("gemini", "g").unwrap();
         crate::settings::set_current_provider(&AppType::Gemini, Some("g")).unwrap();
-        enter(&state, &AppType::Claude).await.expect("enter claude");
-        enter(&state, &AppType::Gemini).await.expect("enter gemini");
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("enter claude");
+        enter(&state, &AppType::Gemini, false)
+            .await
+            .expect("enter gemini");
         let old_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
 
         fs::write(settings_path(), "not json").unwrap();
@@ -2388,7 +2540,7 @@ mod mode_tests {
         let auth_path = crate::codex_config::get_codex_auth_path();
         let auth = || -> Value { crate::config::read_json_file(&auth_path).unwrap() };
 
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, false).await.expect("enter");
         let third_party = fs::read_to_string(&config_path).unwrap();
         assert!(
             third_party.contains(PROXY_TOKEN_PLACEHOLDER),
@@ -2654,7 +2806,7 @@ command = "fs-server"
         assert_eq!(pointer(), None, "{}", codex_text());
 
         // 代理模式：路由从 c 换到 a，契约带进 a 的指针；退出代理写回直连 c 时删掉。
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, false).await.expect("enter");
         ProviderService::switch(&state, AppType::Codex, "a").expect("route to a");
         assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
         exit(&state, &AppType::Codex).await.expect("exit");
@@ -3081,7 +3233,7 @@ model_provider = "c"
         );
         ProviderService::switch(&state, AppType::Codex, "acct-a").expect("direct a again");
 
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, false).await.expect("enter");
         switch_route(&state, &AppType::Codex, "acct-b")
             .await
             .expect("route to b");
@@ -3162,7 +3314,7 @@ model_provider = "c"
         // d 和 b 只差模型名。
         let d = codex_row("d", "https://d.example/v1", "");
         let state = state_with(AppType::Codex, &[a, b, c, d], "b").await;
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, false).await.expect("enter");
         let entered = codex_text();
         assert!(entered.contains(PROXY_TOKEN_PLACEHOLDER), "{entered}");
         assert!(!entered.contains("sk-b"), "{entered}");
@@ -3806,7 +3958,7 @@ model_provider = "c"
         b.settings_config["env"]["GOOGLE_GEMINI_BASE_URL"] = json!("https://b.example");
         let state = state_with(AppType::Gemini, &[a, b], "a").await;
 
-        enter(&state, &AppType::Gemini).await.expect("enter");
+        enter(&state, &AppType::Gemini, false).await.expect("enter");
         let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
         let env = gemini_env();
         assert!(env.contains("GEMINI_API_KEY=PROXY_MANAGED"), "{env}");
@@ -4097,7 +4249,9 @@ model_provider = "c"
         .await;
         ProviderService::switch(&state, AppType::GrokBuild, "a").expect("direct a");
 
-        enter(&state, &AppType::GrokBuild).await.expect("enter");
+        enter(&state, &AppType::GrokBuild, false)
+            .await
+            .expect("enter");
         let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
         let doc = grok_doc();
         let table = &doc["model"]["grok-4.5"];
@@ -4467,8 +4621,8 @@ model_provider = "c"
     async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<PoolMemberView> {
         set_pool_member(state, &AppType::Claude, id, enabled)
             .await
-            .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"))
-            .members
+            .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"));
+        pool_views(state, &AppType::Claude).unwrap().members
     }
 
     #[tokio::test]
@@ -4477,14 +4631,17 @@ model_provider = "c"
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &pool_rows(), "a").await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, true).await.expect("enter");
         let plain_bytes = fs::read(settings_path()).unwrap();
         let plain_contract = mode(&AppType::Claude).contract.unwrap();
 
+        // 进入附加模式时默认那家（a）已经在名单里，它不发布，契约和路由模式一样。
+        assert_eq!(pool_state().members, vec!["a"]);
         let views = set_member(&state, "kimi", true).await;
-        assert_eq!(views.len(), 1);
-        assert_eq!(views[0].key, "kimi");
-        assert_eq!(views[0].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
+        assert_eq!(views.len(), 2);
+        assert!(views[0].route);
+        assert_eq!(pool_state().key_of("kimi"), Some("kimi"));
+        assert_eq!(views[1].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
         let env = settings()["env"].clone();
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
@@ -4502,17 +4659,34 @@ model_provider = "c"
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
 
-        // 名单清空：客户端文件和契约回到没有附加模型时的样子，登记簿保留。
+        // 只剩默认那家：客户端文件和契约回到没有附加模型时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
         assert_eq!(fs::read(settings_path()).unwrap(), plain_bytes);
         assert_eq!(mode(&AppType::Claude).contract.unwrap(), plain_contract);
         let pool = pool_state();
-        assert!(pool.members.is_empty());
+        assert_eq!(pool.members, vec!["a"]);
         assert_eq!(pool.key_of("kimi"), Some("kimi"));
         assert_eq!(pool.key_of("zhipu"), Some("zhipu"));
 
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn a_users_own_model_discovery_switch_survives_switches_and_proxy_mode() {
+        let _home = Home::new();
+        let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();
+        user["env"][CLAUDE_GATEWAY_DISCOVERY_ENV] = json!("1");
+        seed_settings(&serde_json::to_string_pretty(&user).unwrap());
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
+
+        ProviderService::switch(&state, AppType::Claude, "kimi").expect("direct kimi");
+        assert_eq!(discovery(), Some(json!("1")));
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_eq!(discovery(), Some(json!("1")), "no attached models");
     }
 
     #[tokio::test]
@@ -4527,7 +4701,7 @@ model_provider = "c"
         assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
         assert!(pool_state().is_member("kimi"));
 
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, true).await.expect("enter");
         assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
 
@@ -4545,7 +4719,7 @@ model_provider = "c"
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &pool_rows(), "a").await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, true).await.expect("enter");
         let before = fs::read(settings_path()).unwrap();
 
         // 路由那家在名单里：它的模型已经通过默认路由出现，不再发布，契约不变。
@@ -4564,6 +4738,214 @@ model_provider = "c"
         let env = settings()["env"].clone();
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn routing_mode_and_attached_mode_share_the_list() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        set_member(&state, "kimi", true).await;
+        let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
+
+        // 路由模式：名单在也不发布。
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("routing");
+        assert_eq!(discovery(), None);
+        assert!(!pool_views(&state, &AppType::Claude).unwrap().active);
+
+        // 已经在代理模式时换成附加模式：默认那家加入名单，其余的发布。
+        enter(&state, &AppType::Claude, true)
+            .await
+            .expect("attached");
+        assert_eq!(discovery(), Some(json!("1")));
+        assert!(pool_views(&state, &AppType::Claude).unwrap().active);
+        assert_eq!(pool_state().members, vec!["kimi", "a"]);
+
+        // 换回路由模式：名单留着，客户端里的附加模型去掉。
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("routing again");
+        assert_eq!(discovery(), None);
+        assert_eq!(pool_state().members, vec!["kimi", "a"]);
+        assert!(!pool_state().enabled);
+
+        // 退出再以附加模式进入：名单原样恢复。
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
+        enter(&state, &AppType::Claude, true)
+            .await
+            .expect("attached again");
+        assert_eq!(discovery(), Some(json!("1")));
+        assert_eq!(pool_state().members, vec!["kimi", "a"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn the_default_cannot_be_removed_and_a_new_default_joins_the_list() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+
+        let error = set_pool_member(&state, &AppType::Claude, "a", false)
+            .await
+            .expect_err("the default");
+        assert!(!error.partial);
+        assert_eq!(pool_state().members, vec!["a"]);
+
+        // 设为默认（比如托盘里点）一家还没添加的：一起加入名单，原来的默认留在名单里、
+        // 开始发布，之后可以移除。
+        ProviderService::switch(&state, AppType::Claude, "zhipu").expect("set default");
+        assert_eq!(pool_state().members, vec!["a", "zhipu"]);
+        assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        set_member(&state, "a", false).await;
+        assert_eq!(pool_state().members, vec!["zhipu"]);
+        assert!(settings()["env"]
+            .get(CLAUDE_GATEWAY_DISCOVERY_ENV)
+            .is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn changing_the_main_page_switch_sends_apps_in_the_other_mode_back_to_direct() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        set_member(&state, "kimi", true).await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+
+        // 换成显示路由开关之前，附加模式的应用退回直连；路由模式的不动。
+        assert!(exit_apps_in_mode(&state, false).await.unwrap().is_empty());
+        assert!(current::is_proxy(&AppType::Claude));
+        assert_eq!(
+            exit_apps_in_mode(&state, true).await.unwrap(),
+            vec!["claude"]
+        );
+        assert!(!current::is_proxy(&AppType::Claude));
+        assert_back_to_user_settings();
+        assert_eq!(pool_state().members, vec!["kimi", "a"], "the list stays");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn changing_the_main_page_switch_with_nothing_to_exit_keeps_the_server() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        // 各应用都直连，服务是用户手动开的（或者 Claude Desktop 的模型映射在用）。
+        state.proxy_service.start().await.expect("start");
+
+        assert!(exit_apps_in_mode(&state, true).await.unwrap().is_empty());
+        assert!(state.proxy_service.is_running().await);
+        state.proxy_service.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn a_failover_finishing_after_entering_attached_mode_is_dropped() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        let before = fs::read(settings_path()).unwrap();
+
+        // 进入附加模式之前发出的路由请求，这时才转移到 kimi 成功。
+        assert!(!record_failover_route(&state, &AppType::Claude, "kimi")
+            .await
+            .expect("record failover"));
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+        assert_eq!(pool_state().members, vec!["a"]);
+        assert_eq!(fs::read(settings_path()).unwrap(), before);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn enabling_failover_cannot_move_the_default_in_attached_mode() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("routing");
+        set_member(&state, "kimi", true).await;
+
+        // 进入附加模式做到一半失败：锁外读到的还是路由模式，拿切换锁补完之后才是附加模式。
+        failpoint::crash_at(Some("published:0"));
+        enter(&state, &AppType::Claude, true)
+            .await
+            .expect_err("crash");
+        failpoint::crash_at(None);
+        assert!(!crate::mode::pool::pool_mode_now(&AppType::Claude));
+
+        switch_route_for_failover(&state, &AppType::Claude, "kimi")
+            .await
+            .expect_err("attached");
+        assert!(crate::mode::pool::pool_mode_now(&AppType::Claude));
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+
+        // 路由模式照常切到 P1。
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("routing");
+        switch_route_for_failover(&state, &AppType::Claude, "kimi")
+            .await
+            .expect("switch");
+        assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("kimi"));
+        state.proxy_service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn attached_mode_sends_default_requests_to_the_default_only() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        // 故障转移开着，队列里还有别家。
+        let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        state.db.update_proxy_config_for_app(config).await.unwrap();
+        for id in ["a", "kimi"] {
+            state.db.add_to_failover_queue("claude", id).unwrap();
+        }
+        let proxy = crate::proxy::server::ProxyState::for_test(state.db.clone());
+        let body = json!({ "model": "claude-sonnet-5", "messages": [] });
+        let headers = axum::http::HeaderMap::new();
+        let context = || {
+            crate::proxy::handler_context::RequestContext::new(
+                &proxy,
+                &body,
+                &headers,
+                AppType::Claude,
+                "Claude",
+                "claude",
+                None,
+            )
+        };
+        let chain = |ctx: &crate::proxy::handler_context::RequestContext| {
+            ctx.get_providers()
+                .into_iter()
+                .map(|provider| provider.id)
+                .collect::<Vec<_>>()
+        };
+
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("routing");
+        let ctx = context().await.expect("routing context");
+        assert_eq!(chain(&ctx), vec!["a", "kimi"]);
+        assert!(ctx.app_config.auto_failover_enabled);
+
+        enter(&state, &AppType::Claude, true)
+            .await
+            .expect("attached");
+        let ctx = context().await.expect("attached context");
+        assert_eq!(chain(&ctx), vec!["a"]);
+        assert!(!ctx.app_config.auto_failover_enabled);
+        // 队列留着，回到路由模式恢复。
+        assert_eq!(state.db.get_failover_queue("claude").unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -4598,7 +4980,7 @@ model_provider = "c"
             let _home = Home::new();
             seed_settings(USER_SETTINGS);
             let state = state_with(AppType::Claude, &pool_rows(), "a").await;
-            enter(&state, &AppType::Claude).await.expect("enter");
+            enter(&state, &AppType::Claude, true).await.expect("enter");
 
             failpoint::crash_at(Some(point));
             let error = set_pool_member(&state, &AppType::Claude, "kimi", true)
@@ -4640,7 +5022,7 @@ model_provider = "c"
             &PendingTarget::mode(mode(&AppType::Claude)),
         )
         .unwrap();
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, false).await.expect("enter");
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_eq!(pool_state(), pool);
     }
@@ -4651,7 +5033,7 @@ model_provider = "c"
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &pool_rows(), "a").await;
-        enter(&state, &AppType::Claude).await.expect("enter");
+        enter(&state, &AppType::Claude, true).await.expect("enter");
         set_member(&state, "kimi", true).await;
 
         let mut kimi = state
@@ -4673,7 +5055,7 @@ model_provider = "c"
             .unwrap()
             .is_none());
         let pool = pool_state();
-        assert!(pool.members.is_empty());
+        assert_eq!(pool.members, vec!["a"]);
         assert_eq!(pool.key_of("kimi"), Some("kimi"), "the key stays taken");
     }
 
@@ -4712,8 +5094,8 @@ model_provider = "c"
     async fn set_codex_member(state: &AppState, id: &str, enabled: bool) -> Vec<PoolMemberView> {
         set_pool_member(state, &AppType::Codex, id, enabled)
             .await
-            .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"))
-            .members
+            .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"));
+        pool_views(state, &AppType::Codex).unwrap().members
     }
 
     fn codex_catalog() -> Value {
@@ -4726,7 +5108,7 @@ model_provider = "c"
         let _home = Home::new();
         seed_codex("approval_policy = \"on-request\"\n", None);
         let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, true).await.expect("enter");
         let plain_text = codex_text();
         let plain_contract = mode(&AppType::Codex).contract.unwrap();
         assert_eq!(
@@ -4734,8 +5116,10 @@ model_provider = "c"
             Some(200000)
         );
 
+        // 默认那家（a）在名单最前面，不发布。
         let views = set_codex_member(&state, "deepseek", true).await;
-        assert_eq!(views[0].model_ids, vec!["ccs-deepseek/deepseek-v4-pro"]);
+        assert!(views[0].route);
+        assert_eq!(views[1].model_ids, vec!["ccs-deepseek/deepseek-v4-pro"]);
         let doc = codex_doc();
         assert_eq!(
             doc["model"].as_str(),
@@ -4761,7 +5145,8 @@ model_provider = "c"
         assert_eq!(route["priority"], 1);
         assert_eq!(route["context_window"], 200000);
         assert_eq!(route["auto_compact_token_limit"], 150000);
-        assert_eq!(route["comp_hash"], "cc-switch");
+        // 路由那家的行保持模板的值（这里模板没有），附加第一家不会让路由上的会话被压缩。
+        assert_eq!(route["comp_hash"], Value::Null);
         assert_eq!(attached["priority"], 2);
         assert_eq!(attached["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
         // DeepSeek 官方目录的 "3000" 不带过来，窗口按它自己的行算。
@@ -4774,7 +5159,7 @@ model_provider = "c"
 
         // 没有配置模型目录的行只发布它的 `model`。
         let views = set_codex_member(&state, "zhipu", true).await;
-        assert_eq!(views[1].model_ids, vec!["ccs-zhipu/gpt-zhipu"]);
+        assert_eq!(views[2].model_ids, vec!["ccs-zhipu/gpt-zhipu"]);
         let slugs: Vec<String> = codex_catalog()["models"]
             .as_array()
             .unwrap()
@@ -4790,7 +5175,7 @@ model_provider = "c"
             ]
         );
 
-        // 名单清空：config.toml 和契约回到没有附加模型时的样子。
+        // 只剩默认那家：config.toml 和契约回到没有附加模型时的样子。
         set_codex_member(&state, "deepseek", false).await;
         set_codex_member(&state, "zhipu", false).await;
         assert_eq!(codex_text(), plain_text);
@@ -4800,6 +5185,153 @@ model_provider = "c"
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    /// 路由那家自己管理模型目录文件：附加模型发布不了，名单照存，结果带提示而不是静默成功。
+    #[tokio::test]
+    #[serial]
+    async fn codex_route_with_its_own_catalog_reports_attached_models_unpublished() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let [_, deepseek, zhipu] = codex_pool_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"/opt/team/models.json\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        let plain_text = codex_text();
+
+        let notice = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+            .await
+            .expect("attach");
+        assert_eq!(notice, Some("routeOwnsCatalog"));
+        assert!(pool_state_of(&AppType::Codex).is_member("deepseek"));
+        assert_eq!(codex_text(), plain_text, "nothing to publish");
+        assert_eq!(
+            pool_views(&state, &AppType::Codex).unwrap().notice,
+            Some("routeOwnsCatalog")
+        );
+
+        // 名单清空后不再提示。
+        let notice = set_pool_member(&state, &AppType::Codex, "deepseek", false)
+            .await
+            .expect("detach");
+        assert_eq!(notice, None);
+    }
+
+    /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_users_own_catalog_pointer_reports_attached_models_unseen() {
+        let _home = Home::new();
+        seed_codex("model_catalog_json = \"/work/global-models.json\"\n", None);
+        let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+
+        let notice = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+            .await
+            .expect("attach");
+        assert_eq!(notice, Some("configOwnsCatalog"));
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("/work/global-models.json")
+        );
+
+        // 用户删掉自己的指针，下一次写入换上 CC Switch 的目录，不再提示。
+        let without =
+            codex_text().replace("model_catalog_json = \"/work/global-models.json\"\n", "");
+        fs::write(codex_config_path(), without).unwrap();
+        let notice = set_pool_member(&state, &AppType::Codex, "zhipu", true)
+            .await
+            .expect("attach zhipu");
+        assert_eq!(notice, None);
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+    }
+
+    /// 普通保存入口（不带编辑器底）改了附加那家的模型目录：合并目录跟着重算。
+    #[tokio::test]
+    #[serial]
+    async fn editing_an_attached_codex_provider_rewrites_the_catalog() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+
+        let mut deepseek = state
+            .db
+            .get_provider_by_id("deepseek", "codex")
+            .unwrap()
+            .unwrap();
+        deepseek.settings_config["modelCatalog"] = json!({ "models": [
+            { "model": "deepseek-v5" }
+        ]});
+        ProviderService::update(&state, AppType::Codex, None, deepseek).expect("update deepseek");
+        let slugs: Vec<String> = codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(slugs, vec!["gpt-a", "ccs-deepseek/deepseek-v5"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_broken_attached_provider_is_skipped_and_cannot_be_attached() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let mut rows = codex_pool_rows().to_vec();
+        let mut broken = codex_native("broken", "https://b.example/v1", "", None);
+        broken.settings_config["config"] = json!("model = [\n");
+        rows.push(broken);
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+
+        // 配置解析不了的行不能附加，什么都不改。
+        let error = set_pool_member(&state, &AppType::Codex, "broken", true)
+            .await
+            .unwrap_err();
+        assert!(!error.partial);
+        assert_eq!(pool_state_of(&AppType::Codex).members, vec!["a"]);
+
+        // 附加之后才坏掉（比如云同步直接换了行）：只跳过这一家，其余照常发布，
+        // 重写和换路由都不受影响。
+        set_codex_member(&state, "deepseek", true).await;
+        set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(
+            catalog_slugs(),
+            vec![
+                "gpt-a",
+                "ccs-deepseek/deepseek-v4-pro",
+                "ccs-zhipu/gpt-zhipu"
+            ]
+        );
+        let mut zhipu = state
+            .db
+            .get_provider_by_id("zhipu", "codex")
+            .unwrap()
+            .unwrap();
+        zhipu.settings_config["config"] = json!("model = [\n");
+        state.db.save_provider("codex", &zhipu).unwrap();
+        resync_route(&state, &AppType::Codex).await.expect("resync");
+        assert_eq!(
+            catalog_slugs(),
+            vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]
+        );
+        switch_route(&state, &AppType::Codex, "deepseek")
+            .await
+            .expect("switch route");
+        assert_eq!(
+            mode(&AppType::Codex).proxy_route.as_deref(),
+            Some("deepseek")
+        );
     }
 
     #[tokio::test]
@@ -4832,12 +5364,14 @@ model_provider = "c"
         login as chatgpt, native_models, Calls, Fake,
     };
     use crate::services::provider::codex_official_models::{self as official_models, Fetch};
+    use crate::services::subscription::CodexKeychainLogin;
 
     /// 换上假的官方接口；结束时换回来。
     struct FakeModels {
         calls: Calls,
         now: Arc<std::sync::Mutex<u64>>,
         responses: Arc<std::sync::Mutex<Vec<Fetch>>>,
+        keychain_reads: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl Drop for FakeModels {
@@ -4850,20 +5384,34 @@ model_provider = "c"
 
     fn fake_models(
         responses: Vec<Fetch>,
-        keychain: Option<Value>,
+        keychain: CodexKeychainLogin,
+        on_fetch: Option<Box<dyn Fn() + Send + Sync>>,
+    ) -> FakeModels {
+        fake_models_sharing(
+            responses,
+            Arc::new(std::sync::Mutex::new(keychain)),
+            on_fetch,
+        )
+    }
+
+    /// 同 [`fake_models`]，钥匙串由调用方持有，可以在拉取时换掉。
+    fn fake_models_sharing(
+        responses: Vec<Fetch>,
+        keychain: Arc<std::sync::Mutex<CodexKeychainLogin>>,
         on_fetch: Option<Box<dyn Fn() + Send + Sync>>,
     ) -> FakeModels {
         let calls: Calls = Arc::default();
         let now = Arc::new(std::sync::Mutex::new(NOW));
         let responses = Arc::new(std::sync::Mutex::new(responses));
+        let keychain_reads: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
         Fake {
             version: Some("0.158.0".to_string()),
             responses: responses.clone(),
             bundled: None,
             keychain,
+            keychain_reads: keychain_reads.clone(),
             now: now.clone(),
             calls: calls.clone(),
-            notify: None,
             on_fetch,
         }
         .install();
@@ -4871,6 +5419,7 @@ model_provider = "c"
             calls,
             now,
             responses,
+            keychain_reads,
         }
     }
 
@@ -4905,10 +5454,10 @@ model_provider = "c"
         let alice = chatgpt("ws", "alice");
         seed_codex("", Some(&alice));
         let auth_bytes = fs::read(codex_auth_path()).unwrap();
-        let fake = fake_models(vec![official_list(&[])], None, None);
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
         let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, true).await.expect("enter");
         assert!(
             fake.calls.lock().unwrap().is_empty(),
             "no attached models, no fetch"
@@ -4959,6 +5508,50 @@ model_provider = "c"
         assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
     }
 
+    /// 列表变了而重写失败（这里是 config.toml 恰好解析不了）：缓存已经是新的，下一次检查
+    /// 不再联网、拿到的也不会是「列表变了」，但仍按缓存补写客户端文件。
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_failed_rewrite_after_a_refresh_is_retried_at_the_next_check() {
+        let _home = Home::new();
+        seed_codex("", Some(&chatgpt("ws", "alice")));
+        let fetches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let break_config: Box<dyn Fn() + Send + Sync> = {
+            let fetches = fetches.clone();
+            Box::new(move || {
+                // 第二次拉取（后台刷新）时 config.toml 恰好坏了。
+                if fetches.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                    fs::write(codex_config_path(), "model = [\n").unwrap();
+                }
+            })
+        };
+        let fake = fake_models(
+            vec![official_list(&[]), official_list(&[("gpt-6-luna", 5)])],
+            CodexKeychainLogin::Missing,
+            Some(break_config),
+        );
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        let good = codex_text();
+
+        *fake.now.lock().unwrap() = NOW + 7 * 3600;
+        check_codex_official_models(&state).await;
+        assert_eq!(fake.calls.lock().unwrap().len(), 2);
+        assert!(!catalog_slugs().contains(&"gpt-6-luna".to_string()));
+
+        fs::write(codex_config_path(), &good).unwrap();
+        check_codex_official_models(&state).await;
+        assert_eq!(fake.calls.lock().unwrap().len(), 2, "the cache is fresh");
+        assert!(catalog_slugs().contains(&"gpt-6-luna".to_string()));
+
+        // 补写成功后标记清掉：再检查什么都不做。
+        let written = codex_text();
+        check_codex_official_models(&state).await;
+        assert_eq!(codex_text(), written);
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_a_login_that_changes_before_the_write_stops_it() {
@@ -4967,14 +5560,14 @@ model_provider = "c"
         // 拿锁前按 alice 取了列表，之后 Codex 恰好换成同一工作区的 bob 登录。
         let _fake = fake_models(
             vec![official_list(&[])],
-            None,
+            CodexKeychainLogin::Missing,
             Some(Box::new(|| {
                 fs::write(codex_auth_path(), chatgpt("ws", "bob").to_string()).unwrap();
             })),
         );
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
         let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, true).await.expect("enter");
         let before = codex_text();
 
         let error = set_pool_member(&state, &AppType::Codex, "deepseek", true)
@@ -4984,6 +5577,45 @@ model_provider = "c"
         assert_eq!(codex_text(), before);
         assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
         assert!(pool_state_of(&AppType::Codex).members.is_empty());
+    }
+
+    /// 钥匙串不归写锁管：按 alice 取列表的时候 Codex 在钥匙串里换成了 bob，不能把 alice
+    /// 的列表写给 bob。
+    #[tokio::test]
+    #[serial]
+    async fn codex_a_keychain_login_that_changes_during_the_fetch_stops_the_write() {
+        let _home = Home::new();
+        seed_codex("cli_auth_credentials_store = \"keyring\"\n", None);
+        let keychain = Arc::new(std::sync::Mutex::new(CodexKeychainLogin::Found(chatgpt(
+            "ws", "alice",
+        ))));
+        let switched = keychain.clone();
+        let fake = fake_models_sharing(
+            vec![official_list(&[])],
+            keychain,
+            Some(Box::new(move || {
+                *switched.lock().unwrap() = CodexKeychainLogin::Found(chatgpt("ws", "bob"));
+            })),
+        );
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        let before = codex_text();
+
+        let error = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+            .await
+            .expect_err("login changed");
+        assert!(!error.partial, "{}", error.message);
+        assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:alice");
+        assert_eq!(codex_text(), before);
+        assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
+        assert!(pool_state_of(&AppType::Codex).members.is_empty());
+
+        // 重试按 bob 重新取。
+        *fake.responses.lock().unwrap() = vec![official_list(&[])];
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(fake.calls.lock().unwrap()[1].0, "ws|sub:bob");
+        assert!(catalog_slugs().contains(&"gpt-6-sol".to_string()));
     }
 
     #[tokio::test]
@@ -4997,11 +5629,52 @@ model_provider = "c"
             "cli_auth_credentials_store = \"keyring\"\n",
             Some(&chatgpt("ws", "alice")),
         );
-        let fake = fake_models(vec![official_list(&[])], Some(chatgpt("ws", "bob")), None);
+        let fake = fake_models(
+            vec![official_list(&[])],
+            CodexKeychainLogin::Found(chatgpt("ws", "bob")),
+            None,
+        );
         let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
         assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:bob");
+        // 预测登录读一次，取完列表再读一次给拿锁后的核对用；写锁里不读。
+        assert_eq!(
+            fake.keychain_reads
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        exit(&state, &AppType::Codex).await.expect("exit");
+        set_codex_member(&state, "deepseek", false).await;
+        drop(fake);
+
+        // auto：钥匙串读不出来（Windows、Linux，或访问被拒）时不知道 Codex 用的是谁，
+        // 不拿 auth.json 里的 alice 顶替。
+        seed_codex(
+            "cli_auth_credentials_store = \"auto\"\n",
+            Some(&chatgpt("ws", "alice")),
+        );
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Unknown, None);
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert!(fake.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            pool_views(&state, &AppType::Codex).unwrap().notice,
+            Some("officialModelsUnavailable")
+        );
+        exit(&state, &AppType::Codex).await.expect("exit");
+        set_codex_member(&state, "deepseek", false).await;
+        drop(fake);
+
+        // auto：钥匙串里确定没有，Codex 退回 auth.json。
+        seed_codex(
+            "cli_auth_credentials_store = \"auto\"\n",
+            Some(&chatgpt("ws", "alice")),
+        );
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:alice");
         exit(&state, &AppType::Codex).await.expect("exit");
         set_codex_member(&state, "deepseek", false).await;
         drop(fake);
@@ -5011,8 +5684,8 @@ model_provider = "c"
             "cli_auth_credentials_store = \"ephemeral\"\n",
             Some(&chatgpt("ws", "alice")),
         );
-        let fake = fake_models(vec![official_list(&[])], None, None);
-        enter(&state, &AppType::Codex).await.expect("enter");
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
+        enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
         assert!(fake.calls.lock().unwrap().is_empty());
         assert!(codex_doc().get("model_catalog_json").is_none());
@@ -5028,13 +5701,13 @@ model_provider = "c"
         let _home = Home::new();
         set_preservation(false);
         seed_codex("", Some(&chatgpt("ws", "alice")));
-        let fake = fake_models(vec![official_list(&[])], None, None);
+        let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
         let state = state_with(AppType::Codex, &codex_official_pool_rows(), "a").await;
         // 直连切到第三方：登录存进暂存，auth.json 删掉。
         ProviderService::switch(&state, AppType::Codex, "a").expect("direct a");
         assert!(!codex_auth_path().exists());
         set_codex_member(&state, "deepseek", true).await;
-        enter(&state, &AppType::Codex).await.expect("enter");
+        enter(&state, &AppType::Codex, true).await.expect("enter");
         assert!(fake.calls.lock().unwrap().is_empty(), "third-party route");
 
         // 换路由到官方卡：auth.json 会从暂存还回 alice，列表按 alice 取。

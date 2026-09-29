@@ -101,7 +101,7 @@ export function useSetProxyPoolMember() {
       providerId: string;
       enabled: boolean;
     }) => proxyApi.setProxyPoolMember(appType, providerId, enabled),
-    onSuccess: (data, variables) => {
+    onSuccess: (notice, variables) => {
       toast.success(
         t("provider.poolSaved", {
           client: getAppLabel(variables.appType),
@@ -113,8 +113,8 @@ export function useSetProxyPoolMember() {
           closeButton: true,
         },
       );
-      if (data.notice) {
-        toast.warning(t(`provider.${data.notice}`), { closeButton: true });
+      if (notice) {
+        toast.warning(t(`provider.${notice}`), { closeButton: true });
       }
     },
     onError: (error: unknown) => {
@@ -146,8 +146,15 @@ export function useSetProxyTakeoverForApp() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
-      proxyApi.setProxyTakeoverForApp(appType, enabled),
+    mutationFn: ({
+      appType,
+      enabled,
+      pool = false,
+    }: {
+      appType: string;
+      enabled: boolean;
+      pool?: boolean;
+    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, pool),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
       // 进出路由模式会改「当前」显示的供应商（路由模式下是路由到的那家）。

@@ -12,6 +12,12 @@ const TAURI_ENDPOINT = "http://tauri.local";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+/** 某张卡片最近一次渲染拿到的 props。 */
+const lastProps = (id: string) =>
+  providerCardRenderSpy.mock.calls
+    .map((call) => call[0])
+    .filter((props) => props.provider.id === id)
+    .at(-1);
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -297,17 +303,12 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    const lastProps = (id: string) =>
-      providerCardRenderSpy.mock.calls
-        .map((call) => call[0])
-        .filter((props) => props.provider.id === id)
-        .at(-1);
     await waitFor(() => expect(lastProps("a")?.isDirectProvider).toBe(true));
     expect(lastProps("b")?.isCurrent).toBe(true);
     expect(lastProps("b")?.isDirectProvider).toBe(false);
   });
 
-  it("offers attached models for third-party providers in Claude routing mode", async () => {
+  it("turns cards into add / remove / set-as-default in Claude attached mode", async () => {
     const route = createProvider({ id: "route", name: "Route" });
     const kimi = createProvider({ id: "kimi", name: "Kimi" });
     const other = createProvider({ id: "other", name: "Other" });
@@ -325,11 +326,17 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
         HttpResponse.json({
+          active: true,
           members: [
             {
+              providerId: "route",
+              modelIds: ["ccs-claude-route--route-1"],
+              route: true,
+            },
+            {
               providerId: "kimi",
-              key: "kimi",
               modelIds: ["ccs-claude-kimi--kimi-k3"],
+              route: false,
             },
           ],
         }),
@@ -338,7 +345,7 @@ describe("ProviderList Component", () => {
         `${TAURI_ENDPOINT}/set_proxy_pool_member`,
         async ({ request }) => {
           setCalls.push(await request.json());
-          return HttpResponse.json({ members: [] });
+          return HttpResponse.json(null);
         },
       ),
     );
@@ -358,20 +365,19 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    const lastProps = (id: string) =>
-      providerCardRenderSpy.mock.calls
-        .map((call) => call[0])
-        .filter((props) => props.provider.id === id)
-        .at(-1);
-    await waitFor(() => expect(lastProps("kimi")?.isPoolMember).toBe(true));
-    expect(lastProps("kimi")?.poolModelIds).toEqual([
+    await waitFor(() => expect(lastProps("kimi")?.isPoolMode).toBe(true));
+    expect(lastProps("kimi")?.poolMember?.modelIds).toEqual([
       "ccs-claude-kimi--kimi-k3",
     ]);
-    expect(lastProps("other")?.isPoolMember).toBe(false);
+    expect(lastProps("other")?.poolMember).toBeUndefined();
     expect(lastProps("other")?.onTogglePool).toBeTypeOf("function");
-    // 路由那家的模型已经在默认路由里；官方账号不能附加。
-    expect(lastProps("route")?.onTogglePool).toBeUndefined();
+    // 默认那家也在名单里（移除按钮由卡片禁用）；官方账号不能添加。
+    expect(lastProps("route")?.poolMember?.route).toBe(true);
+    expect(lastProps("route")?.onTogglePool).toBeTypeOf("function");
     expect(lastProps("official")?.onTogglePool).toBeUndefined();
+    // 附加模式不做故障转移。
+    expect(lastProps("kimi")?.onToggleFailover).toBeUndefined();
+    expect(lastProps("kimi")?.isAutoFailoverEnabled).toBe(false);
 
     lastProps("kimi")?.onTogglePool(false);
     await waitFor(() => expect(setCalls).toHaveLength(1));
@@ -382,7 +388,54 @@ describe("ProviderList Component", () => {
     });
   });
 
-  it("offers attached models in Codex routing mode but never for ChatGPT accounts", async () => {
+  it("keeps routing-mode cards when attached mode is off", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    const kimi = createProvider({ id: "kimi", name: "Kimi" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, kimi],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [
+            {
+              providerId: "kimi",
+              modelIds: ["ccs-claude-kimi--kimi-k3"],
+              route: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, kimi }}
+        currentProviderId="route"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    // 名单留着，但路由模式下不显示：没有添加 / 移除，照常有故障转移。
+    await waitFor(() =>
+      expect(lastProps("kimi")?.onToggleFailover).toBeTypeOf("function"),
+    );
+    expect(lastProps("kimi")?.isPoolMode).toBe(false);
+    expect(lastProps("kimi")?.poolMember).toBeUndefined();
+    expect(lastProps("kimi")?.onTogglePool).toBeUndefined();
+  });
+
+  it("never lets ChatGPT accounts be added in Codex attached mode", async () => {
     const thirdParty = (id: string) =>
       createProvider({
         id,
@@ -416,11 +469,17 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
         HttpResponse.json({
+          active: true,
           members: [
             {
+              providerId: "route",
+              modelIds: ["ccs-route/gpt-route"],
+              route: true,
+            },
+            {
               providerId: "deepseek",
-              key: "deepseek",
               modelIds: ["ccs-deepseek/deepseek-v4-pro"],
+              route: false,
             },
           ],
           notice: "officialModelsBundled",
@@ -430,7 +489,7 @@ describe("ProviderList Component", () => {
         `${TAURI_ENDPOINT}/set_proxy_pool_member`,
         async ({ request }) => {
           setCalls.push(await request.json());
-          return HttpResponse.json({ members: [] });
+          return HttpResponse.json(null);
         },
       ),
     );
@@ -449,16 +508,14 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    const lastProps = (id: string) =>
-      providerCardRenderSpy.mock.calls
-        .map((call) => call[0])
-        .filter((props) => props.provider.id === id)
-        .at(-1);
-    await waitFor(() => expect(lastProps("deepseek")?.isPoolMember).toBe(true));
+    await waitFor(() =>
+      expect(lastProps("deepseek")?.poolMember).toBeDefined(),
+    );
     expect(lastProps("deepseek")?.onTogglePool).toBeTypeOf("function");
     // 官方模型列表暂未取到：成员卡片带上提示。
     expect(lastProps("deepseek")?.poolNotice).toBe("officialModelsBundled");
-    expect(lastProps("route")?.onTogglePool).toBeUndefined();
+    // 官方账号在附加模式下只能设为默认。
+    expect(lastProps("managed")?.isPoolMode).toBe(true);
     expect(lastProps("managed")?.onTogglePool).toBeUndefined();
 
     lastProps("deepseek")?.onTogglePool(false);
@@ -470,7 +527,7 @@ describe("ProviderList Component", () => {
     });
   });
 
-  it("hides attached models outside routing mode and for apps without them", async () => {
+  it("hides attached mode outside proxy mode and for apps without it", async () => {
     const provider = createProvider({ id: "a", name: "A" });
     useDragSortMock.mockReturnValue({
       sortedProviders: [provider],
@@ -481,7 +538,7 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () => {
         poolReads += 1;
-        return HttpResponse.json({ members: [] });
+        return HttpResponse.json({ active: true, members: [] });
       }),
     );
 
@@ -505,8 +562,9 @@ describe("ProviderList Component", () => {
         />,
       );
       const props = providerCardRenderSpy.mock.calls.at(-1)?.[0];
+      expect(props?.isPoolMode, appId).toBe(false);
       expect(props?.onTogglePool, appId).toBeUndefined();
-      expect(props?.isPoolMember, appId).toBe(false);
+      expect(props?.poolMember, appId).toBeUndefined();
       unmount();
     }
     expect(poolReads).toBe(0);
