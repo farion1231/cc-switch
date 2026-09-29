@@ -1110,6 +1110,50 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 从一份 codex provider 的 config TOML 里判定它归属的 **TOML 表 id**。
+///
+/// 这与 cc-switch 自己的 **provider id** 是两个不同的东西，必须分清：
+/// kaixuan bundle 的 provider id 是 `kaixuan-kxpms` / `kaixuan-local-8782`，
+/// 而写进 `[model_providers.*]` 的表 id 是 `kxpms` / `local8782`。
+/// `@<id>` 后缀携带的是**表 id**（catalog 的 slug 就用它拼），所以任何按
+/// 后缀找目标 provider 的地方都必须比这个，不能比 `provider.id`。
+///
+/// 判定顺序与 `collect_codex_catalog_source_for_provider` 保持一致：
+/// ① 顶层 `model_provider`；② 回退「唯一一张非 `custom` 的自定义表」。
+pub fn codex_provider_toml_id(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    if let Some(id) = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        return Some(id.to_string());
+    }
+    let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
+    let ids: Vec<&str> = mp
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| is_custom_codex_model_provider_id(id))
+        .filter(|id| *id != "custom")
+        .collect();
+    match ids.as_slice() {
+        [only] => Some((*only).to_string()),
+        [] => {
+            let legacy: Vec<&str> = mp
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| *id == "custom")
+                .collect();
+            match legacy.as_slice() {
+                [only] => Some((*only).to_string()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     // Exact match, mirroring upstream: both the built-in provider lookup and
     // validate_reserved_model_provider_ids are case-sensitive, so `OpenAI`
@@ -2690,6 +2734,17 @@ fn append_endpoint_suffixed_entries(
             continue;
         };
         if Some(toml_id) == active_toml_id.as_deref() {
+            continue;
+        }
+        // `custom` 是第四轮为兼容老 session 留的**别名**（RFC 0002 §2.4b），一义多指、
+        // 不算独立端点。第三方 OpenAI 兼容预设的表 id 常常就是 `custom`，若放行就会
+        // 写出 `slug@custom` 这种**不可路由**的条目：proxy 侧明确拒绝 `custom` 作
+        // 为分发目标，而网关收到 `claude-opus-5@custom` 会 404 或静默回退到别的
+        // 模型。别名在 catalog 侧就该被剔除，而不是等到请求时才发现。
+        if toml_id == "custom" {
+            log::warn!(
+                "同 slug catalog 合并：跳过 custom（legacy 兼容别名，非独立端点，RFC 0002 §2.4b）"
+            );
             continue;
         }
         let Some(models) = endpoint.get("models").and_then(Value::as_array) else {
@@ -9211,6 +9266,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
         // developer's real machine (observed 2026-09-28: a 4 KB live config with notify /
         // mcp_servers / plugins / projects was replaced by this test's 303-byte fixture).
         // HOME is set too because the settings store and `dirs::home_dir()` fallbacks follow it.
+        // 全 crate 共享 env 锁，**必须早于下面任何 env 写入**拿到。
+        // 否则抢锁期间别的测试可能正把 HOME 还原，本测试等到的就是真实 HOME——
+        // 第三轮正是因为「先 set_var 后取锁」而写坏过用户真实的 ~/.codex/config.toml。
+        let env_guard = crate::test_support::env_guard();
         let prev_home = [
             std::env::var("CODEX_HOME").ok(),
             std::env::var("CC_SWITCH_TEST_HOME").ok(),
@@ -9247,7 +9306,6 @@ model_catalog_json = "cc-switch-model-catalog.json"
                 // env_guard 在字段 drop 顺序里最后释放。
             }
         }
-        let env_guard = crate::test_support::env_guard();
         let _restore = RestoreEnv {
             prev: prev_home,
             env_guard,

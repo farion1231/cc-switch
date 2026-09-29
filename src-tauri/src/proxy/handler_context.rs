@@ -212,11 +212,31 @@ impl RequestContext {
                     (None, original) => (None, original.to_string()),
                 };
             if let Some(toml_id) = suffix_target {
+                // 比的是 **TOML 表 id**，不是 cc-switch 的 provider id。两者是不同的
+                // 东西：kaixuan bundle 的 provider id 是 `kaixuan-kxpms`，而 catalog
+                // slug 里带的是表 id `kxpms`。按 provider.id 匹配会让真实用户永远
+                // 匹配不上（而用 id==toml_id 造夹具的测试却是绿的）。
+                let provider_toml_id = |p: &Provider| -> Option<String> {
+                    p.settings_config
+                        .get("config")
+                        .and_then(|v| v.as_str())
+                        .and_then(crate::codex_config::codex_provider_toml_id)
+                };
                 if toml_id == "custom" {
-                    log::warn!(
-                        "[{tag}] @custom 是四轮引入的 legacy 别名（RFC 0002 §2.4b），不作为独立目标；忽略后缀"
+                    // `custom` 是第四轮为兼容老 session 留的**别名**（RFC 0002 §2.4b），
+                    // 一义多指，不算独立端点。这里既不能分发，也不能把字面量
+                    // `xxx@custom` 原样发上游——那等于请求一个不存在的模型名，
+                    // 网关会 404 或静默回退到别的模型。直接报错。
+                    log::error!(
+                        "[{tag}] model '{suffix_stripped}@{toml_id}' 的后缀指向 legacy 别名 custom，不作为独立端点"
                     );
-                } else if let Some(idx) = providers.iter().position(|p| p.id == toml_id) {
+                    return Err(ProxyError::ConfigError(format!(
+                        "model '{suffix_stripped}@{toml_id}' 无法路由：custom 是兼容别名，不是独立端点"
+                    )));
+                } else if let Some(idx) = providers
+                    .iter()
+                    .position(|p| provider_toml_id(p).as_deref() == Some(toml_id.as_str()))
+                {
                     let target = providers[idx].clone();
                     let mut reordered = Vec::with_capacity(providers.len());
                     reordered.push(target.clone());
@@ -247,11 +267,24 @@ impl RequestContext {
                     //
                     // 查不到则**直接报错**，绝不回退到 active：catalog 里能看见的
                     // 条目必须真的可达，够不着的应该让用户看见。
+                    // 故障转移关闭时链里只有当前 provider，所以要回 DB **按 TOML 表 id
+                    // 扫一遍**（不是 `get_provider_by_id(toml_id)`——那是 provider id）。
                     let resolved = state
                         .db
-                        .get_provider_by_id(&toml_id, app_type_str)
+                        .get_all_providers(app_type_str)
                         .ok()
-                        .flatten();
+                        .and_then(|all| {
+                            all.into_iter()
+                                .find(|(_, p)| {
+                                    p.settings_config
+                                        .get("config")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(crate::codex_config::codex_provider_toml_id)
+                                        .as_deref()
+                                        == Some(toml_id.as_str())
+                                })
+                                .map(|(_, p)| p)
+                        });
                     match resolved {
                         Some(target) => {
                             provider = target.clone();
@@ -667,14 +700,23 @@ mod tests {
         (format!("http://{addr}/v1"), rx)
     }
 
-    fn codex_provider(id: &str, base_url: &str, api_key: &str) -> Provider {
+    /// 按**生产真实形状**造一个 codex provider。
+    ///
+    /// 注意 `provider_id` 与 **TOML 表 id 是两个不同的东西**：kaixuan bundle 的
+    /// provider id 是 `kaixuan-kxpms` / `kaixuan-local-8782`，而写进
+    /// `[model_providers.*]` 的表 id 是 `kxpms` / `local8782`，而 `@<id>` 后缀
+    /// 携带的是**表 id**。
+    ///
+    /// 第一版夹具把两者设成同一个值，于是「按 provider.id 匹配后缀」这个错误
+    /// 在测试里是绿的、在真实用户那里永远匹配不上。这里刻意保持分离。
+    fn codex_provider(provider_id: &str, toml_id: &str, base_url: &str, api_key: &str) -> Provider {
         Provider::with_id(
-            id.to_string(),
-            id.to_string(),
+            provider_id.to_string(),
+            provider_id.to_string(),
             serde_json::json!({
                 "config": format!(
-                    "model_provider = \"{id}\"\n\n[model_providers.{id}]\n\
-                     name = \"{id}_gateway\"\nbase_url = \"{base_url}\"\n\
+                    "model_provider = \"{toml_id}\"\n\n[model_providers.{toml_id}]\n\
+                     name = \"{toml_id}_gateway\"\nbase_url = \"{base_url}\"\n\
                      wire_api = \"responses\"\nrequires_openai_auth = true\n"
                 ),
                 "auth": {"OPENAI_API_KEY": api_key},
@@ -723,15 +765,15 @@ mod tests {
         let db2 = db.clone();
         db.save_provider(
             AppType::Codex.as_str(),
-            &codex_provider("kxpms", &kxpms_base, "sk-kxpms-only"),
+            &codex_provider("kaixuan-kxpms", "kxpms", &kxpms_base, "sk-kxpms-only"),
         )
         .map_err(|e| e.to_string())?;
         db.save_provider(
             AppType::Codex.as_str(),
-            &codex_provider("local8782", &local_base, "sk-local-only"),
+            &codex_provider("kaixuan-local-8782", "local8782", &local_base, "sk-local-only"),
         )
         .map_err(|e| e.to_string())?;
-        db.set_current_provider(AppType::Codex.as_str(), "kxpms")
+        db.set_current_provider(AppType::Codex.as_str(), "kaixuan-kxpms")
             .map_err(|e| e.to_string())?;
 
         // 关掉故障转移，确保「打到 local8782」只能由后缀分发解释，而不是队列顺序

@@ -872,3 +872,62 @@ CI 日志泄露风险）。改为先经 `redact_secrets_in_config` 打码再比�
 
 - `cargo test --lib` —— **3041 passed / 0 failed / 10 ignored**（含新端到端用例）。
 - 全量跑前后真实库 `providers` 计数 28 → 28。
+
+### 8. 外部审计抓出的三处真实缺口（已修）
+
+审计对本轮产出做了独立核查，抓出三处**我此前漏掉**的问题。都不是理论风险，
+是能对上真实用户路径的。
+
+#### 8.1 ⚠️ 分发按 provider id 匹配，但后缀携带的是 TOML 表 id
+
+kaixuan bundle 的 **provider id** 是 `kaixuan-kxpms` / `kaixuan-local-8782`，
+而写进 `[model_providers.*]` 的 **TOML 表 id** 是 `kxpms` / `local8782`。
+`@<id>` 后缀携带的是**表 id**（catalog slug 就用它拼），而我的分发却写的是
+`providers.iter().position(|p| p.id == toml_id)` —— 按 **provider id** 比。
+真实用户那里**永远匹配不上**。
+
+之所以测试是绿的：我的端到端夹具把两者设成了同一个值。**夹具用了生产不存在的
+形状，把 bug 藏住了。**
+
+修法：
+- `codex_config::codex_provider_toml_id(config_text)` 抽出「顶层 `model_provider`
+  → 回退唯一一张非 `custom` 自定义表」的判定（与 catalog 侧同一套判据）；
+- 链内匹配与 DB 直取都改用这个 TOML 表 id；
+- 端到端夹具改成生产真实形状（`kaixuan-kxpms` ↔ `kxpms` 分离）。
+
+**变异验证**：把链内与 DB 两处都改回按 `provider.id` 匹配，测试立刻红，且报出的
+正是真实用户症状：
+
+```
+proxy 返回 400: model 'claude-opus-5@local8782' 指向的端点不存在（provider id=local8782）
+```
+
+#### 8.2 `@custom` 被忽略，但字面量仍被转发上游
+
+第四轮为兼容老 session 留了 `custom` 别名（RFC 0002 §2.4b），分发代码遇到
+`@custom` 只 `log::warn` 后**跳过**，于是 `endpoint_dispatch` 保持 `None`，
+`claude-opus-5@custom` **原样发给上游**——等于请求一个不存在的模型名，网关会 404
+或静默回退到别的模型。
+
+而这条路径**因本轮把开关默认开而变得可达**：第三方 OpenAI 兼容预设的表 id 常常
+就是 `custom`（`live.rs:920-928` 的回退分支会把它判成 toml_id），
+`append_endpoint_suffixed_entries` 只跳过 *active* id，于是非 active 的
+`custom` 端点模型被写成 `slug@custom`。
+
+两处都修：
+- **catalog 侧**：`custom` 是别名不是独立端点，直接跳过不写出该条目；
+- **proxy 侧**：收到 `@custom` 直接报错，不分发、也不转发字面量。
+
+#### 8.3 两处「先改 env 再取锁」的同型残留
+
+- `services::provider::tests::TempHome`（15 个调用点）写 `HOME`/`USERPROFILE`/
+  `CC_SWITCH_TEST_HOME`/`XDG_CONFIG_HOME` 却没有持锁 → 加 `EnvGuard` 字段，
+  构造时**先取锁再改 env**；
+- `codex_config::tests::self_hosted_gateway_presets_round_trip_through_catalog_pipeline`
+  在 `set_var` + `reload_settings()` 之后才取锁 → 把取锁上移到读 `prev_home` 之前。
+
+两者与 §第五轮 2 是同一个根因，只是当时只扫了 `provider_bundle`。
+
+**教训**：「根治某个模块的竞态」不等于「根治了竞态」——本轮我扫了 20 个文件改了
+17 个，漏掉的两处恰好是 `TempHome`（结构体式的守卫，不像 `set_var` 那样显眼）
+和一个「取锁写在函数中段」的测试。审计不指出来就不会发现。
