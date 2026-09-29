@@ -27,6 +27,10 @@ import {
   OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
 } from "./helpers/opencodeFormUtils";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import {
+  findRequestHeaderValue,
+  normalizeRequestHeaders,
+} from "./helpers/requestHeaders";
 import { FetchedModelPicker } from "./FetchedModelPicker";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
 
@@ -219,20 +223,36 @@ export function OpenCodeFormFields({
       // Ignore responses for a previous endpoint/key or an unmounted form.
       modelFetchGeneration.current += 1;
     };
-  }, [baseUrl, apiKey]);
+  }, [baseUrl, apiKey, headers]);
 
   const handleFetchModels = useCallback(() => {
-    if (!baseUrl || !apiKey) {
+    const requestHeaders = normalizeRequestHeaders(headers);
+    const hasCredentials =
+      Boolean(apiKey) || Object.keys(requestHeaders).length > 0;
+    if (!baseUrl || !hasCredentials) {
       showFetchModelsError(null, t, {
-        hasApiKey: !!apiKey,
-        hasBaseUrl: !!baseUrl,
+        hasApiKey: hasCredentials,
+        hasBaseUrl: Boolean(baseUrl),
       });
       return;
     }
+
+    const customUserAgent = findRequestHeaderValue(
+      requestHeaders,
+      "user-agent",
+    );
+
     const generation = ++modelFetchGeneration.current;
     setFetchedModels([]);
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      undefined,
+      undefined,
+      customUserAgent,
+      { requestHeaders },
+    )
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
         const models = [
@@ -257,7 +277,7 @@ export function OpenCodeFormFields({
           setIsFetchingModels(false);
         }
       });
-  }, [baseUrl, apiKey, t]);
+  }, [baseUrl, apiKey, headers, t]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
