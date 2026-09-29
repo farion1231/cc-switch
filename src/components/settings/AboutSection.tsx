@@ -604,7 +604,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, [t]);
 
-  // 已通过必要的确认后，各工具并发执行并独立刷新、解锁。
+  // 已通过必要的确认后，各工具独立提交、刷新和解锁；安装写入由后端串行调度。
   const executeRun = useCallback(
     async (toolNames: ToolName[], action: ToolLifecycleAction) => {
       const isBatch = toolNames.length > 1;

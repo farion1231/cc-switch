@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 
@@ -112,7 +113,7 @@ describe("AboutSection concurrent CLI upgrades", () => {
       });
   });
 
-  it("lets different tools preflight and upgrade together while blocking duplicate clicks", async () => {
+  it("lets different tools preflight and submit together while blocking duplicate clicks", async () => {
     const claudeProbe = deferred<ToolInstallationReport[]>();
     const codexProbe = deferred<ToolInstallationReport[]>();
     const claudeRun = deferred<void>();
@@ -157,7 +158,7 @@ describe("AboutSection concurrent CLI upgrades", () => {
     expect(mocks.success).toHaveBeenCalledTimes(2);
   });
 
-  it("upgrades the remaining tools in parallel when a single upgrade is already running", async () => {
+  it("submits the remaining tools while a single upgrade is already running", async () => {
     const runs = new Map(
       ["claude", "codex", "gemini"].map((name) => [name, deferred<void>()]),
     );
@@ -297,7 +298,84 @@ describe("AboutSection concurrent CLI upgrades", () => {
     await act(async () => claudeRun.resolve());
   });
 
-  it("does not block another installation while an upgrade is running", async () => {
+  it.each(["double click", "held Enter", "held Space"])(
+    "does not confirm the next queued plan with a %s",
+    async (gesture) => {
+      const claudeProbe = deferred<ToolInstallationReport[]>();
+      const codexProbe = deferred<ToolInstallationReport[]>();
+      const run = deferred<void>();
+      mocks.probeToolInstallations.mockImplementation(([tool]: string[]) =>
+        tool === "claude" ? claudeProbe.promise : codexProbe.promise,
+      );
+      mocks.runToolLifecycleAction.mockImplementation(() => run.promise);
+      const user = userEvent.setup();
+      await renderAbout();
+      fireEvent.click(updateButton("Claude Code"));
+      fireEvent.click(updateButton("Codex"));
+      await act(async () => {
+        claudeProbe.resolve([report("claude", { needs_confirmation: true })]);
+        codexProbe.resolve([report("codex", { needs_confirmation: true })]);
+      });
+      const confirm = screen.getByRole("button", {
+        name: "settings.toolUpgradeConfirmBtn",
+      });
+      if (gesture === "double click") {
+        await user.dblClick(confirm);
+      } else {
+        confirm.focus();
+        await user.keyboard(
+          gesture === "held Enter" ? "{Enter>3/}" : "[Space>3/]",
+        );
+      }
+      expect(mocks.runToolLifecycleAction.mock.calls).toEqual([
+        [["claude"], "update", {}],
+      ]);
+      expect(
+        within(screen.getByRole("dialog")).getByText("Codex"),
+      ).toBeInTheDocument();
+      if (gesture !== "double click") {
+        expect(
+          screen.getByRole("heading", {
+            name: "settings.toolUpgradeConfirmTitle",
+          }),
+        ).toHaveFocus();
+      }
+      // 第二项仍可通过一次新的、明确的操作正常确认。
+      await user.click(confirm);
+      expect(mocks.runToolLifecycleAction.mock.calls).toEqual([
+        [["claude"], "update", {}],
+        [["codex"], "update", {}],
+      ]);
+      await act(async () => run.resolve());
+    },
+  );
+
+  it("does not cancel the next queued plan with a double click", async () => {
+    const claudeProbe = deferred<ToolInstallationReport[]>();
+    const codexProbe = deferred<ToolInstallationReport[]>();
+    mocks.probeToolInstallations.mockImplementation(([tool]: string[]) =>
+      tool === "claude" ? claudeProbe.promise : codexProbe.promise,
+    );
+    const user = userEvent.setup();
+    await renderAbout();
+    fireEvent.click(updateButton("Claude Code"));
+    fireEvent.click(updateButton("Codex"));
+    await act(async () => {
+      claudeProbe.resolve([report("claude", { needs_confirmation: true })]);
+      codexProbe.resolve([report("codex", { needs_confirmation: true })]);
+    });
+    await user.dblClick(screen.getByRole("button", { name: "common.cancel" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText("Codex"),
+    ).toBeInTheDocument();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(updateButton("Claude Code")).toBeEnabled();
+    expect(updateButton("Codex")).toBeEnabled();
+  });
+
+  it("does not block another installation submission while an upgrade is running", async () => {
     const claudeRun = deferred<void>();
     missing.add("codex");
     mocks.runToolLifecycleAction.mockImplementation(
