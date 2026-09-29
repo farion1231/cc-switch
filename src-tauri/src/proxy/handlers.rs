@@ -1029,6 +1029,7 @@ async fn handle_responses_for_app(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let compaction_request = codex_tool_context.is_compaction_request();
     // Captured before `body` is moved into the forwarder: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
@@ -1086,6 +1087,17 @@ async fn handle_responses_for_app(
         .await;
     }
 
+    // 原生 Responses 第三方的压缩回合：上游只会回普通消息，补上 Codex 要的那个
+    // compaction 条目（请求侧已在 forwarder 改成摘要回合，见 `codex_compaction`）。
+    // 压缩回合不带工具，没有要还原的函数名，所以排在 xAI 改写之前。
+    if compaction_request
+        && matches!(app_type, AppType::Codex)
+        && !super::providers::is_codex_official_provider(&ctx.provider)
+    {
+        return handle_codex_native_compaction_response(response, &ctx, &state, connection_guard)
+            .await;
+    }
+
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
@@ -1108,6 +1120,58 @@ async fn handle_responses_for_app(
         connection_guard,
     )
     .await
+}
+
+/// 在上游 SSE 里补发或改写事件的流式响应：响应体和上游的不一样长了，除了逐跳头还要去掉
+/// Content-Length 等实体头，否则客户端读到上游声明的长度就停，补上的事件一个都收不到。
+/// （SSE 路径请求上游时强制 `accept-encoding: identity`，去掉 Content-Encoding 也安全。）
+fn rewritten_sse_response_builder(
+    status: StatusCode,
+    upstream_headers: &axum::http::HeaderMap,
+) -> axum::http::response::Builder {
+    let mut headers = upstream_headers.clone();
+    strip_entity_headers_for_rebuilt_body(&mut headers);
+    strip_hop_by_hop_response_headers(&mut headers);
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in &headers {
+        builder = builder.header(key, value);
+    }
+    builder
+}
+
+async fn handle_codex_native_compaction_response(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    // 错误体和非流式响应照常透传：Codex 的压缩请求总是流式，错误交给它按原样重试。
+    if !status.is_success() || !response.is_sse() {
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    let builder = rewritten_sse_response_builder(status, response.headers());
+
+    let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
+        response.bytes_stream(),
+    );
+    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+    let logged_stream = create_logged_passthrough_stream(
+        compaction_stream,
+        ctx.tag,
+        usage_collector,
+        ctx.streaming_timeout_config(),
+        connection_guard,
+    );
+
+    builder
+        .body(axum::body::Body::from_stream(logged_stream))
+        .map_err(|e| {
+            log::error!("[{}] 构建压缩回合流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}"))
+        })
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -1377,13 +1441,7 @@ async fn handle_codex_xai_native_responses_rewrite(
     }
 
     if response.is_sse() {
-        let mut response_headers = response.headers().clone();
-        strip_hop_by_hop_response_headers(&mut response_headers);
-
-        let mut builder = axum::response::Response::builder().status(status);
-        for (key, value) in &response_headers {
-            builder = builder.header(key, value);
-        }
+        let builder = rewritten_sse_response_builder(status, response.headers());
 
         let restore_stream =
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
@@ -3039,8 +3097,8 @@ mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        responses_sse_to_response_value, rewritten_sse_response_builder,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use bytes::Bytes;
@@ -3048,6 +3106,31 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    /// 补发了压缩条目的 SSE 比上游声明的长：留着上游的 Content-Length，客户端读到那个
+    /// 长度就停，补上的 compaction 条目和 response.completed 都收不到。
+    #[test]
+    fn rewritten_sse_responses_drop_stale_entity_headers() {
+        use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+        let mut upstream = HeaderMap::new();
+        for (name, value) in [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CONTENT_LENGTH, "421"),
+            (header::CONNECTION, "keep-alive"),
+        ] {
+            upstream.insert(name, HeaderValue::from_static(value));
+        }
+        upstream.insert("x-request-id", HeaderValue::from_static("req_1"));
+
+        let response = rewritten_sse_response_builder(StatusCode::OK, &upstream)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let headers = response.headers();
+        assert!(headers.get(header::CONTENT_LENGTH).is_none());
+        assert!(headers.get(header::CONNECTION).is_none());
+        assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(headers["x-request-id"], "req_1");
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

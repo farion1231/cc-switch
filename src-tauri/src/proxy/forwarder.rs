@@ -10,6 +10,9 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
+    opaque_state_rectifier::{
+        detect_opaque_state_rejection, rectify_opaque_state, OpaqueStateRejection,
+    },
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -237,6 +240,31 @@ impl RequestForwarder {
             && !already_retried
             && super::media_sanitizer::contains_image_blocks(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
+    }
+
+    /// 反应式密文重试判定：原样转发的 Responses 上游拒绝了请求里别家签发的密文时，
+    /// 返回要去掉哪些状态，对同一供应商重试一次。
+    ///
+    /// 转成 Chat / Anthropic 的上游收不到这些密文，不参与。受整流器总开关管辖。
+    fn opaque_state_retry_rejection(
+        &self,
+        app_type: &AppType,
+        provider: &Provider,
+        endpoint: &str,
+        already_retried: bool,
+        request: &Value,
+        error: &ProxyError,
+    ) -> Option<OpaqueStateRejection> {
+        if already_retried
+            || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            || super::providers::should_convert_codex_responses_to_chat(provider, endpoint)
+            || super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint)
+        {
+            return None;
+        }
+        let codex_third_party = matches!(app_type, AppType::Codex)
+            && !super::providers::is_codex_official_provider(provider);
+        detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -609,6 +637,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            let mut opaque_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -681,7 +710,7 @@ impl RequestForwarder {
                         .finish_success(provider, app_type_str, used_half_open_permit, forwarded)
                         .await);
                 }
-                Err(e) => {
+                Err(mut e) => {
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -760,6 +789,62 @@ impl RequestForwarder {
                                         return Err(err);
                                     }
                                     continue;
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(rejection) = self.opaque_state_retry_rejection(
+                        app_type,
+                        provider,
+                        endpoint,
+                        opaque_rectifier_retried,
+                        &provider_body,
+                        &e,
+                    ) {
+                        let mut opaque_body = provider_body.clone();
+                        let rectified = rectify_opaque_state(&mut opaque_body, rejection);
+                        if rectified.applied {
+                            let _ = std::mem::replace(&mut opaque_rectifier_retried, true);
+                            log::info!(
+                                "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段，换掉 {} 个压缩条目后对 provider={} 重试一次",
+                                rectified.removed_reasoning_items,
+                                rectified.replaced_encrypted_parts,
+                                rectified.replaced_compaction_items,
+                                provider.id
+                            );
+
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &opaque_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok(forwarded) => {
+                                    log::info!("[{app_type_str}] [RECT-021] 密文整流重试成功");
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                        )
+                                        .await);
+                                }
+                                // 重试仍失败：按这次的错误走常规分类，和没整流过一样
+                                // 决定是否计入熔断、是否换下一家。
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-022] 密文整流重试仍失败: {retry_err}"
+                                    );
+                                    e = retry_err;
                                 }
                             }
                         }
@@ -1519,6 +1604,34 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
+
+        // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
+        // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
+        // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和
+        // CC Switch 包装的压缩摘要改成普通消息。看不出来源的密文原样发出，被拒后由
+        // `opaque_state_rectifier` 处理。请求里没有这些条目时逐字节不变。
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            if codex_official_auth_passthrough {
+                if super::providers::codex_compaction::scrub_ccswitch_state_for_official(
+                    &mut request_body,
+                ) {
+                    log::debug!(
+                        "[Codex] Scrubbed third-party turn state before the official upstream (provider={})",
+                        provider.id
+                    );
+                }
+            } else if super::providers::codex_compaction::prepare_native_third_party_request(
+                &mut request_body,
+            ) {
+                log::debug!(
+                    "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+        }
 
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
@@ -2977,13 +3090,18 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
             | "thread-id"
             | "conversation_id"
             | "chatgpt-account-id"
-            | "x-openai-subagent"
             | "x-client-request-id"
             | "openai-beta"
             | "openai-organization"
             | "openai-project"
     ) || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-codex-")
+        // ChatGPT 登录态下 Codex 每个请求都带：`x-oai-attestation`（设备证明）、
+        // `x-openai-fedramp`、`x-openai-account-routing-override`、`x-openai-memgen-request`、
+        // `x-openai-internal-codex-responses-lite`、`x-responsesapi-include-timing-metrics`。
+        || key_str.starts_with("x-oai-")
+        || key_str.starts_with("x-openai-")
+        || key_str.starts_with("x-responsesapi-")
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -4440,6 +4558,13 @@ mod tests {
             "x-stainless-lang",
             "x-stainless-runtime",
             "x-codex-turn-id",
+            // ChatGPT 登录态下的身份头，附加请求发往第三方时同样不能带出去。
+            "x-oai-attestation",
+            "x-openai-fedramp",
+            "x-openai-account-routing-override",
+            "x-openai-memgen-request",
+            "x-openai-internal-codex-responses-lite",
+            "x-responsesapi-include-timing-metrics",
         ] {
             assert!(
                 is_codex_client_fingerprint_header(header),
@@ -5538,6 +5663,8 @@ mod tests {
                 ("session_id", "session-1"),
                 ("x-codex-turn-state", "state"),
                 ("openai-beta", "responses=experimental"),
+                ("x-oai-attestation", "device-proof"),
+                ("x-openai-fedramp", "true"),
             ] {
                 headers.insert(
                     http::HeaderName::from_static(name),
@@ -5618,6 +5745,80 @@ mod tests {
             )
             .await;
             assert!(seen.headers.contains_key("session_id"));
+        }
+
+        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成不带工具的摘要回合，
+        /// CC Switch 包装的压缩摘要改成普通消息；看不出来源的压缩密文原样发出。
+        #[tokio::test]
+        async fn native_third_party_compaction_becomes_summary_turn() {
+            use crate::proxy::providers::codex_compaction::{
+                encode_compaction_summary, COMPACT_PROMPT, SUMMARY_PREFIX,
+            };
+            let upstream = upstream().await;
+            let mut request = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            request["input"] = json!([
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" },
+                { "type": "compaction", "encrypted_content": encode_compaction_summary("prior work") },
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request,
+            )
+            .await;
+            assert!(seen.body.get("tools").is_none());
+            let input = seen.body["input"].as_array().unwrap();
+            assert_eq!(
+                input[0],
+                json!({ "type": "compaction", "encrypted_content": "gAAAA-openai" })
+            );
+            assert_eq!(
+                input[1]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+            assert!(input
+                .iter()
+                .all(|item| item["type"] != "compaction_trigger"));
+            assert_eq!(input.last().unwrap()["content"][0]["text"], COMPACT_PROMPT);
+
+            // 同一家上游自己签发的压缩密文：请求逐字节不改，不能把已压缩的历史换成占位文字。
+            let mut own_history = body("listed", json!([]));
+            own_history["input"] = json!([
+                { "type": "compaction", "id": "cmp_1", "encrypted_content": "gAAAA-issued-here" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "go on" }] }
+            ]);
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                own_history.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["input"], own_history["input"]);
+
+            // 对照：普通请求逐字节不改。
+            let plain = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                plain.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["tools"], plain["tools"]);
+            assert_eq!(seen.body["input"], plain["input"]);
         }
 
         /// 剥身份头只针对 Codex：Claude Code 的附加请求照常带着 Anthropic SDK 的请求头。
@@ -5741,6 +5942,223 @@ mod tests {
                 assert_eq!(seen.body["tools"], tools, "pool={pool} {model}");
                 assert_eq!(seen.body["tool_choice"]["type"], "web_search");
             }
+        }
+
+        /// 按脚本依次回应的假上游，记下请求头和请求体。
+        async fn scripted_upstream(script: Vec<(u16, Value)>) -> Upstream {
+            let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let script = script.clone();
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        let (status, body) = script
+                            .lock()
+                            .await
+                            .pop_front()
+                            .expect("upstream script exhausted");
+                        (
+                            StatusCode::from_u16(status).expect("status"),
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            body.to_string(),
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        fn blob_rejection() -> (u16, Value) {
+            (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "code": "invalid_encrypted_content",
+                    "message": "The encrypted content could not be verified."
+                } }),
+            )
+        }
+
+        fn response_ok() -> (u16, Value) {
+            (
+                200,
+                json!({ "id": "r1", "object": "response", "output": [] }),
+            )
+        }
+
+        /// 上一轮是别家原生 Responses 上游，历史里留着它签发的推理密文。
+        fn history_with_foreign_reasoning() -> Value {
+            let mut request = body("listed", json!([]));
+            request["input"] = json!([
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other-org" },
+                { "type": "message", "id": "msg_1", "role": "assistant",
+                  "content": [{ "type": "output_text", "text": "a" }] },
+                { "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ]);
+            request
+        }
+
+        async fn forward_codex(
+            forwarder: &RequestForwarder,
+            provider: Provider,
+        ) -> Result<ForwardResult, ForwardError> {
+            forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    history_with_foreign_reasoning(),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider],
+                )
+                .await
+        }
+
+        fn carries_reasoning(seen: &Seen) -> bool {
+            seen.body["input"]
+                .as_array()
+                .is_some_and(|input| input.iter().any(|item| item["type"] == "reasoning"))
+        }
+
+        /// 上游明确说验不了别家签发的密文：去掉推理条目，对同一家只重试一次。
+        #[tokio::test]
+        async fn foreign_blob_rejection_is_retried_once_without_reasoning() {
+            for pool in [true, false] {
+                let upstream = scripted_upstream(vec![blob_rejection(), response_ok()]).await;
+                let result =
+                    forward_codex(&forwarder(pool), provider(&upstream, "openai_responses")).await;
+                assert!(result.is_ok(), "pool={pool}");
+                let seen = upstream.seen.lock().await;
+                assert_eq!(seen.len(), 2, "pool={pool}");
+                assert!(carries_reasoning(&seen[0]));
+                assert!(!carries_reasoning(&seen[1]));
+                assert_eq!(seen[1].body["input"].as_array().unwrap().len(), 3);
+            }
+
+            // 重试仍被拒：不再重试，把第二次的错误交回客户端。
+            let upstream = scripted_upstream(vec![blob_rejection(), blob_rejection()]).await;
+            let error = forward_codex(&forwarder(true), provider(&upstream, "openai_responses"))
+                .await
+                .err()
+                .expect("still rejected");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+            assert_eq!(upstream.seen.lock().await.len(), 2);
+        }
+
+        /// 附加模式下官方压缩过、再切到别家原生 Responses 模型：官方的压缩密文原样发出，
+        /// 那家网关不认识、报错措辞又不在清单里时，只换掉压缩条目对同一家重试一次，
+        /// 这家自己的推理条目照旧发。
+        #[tokio::test]
+        async fn unrecognized_compaction_is_replaced_after_a_native_third_party_rejects_it() {
+            use crate::proxy::providers::codex_compaction::OPAQUE_COMPACTION_NOTE;
+            let unsupported = (
+                400,
+                json!({ "error": { "message": "unsupported input item type: compaction" } }),
+            );
+            let upstream = scripted_upstream(vec![unsupported, response_ok()]).await;
+            let mut request = history_with_foreign_reasoning();
+            request["input"].as_array_mut().unwrap().insert(
+                0,
+                json!({ "type": "compaction", "encrypted_content": "gAAAA-openai" }),
+            );
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    vec![provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["input"][0]["type"], "compaction");
+            let retried = seen[1].body["input"].as_array().unwrap();
+            assert_eq!(retried.len(), 5);
+            assert_eq!(retried[0]["content"][0]["text"], OPAQUE_COMPACTION_NOTE);
+            assert!(carries_reasoning(&seen[1]));
+        }
+
+        /// 措辞不在清单里的兜底只给 Codex 的原生 Responses 第三方：官方的压缩密文只在错误
+        /// 点名时才换，Grok Build 的压缩密文是 xAI 自己的。
+        #[tokio::test]
+        async fn generic_compaction_retry_is_limited_to_codex_third_parties() {
+            let upstream = upstream().await;
+            let third_party = provider(&upstream, "openai_responses");
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+            let request = json!({ "input": [
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" }
+            ] });
+            let unsupported = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("unsupported input item".to_string()),
+            };
+            let forwarder = forwarder(false);
+            let gate = |app_type: AppType, provider: &Provider| {
+                forwarder.opaque_state_retry_rejection(
+                    &app_type,
+                    provider,
+                    "/responses",
+                    false,
+                    &request,
+                    &unsupported,
+                )
+            };
+
+            assert_eq!(
+                gate(AppType::Codex, &third_party),
+                Some(OpaqueStateRejection {
+                    reasoning: false,
+                    compaction: true
+                })
+            );
+            assert_eq!(gate(AppType::Codex, &official), None);
+            assert_eq!(gate(AppType::GrokBuild, &third_party), None);
+        }
+
+        /// 其他 400、转换成 Chat 的上游都不触发。
+        #[tokio::test]
+        async fn blob_retry_only_follows_self_identified_rejections_on_native_upstreams() {
+            let unrelated = (
+                400,
+                json!({ "error": { "type": "invalid_request_error", "message": "Invalid value for 'model'." } }),
+            );
+            let upstream = scripted_upstream(vec![unrelated]).await;
+            assert!(
+                forward_codex(&forwarder(true), provider(&upstream, "openai_responses"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+
+            let upstream = scripted_upstream(vec![blob_rejection()]).await;
+            assert!(
+                forward_codex(&forwarder(true), provider(&upstream, "openai_chat"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
         }
     }
 
