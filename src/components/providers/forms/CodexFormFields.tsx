@@ -55,6 +55,7 @@ import {
 import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
+  modelFetchRequestHeaders,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -815,6 +816,9 @@ export function CodexFormFields({
           isFullUrl,
           undefined,
           customUserAgent,
+          {
+            requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
+          },
         ),
       receiveFetchedModels,
       "[ModelFetch] Failed:",
@@ -834,6 +838,7 @@ export function CodexFormFields({
     selectedGitHubAccountId,
     onCatalogModelsChange,
     onModelChange,
+    localProxyHeadersOverride,
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
