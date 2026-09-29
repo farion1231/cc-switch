@@ -584,13 +584,33 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.settings_config.clone()
             };
 
+            // A new ID cannot inherit an existing provider's built-in definition.
+            // Check at the write boundary as well as in the UI, including old copies.
+            let has_npm = config_to_write
+                .get("npm")
+                .and_then(Value::as_str)
+                .is_some_and(|npm| !npm.trim().is_empty());
+            let has_models = config_to_write
+                .get("models")
+                .and_then(Value::as_object)
+                .is_some_and(|models| !models.is_empty());
+            if (!has_npm || !has_models)
+                && !opencode_config::get_providers()?.contains_key(&provider.id)
+            {
+                return Err(AppError::localized(
+                    "provider.opencode.custom_definition_required",
+                    "新的 OpenCode 供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
+                    "A new OpenCode provider ID requires an npm package and at least one model; only an existing ID in the live config may inherit defaults",
+                ));
+            }
+
             // Convert settings_config to OpenCodeProviderConfig
             let opencode_config_result =
                 serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
 
             match opencode_config_result {
-                Ok(_) => {
-                    opencode_config::set_provider(&provider.id, config_to_write)?;
+                Ok(config) => {
+                    opencode_config::set_typed_provider(&provider.id, &config)?;
                     log::info!("OpenCode provider '{}' written to live config", provider.id);
                 }
                 Err(e) => {
@@ -1165,48 +1185,40 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 
 /// Import all providers from OpenCode live config to database
 ///
-/// Missing v2 API-key providers are first persisted from the credential table.
 /// This imports existing providers from ~/.config/opencode/opencode.json
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
 
-    let existing_ids = state.db.get_provider_ids("opencode")?;
-    opencode_config::import_credential_providers(&existing_ids)?;
-    let providers = opencode_config::get_validated_providers()?;
+    let providers = opencode_config::get_typed_providers()?;
     if providers.is_empty() {
         return Ok(0);
     }
 
     let mut imported = 0;
     let mut updated = 0;
-    for (id, settings_config) in providers {
-        let config_name = settings_config.get("name").and_then(Value::as_str);
-        // Website metadata belongs to CC Switch, not OpenCode's provider config.
-        let default_website_url = (id == "opencode-go").then_some("https://opencode.ai/go");
+    let existing_ids = state.db.get_provider_ids("opencode")?;
+
+    for (id, config) in providers {
+        // Convert to Value for settings_config
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize OpenCode provider '{id}': {e}");
+                continue;
+            }
+        };
 
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "opencode") {
                 Ok(Some(existing)) => {
-                    let display_name = config_name.unwrap_or(&existing.name).to_string();
-                    let needs_website_url = default_website_url.is_some()
-                        && existing
-                            .website_url
-                            .as_deref()
-                            .unwrap_or_default()
-                            .trim()
-                            .is_empty();
-                    if existing.settings_config != settings_config
-                        || existing.name != display_name
-                        || needs_website_url
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
+                    if existing.settings_config != settings_config || existing.name != display_name
                     {
                         let mut provider = existing;
                         provider.name = display_name;
                         provider.settings_config = settings_config;
-                        if needs_website_url {
-                            provider.website_url = default_website_url.map(str::to_string);
-                        }
                         if let Err(e) = state.db.save_provider("opencode", &provider) {
                             log::warn!(
                                 "Failed to update OpenCode provider '{id}' from live config: {e}"
@@ -1226,13 +1238,8 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         }
 
         // Create provider
-        let display_name = config_name.unwrap_or(&id).to_string();
-        let mut provider = Provider::with_id(
-            id.clone(),
-            display_name,
-            settings_config,
-            default_website_url.map(str::to_string),
-        );
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),
             ..Default::default()

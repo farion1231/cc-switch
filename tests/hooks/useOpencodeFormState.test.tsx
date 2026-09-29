@@ -27,7 +27,7 @@ const renderOpencodeFormState = (
 };
 
 describe("useOpencodeFormState", () => {
-  it("edits a credential-backed built-in without inventing a package or models", () => {
+  it("edits an existing built-in override without inventing a package or models", () => {
     const { result, getSettingsConfig } = renderOpencodeFormState({
       name: "OpenCode Go",
       options: { apiKey: "test-key" },
