@@ -5,6 +5,9 @@ export type ManagedAuthProvider =
   | "codex_oauth"
   | "xai_oauth";
 
+export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
+  "codex_oauth_duplicate_account";
+
 export interface ManagedAuthAccount {
   id: string;
   provider: ManagedAuthProvider;

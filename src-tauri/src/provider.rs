@@ -87,6 +87,16 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    /// Third-party managed OAuth (xai_oauth, github_copilot, …): the real
+    /// credential is injected per-request by the local proxy, so the card is
+    /// keyless by design and its stored config is only an upstream snapshot.
+    /// `codex_oauth` is deliberately excluded — the official ChatGPT login
+    /// in auth.json IS its credential, so the `requires_openai_auth = true`
+    /// fallback is its correct shape, never a legacy leftover.
+    pub fn uses_proxy_injected_oauth(&self) -> bool {
+        self.is_xai_oauth() || self.is_github_copilot()
+    }
+
     /// Whether the provider form's "auth field" was explicitly set to
     /// ANTHROPIC_API_KEY. The form only persists `meta.apiKeyField` for the
     /// non-default choice, so `None` means the default ANTHROPIC_AUTH_TOKEN.
@@ -213,7 +223,7 @@ impl Provider {
                 str_at(settings.get("apiKey")),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
-            AppType::OpenCode => {
+            AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");
                 (
                     str_at(options.and_then(|o| o.get("baseURL"))),
@@ -466,10 +476,11 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
-    /// 成本倍数（用于计算实际成本）
+    /// 已停用：供应商级成本倍率。新版不再读取，只为与旧版设备同步时原样往返保留
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,
-    /// 计费模式来源（response/request）
+    /// 已停用：供应商级计费模式覆盖（response/request）。新版只读全局设置，
+    /// 该字段只为与旧版设备同步时原样往返保留
     #[serde(rename = "pricingModelSource", skip_serializing_if = "Option::is_none")]
     pub pricing_model_source: Option<String>,
     /// 每日消费限额（USD）
@@ -1011,6 +1022,30 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn proxy_injected_oauth_excludes_codex_oauth() {
+        let mut provider = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
+        assert!(!provider.uses_proxy_injected_oauth());
+
+        for (provider_type, expected) in [
+            ("xai_oauth", true),
+            ("github_copilot", true),
+            // the official ChatGPT login IS this card's credential — its
+            // auth.json fallback shape must never be neutralized
+            ("codex_oauth", false),
+        ] {
+            provider.meta = Some(ProviderMeta {
+                provider_type: Some(provider_type.to_string()),
+                ..ProviderMeta::default()
+            });
+            assert_eq!(
+                provider.uses_proxy_injected_oauth(),
+                expected,
+                "{provider_type}"
+            );
+        }
+    }
 
     #[test]
     fn provider_meta_serializes_pricing_model_source() {

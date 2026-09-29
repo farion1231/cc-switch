@@ -92,4 +92,40 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
       });
     }
   });
+
+  it("Qwen presets should declare image/video input only for qwen3.8 models", () => {
+    const mediaPresets = [
+      "千问AI平台",
+      "千问AI平台 Token Plan",
+      "QwenCloud",
+      "QwenCloud Token Plan",
+    ].map((name) =>
+      opencodeProviderPresets.find((preset) => preset.name === name),
+    );
+
+    for (const preset of mediaPresets) {
+      expect(preset).toBeDefined();
+      for (const modelId of ["qwen3.8-max", "qwen3.8-flash"]) {
+        expect(preset!.settingsConfig.models[modelId]).toMatchObject({
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        });
+      }
+    }
+
+    // 显式声明会让代理停止剥离图片，因此不支持图片输入的模型必须留空。
+    for (const name of ["QwenCloud", "QwenCloud Token Plan"]) {
+      const preset = opencodeProviderPresets.find((p) => p.name === name);
+      expect(
+        preset!.settingsConfig.models["qwen3.7-max"]?.modalities,
+      ).toBeUndefined();
+    }
+
+    const forCoding = opencodeProviderPresets.find(
+      (p) => p.name === "QwenCloud For Coding",
+    );
+    expect(forCoding).toBeDefined();
+    for (const model of Object.values(forCoding!.settingsConfig.models)) {
+      expect(model.modalities).toBeUndefined();
+    }
+  });
 });

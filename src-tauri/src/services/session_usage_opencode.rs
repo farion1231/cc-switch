@@ -17,7 +17,7 @@ use crate::opencode_config::get_opencode_db_path;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
@@ -71,7 +71,8 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
-    let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
+    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
+    let last_modified = cursors.get(&db_path_str).map_or(0, |c| c.last_modified);
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -106,7 +107,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步
         let sync_key = format!("{db_path_str}:{session_id}");
-        let (sess_last_modified, _) = get_sync_state(db, &sync_key)?;
+        let sess_last_modified = cursors.get(&sync_key).map_or(0, |c| c.last_modified);
         if *time_updated <= sess_last_modified {
             continue; // 会话未更新，跳过
         }

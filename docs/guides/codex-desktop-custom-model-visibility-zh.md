@@ -24,17 +24,17 @@ Codex 桌面应用的模型选择器会按你**当前的登录身份**来决定�
 办法是**保留官方登录态**，让桌面应用的门控放行你的自定义模型。要点如下（完整图文步骤见下方链接的攻略）：
 
 1. 先在 Codex 里登录一次官方 ChatGPT / Codex（Free 订阅即可），保留官方登录态。
-2. 在 CC Switch 开启 `设置 → 通用 → Codex 应用增强 → 切换第三方时保留官方登录`（**默认关闭**）。
-3. 为该第三方供应商开启本地路由并接管 Codex（Chat Completions 协议的供应商如 DeepSeek / Kimi / MiniMax 必须开启）。
+2. 在 CC Switch 开启 `设置 → 通用 → Codex 应用增强 → 非接管切换时保留官方登录`（**默认关闭**）。开启路由接管期间官方登录始终保留，不受这个开关影响。
+3. 如果该第三方供应商带 `需要路由` 徽章（Chat Completions 协议，如 SiliconFlow、ModelScope），开启本地路由并接管 Codex；DeepSeek、Kimi、MiniMax 等原生直连的预设不需要这一步。
 4. 完全退出并重启 Codex。
 
-开启后，CC Switch 在切换第三方供应商时会保留 `~/.codex/auth.json` 里的官方登录态、把第三方 Key 写进 `config.toml`，于是桌面应用仍识别官方登录身份、门控放行，你配置的自定义模型就会重新出现在选择器里。**保留的官方 Token 不会被发往第三方**——第三方模型请求仍用你配置的 Key 经本地路由转发。
+开启后，CC Switch 在切换第三方供应商时会保留 `~/.codex/auth.json` 里的官方登录态、把第三方 Key 写进 `config.toml`，于是桌面应用仍识别官方登录身份、门控放行，你配置的自定义模型就会重新出现在选择器里。**保留的官方 Token 不会被发往第三方**——第三方模型请求仍用你配置的 Key 发出（开启路由接管时经本地路由转发）。
 
-> 📖 详细图文步骤：[使用第三方 API 时保留 Codex 远程操作和官方插件](./codex-official-auth-preservation-guide-zh.md)
+> 详细图文步骤：[使用第三方 API 时保留 Codex 远程操作和官方插件](./codex-official-auth-preservation-guide-zh.md)
 
 ## 仍然看不到怎么办
 
-- **确认开关已开**：该开关默认关闭，很多人第一次切到第三方就把官方登录态覆盖掉了，所以才看不到——按上面开启即可。
+- **确认开关已开**：该开关默认关闭，关闭时直连切到第三方会删除 `auth.json`。很多人第一次切到第三方就这样丢了官方登录态，所以才看不到——按上面第 1、2 步操作即可。
 - **官方登录态会过期**：如果连续几天没用过官方登录，Token 失效后选择器可能又变空——重新登录一次官方即可恢复。
 - **命令行兜底诊断**：用 `codex debug models` 可以列出 CLI 端实际可用的模型，确认模型本身已正确配置（CLI 不受此门控影响）。
 - 个别 Codex 桌面版本的行为可能略有差异；这属于上游客户端范畴，CC Switch 各版本都无法从桌面 GUI 层根治。
@@ -42,5 +42,5 @@ Codex 桌面应用的模型选择器会按你**当前的登录身份**来决定�
 ## 参考链接
 
 - [使用第三方 API 时保留 Codex 远程操作和官方插件](./codex-official-auth-preservation-guide-zh.md)
-- [Codex DeepSeek 本地路由实战攻略](./codex-deepseek-routing-guide-zh.md)
+- [在 Codex 中使用 Chat 格式 API：本地路由攻略](./codex-deepseek-routing-guide-zh.md)
 - [本地路由](../user-manual/zh/4-proxy/4.2-routing.md)
