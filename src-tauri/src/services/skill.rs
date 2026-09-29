@@ -20,6 +20,8 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
+pub(crate) mod vps;
+
 // ========== Skills state coordination ==========
 
 /// Coordinates the database `skills` state with the filesystem SSOT.
@@ -1706,7 +1708,7 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         let mut count = 0;
 
-        for skill in skills.values() {
+        for skill in skills.values().filter(|skill| skill.is_user_managed()) {
             if skill.content_hash.is_some() {
                 continue;
             }
@@ -1776,7 +1778,7 @@ impl SkillService {
             errors: vec![],
         };
 
-        for skill in skills.values() {
+        for skill in skills.values().filter(|skill| skill.is_user_managed()) {
             // 下面是 rename 与 remove_dir_all，脏 directory 可把任意目录搬走或删掉。
             // 软失败：本函数已有 errors 收集通道，记一条继续处理其余 skill，
             // 不要整体中断——用户只是在切换存储位置。
@@ -1862,6 +1864,11 @@ impl SkillService {
         }
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
+        if let Err(error) = crate::services::vps::VpsService::new().reconcile_skills_unlocked(db) {
+            result
+                .errors
+                .push(format!("VPS Skill reconciliation: {error:#}"));
+        }
         for app in AppType::all() {
             let _ = Self::sync_to_app_unlocked(db, &app);
         }
@@ -2519,51 +2526,45 @@ impl SkillService {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
         }
 
-        let sync_method = Self::get_sync_method();
+        Self::materialize_skill_source(&source, &dest, &directory, app)
+    }
 
+    /// Materialize a validated source after the caller has checked destination ownership.
+    fn materialize_skill_source(
+        source: &Path,
+        dest: &Path,
+        directory: &str,
+        app: &AppType,
+    ) -> Result<()> {
+        let sync_method = Self::get_sync_method();
         match sync_method {
             SyncMethod::Auto => {
-                if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, &directory)?;
-                    log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
+                if dest.exists() && !Self::is_symlink(dest) {
+                    Self::replace_dest_with_copy(source, dest, directory)?;
                     return Ok(());
                 }
-
-                if Self::is_symlink(&dest) {
-                    Self::remove_path(&dest)?;
+                if Self::is_symlink(dest) {
+                    Self::remove_path(dest)?;
                 }
-
-                // 优先尝试 symlink
-                match Self::create_symlink(&source, &dest) {
-                    Ok(()) => {
-                        log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Symlink 创建失败，将回退到文件复制: {} -> {}. 错误: {err:#}",
-                            source.display(),
-                            dest.display()
-                        );
-                    }
+                match Self::create_symlink(source, dest) {
+                    Ok(()) => return Ok(()),
+                    Err(err) => log::warn!(
+                        "Symlink 创建失败，将回退到文件复制: {} -> {}. 错误: {err:#}",
+                        source.display(),
+                        dest.display(),
+                    ),
                 }
-                // Fallback 到 copy
-                Self::replace_dest_with_copy(&source, &dest, &directory)?;
-                log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
+                Self::replace_dest_with_copy(source, dest, directory)?;
             }
             SyncMethod::Symlink => {
-                if dest.exists() || Self::is_symlink(&dest) {
-                    Self::remove_path(&dest)?;
+                if dest.exists() || Self::is_symlink(dest) {
+                    Self::remove_path(dest)?;
                 }
-                Self::create_symlink(&source, &dest)?;
-                log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
+                Self::create_symlink(source, dest)?;
             }
-            SyncMethod::Copy => {
-                Self::replace_dest_with_copy(&source, &dest, &directory)?;
-                log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
-            }
+            SyncMethod::Copy => Self::replace_dest_with_copy(source, dest, directory)?,
         }
-
+        log::debug!("Skill {directory} 已通过 {sync_method:?} 同步到 {app:?}");
         Ok(())
     }
 
@@ -2716,14 +2717,15 @@ impl SkillService {
 
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
-        let _state_guard = skill_state_read_guard();
+        let _state_guard = skill_state_write_guard();
         Self::sync_to_app_unlocked(db, app)
     }
 
-    /// Caller must hold either the Skills state read or write guard.
+    /// Caller must hold the Skills state write guard.
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
+        let vps_result = crate::services::vps::VpsService::new().reconcile_skills_unlocked(db);
         if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
-            return Ok(());
+            return vps_result.map(|_| ());
         }
 
         let skills = db.get_all_installed_skills()?;
@@ -2748,6 +2750,9 @@ impl SkillService {
                 }
 
                 if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
+                    if !skill.is_user_managed() {
+                        continue;
+                    }
                     if !skill.apps.is_enabled_for(app) {
                         Self::remove_path(&path)?;
                     }
@@ -2760,7 +2765,7 @@ impl SkillService {
             }
         }
 
-        for skill in skills.values() {
+        for skill in skills.values().filter(|skill| skill.is_user_managed()) {
             if skill.apps.is_enabled_for(app) {
                 // 逐条容错而非 `?` 传播：本函数在切换供应商时被调用，一条脏
                 // directory（存量点开头目录、或同步导入灌进来的行）不得让整个
@@ -2774,7 +2779,7 @@ impl SkillService {
             }
         }
 
-        Ok(())
+        vps_result.map(|_| ())
     }
 
     // ========== 发现功能（保留原有逻辑）==========

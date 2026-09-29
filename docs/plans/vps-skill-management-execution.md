@@ -2,7 +2,7 @@
 
 日期：2026-09-29。关联 [Issue #7739](https://github.com/farion1231/cc-switch/issues/7739)。
 
-**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A 的来源/管理权基础和阶段 B 的主机数据/目录生成已实现并验证新增用例；整体仍有既有符号链接权限测试失败。VPS 自动部署、SSH 测试及页面尚未打通，最新状态见第 10 节，阶段 A 与测试隔离修复记录见第 9 节。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
+**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A/B 基础和阶段 C 受控部署已实现并验证定向用例；D 的恢复/同步保护及 E/F 的整合仍在推进，整体仍有既有符号链接权限测试失败。最新主线程记录见第 11 节，尚未完成真实 SSH 与桌面验收。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
 
 ## 0. 开发启动条件与边界
 
@@ -310,3 +310,28 @@ macOS/Linux 使用对应的原生临时目录路径，无需 `cygpath`。只设�
 日志位于 `.cc-switch/contribution-prep/`：`vps-stage-b-red.log`、`vps-stage-b-green.log`、`vps-stage-b-focused.log`、`vps-stage-b-clippy.log`、`vps-stage-b-rust-lib.log`、`vps-stage-b-integration.log`。
 
 下一步是阶段 C：通用托管 Skill 模板、按应用生成部署及受控生命周期。在接通生产注册/部署前，继续落实阶段 A 记录的迁移与所有权边界，随后按阶段 D 处理扫描、备份和恢复。仍不 push、创建 PR、发布评论、重写提交历史或操作真实 VPS。
+
+## 11. 阶段 C：受控 Skill 部署（2026-09-30）
+
+用户已同意并行实施：主线程负责 C/D，隔离 worktree 的子 agent 分别负责 E/F；重型验证串行安排。C 的本地提交不包含 E/F 代码，也暂不注册 VPS IPC，以便先完成 D 的恢复/同步边界后再接通页面。
+
+### 已实现
+
+- 一份通用 `services/skill/vps-template.md`，内部身份 `internal:vps`、目录 `cc-switch-vps`、来源 `managedBy=vps`，无伪造仓库地址。
+- 各客户端生成独立 `vps/skill-projections/<app>/SKILL.md`，引用对应本机目录；共享模板不含应用路径。生成源在本机 VPS 目录，不把本机引用放进普通 Skill SSOT。
+- 从既有 `sync_to_app_dir` 提取共用物化步骤，生成 Skill 复用原有 Auto/Symlink/Copy 和完整目录哈希，不另造安装器。Pi 不新增持久化启用标志，继续由实际文件存在体现启用。
+- `vps/skill-state.json` 仅记录应用部署路径与已知内容哈希，是中断恢复/归属凭据，不是另一个用户绑定源。首次拒绝接管同名目录；源或部署被手改时拒绝覆盖/删除；应用目录重叠在写主数据前报错。
+- 目录写入与部署完成后才返回成功。失败保留可诊断、可重试的状态；最后解绑清理对应部署，其他主机仍引用时保留。稳定 ID 及单一 Skill 登记在重试中不重复创建。
+- 主机数据与部署使用 `Skill state -> VPS document -> DB` 的锁顺序；全量 Skill 重同步与存储迁移调用同一投影规则，普通 Skill 仍独立同步，即使某个 VPS 部署发生冲突也不破坏普通文件。
+
+### 实际验证与隔离事件
+
+- 首批流程测试：实现前 1 通过 / 5 失败，实现后 6 通过。
+- 扩展复核曾出现 40 通过 / 1 失败：新测试 fixture 只隔离 home，却没有隔离 Hermes 的 Windows `%LOCALAPPDATA%` 默认路径；首次成功测试曾在那里生成一个引用临时目录的测试 Skill。此项是新测试隔离遗漏，不是原有 Rust 基线失败。
+- 发现后立即暂停后端验证，只读核查；用户明确授权精确清理。再次核验文件内容、类型和目录清单后，仅移除该生成的 `SKILL.md` 与空 `cc-switch-vps` 目录，保留 Hermes 其他文件及父目录。未连接 VPS、未读取私钥、未修改系统权限。
+- 修正新 fixture：显式设置临时 `HERMES_HOME`、`MINIMAX_DATA_DIR`、`MAVIS_DATA_DIR` 与 Pi 测试路径，写入前断言所有客户端根目录均在私有临时 home 内；不修改 Hermes 生产路径规则。后端命令也隔离本进程的应用数据目录变量，不改系统环境或 HOME/Cargo 缓存。
+- 最终定向验证：**VPS 41 项通过（含阶段 B 的 26 项与 C 的 15 项）；既有 Skill 服务 80 通过、1 项原有忽略；Clippy `-D warnings` 通过。** 没有修改原有断言/超时或新增 skip。Windows 原生 symlink 受权限限制，Unix symlink 用例未在本机执行；Windows 目标路径规范化由纯测试验证。
+
+日志：`vps-stage-c-red.log`、`vps-stage-c-green.log`、`vps-stage-c-focused.log`（保留隔离失败证据）、`vps-stage-c-isolated.log`、`vps-stage-c-skill-regression.log`、`vps-stage-c-clippy.log`。本阶段尚未重新运行 Rust 全库/集成或真实客户端；原两项库测试及一项集成的 1314 限制仍按前述记录跟踪。
+
+D 必须继续完成：SQL 导出排除托管行、导入/恢复保留本机管理权且不接受远端自报来源；扫描/迁移/ZIP 排除生成副本；恢复后按本机主数据重建。完成这些边界前，不把已交付的前端接到生产 VPS 命令。

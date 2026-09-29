@@ -64,14 +64,17 @@ VPS 页面不是操作执行控制台。CC Switch 自身只对用户触发的连
 <cc-switch-data-dir>/vps/
 ├── servers.json
 ├── ssh_config
-└── clients/
-    ├── <app-id>.json
-    └── ...
+├── clients/
+│   ├── <app-id>.json
+│   └── ...
+├── skill-projections/<app-id>/SKILL.md
+└── skill-state.json
 ```
 
 - `servers.json`：主机 ID、名称、用途、连接参数、密钥/认证引用和现有客户端启用状态，是用户可编辑的主数据源。
 - `ssh_config`：从主数据生成，只管理本功能条目，不整体覆盖用户 `~/.ssh/config`。
 - `clients/<app-id>.json`：只列出分发给该客户端的主机；含稳定 ID、名称、用途、SSH 别名和本机配置引用，不含私钥或密码。
+- 阶段 C 的按应用生成源放在 `skill-projections`，经现有 Skill 物化步骤部署到客户端；通用模板随程序提供，不把本机引用写入普通 SSOT。`skill-state.json` 仅保留已部署路径及中断恢复所需的内容哈希，用户仍只在主数据的 `apps` 中控制绑定，不是另一套 Skill 登记或绑定来源。
 - 现有 Skill 记录中的应用状态对自动托管实例是派生/应用结果，不是另一个可由 Skill 页编辑的源。
 - 不新增 `client-bindings.json`，不把 VPS 写入供应商快照。
 - 阶段 B 的具体格式为 `servers.json` 中的 `version`、`servers` 和 `generatedFiles`。其中 `generatedFiles` 仅保存生成文件的已知内容哈希，以及中断写入期间允许恢复的前后哈希；不是第二个绑定来源，也不是“客户端已接入”的状态。手动编辑主机时保留这些恢复元数据；无法证明归属或已被手改的生成文件会报冲突，不按文件名接管。

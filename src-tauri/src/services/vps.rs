@@ -337,11 +337,11 @@ fn generated_files(root: &Path, servers: &[VpsServer]) -> Result<BTreeMap<String
     Ok(files)
 }
 
-fn content_hash(bytes: &[u8]) -> String {
+pub(crate) fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn is_link(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -353,7 +353,7 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
-fn check_directory(path: &Path) -> Result<()> {
+pub(crate) fn check_directory(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if is_link(&metadata) || !metadata.is_dir() => {
             bail!(
@@ -367,7 +367,7 @@ fn check_directory(path: &Path) -> Result<()> {
     }
 }
 
-fn read_regular_file(path: &Path) -> Result<Option<Vec<u8>>> {
+pub(crate) fn read_regular_file(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if is_link(&metadata) || !metadata.is_file() => {
             bail!(
@@ -585,6 +585,8 @@ impl VpsService {
         generation.context("VPS host data is saved, but file generation is incomplete; retry generation before reporting client access")
     }
 }
+
+mod managed;
 
 #[cfg(test)]
 #[path = "vps/tests.rs"]
