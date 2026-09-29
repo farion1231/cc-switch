@@ -32,6 +32,7 @@ pub mod subscription_grok;
 pub mod sync_protocol;
 pub mod usage_cache;
 pub mod usage_stats;
+pub mod vps;
 pub mod webdav;
 pub mod webdav_auto_sync;
 pub mod webdav_sync;

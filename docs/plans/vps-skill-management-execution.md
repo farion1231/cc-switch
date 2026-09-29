@@ -2,7 +2,7 @@
 
 日期：2026-09-29。关联 [Issue #7739](https://github.com/farion1231/cc-switch/issues/7739)。
 
-**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A 的来源与管理权基础已实现并验证新增用例；经用户确认修复了既有 Windows 测试目录回退问题，整体仍有符号链接权限测试失败。VPS 功能尚未打通，详见第 9 节执行记录。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
+**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A 的来源/管理权基础和阶段 B 的主机数据/目录生成已实现并验证新增用例；整体仍有既有符号链接权限测试失败。VPS 自动部署、SSH 测试及页面尚未打通，最新状态见第 10 节，阶段 A 与测试隔离修复记录见第 9 节。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
 
 ## 0. 开发启动条件与边界
 
@@ -220,8 +220,8 @@ macOS/Linux 使用对应的原生临时目录路径，无需 `cygpath`。只设�
 请在当前仓库 feat/vps-skill-management 分支继续实现 Issue #7739。
 先读 docs/plans/vps-skill-management-execution.md、docs/proposals/vps-skill-management.md 和 CONTRIBUTING.md，并查看 .cc-switch/contribution-prep/preflight.md 的本机基线。
 按执行计划分阶段实现，不重新设计已确认方向：VPS 与 Skills/提示词/会话/MCP 同栏；在 VPS 页选客户端自动托管一个通用 Skill；自动 Skill 在普通 Skill 页隐藏；不设第二开关或常驻 Skill 状态说明；复用现有 Skill 管理和系统 SSH，不建 MCP/Agent/自定义客户端框架。
-先检查工作区并保留现有改动。记录并区分原有的 4 个 Rust 基线失败，新增与受影响测试必须实际验证。可以开始代码实现，但不要自行 commit、push、发布 Issue 评论或创建 PR，也不要未经确认修改系统权限或连接/写入真实 VPS。
-先核对第 9 节的最新执行记录、隔离修复与剩余权限失败，不要把准备期基线当作当前测试结果。
+先检查工作区并保留现有改动。记录并区分原有的 4 个 Rust 基线失败，新增与受影响测试必须实际验证。允许对完成且验证的独立阶段创建本地 commit，提交前检查差异并记录测试结果；未经进一步明确授权，不 push、不发布评论或创建 PR，不重写已有历史、不覆盖用户改动、不修改系统权限或连接/写入真实 VPS。
+先核对第 10 节的阶段 B 结果及第 9 节的隔离修复/剩余权限失败，不要把准备期基线当作当前测试结果。
 ```
 
 ## 9. 实际执行状态（2026-09-29）
@@ -272,3 +272,41 @@ macOS/Linux 使用对应的原生临时目录路径，无需 `cygpath`。只设�
 ### Git 授权更新
 
 用户在继续阶段 B 时明确允许：在当前功能分支上，对完成且经过验证的独立阶段创建本地 commit，提交前检查差异并记录测试结果。因此可单独提交已验证的阶段 A，阶段 B 在完成验证后再提交。未经进一步明确授权，不 push、不创建 PR、不发布评论，不重写已有提交历史或覆盖用户改动。前文“未 commit”等描述为相应检查时点的历史记录，不覆盖这项新授权。
+
+## 10. 阶段 B：主机数据与目录生成（2026-09-29）
+
+阶段 A 已独立提交为 `99548764`；此提交不含阶段 B 代码。阶段 B 的改动范围仅为 `services/vps.rs`、`services/vps/tests.rs`、模块注册/库导出和执行文档，不改供应商模型、Skill 部署或前端导航。
+
+### 实现与后续接口契约
+
+- `VpsServer` 保存稳定 UUID、名称、用途、主机、端口、用户名、密钥路径引用和现有 `SkillApps`。别名从 UUID 派生，重命名不改变身份。构造一次记录，保存失败时复用该 ID 重试，避免重试创建新主机。
+- 校验控制字符、SSH 选项/换行注入、DNS/IP、端口及密钥路径。密钥引用须为绝对路径，不接受父目录穿越、SSH `%`/环境变量展开或引号注入；不读取私钥内容。未指定密钥时生成 agent 模式的 `IdentityFile none`。
+- `VpsService` 使用现有配置目录与原子私密文件写入，读写 `<data-dir>/vps/servers.json`。独立 `ssh_config` 包含严格主机密钥验证及非交互认证约束；不会覆盖 `~/.ssh/config`，也不会启动 SSH。
+- `clients/<app-id>.json` 仅包含分配给该客户端的主机 ID、名称、用途、稳定 SSH 别名和独立配置路径，不包含密钥路径或凭据。遍历既有 `AppType` / `SkillApps` 能力，不维护另一份客户端名单。
+- 纯函数 `required_apps`、`plan_client_changes` 计算引用聚合及 Install/Update/Remove 差异；两台主机共用客户端时删除其中一台只更新，最后解绑才清理客户端目录。主机仍保留时，即使没有客户端绑定也保留 SSH 主机条目。
+- `servers.json.generatedFiles` 是生成内容的归属/恢复哈希元数据，不是另一个绑定来源。先检查目标归属，再原子保存主数据及前后哈希，逐文件写入/清理，最后收敛哈希。中断后可重新打开并 `reconcile()`；错误明确区分“主数据已保存”和“文件生成尚未完成”。
+- 相同内容不重复写入；进程内锁串行协调不同服务实例；写入前比对快照，拒绝覆盖用户已改动的文件。拒绝非普通文件、符号链接及 Windows reparse/junction 路径，仅清理有哈希归属证据的生成文件，保留目录内其他文件。
+
+**阶段 C 必须遵守：** `load()` 返回主数据中的期望绑定，不保证目录或 Skill 已成功部署；`plan_client_changes` 只是期望态差异。重试/启动恢复时须先完成目录生成，并对照实际 Skill 登记/部署收敛，即使期望态没变化也不能跳过首次失败的部署。不能把阶段 B 的保存成功单独当作客户端接入成功。当前没有 VPS Tauri 命令、VPS 页面、托管 Skill 注册或真实 SSH 操作。
+
+### 验证与交付
+
+阶段 B 的基础实现及本机可运行测试完成，按授权独立本地提交；不包含阶段 C–G。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 首批测试红绿验证 | 实现前 3 通过、16 失败；实现后 19 全通过 |
+| 扩展后的 VPS 测试 | 26 全通过，包含临时目录、恢复/幂等、并发保存、Windows junction 拒绝测试 |
+| Rust 全库 | 2929 通过、2 失败、10 原有忽略 |
+| Profile 集成 | 8 通过 |
+| Skill 集成 | 6 通过、1 失败 |
+| Rust 格式 / Clippy `-D warnings` | 通过，单 job |
+| TypeScript / 前端格式 | 通过；本阶段没有修改前端代码 |
+
+库测试仅剩原基线的 `codex_config::tests::resolve_catalog_rejects_symlink_escaping_config_dir` 与 `services::session_usage_grokbuild::tests::symlink_cycle_does_not_cause_stack_overflow`，均为 Windows 1314。Skill 集成仍为 `sync_to_app_removes_disabled_and_orphaned_ssot_symlinks` 在创建链接的测试 helper 处报 1314。与阶段 A 结束时相同，没有新增失败或忽略项；原基线的定价重载与 Pi 迁移继续通过。
+
+后端命令设置隔离 `CC_SWITCH_TEST_HOME`、单编译 job、单测试线程。VPS 用例另外逐项使用私有临时根目录；故障注入只在测试编译下启用。Windows junction 用例只在临时目录创建/移除链接，不修改系统权限；Unix symlink 用例尚未在本机执行。未运行真实 SSH、macOS、桌面或客户端模型任务，未验证真实 OpenSSH 对生成配置的加载；这些仍属于后续验收。没有重新运行前端完整测试/构建或其他 Rust 集成目标。
+
+日志位于 `.cc-switch/contribution-prep/`：`vps-stage-b-red.log`、`vps-stage-b-green.log`、`vps-stage-b-focused.log`、`vps-stage-b-clippy.log`、`vps-stage-b-rust-lib.log`、`vps-stage-b-integration.log`。
+
+下一步是阶段 C：通用托管 Skill 模板、按应用生成部署及受控生命周期。在接通生产注册/部署前，继续落实阶段 A 记录的迁移与所有权边界，随后按阶段 D 处理扫描、备份和恢复。仍不 push、创建 PR、发布评论、重写提交历史或操作真实 VPS。
