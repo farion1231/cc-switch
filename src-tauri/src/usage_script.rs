@@ -1,9 +1,138 @@
+use rquickjs::prelude::Func;
 use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
 use url::{Host, Url};
 
 use crate::error::AppError;
+
+// 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
+// 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
+const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
+// 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
+const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+
+// JS prelude that repairs Date local-time reading on top of the host-provided
+// offset. Needed because the QuickJS build vendored by rquickjs-sys 0.8.1
+// computes the Windows offset in the wrong unit: TIME_ZONE_INFORMATION.Bias is
+// already in minutes, but quickjs divides it by 60, so getTimezoneOffset()
+// returns hours (e.g. -8 for UTC+8 instead of -480) and every local-time getter
+// shifts the timestamp by minutes instead of hours. See issue #7751.
+const TIMEZONE_SHIM_PRELUDE: &str = r#"
+(() => {
+  const hostOffsetMinutes = globalThis.__hostUtcOffsetMinutes;
+  delete globalThis.__hostUtcOffsetMinutes;
+  if (typeof hostOffsetMinutes !== "function") return;
+  const proto = Date.prototype;
+  // Local wall-clock epoch value: local = UTC + offsetMinutes * 60000.
+  const localEpochMs = function (utcMs) { return utcMs + hostOffsetMinutes(utcMs) * 60000; };
+  // Spec: getTimezoneOffset() = UTC - local, in minutes.
+  proto.getTimezoneOffset = function () {
+    const utcMs = this.getTime();
+    return isFinite(utcMs) ? -hostOffsetMinutes(utcMs) : NaN;
+  };
+  const utcGetterNames = {
+    getFullYear: "getUTCFullYear",
+    getMonth: "getUTCMonth",
+    getDate: "getUTCDate",
+    getDay: "getUTCDay",
+    getHours: "getUTCHours",
+    getMinutes: "getUTCMinutes",
+    getSeconds: "getUTCSeconds",
+    getMilliseconds: "getUTCMilliseconds",
+  };
+  for (const localName of Object.keys(utcGetterNames)) {
+    const utcName = utcGetterNames[localName];
+    proto[localName] = function () {
+      return new Date(localEpochMs(this.getTime()))[utcName]();
+    };
+  }
+})();
+"#;
+
+// Local UTC offset in minutes (local minus UTC) for a timestamp in
+// milliseconds. DST-aware via the platform timezone database through chrono.
+fn local_utc_offset_minutes(timestamp_ms: f64) -> f64 {
+    use chrono::TimeZone;
+    if !timestamp_ms.is_finite() {
+        return f64::NAN;
+    }
+    let timestamp_ms = timestamp_ms as i64; // saturates on overflow
+    let Some(utc) = chrono::Utc.timestamp_millis_opt(timestamp_ms).single() else {
+        return 0.0;
+    };
+    let offset_secs = chrono::Local
+        .offset_from_utc_datetime(&utc.naive_utc())
+        .local_minus_utc();
+    offset_secs as f64 / 60.0
+}
+
+/// 创建一个受控的 QuickJS Runtime：限制内存与栈，并安装执行时间中断器。
+fn create_script_runtime() -> Result<Runtime, AppError> {
+    let runtime = Runtime::new().map_err(|e| {
+        AppError::localized(
+            "usage_script.runtime_create_failed",
+            format!("创建 JS 运行时失败: {e}"),
+            format!("Failed to create JS runtime: {e}"),
+        )
+    })?;
+
+    // 内存和栈限制必须在 eval 前设置。
+    runtime.set_memory_limit(USAGE_SCRIPT_MEMORY_LIMIT_BYTES);
+    // set_max_stack_size 默认 256 KiB 够用，这里显式重申请求它保持一致。
+    runtime.set_max_stack_size(256 * 1024);
+
+    // 时间片中断器：每轮解释器循环检查是否超时，超时则抛出不可捕获的异常。
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(USAGE_SCRIPT_TIMEOUT_SECS))
+        .ok_or_else(|| {
+            AppError::localized(
+                "usage_script.invalid_timeout",
+                "无法计算脚本执行截止时间",
+                "Unable to compute script execution deadline",
+            )
+        })?;
+    runtime.set_interrupt_handler(Some(Box::new(move || std::time::Instant::now() > deadline)));
+
+    Ok(runtime)
+}
+
+/// Create the script context and install the Date timezone shim so that user
+/// scripts observe spec-correct local time on every platform.
+fn create_script_context(runtime: &Runtime) -> Result<Context, AppError> {
+    let context = Context::full(runtime).map_err(|e| {
+        AppError::localized(
+            "usage_script.context_create_failed",
+            format!("创建 JS 上下文失败: {e}"),
+            format!("Failed to create JS context: {e}"),
+        )
+    })?;
+
+    context.with(|ctx| -> Result<(), AppError> {
+        ctx.globals()
+            .set(
+                "__hostUtcOffsetMinutes",
+                Func::from(local_utc_offset_minutes),
+            )
+            .map_err(|e| {
+                AppError::localized(
+                    "usage_script.timezone_shim_failed",
+                    format!("安装时区垫片失败: {e}"),
+                    format!("Failed to install timezone shim: {e}"),
+                )
+            })?;
+        let _: rquickjs::Value = ctx.eval(TIMEZONE_SHIM_PRELUDE).map_err(|e| {
+            AppError::localized(
+                "usage_script.timezone_shim_failed",
+                format!("安装时区垫片失败: {e}"),
+                format!("Failed to install timezone shim: {e}"),
+            )
+        })?;
+        Ok(())
+    })?;
+
+    Ok(context)
+}
 
 /// 执行用量查询脚本
 pub async fn execute_usage_script(
@@ -30,51 +159,9 @@ pub async fn execute_usage_script(
     }
 
     // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
-    // 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
-    // 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
-    const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
-    // 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
-    const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-
-    /// 创建一个受控的 QuickJS Runtime：限制内存与栈，并安装执行时间中断器。
-    fn create_script_runtime() -> Result<Runtime, AppError> {
-        let runtime = Runtime::new().map_err(|e| {
-            AppError::localized(
-                "usage_script.runtime_create_failed",
-                format!("创建 JS 运行时失败: {e}"),
-                format!("Failed to create JS runtime: {e}"),
-            )
-        })?;
-
-        // 内存和栈限制必须在 eval 前设置。
-        runtime.set_memory_limit(USAGE_SCRIPT_MEMORY_LIMIT_BYTES);
-        // set_max_stack_size 默认 256 KiB 够用，这里显式重申请求它保持一致。
-        runtime.set_max_stack_size(256 * 1024);
-
-        // 时间片中断器：每轮解释器循环检查是否超时，超时则抛出不可捕获的异常。
-        let deadline = std::time::Instant::now()
-            .checked_add(std::time::Duration::from_secs(USAGE_SCRIPT_TIMEOUT_SECS))
-            .ok_or_else(|| {
-                AppError::localized(
-                    "usage_script.invalid_timeout",
-                    "无法计算脚本执行截止时间",
-                    "Unable to compute script execution deadline",
-                )
-            })?;
-        runtime.set_interrupt_handler(Some(Box::new(move || std::time::Instant::now() > deadline)));
-
-        Ok(runtime)
-    }
-
     let request_config = {
         let runtime = create_script_runtime()?;
-        let context = Context::full(&runtime).map_err(|e| {
-            AppError::localized(
-                "usage_script.context_create_failed",
-                format!("创建 JS 上下文失败: {e}"),
-                format!("Failed to create JS context: {e}"),
-            )
-        })?;
+        let context = create_script_context(&runtime)?;
 
         context.with(|ctx| {
             // 执行用户代码，获取配置对象
@@ -143,13 +230,7 @@ pub async fn execute_usage_script(
     // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
         let runtime = create_script_runtime()?;
-        let context = Context::full(&runtime).map_err(|e| {
-            AppError::localized(
-                "usage_script.context_create_failed",
-                format!("创建 JS 上下文失败: {e}"),
-                format!("Failed to create JS context: {e}"),
-            )
-        })?;
+        let context = create_script_context(&runtime)?;
 
         context.with(|ctx| {
             // 重新 eval 获取配置对象
@@ -686,6 +767,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn date_local_time_apis_use_correct_units() {
+        // Repro instant from issue #7751: 2026-09-29T11:22:47.498Z.
+        const FIXED_MS: i64 = 1_790_680_967_498;
+
+        let script = format!(
+            r#"
+            (function () {{
+                var d = new Date({FIXED_MS});
+                var asUtc = Date.UTC(
+                    d.getFullYear(), d.getMonth(), d.getDate(),
+                    d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()
+                );
+                return JSON.stringify({{
+                    tzOffset: d.getTimezoneOffset(),
+                    localShiftMinutes: Math.round((asUtc - {FIXED_MS}) / 60000),
+                    hours: d.getHours()
+                }});
+            }})()
+            "#
+        );
+
+        let runtime = create_script_runtime().expect("runtime");
+        let context = create_script_context(&runtime).expect("context");
+        let json: String = context
+            .with(|ctx| -> Result<String, rquickjs::Error> { ctx.eval(script.as_str()) })
+            .expect("eval probe failed");
+        let probe: Value = serde_json::from_str(&json).expect("probe json");
+
+        // Host-side ground truth: chrono is DST-aware and unit-correct on every platform.
+        use chrono::{TimeZone, Timelike};
+        let utc = chrono::Utc
+            .timestamp_millis_opt(FIXED_MS)
+            .single()
+            .expect("valid instant");
+        let offset_secs = chrono::Local
+            .offset_from_utc_datetime(&utc.naive_utc())
+            .local_minus_utc();
+        let offset_minutes = offset_secs / 60;
+        let expected_hours =
+            (utc.naive_utc() + chrono::Duration::seconds(offset_secs as i64)).hour();
+
+        assert_eq!(
+            probe["tzOffset"],
+            serde_json::json!(-offset_minutes),
+            "getTimezoneOffset() must return minutes (UTC minus local)"
+        );
+        assert_eq!(
+            probe["localShiftMinutes"],
+            serde_json::json!(offset_minutes),
+            "local-time fields must shift by the full offset in minutes"
+        );
+        assert_eq!(
+            probe["hours"],
+            serde_json::json!(expected_hours),
+            "getHours() must return the local hour"
+        );
     }
 
     #[test]
