@@ -196,18 +196,53 @@ config，**DB 里没有对应 provider 行，官方档存档里也没有这张�
 才是注入点（`set_codex_experimental_bearer_token`，只动 active 那一张表），它在
 写盘阶段才跑，晚于 `merge_inert_codex_provider_tables_into_settings_config`。
 
-因此副本要**两趟盖章**，缺一不可：
+因此副本要**三趟**，缺一不可：
 
 | 趟 | 做什么 | 在哪 | 少了它会怎样 |
 |---|---|---|---|
-| 1 | 无人认领的副本随 active **整表刷新** | `live.rs::merge_session_referenced_shadow_tables`（`db_declared_ids` 区分归属） | 副本停在切换时的直连地址 + 供应商真 key，或压根不存在 |
-| 2 | 注入后把 active 的 token 盖到**路由副本**上 | `codex_config.rs::propagate_active_bearer_token_to_route_copies` | 表在、地址对、认证缺 → 401 |
+| 1 | 无人认领的影子随 active **整表刷新** | `live.rs::merge_session_referenced_shadow_tables`（`db_declared_ids` 区分归属） | 影子停在切换时的直连地址 + 供应商真 key，或压根不存在 |
+| 2 | 接管中把 **DB 声明的 inert 表**也改道到本地代理 | `live.rs::reroute_inert_table_to_takeover`（由 `takeover_route` 参数触发） | inert 表留在自己端点上：既 401，又会把官方凭据发给第三方 |
+| 3 | 注入后把 active 的 token 盖到**所有路由副本**上 | `codex_config.rs::propagate_active_bearer_token_to_route_copies` | 表在、地址对、认证缺 → 401 |
 
-两条不能互相替代：第 1 趟拿不到尚未注入的 token，第 2 趟只认「与 active 同
-`name` + `base_url` 且自带 credential 为空」的表。第 2 趟的判据是**端点身份**而不是
-id 白名单，因为它运行在纯文本层、拿不到 DB；豁免条件是表自带 `env_key` /
-`experimental_bearer_token` / `Authorization` 头（两个 DB provider 指向同一网关、各带
-各的 key 是真实存在的形态），保留 id 一律不盖章。
+三趟不能互相替代：第 1 趟拿不到尚未注入的 token；第 2 趟只改地址不碰凭据；第 3 趟
+在纯文本层跑、拿不到 DB，只能按端点身份认表。
+
+#### 第 2 趟为什么必须有：inert 表身上从来没有凭据
+
+cc-switch 把每个供应商的 key 存在 `auth.OPENAI_API_KEY`，**注入只写 active 那一张表**
+（`set_codex_experimental_bearer_token`）。于是 DB 声明的 inert 表在 live config 里
+永远是「自己的端点 + 零凭据」。本机现场（2026-09-29，修之前的 `~/.codex/config.toml`）：
+
+```
+[model_providers.custom]        # 64 个 rollout / 63 条 state 记录引用它
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"   # 直连第三方，不经本地代理
+requires_openai_auth = true            # 没有任何 env_key / token
+```
+
+`requires_openai_auth = true` + 无凭据 ⇒ Codex 退回原生 ChatGPT 登录，并把这个
+token 呈递给表里的 `base_url`。所以这张表既是**必然失败**，也是**官方凭据外发**。
+（此处未做实测触发：跑一次 resume 就会真的把 ChatGPT 凭据发到第三方主机。）
+
+接管中本地代理是唯一能服务任何表的端点——真 key 都在代理手里。所以 inert 表被改
+成 active 的路由副本：`base_url` → 代理地址、`wire_api = responses`、清掉属于旧端点
+的凭据字段，`name` 保留（那是该端点的显示标签）。代价与 §2.4b' 对影子表的取舍相同：
+老 session 恢复到**当前** active 上游。
+
+切换路径（`takeover_route = None`）**不**改道：那时 live config 就是该 provider 自己的
+端点，别的表指向各自端点仍然属实。
+
+#### 第 3 趟的判据：端点身份是 `base_url`，不是 `name`
+
+改道后的 inert 表保留自己的 `name`（`local_gateway` vs `kxpms_gateway`）而 `base_url`
+变成代理。判据若还要求 name 相同，第 2 趟改道出来的表会被第 3 趟整个漏掉——正好漏掉
+第 2 趟存在的意义。反向也不能只看 name：`name` 相同而端点不同的表会被误盖。两条都由
+同一组断言钉住（`rerouted_inert` 要盖 / `same_name_other_endpoint` 不盖），并做过变异
+验证：把 name 条件加回去，`rerouted_inert` 立刻转红。
+
+豁免条件是表自带 `env_key` / `experimental_bearer_token` / `Authorization` 头（两个
+DB provider 指向同一网关、各带各的 key 是真实存在的形态），保留 id 一律不盖章，
+active 表本身没有 token 时（codex-official 接管靠原生登录）也不盖章。
 
 配套：**旧断言要跟着改**。`merge_does_not_shadow_over_an_existing_table` 锁的正是
 "已存在就跳过"这条导致 401 的规则，已改写为 `session_shadow_refreshes_a_stale_table_it_owns`。

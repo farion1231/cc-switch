@@ -167,14 +167,17 @@ def _declares_own_credential(table: dict) -> bool:
 
 
 def find_unauthenticated_route_copies(tables: dict, active: str | None) -> list[str]:
-    """Route copies of the active table that carry no credential of their own.
+    """Route copies of the active endpoint that carry no credential of their own.
 
-    A "route copy" is a table with the same ``name`` + ``base_url`` as the active
-    one — that is what cc-switch mints so sessions recorded under an older
-    ``model_provider`` id still resolve to the current endpoint. If the active
-    table authenticates but a copy does not, resuming a session through that
-    copy fails with ``Missing or malformed Authorization header`` (401) rather
-    than the clearer "not found".
+    A "route copy" is a table pointing at the same ``base_url`` as the active one
+    — that is what cc-switch mints (session shadows) and what a takeover produces
+    for the tables it rerouted onto the local proxy. ``name`` is deliberately
+    **not** part of the identity: a rerouted inert table keeps its own endpoint's
+    display name while its ``base_url`` becomes the proxy, and it still has to
+    authenticate the way the active route does. If the active table
+    authenticates but a copy does not, resuming a session through that copy fails
+    with ``Missing or malformed Authorization header`` (401) rather than the
+    clearer "not found".
 
     Only flagged when the active table itself holds a token: a codex-official
     takeover has none and every route copy correctly falls back to the native
@@ -186,20 +189,48 @@ def find_unauthenticated_route_copies(tables: dict, active: str | None) -> list[
     token = active_table.get("experimental_bearer_token")
     if not isinstance(token, str) or not token.strip():
         return []
-    key = (active_table.get("name"), active_table.get("base_url"))
-    if key[0] is None or key[1] is None:
+    base_url = active_table.get("base_url")
+    if not isinstance(base_url, str) or not base_url.strip():
         return []
 
     stale: list[str] = []
     for provider_id, table in tables.items():
         if provider_id == active or not isinstance(table, dict):
             continue
-        if (table.get("name"), table.get("base_url")) != key:
+        if (table.get("base_url") or "").strip() != base_url.strip():
             continue
         if _declares_own_credential(table):
             continue
         stale.append(provider_id)
     return sorted(stale)
+
+
+def _is_loopback(url: str) -> bool:
+    host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    return host in {"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"}
+
+
+def find_official_credential_egress(tables: dict, active: str | None) -> list[str]:
+    """Inert tables that would send the native ChatGPT login to a third party.
+
+    ``requires_openai_auth = true`` with no credential of its own makes Codex
+    fall back to the official login, and it then presents that token to whatever
+    ``base_url`` the table names. On a table that points somewhere other than the
+    active route, resuming such a session both fails and hands the ChatGPT
+    credential to a third-party host. Observed on this machine before the
+    takeover reroute landed: the ``custom`` table pointed straight at a vendor
+    URL with ``requires_openai_auth = true`` and no ``env_key``/token.
+    """
+    leaking: list[str] = []
+    for provider_id, table in tables.items():
+        if provider_id == active or not isinstance(table, dict):
+            continue
+        if table.get("requires_openai_auth") is not True:
+            continue
+        if _declares_own_credential(table):
+            continue
+        leaking.append(provider_id)
+    return sorted(leaking)
 
 
 def main() -> int:
@@ -214,6 +245,7 @@ def main() -> int:
     state_rows = collect_from_state_dbs(root)
     defined, active, tables = defined_provider_ids(config_path)
     unauthenticated_copies = find_unauthenticated_route_copies(tables, active)
+    egress = find_official_credential_egress(tables, active)
 
     referenced: dict[str, dict[str, int]] = {}
     for source, counts in (("rollout", rollouts), ("state_db", state_rows)):
@@ -238,12 +270,13 @@ def main() -> int:
                     "referenced": referenced,
                     "unresolved": unresolved,
                     "unauthenticated_route_copies": unauthenticated_copies,
+                    "official_credential_egress": egress,
                 },
                 ensure_ascii=False,
                 indent=2,
             )
         )
-        return 1 if (unresolved or unauthenticated_copies) else 0
+        return 1 if (unresolved or unauthenticated_copies or egress) else 0
 
     print(f"Codex 配置目录: {root}")
     print(f"顶层 model_provider: {active or '(未设置)'}")
@@ -256,6 +289,8 @@ def main() -> int:
             status = "缺表 → 这些 session 打不开"
         elif provider in unauthenticated_copies:
             status = "有表但无认证 → 这些 session 401"
+        elif provider in egress:
+            status = "会向第三方外发官方 ChatGPT 凭据"
         elif provider == active:
             status = "当前路由"
         else:
@@ -286,8 +321,22 @@ def main() -> int:
         print("`experimental_bearer_token`。")
         return 1
 
+    if egress:
+        print()
+        print("会把官方 ChatGPT 登录凭据发往非当前路由端点的表:")
+        for provider_id in egress:
+            url = (tables.get(provider_id) or {}).get("base_url", "(无 base_url)")
+            where = "本机" if _is_loopback(str(url)) else "**远端主机**"
+            print(f"  - {provider_id} -> {url}（{where}）")
+        print("这些表 requires_openai_auth = true 却没有自带凭据，Codex 会退回原生")
+        print("登录并把该 token 呈递给表里的 base_url。远端主机那条同时是凭据外发。")
+        print("修法：接管时把这类表改道到本地代理（`reroute_inert_table_to_takeover`），")
+        print("或手工把它改回指向当前路由。")
+        return 1
+
     print()
-    print("OK: 所有被 session 引用的 provider id 都有表，且路由副本都带认证字段。")
+    print("OK: 所有被 session 引用的 provider id 都有表，路由副本都带认证字段，")
+    print("且没有表会把官方凭据发往第三方。")
     return 0
 
 

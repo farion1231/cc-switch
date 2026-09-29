@@ -3819,11 +3819,18 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
 
 /// Give every *route copy* of the active table the active table's bearer token.
 ///
-/// A "route copy" is a `[model_providers.<id>]` table whose `name` + `base_url`
-/// are byte-identical to the active table's. Those are the session shadow tables
-/// RFC 0002 §2.4b mints (a verbatim copy of the active route) — they exist so
+/// A "route copy" is a `[model_providers.<id>]` table whose `base_url` equals
+/// the active table's. Those are the tables that must authenticate the way the
+/// active route does: the session shadows RFC 0002 §2.4b mints, and — during a
+/// takeover — the inert tables rerouted onto the local proxy. Both exist so
 /// sessions that recorded an old `model_provider` id still resolve to the
 /// current endpoint instead of `Model provider 'X' not found`.
+///
+/// `base_url` is the identity, not `name` + `base_url`: a rerouted inert table
+/// keeps its own endpoint's display `name` (`local_gateway` vs `kxpms_gateway`)
+/// while pointing at the same proxy, and it still has to authenticate the same
+/// way. Keying on the name too would skip exactly the tables the reroute
+/// exists to fix.
 ///
 /// Why this has to be a **separate pass** rather than part of the shadow merge:
 /// the merge runs on the effective settings *before* the write path injects the
@@ -3857,31 +3864,24 @@ fn propagate_active_bearer_token_to_route_copies(config_text: &str) -> Result<St
     if !is_custom_codex_model_provider_id(&active_id) {
         return Ok(config_text.to_string());
     }
-    let route_key = |table: &dyn toml_edit::TableLike| {
-        Some((
-            table.get("name")?.as_str()?.to_string(),
-            table.get("base_url")?.as_str()?.to_string(),
-        ))
-    };
-    let active_key = doc
+    let active_table = doc
         .get("model_providers")
         .and_then(Item::as_table_like)
         .and_then(|table| table.get(&active_id))
-        .and_then(Item::as_table_like)
+        .and_then(Item::as_table_like);
+    let active_base_url = active_table
+        .and_then(|table| table.get("base_url"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string);
+    let token = active_table
         .and_then(|table| table.get("experimental_bearer_token"))
         .and_then(Item::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .map(str::to_string)
-        .and_then(|token| {
-            doc.get("model_providers")
-                .and_then(Item::as_table_like)
-                .and_then(|table| table.get(&active_id))
-                .and_then(Item::as_table_like)
-                .and_then(route_key)
-                .map(|key| (token, key))
-        });
-    let Some((token, active_key)) = active_key else {
+        .map(str::to_string);
+    let (Some(active_base_url), Some(token)) = (active_base_url, token) else {
         return Ok(config_text.to_string());
     };
 
@@ -3900,7 +3900,12 @@ fn propagate_active_bearer_token_to_route_copies(config_text: &str) -> Result<St
         let Some(table) = providers.get_mut(&id).and_then(Item::as_table_like_mut) else {
             continue;
         };
-        if route_key(&*table) != Some(active_key.clone()) {
+        let same_endpoint = table
+            .get("base_url")
+            .and_then(Item::as_str)
+            .map(str::trim)
+            .is_some_and(|url| url == active_base_url);
+        if !same_endpoint {
             continue;
         }
         let declares_own_credential = table.get("env_key").is_some()
@@ -3917,7 +3922,7 @@ fn propagate_active_bearer_token_to_route_copies(config_text: &str) -> Result<St
         return Ok(config_text.to_string());
     }
     log::info!(
-        "codex 影子表：随 active 表补齐认证字段 {:?}（active={}）",
+        "codex 路由副本：随 active 表补齐认证字段 {:?}（active={}）",
         stamped,
         active_id
     );
@@ -5958,6 +5963,22 @@ base_url = "http://127.0.0.1:15721/v1"
 wire_api = "responses"
 requires_openai_auth = true
 http_headers = { Authorization = "Bearer other-gateway-key" }
+
+# 同端点、**不同 name**：这正是接管改道后的 inert 表形态（保留自己的显示名，
+# base_url 换成代理）。判据若还要求 name 相同，这张表就会被漏掉——而它漏掉
+# 的后果就是这一轮要修的 401。
+[model_providers.rerouted_inert]
+name = "local_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 同 name、**不同端点**：name 不是身份，光看名字会误盖。
+[model_providers.same_name_other_endpoint]
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
 "#;
 
         let output =
@@ -5969,7 +5990,13 @@ http_headers = { Authorization = "Bearer other-gateway-key" }
             .and_then(|v| v.as_table())
             .expect("model_providers");
 
-        for id in ["kxpms", "cc-switch-official", "evol"] {
+        for id in [
+            "kxpms",
+            "cc-switch-official",
+            "evol",
+            // 改道后的 inert 表：同端点不同名，照样要盖章
+            "rerouted_inert",
+        ] {
             assert_eq!(
                 tables
                     .get(id)
@@ -5997,7 +6024,12 @@ http_headers = { Authorization = "Bearer other-gateway-key" }
         // 只差在自带 credential 上。少了 `env_key` / `http_headers` 豁免，这两张
         // 表会被盖上 active 的 token，把它们自己的 key 顶掉（变异 2 实测：
         // 只留前两条断言时，摘掉豁免测试照样绿 —— 说明那两条根本没走到豁免分支）。
-        for id in ["same_gateway_env_key", "same_gateway_header"] {
+        for id in [
+            "same_gateway_env_key",
+            "same_gateway_header",
+            // 同名不同端点：不能因为 name 撞了就盖章
+            "same_name_other_endpoint",
+        ] {
             assert!(
                 tables
                     .get(id)

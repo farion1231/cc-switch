@@ -769,6 +769,10 @@ impl ProxyService {
             &effective_settings,
             &provider.id,
             Some(&crate::codex_config::get_codex_config_dir()),
+            // 接管中：inert 表也要改道到本地代理。它们身上从来没有凭据（key 只存
+            // 在 auth.OPENAI_API_KEY，注入只写 active 那一张表），留在原端点上
+            // 既 401 又会把官方 ChatGPT 登录凭据发给第三方。
+            Some(proxy_codex_base_url.as_str()),
         )
         .map_err(|e| format!("codex 接管路径合并 inert provider 表失败: {e}"))?;
 

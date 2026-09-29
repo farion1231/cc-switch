@@ -734,12 +734,21 @@ pub(crate) fn build_effective_settings_with_common_config(
 /// consult" and is what tests pass: reading the developer's real `~/.codex`
 /// would make assertions depend on their personal sessions — a test that passes
 /// on a clean machine and fails on a used one.
+///
+/// `takeover_route` is `Some(proxy_base_url)` while a takeover is active. It is
+/// what makes inert tables usable at all: the API key lives in
+/// `auth.OPENAI_API_KEY` and is injected into the active table only, so an
+/// inert table left pointing at its own endpoint has no credential at all (see
+/// `reroute_inert_table_to_takeover`). Pass `None` on a direct switch, where
+/// the live config is the provider's own endpoint and the other tables are
+/// still telling the truth.
 pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     db: &Database,
     app_type_str: &str,
     settings_config: &Value,
     current_provider_db_id: &str,
     history_dir: Option<&Path>,
+    takeover_route: Option<&str>,
 ) -> Result<Value, AppError> {
     // Pre-flight: only proceed for Codex. Other app types have no
     // `[model_providers.*]` semantics that session metadata would reference.
@@ -863,6 +872,25 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
             merge_inert_provider_table(&mut live_doc, id, item, &mut merged_count);
         }
     }
+
+    // 接管中：把 live 里**每一张**非 active 的第三方表都改道到本地代理。
+    //
+    // 放在合并循环之后、影子补表之前，是为了让两个来源一次覆盖：
+    // 1. DB 其它 provider 声明的 inert 表（合并进来的，或因 live-wins 而被跳过、
+    //    保留着 live 里的旧版本）；
+    // 2. **active provider 自己**在 `settings_config` 里声明的第二张表——上面
+    //    那个循环会 `continue` 掉 active 行，所以它的表压根不进合并流程。
+    //    实机（2026-09-29 20:41 部署验证）：切到 local-gateway-8782 后，
+    //    `custom` 表停在 `http://localhost:8782/v1` 且无 token，正是这一类。
+    let rerouted = match takeover_route {
+        Some(proxy_base_url) => reroute_non_active_tables_to_takeover(
+            &mut live_doc,
+            active_toml_id.as_deref(),
+            proxy_base_url,
+        ),
+        None => 0,
+    };
+    merged_count += rerouted;
 
     // History may reference a provider id that no DB row owns — see
     // `merge_session_referenced_shadow_tables`. Runs even when the loop above
@@ -1008,6 +1036,88 @@ fn merge_inert_provider_table(
 
     mp.insert(id, item.clone());
     *merged_count += 1;
+}
+
+/// Reroute every non-active third-party table in `live_doc` to the proxy.
+///
+/// Runs after the DB merge so it catches tables from both sources (see the
+/// call site). Returns how many tables it rewrote.
+fn reroute_non_active_tables_to_takeover(
+    live_doc: &mut DocumentMut,
+    active_toml_id: Option<&str>,
+    proxy_base_url: &str,
+) -> usize {
+    let Some(providers) = live_doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return 0;
+    };
+    let ids: Vec<String> = providers.iter().map(|(id, _)| id.to_string()).collect();
+    let mut rerouted: Vec<String> = Vec::new();
+    for id in ids {
+        if Some(id.as_str()) == active_toml_id {
+            continue;
+        }
+        // Reserved ids belong to the CLI (see `is_custom_codex_model_provider_id`).
+        if !crate::codex_config::is_custom_codex_model_provider_id(&id) {
+            continue;
+        }
+        let Some(item) = providers.get_mut(&id) else {
+            continue;
+        };
+        let Some(rewritten) = reroute_inert_table_to_takeover(item, proxy_base_url) else {
+            continue;
+        };
+        *item = rewritten;
+        rerouted.push(id);
+    }
+    if !rerouted.is_empty() {
+        log::info!(
+            "接管路径：把 {} 个非 active 的 provider 表改道到本地代理 {:?}（真 key 只在代理手里，inert 表自身从不带凭据）",
+            rerouted.len(),
+            rerouted
+        );
+    }
+    rerouted.len()
+}
+
+/// Point an inert table at the local proxy while a takeover is active.
+///
+/// Why an inert table has to be rerouted too, not just the active one:
+/// cc-switch stores every provider's API key in `auth.OPENAI_API_KEY` and
+/// injects it into **the active table only** at write time. A DB-declared inert
+/// table therefore never carries a credential — it keeps whatever `base_url`
+/// the provider declared, and with no `env_key` / `experimental_bearer_token`
+/// Codex falls back to the native ChatGPT login. Observed on this machine
+/// (`~/.codex/config.toml`): the `custom` table, referenced by 64 rollouts and
+/// 63 state rows, pointed straight at `https://llm.kxpms.cn/v1` with
+/// `requires_openai_auth = true` and no credential — resuming such a session
+/// both fails and hands the official ChatGPT token to a third-party host.
+///
+/// Under takeover the local proxy is the only endpoint that can serve any
+/// table, because the proxy holds the real keys. So an inert table is made a
+/// route copy of the active one: same proxy `base_url`, `wire_api = responses`,
+/// and any credential that belonged to the old endpoint is dropped so the
+/// token layer stamps the proxy placeholder uniformly (it keys off `base_url`
+/// plus "declares no credential of its own"). `name` is preserved: it is that
+/// endpoint's display label, and Codex only uses it for UI.
+///
+/// The cost is the same one §2.4b' already accepts for session shadows — a
+/// session recorded against an old provider resumes onto the *current* active
+/// upstream rather than its original endpoint.
+fn reroute_inert_table_to_takeover(item: &Item, proxy_base_url: &str) -> Option<Item> {
+    let mut rerouted = item.clone();
+    let table = rerouted.as_table_like_mut()?;
+    // The old endpoint's own credential must not travel with the table: the
+    // table is about to point at the proxy, and the proxy placeholder replaces
+    // whatever key the previous endpoint used.
+    for key in ["env_key", "experimental_bearer_token", "auth", "aws"] {
+        table.remove(key);
+    }
+    table.insert("base_url", toml_edit::value(proxy_base_url));
+    table.insert("wire_api", toml_edit::value("responses"));
+    Some(rerouted)
 }
 
 /// Write (or refresh) a session shadow table. Unlike `merge_inert_provider_table`
@@ -1216,6 +1326,10 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         &effective_provider.settings_config,
         &provider.id,
         Some(&crate::codex_config::get_codex_config_dir()),
+        // Direct switch: the live config is the provider's own endpoint, so an
+        // inert table pointing at another provider's endpoint is still truthful.
+        // Only the takeover path reroutes them (see `takeover_route`).
+        None,
     )?;
 
     write_live_snapshot(app_type, &effective_provider)
@@ -2893,6 +3007,26 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
 #[cfg(test)]
 mod tests {
+
+    /// 测试专用包装：切换路径从不改道（`takeover_route = None`），绝大多数用例
+    /// 关心的就是这条路径。接管改道另有专门用例显式传 `Some(proxy_url)`。
+    #[allow(dead_code)]
+    fn merge_inert_tables_for_switch_path(
+        db: &Database,
+        app_type_str: &str,
+        settings_config: &Value,
+        current_provider_db_id: &str,
+        history_dir: Option<&Path>,
+    ) -> Result<Value, AppError> {
+        merge_inert_codex_provider_tables_into_settings_config(
+            db,
+            app_type_str,
+            settings_config,
+            current_provider_db_id,
+            history_dir,
+            None,
+        )
+    }
     use super::*;
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
@@ -4099,6 +4233,15 @@ base_url = "https://a.example/v1"
         })
     }
 
+    fn kxpms_active_provider() -> Provider {
+        Provider::with_id(
+            "kxpms-gateway".to_string(),
+            "开轩".to_string(),
+            kxpms_settings_config(),
+            Some("kxpms".to_string()),
+        )
+    }
+
     fn local_settings_config() -> Value {
         json!({
             "auth": { "OPENAI_API_KEY": "sk-local" },
@@ -4152,7 +4295,7 @@ base_url = "https://a.example/v1"
         )
         .expect("write rollout");
 
-        let result = merge_inert_codex_provider_tables_into_settings_config(
+        let result = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &kxpms_settings_config(),
@@ -4181,6 +4324,159 @@ base_url = "https://a.example/v1"
             doc["model_providers"]["cc-switch-official"]["base_url"].as_str(),
             doc["model_providers"]["kxpms"]["base_url"].as_str(),
             "影子表必须是 active 表的逐字副本（§2.4b）"
+        );
+    }
+
+    /// 实机（2026-09-29）第三轮的形状：DB 声明的 inert 表 `custom` 指向
+    /// `https://llm.kxpms.cn/v1`、没有 env_key/token、还带
+    /// `requires_openai_auth = true`，而 64 个 rollout / 63 条 state 记录引用它。
+    ///
+    /// 接管中必须把它改道到本地代理：key 只存在 `auth.OPENAI_API_KEY`，注入只写
+    /// active 那一张表，所以留在原端点既必然 401，又会让 Codex 退回原生 ChatGPT
+    /// 登录、把官方凭据发给第三方网关。
+    #[test]
+    fn takeover_reroutes_a_db_declared_inert_table_to_the_proxy() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("codex", &kxpms_active_provider())
+            .expect("save active");
+        // 另一个 DB provider：声明 `custom` 表，带自己的 env_key
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "other-endpoint".to_string(),
+                "别的端点".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-other" },
+                    "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"other_gateway\"\nbase_url = \"https://other.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nenv_key = \"OTHER_ENDPOINT_KEY\"\n"
+                }),
+                Some("custom".to_string()),
+            ),
+        )
+        .expect("save other");
+
+        let merged = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &json!({ "config": kxpms_settings_config().get("config").cloned().unwrap() }),
+            "kxpms-gateway",
+            Some(std::path::Path::new("/nonexistent-history-dir")),
+            Some("http://127.0.0.1:15721/v1"),
+        )
+        .expect("merge");
+        let text = merged.get("config").and_then(Value::as_str).expect("text");
+        let parsed: toml::Value = toml::from_str(text).expect("valid toml");
+        let custom = &parsed["model_providers"]["custom"];
+
+        assert_eq!(
+            custom.get("base_url").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1"),
+            "接管中 inert 表必须改道到本地代理: {text}"
+        );
+        assert_eq!(
+            custom.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses"),
+            "改道后 wire_api 必须与 active 一致: {text}"
+        );
+        assert!(
+            custom.get("env_key").is_none(),
+            "旧端点自己的凭据不能跟着表一起改道: {text}"
+        );
+        assert_eq!(
+            custom.get("name").and_then(|v| v.as_str()),
+            Some("other_gateway"),
+            "name 是该端点的显示标签，要保留（认证判据只看 base_url）: {text}"
+        );
+    }
+
+    /// active provider **自己**声明的第二张表也必须改道。
+    ///
+    /// 实机（2026-09-29 20:41 部署验证）：切到 local-gateway-8782 后，`custom`
+    /// 表停在 `http://localhost:8782/v1` 且无 token —— 合并循环会 `continue`
+    /// 掉 active 行，它的表压根不进合并流程，所以「合并时逐表改道」漏掉了这一类。
+    /// 而这张 `custom` 表被 64 个 rollout / 63 条 state 记录引用。
+    #[test]
+    fn takeover_reroutes_a_table_declared_by_the_active_provider_itself() {
+        let db = Database::memory().expect("memory db");
+        // active provider 自带两张表：active 表 + 一张 `custom`
+        let mut cfg = kxpms_settings_config();
+        let active_text = cfg["config"].as_str().expect("text").to_string();
+        cfg["config"] = json!(format!(
+            "{active_text}\n[model_providers.custom]\nname = \"other_gateway\"\nbase_url = \"https://other.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nenv_key = \"OTHER_ENDPOINT_KEY\"\n"
+        ));
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                cfg.clone(),
+                Some("kxpms".to_string()),
+            ),
+        )
+        .expect("save active");
+
+        // 生产形状：live 文本本身就来自 active provider 的 DB 行（`effective_
+        // settings`），所以 `custom` 已经在里面等着被改道。
+        let merged = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &cfg,
+            "kxpms-gateway",
+            Some(std::path::Path::new("/nonexistent-history-dir")),
+            Some("http://127.0.0.1:15721/v1"),
+        )
+        .expect("merge");
+        let text = merged.get("config").and_then(Value::as_str).expect("text");
+        let parsed: toml::Value = toml::from_str(text).expect("valid toml");
+        assert_eq!(
+            parsed["model_providers"]["custom"]
+                .get("base_url")
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1"),
+            "active provider 自己的附属表同样要改道（实机 20:41 就是漏在这一类）: {text}"
+        );
+        assert!(
+            parsed["model_providers"]["custom"].get("env_key").is_none(),
+            "旧端点凭据不能跟着改道: {text}"
+        );
+    }
+
+    /// 切换路径**不**改道：live config 就是该 provider 自己的端点，别的表
+    /// 指向各自端点此时仍然属实。
+    #[test]
+    fn direct_switch_leaves_an_inert_table_on_its_own_endpoint() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("codex", &kxpms_active_provider())
+            .expect("save active");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "other-endpoint".to_string(),
+                "别的端点".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-other" },
+                    "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"other_gateway\"\nbase_url = \"https://other.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nenv_key = \"OTHER_ENDPOINT_KEY\"\n"
+                }),
+                Some("custom".to_string()),
+            ),
+        )
+        .expect("save other");
+
+        let merged = merge_inert_tables_for_switch_path(
+            &db,
+            "codex",
+            &json!({ "config": kxpms_settings_config().get("config").cloned().unwrap() }),
+            "kxpms-gateway",
+            Some(std::path::Path::new("/nonexistent-history-dir")),
+        )
+        .expect("merge");
+        let text = merged.get("config").and_then(Value::as_str).expect("text");
+        let parsed: toml::Value = toml::from_str(text).expect("valid toml");
+        assert_eq!(
+            parsed["model_providers"]["custom"]
+                .get("base_url")
+                .and_then(|v| v.as_str()),
+            Some("https://other.example/v1"),
+            "切换路径不得改道: {text}"
         );
     }
 
@@ -4222,7 +4518,7 @@ base_url = "https://a.example/v1"
                 .to_string(),
         );
 
-        let result = merge_inert_codex_provider_tables_into_settings_config(
+        let result = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &active,
@@ -4258,7 +4554,7 @@ base_url = "https://a.example/v1"
         )
         .expect("save kxpms");
 
-        let result = merge_inert_codex_provider_tables_into_settings_config(
+        let result = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &kxpms_settings_config(),
@@ -4322,7 +4618,7 @@ base_url = "https://a.example/v1"
         .expect("write rollout");
 
         // 第 3 步：切回第三方。
-        let back = merge_inert_codex_provider_tables_into_settings_config(
+        let back = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &kxpms_settings_config(),
@@ -4358,7 +4654,7 @@ base_url = "https://a.example/v1"
         .expect("write rollout");
         let history2 = history2.path();
 
-        let to_official = merge_inert_codex_provider_tables_into_settings_config(
+        let to_official = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &official_settings_config(),
@@ -4425,7 +4721,7 @@ base_url = "https://a.example/v1"
             .expect("write rollout");
         }
 
-        let to_official = merge_inert_codex_provider_tables_into_settings_config(
+        let to_official = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &official_settings_config(),
@@ -4482,7 +4778,7 @@ base_url = "https://a.example/v1"
 
         // Pass 1 — switch path: the active table has NO auth field yet.
         let pre_takeover = "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\n";
-        let first = merge_inert_codex_provider_tables_into_settings_config(
+        let first = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &json!({ "config": pre_takeover }),
@@ -4501,7 +4797,7 @@ base_url = "https://a.example/v1"
 
         // Pass 2 — takeover path: the same shadow must pick up the new field.
         let post_takeover = "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"PROXY_MANAGED\"\n\n[model_providers.cc-switch-official]\nname = \"kxpms_gateway\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nwire_api = \"responses\"\n";
-        let second = merge_inert_codex_provider_tables_into_settings_config(
+        let second = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &json!({ "config": post_takeover }),
@@ -4561,7 +4857,7 @@ base_url = "https://a.example/v1"
         )
         .expect("write rollout");
 
-        let merged = merge_inert_codex_provider_tables_into_settings_config(
+        let merged = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &kxpms_settings_config(),
@@ -4614,7 +4910,7 @@ base_url = "https://a.example/v1"
             .expect("write rollout");
         }
 
-        let merged = merge_inert_codex_provider_tables_into_settings_config(
+        let merged = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &kxpms_settings_config(),
@@ -4683,7 +4979,7 @@ base_url = "https://a.example/v1"
         .expect("save official");
 
         // Active provider = codex-official. Inert = kxpms-gateway (custom).
-        let result = merge_inert_codex_provider_tables_into_settings_config(
+        let result = merge_inert_tables_for_switch_path(
             &db,
             "codex",
             &official_settings_config(),
@@ -4732,14 +5028,9 @@ base_url = "https://a.example/v1"
 
         // Active = kxpms. Inert = local8782 (TOML id 与 active 完全不同)。
         let active = kxpms_settings_config();
-        let result = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "codex",
-            &active,
-            "kxpms-gateway",
-            None,
-        )
-        .expect("merge");
+        let result =
+            merge_inert_tables_for_switch_path(&db, "codex", &active, "kxpms-gateway", None)
+                .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
 
         // Active table preserved verbatim.
@@ -4783,14 +5074,9 @@ base_url = "https://a.example/v1"
         .expect("save extra");
 
         let active = kxpms_settings_config();
-        let result = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "codex",
-            &active,
-            "kxpms-gateway",
-            None,
-        )
-        .expect("merge");
+        let result =
+            merge_inert_tables_for_switch_path(&db, "codex", &active, "kxpms-gateway", None)
+                .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
 
         // Both inert and active share TOML id "kxpms" — collision.
@@ -4831,14 +5117,9 @@ base_url = "https://a.example/v1"
         .expect("save broken");
 
         let active = official_settings_config();
-        let result = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "codex",
-            &active,
-            "codex-official",
-            None,
-        )
-        .expect("merge must succeed despite broken DB row");
+        let result =
+            merge_inert_tables_for_switch_path(&db, "codex", &active, "codex-official", None)
+                .expect("merge must succeed despite broken DB row");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
         // Kxpms still merged successfully.
         assert!(merged.contains("[model_providers.kxpms]"));
@@ -4874,14 +5155,9 @@ base_url = "https://a.example/v1"
         .expect("save broken-table");
 
         let active = official_settings_config();
-        let result = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "codex",
-            &active,
-            "codex-official",
-            None,
-        )
-        .expect("merge");
+        let result =
+            merge_inert_tables_for_switch_path(&db, "codex", &active, "codex-official", None)
+                .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
         // kxpms still merged.
         assert!(merged.contains("[model_providers.kxpms]"));
@@ -4904,22 +5180,12 @@ base_url = "https://a.example/v1"
         .expect("save kxpms");
 
         let active = official_settings_config();
-        let merged_once = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "codex",
-            &active,
-            "codex-official",
-            None,
-        )
-        .expect("merge once");
-        let merged_twice = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "codex",
-            &merged_once,
-            "codex-official",
-            None,
-        )
-        .expect("merge twice");
+        let merged_once =
+            merge_inert_tables_for_switch_path(&db, "codex", &active, "codex-official", None)
+                .expect("merge once");
+        let merged_twice =
+            merge_inert_tables_for_switch_path(&db, "codex", &merged_once, "codex-official", None)
+                .expect("merge twice");
         assert_eq!(
             merged_once.get("config").and_then(Value::as_str),
             merged_twice.get("config").and_then(Value::as_str),
@@ -4943,14 +5209,9 @@ base_url = "https://a.example/v1"
         )
         .expect("save claude");
 
-        let result = merge_inert_codex_provider_tables_into_settings_config(
-            &db,
-            "claude",
-            &json!({"env": {}}),
-            "kxpms",
-            None,
-        )
-        .expect("merge");
+        let result =
+            merge_inert_tables_for_switch_path(&db, "claude", &json!({"env": {}}), "kxpms", None)
+                .expect("merge");
         // Non-codex path returns input unchanged.
         assert_eq!(result, json!({"env": {}}));
     }
