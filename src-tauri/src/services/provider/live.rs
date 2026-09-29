@@ -1060,6 +1060,16 @@ fn merge_session_referenced_shadow_tables(
         if id == active {
             continue;
         }
+        // Codex built-ins (`openai`, `ollama`, `lmstudio`, `amazon-bedrock`, …)
+        // must never get a table: writing a reserved id makes Codex refuse the
+        // whole config at load, which is the opposite of "keep the session
+        // resumable". They resolve to the built-in provider without a table, so
+        // they are not gaps at all. (Caught by the 2026-09-29 deploy run: the
+        // log claimed it had shadowed `openai`; it only survived because a later
+        // step happened to strip it — ordering luck, not design.)
+        if !crate::codex_config::is_custom_codex_model_provider_id(&id) {
+            continue;
+        }
         let already_defined = live_doc
             .get("model_providers")
             .and_then(Item::as_table_like)
@@ -4387,6 +4397,86 @@ base_url = "https://a.example/v1"
         assert!(
             text.contains("[model_providers.kxpms]"),
             "有 DB 归属的 id 在官方档也必须补表: {text}"
+        );
+    }
+
+    /// Codex 内置 id（`openai` 等）**绝不能**被补表。
+    ///
+    /// 写保留 id 会让 Codex 在加载时直接拒绝整份配置——和"让 session 可恢复"
+    /// 完全相反。2026-09-29 的部署验证里日志曾报出"已补 openai"，只因为后续步骤
+    /// 恰好把它剥掉了；那是顺序的运气，不是设计。这条用例把它钉成行为。
+    #[test]
+    fn merge_never_shadows_a_codex_builtin_provider_id() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+
+        let history = tempfile::tempdir().expect("history dir");
+        let sessions = history.path().join("sessions/2026/09/29");
+        std::fs::create_dir_all(&sessions).expect("mkdir");
+        for (name, provider) in [
+            ("a", "openai"),
+            ("b", "ollama"),
+            ("c", "cc-switch-official"),
+        ] {
+            std::fs::write(
+                sessions.join(format!("rollout-{name}.jsonl")),
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"model_provider\":\"{provider}\"}}}}\n"
+                ),
+            )
+            .expect("write rollout");
+        }
+
+        let merged = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &kxpms_settings_config(),
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("merge");
+        let text = merged.get("config").and_then(Value::as_str).expect("text");
+
+        for builtin in ["openai", "ollama"] {
+            assert!(
+                !text.contains(&format!("[model_providers.{builtin}]")),
+                "内置 id '{builtin}' 不能被补表，否则 Codex 拒绝加载整份配置: {text}"
+            );
+        }
+        assert!(
+            text.contains("[model_providers.cc-switch-official]"),
+            "非内置且无 DB 归属的 id 仍必须补表: {text}"
+        );
+    }
+
+    /// 覆盖诊断不得把内置 id 报成缺口——否则每个用户都会去追一个幻影。
+    #[test]
+    fn unresolved_diagnostic_ignores_codex_builtin_ids() {
+        let history = tempfile::tempdir().expect("history dir");
+        let sessions = history.path().join("sessions/2026/09/29");
+        std::fs::create_dir_all(&sessions).expect("mkdir");
+        std::fs::write(
+            sessions.join("rollout-a.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"openai\"}}\n",
+        )
+        .expect("write rollout");
+
+        assert!(
+            crate::codex_config::codex_unresolved_session_provider_ids_in(
+                history.path(),
+                "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"n\"\nbase_url = \"https://x/v1\"\nwire_api = \"responses\"\n"
+            )
+            .is_empty(),
+            "openai 走内置 provider，不需要表，不能算缺口"
         );
     }
 

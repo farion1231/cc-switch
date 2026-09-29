@@ -751,6 +751,27 @@ impl ProxyService {
                 .map_err(|error| error.to_string())?;
         }
 
+        // RFC 0002: 接管路径同样要合并 inert 表与 session 影子表。
+        //
+        // 这条路径**独立于**供应商切换路径（`write_live_with_common_config_*`），
+        // 而它才是日常触发频率最高的那条：每次应用启动的「重新接管并补齐 Live」、
+        // 每次接管激活都走这里。漏掉它等于本 RFC 的不变量在**最常走的门**上失效
+        // ——实测：只修切换路径时，启动一次就把手工补的别名表冲掉，30 个 session
+        // 立刻重新打不开（2026-09-29 部署验证）。
+        //
+        // 位置在 `apply_codex_takeover_fields_for_provider` **之后**：影子表要复制
+        // 接管后的 active 表（指向本地代理 + PROXY_MANAGED），否则会把供应商的真实
+        // API key 复制进影子表，并让老 session 绕过代理直连。
+        let mut effective_settings = effective_settings;
+        effective_settings = crate::services::provider::live::merge_inert_codex_provider_tables_into_settings_config(
+            self.db.as_ref(),
+            AppType::Codex.as_str(),
+            &effective_settings,
+            &provider.id,
+            Some(&crate::codex_config::get_codex_config_dir()),
+        )
+        .map_err(|e| format!("codex 接管路径合并 inert provider 表失败: {e}"))?;
+
         self.write_codex_takeover_live_for_provider(&effective_settings, Some(provider))?;
         Ok(())
     }

@@ -4433,6 +4433,9 @@ pub fn codex_unresolved_session_provider_ids_in(
     crate::codex_session_providers::collect_session_referenced_provider_ids(codex_dir, config_text)
         .into_iter()
         .filter(|id| !defined.contains(id.as_str()))
+        // Codex built-ins resolve without a table, so they are not coverage
+        // gaps — reporting them would send every user chasing a phantom.
+        .filter(|id| is_custom_codex_model_provider_id(id))
         .collect()
 }
 
