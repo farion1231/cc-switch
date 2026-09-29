@@ -150,6 +150,18 @@ def defined_provider_ids(config_path: Path) -> tuple[set[str], str | None, dict]
     return set(tables.keys()), doc.get("model_provider"), tables
 
 
+def defined_provider_ids_doc(config_path: Path) -> dict | None:
+    """The whole parsed config, for checks that need more than the table ids."""
+    try:
+        import tomllib
+
+        with config_path.open("rb") as handle:
+            doc = tomllib.load(handle)
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
 # A table that authenticates on its own; a route copy that has one of these is
 # another provider's credential, not a missing-token shadow.
 _OWN_CREDENTIAL_KEYS = ("experimental_bearer_token", "env_key")
@@ -211,16 +223,25 @@ def _is_loopback(url: str) -> bool:
 
 
 def find_official_credential_egress(tables: dict, active: str | None) -> list[str]:
-    """Inert tables that would send the native ChatGPT login to a third party.
+    """Inert tables that would send the native ChatGPT login off the active route.
 
     ``requires_openai_auth = true`` with no credential of its own makes Codex
     fall back to the official login, and it then presents that token to whatever
-    ``base_url`` the table names. On a table that points somewhere other than the
-    active route, resuming such a session both fails and hands the ChatGPT
-    credential to a third-party host. Observed on this machine before the
-    takeover reroute landed: the ``custom`` table pointed straight at a vendor
-    URL with ``requires_openai_auth = true`` and no ``env_key``/token.
+    ``base_url`` the table names. When that endpoint is **not** the active route's
+    endpoint, resuming such a session both fails and hands the ChatGPT credential
+    to a host the user did not route it to. Observed on this machine before the
+    takeover reroute landed: the ``custom`` table pointed straight at a vendor URL
+    with ``requires_openai_auth = true`` and no ``env_key``/token.
+
+    Tables sharing the active endpoint are **not** reported, and that exclusion is
+    load-bearing. On a codex-official takeover the active table itself is
+    ``requires_openai_auth = true`` with no credential and no token is injected
+    anywhere — the local proxy is what accepts the native login. Flagging every
+    table in that state was a false positive observed on 2026-09-30: switching to
+    ``codex-official`` made this check report all four tables as leaking while the
+    configuration was in fact the intended official passthrough.
     """
+    active_base_url = (tables.get(active) or {}).get("base_url") if active else None
     leaking: list[str] = []
     for provider_id, table in tables.items():
         if provider_id == active or not isinstance(table, dict):
@@ -229,8 +250,59 @@ def find_official_credential_egress(tables: dict, active: str | None) -> list[st
             continue
         if _declares_own_credential(table):
             continue
+        if active_base_url and table.get("base_url") == active_base_url:
+            continue
         leaking.append(provider_id)
     return sorted(leaking)
+
+
+def find_pinned_model_missing_from_catalog(
+    config: dict, catalog: dict | None
+) -> tuple[str, int] | None:
+    """The config's top-level ``model`` when the catalog does not advertise it.
+
+    Observed on this machine (2026-09-29): the card pinned ``gpt-6-sol`` while
+    its own catalog listed 14 entries, all ``kx-*``. The Codex desktop app's
+    model picker came up **completely empty** for every session, while
+    ``model/list`` still returned all 14 entries with ``hidden: false`` — so
+    nothing in the transport was wrong, and no other check here would notice.
+
+    Only meaningful when the config points at a catalog file we can read.
+    """
+    model = config.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return None
+    if catalog is None:
+        return None
+    entries = catalog.get("models")
+    if not isinstance(entries, list):
+        return None
+    slugs = {
+        entry.get("slug").strip()
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("slug"), str)
+        and entry.get("slug").strip()
+    }
+    if model.strip() in slugs:
+        return None
+    return model.strip(), len(entries)
+
+
+def read_catalog(config_path: Path, config: dict) -> dict | None:
+    """Read the catalog the config points at, if it is a readable local file."""
+    pointer = config.get("model_catalog_json")
+    if not isinstance(pointer, str) or not pointer.strip():
+        return None
+    path = Path(pointer.strip())
+    if not path.is_absolute():
+        path = config_path.parent / path
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def main() -> int:
@@ -244,6 +316,10 @@ def main() -> int:
     rollouts = collect_from_rollouts(root)
     state_rows = collect_from_state_dbs(root)
     defined, active, tables = defined_provider_ids(config_path)
+    config_doc = defined_provider_ids_doc(config_path)
+    pinned_gap = find_pinned_model_missing_from_catalog(
+        config_doc or {}, read_catalog(config_path, config_doc or {})
+    )
     unauthenticated_copies = find_unauthenticated_route_copies(tables, active)
     egress = find_official_credential_egress(tables, active)
 
@@ -271,12 +347,13 @@ def main() -> int:
                     "unresolved": unresolved,
                     "unauthenticated_route_copies": unauthenticated_copies,
                     "official_credential_egress": egress,
+                    "pinned_model_missing_from_catalog": pinned_gap,
                 },
                 ensure_ascii=False,
                 indent=2,
             )
         )
-        return 1 if (unresolved or unauthenticated_copies or egress) else 0
+        return 1 if (unresolved or unauthenticated_copies or egress or pinned_gap) else 0
 
     print(f"Codex 配置目录: {root}")
     print(f"顶层 model_provider: {active or '(未设置)'}")
@@ -321,6 +398,15 @@ def main() -> int:
         print("`experimental_bearer_token`。")
         return 1
 
+    if pinned_gap:
+        model, size = pinned_gap
+        print()
+        print(f"顶层 model = {model!r}，但模型目录里没有这一条（目录共 {size} 个条目）")
+        print("这种状态下 Codex 桌面端的**模型选择器整个列表为空**，而 model/list 仍会")
+        print("正常返回目录条目——症状与传输无关，只看目录健康是查不出来的。")
+        print("修法二选一：把卡片的模型改成目录里已有的条目，或把这一条补进卡片的模型目录。")
+        return 1
+
     if egress:
         print()
         print("会把官方 ChatGPT 登录凭据发往非当前路由端点的表:")
@@ -336,7 +422,7 @@ def main() -> int:
 
     print()
     print("OK: 所有被 session 引用的 provider id 都有表，路由副本都带认证字段，")
-    print("且没有表会把官方凭据发往第三方。")
+    print("没有表会把官方凭据发往第三方，且顶层 model 在模型目录里。")
     return 0
 
 

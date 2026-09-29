@@ -2906,6 +2906,16 @@ pub fn prepare_codex_config_text_with_model_catalog(
     let catalog_path = get_codex_model_catalog_path();
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
+        // Diagnose before writing, so the warning names the state the user is
+        // about to get (their own text) rather than whatever lands on disk.
+        if let Some(mismatch) = codex_pinned_model_missing_from_catalog(config_text, &catalog) {
+            log::warn!(
+                "codex 模型目录与卡片自相矛盾：卡片钉的 model '{}' 不在刚生成的目录（{} 个条目）里。桌面端的模型选择器在这种状态下会**整个列表为空**，而 model/list 仍会正常返回目录条目 —— 症状与传输无关。修法二选一：把卡片的模型改成目录里已有的条目，或把 '{}' 补进该卡片的模型目录。",
+                mismatch.model,
+                mismatch.catalog_size,
+                mismatch.model
+            );
+        }
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
@@ -2931,6 +2941,67 @@ pub fn prepare_codex_config_text_with_model_catalog(
         let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
         set_codex_native_web_search_field(&config_text, disable_web_search)
     }
+}
+
+/// A card-pinned model that the catalog cc-switch just generated does not
+/// advertise.
+///
+/// Symptom, observed on this machine (2026-09-29): the `kxpms-gateway` card
+/// pinned `model = "gpt-6-sol"` while its own `modelCatalog` listed 14 entries,
+/// all `kx-*`. The Codex desktop app's model picker came up **completely
+/// empty** for every session. The catalog itself was fine — `model/list` over
+/// the app-server protocol returned all 14 entries with `hidden: false` — so
+/// nothing in the transport was wrong; what was inconsistent was the card
+/// against itself, and it was invisible until the user opened the picker.
+///
+/// Reported, never blocked. A card may legitimately pin a model its gateway
+/// serves but its catalog does not list, and hard-blocking the switch would
+/// take that away. What this buys is a loud record at write time instead of a
+/// user discovering it hours later in the UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexPinnedModelMismatch {
+    /// The model the card pins as the top-level `model`.
+    pub model: String,
+    /// How many entries the generated catalog advertises.
+    pub catalog_size: usize,
+}
+
+pub fn codex_pinned_model(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    doc.get("model")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+}
+
+/// The pinned model when it is absent from `catalog`'s slugs.
+///
+/// Returns `None` when there is nothing to report: no pinned model, a catalog
+/// with no `models` array at all, or a catalog that does advertise it.
+///
+/// A catalog whose entries carry no usable string `slug` is deliberately
+/// **not** in that set: the pinned model genuinely is not advertised by
+/// anything we can read, and saying so is the useful answer. Reporting it is
+/// the whole point — a silent skip would leave the user back where they
+/// started.
+pub fn codex_pinned_model_missing_from_catalog(
+    config_text: &str,
+    catalog: &Value,
+) -> Option<CodexPinnedModelMismatch> {
+    let model = codex_pinned_model(config_text)?;
+    let entries = catalog.get("models")?.as_array()?;
+    let advertised = entries
+        .iter()
+        .filter_map(|entry| entry.get("slug").and_then(|slug| slug.as_str()))
+        .any(|slug| slug.trim() == model);
+    if advertised {
+        return None;
+    }
+    Some(CodexPinnedModelMismatch {
+        model,
+        catalog_size: entries.len(),
+    })
 }
 
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
@@ -6152,6 +6223,73 @@ base_url = "https://single.example.com/v1"
             .expect("remove proven managed live auth");
         assert!(!get_codex_auth_path().exists());
         assert!(!get_codex_managed_oauth_live_auth_marker_path().exists());
+    }
+
+    /// 实机（2026-09-29 22:0x）那张卡的原样形状：顶层 `model` 钉的是 `gpt-6-sol`，
+    /// 而它自己的 catalog 14 条全是 `kx-*`。桌面端模型选择器整个列表为空。
+    #[test]
+    fn pinned_model_missing_from_catalog_is_reported() {
+        let config = "model = \"gpt-6-sol\"\nmodel_provider = \"kxpms\"\n";
+        let catalog = json!({ "models": [
+            { "slug": "kx-claude-opus-5" },
+            { "slug": "kx-gpt-6-astra" }
+        ]});
+        assert_eq!(
+            codex_pinned_model_missing_from_catalog(config, &catalog),
+            Some(CodexPinnedModelMismatch {
+                model: "gpt-6-sol".to_string(),
+                catalog_size: 2,
+            })
+        );
+    }
+
+    /// 改成一个目录里有的条目后，判据必须转为「无异常」——否则它会变成永远
+    /// 报警的噪音源，第二次就会被忽略。
+    #[test]
+    fn pinned_model_present_in_catalog_reports_nothing() {
+        let config = "model = \"kx-gpt-6-astra\"\n";
+        let catalog = json!({ "models": [{ "slug": "kx-gpt-6-astra" }]});
+        assert_eq!(
+            codex_pinned_model_missing_from_catalog(config, &catalog),
+            None
+        );
+    }
+
+    /// 判据**不认识**的情况必须安静，否则会变成永远报警的噪音源。
+    #[test]
+    fn pinned_model_check_stays_quiet_when_it_cannot_judge() {
+        let catalog = json!({ "models": [{ "slug": "kx-glm-5.3" }]});
+        // 顶层没钉 model
+        assert_eq!(
+            codex_pinned_model_missing_from_catalog("model_provider = \"kxpms\"\n", &catalog),
+            None
+        );
+        // catalog 根本没有 models 数组
+        assert_eq!(
+            codex_pinned_model_missing_from_catalog("model = \"x\"\n", &json!({})),
+            None
+        );
+    }
+
+    /// 但「目录里没有任何可读 slug」要**报**，不能安静跳过。
+    ///
+    /// 这一条是写测试时才发现的分歧：我原本断言它返回 None（把「slug 不是
+    /// 字符串」当成无法判断），实现却报了不匹配。实现是对的——目录里确实没有
+    /// 任何可读出的模型名，钉的 model 确实没被广告，沉默只会让用户回到原处。
+    /// 所以改的是断言和注释，不是代码。
+    #[test]
+    fn a_catalog_with_no_readable_slug_still_reports_the_mismatch() {
+        let mismatch = codex_pinned_model_missing_from_catalog(
+            "model = \"gpt-6-sol\"\n",
+            &json!({ "models": [{ "slug": 1 }] }),
+        );
+        assert_eq!(
+            mismatch,
+            Some(CodexPinnedModelMismatch {
+                model: "gpt-6-sol".to_string(),
+                catalog_size: 1,
+            })
+        );
     }
 
     /// 实机（2026-09-29 部署后 `~/.codex/config.toml` 原文）踩到的形状：
