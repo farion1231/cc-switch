@@ -438,6 +438,11 @@ mod tests {
     #[test]
     #[serial(env)]
     fn kaixuan_bundle_local_port_env_override() {
+        // 共享 env 锁：本测试改进程全局 env，必须与**全 crate** 所有改 env 的
+        // 用例互斥。`#[serial]` 与 `#[serial(env)]` 是 serial_test 的两个不同 key，
+        // 彼此不互斥，也都不与 crate::test_support::env_guard() 互斥——只靠它们
+        // 挡不住跨模块串扰。详见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
         let saved = std::env::var("KAIXUAN_LOCAL_GATEWAY_PORT").ok();
         std::env::set_var("KAIXUAN_LOCAL_GATEWAY_PORT", "8899");
         let b = kaixuan_bundle();

@@ -967,3 +967,42 @@ proxy 返回 400: model 'claude-opus-5@local8782' 指向的端点不存在（pro
 该门控**刻意不补测试**：它是一行 `AppType` 判断，拆成可测函数即退化为「测常量」的
 装饰性门（无真实输入路径），而搭 Claude/Gemini 端到端用例成本高、证力低。改为把
 存废理由写进代码注释（commit `05d61abf`），防未来有人顺手删掉。
+
+### 第六轮：批判式审计推翻了第五轮的一句核心宣称
+
+第五轮我写过「**全 crate 共享 env 锁根治跨模块竞态**」。这句话当时是**过度宣称**——
+它只在「我改过的那些文件」上成立。第六轮用枚举法重新审计后，发现三处实质缺口。
+
+**审计方法**（可复现）：脚本枚举全 crate 每个函数体里所有
+`set_var` / `remove_var`，与该函数是否持有锁做交叉，输出三类：持锁 / 裸改 / Drop 实现。
+再按 env 键求交集，判断"裸改组"与"持锁组"是否真的共享键。
+
+**缺口 1：9 个测试改进程全局 env 却不持共享锁。**
+
+`grok_config.rs` ×2、`gateway_health.rs` ×4、`provider_bundle.rs` ×1、
+`deeplink/provider.rs` ×2。它们只挂 `#[serial]`（默认 key）或 `#[serial(env)]`
+（key = `"env"`）。**这两个是 serial_test 的不同 key，彼此不互斥**；而它们与
+`crate::test_support::env_guard()` 是两套完全独立的机制，**同样不互斥**。
+
+今天没出事纯属运气：这些用例改的键（`GROK_TEST_API_KEY` / `XAI_API_KEY` /
+`KAIXUAN_GATEWAY_START_CMD` / `KAIXUAN_LOCAL_GATEWAY_PORT` /
+`CC_SWITCH_DEEPLINK_ENV_PROBE`）恰好与持锁组改的键不重叠。**这是"靠键不相撞"，
+不是"靠锁"。** 任何人往这批用例里加一个 `HOME`，竞态立刻回来。
+
+修法：9 处全部补 `let _env_guard = crate::test_support::env_guard();`。
+
+**缺口 2：`env_expand.rs` 有一把私有 `static ENV_LOCK`（第三把锁）。**
+
+它只约束本模块用例，对全 crate 零约束。今天安全同样是因为调用点只用
+`CC_SWITCH_TEST_*` 专属键。已改为委托 `crate::test_support::env_guard()`，
+让全 crate 只有**一把** env 锁。
+
+**缺口 3（口径修正）**：`#[serial]` 289 处 / `#[serial(env)]` 7 处并存，
+两个 key 混用本身就是这套 crate 里最常见的 env 串扰来源。**serial_test 的 key
+不是装饰**——同名 `#[serial]` 与 `#[serial(env)]` 之间的并发，serial_test 不会拦。
+凡是改进程全局 env 的用例，一律以 `env_guard()` 为准，`#[serial]` 只当额外保险。
+
+**修正后的准确表述**：本 crate 内**所有**改进程全局 env 的测试都持有
+`crate::test_support::env_guard()`（可重入、中毒自愈）。这不等于"消除了一切
+flaky"——它消除的是**跨模块 env 串扰这一类**。端口占用、文件系统、真实数据库
+等其它 flaky 来源不在此列。

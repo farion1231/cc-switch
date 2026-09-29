@@ -210,14 +210,18 @@ fn record_missing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // 环境变量在并行测试里会互相干扰，必须串行化。PoisonError 时也
-    // 强制拿锁——一个 case 的 panic 不该污染后续 case。
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
+    // 审计修正：本模块原先有一把**私有** `static ENV_LOCK`。它只能让本模块的
+    // 用例互斥，对**全 crate** 其它改 env 的用例零约束——两套锁彼此不感知。
+    // 今天没出事只是因为这里的调用点恰好只用 `CC_SWITCH_TEST_*` 这类专属键，
+    // 一旦有人往 `with_env` 里传 `HOME` / `CODEX_HOME`，竞态立刻回来且极难查。
+    // 改为委托 crate 共享 env 锁，让这把锁与其它模块是**同一把**。
+    //
+    // 保留 `with_env` 这层是因为它还负责「保存 / 清空 / 还原」，那是锁替代不了的。
     fn with_env<F: FnOnce()>(pairs: &[(&str, &str)], f: F) {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // 可重入：同一测试里再取一次锁不会自死锁；中毒自愈——
+        // 一个 case 的 panic 不该让后续所有 env 用例永久卡死。
+        let _g = crate::test_support::env_guard();
         // 保存并清理
         let saved: Vec<(String, Option<String>)> = pairs
             .iter()
