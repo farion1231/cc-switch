@@ -836,6 +836,39 @@ CI 日志泄露风险）。改为先经 `redact_secrets_in_config` 打码再比�
 3. **「两个 provider 撞同一 TOML id」是独立缺陷**：merge 按表 id 选表，而不是按
    provider 身份。真正要解耦本机端点 id，得先修这条。FE 预设与 bundle 目前就
    共用 `local_gateway` 这个 name-based 映射，只是恰好目标 id 一致才没出事。
-4. `merged_catalog_enabled_path_produces_well_formed_suffixed_entries` 仍是**纯函数级**
-   断言，没升级成「真起 proxy、真发请求、断言打到另一端点」的端到端。
+4.（已解决，见下 §第五轮 7）
 5. 后缀分发只在 Codex 上生效（按目标刻意限定），Claude / Gemini 未做。
+
+### 7. 端到端验收：真起 proxy + 真发请求，抓出一处**静默错路由**
+
+`suffixed_model_is_dispatched_to_named_endpoint_with_its_own_key`
+（`proxy::handler_context::tests`）：起两个**真实**假上游（各记录收到的
+`model` 与 `Authorization`）→ 内存库放两个 codex provider（active = kxpms，
+另一个 = local8782）→ **真起 proxy**（OS 分配端口）→ **真发一条**
+`POST /v1/responses {"model":"claude-opus-5@local8782"}` → 从**真实上游收到的请求**
+断言三件事：打到了 local8782（不是 active）、`model` 已被剥离成 `claude-opus-5`、
+`Authorization` 是 local8782 的 key 而不是 kxpms 的。
+
+**这条测试第一次跑就红了，而且红得有价值**：请求确实返回 200，但打到的是
+**kxpms**（body 里 `"text":"from kxpms"`）。
+
+根因：分发只在 `select_providers` 返回的 failover 链里找目标 id，而**故障转移
+关闭时那条链只有当前 provider**——目标根本不在链里，于是走了
+「不在链里 → 回退 active」的分支。结果是：catalog 里明明白白列着
+`claude-opus-5@local8782`，用户选了它，实际打到 kxpms。**静默错路由**，
+正是第三轮判定「比直接报错糟糕得多」的那一类。
+
+修法（`RequestContext::new`）：
+- 目标不在链里时，**回 DB 按 id 直取**并插到链首（而不是回退）；
+- 查不到就**直接报错** `model '<x>@<id>' 指向的端点不存在`，**绝不**静默回退——
+  catalog 里能看见的条目必须真的可达，够不着就该让用户看见。
+
+**这条是本轮「形状断言 vs 端到端」最直接的例证**：
+`merged_catalog_enabled_path_produces_well_formed_suffixed_entries` 断言
+`claude-opus-5@local8782` 出现在 catalog 里，一直是绿的，但它对
+「这个 slug 发出去之后会打到哪」一个字都没说。
+
+## 第五轮补充测试证据
+
+- `cargo test --lib` —— **3041 passed / 0 failed / 10 ignored**（含新端到端用例）。
+- 全量跑前后真实库 `providers` 计数 28 → 28。

@@ -239,9 +239,41 @@ impl RequestContext {
                         target_toml_id: toml_id,
                     });
                 } else {
-                    log::warn!(
-                        "[{tag}] @<toml_id> suffix found ({suffix_stripped}@{toml_id}) but {toml_id} is not in current providers; falling back to active"
-                    );
+                    // 目标**不在** failover 链里。故障转移关闭时 `select_providers`
+                    // 只返回当前 provider，所以「不在链里」是常态而不是异常——
+                    // 必须回 DB 按 id 直取，否则带后缀的请求会被**静默送回 active
+                    // 端点**：用户以为选了 local8782 的模型，实际打到 kxpms。
+                    // 这正是第三轮判定的「静默错路由比报错更糟」。
+                    //
+                    // 查不到则**直接报错**，绝不回退到 active：catalog 里能看见的
+                    // 条目必须真的可达，够不着的应该让用户看见。
+                    let resolved = state
+                        .db
+                        .get_provider_by_id(&toml_id, app_type_str)
+                        .ok()
+                        .flatten();
+                    match resolved {
+                        Some(target) => {
+                            provider = target.clone();
+                            providers.insert(0, target);
+                            request_model = suffix_stripped.clone();
+                            log::info!(
+                                "[{tag}] @<toml_id> dispatch (out of chain): stripped={suffix_stripped} target={toml_id}"
+                            );
+                            endpoint_dispatch = Some(EndpointDispatch {
+                                stripped_model: suffix_stripped,
+                                target_toml_id: toml_id,
+                            });
+                        }
+                        None => {
+                            log::error!(
+                                "[{tag}] @<toml_id> 指向未知端点 {toml_id}（model={suffix_stripped}），拒绝静默回退到 active 端点"
+                            );
+                            return Err(ProxyError::ConfigError(format!(
+                                "model '{suffix_stripped}@{toml_id}' 指向的端点不存在（provider id={toml_id}）"
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -410,6 +442,17 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{extract_gemini_model_from_path, parse_model_endpoint_suffix};
+    use crate::app_config::AppType;
+    use crate::provider::Provider;
+    use serde_json::Value;
+
+    /// 假上游记录下来的「实际收到的请求」——端到端断言全部读它，
+    /// 而不是读 proxy 的内部状态。
+    #[derive(Debug, Clone, PartialEq)]
+    struct Observed {
+        model: String,
+        authorization: Option<String>,
+    }
 
     #[test]
     fn extract_model_with_action() {
@@ -552,5 +595,230 @@ mod tests {
         let (id, stripped) = parse_model_endpoint_suffix("glm-5.2@qwen3-v2");
         assert_eq!(id, Some("qwen3-v2"));
         assert_eq!(stripped, "glm-5.2");
+    }
+
+    // ── 端到端：真起两个上游 + 真起 proxy + 真发请求 ────────────────────
+    //
+    // 纯函数级的 `merged_catalog_enabled_path_produces_well_formed_suffixed_entries`
+    // 只证明「catalog 写出了带后缀的 slug」，**不证明**那个 slug 真的能被路由。
+    // 第三轮审计正是栽在「形状对但链路没通」上：catalog 里写得出
+    // `claude-opus-5@kxpms`，但请求发出去没人剥离、没人分发。
+    //
+    // 这条把整条链路真跑一遍：
+    //   Codex 请求体 model = "claude-opus-5@local8782"
+    //     → proxy 解析后缀 → 按 id 选中 local8782
+    //     → 转发到 local8782 的上游（**不是** active 的 kxpms）
+    //     → 上游收到的 model 已被剥离成 "claude-opus-5"
+    //     → 上游收到的 Authorization 是 local8782 的 key，不是 kxpms 的
+    //
+    // 断言「打到另一端点」+「后缀被剥离」+「鉴权取目标端点」三件事，都从**真实
+    // 上游收到的请求**里读，而不是从 proxy 的内部状态里读。
+
+    /// 起一个只会把收到的 `model` 与 `Authorization` 原样回显的假上游。
+    /// 返回 `(base_url, mpsc::Receiver<Observed>)`。
+    async fn spawn_recording_upstream(
+        tag: &'static str,
+    ) -> (String, tokio::sync::mpsc::Receiver<Observed>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Observed>(4);
+        // 用 fallback 接住**任意**路径：适配器把 base_url 拼成 `{base}/responses`
+        // 还是 `{base}/v1/responses` 取决于实现细节，测试不该绑死这个形状。
+        let app = axum::Router::new().fallback(
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: axum::Json<Value>| {
+                let tx = tx.clone();
+                let tag = tag;
+                async move {
+                    let body = body.0;
+                    let observed = Observed {
+                        model: body
+                            .get("model")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        authorization: headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_string),
+                    };
+                    let _ = tx.send(observed).await;
+                    (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "id": "resp_test",
+                            "object": "response",
+                            "status": "completed",
+                            "output": [{
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": format!("from {tag}")}]
+                            }],
+                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                        })),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}/v1"), rx)
+    }
+
+    fn codex_provider(id: &str, base_url: &str, api_key: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            id.to_string(),
+            serde_json::json!({
+                "config": format!(
+                    "model_provider = \"{id}\"\n\n[model_providers.{id}]\n\
+                     name = \"{id}_gateway\"\nbase_url = \"{base_url}\"\n\
+                     wire_api = \"responses\"\nrequires_openai_auth = true\n"
+                ),
+                "auth": {"OPENAI_API_KEY": api_key},
+            }),
+            None,
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn suffixed_model_is_dispatched_to_named_endpoint_with_its_own_key() {
+        // 共享 env 锁：全 crate 共享那把，见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prev_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let prev_home = std::env::var_os("HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        std::env::set_var("HOME", tmp.path());
+
+        let result = run_dispatch_e2e().await;
+
+        match prev_test_home {
+            Some(v) => std::env::set_var("CC_SWITCH_TEST_HOME", v),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        result.expect("端到端分发失败");
+    }
+
+    async fn run_dispatch_e2e() -> Result<(), String> {
+        use crate::app_config::AppType;
+        use crate::database::Database;
+        use crate::services::proxy::ProxyService;
+        use crate::store::AppState;
+        use std::sync::Arc;
+
+        // 1) 两个**真实**上游，各自记录收到的请求
+        let (kxpms_base, mut kxpms_rx) = spawn_recording_upstream("kxpms").await;
+        let (local_base, mut local_rx) = spawn_recording_upstream("local").await;
+
+        // 2) 两个 codex provider：active = kxpms，另一个 = local8782
+        let db = Arc::new(Database::memory().map_err(|e| e.to_string())?);
+        let db2 = db.clone();
+        db.save_provider(
+            AppType::Codex.as_str(),
+            &codex_provider("kxpms", &kxpms_base, "sk-kxpms-only"),
+        )
+        .map_err(|e| e.to_string())?;
+        db.save_provider(
+            AppType::Codex.as_str(),
+            &codex_provider("local8782", &local_base, "sk-local-only"),
+        )
+        .map_err(|e| e.to_string())?;
+        db.set_current_provider(AppType::Codex.as_str(), "kxpms")
+            .map_err(|e| e.to_string())?;
+
+        // 关掉故障转移，确保「打到 local8782」只能由后缀分发解释，而不是队列顺序
+        let mut cfg = db.get_proxy_config_for_app(AppType::Codex.as_str()).await
+            .map_err(|e| e.to_string())?;
+        cfg.auto_failover_enabled = false;
+        db.update_proxy_config_for_app(cfg).await.map_err(|e| e.to_string())?;
+
+        // 3) 真起 proxy（OS 分配端口）
+        // per-app 开关打开（照抄 update_current_claude_desktop... 的写法）
+        {
+            let mut cfg = db2
+                .get_proxy_config_for_app(AppType::Codex.as_str())
+                .await
+                .map_err(|e| e.to_string())?;
+            cfg.enabled = true;
+            db2.update_proxy_config_for_app(cfg)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        // OS 分配端口：开发者本地正跑着 cc-switch 桌面端时，固定端口必红
+        {
+            let mut cfg = db2.get_proxy_config().await.map_err(|e| e.to_string())?;
+            cfg.listen_port = 0;
+            db2.update_proxy_config(cfg).await.map_err(|e| e.to_string())?;
+        }
+
+        let state = AppState::new(db);
+        let info = state.proxy_service.start().await.map_err(|e| e.to_string())?;
+
+        // 4) 真发一条 Codex 请求，模型名带 @<toml_id> 后缀
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://127.0.0.1:{}/v1/responses", info.port))
+            .json(&serde_json::json!({
+                "model": "claude-opus-5@local8782",
+                "input": "ping",
+                "stream": false,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("发请求失败: {e}"))?;
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!("proxy 返回 {status}: {body_text}"));
+        }
+        // 诊断：两个上游各自是否收到
+        let kxpms_hit = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            kxpms_rx.recv(),
+        ).await.ok().flatten();
+        if kxpms_hit.is_some() {
+            return Err(format!("请求打到了 active(kxpms) 端点。body={body_text}"));
+        }
+
+        // 5) 断言：**local8782 的上游**收到了请求
+        let observed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            local_rx.recv(),
+        )
+        .await
+        .map_err(|_| "local8782 上游没收到任何请求——后缀分发没生效".to_string())?
+        .ok_or_else(|| "local8782 上游 channel 已关闭".to_string())?;
+
+        let _ = kxpms_hit;
+
+        // 后缀必须在转发前被剥离
+        let _ = &body_text;
+        if observed.model != "claude-opus-5" {
+            return Err(format!(
+                "上游收到的 model = {:?}，期望已剥离成 \"claude-opus-5\"",
+                observed.model
+            ));
+        }
+        // 鉴权必须按**目标端点**取，不能沿用 active 的 key
+        let auth = observed.authorization.unwrap_or_default();
+        if !auth.contains("sk-local-only") {
+            return Err(format!(
+                "上游收到的 Authorization = {auth:?}，期望含 local8782 的 key 而不是 kxpms 的"
+            ));
+        }
+        if auth.contains("sk-kxpms-only") {
+            return Err("鉴权沿用了 active 端点的 key".to_string());
+        }
+
+        let _ = state.proxy_service.stop().await;
+        Ok(())
     }
 }
