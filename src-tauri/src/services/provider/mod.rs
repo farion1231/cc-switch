@@ -278,11 +278,27 @@ mod tests {
         let old_home = std::env::var_os("HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        // Neutralize the env vars get_hermes_dir() consults, so an ambient
+        // HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install, or the
+        // Windows default %LOCALAPPDATA%\hermes) can't make Hermes tests
+        // escape the temp home. Mirrors hermes_config::tests::with_test_home.
+        let old_hermes_home = std::env::var_os("HERMES_HOME");
+        let old_local_appdata = std::env::var_os("LOCALAPPDATA");
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("LOCALAPPDATA");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
 
+        match old_local_appdata {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        match old_hermes_home {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -4281,10 +4297,11 @@ wire_api = "responses"
                 .save_universal_provider(&universal)
                 .expect("save universal provider");
 
-            let hermes_dir = home.join(".hermes");
-            std::fs::create_dir_all(&hermes_dir).expect("create hermes dir");
-            std::fs::write(hermes_dir.join("config.yaml"), "{{{{invalid yaml")
-                .expect("write broken hermes config");
+            // 用 get_hermes_config_path() 而非硬编码 home/.hermes：
+            // Windows 上 Hermes 目录是 <home>\AppData\Local\hermes。
+            let config_path = crate::hermes_config::get_hermes_config_path();
+            std::fs::create_dir_all(config_path.parent().unwrap()).expect("create hermes dir");
+            std::fs::write(&config_path, "{{{{invalid yaml").expect("write broken hermes config");
 
             ProviderService::sync_universal_to_apps(state, "legacy")
                 .expect("sync must not fail on unrelated broken Hermes config");
@@ -4318,9 +4335,10 @@ wire_api = "responses"
             ProviderService::sync_universal_to_apps(state, "doomed").expect("seed Hermes child");
 
             // 让 live 删除失败：把 config.yaml 换成损坏内容。
-            let hermes_dir = home.join(".hermes");
-            std::fs::write(hermes_dir.join("config.yaml"), "{{{{invalid yaml")
-                .expect("break hermes config");
+            // 用 get_hermes_config_path() 而非硬编码 home/.hermes：
+            // Windows 上 Hermes 目录是 <home>\AppData\Local\hermes。
+            let config_path = crate::hermes_config::get_hermes_config_path();
+            std::fs::write(&config_path, "{{{{invalid yaml").expect("break hermes config");
 
             let result = ProviderService::delete_universal(state, "doomed");
             assert!(
