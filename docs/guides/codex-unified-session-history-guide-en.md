@@ -28,6 +28,8 @@ Think of it as **two drawers + automatic backup**:
 - You can optionally choose to "move" your **existing official sessions** into the shared drawer as well (this step is called **migration**; it's optional and requires you to opt in by checking a box), and **before anything is moved a backup copy is made first**, so the whole process is **reversible**;
 - **Authentication is completely unaffected**—your official subscription still uses your ChatGPT login and still goes through the official backend; only the session's classification tag changes.
 
+For upgrade compatibility, unified proxy writes keep an existing `cc-switch-official` legacy official-proxy route definition and normalize it into a dormant mirror without a bearer token, so sessions that still reference the old tag can be resumed; after resuming, sending still follows the rules of the current mode — while direct with the local proxy not running, re-enter proxy mode first. Normalization overwrites your modifications to that table (renames, added keys). A missing legacy table is never invented, and sessions are not migrated automatically; a changed proxy address is picked up on the next valid projection. If you explicitly delete the dormant table in the editor, later writes leave it deleted.
+
 For the full mechanism (what gets injected, why it's reversible, how migration / restore guarantee no data loss) see [The core mental model](#the-core-mental-model-two-drawers--automatic-backup) and the [Advanced mechanism appendix](#advanced-mechanism-appendix-for-users-who-want-to-truly-understand-how-it-works) at the end.
 
 ## How to use it (at a glance)

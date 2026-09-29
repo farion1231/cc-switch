@@ -4138,6 +4138,32 @@ model_provider = "c"
         assert_eq!(codex_text(), codex_unified_proxy_mirror());
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_dormant_twin_does_not_wake_startup_writes() {
+        // live 是直连镜像（共享槽）、休眠旧表只是躺在旁边：启动看到直连不许重写，
+        // 孪生的存在本身不是接管的证据（规范化只发生在合法投影里）。
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        commit_state(
+            &s,
+            &AppType::Codex,
+            &PendingTarget::mode(ModeState {
+                mode: Some(Mode::Direct),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        let live = format!(
+            "{}\n[model_providers.cc-switch-official]\nname = \"renamed by user\"\nwire_api = \"chat\"\n",
+            codex_unified_proxy_mirror()
+        );
+        seed_codex(&live, Some(&json!({})));
+        startup_app(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(codex_text(), live);
+    }
+
     #[test]
     #[serial]
     fn codex_unified_proxy_manual_row_is_not_polluted() {
@@ -4162,6 +4188,12 @@ model_provider = "c"
         let text = codex_text();
         let d: toml::Table = toml::from_str(&text).unwrap();
         let bucket = d["model_provider"].as_str().unwrap().to_string();
+        let retained = &d["model_providers"]["cc-switch-official"];
+        assert_eq!(retained["name"].as_str(), Some("OpenAI"));
+        assert_eq!(retained["wire_api"].as_str(), Some("responses"));
+        assert_eq!(retained["requires_openai_auth"].as_bool(), Some(true));
+        assert_eq!(retained["supports_websockets"].as_bool(), Some(false));
+        assert!(retained.get("experimental_bearer_token").is_none());
         let new_key = mode(&AppType::Codex).contract.unwrap().key;
         let auth_after: Value =
             serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
@@ -4182,6 +4214,14 @@ model_provider = "c"
         assert_eq!(auth_after, auth);
         assert!(unchanged);
         assert_eq!(back["model_provider"].as_str(), Some("cc-switch-official"));
+        assert_eq!(
+            back["model_providers"]["cc-switch-official"]["name"].as_str(),
+            Some("OpenAI")
+        );
+        assert_eq!(
+            back["model_providers"]["cc-switch-official"]["base_url"].as_str(),
+            d["model_providers"]["cc-switch-official"]["base_url"].as_str()
+        );
     }
 
     #[tokio::test]
@@ -4306,7 +4346,10 @@ model_provider = "c"
         let row = codex_official();
         let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
         codex_unified_proxy_toggle(true);
-        seed_codex("", Some(&json!({})));
+        seed_codex(
+            "[model_providers.cc-switch-official]\nname = 'OpenAI'\nrequires_openai_auth = true\nsupports_websockets = false\nwire_api = 'responses'\nbase_url = 'http://127.0.0.1:15721/v1'\n",
+            Some(&json!({})),
+        );
         enter(&s, &AppType::Codex).await.unwrap();
         let before = codex_text();
         let auth_before = fs::read(codex_auth_path()).unwrap();
@@ -4330,7 +4373,29 @@ model_provider = "c"
             doc["model_providers"]["custom"]["base_url"].as_str(),
             Some(expected.as_str())
         );
+        assert_eq!(
+            doc["model_providers"]["cc-switch-official"]["base_url"].as_str(),
+            Some(expected.as_str())
+        );
         assert_eq!(auth_before, auth_after);
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_clean_live_attach_does_not_invent_the_legacy_route() {
+        // 全新设备（live 里从没有过旧表）+ 统一开 + 进官方代理：只写共享槽，
+        // 绝不无中生有旧 `cc-switch-official` 定义——集成层锁定这个最常走的路径。
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        codex_unified_proxy_toggle(true);
+        seed_codex("", Some(&json!({})));
+        enter(&s, &AppType::Codex).await.unwrap();
+        let text = codex_text();
+        // Release the real local listener before assertions can panic.
+        exit(&s, &AppType::Codex).await.unwrap();
+        let doc: toml::Table = toml::from_str(&text).unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"].get("cc-switch-official").is_none());
     }
     #[tokio::test]
     #[serial]
@@ -4344,10 +4409,12 @@ model_provider = "c"
             &official.id,
         )
         .await;
-        codex_unified_proxy_toggle(true);
+        codex_unified_proxy_toggle(false);
         let auth = json!({"auth_mode":"chatgpt", "tokens":{"id_token":"proof-id", "access_token":"proof-access", "refresh_token":"proof-refresh", "account_id":"proof-account"}});
         seed_codex("", Some(&auth));
         enter(&s, &AppType::Codex).await.unwrap();
+        codex_unified_proxy_toggle(true);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
         ProviderService::switch(&s, AppType::Codex, &relay.id).unwrap();
         let relay_text = codex_text();
         let relay_auth: Value =
@@ -4361,6 +4428,13 @@ model_provider = "c"
         let o: toml::Table = toml::from_str(&official_text).unwrap();
         assert_eq!(r["model_provider"].as_str(), Some("custom"));
         assert_eq!(
+            r["model_providers"]["cc-switch-official"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(r["model_providers"]["cc-switch-official"]
+            .get("experimental_bearer_token")
+            .is_none());
+        assert_eq!(
             r["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
             Some(PROXY_TOKEN_PLACEHOLDER)
         );
@@ -4372,6 +4446,10 @@ model_provider = "c"
         assert!(o["model_providers"]["custom"]
             .get("experimental_bearer_token")
             .is_none());
+        assert_eq!(
+            o["model_providers"]["cc-switch-official"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
         assert_eq!(relay_auth, auth);
         assert_eq!(official_auth, auth);
         assert_eq!(

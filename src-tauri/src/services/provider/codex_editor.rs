@@ -293,9 +293,38 @@ pub(crate) fn plan_save(
         .collect();
     let mut base_entries = entries(&base_doc, &routes);
     base_entries.extend(removed_from_live);
+    let mut edited_entries = entries(&edited_doc, &routes);
+    if !routes.contains(&OFFICIAL_PROXY_ROUTE_ID) {
+        if let Some(item) = base_doc
+            .get("model_providers")
+            .and_then(Item::as_table_like)
+            .and_then(|providers| providers.get(OFFICIAL_PROXY_ROUTE_ID))
+        {
+            base_entries.push(Entry {
+                path: vec![
+                    "model_providers".to_string(),
+                    OFFICIAL_PROXY_ROUTE_ID.to_string(),
+                ],
+                item: item.clone(),
+            });
+        }
+        if let Some(item) = edited_doc
+            .get("model_providers")
+            .and_then(Item::as_table_like)
+            .and_then(|providers| providers.get(OFFICIAL_PROXY_ROUTE_ID))
+        {
+            edited_entries.push(Entry {
+                path: vec![
+                    "model_providers".to_string(),
+                    OFFICIAL_PROXY_ROUTE_ID.to_string(),
+                ],
+                item: item.clone(),
+            });
+        }
+    }
     Ok(CodexEditorPlan {
         row_settings: store_into_row(stored_row, edited, &projection)?,
-        edits: TomlEdits::between(&base_entries, &entries(&edited_doc, &routes), on_conflict),
+        edits: TomlEdits::between(&base_entries, &edited_entries, on_conflict),
     })
 }
 
@@ -535,5 +564,69 @@ mod tests {
             !text.contains("approval_policy"),
             "global settings go to live, not the row: {text}"
         );
+    }
+
+    #[test]
+    fn deleting_the_legacy_official_proxy_route_is_recorded_as_a_live_edit() {
+        let base = json!({
+            "auth": {},
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nwire_api = \"responses\"\n"
+        });
+        let edited = json!({
+            "auth": {},
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\n"
+        });
+        let plan = plan_save(
+            None,
+            &edited,
+            &base,
+            &Origin::Live(Vec::new()),
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+
+        let mut live = doc(base["config"].as_str().unwrap());
+        plan.edits
+            .apply_to(Path::new("config.toml"), &mut live)
+            .unwrap();
+        assert!(live["model_providers"]
+            .as_table()
+            .unwrap()
+            .get(OFFICIAL_PROXY_ROUTE_ID)
+            .is_none());
+    }
+
+    #[test]
+    fn a_save_that_leaves_the_legacy_official_proxy_route_alone_emits_no_edit_for_it() {
+        // 休眠的旧路由定义不是本行的路由：编辑器不收进行、也不当全局设置改写，
+        // 用户没动它就不该出现在三方比较里。
+        let twin =
+            "\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nwire_api = \"responses\"\n";
+        let base = json!({
+            "auth": {},
+            "config": format!("model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\n{twin}")
+        });
+        let edited = json!({
+            "auth": {},
+            "config": format!("model_provider = \"custom\"\nmodel = \"gpt-b\"\n\n[model_providers.custom]\nname = \"OpenAI\"\n{twin}")
+        });
+        let plan = plan_save(
+            None,
+            &edited,
+            &base,
+            &Origin::Live(Vec::new()),
+            false,
+            false,
+            ConflictPolicy::Refuse,
+        )
+        .unwrap();
+
+        assert!(plan
+            .edits
+            .paths()
+            .iter()
+            .all(|path| !path.contains(OFFICIAL_PROXY_ROUTE_ID)));
     }
 }
