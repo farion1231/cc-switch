@@ -176,8 +176,32 @@ config，**DB 里没有对应 provider 行，官方档存档里也没有这张�
 - **一次性迁移的「已完成」只能由真实迁移置位**。`codexThirdPartyHistoryProviderBucketV1`
   曾于 2026-09-28T16:45 在 `source_provider_ids` 为空时写下 `scanned: true / 0 / 0`，
   此后被 `is_..._migrated()` 永久短路，既没修好历史也堵死重试。
-- **回归用例必须是四步闭环**：切 official → 建 session → 切回第三方 → 断言该 id 有表。
-  单步断言（切完检查表内容）看不见这条缺口。
+- **回归用例必须是四步闭环**：切 official → 建 session → 切回 third-party → 断言该
+  id 有表，且**镜像方向同样断言**。单步断言看不见这条缺口——本类缺陷前三次都从
+  单步断言下溜过去，因为每一步单独看都"对"。
+
+#### 四步闭环的实测结果（2026-09-29）
+
+`session_resolves_in_both_directions_of_an_official_round_trip` 覆盖两个方向，
+**均通过**。也就是说「切到官方丢第三方表」这条并不成立：DB 驱动的那部分合并本来就
+覆盖了它（`merge_inert_preserves_custom_table_when_switching_to_official`）。真正缺的
+只有**无 DB 归属**的 id 在**切离官方**方向上的补表。
+
+残留（`official_route_reports_rather_than_invents_a_table_for_db_less_ids` 钉住）：
+
+| 场景 | 结果 |
+|---|---|
+| 第三方路由 + 无 DB 归属的引用 id | 补 inert 影子表（本轮修复） |
+| 官方路由 + **有** DB 归属的引用 id | 补表（既有 DB 合并已覆盖） |
+| 官方路由 + **无** DB 归属的引用 id | **不补，只报**。官方档顶层 `model_provider` 按 §2.4c 必须缺失，故既无 active 表可复制、也无 DB 行可提供定义 |
+
+最后一行是**有意的不作为**：凭空造一张表等于把老 session 静默改道到一个用户当前
+根本没选的端点。
+
+**因此覆盖门不升级为硬拒绝。** 曾经考虑过"切换前断言引用集合 ⊆ 定义集合，不满足就
+拒绝切换"，但上表证明该残留不可救：硬门会为一段远古 session **永久拒绝用户切换
+供应商**，代价大于它防的症状。当前形态是"能救的全救 + 残留 `log::error` 报出"，
+另有 `scripts/codex-session-provider-check.py` 把同一判据暴露给用户自查。
 
 ### 2.4c 顶层 `model_provider` 的补写必须分 provider 类别（2026-09-29 审计追加）
 

@@ -4215,6 +4215,181 @@ base_url = "https://a.example/v1"
         );
     }
 
+    /// 四步闭环回归：切官方 → 建 session → 切回第三方 → 该 session 的 id 仍有表。
+    ///
+    /// 这是 RFC 0002 §2.4b' 要求的验收形态。单步断言（切完检查表内容）看不见
+    /// 缺口——本类缺陷前三次都从单步断言下溜过去，因为每一步单独看都"对"。
+    /// 缺口只在**下一段历史存在、而当前配置不再定义那个 id** 时才显形。
+    ///
+    /// 两个方向都在这里断言，因为前两次修复各只覆盖了一个方向。
+    #[test]
+    fn session_resolves_in_both_directions_of_an_official_round_trip() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "codex-official".to_string(),
+                "OpenAI Official".to_string(),
+                official_settings_config(),
+                None,
+            ),
+        )
+        .expect("save official");
+
+        // 第 1-2 步：切到官方，期间 Codex 用 official 投影 id 开了 session，
+        // 所以历史里出现一个没有任何 DB provider 归属的 id。
+        let history = tempfile::tempdir().expect("history dir");
+        let rollout = history
+            .path()
+            .join("sessions/2026/09/29/rollout-official-era.jsonl");
+        std::fs::create_dir_all(rollout.parent().unwrap()).expect("mkdir");
+        std::fs::write(
+            &rollout,
+            concat!(
+                r#"{"type":"session_meta","payload":{"model_provider":"cc-switch-official"}}"#,
+                "\n"
+            ),
+        )
+        .expect("write rollout");
+
+        // 第 3 步：切回第三方。
+        let back = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &kxpms_settings_config(),
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("merge back to third party");
+        let back_text = back.get("config").and_then(Value::as_str).expect("text");
+
+        // 第 4 步：那一段历史必须仍能解析。
+        assert_eq!(
+            crate::codex_config::codex_unresolved_session_provider_ids_in(
+                history.path(),
+                back_text
+            ),
+            Vec::<String>::new(),
+            "切回第三方后，官方时期开的 session 必须仍有表可解析: {back_text}"
+        );
+
+        // 镜像方向：切到官方时，第三方时期的 session 也必须仍有表可解析。
+        let history2 = tempfile::tempdir().expect("history dir");
+        let rollout2 = history2
+            .path()
+            .join("sessions/2026/09/29/rollout-third-party-era.jsonl");
+        std::fs::create_dir_all(rollout2.parent().unwrap()).expect("mkdir");
+        std::fs::write(
+            &rollout2,
+            concat!(
+                r#"{"type":"session_meta","payload":{"model_provider":"kxpms"}}"#,
+                "\n"
+            ),
+        )
+        .expect("write rollout");
+        let history2 = history2.path();
+
+        let to_official = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &official_settings_config(),
+            "codex-official",
+            Some(history2),
+        )
+        .expect("merge to official");
+        let official_text = to_official
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("text");
+        assert_eq!(
+            crate::codex_config::codex_unresolved_session_provider_ids_in(history2, official_text),
+            Vec::<String>::new(),
+            "切到官方后，第三方时期的 session 必须仍有表可解析: {official_text}"
+        );
+    }
+
+    /// 已量化的残留边界：切到官方时，**无 DB 归属**的历史 id 无法被补表。
+    ///
+    /// 官方档按 RFC §2.4c 顶层 `model_provider` 必须保持缺失，于是既没有
+    /// active 表可复制、也没有任何 DB 行能提供该 id 的定义。此时
+    /// `merge_session_referenced_shadow_tables` 明确不造表——凭空造一张会把
+    /// 老 session 静默改道到一个用户当前根本没选的端点。
+    ///
+    /// 这条用例把这个残留**钉成已知且有界**的行为：可救的照救，不可救的只报
+    /// 出来。这也正是覆盖门不能升级成硬拒绝的原因——为了一段远古 session
+    /// 永久拒绝用户切换供应商，代价远大于它防的那个症状。
+    #[test]
+    fn official_route_reports_rather_than_invents_a_table_for_db_less_ids() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "codex-official".to_string(),
+                "OpenAI Official".to_string(),
+                official_settings_config(),
+                None,
+            ),
+        )
+        .expect("save official");
+
+        let history = tempfile::tempdir().expect("history dir");
+        let sessions = history.path().join("sessions/2026/09/29");
+        std::fs::create_dir_all(&sessions).expect("mkdir");
+        // 混合历史：一个有 DB 归属（可救），一个没有（不可救）。
+        for (name, provider) in [("a", "kxpms"), ("b", "evol-unowned")] {
+            std::fs::write(
+                sessions.join(format!("rollout-{name}.jsonl")),
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"model_provider\":\"{provider}\"}}}}\n"
+                ),
+            )
+            .expect("write rollout");
+        }
+
+        let to_official = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &official_settings_config(),
+            "codex-official",
+            Some(history.path()),
+        )
+        .expect("merge to official");
+        let text = to_official
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("text");
+
+        assert_eq!(
+            crate::codex_config::codex_unresolved_session_provider_ids_in(history.path(), text),
+            vec!["evol-unowned".to_string()],
+            "只有无 DB 归属的 id 应残留；有归属的必须被补上: {text}"
+        );
+        assert!(
+            text.contains("[model_providers.kxpms]"),
+            "有 DB 归属的 id 在官方档也必须补表: {text}"
+        );
+    }
+
     #[test]
     fn merge_inert_preserves_custom_table_when_switching_to_official() {
         let db = Database::memory().expect("memory db");

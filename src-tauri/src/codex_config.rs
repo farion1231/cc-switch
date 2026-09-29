@@ -1,11 +1,11 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::app_config::AppType;
 use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
 };
-use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use crate::Database;
@@ -1188,9 +1188,7 @@ fn migrate_legacy_codex_toml_ids_with_policy(
 ) -> Option<String> {
     let mut doc = config_text.parse::<DocumentMut>().ok()?;
     let legacy_name = {
-        let mp = doc
-            .get("model_providers")
-            .and_then(Item::as_table_like)?;
+        let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
         mp.get("custom")
             .and_then(Item::as_table_like)
             .and_then(|table| table.get("name"))
@@ -1205,8 +1203,10 @@ fn migrate_legacy_codex_toml_ids_with_policy(
         .map(|(_, new_id)| *new_id)?;
 
     // 顶层 model_provider 已指向别的 id → 用户的自定义路由，不动。
-    let top_level_points_at_legacy =
-        matches!(active_codex_model_provider_id(&doc).as_deref(), Some("custom"));
+    let top_level_points_at_legacy = matches!(
+        active_codex_model_provider_id(&doc).as_deref(),
+        Some("custom")
+    );
     if let Some(current) = active_codex_model_provider_id(&doc) {
         if current != "custom" {
             log::info!(
@@ -2686,14 +2686,12 @@ fn append_endpoint_suffixed_entries(
             continue;
         }
         let expanded = match source {
-            ExpansionSource::Template(template) => {
-                codex_model_catalog_entries_from_specs(
-                    &specs,
-                    template,
-                    profile,
-                    default_context_window,
-                )
-            }
+            ExpansionSource::Template(template) => codex_model_catalog_entries_from_specs(
+                &specs,
+                template,
+                profile,
+                default_context_window,
+            ),
             ExpansionSource::Vendor(vendor_models) => specs
                 .iter()
                 .enumerate()
@@ -2702,7 +2700,11 @@ fn append_endpoint_suffixed_entries(
         };
 
         for mut entry in expanded {
-            let Some(slug) = entry.get("slug").and_then(Value::as_str).map(str::to_string) else {
+            let Some(slug) = entry
+                .get("slug")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
                 continue;
             };
             // 已经带后缀的（用户自己写的多端点 id 表单）不再二次加。
@@ -4434,7 +4436,7 @@ pub fn codex_unresolved_session_provider_ids_in(
         .collect()
 }
 
-    pub fn write_codex_live_for_provider(
+pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
@@ -4760,6 +4762,12 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use serial_test::serial;
+    use std::ffi::OsString;
+
     /// 覆盖判据（而非字段合法性）才是真正的门：一个**完全缺失**的 id 能通过
     /// `preflight_codex_provider_table_conflicts`，这正是它三次都没拦住的原因。
     #[test]
@@ -4767,9 +4775,7 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         use std::io::Write as _;
 
         let history = tempfile::tempdir().expect("history dir");
-        let rollout = history
-            .path()
-            .join("sessions/2026/09/29/rollout-a.jsonl");
+        let rollout = history.path().join("sessions/2026/09/29/rollout-a.jsonl");
         std::fs::create_dir_all(rollout.parent().unwrap()).expect("mkdir");
         let mut file = std::fs::File::create(&rollout).expect("create");
         writeln!(
@@ -4796,12 +4802,6 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
             "补表之后必须归零，否则每次切换都会误报"
         );
     }
-
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use serial_test::serial;
-    use std::ffi::OsString;
 
     /// 老 bundle 的 `[model_providers.custom]` 必须被改写成按端点区分的 id。
     ///
@@ -4831,7 +4831,9 @@ mod tests {
             // 的 model_provider 就是 `custom`，少了它 Codex 拒绝 resume）。
             let new_table = parsed["model_providers"][expected_id]
                 .as_table()
-                .unwrap_or_else(|| panic!("{legacy_name}: 必须存在 [{expected_id}] 表\n{migrated}"));
+                .unwrap_or_else(|| {
+                    panic!("{legacy_name}: 必须存在 [{expected_id}] 表\n{migrated}")
+                });
             assert_eq!(
                 new_table.get("name").and_then(|v| v.as_str()),
                 Some(legacy_name),
@@ -5009,12 +5011,13 @@ mod tests {
         .expect("catalog generation")
         .expect("catalog expected");
         let models = catalog["models"].as_array().expect("models array");
-        let slugs: Vec<&str> = models
-            .iter()
-            .filter_map(|e| e["slug"].as_str())
-            .collect();
+        let slugs: Vec<&str> = models.iter().filter_map(|e| e["slug"].as_str()).collect();
 
-        assert_eq!(slugs, vec!["claude-opus-5", "glm-5.2"], "默认只出 active 端点模型");
+        assert_eq!(
+            slugs,
+            vec!["claude-opus-5", "glm-5.2"],
+            "默认只出 active 端点模型"
+        );
         assert_eq!(
             slugs.iter().filter(|s| s.contains('@')).count(),
             0,
@@ -5058,7 +5061,10 @@ mod tests {
         );
         let slugs: Vec<&str> = merged.iter().filter_map(|e| e["slug"].as_str()).collect();
 
-        assert!(slugs.contains(&"claude-opus-5"), "active 端裸 slug 必须保留: {slugs:?}");
+        assert!(
+            slugs.contains(&"claude-opus-5"),
+            "active 端裸 slug 必须保留: {slugs:?}"
+        );
         assert!(
             slugs.contains(&"claude-opus-5@local8782"),
             "另一端点的同 slug 必须带 @toml_id 后缀共存: {slugs:?}"
@@ -9181,7 +9187,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         ];
         let temp_home = tempfile::tempdir().expect("tempdir for CC_SWITCH_TEST_HOME");
         let home_path = temp_home.path().to_path_buf();
-        let _keep_alive = temp_home;            // RAII: drop at end of test
+        let _keep_alive = temp_home; // RAII: drop at end of test
         std::env::set_var("CODEX_HOME", home_path.to_string_lossy().to_string());
         std::env::set_var("CC_SWITCH_TEST_HOME", &home_path);
         std::env::set_var("HOME", &home_path);
@@ -9301,7 +9307,11 @@ model_catalog_json = "cc-switch-model-catalog.json"
             .expect("read generated catalog");
         let on_disk: serde_json::Value = serde_json::from_str(&on_disk).expect("catalog json");
         let on_disk_models = on_disk["models"].as_array().expect("on_disk models");
-        assert_eq!(on_disk_models.len(), 4, "generated file must mirror the 4 fixture entries");
+        assert_eq!(
+            on_disk_models.len(),
+            4,
+            "generated file must mirror the 4 fixture entries"
+        );
         for slug in ["claude-opus-5", "glm-5.2", "kimi-k3", "minimax-m3"] {
             assert!(
                 on_disk_models
