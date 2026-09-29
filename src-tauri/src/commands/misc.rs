@@ -4272,11 +4272,11 @@ pub async fn open_provider_terminal(
     // Anthropic 请求直接发到上游的 OpenAI/Gemini 端点。见
     // `claude_terminal_requires_local_proxy`。
     //
-    // 代理只会把请求发给"当前供应商"，所以只有当前卡片能用这条路：否则终端会打着
-    // A 卡片的模型名，把请求送进 B 卡片的上游。
+    // 代理只会把请求发给它自己选中的那家，所以只有那一家能用这条路：否则终端会打着
+    // A 卡片的模型名，把请求送进 B 卡片的上游，而真正在用的那家反而拿不到转换配置。
     let proxy_backed_claude = app_type == AppType::Claude
         && claude_terminal_requires_local_proxy(provider)
-        && is_current_provider(state.inner(), &app_type, &providerId);
+        && proxy_serves_card(state.inner(), &app_type, &providerId).await;
     let config = if proxy_backed_claude {
         if !state.proxy_service.is_running().await {
             state.proxy_service.start().await?;
@@ -4299,16 +4299,32 @@ pub async fn open_provider_terminal(
     Ok(true)
 }
 
-/// 该提供商是否为该应用的当前供应商。
+/// 代理会把请求发给这张卡片吗？和 `ProviderRouter` 的选路保持一致。
 ///
-/// 与代理选路保持一致：`ProviderRouter` 只把请求发给当前供应商（故障转移开启时
-/// 才走队列），所以按卡片启动终端时必须先确认它确实是代理会命中的那一个。
-fn is_current_provider(
+/// - 故障转移开启：代理只用故障转移队列（按队列顺序），当前卡片在队列里就算数——
+///   终端配置和代理路由无关，队列里的卡片代理都可能服务；
+/// - 故障转移关闭：代理只发给「正在用的那家」。代理模式下直连指针和代理路由互相
+///   独立，切换卡片只更新代理路由，所以这里必须读「正在用的那家」而不是直连指针，
+///   否则会打着 A 卡片的模型名把请求送进 B 卡片的上游。
+async fn proxy_serves_card(
     state: &crate::store::AppState,
     app_type: &AppType,
     provider_id: &str,
 ) -> bool {
-    crate::settings::get_effective_current_provider(&state.db, app_type)
+    let failover_enabled = state
+        .db
+        .get_proxy_config_for_app(app_type.as_str())
+        .await
+        .map(|config| config.auto_failover_enabled)
+        .unwrap_or(false);
+    if failover_enabled {
+        return state
+            .db
+            .get_failover_queue(app_type.as_str())
+            .map(|queue| queue.iter().any(|item| item.provider_id == provider_id))
+            .unwrap_or(false);
+    }
+    crate::mode::current::provider_for(&state.db, app_type, crate::mode::current::Purpose::InUse)
         .ok()
         .flatten()
         .is_some_and(|current| current == provider_id)
@@ -4320,7 +4336,7 @@ fn is_current_provider(
 /// （openai_chat / openai_responses / gemini_native）必须由本地代理做协议转换，
 /// 否则客户端会把 Anthropic 请求直接打到上游的 OpenAI/Gemini 端点。
 ///
-/// 上游的 `/v1/messages` 兼容层并不可靠：AgentRouter 会把该路径转成
+/// 上游的 `/v1/messages` 兼容层并不可靠：中转站会把该路径转成
 /// `/v1/chat/completions`，于是带 `reasoning_effort` 的请求在携带 function
 /// tools 时被上游以 400 拒绝（"Function tools with reasoning_effort are not
 /// supported for gpt-6-astra in /v1/chat/completions. To use function tools, use
@@ -8643,7 +8659,7 @@ mod tests {
     }
 
     /// Claude Code 只会说 Anthropic Messages：`apiFormat` 非 anthropic 的卡片
-    /// （AgentRouter + GPT-6 Astra 用 openai_responses）必须经本地代理转换，
+    /// （relay.example + GPT-6 Astra 用 openai_responses）必须经本地代理转换，
     /// 否则 Anthropic 请求会被直接打到上游，上游再降级成 /v1/chat/completions 并以
     /// "Function tools with reasoning_effort are not supported ... use /v1/responses"
     /// 拒绝每一次带工具的请求。
@@ -8653,7 +8669,7 @@ mod tests {
             json!({
                 "env": {
                     "ANTHROPIC_AUTH_TOKEN": "sk-test",
-                    "ANTHROPIC_BASE_URL": "https://agentrouter.org",
+                    "ANTHROPIC_BASE_URL": "https://relay.example",
                     "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]"
                 }
             }),
@@ -8723,7 +8739,7 @@ mod tests {
         let legacy = provider_with_meta(
             json!({
                 "api_format": "openai_responses",
-                "env": { "ANTHROPIC_BASE_URL": "https://agentrouter.org" }
+                "env": { "ANTHROPIC_BASE_URL": "https://relay.example" }
             }),
             None,
         );
@@ -8755,9 +8771,9 @@ mod tests {
         assert!(claude_terminal_requires_local_proxy(&xai));
     }
 
-    /// 端到端契约：AgentRouter + GPT-6 Astra（openai_responses）的卡片按卡片启动
+    /// 端到端契约：relay.example + GPT-6 Astra（openai_responses）的卡片按卡片启动
     /// 终端时，写进 `claude --settings` 的配置必须指向本地代理，而不是
-    /// `https://agentrouter.org`——后者会让 Claude Code 把 Anthropic 请求直接打到
+    /// `https://relay.example`——后者会让 Claude Code 把 Anthropic 请求直接打到
     /// 上游，上游再降级成 /v1/chat/completions 并以 400 拒绝所有带工具的请求。
     ///
     /// 这是本修复的核心不变量：只有真正发往代理，Anthropic → Responses 的转换
@@ -8776,27 +8792,27 @@ mod tests {
                 json!({
                     "env": {
                         "ANTHROPIC_AUTH_TOKEN": "sk-real-upstream-key",
-                        "ANTHROPIC_BASE_URL": "https://agentrouter.org",
+                        "ANTHROPIC_BASE_URL": "https://relay.example",
                         "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]",
                         "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "GPT 6 Astra"
                     }
                 }),
                 Some("openai_responses"),
             );
-            p.id = "agentrouter".to_string();
-            p.name = "AgentRouter".to_string();
+            p.id = "relay-card".to_string();
+            p.name = "Relay Card".to_string();
             p
         };
         db.save_provider("claude", &provider)
             .expect("save provider");
-        db.set_current_provider("claude", "agentrouter")
+        db.set_current_provider("claude", "relay-card")
             .expect("set current provider");
-        crate::settings::set_current_provider(&AppType::Claude, Some("agentrouter"))
+        crate::settings::set_current_provider(&AppType::Claude, Some("relay-card"))
             .expect("set local current provider");
 
         assert!(
-            is_current_provider(&state, &AppType::Claude, "agentrouter"),
-            "provider must be current for the proxy-backed path"
+            proxy_serves_card(&state, &AppType::Claude, "relay-card").await,
+            "provider must be the one the proxy routes to"
         );
 
         let config = state
@@ -8813,7 +8829,7 @@ mod tests {
             "converted providers must be routed through the local proxy, got {base_url}"
         );
         assert_ne!(
-            base_url, "https://agentrouter.org",
+            base_url, "https://relay.example",
             "the terminal must not talk to the upstream directly"
         );
         assert_eq!(
@@ -8878,6 +8894,139 @@ mod tests {
             "direct providers keep their real key"
         );
         let _ = &state;
+    }
+
+    /// 代理模式下直连指针和代理路由互相独立：切换卡片只更新代理路由。按卡片开终端
+    /// 必须以代理实际路由为准，否则直连指针那家会被误放行到本地代理——请求却按代理
+    /// 路由那家的模型和凭据发往它的上游；真正在用的那家反而拿不到转换配置。
+    #[tokio::test]
+    #[serial]
+    async fn claude_terminal_gate_follows_proxy_route_not_direct_pointer() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+
+        let db = Arc::new(crate::database::Database::memory().expect("in-memory db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        let direct = {
+            let mut provider = provider_with_meta(
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "sk-direct",
+                        "ANTHROPIC_BASE_URL": "https://direct.example",
+                        "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]"
+                    }
+                }),
+                Some("openai_responses"),
+            );
+            provider.id = "direct-a".to_string();
+            provider.name = "Direct A".to_string();
+            provider
+        };
+        let routed = {
+            let mut provider = provider_with_meta(
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "sk-routed",
+                        "ANTHROPIC_BASE_URL": "https://relay.example",
+                        "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]"
+                    }
+                }),
+                Some("openai_responses"),
+            );
+            provider.id = "route-b".to_string();
+            provider.name = "Route B".to_string();
+            provider
+        };
+        db.save_provider("claude", &direct).expect("save direct");
+        db.save_provider("claude", &routed).expect("save routed");
+        // 直连指针是 A，代理路由是 B；代理只会把请求发给 B。
+        db.set_current_provider("claude", "direct-a")
+            .expect("direct pointer");
+        crate::settings::set_current_provider(&AppType::Claude, Some("direct-a"))
+            .expect("local direct pointer");
+        crate::mode::state::update(&crate::live::engine::DeviceStore::for_device(), |live| {
+            let app = live.apps.entry("claude".to_string()).or_default();
+            app.mode = Some(crate::mode::state::Mode::Proxy);
+            app.proxy_route = Some("route-b".to_string());
+        })
+        .expect("proxy mode state");
+
+        assert!(
+            !proxy_serves_card(&state, &AppType::Claude, "direct-a").await,
+            "the direct pointer must not open the proxy-backed path while the proxy routes elsewhere"
+        );
+        assert!(
+            proxy_serves_card(&state, &AppType::Claude, "route-b").await,
+            "the card the proxy actually routes to must open the proxy-backed path"
+        );
+
+        // 转换配置按代理路由那家生成：上游 Key 换成占位符，客户端指向本地代理。
+        let config = state
+            .proxy_service
+            .claude_settings_via_local_proxy(&routed)
+            .await
+            .expect("build proxy-backed claude settings");
+        assert_eq!(
+            config["env"]["ANTHROPIC_AUTH_TOKEN"].as_str(),
+            Some("PROXY_MANAGED"),
+            "the routed card's key must be replaced by the proxy placeholder"
+        );
+        let base_url = config["env"]["ANTHROPIC_BASE_URL"]
+            .as_str()
+            .expect("base url present");
+        assert!(
+            base_url.starts_with("http://127.0.0.1:") || base_url.starts_with("http://localhost:"),
+            "the routed card must be pointed at the local proxy, got {base_url}"
+        );
+    }
+
+    /// 故障转移开启时代理只用队列选路：队列里的卡片都可能被代理服务，终端可以走
+    /// 转换路径；不在队列里的卡片不会被代理命中，必须保持直连。
+    #[tokio::test]
+    #[serial]
+    async fn claude_terminal_gate_follows_failover_queue_when_enabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().unwrap();
+
+        let db = Arc::new(crate::database::Database::memory().expect("in-memory db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        for id in ["queued-a", "queued-b", "outside"] {
+            let mut provider = provider_with_meta(
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": format!("sk-{id}"),
+                        "ANTHROPIC_BASE_URL": "https://relay.example",
+                        "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-6-astra[1M]"
+                    }
+                }),
+                Some("openai_responses"),
+            );
+            provider.id = id.to_string();
+            provider.name = id.to_string();
+            db.save_provider("claude", &provider)
+                .expect("save provider");
+        }
+        db.set_current_provider("claude", "outside")
+            .expect("direct pointer");
+        crate::settings::set_current_provider(&AppType::Claude, Some("outside"))
+            .expect("local direct pointer");
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        db.add_to_failover_queue("claude", "queued-a")
+            .expect("failover queue");
+
+        assert!(
+            proxy_serves_card(&state, &AppType::Claude, "queued-a").await,
+            "cards in the failover queue can be served by the proxy"
+        );
+        assert!(
+            !proxy_serves_card(&state, &AppType::Claude, "outside").await,
+            "cards outside the failover queue are never selected by the proxy"
+        );
     }
 
     fn provider_with_meta(
