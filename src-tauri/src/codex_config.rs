@@ -3817,6 +3817,113 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
     Ok(doc.to_string())
 }
 
+/// Give every *route copy* of the active table the active table's bearer token.
+///
+/// A "route copy" is a `[model_providers.<id>]` table whose `name` + `base_url`
+/// are byte-identical to the active table's. Those are the session shadow tables
+/// RFC 0002 §2.4b mints (a verbatim copy of the active route) — they exist so
+/// sessions that recorded an old `model_provider` id still resolve to the
+/// current endpoint instead of `Model provider 'X' not found`.
+///
+/// Why this has to be a **separate pass** rather than part of the shadow merge:
+/// the merge runs on the effective settings *before* the write path injects the
+/// token, so the copy it takes is the pre-injection active table. Observed shape
+/// on this machine after the 2026-09-29 deploy — `[model_providers.kxpms]`
+/// carried `experimental_bearer_token = "PROXY_MANAGED"` while every shadow
+/// (`cc-switch-official`, `evol`) had the takeover `base_url` but **no token**,
+/// and resuming one of those 30 sessions 401'd `Missing or malformed
+/// Authorization header`. The refresh alone cannot fix that: the shadow is
+/// already a faithful copy of a table that has no token yet.
+///
+/// Deliberately narrow:
+/// - only tables that carry no credential of their own (`env_key`,
+///   `experimental_bearer_token`, or an `Authorization` header) — a table with
+///   its own key is another provider's, not a copy of ours;
+/// - never a reserved Codex id (`is_custom_codex_model_provider_id`): those
+///   tables belong to the CLI, same rule as the shadow merge;
+/// - only when the active table actually holds a token. A codex-official
+///   takeover has none and authenticates from the native login, so its copies
+///   correctly have none either.
+fn propagate_active_bearer_token_to_route_copies(config_text: &str) -> Result<String, AppError> {
+    if config_text.trim().is_empty() || !config_text.contains("experimental_bearer_token") {
+        return Ok(config_text.to_string());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(active_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+    if !is_custom_codex_model_provider_id(&active_id) {
+        return Ok(config_text.to_string());
+    }
+    let route_key = |table: &dyn toml_edit::TableLike| {
+        Some((
+            table.get("name")?.as_str()?.to_string(),
+            table.get("base_url")?.as_str()?.to_string(),
+        ))
+    };
+    let active_key = doc
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get(&active_id))
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get("experimental_bearer_token"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .and_then(|token| {
+            doc.get("model_providers")
+                .and_then(Item::as_table_like)
+                .and_then(|table| table.get(&active_id))
+                .and_then(Item::as_table_like)
+                .and_then(route_key)
+                .map(|key| (token, key))
+        });
+    let Some((token, active_key)) = active_key else {
+        return Ok(config_text.to_string());
+    };
+
+    let Some(providers) = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return Ok(config_text.to_string());
+    };
+    let ids: Vec<String> = providers.iter().map(|(id, _)| id.to_string()).collect();
+    let mut stamped: Vec<String> = Vec::new();
+    for id in ids {
+        if id == active_id || !is_custom_codex_model_provider_id(&id) {
+            continue;
+        }
+        let Some(table) = providers.get_mut(&id).and_then(Item::as_table_like_mut) else {
+            continue;
+        };
+        if route_key(&*table) != Some(active_key.clone()) {
+            continue;
+        }
+        let declares_own_credential = table.get("env_key").is_some()
+            || table.get("experimental_bearer_token").is_some()
+            || table_declares_authorization_header(table.get("http_headers"))
+            || table_declares_authorization_header(table.get("env_http_headers"));
+        if declares_own_credential {
+            continue;
+        }
+        table.insert("experimental_bearer_token", toml_edit::value(&token));
+        stamped.push(id);
+    }
+    if stamped.is_empty() {
+        return Ok(config_text.to_string());
+    }
+    log::info!(
+        "codex 影子表：随 active 表补齐认证字段 {:?}（active={}）",
+        stamped,
+        active_id
+    );
+    Ok(doc.to_string())
+}
+
 pub fn remove_codex_experimental_bearer_token_if(
     config_text: &str,
     predicate: impl Fn(&str) -> bool,
@@ -4520,7 +4627,11 @@ pub fn prepare_codex_provider_live_config(
     };
     let normalized = normalize_codex_legacy_openai_reroute(config_text)?;
     let config_text = normalized.as_deref().unwrap_or(config_text);
-    set_codex_experimental_bearer_token(config_text, &token)
+    let injected = set_codex_experimental_bearer_token(config_text, &token)?;
+    // After injection, never before: the session shadows the merge minted are
+    // copies of the *pre-injection* active table, so they need a second pass to
+    // pick the token up (see `propagate_active_bearer_token_to_route_copies`).
+    propagate_active_bearer_token_to_route_copies(&injected)
 }
 
 /// During DB backfill, lift a live `experimental_bearer_token` back into
@@ -5787,6 +5898,148 @@ base_url = "https://single.example.com/v1"
             .expect("remove proven managed live auth");
         assert!(!get_codex_auth_path().exists());
         assert!(!get_codex_managed_oauth_live_auth_marker_path().exists());
+    }
+
+    /// 实机（2026-09-29 部署后 `~/.codex/config.toml` 原文）踩到的形状：
+    /// active 表带 token，两张**路由副本**（= session 影子）指向同一个
+    /// `name` + `base_url` 却没有 token —— 走影子表 resume 的 30 个 session
+    /// 全部 401 `Missing or malformed Authorization header`。
+    ///
+    /// 这条测试的输入就是那三张表（`local8782` / `custom` 一并带上，钉住
+    /// "同端点以外 / 自带凭据的表不动"）。
+    #[test]
+    fn bearer_token_propagates_to_route_copies_of_the_active_table() {
+        let input = r#"model_provider = "kxpms"
+model = "gpt-5.1-codex"
+
+[model_providers.kxpms]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.cc-switch-official]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.evol]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.local8782]
+name = "local_gateway"
+base_url = "http://localhost:8782/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.custom]
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+env_key = "CUSTOM_KEY"
+
+# 与 active **同端点**，但自带凭据：两个不同的 DB provider 可以指向同一个网关、
+# 各自带各自的 key。这种表不是我们的副本，盖章会把它自己的 key 顶掉。
+[model_providers.same_gateway_env_key]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+env_key = "OTHER_GATEWAY_KEY"
+
+[model_providers.same_gateway_header]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+http_headers = { Authorization = "Bearer other-gateway-key" }
+"#;
+
+        let output =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "PROXY_MANAGED"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        let tables = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers");
+
+        for id in ["kxpms", "cc-switch-official", "evol"] {
+            assert_eq!(
+                tables
+                    .get(id)
+                    .and_then(|t| t.get("experimental_bearer_token"))
+                    .and_then(|v| v.as_str()),
+                Some("PROXY_MANAGED"),
+                "[{id}] 是 active 的路由副本，必须拿到同一个 token，否则 resume 401"
+            );
+        }
+        assert!(
+            tables
+                .get("local8782")
+                .and_then(|t| t.get("experimental_bearer_token"))
+                .is_none(),
+            "不同端点不是路由副本，不能盖章"
+        );
+        assert!(
+            tables
+                .get("custom")
+                .and_then(|t| t.get("experimental_bearer_token"))
+                .is_none(),
+            "自带 env_key 的表是自己的凭据，不能被 active 覆盖"
+        );
+        // 下面两条才是"自带凭据豁免"真正承重的地方：它们与 active **同端点**，
+        // 只差在自带 credential 上。少了 `env_key` / `http_headers` 豁免，这两张
+        // 表会被盖上 active 的 token，把它们自己的 key 顶掉（变异 2 实测：
+        // 只留前两条断言时，摘掉豁免测试照样绿 —— 说明那两条根本没走到豁免分支）。
+        for id in ["same_gateway_env_key", "same_gateway_header"] {
+            assert!(
+                tables
+                    .get(id)
+                    .and_then(|t| t.get("experimental_bearer_token"))
+                    .is_none(),
+                "[{id}] 与 active 同端点但自带凭据，必须保持自己的认证方式"
+            );
+        }
+    }
+
+    /// 官方接管没有 token：副本也不该有 —— 它俩都靠原生 ChatGPT 登录。
+    /// 这条钉住"没有就不盖章"，避免给影子塞一个 PROXY_MANAGED 之外的假凭据。
+    #[test]
+    fn no_bearer_token_means_no_token_on_route_copies_either() {
+        let input = r#"model_provider = "cc-switch-official"
+
+[model_providers.cc-switch-official]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.evol]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let output = prepare_codex_provider_live_config(&json!({}), input).expect("prepare");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert!(
+            output.contains("experimental_bearer_token") == false
+                || parsed
+                    .get("model_providers")
+                    .and_then(|v| v.as_table())
+                    .map(|t| t
+                        .values()
+                        .all(|v| v.get("experimental_bearer_token").is_none()))
+                    .unwrap_or(true),
+            "active 表本身没有 token 时，任何表都不该被凭空盖章: {output}"
+        );
     }
 
     #[test]

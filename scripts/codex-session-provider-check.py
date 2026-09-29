@@ -132,18 +132,74 @@ def _state_db_candidates(root: Path) -> list[Path]:
     return unique
 
 
-def defined_provider_ids(config_path: Path) -> tuple[set[str], str | None]:
-    """Ids defined as [model_providers.*] in config.toml, plus the active route."""
+def defined_provider_ids(config_path: Path) -> tuple[set[str], str | None, dict]:
+    """Ids defined as [model_providers.*] in config.toml, plus the active route.
+
+    Also returns the parsed tables so the auth check below can inspect them.
+    """
     try:
         import tomllib
 
         with config_path.open("rb") as handle:
             doc = tomllib.load(handle)
     except FileNotFoundError:
-        return set(), f"{config_path} 不存在"
+        return set(), f"{config_path} 不存在", {}
     except Exception as exc:  # malformed TOML is itself a finding
-        return set(), f"{config_path} 解析失败: {exc}"
-    return set((doc.get("model_providers") or {}).keys()), doc.get("model_provider")
+        return set(), f"{config_path} 解析失败: {exc}", {}
+    tables = doc.get("model_providers") or {}
+    return set(tables.keys()), doc.get("model_provider"), tables
+
+
+# A table that authenticates on its own; a route copy that has one of these is
+# another provider's credential, not a missing-token shadow.
+_OWN_CREDENTIAL_KEYS = ("experimental_bearer_token", "env_key")
+_OWN_CREDENTIAL_HEADERS = ("authorization", "x-api-key", "api-key")
+
+
+def _declares_own_credential(table: dict) -> bool:
+    if any(key in table for key in _OWN_CREDENTIAL_KEYS):
+        return True
+    for header_key in ("http_headers", "env_http_headers"):
+        headers = table.get(header_key) or {}
+        if any(str(name).lower() in _OWN_CREDENTIAL_HEADERS for name in headers):
+            return True
+    return False
+
+
+def find_unauthenticated_route_copies(tables: dict, active: str | None) -> list[str]:
+    """Route copies of the active table that carry no credential of their own.
+
+    A "route copy" is a table with the same ``name`` + ``base_url`` as the active
+    one — that is what cc-switch mints so sessions recorded under an older
+    ``model_provider`` id still resolve to the current endpoint. If the active
+    table authenticates but a copy does not, resuming a session through that
+    copy fails with ``Missing or malformed Authorization header`` (401) rather
+    than the clearer "not found".
+
+    Only flagged when the active table itself holds a token: a codex-official
+    takeover has none and every route copy correctly falls back to the native
+    ChatGPT login.
+    """
+    if not active or active not in tables:
+        return []
+    active_table = tables[active] or {}
+    token = active_table.get("experimental_bearer_token")
+    if not isinstance(token, str) or not token.strip():
+        return []
+    key = (active_table.get("name"), active_table.get("base_url"))
+    if key[0] is None or key[1] is None:
+        return []
+
+    stale: list[str] = []
+    for provider_id, table in tables.items():
+        if provider_id == active or not isinstance(table, dict):
+            continue
+        if (table.get("name"), table.get("base_url")) != key:
+            continue
+        if _declares_own_credential(table):
+            continue
+        stale.append(provider_id)
+    return sorted(stale)
 
 
 def main() -> int:
@@ -156,7 +212,8 @@ def main() -> int:
 
     rollouts = collect_from_rollouts(root)
     state_rows = collect_from_state_dbs(root)
-    defined, active = defined_provider_ids(config_path)
+    defined, active, tables = defined_provider_ids(config_path)
+    unauthenticated_copies = find_unauthenticated_route_copies(tables, active)
 
     referenced: dict[str, dict[str, int]] = {}
     for source, counts in (("rollout", rollouts), ("state_db", state_rows)):
@@ -180,12 +237,13 @@ def main() -> int:
                     "defined_provider_ids": sorted(defined),
                     "referenced": referenced,
                     "unresolved": unresolved,
+                    "unauthenticated_route_copies": unauthenticated_copies,
                 },
                 ensure_ascii=False,
                 indent=2,
             )
         )
-        return 1 if unresolved else 0
+        return 1 if (unresolved or unauthenticated_copies) else 0
 
     print(f"Codex 配置目录: {root}")
     print(f"顶层 model_provider: {active or '(未设置)'}")
@@ -196,6 +254,8 @@ def main() -> int:
         counts = referenced[provider]
         if provider in unresolved:
             status = "缺表 → 这些 session 打不开"
+        elif provider in unauthenticated_copies:
+            status = "有表但无认证 → 这些 session 401"
         elif provider == active:
             status = "当前路由"
         else:
@@ -217,8 +277,17 @@ def main() -> int:
         print("或在退出 Codex 后改写历史里的 id 为当前 provider。")
         return 1
 
+    if unauthenticated_copies:
+        print()
+        print("与当前路由同端点、却没有自带凭据的表: " + ", ".join(unauthenticated_copies))
+        print("走这些表恢复的对话串会报 401 `Missing or malformed Authorization header`。")
+        print("修法：让 cc-switch 在写盘时随 active 表一并盖章")
+        print("（`propagate_active_bearer_token_to_route_copies`），或退出 Codex 后手工补")
+        print("`experimental_bearer_token`。")
+        return 1
+
     print()
-    print("OK: 所有被 session 引用的 provider id 都有表。")
+    print("OK: 所有被 session 引用的 provider id 都有表，且路由副本都带认证字段。")
     return 0
 
 

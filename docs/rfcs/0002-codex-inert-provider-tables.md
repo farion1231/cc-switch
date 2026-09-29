@@ -165,7 +165,7 @@ config，**DB 里没有对应 provider 行，官方档存档里也没有这张�
 | 集合来源 | rollout `.jsonl` 首行 `session_meta.payload.model_provider` ∪ state DB `threads.model_provider`。**两个源都要扫**：Codex 分别写二者，可能只有一边有某条 thread（`codex doctor` 就会报 rollout 缺失） |
 | 扫描成本 | 只读每个文件的首行（`session_meta` 在最前），不全文扫。实机 155 个文件 / 347MB 实测 0.01s |
 | 补表规则 | 引用集合里**没有 DB provider 归属**的 id，落一张 active 表的逐字副本（沿用 2.4b 的副本语义），inert，不影响新流量 |
-| 已存在则不覆盖 | live 已有该 id 时保持 "live wins"（§2.4 rule 1），不被副本改道 |
+| 已有表的两种身份 | 归 DB provider 真正声明的（`db_declared_ids`）→ 是别的供应商的 inert 状态，保持 "live wins"（§2.4 rule 1）不被改道；**我们自己早先铸出的副本**→ 必须整表刷新。理由见 §2.4b'' |
 | 已知代价 | 旧官方 session 恢复后会走到当前 active 上游而非它当初的端点。这是「能恢复」换来的，2.4b 的 `custom` 冲突已是同一取舍 |
 
 配套要求：
@@ -179,6 +179,41 @@ config，**DB 里没有对应 provider 行，官方档存档里也没有这张�
 - **回归用例必须是四步闭环**：切 official → 建 session → 切回 third-party → 断言该
   id 有表，且**镜像方向同样断言**。单步断言看不见这条缺口——本类缺陷前三次都从
   单步断言下溜过去，因为每一步单独看都"对"。
+
+### 2.4b'' 副本必须带认证字段，且要分两趟盖章（2026-09-29 第四轮追加）
+
+"有表"只是第一半。本机 30 个 session 能加载了，却全部 401
+`Missing or malformed Authorization header`。现场 `~/.codex/config.toml` 原文：
+
+| 表 | `base_url` | `experimental_bearer_token` |
+|---|---|---|
+| `kxpms`（active） | `http://127.0.0.1:15721/v1` | `PROXY_MANAGED` |
+| `cc-switch-official`（副本） | `http://127.0.0.1:15721/v1` | **无** |
+| `evol`（副本） | `http://127.0.0.1:15721/v1` | **无** |
+
+副本拿到了改道后的 `base_url`、唯独没有 token——**这一行差异就是时序证据**：
+补表发生在「接管改道已写入」之后、「token 注入」之前。`prepare_codex_provider_live_config`
+才是注入点（`set_codex_experimental_bearer_token`，只动 active 那一张表），它在
+写盘阶段才跑，晚于 `merge_inert_codex_provider_tables_into_settings_config`。
+
+因此副本要**两趟盖章**，缺一不可：
+
+| 趟 | 做什么 | 在哪 | 少了它会怎样 |
+|---|---|---|---|
+| 1 | 无人认领的副本随 active **整表刷新** | `live.rs::merge_session_referenced_shadow_tables`（`db_declared_ids` 区分归属） | 副本停在切换时的直连地址 + 供应商真 key，或压根不存在 |
+| 2 | 注入后把 active 的 token 盖到**路由副本**上 | `codex_config.rs::propagate_active_bearer_token_to_route_copies` | 表在、地址对、认证缺 → 401 |
+
+两条不能互相替代：第 1 趟拿不到尚未注入的 token，第 2 趟只认「与 active 同
+`name` + `base_url` 且自带 credential 为空」的表。第 2 趟的判据是**端点身份**而不是
+id 白名单，因为它运行在纯文本层、拿不到 DB；豁免条件是表自带 `env_key` /
+`experimental_bearer_token` / `Authorization` 头（两个 DB provider 指向同一网关、各带
+各的 key 是真实存在的形态），保留 id 一律不盖章。
+
+配套：**旧断言要跟着改**。`merge_does_not_shadow_over_an_existing_table` 锁的正是
+"已存在就跳过"这条导致 401 的规则，已改写为 `session_shadow_refreshes_a_stale_table_it_owns`。
+变异验证显示，只保留"不同端点不盖章"的断言时，摘掉"自带凭据豁免"测试**照样绿**
+——`custom` 的 `base_url` 早在端点身份那一关就被挡了，压根没走到豁免分支。真正承重的
+是**同端点 + 自带凭据**的夹具。
 
 #### 四步闭环的实测结果（2026-09-29）
 
