@@ -18,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -28,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
 import { PricingEditModal } from "./PricingEditModal";
-import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
+import type { ModelPricing } from "@/types/usage";
 import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
@@ -38,12 +37,14 @@ const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
 type PricingModelSource = "request" | "response";
 
-interface AppConfig {
-  multiplier: string;
-  source: PricingModelSource;
-}
+type SourceState = Record<PricingApp, PricingModelSource>;
 
-type AppConfigState = Record<PricingApp, AppConfig>;
+const DEFAULT_SOURCES: SourceState = {
+  claude: "response",
+  codex: "response",
+  gemini: "response",
+  grokbuild: "response",
+};
 
 export function PricingConfigPanel() {
   const { t } = useTranslation();
@@ -54,13 +55,8 @@ export function PricingConfigPanel() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   // All applications with a first-class usage pipeline.
-  const [appConfigs, setAppConfigs] = useState<AppConfigState>({
-    claude: { multiplier: "1", source: "response" },
-    codex: { multiplier: "1", source: "response" },
-    gemini: { multiplier: "1", source: "response" },
-    grokbuild: { multiplier: "1", source: "response" },
-  });
-  const [originalConfigs, setOriginalConfigs] = useState<AppConfigState | null>(
+  const [sources, setSources] = useState<SourceState>(DEFAULT_SOURCES);
+  const [originalSources, setOriginalSources] = useState<SourceState | null>(
     null,
   );
   const [isConfigLoading, setIsConfigLoading] = useState(true);
@@ -68,12 +64,8 @@ export function PricingConfigPanel() {
 
   // 检查是否有改动
   const isDirty =
-    originalConfigs !== null &&
-    PRICING_APPS.some(
-      (app) =>
-        appConfigs[app].multiplier !== originalConfigs[app].multiplier ||
-        appConfigs[app].source !== originalConfigs[app].source,
-    );
+    originalSources !== null &&
+    PRICING_APPS.some((app) => sources[app] !== originalSources[app]);
 
   // 加载所有应用的配置
   useEffect(() => {
@@ -84,13 +76,9 @@ export function PricingConfigPanel() {
       try {
         const results = await Promise.all(
           PRICING_APPS.map(async (app) => {
-            const [multiplier, source] = await Promise.all([
-              proxyApi.getDefaultCostMultiplier(app),
-              proxyApi.getPricingModelSource(app),
-            ]);
+            const source = await proxyApi.getPricingModelSource(app);
             return {
               app,
-              multiplier,
               source: (source === "request"
                 ? "request"
                 : "response") as PricingModelSource,
@@ -100,20 +88,12 @@ export function PricingConfigPanel() {
 
         if (!isMounted) return;
 
-        const newState: AppConfigState = {
-          claude: { multiplier: "1", source: "response" },
-          codex: { multiplier: "1", source: "response" },
-          gemini: { multiplier: "1", source: "response" },
-          grokbuild: { multiplier: "1", source: "response" },
-        };
+        const newState: SourceState = { ...DEFAULT_SOURCES };
         for (const result of results) {
-          newState[result.app] = {
-            multiplier: result.multiplier,
-            source: result.source,
-          };
+          newState[result.app] = result.source;
         }
-        setAppConfigs(newState);
-        setOriginalConfigs(newState);
+        setSources(newState);
+        setOriginalSources(newState);
       } catch (error) {
         const message =
           error instanceof Error
@@ -137,36 +117,15 @@ export function PricingConfigPanel() {
 
   // 保存所有配置
   const handleSaveAll = async () => {
-    // 验证所有倍率
-    for (const app of PRICING_APPS) {
-      const trimmed = appConfigs[app].multiplier.trim();
-      if (!trimmed) {
-        toast.error(
-          `${t(`apps.${app}`)}: ${t("settings.globalProxy.defaultCostMultiplierRequired")}`,
-        );
-        return;
-      }
-      if (!isNonNegativeDecimalString(trimmed)) {
-        toast.error(
-          `${t(`apps.${app}`)}: ${t("settings.globalProxy.defaultCostMultiplierInvalid")}`,
-        );
-        return;
-      }
-    }
-
     setIsSaving(true);
     try {
       await Promise.all(
-        PRICING_APPS.flatMap((app) => [
-          proxyApi.setDefaultCostMultiplier(
-            app,
-            appConfigs[app].multiplier.trim(),
-          ),
-          proxyApi.setPricingModelSource(app, appConfigs[app].source),
-        ]),
+        PRICING_APPS.map((app) =>
+          proxyApi.setPricingModelSource(app, sources[app]),
+        ),
       );
       toast.success(t("settings.globalProxy.pricingSaved"));
-      setOriginalConfigs({ ...appConfigs });
+      setOriginalSources({ ...sources });
     } catch (error) {
       const message =
         error instanceof Error
@@ -260,9 +219,6 @@ export function PricingConfigPanel() {
                     {t("settings.globalProxy.pricingAppLabel")}
                   </th>
                   <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                    {t("settings.globalProxy.defaultCostMultiplierLabel")}
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-muted-foreground">
                     {t("settings.globalProxy.pricingModelSourceLabel")}
                   </th>
                 </tr>
@@ -281,33 +237,12 @@ export function PricingConfigPanel() {
                       {t(`apps.${app}`)}
                     </td>
                     <td className="px-3 py-1.5">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        inputMode="decimal"
-                        value={appConfigs[app].multiplier}
-                        onChange={(e) =>
-                          setAppConfigs((prev) => ({
-                            ...prev,
-                            [app]: { ...prev[app], multiplier: e.target.value },
-                          }))
-                        }
-                        disabled={isSaving}
-                        placeholder="1"
-                        className="w-24"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
                       <Select
-                        value={appConfigs[app].source}
+                        value={sources[app]}
                         onValueChange={(value) =>
-                          setAppConfigs((prev) => ({
+                          setSources((prev) => ({
                             ...prev,
-                            [app]: {
-                              ...prev[app],
-                              source: value as PricingModelSource,
-                            },
+                            [app]: value as PricingModelSource,
                           }))
                         }
                         disabled={isSaving}

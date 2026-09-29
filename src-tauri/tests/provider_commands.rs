@@ -37,7 +37,7 @@ context_window = 500000
 
 #[test]
 fn grokbuild_import_and_switch_write_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let live_path = home.join(".grok").join("config.toml");
@@ -94,9 +94,74 @@ fn grokbuild_import_and_switch_write_live_config() {
     );
 }
 
+/// Grok Build's `/settings` → Default model rewrites `models.default` in the live
+/// config. Picking a built-in model while a third-party provider is active leaves
+/// the provider's own `[model.*]` table unreferenced; switching away and back must
+/// still work.
+#[test]
+fn grokbuild_switch_back_after_client_changed_default_model() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let live_path = home.join(".grok").join("config.toml");
+    std::fs::create_dir_all(live_path.parent().expect("grok config dir"))
+        .expect("create grok config dir");
+
+    let state = create_test_state().expect("create test state");
+    let relay_a = grokbuild_config("RelayA", "https://a.example/v1", "key-a");
+    let relay_b = grokbuild_config("RelayB", "https://b.example/v1", "key-b");
+    for (id, name, config) in [("a", "RelayA", &relay_a), ("b", "RelayB", &relay_b)] {
+        state
+            .db
+            .save_provider(
+                AppType::GrokBuild.as_str(),
+                &Provider::with_id(
+                    id.to_string(),
+                    name.to_string(),
+                    json!({ "config": config }),
+                    None,
+                ),
+            )
+            .expect("save Grok Build provider");
+    }
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "a").expect("switch to provider a");
+    assert_eq!(
+        std::fs::read_to_string(&live_path).expect("read live after switching to a"),
+        relay_a
+    );
+
+    // Simulate Grok's `/settings` → Default model picking the built-in grok-4.6.
+    let client_edited = relay_a.replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
+    std::fs::write(&live_path, &client_edited).expect("simulate client edit");
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "b").expect("switch to provider b");
+
+    let backfilled_a = state
+        .db
+        .get_provider_by_id("a", AppType::GrokBuild.as_str())
+        .expect("query provider a")
+        .expect("provider a exists")
+        .settings_config
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_default();
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "a").unwrap_or_else(|err| {
+        panic!("switching back to provider a failed: {err}\nbackfilled row a:\n{backfilled_a}")
+    });
+
+    let live = std::fs::read_to_string(&live_path).expect("read live after switching back");
+    assert!(
+        live.contains("default = \"grok-4.5\"") && live.contains("https://a.example/v1"),
+        "live should select provider a's own model table again, got:\n{live}"
+    );
+}
+
 #[test]
 fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -171,7 +236,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
 
 #[test]
 fn codex_startup_import_accepts_config_without_auth_file() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -224,7 +289,7 @@ experimental_bearer_token = "live-key"
 
 #[test]
 fn codex_startup_import_marks_oauth_only_default_official() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -263,7 +328,7 @@ command = "echo"
 
 #[test]
 fn codex_startup_import_skips_when_only_official_seed_exists() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -312,7 +377,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
 
 #[test]
 fn switch_provider_updates_codex_live_and_state() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
@@ -404,13 +469,16 @@ command = "say"
     );
 
     let config_text = std::fs::read_to_string(get_codex_config_path()).expect("read config.toml");
+    // 只替换关键字段：live 里用户的 MCP 原样留着，行里的 MCP 不投影；这张卡没有路由，
+    // Key 没有第三方地址可发，不写进 live。
     assert!(
-        config_text.contains("mcp_servers.echo-server"),
-        "config.toml should contain synced MCP servers"
+        config_text.contains("[mcp_servers.legacy]"),
+        "{config_text}"
     );
+    assert!(!config_text.contains("mcp_servers.latest"), "{config_text}");
     assert!(
-        config_text.contains("experimental_bearer_token"),
-        "config.toml should carry the selected provider API key as bearer token"
+        !config_text.contains("experimental_bearer_token"),
+        "{config_text}"
     );
 
     let current_id = app_state
@@ -427,44 +495,19 @@ command = "say"
         .db
         .get_all_providers(AppType::Codex.as_str())
         .expect("get all providers");
-
-    let new_provider = providers.get("new-provider").expect("new provider exists");
-    let new_config_text = new_provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    // 供应商配置应该包含在 live 文件中
-    // 注意：live 文件还会包含 MCP 同步后的内容
-    assert!(
-        config_text.contains("mcp_servers.latest"),
-        "live file should contain provider's original config"
-    );
-    assert!(
-        new_config_text.contains("mcp_servers.latest"),
-        "provider snapshot should contain provider's original config"
-    );
-
     let legacy = providers
         .get("old-provider")
         .expect("legacy provider still exists");
-    let legacy_auth_value = legacy
-        .settings_config
-        .get("auth")
-        .and_then(|v| v.get("OPENAI_API_KEY"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    // 回填机制：切换前会将 live 配置回填到当前供应商
-    // 这保护了用户在 live 文件中的手动修改
     assert_eq!(
-        legacy_auth_value, "legacy-key",
-        "previous provider should be backfilled with live auth"
+        legacy.settings_config,
+        json!({ "auth": {"OPENAI_API_KEY": "stale"}, "config": "stale-config" }),
+        "switching away never writes live content back into the row"
     );
 }
 
 #[test]
 fn switch_provider_missing_provider_returns_error() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
 
     let mut config = MultiAppConfig::default();
@@ -489,7 +532,7 @@ fn switch_provider_missing_provider_returns_error() {
 
 #[test]
 fn switch_provider_updates_claude_live_and_state() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -576,11 +619,16 @@ fn switch_provider_updates_claude_live_and_state() {
     let legacy_provider = providers
         .get("old-provider")
         .expect("legacy provider still exists");
-    // 回填机制：切换前会将 live 配置回填到当前供应商
-    // 这保护了用户在 live 文件中的手动修改
+    // 不再回填：用户在 live 里的改动留在 live，上一家的行不变。
     assert_eq!(
-        legacy_provider.settings_config, legacy_live,
-        "previous provider should be backfilled with live config"
+        legacy_provider.settings_config,
+        json!({ "env": { "ANTHROPIC_API_KEY": "stale-key" } }),
+        "switching away must not copy live into the previous provider"
+    );
+    assert_eq!(
+        live_after["workspace"],
+        json!({ "path": "/tmp/workspace" }),
+        "non-key settings in live stay where they are"
     );
 
     let new_provider = providers.get("new-provider").expect("new provider exists");
@@ -619,7 +667,7 @@ fn switch_provider_updates_claude_live_and_state() {
 
 #[test]
 fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -668,7 +716,7 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
 
 #[test]
 fn import_refuses_live_config_under_proxy_takeover() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     ensure_test_home();
 

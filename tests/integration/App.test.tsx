@@ -390,6 +390,42 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("duplicates MiniMax Code providers under a generated unused key", async () => {
+    localStorage.setItem("cc-switch-last-app", "mcode");
+    const provider = (id: string, name: string) => ({
+      id,
+      name,
+      settingsConfig: {},
+      category: "custom" as const,
+      sortIndex: 0,
+      createdAt: Date.now(),
+    });
+    setProviders("mcode", {
+      kimi: provider("kimi", "Kimi"),
+      "kimi-copy": provider("kimi-copy", "Kimi copy"),
+    });
+    setCurrentProviderId("mcode", "kimi");
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "kimi-copy",
+      ),
+    );
+    fireEvent.click(screen.getByText("duplicate"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "kimi-copy-2",
+      ),
+    );
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("Provider key is required for mcode"),
+    );
+  });
+
   it("refreshes MiniMax Code provider membership after removing it from live config", async () => {
     localStorage.setItem("cc-switch-last-app", "mcode");
     let liveConfigManaged = true;
