@@ -1110,6 +1110,50 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 从一份 codex provider 的 config TOML 里判定它归属的 **TOML 表 id**。
+///
+/// 这与 cc-switch 自己的 **provider id** 是两个不同的东西，必须分清：
+/// kaixuan bundle 的 provider id 是 `kaixuan-kxpms` / `kaixuan-local-8782`，
+/// 而写进 `[model_providers.*]` 的表 id 是 `kxpms` / `local8782`。
+/// `@<id>` 后缀携带的是**表 id**（catalog 的 slug 就用它拼），所以任何按
+/// 后缀找目标 provider 的地方都必须比这个，不能比 `provider.id`。
+///
+/// 判定顺序与 `collect_codex_catalog_source_for_provider` 保持一致：
+/// ① 顶层 `model_provider`；② 回退「唯一一张非 `custom` 的自定义表」。
+pub fn codex_provider_toml_id(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    if let Some(id) = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        return Some(id.to_string());
+    }
+    let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
+    let ids: Vec<&str> = mp
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| is_custom_codex_model_provider_id(id))
+        .filter(|id| *id != "custom")
+        .collect();
+    match ids.as_slice() {
+        [only] => Some((*only).to_string()),
+        [] => {
+            let legacy: Vec<&str> = mp
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| *id == "custom")
+                .collect();
+            match legacy.as_slice() {
+                [only] => Some((*only).to_string()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     // Exact match, mirroring upstream: both the built-in provider lookup and
     // validate_reserved_model_provider_ids are case-sensitive, so `OpenAI`
@@ -1136,6 +1180,23 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 /// `kxpms_gateway` → `kxpms`，`local_gateway` → `local8782`。这与
 /// `provider_bundle::kaixuan_bundle()` 当前写出的形态逐字一致，所以迁移后的
 /// DB 行与重装 bundle 的结果等价。
+///
+/// ## 为什么本机端点保留 `local8782` 这个「带端口」的 id（第五轮查证后的决定）
+///
+/// 第五轮一度想把它改成与端口解耦的 `local`，**实测后回退**：改 id 会连带扩大
+/// legacy 迁移的作用域——FE 预设「本地 LLM 网关 (8782)」那张
+/// `[model_providers.custom]` 表 `name` 同样是 `local_gateway`，于是它也会被
+/// 映射到 `local`，与 bundle 端点**撞同一个 `[model_providers.local]`**。
+/// 撞 id 之后 `merge_inert_codex_provider_tables_into_settings_config` 的
+/// "live wins" 会先到先得地静默选中其中一个，用户以为切到 A 端点、实际拿到
+/// B 端点的 base_url（实测 merge 出了 FE 预设那条 `http://localhost:8782/v1`
+/// 而不是 bundle 的 `http://127.0.0.1:8782/v1`）。
+///
+/// **端口由 `base_url` 承载，id 是稳定身份**：改 `KAIXUAN_LOCAL_GATEWAY_PORT`
+/// 只改 `base_url`，不改 id，所以不会作废任何历史 session 的
+/// `session_meta.model_provider`。要真正解耦，得先把「两个 provider 撞同一
+/// TOML id」这个独立缺陷修掉（merge 应按 provider 身份而非表 id 选表），
+/// 而不是在 id 层面绕。
 const LEGACY_CODEX_TOML_ID_MIGRATIONS: &[(&str, &str)] =
     &[("kxpms_gateway", "kxpms"), ("local_gateway", "local8782")];
 
@@ -1197,8 +1258,8 @@ fn migrate_legacy_codex_toml_ids_with_policy(
             .and_then(Item::as_str)
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .map(str::to_string)?
-    };
+            .map(str::to_string)
+    }?;
     let new_id = LEGACY_CODEX_TOML_ID_MIGRATIONS
         .iter()
         .find(|(legacy, _)| *legacy == legacy_name)
@@ -2562,37 +2623,42 @@ fn codex_model_catalog_from_settings(
     Ok(Some(codex_catalog_with_models(entries)))
 }
 
-/// 同 slug 多端点共存的**总开关**，默认**关闭**。
+/// 同 slug 多端点共存 catalog 的**总开关**。
 ///
-/// 为什么默认关（2026-09-28 审计结论，别急着打开）：Codex 的 catalog 条目只有
-/// `slug` 一个身份字段，**没有**「仅用于显示的别名」——`slug` 就是发出去的
-/// `model` 值（`read_codex_model_catalog_simplified_from_live` 把它原样还原成前端
-/// 表格的 `model` 字段，而那就是请求体里的模型名）。于是 `claude-opus-5@kxpms`
-/// 这类 slug 意味着「向当前 provider 请求一个叫 `claude-opus-5@kxpms` 的模型」。
+/// ## 历史（第二轮默认关，第三轮审计推翻并保持默认关）
 ///
-/// 而按后缀路由的那一半**还不存在**：
-/// - Codex 的 `model_provider` 是**配置级全局**的，一个 config.toml 只能一个
-///   provider，配置层表达不了「按模型分发」；
-/// - cc-switch 侧没有任何代码剥离/归一化模型名里的 `@<id>` 后缀（仅有的两处
-///   `rsplit_once('@')` 是解析 URL 的 userinfo，与模型名无关）；
-/// - llm-gateway-go 侧也没有：`autoroute.promoteCanonical` 用的是**精确相等**，
-///   带后缀的名字匹配不到任何 candidate，会落到通用评分兜底。
+/// Codex 的 catalog 条目只有 `slug` 一个身份字段——`slug` 就是发出去的 `model`
+/// 值（`read_codex_model_catalog_simplified_from_live` 把它原样还原成前端表格的
+/// `model` 字段）。若后缀路由那一半不存在，则 `claude-opus-5@kxpms` 意味着「向
+/// 当前 provider 请求一个叫 `claude-opus-5@kxpms` 的模型」，匹配失败会落到网关
+/// 通用评分兜底——**静默路由到别的模型**，看起来「能用」实则错路。
 ///
-/// 兜底才是真正危险的地方：不是干脆报错，而是**静默路由到别的模型**——用户以为
-/// 选中了「local8782 的 claude-opus-5」，实际拿到的是 kxpms 的某个模型，看起来
-/// 「能用」。这比直接报错糟糕得多。
+/// 那时（第二轮）只做了采集侧，不动请求路径，所以默认关。
 ///
-/// 所以：收集 + 去重逻辑保留并保持测试覆盖（`append_endpoint_suffixed_entries`），
-/// 但**写盘前默认不过闸**。等「按 `@<toml_id>` 分发」真正落到请求路径上（proxy
-/// 侧剥离后缀并分发，或网关支持该语法）再打开，届时本函数是那半边的现成素材。
+/// ## 第五轮：开关改为默认**开启**
+///
+/// 后缀路由那一半已在 `proxy::handler_context::RequestContext::new` 落地：
+/// - 解析请求体 `model` 末尾的 `@<toml_id>` 后缀
+/// - 按 id 选目标 provider（failover 链首位），其余 provider 作为 failover
+/// - 鉴权按目标端点取（不会沿用 active 端点的 key）
+/// - 转发前 `ctx.strip_endpoint_suffix_from_body` 把 body.model 改回剥离名
+///
+/// 现在两边配套：catalog 可以写出 `claude-opus-5@kxpms`，proxy 收到后能正确
+/// 解析、剥离、并路由到 kxpms。
+///
+/// ## 关闭开关的方式
+///
+/// `CC_SWITCH_CODEX_ENDPOINT_CATALOG=0` / `false` / `off`：保持旧形态（只写
+/// active 端点的模型目录）。给排查期留的逃生口，未来稳定后可能直接砍函数。
 fn codex_endpoint_catalog_coexist_enabled() -> bool {
-    matches!(
-        std::env::var("CC_SWITCH_CODEX_ENDPOINT_CATALOG")
-            .ok()
-            .as_deref()
-            .map(str::trim),
-        Some("1") | Some("true") | Some("on")
-    )
+    match std::env::var("CC_SWITCH_CODEX_ENDPOINT_CATALOG")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("0") | Some("false") | Some("off") | Some("") => false,
+        _ => true,
+    }
 }
 
 /// 开关关闭时**原样返回**，绝不写出无法路由的条目。
@@ -2668,6 +2734,17 @@ fn append_endpoint_suffixed_entries(
             continue;
         };
         if Some(toml_id) == active_toml_id.as_deref() {
+            continue;
+        }
+        // `custom` 是第四轮为兼容老 session 留的**别名**（RFC 0002 §2.4b），一义多指、
+        // 不算独立端点。第三方 OpenAI 兼容预设的表 id 常常就是 `custom`，若放行就会
+        // 写出 `slug@custom` 这种**不可路由**的条目：proxy 侧明确拒绝 `custom` 作
+        // 为分发目标，而网关收到 `claude-opus-5@custom` 会 404 或静默回退到别的
+        // 模型。别名在 catalog 侧就该被剔除，而不是等到请求时才发现。
+        if toml_id == "custom" {
+            log::warn!(
+                "同 slug catalog 合并：跳过 custom（legacy 兼容别名，非独立端点，RFC 0002 §2.4b）"
+            );
             continue;
         }
         let Some(models) = endpoint.get("models").and_then(Value::as_array) else {
@@ -4891,28 +4968,44 @@ mod tests {
     /// 这是「同 slug 不同源在 `/model` picker 里都能看见」的直接证据，也是
     /// 用户问的「自动路由」的前置——没有共存 catalog，挑模型时根本看不到另一侧。
     #[test]
-    fn merged_catalog_coexists_same_slug_across_endpoints() {
-        let settings = json!({
+    #[serial_test::serial]
+    fn merged_catalog_default_on_includes_suffixed_endpoints() {
+        // 第五轮起 `CC_SWITCH_CODEX_ENDPOINT_CATALOG` 默认**开**（配套 proxy 侧
+        // 的 `@<toml_id>` 后缀分发）。catalog 应包含：
+        // - active 端点（kxpms）的原始 slug
+        // - 其他已启用端点（local）同 slug 加 `@<toml_id>` 后缀
+        // - 主动跳过 active 端点自身在 sources 里再次出现的情况（去重）
+        //
+        // 若未来后缀路由下线，这个测试会立刻红，提示开关需重新默认关。
+        // serde_json::json! 宏里 `IDENT: value` 是把 IDENT 当字面 key（不是
+        // 常量值），所以必须用变量中转把 MERGED_CATALOG_SOURCES_KEY 的**值**
+        // 当 key 注入。
+        //
+        // 持有 env_lock + 显式清掉 CC_SWITCH_CODEX_ENDPOINT_CATALOG，避免被
+        // 同 module 的 "switch off" 测试把 var 设成 "0" 漏进来。
+        // + #[serial_test::serial] 保证两个 catalog 测试在本进程内串行。
+        let _env_guard = crate::test_support::env_guard();
+        let prev = std::env::var("CC_SWITCH_CODEX_ENDPOINT_CATALOG").ok();
+        std::env::remove_var("CC_SWITCH_CODEX_ENDPOINT_CATALOG");
+
+        let mut settings = json!({
             "config": "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n",
             "modelCatalog": { "models": [
                 { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
                 { "model": "glm-5.2" }
             ]},
-            MERGED_CATALOG_SOURCES_KEY: [
-                { "toml_id": "local8782", "models": [
-                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
-                    { "model": "minimax-m3" }
-                ]},
-                { "toml_id": "kxpms", "models": [
-                    // active 端点自己再来一遍：必须被跳过，不能产生 claude-opus-5@kxpms
-                    { "model": "claude-opus-5" }
-                ]}
-            ]
         });
+        settings[MERGED_CATALOG_SOURCES_KEY] = json!([
+            { "toml_id": "local8782", "models": [
+                { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                { "model": "minimax-m3" }
+            ]},
+            { "toml_id": "kxpms", "models": [
+                // active 端点自己再来一遍：必须被跳过，不能产生 claude-opus-5@kxpms
+                { "model": "claude-opus-5" }
+            ]}
+        ]);
 
-        // **默认（开关关）**：只写 active 端点的条目，绝不产出无法路由的
-        // `@<toml_id>` slug。理由见 `codex_endpoint_catalog_coexist_enabled`：
-        // Codex 的 slug 就是发出去的模型名，而后缀路由那一半还不存在。
         let catalog = codex_model_catalog_from_settings(
             &settings,
             settings["config"].as_str().unwrap(),
@@ -4921,16 +5014,92 @@ mod tests {
         .expect("catalog generation")
         .expect("catalog expected");
         let models = catalog["models"].as_array().expect("models array");
-        let slugs: Vec<&str> = models
+        let slugs: Vec<String> = models
             .iter()
-            .filter_map(|e| e["slug"].as_str())
+            .filter_map(|e| e["slug"].as_str().map(|s| s.to_string()))
             .collect();
 
-        assert_eq!(slugs, vec!["claude-opus-5", "glm-5.2"], "默认只出 active 端点模型");
+        // active 端点保留原名；非 active 端点同 slug 加后缀；active 在 sources
+        // 里再次出现的「claude-opus-5」必须被去重（不能产生 claude-opus-5@kxpms）
+        assert!(
+            slugs.iter().any(|s| s == "claude-opus-5"),
+            "active 端点 slug 必须原样保留: {slugs:?}"
+        );
+        assert!(
+            slugs.iter().any(|s| s == "glm-5.2"),
+            "active 端点独占模型必须保留: {slugs:?}"
+        );
+        assert!(
+            slugs.iter().any(|s| s == "claude-opus-5@local8782"),
+            "非 active 端点同 slug 必须加后缀: {slugs:?}"
+        );
+        assert!(
+            slugs.iter().any(|s| s == "minimax-m3@local8782"),
+            "非 active 端点独占模型必须加后缀: {slugs:?}"
+        );
+        assert!(
+            !slugs.iter().any(|s| s == "claude-opus-5@kxpms"),
+            "active 端点在 sources 中重复出现必须被去重，不能产生自后缀: {slugs:?}"
+        );
+        // 还原 env var（避免污染后续测试）
+        match prev {
+            Some(v) => std::env::set_var("CC_SWITCH_CODEX_ENDPOINT_CATALOG", v),
+            None => std::env::remove_var("CC_SWITCH_CODEX_ENDPOINT_CATALOG"),
+        }
+    }
+
+    /// 开关**关闭**时：catalog 必须回退为旧形态，只出 active 端点模型。这是排查期
+    /// 的逃生口，必须被钉住——将来若开关逻辑再改，本测试立刻红。
+    #[test]
+    #[serial_test::serial]
+    fn merged_catalog_switch_off_falls_back_to_active_only() {
+        // 一次性串行化：本测试改 env var，必须持有 env_lock 才能与其他 env 改写
+        // 测试不互踩。cargo test 默认并行。
+        let _env_guard = crate::test_support::env_guard();
+        let prev = std::env::var("CC_SWITCH_CODEX_ENDPOINT_CATALOG").ok();
+        std::env::set_var("CC_SWITCH_CODEX_ENDPOINT_CATALOG", "0");
+        let result = std::panic::catch_unwind(|| {
+            let mut settings = json!({
+                "config": "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n",
+                "modelCatalog": { "models": [
+                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                    { "model": "glm-5.2" }
+                ]},
+            });
+            settings[MERGED_CATALOG_SOURCES_KEY] = json!([
+                { "toml_id": "local8782", "models": [
+                    { "model": "claude-opus-5" },
+                    { "model": "minimax-m3" }
+                ]}
+            ]);
+            let catalog = codex_model_catalog_from_settings(
+                &settings,
+                settings["config"].as_str().unwrap(),
+                CodexCatalogToolProfile::NativeResponses,
+            )
+            .expect("catalog generation")
+            .expect("catalog expected");
+            let models = catalog["models"].as_array().expect("models array");
+            let slugs: Vec<String> = models
+                .iter()
+                .filter_map(|e| e["slug"].as_str().map(|s| s.to_string()))
+                .collect();
+            slugs
+        });
+        // 还原 env var，避免污染后续测试
+        match prev {
+            Some(v) => std::env::set_var("CC_SWITCH_CODEX_ENDPOINT_CATALOG", v),
+            None => std::env::remove_var("CC_SWITCH_CODEX_ENDPOINT_CATALOG"),
+        }
+        let slugs = result.expect("catalog test panicked");
         assert_eq!(
-            slugs.iter().filter(|s| s.contains('@')).count(),
-            0,
-            "默认绝不能写出带 @ 的 slug（无法路由 = 静默错路由）: {slugs:?}"
+            slugs,
+            vec!["claude-opus-5".to_string(), "glm-5.2".to_string()],
+            "开关关闭时 catalog 必须只含 active 端点模型"
+        );
+        assert!(
+            slugs.iter().all(|s| !s.contains('@')),
+            "开关关闭时 catalog 绝不能含 @ 后缀 slug: {slugs:?}"
         );
     }
 
@@ -4984,7 +5153,7 @@ mod tests {
             !slugs.contains(&"claude-opus-5@kxpms"),
             "active 端点不得被二次加后缀: {slugs:?}"
         );
-        // active 2 条 + local8782 2 条 = 4，且无重复
+        // active 2 条 + local 2 条 = 4，且无重复
         assert_eq!(merged.len(), 4, "条目数必须与去重后的预期一致: {slugs:?}");
         let mut dedup = slugs.clone();
         dedup.sort_unstable();
@@ -5005,6 +5174,76 @@ mod tests {
         assert!(
             suffixed.get("base_instructions").is_some(),
             "后缀条目必须继承 base_instructions（Codex 必填）"
+        );
+    }
+
+    /// 第四轮为兼容老 session 留的 legacy `custom` 是**别名**、不是独立端点
+    /// （RFC 0002 §2.4b）。本轮把关掉开关默认打开后，第三方 OpenAI 兼容预设
+    /// （表 id 恰好就叫 `custom`，见 `live.rs` 的归属判定回退分支）这条路径
+    /// 变得**真实可达**：它会往 catalog 写出一批 `slug@custom` 条目。
+    ///
+    /// 这类条目**不可路由**：proxy 侧明确拒绝 `custom` 作分发目标，而网关收到
+    /// `claude-opus-5@custom` 会 404 或静默回退到别的模型。别名必须在**生成侧**
+    /// 就被剔除，而不是等请求时才发现。
+    ///
+    /// 关键场景是**非 active** 的 `custom`：active 的那个本来就会被
+    /// `active_toml_id_of_settings_config` 那条 `continue` 挡掉，测它证明不了任何事。
+    #[test]
+    fn merged_catalog_excludes_legacy_custom_alias_endpoint() {
+        // 照抄生产形状：active = kxpms；另一个第三方 OpenAI 兼容预设的表 id 是 `custom`。
+        let settings = json!({
+            "config": "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n",
+            "modelCatalog": { "models": [
+                { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 }
+            ]},
+            MERGED_CATALOG_SOURCES_KEY: [
+                // 别名端点：模型名与 active 同名，另有独占模型
+                { "toml_id": "custom", "models": [
+                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                    { "model": "glm-5.2" }
+                ]},
+                // 正常端点：用来证明剔除 custom 没有误伤别人
+                { "toml_id": "local8782", "models": [ { "model": "minimax-m3" } ] }
+            ]
+        });
+        let template = load_codex_native_responses_template();
+        let active = codex_catalog_model_specs(&settings);
+        let entries = codex_model_catalog_entries_from_specs(
+            &active,
+            &template,
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+
+        let merged = append_endpoint_suffixed_entries(
+            entries,
+            &settings,
+            ExpansionSource::Template(&template),
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+        let slugs: Vec<&str> = merged.iter().filter_map(|e| e["slug"].as_str()).collect();
+
+        assert!(
+            !slugs.iter().any(|s| s.ends_with("@custom")),
+            "catalog 绝不能产出 @custom 条目（别名不是独立端点）: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"glm-5.2"),
+            "custom 端点的独占模型不得混进 catalog: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"claude-opus-5@custom"),
+            "custom 端点的同 slug 不得带 @custom 后缀共存: {slugs:?}"
+        );
+        // 反向证明：剔除 custom 是**选择性**的，没有把别的端点一起干掉。
+        assert!(
+            slugs.contains(&"minimax-m3@local8782"),
+            "正常端点必须照常合并，不能被 custom 的剔除误伤: {slugs:?}"
+        );
+        assert!(
+            slugs.contains(&"claude-opus-5"),
+            "active 端裸 slug 必须保留: {slugs:?}"
         );
     }
 
@@ -5068,29 +5307,40 @@ mod tests {
     struct CodexLiveTestHome {
         _dir: tempfile::TempDir,
         original_test_home: Option<OsString>,
+        // 持有全 crate 共享 env_lock 到 Drop。字段 drop 顺序：先 original_test_home
+        // / _dir，最后 env_guard——确保锁释放前 env 已还原。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
     }
 
     impl CodexLiveTestHome {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("create isolated Codex live test home");
             let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            // 持有全 crate 共享的 env_lock，保护「切换 CC_SWITCH_TEST_HOME」
+            // 与「读 get_home_dir()/get_codex_config_dir()」之间的一致性。
+            // 单靠 #[serial] 串不掉跨模块并发（详见 crate::test_support）。
+            let env_guard = crate::test_support::env_guard();
             std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
             crate::settings::reload_settings().expect("reload settings for isolated test home");
 
             Self {
                 _dir: dir,
                 original_test_home,
+                env_guard,
             }
         }
     }
 
     impl Drop for CodexLiveTestHome {
         fn drop(&mut self) {
+            // 先还原 env 再释放 env_guard，避免另一个测试在锁释放后看到错的 HOME 值。
             match &self.original_test_home {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
             let _ = crate::settings::reload_settings();
+            // env_guard 在字段 drop 顺序里最后释放。
         }
     }
 
@@ -9086,6 +9336,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
         // developer's real machine (observed 2026-09-28: a 4 KB live config with notify /
         // mcp_servers / plugins / projects was replaced by this test's 303-byte fixture).
         // HOME is set too because the settings store and `dirs::home_dir()` fallbacks follow it.
+        // 全 crate 共享 env 锁，**必须早于下面任何 env 写入**拿到。
+        // 否则抢锁期间别的测试可能正把 HOME 还原，本测试等到的就是真实 HOME——
+        // 第三轮正是因为「先 set_var 后取锁」而写坏过用户真实的 ~/.codex/config.toml。
+        let env_guard = crate::test_support::env_guard();
         let prev_home = [
             std::env::var("CODEX_HOME").ok(),
             std::env::var("CC_SWITCH_TEST_HOME").ok(),
@@ -9099,22 +9353,33 @@ model_catalog_json = "cc-switch-model-catalog.json"
         std::env::set_var("HOME", &home_path);
         crate::settings::reload_settings().expect("reload settings");
         // Restore on drop so other tests keep their original environment.
-        struct RestoreEnv([Option<String>; 3]);
+        // 同时持有全 crate 共享 env_lock，保护「切换 HOME 等 env」与
+        // 「get_home_dir()」之间的一致性——单靠 #[serial] 串不掉跨模块并发
+        // （详见 crate::test_support）。
+        struct RestoreEnv {
+            prev: [Option<String>; 3],
+            #[allow(dead_code)]
+            env_guard: crate::test_support::EnvGuard,
+        }
         impl Drop for RestoreEnv {
             fn drop(&mut self) {
                 for (key, value) in [
-                    ("CODEX_HOME", &self.0[0]),
-                    ("CC_SWITCH_TEST_HOME", &self.0[1]),
-                    ("HOME", &self.0[2]),
+                    ("CODEX_HOME", &self.prev[0]),
+                    ("CC_SWITCH_TEST_HOME", &self.prev[1]),
+                    ("HOME", &self.prev[2]),
                 ] {
                     match value {
                         Some(v) => std::env::set_var(key, v),
                         None => std::env::remove_var(key),
                     }
                 }
+                // env_guard 在字段 drop 顺序里最后释放。
             }
         }
-        let _restore = RestoreEnv(prev_home);
+        let _restore = RestoreEnv {
+            prev: prev_home,
+            env_guard,
+        };
 
         // Prove the sandbox actually captured this test's home before doing any writes.
         // `get_home_dir()` reads CC_SWITCH_TEST_HOME, so `get_codex_config_dir()` must now

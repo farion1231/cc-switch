@@ -3352,6 +3352,8 @@ mod tests {
     #[test]
     #[ignore]
     fn replay_real_codex_corpus() -> Result<(), AppError> {
+        // 持有全 crate 共享 env_lock（详见 crate::test_support）
+        let _env_guard = crate::test_support::env_guard();
         let Some(real_home) = dirs::home_dir() else {
             eprintln!("[REPLAY] no home dir, skipping");
             return Ok(());

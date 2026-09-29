@@ -353,20 +353,31 @@ pub fn remove_plugins_by_prefixes(path: &Path, prefixes: &[&str]) -> Result<bool
 mod tests {
     use super::*;
 
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    struct TestHomeGuard {
+        prev: Option<std::ffi::OsString>,
+        // 持有全 crate 共享 env_lock 到 Drop，确保「切换 CC_SWITCH_TEST_HOME」
+        // 与「get_home_dir()/get_opencode_override_dir()」之间一致。
+        // 单靠 #[serial_test::serial] 串不掉跨模块并发（详见 crate::test_support）。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
+    }
     impl TestHomeGuard {
         fn set(home: &std::path::Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let env_guard = crate::test_support::env_guard();
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            guard
+            Self {
+                prev: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                env_guard,
+            }
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            match self.0.take() {
+            match self.prev.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
+            // env_guard 在字段 drop 顺序里最后释放。
         }
     }
 

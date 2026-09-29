@@ -534,6 +534,11 @@ context_window = 500000
     #[test]
     #[serial]
     fn resolves_api_key_from_configured_environment_variable() {
+        // 共享 env 锁：本测试改进程全局 env，必须与**全 crate** 所有改 env 的
+        // 用例互斥。`#[serial]` 与 `#[serial(env)]` 是 serial_test 的两个不同 key，
+        // 彼此不互斥，也都不与 crate::test_support::env_guard() 互斥——只靠它们
+        // 挡不住跨模块串扰。详见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
         let original = std::env::var_os("GROK_TEST_API_KEY");
         std::env::set_var("GROK_TEST_API_KEY", "env-secret");
 
@@ -566,6 +571,11 @@ context_window = 500000
     #[test]
     #[serial]
     fn does_not_fall_back_to_xai_api_key_when_declared_env_key_is_unset() {
+        // 共享 env 锁：本测试改进程全局 env，必须与**全 crate** 所有改 env 的
+        // 用例互斥。`#[serial]` 与 `#[serial(env)]` 是 serial_test 的两个不同 key，
+        // 彼此不互斥，也都不与 crate::test_support::env_guard() 互斥——只靠它们
+        // 挡不住跨模块串扰。详见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
         // 即使进程里恰好设了 XAI_API_KEY，也不能被静默借用到别的 base_url 上。
         let original_xai = std::env::var_os("XAI_API_KEY");
         let original_unset = std::env::var_os("GROK_TEST_DEFINITELY_UNSET_VAR");
@@ -609,6 +619,9 @@ context_window = 500000
     #[test]
     #[serial]
     fn official_provider_roundtrips_without_custom_model_tables() {
+        // 持有全 crate 共享 env_lock，保护 CC_SWITCH_TEST_HOME 与 get_home_dir()
+        // 之间的一致性——单靠 #[serial] 串不掉跨模块并发（详见 crate::test_support）。
+        let _env_guard = crate::test_support::env_guard();
         let temp = TempDir::new().expect("temp dir");
         let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
@@ -655,6 +668,7 @@ context_window = 500000
     #[test]
     #[serial]
     fn writes_and_reads_live_config() {
+        let _env_guard = crate::test_support::env_guard();
         let temp = TempDir::new().expect("temp dir");
         let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());

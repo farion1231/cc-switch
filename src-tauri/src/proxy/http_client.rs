@@ -342,12 +342,10 @@ pub fn mask_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    // 本模块改的 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 等是进程全局 env，
+    // 历史上用本地 OnceLock 锁本模块内的测试，但跨模块（openclaw/codex 等
+    // 改 HOME/CODEX_HOME 的测试）一起跑仍会互相串。委托到 crate 共享 env_lock。
+    use crate::test_support;
 
     #[test]
     fn test_mask_url() {
@@ -428,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_system_proxy_points_to_loopback() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = test_support::env_guard();
 
         // 设置 CC Switch 代理端口
         set_proxy_port(15721);

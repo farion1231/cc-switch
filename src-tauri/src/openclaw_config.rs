@@ -915,13 +915,20 @@ pub fn set_tools_config(tools: &OpenClawToolsConfig) -> Result<OpenClawWriteOutc
 mod tests {
     use super::*;
     use serial_test::serial;
-    use std::sync::{Mutex, OnceLock};
 
-    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+    /// 返回全 crate 共享 env 锁的**可重入**守卫（见 crate::test_support）。
+    ///
+    /// 改用共享锁的原因：原先的模块内 `OnceLock` 锁不住其他模块的 `#[serial]`
+    /// 测试——`serial_test` 只协调同样标了 `#[serial]` 的测试，于是一个 `#[serial]`
+    /// 的 codex 测试与一个用本地 mutex 的 openclaw 测试可以真并发，互相踩
+    /// `CC_SWITCH_TEST_HOME` / `HOME`。这正是 HEAD 上
+    /// `default_model_noop_write_skips_backup` 间歇失败、并把用户真实
+    /// `~/.openclaw/openclaw.json`（含 API key）整份 dump 进 panic 的根因。
+    ///
+    /// 必须**可重入**：一个测试里可能有多层 env RAII 包装，非重入的 Mutex 会在
+    /// 第二次获取时永久阻塞在自己已持有的锁上。
+    fn test_guard() -> crate::test_support::EnvGuard {
+        crate::test_support::env_guard()
     }
 
     fn with_test_paths<T>(source: &str, test: impl FnOnce(&Path) -> T) -> T {
@@ -1025,7 +1032,14 @@ mod tests {
             assert!(second_outcome.backup_path.is_none());
 
             let second_written = fs::read_to_string(get_openclaw_config_path()).unwrap();
-            assert_eq!(second_written, first_written);
+            // 把 API key 等敏感字段打码后再比较——即便 env_lock 失守导致读到
+            // 真实 ~/.openclaw/openclaw.json，panic 输出也不会泄漏凭据。
+            // 长度仍保留，便于定位「文件大小是否被改」。
+            assert_eq!(
+                crate::test_support::redact_secrets_in_config(&second_written),
+                crate::test_support::redact_secrets_in_config(&first_written),
+                "openclaw config body changed unexpectedly (key-bearing fields redacted)"
+            );
             assert_eq!(fs::read_dir(&backup_dir).unwrap().count(), backup_count);
         });
     }

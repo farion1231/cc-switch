@@ -16,10 +16,14 @@ struct TestHomeGuard {
     original_home: Option<OsString>,
     original_userprofile: Option<OsString>,
     original_test_home: Option<OsString>,
+    // 持有全 crate 共享 env_lock 到 Drop。详见 crate::test_support。
+    #[allow(dead_code)]
+    env_guard: crate::test_support::EnvGuard,
 }
 
 impl TestHomeGuard {
     fn new() -> Self {
+        let env_guard = crate::test_support::env_guard();
         let dir = tempfile::tempdir().expect("create isolated test home");
         let original_home = env::var_os("HOME");
         let original_userprofile = env::var_os("USERPROFILE");
@@ -34,6 +38,7 @@ impl TestHomeGuard {
             original_home,
             original_userprofile,
             original_test_home,
+            env_guard,
         }
     }
 }

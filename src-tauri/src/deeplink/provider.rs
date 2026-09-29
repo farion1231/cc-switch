@@ -986,6 +986,11 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn grokbuild_deeplink_never_carries_env_key_or_resolved_secret() {
+        // 共享 env 锁：本测试改进程全局 env，必须与**全 crate** 所有改 env 的
+        // 用例互斥。`#[serial]` 与 `#[serial(env)]` 是 serial_test 的两个不同 key，
+        // 彼此不互斥，也都不与 crate::test_support::env_guard() 互斥——只靠它们
+        // 挡不住跨模块串扰。详见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
         let original = std::env::var_os("CC_SWITCH_DEEPLINK_ENV_PROBE");
         std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", "secret-must-not-leak");
 
@@ -1038,6 +1043,11 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn grokbuild_env_key_only_link_is_rejected_at_the_public_entry() {
+        // 共享 env 锁：本测试改进程全局 env，必须与**全 crate** 所有改 env 的
+        // 用例互斥。`#[serial]` 与 `#[serial(env)]` 是 serial_test 的两个不同 key，
+        // 彼此不互斥，也都不与 crate::test_support::env_guard() 互斥——只靠它们
+        // 挡不住跨模块串扰。详见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
         use base64::prelude::*;
 
         // 探针变量必须**真的设上**。若它在环境里不存在，旧代码的

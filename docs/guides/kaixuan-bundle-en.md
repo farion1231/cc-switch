@@ -142,4 +142,8 @@ The two old standalone presets (`开轩 LLM 网关` / `本地 LLM 网关 (8782)`
 
 Each endpoint has its own TOML table id (`kxpms` and `local8782`) plus a top-level `model_provider` pointing at the active one, so switching never collides and both tables stay in the live config. Switching writes the new config without breaking the file; if Codex is already running, cc-switch offers to restart it so the running session picks up the new provider too.
 
-Models from both endpoints appear together in the `/model` picker as `claude-opus-5` (active endpoint) and `claude-opus-5@kxpms` / `claude-opus-5@local8782` (the other endpoint). The `@`-suffixed entries make the other endpoint's catalog _visible_; actual request routing is still decided by the top-level `model_provider`.
+Models from both endpoints appear together in the `/model` picker: `claude-opus-5` (active endpoint) plus `claude-opus-5@kxpms` / `claude-opus-5@local8782` for the other endpoint. The `@<id>` suffix is a real routing instruction, not just a display label — when the proxy receives a request whose model carries a suffix, it dispatches to that endpoint (and strips the suffix before forwarding, and authenticates with that endpoint's key). The un-suffixed `claude-opus-5` keeps going to whichever endpoint is currently active.
+
+If you ever need to turn the suffixed entries off (for example while diagnosing a routing problem), set `CC_SWITCH_CODEX_ENDPOINT_CATALOG=0` before starting cc-switch. The suffix form is the default.
+
+The endpoint id (`local8782`) is deliberately independent of the port — the 8782 in the name is historical, not a port contract. Change `KAIXUAN_LOCAL_GATEWAY_PORT` and the `base_url` follows, while the id — and therefore any Codex session that recorded it — stays valid.

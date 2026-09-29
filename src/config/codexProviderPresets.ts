@@ -3593,6 +3593,18 @@ requires_openai_auth = true
     // provider_bundle 端会同步替换 base_url；FE 端这里写死的端口仅供展示。
     // 与「开轩 LLM 网关」预设必须用不同 TOML id (local8782 vs kxpms)，
     // 否则 inert 合并按 live wins 把其中一张表静默丢弃。
+    //
+    // id 里的 8782 是**历史遗留、不是端口契约**：端口由下面的 `base_url` 承载，
+    // 改 `KAIXUAN_LOCAL_GATEWAY_PORT` 只改 base_url、不改 id，所以不会作废任何
+    // 历史 session 的 `session_meta.model_provider`。
+    //
+    // 第五轮曾想把这个 id 改成与端口解耦的 `local`，**实测后回退**：改 id 会连带
+    // 扩大后端 legacy 迁移的作用域——本预设这张 `custom` 表的 `name` 同样是
+    // `local_gateway`，也会被映射到 `local`，于是与 kaixuan bundle 的本机端点
+    // **撞同一个 `[model_providers.local]`**，live-wins 下先到先得、静默选错端点
+    // （实测 merge 出的是本预设这条 `http://localhost:8782/v1`，而不是 bundle 的
+    // `http://127.0.0.1:8782/v1`）。要真正解耦，得先修「两个 provider 撞同一
+    // TOML id」这个独立缺陷，而不是在 id 层面绕。
     config: `model_provider = "local8782"
 model = "claude-opus-5"
 model_reasoning_effort = "high"

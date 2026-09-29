@@ -4113,10 +4113,14 @@ mod tests {
         original_home: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
+        // 持有全 crate 共享 env_lock 到 Drop。详见 crate::test_support。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
     }
 
     impl TempHome {
         fn new() -> Self {
+            let env_guard = crate::test_support::env_guard();
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
@@ -4131,6 +4135,7 @@ mod tests {
                 original_home,
                 original_userprofile,
                 original_test_home,
+                env_guard,
             }
         }
     }

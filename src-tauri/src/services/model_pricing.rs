@@ -477,6 +477,8 @@ mod tests {
     use serial_test::serial;
 
     fn with_test_home(test: impl FnOnce(&Database, &PathBuf)) {
+        // 持有全 crate 共享 env_lock（详见 crate::test_support）
+        let _env_guard = crate::test_support::env_guard();
         let temp = tempfile::tempdir().expect("tempdir");
         let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());

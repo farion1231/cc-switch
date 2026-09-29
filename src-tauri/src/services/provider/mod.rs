@@ -131,12 +131,18 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     struct TempHome {
         #[allow(dead_code)]
         dir: TempDir,
+        /// 全 crate 共享 env 锁（见 crate::test_support）。**必须在写任何 env 之前**
+        /// 拿到：反过来（先 set_var 再抢锁）的话，抢锁期间另一个测试可能正把 HOME
+        /// 还原，本测试等到的就是已被还原的真实路径 → `get_home_dir()` 落到用户
+        /// 真实的 `~/.cc-switch`。这与 provider_bundle 第五轮踩的坑同源。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
         original_home: Option<String>,
         #[cfg(windows)]
         original_local_app_data: Option<String>,
@@ -149,6 +155,8 @@ mod tests {
     impl TempHome {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
+            // 先取锁，再读原值、再写新值——整个「快照 + 改写」过程都在锁内。
+            let env_guard = crate::test_support::env_guard();
             let original_home = env::var("HOME").ok();
             #[cfg(windows)]
             let original_local_app_data = env::var("LOCALAPPDATA").ok();
@@ -168,6 +176,7 @@ mod tests {
 
             Self {
                 dir,
+                env_guard,
                 original_home,
                 #[cfg(windows)]
                 original_local_app_data,
@@ -240,11 +249,9 @@ mod tests {
             .join(format!("{PROFILE_ID}.json"))
     }
 
-    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+    /// 返回全 crate 共享 env 锁的**可重入**守卫（见 crate::test_support）。
+    fn test_guard() -> crate::test_support::EnvGuard {
+        crate::test_support::env_guard()
     }
 
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {

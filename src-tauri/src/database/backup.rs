@@ -1189,11 +1189,16 @@ mod tests {
     struct TestHomeGuard {
         previous_test_home: Option<std::ffi::OsString>,
         temp_dir: tempfile::TempDir,
+        // 持有全 crate 共享 env_lock 到 Drop，确保「切换 CC_SWITCH_TEST_HOME」
+        // 与「get_app_config_dir()」之间一致。单靠 #[serial] 串不掉跨模块并发。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
     }
 
     impl TestHomeGuard {
         fn new() -> Self {
             let temp_dir = tempfile::tempdir().expect("create isolated test home");
+            let env_guard = crate::test_support::env_guard();
             let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
             std::env::set_var("CC_SWITCH_TEST_HOME", temp_dir.path());
             // Prevent the Windows legacy-HOME fallback without mutating HOME:
@@ -1206,6 +1211,7 @@ mod tests {
             let guard = Self {
                 previous_test_home,
                 temp_dir,
+                env_guard,
             };
             let resolved = crate::config::get_app_config_dir();
             assert!(
@@ -1223,6 +1229,7 @@ mod tests {
 
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
+            // 先还原 env，env_guard 在字段 drop 顺序里最后释放。
             match self.previous_test_home.as_ref() {
                 Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
