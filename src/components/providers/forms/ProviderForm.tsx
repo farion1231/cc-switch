@@ -1145,7 +1145,11 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      if (Object.keys(opencodeForm.opencodeModels).length === 0) {
+      // Built-in overrides inherit OpenCode's package and model catalog.
+      if (
+        opencodeForm.opencodeNpm &&
+        Object.keys(opencodeForm.opencodeModels).length === 0
+      ) {
         issues.push(t("opencode.modelsRequired"));
       }
     }

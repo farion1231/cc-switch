@@ -1576,6 +1576,7 @@
     "npmPackage": "API フォーマット",
     "selectPackage": "API フォーマットを選択",
     "npmPackageHint": "AI サービスの API フォーマットを選択",
+    "builtinDefaults": "OpenCode 組み込みプロバイダーの既定値を使用",
     "baseUrl": "Base URL",
     "baseUrlHint": "カスタム API エンドポイント URL",
     "models": "モデル設定",

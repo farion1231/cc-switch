@@ -935,6 +935,8 @@ requires_openai_auth = true"#
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeProviderConfig {
     /// AI SDK 包名，如 "@ai-sdk/openai-compatible", "@ai-sdk/anthropic"
+    /// 内置供应商可以省略，沿用 OpenCode 的包和模型定义。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub npm: String,
 
     /// 供应商名称（可选，用于显示）
@@ -986,6 +988,7 @@ pub struct OpenCodeProviderOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeModel {
     /// 模型显示名称
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
 
     /// 模型限制（上下文和输出 token 数）

@@ -535,9 +535,13 @@ export function OpenCodeFormFields({
         <Select value={npm} onValueChange={onNpmChange}>
           <SelectTrigger id="opencode-npm">
             <SelectValue
-              placeholder={t("opencode.selectPackage", {
-                defaultValue: "Select a package",
-              })}
+              placeholder={
+                npm
+                  ? t("opencode.selectPackage", {
+                      defaultValue: "Select a package",
+                    })
+                  : t("opencode.builtinDefaults")
+              }
             />
           </SelectTrigger>
           <SelectContent>

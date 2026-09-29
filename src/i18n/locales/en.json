@@ -1576,6 +1576,7 @@
     "npmPackage": "API Format",
     "selectPackage": "Select API format",
     "npmPackageHint": "Select the API format for the AI service",
+    "builtinDefaults": "Use OpenCode built-in provider defaults",
     "baseUrl": "Base URL",
     "baseUrlHint": "Custom API endpoint URL",
     "models": "Models",

@@ -589,8 +589,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
 
             match opencode_config_result {
-                Ok(config) => {
-                    opencode_config::set_typed_provider(&provider.id, &config)?;
+                Ok(_) => {
+                    opencode_config::set_provider(&provider.id, config_to_write)?;
                     log::info!("OpenCode provider '{}' written to live config", provider.id);
                 }
                 Err(e) => {
@@ -1165,40 +1165,48 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 
 /// Import all providers from OpenCode live config to database
 ///
+/// Missing v2 API-key providers are first persisted from the credential table.
 /// This imports existing providers from ~/.config/opencode/opencode.json
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
 
-    let providers = opencode_config::get_typed_providers()?;
+    let existing_ids = state.db.get_provider_ids("opencode")?;
+    opencode_config::import_credential_providers(&existing_ids)?;
+    let providers = opencode_config::get_validated_providers()?;
     if providers.is_empty() {
         return Ok(0);
     }
 
     let mut imported = 0;
     let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("opencode")?;
-
-    for (id, config) in providers {
-        // Convert to Value for settings_config
-        let settings_config = match serde_json::to_value(&config) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("Failed to serialize OpenCode provider '{id}': {e}");
-                continue;
-            }
-        };
+    for (id, settings_config) in providers {
+        let config_name = settings_config.get("name").and_then(Value::as_str);
+        // Website metadata belongs to CC Switch, not OpenCode's provider config.
+        let default_website_url = (id == "opencode-go").then_some("https://opencode.ai/go");
 
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "opencode") {
                 Ok(Some(existing)) => {
-                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
-                    if existing.settings_config != settings_config || existing.name != display_name
+                    let display_name = config_name.unwrap_or(&existing.name).to_string();
+                    let needs_website_url = default_website_url.is_some()
+                        && existing
+                            .website_url
+                            .as_deref()
+                            .unwrap_or_default()
+                            .trim()
+                            .is_empty();
+                    if existing.settings_config != settings_config
+                        || existing.name != display_name
+                        || needs_website_url
                     {
                         let mut provider = existing;
                         provider.name = display_name;
                         provider.settings_config = settings_config;
+                        if needs_website_url {
+                            provider.website_url = default_website_url.map(str::to_string);
+                        }
                         if let Err(e) = state.db.save_provider("opencode", &provider) {
                             log::warn!(
                                 "Failed to update OpenCode provider '{id}' from live config: {e}"
@@ -1218,8 +1226,13 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         }
 
         // Create provider
-        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
-        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        let display_name = config_name.unwrap_or(&id).to_string();
+        let mut provider = Provider::with_id(
+            id.clone(),
+            display_name,
+            settings_config,
+            default_website_url.map(str::to_string),
+        );
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),
             ..Default::default()

@@ -271,9 +271,31 @@ mod tests {
             .unwrap_or_else(|err| err.into_inner())
     }
 
+    struct OpenCodeDbEnvGuard(Option<std::ffi::OsString>);
+
+    impl OpenCodeDbEnvGuard {
+        fn set(path: &Path) -> Self {
+            let guard = Self(std::env::var_os("OPENCODE_DB"));
+            std::env::set_var("OPENCODE_DB", path);
+            guard
+        }
+    }
+
+    impl Drop for OpenCodeDbEnvGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("OPENCODE_DB", value),
+                None => std::env::remove_var("OPENCODE_DB"),
+            }
+        }
+    }
+
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
         let temp = tempfile::tempdir().expect("tempdir");
+        // Import tests must never read real credentials, including when the
+        // developer has OPENCODE_DB or XDG_DATA_HOME set outside the test home.
+        let _opencode_db = OpenCodeDbEnvGuard::set(&temp.path().join("opencode.db"));
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
@@ -3569,6 +3591,242 @@ wire_api = "responses"
                 "a failed managed switch must not move current off the previous provider"
             );
         });
+    }
+
+    fn seed_opencode_credential() {
+        let conn =
+            rusqlite::Connection::open(crate::opencode_config::get_opencode_db_path()).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE credential (
+                id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT,
+                connector_id TEXT, active INTEGER, time_created INTEGER
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO credential VALUES (?1, ?2, ?3, ?4, NULL, 1, 1)",
+            rusqlite::params![
+                "go-key",
+                "opencode-go",
+                "OpenCode Go",
+                r#"{"type":"key","key":"db-test-key"}"#
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_credential_persists_before_import_and_is_idempotent() {
+        with_test_home(|state, _| {
+            seed_opencode_credential();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            let path = crate::opencode_config::get_opencode_config_path();
+            let file: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            let saved = state
+                .db
+                .get_provider_by_id("opencode-go", "opencode")
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.name, "OpenCode Go");
+            assert_eq!(saved.website_url.as_deref(), Some("https://opencode.ai/go"));
+            assert_eq!(saved.settings_config, file["provider"]["opencode-go"]);
+            assert_eq!(saved.settings_config["options"]["apiKey"], "db-test-key");
+            assert_eq!(
+                saved.settings_config["options"]["baseURL"],
+                "https://opencode.ai/zen/go/v1"
+            );
+            assert!(saved.settings_config.get("npm").is_none());
+            assert_eq!(saved.meta.unwrap().live_config_managed, Some(true));
+            let modified = fs::metadata(&path).unwrap().modified().unwrap();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            assert_eq!(state.db.get_provider_ids("opencode").unwrap().len(), 1);
+            assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+
+            // Existing installations should get the default on their next import,
+            // without needing to delete/recreate the card or change the live file.
+            let mut saved = state
+                .db
+                .get_provider_by_id("opencode-go", "opencode")
+                .unwrap()
+                .unwrap();
+            for missing_url in [None, Some(String::new()), Some("  ".to_string())] {
+                saved.website_url = missing_url;
+                state.db.save_provider("opencode", &saved).unwrap();
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+                let restored = state
+                    .db
+                    .get_provider_by_id("opencode-go", "opencode")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    restored.website_url.as_deref(),
+                    Some("https://opencode.ai/go")
+                );
+                assert_eq!(restored.settings_config, saved.settings_config);
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            }
+            saved.website_url = Some("https://example.com/my-go-account".to_string());
+            state.db.save_provider("opencode", &saved).unwrap();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            let preserved = state
+                .db
+                .get_provider_by_id("opencode-go", "opencode")
+                .unwrap()
+                .unwrap();
+            assert_eq!(preserved.website_url, saved.website_url);
+            assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_file_wins_and_extensions_survive_editing() {
+        with_test_home(|state, _| {
+            seed_opencode_credential();
+            let mut config = opencode_provider("opencode-go").settings_config;
+            config["name"] = json!("Go from file");
+            config["options"]["apiKey"] = json!("file-test-key");
+            config["futureField"] = json!({"keep": true});
+            config["models"]["gpt-4o"]["limit"] =
+                json!({"context":128000, "input":64000, "output":8192});
+            crate::opencode_config::set_provider("opencode-go", config.clone()).unwrap();
+            let path = crate::opencode_config::get_opencode_config_path();
+            let original = fs::read(&path).unwrap();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            assert_eq!(fs::read(&path).unwrap(), original);
+            let mut saved = state
+                .db
+                .get_provider_by_id("opencode-go", "opencode")
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.settings_config, config);
+            assert_eq!(saved.name, "Go from file");
+            saved.settings_config["options"]["apiKey"] = json!("edited-test-key");
+            ProviderService::update(state, AppType::OpenCode, None, saved.clone()).unwrap();
+            assert_eq!(
+                crate::opencode_config::get_providers().unwrap()["opencode-go"],
+                saved.settings_config
+            );
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            assert_eq!(state.db.get_provider_ids("opencode").unwrap().len(), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_credential_does_not_reenable_existing_inactive_provider() {
+        with_test_home(|state, _| {
+            seed_opencode_credential();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            crate::opencode_config::remove_provider("opencode-go").unwrap();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            assert!(crate::opencode_config::get_providers().unwrap().is_empty());
+            assert_eq!(state.db.get_provider_ids("opencode").unwrap().len(), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_partial_file_override_wins_over_credential() {
+        with_test_home(|state, _| {
+            seed_opencode_credential();
+            let mut config = json!({
+                "options": {"apiKey": "file-test-key"},
+                "models": {"glm-5.2": {"limit": {"input": 64000}}}
+            });
+            crate::opencode_config::set_provider("opencode-go", config.clone()).unwrap();
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            config["options"]["baseURL"] = json!("https://opencode.ai/zen/go/v1");
+            let saved = state
+                .db
+                .get_provider_by_id("opencode-go", "opencode")
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.settings_config, config);
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_backfills_existing_go_endpoint_even_without_readable_credentials() {
+        for corrupt in [false, true] {
+            with_test_home(|state, _| {
+                if corrupt {
+                    fs::write(
+                        crate::opencode_config::get_opencode_db_path(),
+                        "not a sqlite database",
+                    )
+                    .unwrap();
+                }
+                let mut config =
+                    json!({"name": "OpenCode Go", "options": {"apiKey": "file-test-key"}});
+                crate::opencode_config::set_provider("opencode-go", config.clone()).unwrap();
+                let existing = Provider::with_id(
+                    "opencode-go".into(),
+                    "OpenCode Go".into(),
+                    config.clone(),
+                    Some("https://opencode.ai/go".into()),
+                );
+                state.db.save_provider("opencode", &existing).unwrap();
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+                config["options"]["baseURL"] = json!("https://opencode.ai/zen/go/v1");
+                assert_eq!(
+                    crate::opencode_config::get_providers().unwrap()["opencode-go"],
+                    config
+                );
+                let saved = state
+                    .db
+                    .get_provider_by_id("opencode-go", "opencode")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(saved.settings_config, config);
+                assert_eq!(state.db.get_provider_ids("opencode").unwrap().len(), 1);
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_credential_does_not_import_when_file_cannot_be_written() {
+        with_test_home(|state, _| {
+            seed_opencode_credential();
+            let dir = crate::opencode_config::get_opencode_dir();
+            fs::create_dir_all(dir.parent().unwrap()).unwrap();
+            fs::write(&dir, "blocks config directory").unwrap();
+            assert!(import_opencode_providers_from_live(state).is_err());
+            assert!(state.db.get_provider_ids("opencode").unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_opencode_file_still_works_with_v1_or_unreadable_database() {
+        for corrupt in [false, true] {
+            with_test_home(|state, _| {
+                let db_path = crate::opencode_config::get_opencode_db_path();
+                if corrupt {
+                    fs::write(&db_path, "not a sqlite database").unwrap();
+                } else {
+                    rusqlite::Connection::open(&db_path).unwrap();
+                }
+                let provider = opencode_provider("v1-provider");
+                crate::opencode_config::set_provider(
+                    &provider.id,
+                    provider.settings_config.clone(),
+                )
+                .unwrap();
+                assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+                let saved = state
+                    .db
+                    .get_provider_by_id(&provider.id, "opencode")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(saved.settings_config, provider.settings_config);
+            });
+        }
     }
 
     #[test]

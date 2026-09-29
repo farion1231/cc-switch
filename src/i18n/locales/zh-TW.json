@@ -1577,6 +1577,7 @@
     "npmPackage": "API 格式",
     "selectPackage": "選擇 API 格式",
     "npmPackageHint": "選擇 AI 服務的 API 格式",
+    "builtinDefaults": "使用 OpenCode 內建供應商預設值",
     "baseUrl": "Base URL",
     "baseUrlHint": "自訂 API 端點位址",
     "models": "模型設定",
