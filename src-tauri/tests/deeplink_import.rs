@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use base64::prelude::*;
@@ -6,6 +7,16 @@ use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState,
 #[path = "support.rs"]
 mod support;
 use support::{ensure_test_home, reset_test_fs, test_mutex};
+
+fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    let desktop_dir = home.join("Library/Application Support/Claude-3p");
+    #[cfg(windows)]
+    let desktop_dir = home.join("AppData/Local/Claude-3p");
+    #[cfg(target_os = "linux")]
+    let desktop_dir = home.join(".config/Claude-3p");
+    desktop_dir.join("configLibrary/00000000-0000-4000-8000-000000157210.json")
+}
 
 #[test]
 fn deeplink_import_claude_provider_persists_to_db() {
@@ -98,13 +109,7 @@ fn deeplink_import_claude_desktop_only_applies_when_enabled() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
-    #[cfg(target_os = "macos")]
-    let desktop_dir = home.join("Library/Application Support/Claude-3p");
-    #[cfg(windows)]
-    let desktop_dir = home.join("AppData/Local/Claude-3p");
-    #[cfg(target_os = "linux")]
-    let desktop_dir = home.join(".config/Claude-3p");
-    let profile = desktop_dir.join("configLibrary/00000000-0000-4000-8000-000000157210.json");
+    let profile = claude_desktop_profile_path(home);
 
     for enabled in ["", "&enabled=false", "&enabled=true"] {
         let before = std::fs::read(&profile).ok();
@@ -146,6 +151,33 @@ fn deeplink_import_claude_desktop_only_applies_when_enabled() {
             assert_eq!(std::fs::read(&profile).ok(), before);
         }
     }
+}
+
+#[test]
+fn deeplink_import_claude_desktop_proxy_model_writes_route_profile() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let profile = claude_desktop_profile_path(home);
+
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Proxy&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&model=deepseek-v4&enabled=true";
+    let id = import_provider_from_deeplink(&state, parse_deeplink_url(url).unwrap()).unwrap();
+
+    assert_eq!(
+        db.get_current_provider("claude-desktop")
+            .unwrap()
+            .as_deref(),
+        Some(id.as_str())
+    );
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&profile).unwrap()).unwrap();
+    assert_eq!(written["inferenceProvider"], "gateway");
+    let models = written["inferenceModels"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["labelOverride"], "deepseek-v4");
+    assert!(models[0]["name"].as_str().unwrap().starts_with("claude-"));
 }
 
 #[test]
