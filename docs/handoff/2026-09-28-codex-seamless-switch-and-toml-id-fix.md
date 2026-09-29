@@ -1006,3 +1006,15 @@ proxy 返回 400: model 'claude-opus-5@local8782' 指向的端点不存在（pro
 `crate::test_support::env_guard()`（可重入、中毒自愈）。这不等于"消除了一切
 flaky"——它消除的是**跨模块 env 串扰这一类**。端口占用、文件系统、真实数据库
 等其它 flaky 来源不在此列。
+
+### 第六轮收尾：已合并进 main 并推送
+
+- 合并提交 `90fc82db`（`--no-ff`），`main`：`9f119f93..90fc82db`，**真快进、无 force**。
+- 合并**前**在合并后的 main 树上实跑过一次全量 `cargo test --lib`：
+  **3043 passed / 0 failed / 10 ignored**——不拿分支上的结果替 main 背书。
+- 真实库 `providers` 全程 28 → 28。
+- 本分支相对新 `origin/main` 已无独有提交（`git log origin/main..HEAD` 为空）。
+
+**与 `fix/codex-session-referenced-provider-tables` 的合并仍未做**（那是并发会话的工作，
+不是本 PR 的范围）。该分支在本次操作期间又前进到 `d8f5d577`。合并时按 PR #1
+「合并注意」一节执行：保留持 `env_guard` 的一侧。
