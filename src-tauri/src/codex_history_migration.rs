@@ -124,6 +124,14 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
 
     let source_provider_ids = collect_source_model_provider_ids(db)?;
     if source_provider_ids.is_empty() {
+        // Record the attempt, but the "migrated" predicate now also requires a
+        // non-empty id set, so this cannot latch the migration off. Without a
+        // known legacy id there is genuinely nothing to re-bucket; the ids that
+        // break session resume are projection ids, and those are fixed by
+        // keeping a table for them, not by rewriting immutable history (§2.2).
+        log::info!(
+            "codex 历史分桶迁移：DB 里没有已知 legacy provider id，本次无需迁移（保持可重跑）"
+        );
         crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
             CodexThirdPartyHistoryProviderBucketMigration {
                 completed_at: Utc::now().to_rfc3339(),

@@ -140,6 +140,139 @@ live config 缺失 provider 表导致旧 session 永远卡死。
 | 多端点冲突 | 两端点各自带一份 `custom` 副本时，合并按既有 "live wins" 规则取先到者；能解析即可，不保证端点归属（`custom` 本就一义多指） |
 | 归属判定 | catalog 素材收集的「唯一一张自定义表」回退判据必须**先剔除 `custom` 副本**，否则多端点场景永远判不出 toml_id，模型目录被静默丢弃 |
 
+### 2.4b' 保留判据必须来自 session 历史本身（2026-09-29 第三轮审计追加）
+
+2.4b 是**按 id 逐个补规则**的补丁：先发现 `custom` 会丢，就为 `custom` 写一条别名
+规则。它没有改变 §2.1 的判据来源，于是镜像方向必然复发——
+
+| 次序 | 切换方向 | 报错的 id | 谁产生的 | 修法 |
+|---|---|---|---|---|
+| 1 | 切到 official | `custom` | 端点 id 迁移改名 | 82a731d9 + 2.4b 别名 |
+| 2 | 切离 official | `cc-switch-official` | **投影产物** | 本节 |
+| 3（实测复发） | 切离 official | `evol` | 未知来源的投影 id | 本节 |
+
+关键事实：`cc-switch-official` 由 `apply_codex_official_proxy_route` 直接写进 live
+config，**DB 里没有对应 provider 行，官方档存档里也没有这张表**。所以「枚举 DB 行」
+这个判据在**设计上**就不可能把它补回来——只要 id 的产生路径能绕开实体表，两者就
+不等价。§2.1 写的「把 DB 里所有其它 provider 的表合并进来」是真约束的一个**错误
+代理指标**。
+
+因此判据改为：**「历史 session 引用过的每个 `model_provider` 都必须有同名表」**，
+集合从历史本身采集（`codex_session_providers`）：
+
+| 规则 | 内容 |
+|---|---|
+| 集合来源 | rollout `.jsonl` 首行 `session_meta.payload.model_provider` ∪ state DB `threads.model_provider`。**两个源都要扫**：Codex 分别写二者，可能只有一边有某条 thread（`codex doctor` 就会报 rollout 缺失） |
+| 扫描成本 | 只读每个文件的首行（`session_meta` 在最前），不全文扫。实机 155 个文件 / 347MB 实测 0.01s |
+| 补表规则 | 引用集合里**没有 DB provider 归属**的 id，落一张 active 表的逐字副本（沿用 2.4b 的副本语义），inert，不影响新流量 |
+| 已有表的两种身份 | 归 DB provider 真正声明的（`db_declared_ids`）→ 是别的供应商的 inert 状态，保持 "live wins"（§2.4 rule 1）不被改道；**我们自己早先铸出的副本**→ 必须整表刷新。理由见 §2.4b'' |
+| 已知代价 | 旧官方 session 恢复后会走到当前 active 上游而非它当初的端点。这是「能恢复」换来的，2.4b 的 `custom` 冲突已是同一取舍 |
+
+配套要求：
+
+- **前置门要判覆盖，不只判合法性**。`preflight_codex_provider_table_conflicts` 只校验
+  存在表的字段组合，一个**完全缺失**的 id 能一路绿灯——这三次它一次都没拦住。
+  新增 `codex_unresolved_session_provider_ids` 做覆盖诊断。
+- **一次性迁移的「已完成」只能由真实迁移置位**。`codexThirdPartyHistoryProviderBucketV1`
+  曾于 2026-09-28T16:45 在 `source_provider_ids` 为空时写下 `scanned: true / 0 / 0`，
+  此后被 `is_..._migrated()` 永久短路，既没修好历史也堵死重试。
+- **回归用例必须是四步闭环**：切 official → 建 session → 切回 third-party → 断言该
+  id 有表，且**镜像方向同样断言**。单步断言看不见这条缺口——本类缺陷前三次都从
+  单步断言下溜过去，因为每一步单独看都"对"。
+
+### 2.4b'' 副本必须带认证字段，且要分两趟盖章（2026-09-29 第四轮追加）
+
+"有表"只是第一半。本机 30 个 session 能加载了，却全部 401
+`Missing or malformed Authorization header`。现场 `~/.codex/config.toml` 原文：
+
+| 表 | `base_url` | `experimental_bearer_token` |
+|---|---|---|
+| `kxpms`（active） | `http://127.0.0.1:15721/v1` | `PROXY_MANAGED` |
+| `cc-switch-official`（副本） | `http://127.0.0.1:15721/v1` | **无** |
+| `evol`（副本） | `http://127.0.0.1:15721/v1` | **无** |
+
+副本拿到了改道后的 `base_url`、唯独没有 token——**这一行差异就是时序证据**：
+补表发生在「接管改道已写入」之后、「token 注入」之前。`prepare_codex_provider_live_config`
+才是注入点（`set_codex_experimental_bearer_token`，只动 active 那一张表），它在
+写盘阶段才跑，晚于 `merge_inert_codex_provider_tables_into_settings_config`。
+
+因此副本要**三趟**，缺一不可：
+
+| 趟 | 做什么 | 在哪 | 少了它会怎样 |
+|---|---|---|---|
+| 1 | 无人认领的影子随 active **整表刷新** | `live.rs::merge_session_referenced_shadow_tables`（`db_declared_ids` 区分归属） | 影子停在切换时的直连地址 + 供应商真 key，或压根不存在 |
+| 2 | 接管中把 **DB 声明的 inert 表**也改道到本地代理 | `live.rs::reroute_inert_table_to_takeover`（由 `takeover_route` 参数触发） | inert 表留在自己端点上：既 401，又会把官方凭据发给第三方 |
+| 3 | 注入后把 active 的 token 盖到**所有路由副本**上 | `codex_config.rs::propagate_active_bearer_token_to_route_copies` | 表在、地址对、认证缺 → 401 |
+
+三趟不能互相替代：第 1 趟拿不到尚未注入的 token；第 2 趟只改地址不碰凭据；第 3 趟
+在纯文本层跑、拿不到 DB，只能按端点身份认表。
+
+#### 第 2 趟为什么必须有：inert 表身上从来没有凭据
+
+cc-switch 把每个供应商的 key 存在 `auth.OPENAI_API_KEY`，**注入只写 active 那一张表**
+（`set_codex_experimental_bearer_token`）。于是 DB 声明的 inert 表在 live config 里
+永远是「自己的端点 + 零凭据」。本机现场（2026-09-29，修之前的 `~/.codex/config.toml`）：
+
+```
+[model_providers.custom]        # 64 个 rollout / 63 条 state 记录引用它
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"   # 直连第三方，不经本地代理
+requires_openai_auth = true            # 没有任何 env_key / token
+```
+
+`requires_openai_auth = true` + 无凭据 ⇒ Codex 退回原生 ChatGPT 登录，并把这个
+token 呈递给表里的 `base_url`。所以这张表既是**必然失败**，也是**官方凭据外发**。
+（此处未做实测触发：跑一次 resume 就会真的把 ChatGPT 凭据发到第三方主机。）
+
+接管中本地代理是唯一能服务任何表的端点——真 key 都在代理手里。所以 inert 表被改
+成 active 的路由副本：`base_url` → 代理地址、`wire_api = responses`、清掉属于旧端点
+的凭据字段，`name` 保留（那是该端点的显示标签）。代价与 §2.4b' 对影子表的取舍相同：
+老 session 恢复到**当前** active 上游。
+
+切换路径（`takeover_route = None`）**不**改道：那时 live config 就是该 provider 自己的
+端点，别的表指向各自端点仍然属实。
+
+#### 第 3 趟的判据：端点身份是 `base_url`，不是 `name`
+
+改道后的 inert 表保留自己的 `name`（`local_gateway` vs `kxpms_gateway`）而 `base_url`
+变成代理。判据若还要求 name 相同，第 2 趟改道出来的表会被第 3 趟整个漏掉——正好漏掉
+第 2 趟存在的意义。反向也不能只看 name：`name` 相同而端点不同的表会被误盖。两条都由
+同一组断言钉住（`rerouted_inert` 要盖 / `same_name_other_endpoint` 不盖），并做过变异
+验证：把 name 条件加回去，`rerouted_inert` 立刻转红。
+
+豁免条件是表自带 `env_key` / `experimental_bearer_token` / `Authorization` 头（两个
+DB provider 指向同一网关、各带各的 key 是真实存在的形态），保留 id 一律不盖章，
+active 表本身没有 token 时（codex-official 接管靠原生登录）也不盖章。
+
+配套：**旧断言要跟着改**。`merge_does_not_shadow_over_an_existing_table` 锁的正是
+"已存在就跳过"这条导致 401 的规则，已改写为 `session_shadow_refreshes_a_stale_table_it_owns`。
+变异验证显示，只保留"不同端点不盖章"的断言时，摘掉"自带凭据豁免"测试**照样绿**
+——`custom` 的 `base_url` 早在端点身份那一关就被挡了，压根没走到豁免分支。真正承重的
+是**同端点 + 自带凭据**的夹具。
+
+#### 四步闭环的实测结果（2026-09-29）
+
+`session_resolves_in_both_directions_of_an_official_round_trip` 覆盖两个方向，
+**均通过**。也就是说「切到官方丢第三方表」这条并不成立：DB 驱动的那部分合并本来就
+覆盖了它（`merge_inert_preserves_custom_table_when_switching_to_official`）。真正缺的
+只有**无 DB 归属**的 id 在**切离官方**方向上的补表。
+
+残留（`official_route_reports_rather_than_invents_a_table_for_db_less_ids` 钉住）：
+
+| 场景 | 结果 |
+|---|---|
+| 第三方路由 + 无 DB 归属的引用 id | 补 inert 影子表（本轮修复） |
+| 官方路由 + **有** DB 归属的引用 id | 补表（既有 DB 合并已覆盖） |
+| 官方路由 + **无** DB 归属的引用 id | **不补，只报**。官方档顶层 `model_provider` 按 §2.4c 必须缺失，故既无 active 表可复制、也无 DB 行可提供定义 |
+
+最后一行是**有意的不作为**：凭空造一张表等于把老 session 静默改道到一个用户当前
+根本没选的端点。
+
+**因此覆盖门不升级为硬拒绝。** 曾经考虑过"切换前断言引用集合 ⊆ 定义集合，不满足就
+拒绝切换"，但上表证明该残留不可救：硬门会为一段远古 session **永久拒绝用户切换
+供应商**，代价大于它防的症状。当前形态是"能救的全救 + 残留 `log::error` 报出"，
+另有 `scripts/codex-session-provider-check.py` 把同一判据暴露给用户自查。
+
 ### 2.4c 顶层 `model_provider` 的补写必须分 provider 类别（2026-09-29 审计追加）
 
 legacy id 迁移在「顶层 `model_provider` 缺失」时是否补写，取决于**那张表是不是该

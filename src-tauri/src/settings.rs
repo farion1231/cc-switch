@@ -808,6 +808,22 @@ where
     Ok(())
 }
 
+/// Whether the third-party history re-bucketing is genuinely finished.
+///
+/// Requires `source_provider_ids` to be non-empty on purpose. A run that found
+/// nothing to do still records that it scanned, but it did **not** migrate
+/// anything — treating that as "done" latches the migration off forever, so a
+/// later switch that introduces a legacy id never gets re-bucketed and the
+/// affected sessions stay unloadable. Seen on a real install: the marker was
+/// written at 2026-09-28T16:45 with 0 files / 0 rows and has short-circuited
+/// every run since.
+/// A recorded run only counts as finished if it actually re-bucketed
+/// something. Kept as a named predicate so the rule is testable without touching
+/// the process-wide settings file.
+fn migration_actually_completed(migration: &CodexThirdPartyHistoryProviderBucketMigration) -> bool {
+    migration.scanned_history_files && !migration.source_provider_ids.is_empty()
+}
+
 pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
     get_settings()
         .local_migrations
@@ -817,7 +833,7 @@ pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
                 .codex_third_party_history_provider_bucket_v1
                 .as_ref()
         })
-        .is_some_and(|m| m.scanned_history_files)
+        .is_some_and(migration_actually_completed)
 }
 
 pub fn mark_codex_third_party_history_provider_bucket_migrated(
@@ -1192,6 +1208,43 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    /// 「扫过了但没迁到任何东西」不等于「迁完了」。
+    ///
+    /// 实机踩过：2026-09-28T16:45 写入 `scannedHistoryFiles: true` 且
+    /// source/migrated 全为 0，之后 `is_..._migrated()` 永久返回 true，
+    /// 于是这个一次性迁移从那天起再没跑过一次——既没修好历史，也堵死了重试。
+    #[test]
+    fn empty_history_scan_is_not_treated_as_migration_completed() {
+        let empty_run = CodexThirdPartyHistoryProviderBucketMigration {
+            completed_at: "2026-09-28T16:45:29Z".to_string(),
+            target_provider_id: "custom".to_string(),
+            source_provider_ids: Vec::new(),
+            migrated_jsonl_files: 0,
+            migrated_state_rows: 0,
+            scanned_history_files: true,
+        };
+        assert!(
+            !migration_actually_completed(&empty_run),
+            "0 source ids 的那次扫描不得把迁移标记为完成"
+        );
+
+        let real_run = CodexThirdPartyHistoryProviderBucketMigration {
+            source_provider_ids: vec!["ccswitch".to_string()],
+            migrated_jsonl_files: 3,
+            ..empty_run.clone()
+        };
+        assert!(
+            migration_actually_completed(&real_run),
+            "真的迁过 id 的那次必须算完成，否则每次启动都重跑"
+        );
+
+        let never_scanned = CodexThirdPartyHistoryProviderBucketMigration {
+            scanned_history_files: false,
+            ..empty_run
+        };
+        assert!(!migration_actually_completed(&never_scanned));
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

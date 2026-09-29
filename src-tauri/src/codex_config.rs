@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::app_config::AppType;
 use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
 };
-use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use crate::Database;
@@ -1249,9 +1249,7 @@ fn migrate_legacy_codex_toml_ids_with_policy(
 ) -> Option<String> {
     let mut doc = config_text.parse::<DocumentMut>().ok()?;
     let legacy_name = {
-        let mp = doc
-            .get("model_providers")
-            .and_then(Item::as_table_like)?;
+        let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
         mp.get("custom")
             .and_then(Item::as_table_like)
             .and_then(|table| table.get("name"))
@@ -1266,8 +1264,10 @@ fn migrate_legacy_codex_toml_ids_with_policy(
         .map(|(_, new_id)| *new_id)?;
 
     // 顶层 model_provider 已指向别的 id → 用户的自定义路由，不动。
-    let top_level_points_at_legacy =
-        matches!(active_codex_model_provider_id(&doc).as_deref(), Some("custom"));
+    let top_level_points_at_legacy = matches!(
+        active_codex_model_provider_id(&doc).as_deref(),
+        Some("custom")
+    );
     if let Some(current) = active_codex_model_provider_id(&doc) {
         if current != "custom" {
             log::info!(
@@ -2763,14 +2763,12 @@ fn append_endpoint_suffixed_entries(
             continue;
         }
         let expanded = match source {
-            ExpansionSource::Template(template) => {
-                codex_model_catalog_entries_from_specs(
-                    &specs,
-                    template,
-                    profile,
-                    default_context_window,
-                )
-            }
+            ExpansionSource::Template(template) => codex_model_catalog_entries_from_specs(
+                &specs,
+                template,
+                profile,
+                default_context_window,
+            ),
             ExpansionSource::Vendor(vendor_models) => specs
                 .iter()
                 .enumerate()
@@ -2779,7 +2777,11 @@ fn append_endpoint_suffixed_entries(
         };
 
         for mut entry in expanded {
-            let Some(slug) = entry.get("slug").and_then(Value::as_str).map(str::to_string) else {
+            let Some(slug) = entry
+                .get("slug")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
                 continue;
             };
             // 已经带后缀的（用户自己写的多端点 id 表单）不再二次加。
@@ -3892,6 +3894,118 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
     Ok(doc.to_string())
 }
 
+/// Give every *route copy* of the active table the active table's bearer token.
+///
+/// A "route copy" is a `[model_providers.<id>]` table whose `base_url` equals
+/// the active table's. Those are the tables that must authenticate the way the
+/// active route does: the session shadows RFC 0002 §2.4b mints, and — during a
+/// takeover — the inert tables rerouted onto the local proxy. Both exist so
+/// sessions that recorded an old `model_provider` id still resolve to the
+/// current endpoint instead of `Model provider 'X' not found`.
+///
+/// `base_url` is the identity, not `name` + `base_url`: a rerouted inert table
+/// keeps its own endpoint's display `name` (`local_gateway` vs `kxpms_gateway`)
+/// while pointing at the same proxy, and it still has to authenticate the same
+/// way. Keying on the name too would skip exactly the tables the reroute
+/// exists to fix.
+///
+/// Why this has to be a **separate pass** rather than part of the shadow merge:
+/// the merge runs on the effective settings *before* the write path injects the
+/// token, so the copy it takes is the pre-injection active table. Observed shape
+/// on this machine after the 2026-09-29 deploy — `[model_providers.kxpms]`
+/// carried `experimental_bearer_token = "PROXY_MANAGED"` while every shadow
+/// (`cc-switch-official`, `evol`) had the takeover `base_url` but **no token**,
+/// and resuming one of those 30 sessions 401'd `Missing or malformed
+/// Authorization header`. The refresh alone cannot fix that: the shadow is
+/// already a faithful copy of a table that has no token yet.
+///
+/// Deliberately narrow:
+/// - only tables that carry no credential of their own (`env_key`,
+///   `experimental_bearer_token`, or an `Authorization` header) — a table with
+///   its own key is another provider's, not a copy of ours;
+/// - never a reserved Codex id (`is_custom_codex_model_provider_id`): those
+///   tables belong to the CLI, same rule as the shadow merge;
+/// - only when the active table actually holds a token. A codex-official
+///   takeover has none and authenticates from the native login, so its copies
+///   correctly have none either.
+fn propagate_active_bearer_token_to_route_copies(config_text: &str) -> Result<String, AppError> {
+    if config_text.trim().is_empty() || !config_text.contains("experimental_bearer_token") {
+        return Ok(config_text.to_string());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(active_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+    if !is_custom_codex_model_provider_id(&active_id) {
+        return Ok(config_text.to_string());
+    }
+    let active_table = doc
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get(&active_id))
+        .and_then(Item::as_table_like);
+    let active_base_url = active_table
+        .and_then(|table| table.get("base_url"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string);
+    let token = active_table
+        .and_then(|table| table.get("experimental_bearer_token"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string);
+    let (Some(active_base_url), Some(token)) = (active_base_url, token) else {
+        return Ok(config_text.to_string());
+    };
+
+    let Some(providers) = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return Ok(config_text.to_string());
+    };
+    let ids: Vec<String> = providers.iter().map(|(id, _)| id.to_string()).collect();
+    let mut stamped: Vec<String> = Vec::new();
+    for id in ids {
+        if id == active_id || !is_custom_codex_model_provider_id(&id) {
+            continue;
+        }
+        let Some(table) = providers.get_mut(&id).and_then(Item::as_table_like_mut) else {
+            continue;
+        };
+        let same_endpoint = table
+            .get("base_url")
+            .and_then(Item::as_str)
+            .map(str::trim)
+            .is_some_and(|url| url == active_base_url);
+        if !same_endpoint {
+            continue;
+        }
+        let declares_own_credential = table.get("env_key").is_some()
+            || table.get("experimental_bearer_token").is_some()
+            || table_declares_authorization_header(table.get("http_headers"))
+            || table_declares_authorization_header(table.get("env_http_headers"));
+        if declares_own_credential {
+            continue;
+        }
+        table.insert("experimental_bearer_token", toml_edit::value(&token));
+        stamped.push(id);
+    }
+    if stamped.is_empty() {
+        return Ok(config_text.to_string());
+    }
+    log::info!(
+        "codex 路由副本：随 active 表补齐认证字段 {:?}（active={}）",
+        stamped,
+        active_id
+    );
+    Ok(doc.to_string())
+}
+
 pub fn remove_codex_experimental_bearer_token_if(
     config_text: &str,
     predicate: impl Fn(&str) -> bool,
@@ -4471,6 +4585,49 @@ pub fn preflight_codex_live_write(
     .map(|_| ())
 }
 
+/// Model provider ids that session history references but `config_text` does
+/// not define a table for — i.e. the sessions Codex will refuse to load.
+///
+/// Exists as a diagnostic because the existing preflight
+/// (`preflight_codex_provider_table_conflicts`) only judges *field legality* of
+/// the tables that are present; a completely absent id passes it every time,
+/// which is why this class of breakage reached the user three times.
+///
+/// Deliberately not a hard gate yet: the official-route write path does not run
+/// the inert-merge hook, so on a switch to official it would report every
+/// third-party id as missing and refuse a switch the user legitimately needs.
+/// Until that path heals too, this reports rather than blocks.
+pub fn codex_unresolved_session_provider_ids(config_text: &str) -> Vec<String> {
+    let codex_dir = get_codex_config_dir();
+    codex_unresolved_session_provider_ids_in(&codex_dir, config_text)
+}
+
+/// Same check against an explicit Codex dir, so tests do not read the
+/// developer's real `~/.codex`.
+pub fn codex_unresolved_session_provider_ids_in(
+    codex_dir: &std::path::Path,
+    config_text: &str,
+) -> Vec<String> {
+    if !codex_dir.is_dir() {
+        return Vec::new();
+    }
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    let defined: BTreeSet<&str> = doc
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .map(|table| table.iter().map(|(id, _)| id).collect())
+        .unwrap_or_default();
+    crate::codex_session_providers::collect_session_referenced_provider_ids(codex_dir, config_text)
+        .into_iter()
+        .filter(|id| !defined.contains(id.as_str()))
+        // Codex built-ins resolve without a table, so they are not coverage
+        // gaps — reporting them would send every user chasing a phantom.
+        .filter(|id| is_custom_codex_model_provider_id(id))
+        .collect()
+}
+
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
@@ -4482,6 +4639,17 @@ pub fn write_codex_live_for_provider(
         config_text,
         crate::settings::preserve_codex_official_auth_on_switch(),
     )?;
+    if let Some(text) = plan.config_text.as_deref() {
+        let unresolved = codex_unresolved_session_provider_ids(text);
+        if !unresolved.is_empty() {
+            // Loud, because the alternative is the user discovering it as
+            // "Model provider X not found" on a thread they are trying to open.
+            log::error!(
+                "codex live 写入：历史 session 引用的 provider id 缺表 {:?}，这些 session 将无法 resume",
+                unresolved
+            );
+        }
+    }
     if plan.write_full_auth {
         return write_codex_live_atomic(auth, plan.config_text.as_deref());
     }
@@ -4541,7 +4709,11 @@ pub fn prepare_codex_provider_live_config(
     };
     let normalized = normalize_codex_legacy_openai_reroute(config_text)?;
     let config_text = normalized.as_deref().unwrap_or(config_text);
-    set_codex_experimental_bearer_token(config_text, &token)
+    let injected = set_codex_experimental_bearer_token(config_text, &token)?;
+    // After injection, never before: the session shadows the merge minted are
+    // copies of the *pre-injection* active table, so they need a second pass to
+    // pick the token up (see `propagate_active_bearer_token_to_route_copies`).
+    propagate_active_bearer_token_to_route_copies(&injected)
 }
 
 /// During DB backfill, lift a live `experimental_bearer_token` back into
@@ -4792,6 +4964,41 @@ mod tests {
     use serial_test::serial;
     use std::ffi::OsString;
 
+    /// 覆盖判据（而非字段合法性）才是真正的门：一个**完全缺失**的 id 能通过
+    /// `preflight_codex_provider_table_conflicts`，这正是它三次都没拦住的原因。
+    #[test]
+    fn unresolved_session_provider_ids_reports_absent_tables_only() {
+        use std::io::Write as _;
+
+        let history = tempfile::tempdir().expect("history dir");
+        let rollout = history.path().join("sessions/2026/09/29/rollout-a.jsonl");
+        std::fs::create_dir_all(rollout.parent().unwrap()).expect("mkdir");
+        let mut file = std::fs::File::create(&rollout).expect("create");
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"model_provider":"cc-switch-official"}}}}"#
+        )
+        .expect("write");
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"model_provider":"kxpms"}}}}"#
+        )
+        .expect("write");
+
+        let live = "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"n\"\nbase_url = \"https://x/v1\"\nwire_api = \"responses\"\n";
+        assert_eq!(
+            codex_unresolved_session_provider_ids_in(history.path(), live),
+            vec!["cc-switch-official".to_string()],
+            "只有真正缺表的 id 应被报出"
+        );
+
+        let healed = format!("{live}\n[model_providers.cc-switch-official]\nname = \"n\"\nbase_url = \"https://x/v1\"\nwire_api = \"responses\"\n");
+        assert!(
+            codex_unresolved_session_provider_ids_in(history.path(), &healed).is_empty(),
+            "补表之后必须归零，否则每次切换都会误报"
+        );
+    }
+
     /// 老 bundle 的 `[model_providers.custom]` 必须被改写成按端点区分的 id。
     ///
     /// 网关档（默认策略）：顶层缺失时**补上**——那正是 Codex 0.149+ 起不来的
@@ -4820,7 +5027,9 @@ mod tests {
             // 的 model_provider 就是 `custom`，少了它 Codex 拒绝 resume）。
             let new_table = parsed["model_providers"][expected_id]
                 .as_table()
-                .unwrap_or_else(|| panic!("{legacy_name}: 必须存在 [{expected_id}] 表\n{migrated}"));
+                .unwrap_or_else(|| {
+                    panic!("{legacy_name}: 必须存在 [{expected_id}] 表\n{migrated}")
+                });
             assert_eq!(
                 new_table.get("name").and_then(|v| v.as_str()),
                 Some(legacy_name),
@@ -5139,7 +5348,10 @@ mod tests {
         );
         let slugs: Vec<&str> = merged.iter().filter_map(|e| e["slug"].as_str()).collect();
 
-        assert!(slugs.contains(&"claude-opus-5"), "active 端裸 slug 必须保留: {slugs:?}");
+        assert!(
+            slugs.contains(&"claude-opus-5"),
+            "active 端裸 slug 必须保留: {slugs:?}"
+        );
         assert!(
             slugs.contains(&"claude-opus-5@local8782"),
             "另一端点的同 slug 必须带 @toml_id 后缀共存: {slugs:?}"
@@ -5940,6 +6152,175 @@ base_url = "https://single.example.com/v1"
             .expect("remove proven managed live auth");
         assert!(!get_codex_auth_path().exists());
         assert!(!get_codex_managed_oauth_live_auth_marker_path().exists());
+    }
+
+    /// 实机（2026-09-29 部署后 `~/.codex/config.toml` 原文）踩到的形状：
+    /// active 表带 token，两张**路由副本**（= session 影子）指向同一个
+    /// `name` + `base_url` 却没有 token —— 走影子表 resume 的 30 个 session
+    /// 全部 401 `Missing or malformed Authorization header`。
+    ///
+    /// 这条测试的输入就是那三张表（`local8782` / `custom` 一并带上，钉住
+    /// "同端点以外 / 自带凭据的表不动"）。
+    #[test]
+    fn bearer_token_propagates_to_route_copies_of_the_active_table() {
+        let input = r#"model_provider = "kxpms"
+model = "gpt-5.1-codex"
+
+[model_providers.kxpms]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.cc-switch-official]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.evol]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.local8782]
+name = "local_gateway"
+base_url = "http://localhost:8782/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.custom]
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+env_key = "CUSTOM_KEY"
+
+# 与 active **同端点**，但自带凭据：两个不同的 DB provider 可以指向同一个网关、
+# 各自带各自的 key。这种表不是我们的副本，盖章会把它自己的 key 顶掉。
+[model_providers.same_gateway_env_key]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+env_key = "OTHER_GATEWAY_KEY"
+
+[model_providers.same_gateway_header]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+http_headers = { Authorization = "Bearer other-gateway-key" }
+
+# 同端点、**不同 name**：这正是接管改道后的 inert 表形态（保留自己的显示名，
+# base_url 换成代理）。判据若还要求 name 相同，这张表就会被漏掉——而它漏掉
+# 的后果就是这一轮要修的 401。
+[model_providers.rerouted_inert]
+name = "local_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+# 同 name、**不同端点**：name 不是身份，光看名字会误盖。
+[model_providers.same_name_other_endpoint]
+name = "kxpms_gateway"
+base_url = "https://llm.kxpms.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let output =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "PROXY_MANAGED"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        let tables = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers");
+
+        for id in [
+            "kxpms",
+            "cc-switch-official",
+            "evol",
+            // 改道后的 inert 表：同端点不同名，照样要盖章
+            "rerouted_inert",
+        ] {
+            assert_eq!(
+                tables
+                    .get(id)
+                    .and_then(|t| t.get("experimental_bearer_token"))
+                    .and_then(|v| v.as_str()),
+                Some("PROXY_MANAGED"),
+                "[{id}] 是 active 的路由副本，必须拿到同一个 token，否则 resume 401"
+            );
+        }
+        assert!(
+            tables
+                .get("local8782")
+                .and_then(|t| t.get("experimental_bearer_token"))
+                .is_none(),
+            "不同端点不是路由副本，不能盖章"
+        );
+        assert!(
+            tables
+                .get("custom")
+                .and_then(|t| t.get("experimental_bearer_token"))
+                .is_none(),
+            "自带 env_key 的表是自己的凭据，不能被 active 覆盖"
+        );
+        // 下面两条才是"自带凭据豁免"真正承重的地方：它们与 active **同端点**，
+        // 只差在自带 credential 上。少了 `env_key` / `http_headers` 豁免，这两张
+        // 表会被盖上 active 的 token，把它们自己的 key 顶掉（变异 2 实测：
+        // 只留前两条断言时，摘掉豁免测试照样绿 —— 说明那两条根本没走到豁免分支）。
+        for id in [
+            "same_gateway_env_key",
+            "same_gateway_header",
+            // 同名不同端点：不能因为 name 撞了就盖章
+            "same_name_other_endpoint",
+        ] {
+            assert!(
+                tables
+                    .get(id)
+                    .and_then(|t| t.get("experimental_bearer_token"))
+                    .is_none(),
+                "[{id}] 与 active 同端点但自带凭据，必须保持自己的认证方式"
+            );
+        }
+    }
+
+    /// 官方接管没有 token：副本也不该有 —— 它俩都靠原生 ChatGPT 登录。
+    /// 这条钉住"没有就不盖章"，避免给影子塞一个 PROXY_MANAGED 之外的假凭据。
+    #[test]
+    fn no_bearer_token_means_no_token_on_route_copies_either() {
+        let input = r#"model_provider = "cc-switch-official"
+
+[model_providers.cc-switch-official]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.evol]
+name = "kxpms_gateway"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let output = prepare_codex_provider_live_config(&json!({}), input).expect("prepare");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert!(
+            output.contains("experimental_bearer_token") == false
+                || parsed
+                    .get("model_providers")
+                    .and_then(|v| v.as_table())
+                    .map(|t| t
+                        .values()
+                        .all(|v| v.get("experimental_bearer_token").is_none()))
+                    .unwrap_or(true),
+            "active 表本身没有 token 时，任何表都不该被凭空盖章: {output}"
+        );
     }
 
     #[test]
@@ -9347,7 +9728,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         ];
         let temp_home = tempfile::tempdir().expect("tempdir for CC_SWITCH_TEST_HOME");
         let home_path = temp_home.path().to_path_buf();
-        let _keep_alive = temp_home;            // RAII: drop at end of test
+        let _keep_alive = temp_home; // RAII: drop at end of test
         std::env::set_var("CODEX_HOME", home_path.to_string_lossy().to_string());
         std::env::set_var("CC_SWITCH_TEST_HOME", &home_path);
         std::env::set_var("HOME", &home_path);
@@ -9478,7 +9859,11 @@ model_catalog_json = "cc-switch-model-catalog.json"
             .expect("read generated catalog");
         let on_disk: serde_json::Value = serde_json::from_str(&on_disk).expect("catalog json");
         let on_disk_models = on_disk["models"].as_array().expect("on_disk models");
-        assert_eq!(on_disk_models.len(), 4, "generated file must mirror the 4 fixture entries");
+        assert_eq!(
+            on_disk_models.len(),
+            4,
+            "generated file must mirror the 4 fixture entries"
+        );
         for slug in ["claude-opus-5", "glm-5.2", "kimi-k3", "minimax-m3"] {
             assert!(
                 on_disk_models

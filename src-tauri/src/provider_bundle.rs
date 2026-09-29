@@ -59,7 +59,7 @@ pub struct InstallBundleResult {
 /// settings_config 整块 JSON 传进来，后端只做占位符展开与角色标记。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundleEndpointSpec {
-    pub role: String, // "primary" | "secondary"
+    pub role: String,        // "primary" | "secondary"
     pub provider_id: String, // 稳定 id（如 "kaixuan-kxpms"），由 bundle_id + role 派生
     pub name: String,
     pub website_url: Option<String>,
@@ -130,11 +130,7 @@ pub async fn install_bundle_internal(
     let mut expanded_endpoints: Vec<(BundleEndpointSpec, String)> = Vec::new();
     for ep in spec.endpoints.iter() {
         let mut ep = ep.clone();
-        let key_input = req
-            .api_keys
-            .get(&ep.role)
-            .cloned()
-            .unwrap_or_default();
+        let key_input = req.api_keys.get(&ep.role).cloned().unwrap_or_default();
         let expanded = expand_endpoint_key(&key_input, &mut missing_env_vars);
         ep.settings_config = apply_expanded_key(&ep.settings_config, &ep.api_key_field, &expanded);
         expanded_endpoints.push((ep, expanded));
@@ -220,9 +216,7 @@ fn apply_expanded_key(root: &Value, field_path: &str, expanded: &str) -> Value {
             return root;
         };
         // 中间节点：缺失则创建空 object，否则取现有 entry 的可变引用
-        let entry = map
-            .entry((*seg).to_string())
-            .or_insert_with(|| json!({}));
+        let entry = map.entry((*seg).to_string()).or_insert_with(|| json!({}));
         if !entry.is_object() {
             *entry = json!({});
         }
@@ -387,8 +381,8 @@ pub async fn install_bundle(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        let result = install_bundle_internal_blocking(&state.db, &request)
-            .map_err(|e| e.to_string())?;
+        let result =
+            install_bundle_internal_blocking(&state.db, &request).map_err(|e| e.to_string())?;
         // 切到 P1
         crate::switch_provider_test_hook(
             state.inner(),
@@ -409,9 +403,8 @@ fn install_bundle_internal_blocking(
     db: &Database,
     req: &InstallBundleRequest,
 ) -> Result<InstallBundleResult, AppError> {
-    let rt = tokio::runtime::Handle::try_current().map_err(|e| {
-        AppError::Config(format!("install_bundle 需要 tokio runtime 上下文: {e}"))
-    });
+    let rt = tokio::runtime::Handle::try_current()
+        .map_err(|e| AppError::Config(format!("install_bundle 需要 tokio runtime 上下文: {e}")));
     let rt = match rt {
         Ok(rt) => rt,
         Err(e) => return Err(e),
@@ -423,6 +416,26 @@ fn install_bundle_internal_blocking(
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    /// 测试专用包装：切换路径从不改道（`takeover_route = None`），本文件这几个
+    /// 用例关心的就是这条路径（bundle 安装后切一次 provider）。
+    #[allow(dead_code)]
+    fn merge_inert_tables_for_switch_path(
+        db: &crate::database::Database,
+        app_type_str: &str,
+        settings_config: &serde_json::Value,
+        current_provider_db_id: &str,
+        history_dir: Option<&std::path::Path>,
+    ) -> Result<serde_json::Value, crate::error::AppError> {
+        crate::services::provider::live::merge_inert_codex_provider_tables_into_settings_config(
+            db,
+            app_type_str,
+            settings_config,
+            current_provider_db_id,
+            history_dir,
+            None,
+        )
+    }
 
     /// 端到端：在临时 HOME 里 init 真 SQLite，验证 install_bundle_internal
     /// 真的把两个 endpoint 写进 providers 表、加入故障转移队列、开启
@@ -581,7 +594,10 @@ mod tests {
         assert_eq!(queue.len(), 2);
         let ids: Vec<&str> = queue.iter().map(|q| q.provider_id.as_str()).collect();
         let kxpms_pos = ids.iter().position(|id| *id == "kaixuan-kxpms").unwrap();
-        let local_pos = ids.iter().position(|id| *id == "kaixuan-local-8782").unwrap();
+        let local_pos = ids
+            .iter()
+            .position(|id| *id == "kaixuan-local-8782")
+            .unwrap();
         assert!(
             kxpms_pos < local_pos,
             "P1 顺序错：kxpms@{kxpms_pos}, local@{local_pos}"
@@ -606,7 +622,9 @@ mod tests {
                 m
             },
         };
-        let result3 = install_bundle_internal(&db, &req2).await.expect("install 3");
+        let result3 = install_bundle_internal(&db, &req2)
+            .await
+            .expect("install 3");
         assert_eq!(
             result3.missing_env_vars,
             vec!["KAIXUAN_TEST_KEY".to_string()]
@@ -709,8 +727,8 @@ mod tests {
         );
 
         // auto_failover 也不能被打开（它与 provider 写入同属一个事务）。
-        let cfg = futures::executor::block_on(db.get_proxy_config_for_app("codex"))
-            .expect("proxy cfg");
+        let cfg =
+            futures::executor::block_on(db.get_proxy_config_for_app("codex")).expect("proxy cfg");
         assert!(
             !cfg.auto_failover_enabled,
             "auto_failover must not be enabled when the batch rolled back"
@@ -953,8 +971,7 @@ mod tests {
         for ep in &b.endpoints {
             // 必填：auth.OPENAI_API_KEY 是空字符串（占位待填）
             assert_eq!(
-                ep.settings_config["auth"]["OPENAI_API_KEY"],
-                "",
+                ep.settings_config["auth"]["OPENAI_API_KEY"], "",
                 "{} 缺 OPENAI_API_KEY 槽位",
                 ep.provider_id
             );
@@ -1047,7 +1064,6 @@ mod tests {
     #[serial]
     fn kaixuan_bundle_inert_merge_preserves_inactive_endpoint_table() {
         use crate::database::Database;
-        use crate::services::provider::live::merge_inert_codex_provider_tables_into_settings_config;
         use tempfile::TempDir;
 
         // 临时 HOME → DB 落 sandbox
@@ -1082,17 +1098,17 @@ mod tests {
             .unwrap()
             .settings_config
             .clone();
-        let merged = merge_inert_codex_provider_tables_into_settings_config(
+        let merged = merge_inert_tables_for_switch_path(
             &db,
             AppType::Codex.as_str(),
             &kxpms_cfg,
             "kaixuan-kxpms",
+            None,
         )
         .expect("merge kxpms-active");
         let merged_text = merged.get("config").and_then(Value::as_str).expect("text");
-        let doc: toml_edit::DocumentMut = merged_text
-            .parse()
-            .expect("merged config 必须是合法 TOML");
+        let doc: toml_edit::DocumentMut =
+            merged_text.parse().expect("merged config 必须是合法 TOML");
         let mp = doc
             .get("model_providers")
             .and_then(|i| i.as_table_like())
@@ -1124,11 +1140,12 @@ mod tests {
             .unwrap()
             .settings_config
             .clone();
-        let merged2 = merge_inert_codex_provider_tables_into_settings_config(
+        let merged2 = merge_inert_tables_for_switch_path(
             &db,
             AppType::Codex.as_str(),
             &local_cfg,
             "kaixuan-local-8782",
+            None,
         )
         .expect("merge local-active");
         let doc2: toml_edit::DocumentMut = merged2
@@ -1159,7 +1176,6 @@ mod tests {
     #[serial]
     fn legacy_custom_toml_id_bundle_is_migrated_on_switch() {
         use crate::database::Database;
-        use crate::services::provider::live::merge_inert_codex_provider_tables_into_settings_config;
         use tempfile::TempDir;
 
         let tmp = TempDir::new().expect("tempdir");
@@ -1194,16 +1210,18 @@ mod tests {
         }
 
         // 切到 kxpms：live 投影必须是新形态
-        let merged = merge_inert_codex_provider_tables_into_settings_config(
+        let merged = merge_inert_tables_for_switch_path(
             &db,
             AppType::Codex.as_str(),
             &legacy_kxpms,
             "kaixuan-kxpms",
+            None,
         )
         .expect("inert merge");
 
         let live_text = merged["config"].as_str().expect("config string");
-        let doc: toml::Value = toml::from_str(live_text).expect("migrated config must be valid TOML");
+        let doc: toml::Value =
+            toml::from_str(live_text).expect("migrated config must be valid TOML");
         assert_eq!(
             doc.get("model_provider").and_then(|v| v.as_str()),
             Some("kxpms"),
@@ -1283,8 +1301,8 @@ mod tests {
         )
         .expect("save legacy provider");
 
-        let migrated = crate::codex_config::migrate_legacy_codex_toml_ids_in_db(&db)
-            .expect("db migration");
+        let migrated =
+            crate::codex_config::migrate_legacy_codex_toml_ids_in_db(&db).expect("db migration");
         assert_eq!(migrated, 1, "必须恰好改写 1 行");
 
         // 重新从 DB 读，验证真的落盘了
@@ -1355,8 +1373,9 @@ mod tests {
             app_type: AppType::Codex.as_str().to_string(),
             api_keys,
         };
-        let install_result =
-            install_bundle_internal(&db, &req).await.expect("install bundle");
+        let install_result = install_bundle_internal(&db, &req)
+            .await
+            .expect("install bundle");
         assert_eq!(install_result.installed_provider_ids.len(), 2);
         assert_eq!(install_result.primary_provider_id, "kaixuan-kxpms");
 
@@ -1576,18 +1595,14 @@ mod tests {
         // (f) auth.json 写的是明文 key（不再含 $VAR）
         let auth_path = codex_home.join("auth.json");
         if auth_path.exists() {
-            let auth_text = std::fs::read_to_string(&auth_path)
-                .map_err(|e| format!("read auth.json: {e}"))?;
+            let auth_text =
+                std::fs::read_to_string(&auth_path).map_err(|e| format!("read auth.json: {e}"))?;
             if auth_text.contains('$') {
                 return Err(format!("auth.json 仍含 $VAR 字面：{auth_text}"));
             }
             // 至少含两个 key 中的一个
-            if !auth_text.contains(expected_kxpms_key)
-                && !auth_text.contains(expected_local_key)
-            {
-                return Err(format!(
-                    "auth.json 不含期望 key：实际 {auth_text}"
-                ));
+            if !auth_text.contains(expected_kxpms_key) && !auth_text.contains(expected_local_key) {
+                return Err(format!("auth.json 不含期望 key：实际 {auth_text}"));
             }
         }
 
