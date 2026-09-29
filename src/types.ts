@@ -232,6 +232,18 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
+  stackModels?: ClaudeStackModel[];
+}
+
+// Stack 模式下 Claude Code 供应商发布的一个模型
+export interface ClaudeStackModel {
+  // 发往上游的模型名（不带 1M 标记）
+  model: string;
+  // 选择器里的显示名，没有时用模型名
+  displayName?: string;
+  // 上游是 1M 窗口
+  oneM?: boolean;
 }
 
 // Skill 同步方式

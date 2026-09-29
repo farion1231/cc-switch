@@ -3,7 +3,9 @@
 //! Stack 模式和路由模式在界面上二选一，内部都是代理模式：Stack 模式多一个开关位
 //! （[`StackState::enabled`]）。Stack 模式下供应商列表是累加式的：添加的每一家（第三方）的
 //! 模型以带保留前缀的 id 发布给客户端，选中后请求直达那一家；不带前缀的请求发往「默认」
-//! 那家（代理路由），不做故障转移。
+//! 那家（代理路由），不做故障转移。Claude Code 的四档别名（启动默认、后台任务、子代理别名）
+//! 都指向默认那家列表里的第一个模型（[`claude_route_default`]），平时用哪个由用户在
+//! `/model` 里选。
 //!
 //! - 名单和 key 登记簿存在 `live-state.json`（[`StackState`]），增删和客户端文件在同一个
 //!   操作里提交（`controller::set_stack_member`）；默认那家也在名单里，不能移除；
@@ -22,7 +24,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{env_string, has_one_m_marker, ONE_M_MARKER_FOR_CLIENT};
-use crate::provider::Provider;
+use crate::provider::{ClaudeStackModel, Provider};
 use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
 
 use super::state::{self, StackState};
@@ -160,6 +162,8 @@ pub struct StackModel {
     pub id: String,
     /// 发往上游的模型名：行里配置的原值（可能带 `[1M]`，转发时和路由请求一样处理）。
     pub upstream: String,
+    /// 模型自己的显示名（行里配的，没有是模型名），不带供应商名。
+    pub name: String,
     /// 选择器里显示的名字：`<显示名>（<供应商名>）`。
     pub display_name: String,
     /// 选择器里的说明。
@@ -170,9 +174,89 @@ pub struct StackModel {
     pub window: u64,
 }
 
-/// Claude 行发布的模型：`ANTHROPIC_MODEL` 和各档 `ANTHROPIC_DEFAULT_*_MODEL`，按去掉 1M
-/// 标记后的名字去重（任何一处带标记就按 1M）。显示名取对应档位的 `*_MODEL_NAME`。
+/// Claude 行发布的模型：配了 Stack 模型列表（`meta.stackModels`）就是列表，清空了就什么都不
+/// 发布；没配时是模型映射，即 `ANTHROPIC_MODEL` 和各档 `ANTHROPIC_DEFAULT_*_MODEL`，显示名取
+/// 对应档位的 `*_MODEL_NAME`。按去掉 1M 标记后的名字去重（任何一处带标记就按 1M）。
 pub fn claude_models(key: &str, provider: &Provider) -> Vec<StackModel> {
+    let listed = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.stack_models.as_deref());
+    let found = match listed {
+        Some(list) => listed_models(list),
+        None => claude_env(provider).map(mapped_models).unwrap_or_default(),
+    };
+    stack_models(key, provider, found)
+}
+
+/// 行里要发布的一个模型（还没加前缀）。
+struct Found {
+    /// 去掉 1M 标记的模型名。
+    model: String,
+    /// 发往上游的原值（1M 模型带标记）。
+    upstream: String,
+    name: Option<String>,
+    one_m: bool,
+}
+
+/// 按去掉 1M 标记后的名字去重地加入 `found`。同一个模型有一处带 1M 标记就按 1M，发往上游的
+/// 也用带标记的那个写法；显示名取第一个有的。
+fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
+    let model = strip_one_m_suffix_for_upstream(upstream).trim().to_string();
+    if model.is_empty() {
+        return;
+    }
+    let one_m = has_one_m_marker(upstream);
+    match found.iter_mut().find(|entry| entry.model == model) {
+        Some(entry) => {
+            if one_m && !entry.one_m {
+                entry.upstream = upstream.to_string();
+                entry.one_m = true;
+            }
+            if entry.name.is_none() {
+                entry.name = name;
+            }
+        }
+        None => found.push(Found {
+            model,
+            upstream: upstream.to_string(),
+            name,
+            one_m,
+        }),
+    }
+}
+
+fn claude_env(provider: &Provider) -> Option<&Map<String, Value>> {
+    provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object)
+}
+
+/// Stack 模型列表（`meta.stackModels`）里的模型。
+fn listed_models(list: &[ClaudeStackModel]) -> Vec<Found> {
+    let mut found = Vec::new();
+    for entry in list {
+        let raw = entry.model.trim();
+        let model = strip_one_m_suffix_for_upstream(raw).trim();
+        let upstream = if entry.one_m || has_one_m_marker(raw) {
+            format!("{model}{ONE_M_MARKER_FOR_CLIENT}")
+        } else {
+            model.to_string()
+        };
+        let name = entry
+            .display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        push_found(&mut found, &upstream, name);
+    }
+    found
+}
+
+/// 模型映射里的模型：`ANTHROPIC_MODEL` 和各档 `ANTHROPIC_DEFAULT_*_MODEL`。
+fn mapped_models(env: &Map<String, Value>) -> Vec<Found> {
     const ROLES: [(&str, Option<&str>); 5] = [
         ("ANTHROPIC_MODEL", None),
         (
@@ -192,14 +276,22 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<StackModel> {
             Some("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"),
         ),
     ];
-    let empty = Map::new();
-    let env = provider
-        .settings_config
-        .get("env")
-        .and_then(Value::as_object)
-        .unwrap_or(&empty);
-    let window = env
-        .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+    let mut found = Vec::new();
+    for (model_key, name_key) in ROLES {
+        let Some(upstream) = env_string(env, model_key) else {
+            continue;
+        };
+        let name = name_key.and_then(|name_key| env_string(env, name_key).map(str::to_string));
+        push_found(&mut found, upstream, name);
+    }
+    found
+}
+
+/// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是行里的
+/// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（Claude Code 只有一个全局窗口，没法按模型设），没有是 200K。
+fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackModel> {
+    let window = claude_env(provider)
+        .and_then(|env| env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
         .and_then(|value| match value {
             Value::Number(number) => number.as_u64(),
             Value::String(text) => text.trim().parse().ok(),
@@ -207,58 +299,19 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<StackModel> {
         })
         .filter(|window| *window > 0)
         .unwrap_or(CLAUDE_DEFAULT_WINDOW);
-
-    struct Found {
-        /// 去掉 1M 标记的模型名。
-        model: String,
-        /// 行里的原值。
-        upstream: String,
-        name: Option<String>,
-        one_m: bool,
-    }
-    let mut found: Vec<Found> = Vec::new();
-    for (model_key, name_key) in ROLES {
-        let Some(upstream) = env_string(env, model_key) else {
-            continue;
-        };
-        let model = strip_one_m_suffix_for_upstream(upstream).trim().to_string();
-        if model.is_empty() {
-            continue;
-        }
-        let name = name_key.and_then(|name_key| env_string(env, name_key).map(str::to_string));
-        let one_m = has_one_m_marker(upstream);
-        match found.iter_mut().find(|entry| entry.model == model) {
-            Some(entry) => {
-                // 同一个模型有一处带 1M 标记就按 1M，发往上游的也用带标记的那个写法。
-                if one_m && !entry.one_m {
-                    entry.upstream = upstream.to_string();
-                    entry.one_m = true;
-                }
-                if entry.name.is_none() {
-                    entry.name = name;
-                }
-            }
-            None => found.push(Found {
-                model,
-                upstream: upstream.to_string(),
-                name,
-                one_m,
-            }),
-        }
-    }
-
     found
         .into_iter()
-        .map(|found| StackModel {
-            id: encode(&AppType::Claude, key, &found.model, found.one_m),
-            display_name: display_name(
-                found.name.as_deref().unwrap_or(&found.model),
-                &provider.name,
-            ),
-            description: routed_description(&provider.name),
-            upstream: found.upstream,
-            one_m: found.one_m,
-            window,
+        .map(|found| {
+            let name = found.name.unwrap_or_else(|| found.model.clone());
+            StackModel {
+                id: encode(&AppType::Claude, key, &found.model, found.one_m),
+                display_name: display_name(&name, &provider.name),
+                name,
+                description: routed_description(&provider.name),
+                upstream: found.upstream,
+                one_m: found.one_m,
+                window,
+            }
         })
         .collect()
 }
@@ -287,14 +340,16 @@ pub fn routed_description(provider_name: &str) -> String {
     format!("经 CC Switch 路由到 {provider_name} (Routed by CC Switch to {provider_name})")
 }
 
-/// 一家 Stack 供应商发布给客户端的模型 id。
-fn model_ids_of(app: &AppType, key: &str, provider: &Provider) -> Vec<String> {
+/// 一家 Stack 供应商发布给客户端的模型 id。Codex 路由那家的整张目录就是默认路由的目录行，
+/// 不再带前缀发布；Claude 路由那家整张列表照常发布（它的第一个模型同时占着四档别名，见
+/// [`claude_route_default`]）。
+fn model_ids_of(app: &AppType, key: &str, provider: &Provider, route: bool) -> Vec<String> {
     match app {
         AppType::Claude => claude_models(key, provider)
             .into_iter()
             .map(|model| model.id)
             .collect(),
-        AppType::Codex => codex_model_ids(key, provider),
+        AppType::Codex if !route => codex_model_ids(key, provider),
         _ => Vec::new(),
     }
 }
@@ -304,13 +359,20 @@ fn model_ids_of(app: &AppType, key: &str, provider: &Provider) -> Vec<String> {
 pub struct Member {
     pub provider: Provider,
     pub key: String,
+    /// 这家是路由那家（默认），见 [`is_published`]。
+    pub route: bool,
     /// 发布给客户端的模型 id。
     pub model_ids: Vec<String>,
 }
 
 /// 名单里还在库里的成员，按加入顺序。库里已经没有的跳过（删除供应商会先把它移出名单，
-/// 删行前失败才会留下）。
-pub fn members(db: &Database, app: &AppType, stack: &StackState) -> Result<Vec<Member>, AppError> {
+/// 删行前失败才会留下）。`route` 是代理模式下的路由供应商（不在代理模式时为 `None`）。
+pub fn members(
+    db: &Database,
+    app: &AppType,
+    stack: &StackState,
+    route: Option<&str>,
+) -> Result<Vec<Member>, AppError> {
     let mut members = Vec::with_capacity(stack.members.len());
     for id in &stack.members {
         let Some(key) = stack.key_of(id) else {
@@ -320,20 +382,23 @@ pub fn members(db: &Database, app: &AppType, stack: &StackState) -> Result<Vec<M
         let Some(provider) = db.get_provider_by_id(id, app.as_str())? else {
             continue;
         };
-        let model_ids = model_ids_of(app, key, &provider);
+        let route = route == Some(id.as_str());
+        let model_ids = model_ids_of(app, key, &provider, route);
         members.push(Member {
             key: key.to_string(),
             provider,
+            route,
             model_ids,
         });
     }
     Ok(members)
 }
 
-/// 这个成员发布 Stack 模型：路由那家（`route`）不发布，它的模型已经通过默认路由出现，名单
-/// 保留。契约、Codex 目录、Claude Code 的模型发现和给前端的名单都按这一条排除。
-pub fn is_published(member: &Member, route: Option<&str>) -> bool {
-    Some(member.provider.id.as_str()) != route
+/// 这个成员发布 Stack 模型。Codex 路由那家不发布（它的模型已经是默认路由的目录行），Claude
+/// 路由那家照常发布；名单都保留。契约、Codex 目录、Claude Code 的模型发现和给前端的名单都按
+/// 这一条算。
+pub fn is_published(member: &Member) -> bool {
+    !member.route || !member.model_ids.is_empty()
 }
 
 /// 发布 Stack 模型的成员（按名单顺序，见 [`is_published`]）。Stack 模式关着（路由模式）时
@@ -347,8 +412,8 @@ pub fn published_members(
     if !stack.enabled || stack.members.is_empty() || !supports_stack(app) {
         return Ok(Vec::new());
     }
-    let mut members = members(db, app, stack)?;
-    members.retain(|member| is_published(member, route));
+    let mut members = members(db, app, stack, route)?;
+    members.retain(is_published);
     Ok(members)
 }
 
@@ -358,6 +423,17 @@ pub fn claude_published(members: &[Member]) -> Vec<StackModel> {
         .iter()
         .flat_map(|member| claude_models(&member.key, &member.provider))
         .collect()
+}
+
+/// 默认那家（路由）列表里的第一个模型：Stack 模式下 Claude Code 的四档别名（启动默认、后台
+/// 任务、子代理别名）都指向它。列表的顺序就是模型映射的顺序（`ANTHROPIC_MODEL` 在前），
+/// 所以没配列表的行用的是它的主模型。路由那家不在发布的成员里（Stack 模式关着、它没有模型）
+/// 时没有。
+pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
+    let route = members.iter().find(|member| member.route)?;
+    claude_models(&route.key, &route.provider)
+        .into_iter()
+        .next()
 }
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
@@ -501,8 +577,8 @@ pub struct StackMemberView {
     pub provider_id: String,
     /// 发布给客户端的模型 id。
     pub model_ids: Vec<String>,
-    /// 这家是默认那家（代理路由）：它的模型通过默认路由出现，`model_ids` 暂不发布，默认
-    /// 换到别家后才发布。
+    /// 这家是默认那家（代理路由）。Claude 的照常发布，第一个模型同时占着四档别名；Codex 的
+    /// 模型是默认路由的目录行，`model_ids` 为空，默认换到别家后才带前缀发布。
     pub route: bool,
 }
 
@@ -522,14 +598,13 @@ pub struct StackView {
     pub notice: Option<&'static str>,
 }
 
-/// `route` 是代理模式下的路由供应商（不在代理模式时为 `None`）。
-pub fn member_views(members: &[Member], route: Option<&str>) -> Vec<StackMemberView> {
+pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {
     members
         .iter()
         .map(|member| StackMemberView {
             provider_id: member.provider.id.clone(),
             model_ids: member.model_ids.clone(),
-            route: !is_published(member, route),
+            route: member.route,
         })
         .collect()
 }
@@ -687,6 +762,7 @@ mod tests {
                 StackModel {
                     id: "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
                     upstream: "glm-5.2[1M]".to_string(),
+                    name: "GLM 5.2".to_string(),
                     display_name: "GLM 5.2（Zhipu）".to_string(),
                     description: "经 CC Switch 路由到 Zhipu (Routed by CC Switch to Zhipu)"
                         .to_string(),
@@ -696,6 +772,7 @@ mod tests {
                 StackModel {
                     id: "ccs-claude-zhipu--glm-4.7-air".to_string(),
                     upstream: "glm-4.7-air".to_string(),
+                    name: "glm-4.7-air".to_string(),
                     display_name: "glm-4.7-air（Zhipu）".to_string(),
                     description: "经 CC Switch 路由到 Zhipu (Routed by CC Switch to Zhipu)"
                         .to_string(),
@@ -710,6 +787,88 @@ mod tests {
         assert_eq!(
             claude_models("r", &default_window)[0].window,
             CLAUDE_DEFAULT_WINDOW
+        );
+    }
+
+    fn with_stack_models(mut provider: Provider, models: Value) -> Provider {
+        provider.meta = Some(crate::provider::ProviderMeta {
+            stack_models: serde_json::from_value(models).unwrap(),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn an_emptied_list_publishes_nothing_and_an_unset_one_follows_the_mapping() {
+        let mapped = provider("p", "Kimi", None, json!({ "ANTHROPIC_MODEL": "kimi-k3" }));
+        let emptied = with_stack_models(mapped.clone(), json!([]));
+        assert!(claude_models("kimi", &emptied).is_empty());
+        assert_eq!(
+            serde_json::to_value(emptied.meta.as_ref().unwrap()).unwrap()["stackModels"],
+            json!([])
+        );
+
+        let unset = with_stack_models(mapped, Value::Null);
+        assert_eq!(unset.meta.as_ref().unwrap().stack_models, None);
+        let ids: Vec<String> = claude_models("kimi", &unset)
+            .into_iter()
+            .map(|model| model.id)
+            .collect();
+        assert_eq!(ids, vec!["ccs-claude-kimi--kimi-k3"]);
+        let meta = serde_json::to_value(unset.meta.as_ref().unwrap()).unwrap();
+        assert!(meta.get("stackModels").is_none());
+    }
+
+    #[test]
+    fn a_stack_model_list_replaces_the_mapping() {
+        let row = with_stack_models(
+            provider(
+                "p",
+                "Kimi",
+                None,
+                json!({
+                    "ANTHROPIC_MODEL": "kimi-k3",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-k3-turbo",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "256000"
+                }),
+            ),
+            json!([
+                { "model": " kimi-k3 ", "displayName": "Kimi K3" },
+                { "model": "kimi-k3-thinking", "displayName": " ", "oneM": true },
+                { "model": "  " },
+                { "model": "kimi-k3[1m]", "displayName": "ignored" }
+            ]),
+        );
+        let summary: Vec<(String, String, String, bool, u64)> = claude_models("kimi", &row)
+            .into_iter()
+            .map(|model| {
+                (
+                    model.id,
+                    model.upstream,
+                    model.display_name,
+                    model.one_m,
+                    model.window,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    "ccs-claude-kimi--kimi-k3[1M]".to_string(),
+                    "kimi-k3[1M]".to_string(),
+                    "Kimi K3（Kimi）".to_string(),
+                    true,
+                    256_000,
+                ),
+                (
+                    "ccs-claude-kimi--kimi-k3-thinking[1M]".to_string(),
+                    "kimi-k3-thinking[1M]".to_string(),
+                    "kimi-k3-thinking（Kimi）".to_string(),
+                    true,
+                    256_000,
+                ),
+            ]
         );
     }
 
@@ -780,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn the_route_is_not_published_twice() {
+    fn a_claude_route_publishes_its_whole_list_and_leads_with_its_default() {
         let fx = fixture();
         let stack = state::stack(&fx.store, "claude").unwrap();
         let members = |route| published_members(&fx.db, &AppType::Claude, &stack, route).unwrap();
@@ -790,23 +949,62 @@ mod tests {
                 .map(|model| model.id)
                 .collect::<Vec<_>>()
         };
+        // 路由那家照常发布，和不在代理模式时算出来的一样。
         let all = ids(None);
         assert!(all.contains(&"ccs-claude-kimi--kimi-k3".to_string()));
-        let without_kimi: Vec<String> = all
-            .iter()
-            .filter(|id| !id.starts_with("ccs-claude-kimi--"))
-            .cloned()
-            .collect();
-        assert!(!without_kimi.is_empty());
-        assert_eq!(ids(Some("kimi")), without_kimi);
+        assert_eq!(ids(Some("kimi")), all);
+        assert_eq!(claude_route_default(&members(None)), None);
+        let default = claude_route_default(&members(Some("zhipu"))).unwrap();
+        assert_eq!(
+            (default.id.as_str(), default.name.as_str()),
+            ("ccs-claude-zhipu--glm-5.2[1M]", "glm-5.2")
+        );
 
-        // 界面上路由那家仍在名单里，标出来。
-        let views = member_views(&members(None), Some("kimi"));
-        let route_flags: Vec<(&str, bool)> = views
+        // 界面上标出路由那家，它的模型 id 照常列出。
+        let views =
+            member_views(&super::members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap());
+        let route_flags: Vec<(&str, bool, usize)> = views
             .iter()
-            .map(|view| (view.provider_id.as_str(), view.route))
+            .map(|view| (view.provider_id.as_str(), view.route, view.model_ids.len()))
             .collect();
-        assert_eq!(route_flags, vec![("kimi", true), ("zhipu", false)]);
+        assert_eq!(route_flags, vec![("kimi", true, 1), ("zhipu", false, 1)]);
+    }
+
+    #[test]
+    fn the_default_is_the_first_model_of_the_routes_list() {
+        let fx = fixture();
+        let kimi = with_stack_models(
+            provider(
+                "kimi",
+                "Kimi",
+                Some("kimi"),
+                json!({ "ANTHROPIC_MODEL": "kimi-k3" }),
+            ),
+            json!([
+                { "model": "kimi-k3-mini", "displayName": "K3 Mini" },
+                { "model": "kimi-k3" }
+            ]),
+        );
+        fx.db.save_provider("claude", &kimi).unwrap();
+        let stack = state::stack(&fx.store, "claude").unwrap();
+        let published = published_members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap();
+        let default = claude_route_default(&published).unwrap();
+        assert_eq!(
+            (default.id.as_str(), default.name.as_str()),
+            ("ccs-claude-kimi--kimi-k3-mini", "K3 Mini")
+        );
+        let ids: Vec<String> = claude_published(&published)
+            .into_iter()
+            .map(|model| model.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "ccs-claude-kimi--kimi-k3-mini".to_string(),
+                "ccs-claude-kimi--kimi-k3".to_string(),
+                "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+            ]
+        );
     }
 
     #[test]

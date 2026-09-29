@@ -507,24 +507,32 @@ export function ProviderCard({
                 />
               )}
 
-              {/* 默认那家的模型走默认路由，不带前缀发布，不标。 */}
-              {stackMember && !stackMember.route && (
-                <ProviderStatusBadge
-                  tone={stackNotice ? "warning" : "success"}
-                  label={t("provider.stackBadge")}
-                  title={[
-                    stackMember.modelIds.length > 0
-                      ? t("provider.stackBadgeHint", {
-                          client: getAppLabel(appId),
-                          models: stackMember.modelIds.join(", "),
-                        })
-                      : t("provider.stackBadgeNoModels"),
-                    stackNotice ? t(`provider.${stackNotice}`) : null,
-                  ]
-                    .filter(Boolean)
-                    .join("\n")}
-                />
-              )}
+              {/* 默认那家：Claude Code 的照常发布（第一个模型同时接住启动和后台请求）；Codex 的
+                  模型是默认路由的目录行，不带前缀发布，不标。 */}
+              {stackMember &&
+                (!stackMember.route || stackMember.modelIds.length > 0) && (
+                  <ProviderStatusBadge
+                    tone={stackNotice ? "warning" : "success"}
+                    label={t("provider.stackBadge")}
+                    title={[
+                      stackMember.modelIds.length > 0
+                        ? t("provider.stackBadgeHint", {
+                            client: getAppLabel(appId),
+                            models: stackMember.modelIds.join(", "),
+                          })
+                        : t("provider.stackBadgeNoModels"),
+                      stackMember.route
+                        ? t("provider.stackDefaultHint", {
+                            defaultValue:
+                              "它是默认供应商：列表里的第一个模型负责 Claude Code 启动和后台任务",
+                          })
+                        : null,
+                      stackNotice ? t(`provider.${stackNotice}`) : null,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
+                  />
+                )}
 
               {appId === "claude" && provider.category === "official" && (
                 <ProviderStatusBadge

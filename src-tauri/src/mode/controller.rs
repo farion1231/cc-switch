@@ -25,7 +25,8 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
-    direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, PROXY_TOKEN_PLACEHOLDER,
+    direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, StackRoleModel,
+    PROXY_TOKEN_PLACEHOLDER,
 };
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
@@ -176,15 +177,22 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
     }
 }
 
+/// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名指向的模型（Stack 模式下默认那家
+/// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。
 fn claude_contract(
     route: &Provider,
     proxy_url: &str,
     stack: &[StackModel],
+    stack_default: Option<&StackModel>,
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
         proxy_url,
         claude_proxy_auth(route),
+        stack_default.map(|model| StackRoleModel {
+            id: &model.id,
+            name: &model.name,
+        }),
     );
     with_stack_models(&mut projection, stack);
     let contract = contract::claude(&projection);
@@ -198,9 +206,8 @@ const CLAUDE_GATEWAY_DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DIS
 const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
 /// 发布了 Stack 模型时：打开模型发现；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由 Stack 模型决定，取
-/// 非 1M 模型里最小的窗口（等于默认 200K 时不写）。路由用的是 `claude-*` 别名，Claude Code
-/// 本来就不对它们用 MAX，所以不影响路由；1M 的 Stack 模型也不受 MAX 影响。没有发布 Stack 模型时
-/// 契约和原来逐字节一致。
+/// 非 1M 模型里最小的窗口（等于默认 200K 时不写）。四档别名也写成 Stack id，同样受 MAX 约束；
+/// 1M 的 Stack 模型不受 MAX 影响。没有发布 Stack 模型时契约和原来逐字节一致。
 fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
     if stack.is_empty() {
         return;
@@ -273,8 +280,11 @@ async fn write_proxy(
     };
     match app {
         AppType::Claude => {
-            let published = stack::claude_published(&published_members(state, app, &stack, route)?);
-            let (projection, contract) = claude_contract(route, &proxy_url, &published);
+            let members = published_members(state, app, &stack, route)?;
+            let published = stack::claude_published(&members);
+            let stack_default = stack::claude_route_default(&members);
+            let (projection, contract) =
+                claude_contract(route, &proxy_url, &published, stack_default.as_ref());
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
@@ -987,16 +997,16 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
         return Ok(StackView::default());
     }
     let stack = settled_stack(app)?;
-    let members = stack::members(&state.db, app, &stack).map_err(err)?;
     let mode = current::mode_state(app);
     let route = mode.proxy_route.as_deref().filter(|_| mode.is_proxy());
+    let members = stack::members(&state.db, app, &stack, route).map_err(err)?;
     let notice = match app {
         AppType::Codex => codex_stack_notice(state, &stack),
         _ => None,
     };
     Ok(StackView {
         active: mode.is_proxy() && stack.enabled,
-        members: stack::member_views(&members, route),
+        members: stack::member_views(&members),
         notice,
     })
 }
@@ -1348,7 +1358,7 @@ mod tests {
 
     /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
     fn takeover(live: &Value, provider: &Provider) -> Value {
-        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[]);
+        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None);
         let mut doc = live.clone();
         direct_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -4632,20 +4642,38 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let plain_bytes = fs::read(settings_path()).unwrap();
-        let plain_contract = mode(&AppType::Claude).contract.unwrap();
+        let only_default_bytes = fs::read(settings_path()).unwrap();
+        let only_default_contract = mode(&AppType::Claude).contract.unwrap();
 
-        // 进入 Stack 模式时默认那家（a）已经在名单里，它不发布，契约和路由模式一样。
+        // 进入 Stack 模式时默认那家（a）已经在名单里，照常发布；四档都指向它的第一个模型。
         assert_eq!(stack_state().members, vec!["a"]);
+        let env = settings()["env"].clone();
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
+            assert_eq!(
+                env[format!("ANTHROPIC_DEFAULT_{role}_MODEL")],
+                "ccs-claude-a--claude-sonnet-4-6",
+                "{role}"
+            );
+            assert_eq!(
+                env[format!("ANTHROPIC_DEFAULT_{role}_MODEL_NAME")],
+                "claude-sonnet-4-6",
+                "{role}"
+            );
+        }
         let views = set_member(&state, "kimi", true).await;
         assert_eq!(views.len(), 2);
         assert!(views[0].route);
+        assert_eq!(views[0].model_ids, vec!["ccs-claude-a--claude-sonnet-4-6"]);
         assert_eq!(stack_state().key_of("kimi"), Some("kimi"));
         assert_eq!(views[1].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
         let env = settings()["env"].clone();
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
-        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
         assert_eq!(
             mode(&AppType::Claude).contract.unwrap().exclusive[CLAUDE_MAX_CONTEXT_ENV],
             "128000"
@@ -4659,10 +4687,13 @@ model_provider = "c"
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
 
-        // 只剩默认那家：客户端文件和契约回到没有 Stack 模型时的样子，登记簿保留。
+        // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
-        assert_eq!(fs::read(settings_path()).unwrap(), plain_bytes);
-        assert_eq!(mode(&AppType::Claude).contract.unwrap(), plain_contract);
+        assert_eq!(fs::read(settings_path()).unwrap(), only_default_bytes);
+        assert_eq!(
+            mode(&AppType::Claude).contract.unwrap(),
+            only_default_contract
+        );
         let stack = stack_state();
         assert_eq!(stack.members, vec!["a"]);
         assert_eq!(stack.key_of("kimi"), Some("kimi"));
@@ -4715,14 +4746,14 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn the_route_is_not_published_and_repeating_a_target_changes_nothing() {
+    async fn the_default_leads_the_aliases_and_repeating_a_target_changes_nothing() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
         let before = fs::read(settings_path()).unwrap();
 
-        // 路由那家在名单里：它的模型已经通过默认路由出现，不再发布，契约不变。
+        // 路由那家已经在名单里：再加一次什么都不变。
         let views = set_member(&state, "a", true).await;
         assert_eq!(views.len(), 1);
         assert_eq!(fs::read(settings_path()).unwrap(), before);
@@ -4733,11 +4764,22 @@ model_provider = "c"
         assert_eq!(fs::read(settings_path()).unwrap(), with_kimi);
         assert_eq!(stack_state().members, vec!["a", "kimi"]);
 
-        // 换路由到名单里的 kimi：它不再发布，a 的模型开始发布。
+        // 换默认到名单里的 kimi：四档跟着指向 kimi 的第一个模型，两家都照常发布。
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
         let env = settings()["env"].clone();
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
-        assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-kimi--kimi-k3"
+        );
+        assert_eq!(env["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], "kimi-k3");
+        let views = stack_views(&state, &AppType::Claude).unwrap().members;
+        let published: Vec<(&str, bool, usize)> = views
+            .iter()
+            .map(|view| (view.provider_id.as_str(), view.route, view.model_ids.len()))
+            .collect();
+        assert_eq!(published, vec![("a", false, 1), ("kimi", true, 1)]);
     }
 
     #[tokio::test]
@@ -4796,16 +4838,26 @@ model_provider = "c"
         assert!(!error.partial);
         assert_eq!(stack_state().members, vec!["a"]);
 
-        // 设为默认（比如托盘里点）一家还没添加的：一起加入名单，原来的默认留在名单里、
-        // 开始发布，之后可以移除。
+        // 设为默认（比如托盘里点）一家还没添加的：一起加入名单，原来的默认留在名单里，
+        // 之后可以移除。四档指向新默认的第一个模型：1M 模型三档带标记，haiku 不带。
         ProviderService::switch(&state, AppType::Claude, "zhipu").expect("set default");
         assert_eq!(stack_state().members, vec!["a", "zhipu"]);
-        assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        let env = settings()["env"].clone();
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-zhipu--glm-5.2[1M]"
+        );
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "ccs-claude-zhipu--glm-5.2"
+        );
+        let with_a = settings();
         set_member(&state, "a", false).await;
         assert_eq!(stack_state().members, vec!["zhipu"]);
-        assert!(settings()["env"]
-            .get(CLAUDE_GATEWAY_DISCOVERY_ENV)
-            .is_none());
+        let env = settings()["env"].clone();
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
+        assert_eq!(env, with_a["env"], "a is not the default any more");
     }
 
     #[tokio::test]
@@ -5051,7 +5103,7 @@ model_provider = "c"
 
         ProviderService::delete(&state, AppType::Claude, "kimi").expect("delete kimi");
         let env = settings()["env"].clone();
-        assert!(env.get(CLAUDE_GATEWAY_DISCOVERY_ENV).is_none(), "{env}");
+        assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1", "a still publishes");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
         assert!(state
             .db
@@ -5061,6 +5113,76 @@ model_provider = "c"
         let stack = stack_state();
         assert_eq!(stack.members, vec!["a"]);
         assert_eq!(stack.key_of("kimi"), Some("kimi"), "the key stays taken");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn the_first_model_of_the_defaults_list_leads_the_aliases() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        let mapped_contract = mode(&AppType::Claude).contract.unwrap();
+        let sonnet = || settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"].clone();
+        assert_eq!(sonnet(), "ccs-claude-a--claude-sonnet-4-6");
+
+        // 配了列表：整张照常发布，第一个占四档。
+        let mut a = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        a.meta.get_or_insert_with(Default::default).stack_models = serde_json::from_value(
+            json!([{ "model": "a-vision", "displayName": "A Vision" }, { "model": "claude-sonnet-4-6" }]),
+        )
+        .unwrap();
+        ProviderService::update(&state, AppType::Claude, None, a.clone()).expect("update a");
+        let views = stack_views(&state, &AppType::Claude).unwrap().members;
+        assert!(views[0].route);
+        assert_eq!(
+            views[0].model_ids,
+            vec!["ccs-claude-a--a-vision", "ccs-claude-a--claude-sonnet-4-6"]
+        );
+        assert_eq!(sonnet(), "ccs-claude-a--a-vision");
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"],
+            "A Vision"
+        );
+
+        // 调整顺序就换了默认模型。
+        a.meta
+            .as_mut()
+            .unwrap()
+            .stack_models
+            .as_mut()
+            .unwrap()
+            .reverse();
+        ProviderService::update(&state, AppType::Claude, None, a.clone()).expect("reorder a");
+        assert_eq!(sonnet(), "ccs-claude-a--claude-sonnet-4-6");
+
+        // 用户清空了列表：什么都不发布，四档回到路由契约的写法。
+        a.meta.as_mut().unwrap().stack_models = Some(Vec::new());
+        ProviderService::update(&state, AppType::Claude, None, a.clone()).expect("clear a");
+        let views = stack_views(&state, &AppType::Claude).unwrap().members;
+        assert!(views[0].model_ids.is_empty());
+        assert!(!sonnet().as_str().unwrap().starts_with("ccs-claude-"));
+
+        // 没配列表：回到按映射发布，第一个是 `ANTHROPIC_MODEL`。
+        a.meta.as_mut().unwrap().stack_models = None;
+        ProviderService::update(&state, AppType::Claude, None, a).expect("unset a");
+        assert_eq!(mode(&AppType::Claude).contract.unwrap(), mapped_contract);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn routing_mode_keeps_the_claude_aliases() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        set_member(&state, "kimi", true).await;
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("routing");
+        let env = settings()["env"].clone();
+        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-5");
+        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "claude-haiku-4-5");
+        assert!(env.get(CLAUDE_GATEWAY_DISCOVERY_ENV).is_none(), "{env}");
     }
 
     fn codex_native(id: &str, url: &str, extra: &str, catalog: Option<Value>) -> Provider {
