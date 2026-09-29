@@ -419,8 +419,8 @@ pub fn commit_target(
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(app, id)?;
     }
-    // 模式、写入记录和附加模型在同一次状态文件写入里落定。
-    if target.state.is_some() || target.written.is_some() || target.pool.is_some() {
+    // 模式、写入记录和 Stack 模型在同一次状态文件写入里落定。
+    if target.state.is_some() || target.written.is_some() || target.stack.is_some() {
         state::update(store, |live| {
             let entry = live.apps.entry(app.to_string()).or_default();
             if let Some(mode) = &target.state {
@@ -429,8 +429,8 @@ pub fn commit_target(
             if let Some(written) = &target.written {
                 entry.written = Some(written.clone());
             }
-            if let Some(pool) = &target.pool {
-                entry.pool = pool.clone();
+            if let Some(stack) = &target.stack {
+                entry.stack = stack.clone();
             }
         })?;
     }

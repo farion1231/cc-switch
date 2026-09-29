@@ -149,8 +149,8 @@ describe("ProviderActions Pi provider switching", () => {
   });
 });
 
-describe("ProviderActions attached mode", () => {
-  const renderPool = (
+describe("ProviderActions Stack mode", () => {
+  const renderStack = (
     props: Partial<Parameters<typeof ProviderActions>[0]> = {},
   ) =>
     render(
@@ -158,7 +158,7 @@ describe("ProviderActions attached mode", () => {
         appId="claude"
         isCurrent={false}
         isProxyTakeover
-        isPoolMode
+        isStackMode
         onSwitch={vi.fn()}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
@@ -168,29 +168,29 @@ describe("ProviderActions attached mode", () => {
 
   it("adds a provider that is not in the list", async () => {
     const user = userEvent.setup();
-    const onTogglePool = vi.fn();
-    renderPool({ onTogglePool });
+    const onToggleStack = vi.fn();
+    renderStack({ onToggleStack });
 
     await user.click(screen.getByRole("button", { name: "添加" }));
-    expect(onTogglePool).toHaveBeenLastCalledWith(true);
+    expect(onToggleStack).toHaveBeenLastCalledWith(true);
     // 没添加的不能设为默认。
     expect(screen.queryByRole("button", { name: "设为默认" })).toBeNull();
   });
 
   it("removes an added provider and sets it as the default", async () => {
     const user = userEvent.setup();
-    const onTogglePool = vi.fn();
+    const onToggleStack = vi.fn();
     const onSwitch = vi.fn();
-    renderPool({ isPoolMember: true, onTogglePool, onSwitch });
+    renderStack({ isStackMember: true, onToggleStack, onSwitch });
 
     await user.click(screen.getByRole("button", { name: "设为默认" }));
     expect(onSwitch).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "移除" }));
-    expect(onTogglePool).toHaveBeenLastCalledWith(false);
+    expect(onToggleStack).toHaveBeenLastCalledWith(false);
   });
 
   it("keeps the default in the list", () => {
-    renderPool({ isCurrent: true, isPoolMember: true, onTogglePool: vi.fn() });
+    renderStack({ isCurrent: true, isStackMember: true, onToggleStack: vi.fn() });
 
     expect(screen.getByRole("button", { name: "移除" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "当前默认" })).toBeDisabled();
@@ -199,7 +199,7 @@ describe("ProviderActions attached mode", () => {
   it("only lets an account that cannot be added become the default", async () => {
     const user = userEvent.setup();
     const onSwitch = vi.fn();
-    renderPool({ appId: "codex", onSwitch });
+    renderStack({ appId: "codex", onSwitch });
 
     expect(screen.queryByRole("button", { name: "添加" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "设为默认" }));
@@ -207,7 +207,7 @@ describe("ProviderActions attached mode", () => {
   });
 
   it("keeps an official account blocked by the proxy blocked", () => {
-    renderPool({ isOfficialBlockedByProxy: true });
+    renderStack({ isOfficialBlockedByProxy: true });
 
     expect(screen.queryByRole("button", { name: "设为默认" })).toBeNull();
   });

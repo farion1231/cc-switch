@@ -52,8 +52,8 @@ export interface ProxyTakeoverStatus {
   hermes: boolean;
 }
 
-/** 附加模型：名单里的一家和它发布给客户端的模型 id。 */
-export interface ProxyPoolMember {
+/** Stack 模型：名单里的一家和它发布给客户端的模型 id。 */
+export interface ProxyStackMember {
   providerId: string;
   modelIds: string[];
   /** 这家是默认那家（代理路由）：模型走默认路由，`modelIds` 等默认换到别家后才发布。 */
@@ -61,27 +61,27 @@ export interface ProxyPoolMember {
 }
 
 /**
- * Codex 附加模型客户端看不到或看不全：`routeOwnsCatalog` 路由供应商使用自己的模型目录文件，
- * 附加模型不发布；`configOwnsCatalog` 用户在 config.toml 里指定了自己的模型目录，生成的目录
+ * Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由供应商使用自己的模型目录文件，
+ * Stack 模型不发布；`configOwnsCatalog` 用户在 config.toml 里指定了自己的模型目录，生成的目录
  * 不生效；官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex
- * 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` 附加模型暂不可用。
+ * 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型暂不可用。
  */
-export type ProxyPoolNotice =
+export type ProxyStackNotice =
   | "routeOwnsCatalog"
   | "configOwnsCatalog"
   | "officialModelsBundled"
   | "officialModelsUnavailable";
 
-/** 附加模式的状态、名单和提示。 */
-export interface ProxyPool {
-  /** 在附加模式（代理模式且附加模式开着）。 */
+/** Stack 模式的状态、名单和提示。 */
+export interface ProxyStack {
+  /** 在 Stack 模式（代理模式且 Stack 模式开着）。 */
   active: boolean;
-  members: ProxyPoolMember[];
-  notice?: ProxyPoolNotice;
+  members: ProxyStackMember[];
+  notice?: ProxyStackNotice;
 }
 
-/** 增删附加模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
-export interface ProxyPoolWriteError {
+/** 增删 Stack 模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
+export interface ProxyStackWriteError {
   partial: boolean;
   message: string;
 }

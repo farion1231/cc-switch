@@ -38,8 +38,8 @@ use crate::store::AppState;
 use super::contract;
 use super::current::{self, Purpose};
 use super::operation;
-use super::pool::{self, PoolModel, PoolView};
-use super::state::{op, Contract, Mode, ModeState, PendingTarget, PoolState};
+use super::stack::{self, StackModel, StackView};
+use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
 /// 支持代理模式的应用。
 pub const PROXY_APPS: [AppType; 4] = [
@@ -179,30 +179,30 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
 fn claude_contract(
     route: &Provider,
     proxy_url: &str,
-    pool: &[PoolModel],
+    stack: &[StackModel],
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
         proxy_url,
         claude_proxy_auth(route),
     );
-    with_pool_models(&mut projection, pool);
+    with_stack_models(&mut projection, stack);
     let contract = contract::claude(&projection);
     (projection, contract)
 }
 
 /// Claude Code 的模型发现开关：打开后启动时向 `ANTHROPIC_BASE_URL/v1/models` 取模型列表，
-/// 附加模型才会出现在 `/model` 里。独有字段：记进契约，退出代理时按记录删（同值才删），
+/// Stack 模型才会出现在 `/model` 里。独有字段：记进契约，退出代理时按记录删（同值才删），
 /// 用户自己设的全局值在直连切换时不受影响。
 const CLAUDE_GATEWAY_DISCOVERY_ENV: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
 const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
-/// 发布了附加模型时：打开模型发现；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由附加模型决定，取
+/// 发布了 Stack 模型时：打开模型发现；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由 Stack 模型决定，取
 /// 非 1M 模型里最小的窗口（等于默认 200K 时不写）。路由用的是 `claude-*` 别名，Claude Code
-/// 本来就不对它们用 MAX，所以不影响路由；1M 的附加模型也不受 MAX 影响。没有发布附加模型时
+/// 本来就不对它们用 MAX，所以不影响路由；1M 的 Stack 模型也不受 MAX 影响。没有发布 Stack 模型时
 /// 契约和原来逐字节一致。
-fn with_pool_models(projection: &mut ClaudeProjection, pool: &[PoolModel]) {
-    if pool.is_empty() {
+fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
+    if stack.is_empty() {
         return;
     }
     projection.exclusive.insert(
@@ -210,12 +210,12 @@ fn with_pool_models(projection: &mut ClaudeProjection, pool: &[PoolModel]) {
         Value::String("1".to_string()),
     );
     projection.exclusive.shift_remove(CLAUDE_MAX_CONTEXT_ENV);
-    let smallest = pool
+    let smallest = stack
         .iter()
         .filter(|model| !model.one_m)
         .map(|model| model.window)
         .min();
-    if let Some(window) = smallest.filter(|window| *window != pool::CLAUDE_DEFAULT_WINDOW) {
+    if let Some(window) = smallest.filter(|window| *window != stack::CLAUDE_DEFAULT_WINDOW) {
         projection.exclusive.insert(
             CLAUDE_MAX_CONTEXT_ENV.to_string(),
             Value::String(window.to_string()),
@@ -223,19 +223,19 @@ fn with_pool_models(projection: &mut ClaudeProjection, pool: &[PoolModel]) {
     }
 }
 
-/// 这个应用已落定的附加名单。
-fn settled_pool(app: &AppType) -> Result<PoolState, String> {
-    super::state::pool(&DeviceStore::for_device(), app.as_str()).map_err(err)
+/// 这个应用已落定的 Stack 名单。
+fn settled_stack(app: &AppType) -> Result<StackState, String> {
+    super::state::stack(&DeviceStore::for_device(), app.as_str()).map_err(err)
 }
 
-/// 发布附加模型的成员（见 [`pool::published_members`]）。
+/// 发布 Stack 模型的成员（见 [`stack::published_members`]）。
 fn published_members(
     state: &AppState,
     app: &AppType,
-    pool: &PoolState,
+    stack: &StackState,
     route: &Provider,
-) -> Result<Vec<pool::Member>, String> {
-    pool::published_members(&state.db, app, pool, Some(route.id.as_str())).map_err(err)
+) -> Result<Vec<stack::Member>, String> {
+    stack::published_members(&state.db, app, stack, Some(route.id.as_str())).map_err(err)
 }
 
 /// 只落定状态，不碰客户端文件（未接上时换路由、故障转移记下新路由等）。
@@ -248,8 +248,8 @@ fn commit_state(state: &AppState, app: &AppType, target: &PendingTarget) -> Resu
 /// （启动时）一律重写：顺带核对路由供应商还能用（比如托管账号还在），并修正 CC Switch
 /// 没运行期间客户端文件里的漂移。
 ///
-/// `next_pool` 是这次操作之后的附加名单：参与契约计算，随同一个操作落定
-/// （`PendingTarget::pool`）；`None` 按已落定的名单算。
+/// `next_stack` 是这次操作之后的 Stack 名单：参与契约计算，随同一个操作落定
+/// （`PendingTarget::stack`）；`None` 按已落定的名单算。
 async fn write_proxy(
     state: &AppState,
     app: &AppType,
@@ -257,23 +257,23 @@ async fn write_proxy(
     route: &Provider,
     live_now: &LiveNow,
     mut target: ModeState,
-    next_pool: Option<PoolState>,
+    next_stack: Option<StackState>,
 ) -> Result<(), String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
-    let pool = match &next_pool {
+    let stack = match &next_stack {
         Some(next) => next.clone(),
-        None => settled_pool(app)?,
+        None => settled_stack(app)?,
     };
     // 各应用把 `contract` 填进 `target` 之后，模式状态和新名单一起落定。
     let pending = |target: ModeState| PendingTarget {
         state: Some(target),
-        pool: next_pool.clone(),
+        stack: next_stack.clone(),
         ..PendingTarget::default()
     };
     match app {
         AppType::Claude => {
-            let published = pool::claude_published(&published_members(state, app, &pool, route)?);
+            let published = stack::claude_published(&published_members(state, app, &stack, route)?);
             let (projection, contract) = claude_contract(route, &proxy_url, &published);
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
@@ -305,11 +305,11 @@ async fn write_proxy(
         }
         AppType::Codex => {
             let owner = live_now.codex_owner();
-            let members = published_members(state, app, &pool, route)?;
+            let members = published_members(state, app, &stack, route)?;
             let spec = codex_direct::Target::Proxy {
                 route,
                 base_url: &codex_base_url,
-                pool: &members,
+                stack: &members,
             };
             let mut prepared =
                 codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
@@ -526,20 +526,20 @@ pub(crate) fn lock_settled_blocking(
     futures::executor::block_on(lock_settled(state, app)).map(Some)
 }
 
-/// 进入代理模式。`pool_mode` 为真是附加模式（界面上和路由模式二选一，见
-/// [`PoolState::enabled`]）：默认那家（代理路由）随之加入名单，名单里其余各家的模型发布给
+/// 进入代理模式。`stack_mode` 为真是 Stack 模式（界面上和路由模式二选一，见
+/// [`StackState::enabled`]）：默认那家（代理路由）随之加入名单，名单里其余各家的模型发布给
 /// 客户端。已经在代理模式时按选的模式重写。
-pub async fn enter(state: &AppState, app: &AppType, pool_mode: bool) -> Result<(), String> {
+pub async fn enter(state: &AppState, app: &AppType, stack_mode: bool) -> Result<(), String> {
     require_proxy_app(app)?;
-    if pool_mode && !pool::supports_pool(app) {
+    if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
-            "{} 不支持附加模式 ({} does not support the attached mode)",
+            "{} 不支持 Stack 模式 ({} does not support the Stack mode)",
             app.as_str(),
             app.as_str()
         ));
     }
     let result = match lock_settled(state, app).await {
-        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(pool_mode)).await,
+        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(stack_mode)).await,
         Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
@@ -548,12 +548,12 @@ pub async fn enter(state: &AppState, app: &AppType, pool_mode: bool) -> Result<(
     result
 }
 
-/// `pool_mode` 为 `None` 时沿用已落定的模式（启动时接上）。
+/// `stack_mode` 为 `None` 时沿用已落定的模式（启动时接上）。
 async fn enter_locked(
     state: &AppState,
     app: &AppType,
     op_name: &str,
-    pool_mode: Option<bool>,
+    stack_mode: Option<bool>,
 ) -> Result<(), String> {
     if !state.proxy_service.is_running().await {
         state.proxy_service.start().await?;
@@ -569,9 +569,9 @@ async fn enter_locked(
             )
         })?,
     };
-    let next_pool = match pool_mode {
+    let next_stack = match stack_mode {
         Some(on) => {
-            let current = settled_pool(app)?;
+            let current = settled_stack(app)?;
             let mut next = current.clone();
             next.enabled = on;
             if on {
@@ -594,7 +594,7 @@ async fn enter_locked(
             proxy_route: Some(route.id.clone()),
             contract: None,
         },
-        next_pool,
+        next_stack,
     )
     .await?;
     state.proxy_service.set_active_target(app, &route).await;
@@ -630,14 +630,14 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
     Ok(())
 }
 
-/// 设置里在路由和附加之间换：处于另一种模式（`pool` 为真是附加模式）的 Claude Code、
+/// 设置里在路由和 Stack 之间换：处于另一种模式（`stack` 为真是 Stack 模式）的 Claude Code、
 /// Codex 退回直连，名单留着。返回退回直连的应用。
-pub async fn exit_apps_in_mode(state: &AppState, pool: bool) -> Result<Vec<String>, String> {
+pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<String>, String> {
     let mut exited = Vec::new();
-    for app in PROXY_APPS.into_iter().filter(pool::supports_pool) {
+    for app in PROXY_APPS.into_iter().filter(stack::supports_stack) {
         {
             let _guard = lock_settled(state, &app).await.map_err(|e| e.to_string())?;
-            if !current::is_proxy(&app) || settled_pool(&app)?.enabled != pool {
+            if !current::is_proxy(&app) || settled_stack(&app)?.enabled != stack {
                 continue;
             }
             exit_locked(state, &app, false)?;
@@ -755,20 +755,20 @@ pub async fn switch_route_locked(
         proxy_route: Some(target.id.clone()),
         ..mode.clone()
     };
-    // 附加模式下默认那家也在名单里：设为默认的这家（比如托盘里点的）还没添加就一起加上。
-    let current = settled_pool(app)?;
+    // Stack 模式下默认那家也在名单里：设为默认的这家（比如托盘里点的）还没添加就一起加上。
+    let current = settled_stack(app)?;
     let mut next = current.clone();
     if next.enabled {
         add_default(app, &mut next, target);
     }
-    let next_pool = (next != current).then_some(next);
+    let next_stack = (next != current).then_some(next);
     if !mode.attached {
         commit_state(
             state,
             app,
             &PendingTarget {
                 state: Some(new_state),
-                pool: next_pool,
+                stack: next_stack,
                 ..PendingTarget::default()
             },
         )?;
@@ -781,7 +781,7 @@ pub async fn switch_route_locked(
             target,
             &live_now,
             new_state,
-            next_pool,
+            next_stack,
         )
         .await?;
     }
@@ -798,7 +798,7 @@ pub async fn switch_route(
     switch_route_checked(state, app, provider_id, false).await
 }
 
-/// 开启故障转移时切到队列 P1（拿切换锁）。附加模式不做故障转移，拒绝：否则会换掉默认
+/// 开启故障转移时切到队列 P1（拿切换锁）。Stack 模式不做故障转移，拒绝：否则会换掉默认
 /// 那家。要在锁内、补完上次没做完的操作之后再看模式，锁外读到的可能是旧的。
 pub async fn switch_route_for_failover(
     state: &AppState,
@@ -812,16 +812,16 @@ async fn switch_route_checked(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
-    reject_attached: bool,
+    reject_stacked: bool,
 ) -> Result<(), String> {
     require_proxy_app(app)?;
     let target =
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     reject_unsupported_official(app, &target)?;
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
-    if reject_attached && current::is_proxy(app) && settled_pool(app)?.enabled {
+    if reject_stacked && current::is_proxy(app) && settled_stack(app)?.enabled {
         return Err(
-            "附加模式不做故障转移，请先换回路由模式 (The attached mode has no failover; switch back to the routing mode first)"
+            "Stack 模式不做故障转移，请先换回路由模式 (The Stack mode has no failover; switch back to the routing mode first)"
                 .to_string(),
         );
     }
@@ -841,17 +841,17 @@ pub fn reject_unsupported_official(app: &AppType, provider: &Provider) -> Result
     Ok(())
 }
 
-/// 增删附加模型失败。
+/// 增删 Stack 模型失败。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PoolWriteError {
+pub struct StackWriteError {
     /// 已部分写入：客户端文件可能一半新一半旧，下次操作这个应用或重启 CC Switch 时按
     /// pending 补完，最终是新名单。为假时什么都没改。
     pub partial: bool,
     pub message: String,
 }
 
-impl PoolWriteError {
+impl StackWriteError {
     pub(crate) fn unchanged(message: impl Into<String>) -> Self {
         Self {
             partial: false,
@@ -860,94 +860,94 @@ impl PoolWriteError {
     }
 }
 
-/// 能不能附加。不能是官方账号：Claude 官方订阅本来就不进代理；Codex 官方可以做路由，
-/// 但它靠客户端自己的登录做账号校验，不能当附加目标。Codex 的行还要能解析：它的模型要
+/// 能不能加进 Stack。不能是官方账号：Claude 官方订阅本来就不进代理；Codex 官方可以做路由，
+/// 但它靠客户端自己的登录做账号校验，不能当 Stack 目标。Codex 的行还要能解析：它的模型要
 /// 写进目录。
-fn check_pool_member(app: &AppType, provider: &Provider) -> Result<(), String> {
+fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> {
     let official = match app {
         AppType::Codex => codex_direct::is_official(provider),
         _ => provider.category.as_deref() == Some("official"),
     };
     if official {
         return Err(
-            "官方账号不能作为附加模型 (An official account cannot be an attached model)"
+            "官方账号不能作为 Stack 模型 (An official account cannot be a stacked model)"
                 .to_string(),
         );
     }
     if matches!(app, AppType::Codex) {
-        codex_direct::check_pool_member(provider).map_err(err)?;
+        codex_direct::check_stack_member(provider).map_err(err)?;
     }
     Ok(())
 }
 
-/// 附加模式下默认那家也在名单里（界面上是「已添加」）。官方账号只能做默认、不能附加，
+/// Stack 模式下默认那家也在名单里（界面上是「已添加」）。官方账号只能做默认、不能加进 Stack，
 /// 配置解析不了的 Codex 行也不加（它做默认时写入本来就会失败）。
-fn add_default(app: &AppType, pool: &mut PoolState, route: &Provider) {
-    if check_pool_member(app, route).is_err() {
+fn add_default(app: &AppType, stack: &mut StackState, route: &Provider) {
+    if check_stack_member(app, route).is_err() {
         return;
     }
-    pool::allocate_key(pool, route);
-    if !pool.is_member(&route.id) {
-        pool.members.push(route.id.clone());
+    stack::allocate_key(stack, route);
+    if !stack.is_member(&route.id) {
+        stack.members.push(route.id.clone());
     }
 }
 
-/// 增删一家附加供应商。`enabled` 是目标值，不是「切换一下」：以为失败又点一次时，先补完
+/// 增删一家 Stack 供应商。`enabled` 是目标值，不是「切换一下」：以为失败又点一次时，先补完
 /// 上一次的操作再应用同一个目标值，结果是空操作，不会反过来撤销。
 ///
 /// 代理模式且已接上时，新名单参与契约计算，和客户端文件在同一个操作里提交（契约没变就
 /// 只落定名单）；否则只落定名单，下次进入代理模式时生效。移除时 key 留在登记簿里。
 ///
-/// 成功时返回客户端看不到或看不全附加模型的提示（见 [`PoolView::notice`]）。失败分两种
-/// （见 [`PoolWriteError::partial`]）：操作还没开始发布就失败，什么都没改；已经开始发布，
+/// 成功时返回客户端看不到或看不全 Stack 模型的提示（见 [`StackView::notice`]）。失败分两种
+/// （见 [`StackWriteError::partial`]）：操作还没开始发布就失败，什么都没改；已经开始发布，
 /// pending 留着等前滚。
-pub async fn set_pool_member(
+pub async fn set_stack_member(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
     enabled: bool,
-) -> Result<Option<&'static str>, PoolWriteError> {
-    if !pool::supports_pool(app) {
-        return Err(PoolWriteError::unchanged(format!(
-            "{} 不支持附加模型 ({} does not support attached models)",
+) -> Result<Option<&'static str>, StackWriteError> {
+    if !stack::supports_stack(app) {
+        return Err(StackWriteError::unchanged(format!(
+            "{} 不支持 Stack 模型 ({} does not support stacked models)",
             app.as_str(),
             app.as_str()
         )));
     }
     let _guard = lock_settled(state, app)
         .await
-        .map_err(|error| PoolWriteError::unchanged(error.to_string()))?;
-    if let Err(message) = set_pool_member_locked(state, app, provider_id, enabled).await {
+        .map_err(|error| StackWriteError::unchanged(error.to_string()))?;
+    if let Err(message) = set_stack_member_locked(state, app, provider_id, enabled).await {
         let partial = operation::pending_published(&DeviceStore::for_device(), app.as_str())
             .unwrap_or_else(|error| {
                 log::warn!("读取 {} 的写前意图失败: {error}", app.as_str());
                 None
             })
             == Some(true);
-        return Err(PoolWriteError { partial, message });
+        return Err(StackWriteError { partial, message });
     }
     // 名单已经落定：读不出提示也不能报成保存失败（界面会以为什么都没改）。
     Ok(match app {
-        AppType::Codex => settled_pool(app)
+        AppType::Codex => settled_stack(app)
             .ok()
-            .and_then(|pool| codex_pool_notice(state, &pool)),
+            .and_then(|stack| codex_stack_notice(state, &stack)),
         _ => None,
     })
 }
 
-async fn set_pool_member_locked(
+async fn set_stack_member_locked(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
     enabled: bool,
 ) -> Result<(), String> {
-    let current = settled_pool(app)?;
+    let current = settled_stack(app)?;
     let mut next = current.clone();
     if enabled {
         let target = provider(state, app, provider_id)?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
-        check_pool_member(app, &target)?;
-        pool::allocate_key(&mut next, &target);
+        check_stack_member(app, &target)?;
+        stack::allocate_key(&mut next, &target);
         if !next.is_member(provider_id) {
             next.members.push(provider_id.to_string());
         }
@@ -968,46 +968,46 @@ async fn set_pool_member_locked(
     match attached_route(state, app)? {
         Some((mode, route)) => {
             let live_now = LiveNow::of(state, app, &mode)?;
-            write_proxy(state, app, op::POOL, &route, &live_now, mode, Some(next)).await
+            write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next)).await
         }
         None => commit_state(
             state,
             app,
             &PendingTarget {
-                pool: Some(next),
+                stack: Some(next),
                 ..PendingTarget::default()
             },
         ),
     }
 }
 
-/// 附加模式的状态、名单里的每一家和它发布的模型 id（给前端）。
-pub fn pool_views(state: &AppState, app: &AppType) -> Result<PoolView, String> {
-    if !pool::supports_pool(app) {
-        return Ok(PoolView::default());
+/// Stack 模式的状态、名单里的每一家和它发布的模型 id（给前端）。
+pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String> {
+    if !stack::supports_stack(app) {
+        return Ok(StackView::default());
     }
-    let pool = settled_pool(app)?;
-    let members = pool::members(&state.db, app, &pool).map_err(err)?;
+    let stack = settled_stack(app)?;
+    let members = stack::members(&state.db, app, &stack).map_err(err)?;
     let mode = current::mode_state(app);
     let route = mode.proxy_route.as_deref().filter(|_| mode.is_proxy());
     let notice = match app {
-        AppType::Codex => codex_pool_notice(state, &pool),
+        AppType::Codex => codex_stack_notice(state, &stack),
         _ => None,
     };
-    Ok(PoolView {
-        active: mode.is_proxy() && pool.enabled,
-        members: pool::member_views(&members, route),
+    Ok(StackView {
+        active: mode.is_proxy() && stack.enabled,
+        members: stack::member_views(&members, route),
         notice,
     })
 }
 
-/// Codex 在附加模式下有要发布的附加模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（附加模型不发布）；`config.toml` 里用户自己指定了模型目录（生成的目录不生效）；
+/// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
+/// 目录文件（Stack 模型不发布）；`config.toml` 里用户自己指定了模型目录（生成的目录不生效）；
 /// 或者官方做默认、最近一次写目录时没拿到官方列表。
-fn codex_pool_notice(state: &AppState, pool: &PoolState) -> Option<&'static str> {
+fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     let (_, route) = attached_route(state, &AppType::Codex).ok()??;
     let published =
-        pool::published_members(&state.db, &AppType::Codex, pool, Some(&route.id)).ok()?;
+        stack::published_members(&state.db, &AppType::Codex, stack, Some(&route.id)).ok()?;
     if published.is_empty() {
         return None;
     }
@@ -1037,7 +1037,7 @@ pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), 
     switch_route_locked(state, app, &route).await
 }
 
-/// 代理模式下存好了 `provider` 的行：它是代理路由时按新行重写代理契约；在附加名单里时，
+/// 代理模式下存好了 `provider` 的行：它是代理路由时按新行重写代理契约；在 Stack 名单里时，
 /// 它发布的模型、窗口在契约里，按当前路由重算。契约没变就不碰客户端文件，其余情况什么
 /// 都不做。调用方持有切换锁。
 pub async fn resync_saved_row_locked(
@@ -1052,11 +1052,11 @@ pub async fn resync_saved_row_locked(
     if mode.routes_to(&provider.id) {
         return switch_route_locked(state, app, provider).await;
     }
-    let in_pool = pool::is_member(app, &provider.id).unwrap_or_else(|error| {
-        log::warn!("读取 {} 的附加模型失败: {error}", app.as_str());
+    let in_stack = stack::is_member(app, &provider.id).unwrap_or_else(|error| {
+        log::warn!("读取 {} 的 Stack 模型失败: {error}", app.as_str());
         false
     });
-    if in_pool {
+    if in_stack {
         return resync_route_locked(state, app).await;
     }
     Ok(())
@@ -1067,7 +1067,7 @@ pub async fn resync_route(state: &AppState, app: &AppType) -> Result<(), String>
     resync_route_locked(state, app).await
 }
 
-/// 后台检查（CC Switch 启动时和之后每 15 分钟）：Codex 官方做路由、发布了附加模型时，
+/// 后台检查（CC Switch 启动时和之后每 15 分钟）：Codex 官方做路由、发布了 Stack 模型时，
 /// 目标登录的官方模型缓存没有或过期了就刷新（一定联网）；客户端落后于缓存（列表刚变，
 /// 或者之前重写失败了）就重写客户端文件。
 pub async fn check_codex_official_models(state: &AppState) {
@@ -1109,7 +1109,7 @@ pub async fn resync_codex_if_behind(state: &AppState) {
     }
 }
 
-/// 现在（代理模式、接着、官方做路由、发布了附加模型时）Codex 会用的登录。
+/// 现在（代理模式、接着、官方做路由、发布了 Stack 模型时）Codex 会用的登录。
 fn codex_official_login_now(
     state: &AppState,
     app: &AppType,
@@ -1117,7 +1117,7 @@ fn codex_official_login_now(
     let Some((mode, route)) = attached_route(state, app)? else {
         return Ok(None);
     };
-    let members = published_members(state, app, &settled_pool(app)?, &route)?;
+    let members = published_members(state, app, &settled_stack(app)?, &route)?;
     if !codex_direct::needs_official_rows(&route, &members) {
         return Ok(None);
     }
@@ -1127,7 +1127,7 @@ fn codex_official_login_now(
     let spec = codex_direct::Target::Proxy {
         route: &route,
         base_url: &base_url,
-        pool: &members,
+        stack: &members,
     };
     let prepared = codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
     codex_direct::predicted_official_login(&state.db, &owner, &spec, &prepared).map_err(err)
@@ -1153,7 +1153,7 @@ pub async fn resync_routes(state: &AppState) -> Result<(), String> {
 /// 故障转移成功后记下新路由：只换代理的上游，不写客户端文件（契约兼容性本轮不检查）。
 /// 返回路由是否真的变了。
 ///
-/// 附加模式不做故障转移：这时到达的是进入附加模式之前发出的请求的结果，已经过期，丢掉。
+/// Stack 模式不做故障转移：这时到达的是进入 Stack 模式之前发出的请求的结果，已经过期，丢掉。
 /// 记下它会换掉默认那家，却不把它加进名单、也不重写发布给客户端的模型。
 pub async fn record_failover_route(
     state: &AppState,
@@ -1165,9 +1165,9 @@ pub async fn record_failover_route(
     if !mode.is_proxy() || mode.proxy_route.as_deref() == Some(provider_id) {
         return Ok(false);
     }
-    if settled_pool(app)?.enabled {
+    if settled_stack(app)?.enabled {
         log::info!(
-            "[Failover] {} 在附加模式，忽略进入之前的请求转移到 {provider_id} 的结果",
+            "[Failover] {} 在 Stack 模式，忽略进入之前的请求转移到 {provider_id} 的结果",
             app.as_str()
         );
         return Ok(false);
@@ -1812,7 +1812,7 @@ mod mode_tests {
     use crate::database::Database;
     use crate::live::engine::DeviceStore;
     use crate::mode::operation::failpoint;
-    use crate::mode::pool::PoolMemberView;
+    use crate::mode::stack::StackMemberView;
     use crate::mode::state::{self, Mode};
     use crate::proxy::types::ProxyConfig;
     use crate::services::provider::ProviderService;
@@ -4593,9 +4593,9 @@ model_provider = "c"
         assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
     }
 
-    // ---- 附加模型（`mode::pool`） ----
+    // ---- Stack 模型（`mode::stack`） ----
 
-    fn pool_rows() -> [Provider; 3] {
+    fn stack_rows() -> [Provider; 3] {
         [
             claude("a", "https://a.example", json!({})),
             claude(
@@ -4614,33 +4614,33 @@ model_provider = "c"
         ]
     }
 
-    fn pool_state() -> PoolState {
-        state::pool(&DeviceStore::for_device(), "claude").unwrap()
+    fn stack_state() -> StackState {
+        state::stack(&DeviceStore::for_device(), "claude").unwrap()
     }
 
-    async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<PoolMemberView> {
-        set_pool_member(state, &AppType::Claude, id, enabled)
+    async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<StackMemberView> {
+        set_stack_member(state, &AppType::Claude, id, enabled)
             .await
             .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"));
-        pool_views(state, &AppType::Claude).unwrap().members
+        stack_views(state, &AppType::Claude).unwrap().members
     }
 
     #[tokio::test]
     #[serial]
-    async fn attached_models_join_the_claude_contract_and_leave_with_it() {
+    async fn stack_models_join_the_claude_contract_and_leave_with_it() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
         let plain_bytes = fs::read(settings_path()).unwrap();
         let plain_contract = mode(&AppType::Claude).contract.unwrap();
 
-        // 进入附加模式时默认那家（a）已经在名单里，它不发布，契约和路由模式一样。
-        assert_eq!(pool_state().members, vec!["a"]);
+        // 进入 Stack 模式时默认那家（a）已经在名单里，它不发布，契约和路由模式一样。
+        assert_eq!(stack_state().members, vec!["a"]);
         let views = set_member(&state, "kimi", true).await;
         assert_eq!(views.len(), 2);
         assert!(views[0].route);
-        assert_eq!(pool_state().key_of("kimi"), Some("kimi"));
+        assert_eq!(stack_state().key_of("kimi"), Some("kimi"));
         assert_eq!(views[1].model_ids, vec!["ccs-claude-kimi--kimi-k3"]);
         let env = settings()["env"].clone();
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
@@ -4651,7 +4651,7 @@ model_provider = "c"
             "128000"
         );
 
-        // 1M 的附加模型不影响 MAX。
+        // 1M 的 Stack 模型不影响 MAX。
         set_member(&state, "zhipu", true).await;
         assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
         set_member(&state, "kimi", false).await;
@@ -4659,14 +4659,14 @@ model_provider = "c"
         assert_eq!(env[CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
 
-        // 只剩默认那家：客户端文件和契约回到没有附加模型时的样子，登记簿保留。
+        // 只剩默认那家：客户端文件和契约回到没有 Stack 模型时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
         assert_eq!(fs::read(settings_path()).unwrap(), plain_bytes);
         assert_eq!(mode(&AppType::Claude).contract.unwrap(), plain_contract);
-        let pool = pool_state();
-        assert_eq!(pool.members, vec!["a"]);
-        assert_eq!(pool.key_of("kimi"), Some("kimi"));
-        assert_eq!(pool.key_of("zhipu"), Some("zhipu"));
+        let stack = stack_state();
+        assert_eq!(stack.members, vec!["a"]);
+        assert_eq!(stack.key_of("kimi"), Some("kimi"));
+        assert_eq!(stack.key_of("zhipu"), Some("zhipu"));
 
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
@@ -4679,27 +4679,27 @@ model_provider = "c"
         let mut user: Value = serde_json::from_str(USER_SETTINGS).unwrap();
         user["env"][CLAUDE_GATEWAY_DISCOVERY_ENV] = json!("1");
         seed_settings(&serde_json::to_string_pretty(&user).unwrap());
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
 
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("direct kimi");
         assert_eq!(discovery(), Some(json!("1")));
         enter(&state, &AppType::Claude, false).await.expect("enter");
         exit(&state, &AppType::Claude).await.expect("exit");
-        assert_eq!(discovery(), Some(json!("1")), "no attached models");
+        assert_eq!(discovery(), Some(json!("1")), "no stacked models");
     }
 
     #[tokio::test]
     #[serial]
-    async fn attached_models_leave_the_client_file_on_exit_and_come_back_on_enter() {
+    async fn stack_models_leave_the_client_file_on_exit_and_come_back_on_enter() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
 
         // 不在代理模式：只存名单，客户端文件不动。
         set_member(&state, "kimi", true).await;
         assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
-        assert!(pool_state().is_member("kimi"));
+        assert!(stack_state().is_member("kimi"));
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
         assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
@@ -4708,7 +4708,7 @@ model_provider = "c"
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
         assert!(
-            pool_state().is_member("kimi"),
+            stack_state().is_member("kimi"),
             "the list outlives proxy mode"
         );
     }
@@ -4718,7 +4718,7 @@ model_provider = "c"
     async fn the_route_is_not_published_and_repeating_a_target_changes_nothing() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
         let before = fs::read(settings_path()).unwrap();
 
@@ -4731,7 +4731,7 @@ model_provider = "c"
         let with_kimi = fs::read(settings_path()).unwrap();
         set_member(&state, "kimi", true).await;
         assert_eq!(fs::read(settings_path()).unwrap(), with_kimi);
-        assert_eq!(pool_state().members, vec!["a", "kimi"]);
+        assert_eq!(stack_state().members, vec!["a", "kimi"]);
 
         // 换路由到名单里的 kimi：它不再发布，a 的模型开始发布。
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
@@ -4742,10 +4742,10 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn routing_mode_and_attached_mode_share_the_list() {
+    async fn routing_mode_and_stack_mode_share_the_list() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         set_member(&state, "kimi", true).await;
         let discovery = || settings()["env"].get(CLAUDE_GATEWAY_DISCOVERY_ENV).cloned();
 
@@ -4754,32 +4754,32 @@ model_provider = "c"
             .await
             .expect("routing");
         assert_eq!(discovery(), None);
-        assert!(!pool_views(&state, &AppType::Claude).unwrap().active);
+        assert!(!stack_views(&state, &AppType::Claude).unwrap().active);
 
-        // 已经在代理模式时换成附加模式：默认那家加入名单，其余的发布。
+        // 已经在代理模式时换成 Stack 模式：默认那家加入名单，其余的发布。
         enter(&state, &AppType::Claude, true)
             .await
-            .expect("attached");
+            .expect("stack mode");
         assert_eq!(discovery(), Some(json!("1")));
-        assert!(pool_views(&state, &AppType::Claude).unwrap().active);
-        assert_eq!(pool_state().members, vec!["kimi", "a"]);
+        assert!(stack_views(&state, &AppType::Claude).unwrap().active);
+        assert_eq!(stack_state().members, vec!["kimi", "a"]);
 
-        // 换回路由模式：名单留着，客户端里的附加模型去掉。
+        // 换回路由模式：名单留着，客户端里的 Stack 模型去掉。
         enter(&state, &AppType::Claude, false)
             .await
             .expect("routing again");
         assert_eq!(discovery(), None);
-        assert_eq!(pool_state().members, vec!["kimi", "a"]);
-        assert!(!pool_state().enabled);
+        assert_eq!(stack_state().members, vec!["kimi", "a"]);
+        assert!(!stack_state().enabled);
 
-        // 退出再以附加模式进入：名单原样恢复。
+        // 退出再以 Stack 模式进入：名单原样恢复。
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
         enter(&state, &AppType::Claude, true)
             .await
-            .expect("attached again");
+            .expect("stack mode again");
         assert_eq!(discovery(), Some(json!("1")));
-        assert_eq!(pool_state().members, vec!["kimi", "a"]);
+        assert_eq!(stack_state().members, vec!["kimi", "a"]);
     }
 
     #[tokio::test]
@@ -4787,22 +4787,22 @@ model_provider = "c"
     async fn the_default_cannot_be_removed_and_a_new_default_joins_the_list() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
 
-        let error = set_pool_member(&state, &AppType::Claude, "a", false)
+        let error = set_stack_member(&state, &AppType::Claude, "a", false)
             .await
             .expect_err("the default");
         assert!(!error.partial);
-        assert_eq!(pool_state().members, vec!["a"]);
+        assert_eq!(stack_state().members, vec!["a"]);
 
         // 设为默认（比如托盘里点）一家还没添加的：一起加入名单，原来的默认留在名单里、
         // 开始发布，之后可以移除。
         ProviderService::switch(&state, AppType::Claude, "zhipu").expect("set default");
-        assert_eq!(pool_state().members, vec!["a", "zhipu"]);
+        assert_eq!(stack_state().members, vec!["a", "zhipu"]);
         assert_eq!(settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV], "1");
         set_member(&state, "a", false).await;
-        assert_eq!(pool_state().members, vec!["zhipu"]);
+        assert_eq!(stack_state().members, vec!["zhipu"]);
         assert!(settings()["env"]
             .get(CLAUDE_GATEWAY_DISCOVERY_ENV)
             .is_none());
@@ -4813,11 +4813,11 @@ model_provider = "c"
     async fn changing_the_main_page_switch_sends_apps_in_the_other_mode_back_to_direct() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         set_member(&state, "kimi", true).await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
 
-        // 换成显示路由开关之前，附加模式的应用退回直连；路由模式的不动。
+        // 换成显示路由开关之前，Stack 模式的应用退回直连；路由模式的不动。
         assert!(exit_apps_in_mode(&state, false).await.unwrap().is_empty());
         assert!(current::is_proxy(&AppType::Claude));
         assert_eq!(
@@ -4826,7 +4826,7 @@ model_provider = "c"
         );
         assert!(!current::is_proxy(&AppType::Claude));
         assert_back_to_user_settings();
-        assert_eq!(pool_state().members, vec!["kimi", "a"], "the list stays");
+        assert_eq!(stack_state().members, vec!["kimi", "a"], "the list stays");
     }
 
     #[tokio::test]
@@ -4834,7 +4834,7 @@ model_provider = "c"
     async fn changing_the_main_page_switch_with_nothing_to_exit_keeps_the_server() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         // 各应用都直连，服务是用户手动开的（或者 Claude Desktop 的模型映射在用）。
         state.proxy_service.start().await.expect("start");
 
@@ -4845,45 +4845,45 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn a_failover_finishing_after_entering_attached_mode_is_dropped() {
+    async fn a_failover_finishing_after_entering_stack_mode_is_dropped() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
         let before = fs::read(settings_path()).unwrap();
 
-        // 进入附加模式之前发出的路由请求，这时才转移到 kimi 成功。
+        // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
         assert!(!record_failover_route(&state, &AppType::Claude, "kimi")
             .await
             .expect("record failover"));
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
-        assert_eq!(pool_state().members, vec!["a"]);
+        assert_eq!(stack_state().members, vec!["a"]);
         assert_eq!(fs::read(settings_path()).unwrap(), before);
     }
 
     #[tokio::test]
     #[serial]
-    async fn enabling_failover_cannot_move_the_default_in_attached_mode() {
+    async fn enabling_failover_cannot_move_the_default_in_stack_mode() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, false)
             .await
             .expect("routing");
         set_member(&state, "kimi", true).await;
 
-        // 进入附加模式做到一半失败：锁外读到的还是路由模式，拿切换锁补完之后才是附加模式。
+        // 进入 Stack 模式做到一半失败：锁外读到的还是路由模式，拿切换锁补完之后才是 Stack 模式。
         failpoint::crash_at(Some("published:0"));
         enter(&state, &AppType::Claude, true)
             .await
             .expect_err("crash");
         failpoint::crash_at(None);
-        assert!(!crate::mode::pool::pool_mode_now(&AppType::Claude));
+        assert!(!crate::mode::stack::stack_mode_now(&AppType::Claude));
 
         switch_route_for_failover(&state, &AppType::Claude, "kimi")
             .await
-            .expect_err("attached");
-        assert!(crate::mode::pool::pool_mode_now(&AppType::Claude));
+            .expect_err("stack mode");
+        assert!(crate::mode::stack::stack_mode_now(&AppType::Claude));
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
 
         // 路由模式照常切到 P1。
@@ -4899,10 +4899,10 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn attached_mode_sends_default_requests_to_the_default_only() {
+    async fn stack_mode_sends_default_requests_to_the_default_only() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         // 故障转移开着，队列里还有别家。
         let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
         config.auto_failover_enabled = true;
@@ -4940,8 +4940,8 @@ model_provider = "c"
 
         enter(&state, &AppType::Claude, true)
             .await
-            .expect("attached");
-        let ctx = context().await.expect("attached context");
+            .expect("stack mode");
+        let ctx = context().await.expect("stack mode context");
         assert_eq!(chain(&ctx), vec!["a"]);
         assert!(!ctx.app_config.auto_failover_enabled);
         // 队列留着，回到路由模式恢复。
@@ -4950,19 +4950,19 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn official_accounts_cannot_be_attached() {
+    async fn official_accounts_cannot_be_stacked() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
         let mut official = claude("official", "https://api.anthropic.com", json!({}));
         official.category = Some("official".to_string());
         let rows = [claude("a", "https://a.example", json!({})), official];
         let state = state_with(AppType::Claude, &rows, "a").await;
-        let error = set_pool_member(&state, &AppType::Claude, "official", true)
+        let error = set_stack_member(&state, &AppType::Claude, "official", true)
             .await
             .expect_err("official");
         assert!(!error.partial);
-        assert!(pool_state().is_empty());
-        let error = set_pool_member(&state, &AppType::Claude, "missing", true)
+        assert!(stack_state().is_empty());
+        let error = set_stack_member(&state, &AppType::Claude, "missing", true)
             .await
             .expect_err("missing");
         assert!(!error.partial);
@@ -4970,7 +4970,7 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn a_failed_pool_change_says_whether_it_will_be_finished() {
+    async fn a_failed_stack_change_says_whether_it_will_be_finished() {
         for (point, partial) in [
             ("pending", false),
             ("marked", true),
@@ -4979,21 +4979,25 @@ model_provider = "c"
         ] {
             let _home = Home::new();
             seed_settings(USER_SETTINGS);
-            let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+            let state = state_with(AppType::Claude, &stack_rows(), "a").await;
             enter(&state, &AppType::Claude, true).await.expect("enter");
 
             failpoint::crash_at(Some(point));
-            let error = set_pool_member(&state, &AppType::Claude, "kimi", true)
+            let error = set_stack_member(&state, &AppType::Claude, "kimi", true)
                 .await
                 .expect_err(point);
             failpoint::crash_at(None);
             assert_eq!(error.partial, partial, "{point}: {error:?}");
             // 状态落定之前失败，已落定的名单还是旧的。
-            assert_eq!(pool_state().is_member("kimi"), point == "target", "{point}");
+            assert_eq!(
+                stack_state().is_member("kimi"),
+                point == "target",
+                "{point}"
+            );
 
             // 再发一次同样的目标值：先补完（或丢弃）上一次，再应用，结果都是新名单。
             set_member(&state, "kimi", true).await;
-            assert!(pool_state().is_member("kimi"), "{point}");
+            assert!(stack_state().is_member("kimi"), "{point}");
             assert_eq!(
                 settings()["env"][CLAUDE_GATEWAY_DISCOVERY_ENV],
                 "1",
@@ -5011,11 +5015,11 @@ model_provider = "c"
     async fn operations_that_do_not_touch_the_list_keep_it() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         set_member(&state, "kimi", true).await;
-        let pool = pool_state();
+        let stack = stack_state();
 
-        // 一个不带 `pool` 的 pending（旧版本写的、或者换路由这类操作）前滚时不清名单。
+        // 一个不带 `stack` 的 pending（旧版本写的、或者换路由这类操作）前滚时不清名单。
         commit_state(
             &state,
             &AppType::Claude,
@@ -5024,15 +5028,15 @@ model_provider = "c"
         .unwrap();
         enter(&state, &AppType::Claude, false).await.expect("enter");
         exit(&state, &AppType::Claude).await.expect("exit");
-        assert_eq!(pool_state(), pool);
+        assert_eq!(stack_state(), stack);
     }
 
     #[tokio::test]
     #[serial]
-    async fn editing_or_deleting_an_attached_provider_rewrites_the_contract() {
+    async fn editing_or_deleting_an_stacked_provider_rewrites_the_contract() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
-        let state = state_with(AppType::Claude, &pool_rows(), "a").await;
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
         set_member(&state, "kimi", true).await;
 
@@ -5054,9 +5058,9 @@ model_provider = "c"
             .get_provider_by_id("kimi", "claude")
             .unwrap()
             .is_none());
-        let pool = pool_state();
-        assert_eq!(pool.members, vec!["a"]);
-        assert_eq!(pool.key_of("kimi"), Some("kimi"), "the key stays taken");
+        let stack = stack_state();
+        assert_eq!(stack.members, vec!["a"]);
+        assert_eq!(stack.key_of("kimi"), Some("kimi"), "the key stays taken");
     }
 
     fn codex_native(id: &str, url: &str, extra: &str, catalog: Option<Value>) -> Provider {
@@ -5071,7 +5075,7 @@ model_provider = "c"
         provider
     }
 
-    fn codex_pool_rows() -> [Provider; 3] {
+    fn codex_stack_rows() -> [Provider; 3] {
         [
             codex_native(
                 "a",
@@ -5091,11 +5095,11 @@ model_provider = "c"
         ]
     }
 
-    async fn set_codex_member(state: &AppState, id: &str, enabled: bool) -> Vec<PoolMemberView> {
-        set_pool_member(state, &AppType::Codex, id, enabled)
+    async fn set_codex_member(state: &AppState, id: &str, enabled: bool) -> Vec<StackMemberView> {
+        set_stack_member(state, &AppType::Codex, id, enabled)
             .await
             .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"));
-        pool_views(state, &AppType::Codex).unwrap().members
+        stack_views(state, &AppType::Codex).unwrap().members
     }
 
     fn codex_catalog() -> Value {
@@ -5104,10 +5108,10 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn codex_attached_models_join_the_catalog_and_leave_with_it() {
+    async fn codex_stack_models_join_the_catalog_and_leave_with_it() {
         let _home = Home::new();
         seed_codex("approval_policy = \"on-request\"\n", None);
-        let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         let plain_text = codex_text();
         let plain_contract = mode(&AppType::Codex).contract.unwrap();
@@ -5141,19 +5145,19 @@ model_provider = "c"
         let models = catalog["models"].as_array().unwrap();
         let slugs: Vec<&str> = models.iter().map(|m| m["slug"].as_str().unwrap()).collect();
         assert_eq!(slugs, vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]);
-        let (route, attached) = (&models[0], &models[1]);
+        let (route, stacked) = (&models[0], &models[1]);
         assert_eq!(route["priority"], 1);
         assert_eq!(route["context_window"], 200000);
         assert_eq!(route["auto_compact_token_limit"], 150000);
-        // 路由那家的行保持模板的值（这里模板没有），附加第一家不会让路由上的会话被压缩。
+        // 路由那家的行保持模板的值（这里模板没有），加进第一家不会让路由上的会话被压缩。
         assert_eq!(route["comp_hash"], Value::Null);
-        assert_eq!(attached["priority"], 2);
-        assert_eq!(attached["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
+        assert_eq!(stacked["priority"], 2);
+        assert_eq!(stacked["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
         // DeepSeek 官方目录的 "3000" 不带过来，窗口按它自己的行算。
-        assert_eq!(attached["comp_hash"], "cc-switch");
-        let window = attached["context_window"].as_u64().unwrap();
+        assert_eq!(stacked["comp_hash"], "cc-switch");
+        let window = stacked["context_window"].as_u64().unwrap();
         assert_eq!(
-            attached["auto_compact_token_limit"].as_u64(),
+            stacked["auto_compact_token_limit"].as_u64(),
             Some(window * 9 / 10)
         );
 
@@ -5175,7 +5179,7 @@ model_provider = "c"
             ]
         );
 
-        // 只剩默认那家：config.toml 和契约回到没有附加模型时的样子。
+        // 只剩默认那家：config.toml 和契约回到没有 Stack 模型时的样子。
         set_codex_member(&state, "deepseek", false).await;
         set_codex_member(&state, "zhipu", false).await;
         assert_eq!(codex_text(), plain_text);
@@ -5187,13 +5191,13 @@ model_provider = "c"
             .live_has_proxy_placeholder(&AppType::Codex));
     }
 
-    /// 路由那家自己管理模型目录文件：附加模型发布不了，名单照存，结果带提示而不是静默成功。
+    /// 路由那家自己管理模型目录文件：Stack 模型发布不了，名单照存，结果带提示而不是静默成功。
     #[tokio::test]
     #[serial]
-    async fn codex_route_with_its_own_catalog_reports_attached_models_unpublished() {
+    async fn codex_route_with_its_own_catalog_reports_stack_models_unpublished() {
         let _home = Home::new();
         seed_codex("", None);
-        let [_, deepseek, zhipu] = codex_pool_rows();
+        let [_, deepseek, zhipu] = codex_stack_rows();
         let route = codex_native(
             "a",
             "https://a.example/v1",
@@ -5204,19 +5208,19 @@ model_provider = "c"
         enter(&state, &AppType::Codex, true).await.expect("enter");
         let plain_text = codex_text();
 
-        let notice = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+        let notice = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
-            .expect("attach");
+            .expect("stack");
         assert_eq!(notice, Some("routeOwnsCatalog"));
-        assert!(pool_state_of(&AppType::Codex).is_member("deepseek"));
+        assert!(stack_state_of(&AppType::Codex).is_member("deepseek"));
         assert_eq!(codex_text(), plain_text, "nothing to publish");
         assert_eq!(
-            pool_views(&state, &AppType::Codex).unwrap().notice,
+            stack_views(&state, &AppType::Codex).unwrap().notice,
             Some("routeOwnsCatalog")
         );
 
         // 名单清空后不再提示。
-        let notice = set_pool_member(&state, &AppType::Codex, "deepseek", false)
+        let notice = set_stack_member(&state, &AppType::Codex, "deepseek", false)
             .await
             .expect("detach");
         assert_eq!(notice, None);
@@ -5225,15 +5229,15 @@ model_provider = "c"
     /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。
     #[tokio::test]
     #[serial]
-    async fn codex_a_users_own_catalog_pointer_reports_attached_models_unseen() {
+    async fn codex_a_users_own_catalog_pointer_reports_stack_models_unseen() {
         let _home = Home::new();
         seed_codex("model_catalog_json = \"/work/global-models.json\"\n", None);
-        let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
 
-        let notice = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+        let notice = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
-            .expect("attach");
+            .expect("stack");
         assert_eq!(notice, Some("configOwnsCatalog"));
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
@@ -5244,9 +5248,9 @@ model_provider = "c"
         let without =
             codex_text().replace("model_catalog_json = \"/work/global-models.json\"\n", "");
         fs::write(codex_config_path(), without).unwrap();
-        let notice = set_pool_member(&state, &AppType::Codex, "zhipu", true)
+        let notice = set_stack_member(&state, &AppType::Codex, "zhipu", true)
             .await
-            .expect("attach zhipu");
+            .expect("stack zhipu");
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
@@ -5254,13 +5258,13 @@ model_provider = "c"
         );
     }
 
-    /// 普通保存入口（不带编辑器底）改了附加那家的模型目录：合并目录跟着重算。
+    /// 普通保存入口（不带编辑器底）改了 Stack 里那家的模型目录：合并目录跟着重算。
     #[tokio::test]
     #[serial]
-    async fn editing_an_attached_codex_provider_rewrites_the_catalog() {
+    async fn editing_an_stacked_codex_provider_rewrites_the_catalog() {
         let _home = Home::new();
         seed_codex("", None);
-        let state = state_with(AppType::Codex, &codex_pool_rows(), "a").await;
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
 
@@ -5284,24 +5288,24 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn codex_a_broken_attached_provider_is_skipped_and_cannot_be_attached() {
+    async fn codex_a_broken_stacked_provider_is_skipped_and_cannot_be_stacked() {
         let _home = Home::new();
         seed_codex("", None);
-        let mut rows = codex_pool_rows().to_vec();
+        let mut rows = codex_stack_rows().to_vec();
         let mut broken = codex_native("broken", "https://b.example/v1", "", None);
         broken.settings_config["config"] = json!("model = [\n");
         rows.push(broken);
         let state = state_with(AppType::Codex, &rows, "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
 
-        // 配置解析不了的行不能附加，什么都不改。
-        let error = set_pool_member(&state, &AppType::Codex, "broken", true)
+        // 配置解析不了的行不能加进 Stack，什么都不改。
+        let error = set_stack_member(&state, &AppType::Codex, "broken", true)
             .await
             .unwrap_err();
         assert!(!error.partial);
-        assert_eq!(pool_state_of(&AppType::Codex).members, vec!["a"]);
+        assert_eq!(stack_state_of(&AppType::Codex).members, vec!["a"]);
 
-        // 附加之后才坏掉（比如云同步直接换了行）：只跳过这一家，其余照常发布，
+        // 加进 Stack 之后才坏掉（比如云同步直接换了行）：只跳过这一家，其余照常发布，
         // 重写和换路由都不受影响。
         set_codex_member(&state, "deepseek", true).await;
         set_codex_member(&state, "zhipu", true).await;
@@ -5336,13 +5340,13 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn codex_official_accounts_cannot_be_attached() {
+    async fn codex_official_accounts_cannot_be_stacked() {
         let _home = Home::new();
         seed_codex("", None);
-        let mut rows = codex_pool_rows().to_vec();
+        let mut rows = codex_stack_rows().to_vec();
         rows.push(codex_official());
         let state = state_with(AppType::Codex, &rows, "a").await;
-        let error = set_pool_member(
+        let error = set_stack_member(
             &state,
             &AppType::Codex,
             crate::database::CODEX_OFFICIAL_PROVIDER_ID,
@@ -5351,14 +5355,14 @@ model_provider = "c"
         .await
         .expect_err("official");
         assert!(!error.partial);
-        assert!(pool_state_of(&AppType::Codex).members.is_empty());
+        assert!(stack_state_of(&AppType::Codex).members.is_empty());
     }
 
-    fn pool_state_of(app: &AppType) -> PoolState {
-        state::pool(&DeviceStore::for_device(), app.as_str()).unwrap()
+    fn stack_state_of(app: &AppType) -> StackState {
+        state::stack(&DeviceStore::for_device(), app.as_str()).unwrap()
     }
 
-    // ---- 附加模型：Codex 官方做路由 ----
+    // ---- Stack 模型：Codex 官方做路由 ----
 
     use crate::services::provider::codex_official_models::testing::{
         login as chatgpt, native_models, Calls, Fake,
@@ -5441,26 +5445,26 @@ model_provider = "c"
             .collect()
     }
 
-    fn codex_official_pool_rows() -> Vec<Provider> {
+    fn codex_official_stack_rows() -> Vec<Provider> {
         let mut rows = vec![codex_official()];
-        rows.extend(codex_pool_rows());
+        rows.extend(codex_stack_rows());
         rows
     }
 
     #[tokio::test]
     #[serial]
-    async fn codex_official_route_lists_every_official_model_before_the_attached_ones() {
+    async fn codex_official_route_lists_every_official_model_before_the_stacked_ones() {
         let _home = Home::new();
         let alice = chatgpt("ws", "alice");
         seed_codex("", Some(&alice));
         let auth_bytes = fs::read(codex_auth_path()).unwrap();
         let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         assert!(
             fake.calls.lock().unwrap().is_empty(),
-            "no attached models, no fetch"
+            "no stacked models, no fetch"
         );
 
         set_codex_member(&state, "deepseek", true).await;
@@ -5479,7 +5483,7 @@ model_provider = "c"
             vec![("ws|sub:alice".to_string(), "0.158.0".to_string(), None)]
         );
         assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
-        assert!(pool_views(&state, &AppType::Codex)
+        assert!(stack_views(&state, &AppType::Codex)
             .unwrap()
             .notice
             .is_none());
@@ -5531,7 +5535,7 @@ model_provider = "c"
             Some(break_config),
         );
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
         let good = codex_text();
@@ -5566,17 +5570,17 @@ model_provider = "c"
             })),
         );
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         let before = codex_text();
 
-        let error = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+        let error = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
             .expect_err("login changed");
         assert!(!error.partial, "{}", error.message);
         assert_eq!(codex_text(), before);
         assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
-        assert!(pool_state_of(&AppType::Codex).members.is_empty());
+        assert!(stack_state_of(&AppType::Codex).members.is_empty());
     }
 
     /// 钥匙串不归写锁管：按 alice 取列表的时候 Codex 在钥匙串里换成了 bob，不能把 alice
@@ -5598,18 +5602,18 @@ model_provider = "c"
             })),
         );
         let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         let before = codex_text();
 
-        let error = set_pool_member(&state, &AppType::Codex, "deepseek", true)
+        let error = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
             .expect_err("login changed");
         assert!(!error.partial, "{}", error.message);
         assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:alice");
         assert_eq!(codex_text(), before);
         assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
-        assert!(pool_state_of(&AppType::Codex).members.is_empty());
+        assert!(stack_state_of(&AppType::Codex).members.is_empty());
 
         // 重试按 bob 重新取。
         *fake.responses.lock().unwrap() = vec![official_list(&[])];
@@ -5634,7 +5638,7 @@ model_provider = "c"
             CodexKeychainLogin::Found(chatgpt("ws", "bob")),
             None,
         );
-        let state = state_with(AppType::Codex, &codex_official_pool_rows(), official).await;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
         set_codex_member(&state, "deepseek", true).await;
         assert_eq!(fake.calls.lock().unwrap()[0].0, "ws|sub:bob");
@@ -5659,7 +5663,7 @@ model_provider = "c"
         set_codex_member(&state, "deepseek", true).await;
         assert!(fake.calls.lock().unwrap().is_empty());
         assert_eq!(
-            pool_views(&state, &AppType::Codex).unwrap().notice,
+            stack_views(&state, &AppType::Codex).unwrap().notice,
             Some("officialModelsUnavailable")
         );
         exit(&state, &AppType::Codex).await.expect("exit");
@@ -5679,7 +5683,7 @@ model_provider = "c"
         set_codex_member(&state, "deepseek", false).await;
         drop(fake);
 
-        // ephemeral：登录从不落盘，不拉取；没有自带列表时附加模型暂不可用，也不写目录。
+        // ephemeral：登录从不落盘，不拉取；没有自带列表时 Stack 模型暂不可用，也不写目录。
         seed_codex(
             "cli_auth_credentials_store = \"ephemeral\"\n",
             Some(&chatgpt("ws", "alice")),
@@ -5690,7 +5694,7 @@ model_provider = "c"
         assert!(fake.calls.lock().unwrap().is_empty());
         assert!(codex_doc().get("model_catalog_json").is_none());
         assert_eq!(
-            pool_views(&state, &AppType::Codex).unwrap().notice,
+            stack_views(&state, &AppType::Codex).unwrap().notice,
             Some("officialModelsUnavailable")
         );
     }
@@ -5702,7 +5706,7 @@ model_provider = "c"
         set_preservation(false);
         seed_codex("", Some(&chatgpt("ws", "alice")));
         let fake = fake_models(vec![official_list(&[])], CodexKeychainLogin::Missing, None);
-        let state = state_with(AppType::Codex, &codex_official_pool_rows(), "a").await;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), "a").await;
         // 直连切到第三方：登录存进暂存，auth.json 删掉。
         ProviderService::switch(&state, AppType::Codex, "a").expect("direct a");
         assert!(!codex_auth_path().exists());

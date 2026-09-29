@@ -2190,7 +2190,7 @@ fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalo
         .unwrap_or_default()
 }
 
-/// 附加模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
+/// Stack 模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
 /// `config`（只读顶层 `model`）。
 pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
     codex_published_specs(settings, config_text)
@@ -2208,15 +2208,15 @@ pub(crate) struct CodexCatalogRow<'a> {
     pub profile: CodexCatalogToolProfile,
 }
 
-/// 合并目录里的一家附加供应商。
-pub(crate) struct CodexPoolCatalogMember<'a> {
+/// 合并目录里的一家 Stack 供应商。
+pub(crate) struct CodexStackCatalogMember<'a> {
     pub key: &'a str,
     pub provider_name: &'a str,
     pub row: CodexCatalogRow<'a>,
 }
 
 /// 合并目录里路由那家的行。
-pub(crate) enum CodexPoolRoute<'a> {
+pub(crate) enum CodexStackRoute<'a> {
     /// 第三方路由：按它的行生成。
     ThirdParty(CodexCatalogRow<'a>),
     /// 官方路由：官方模型列表的原生行（已补齐、已校验），原样保留；`config_text` 是
@@ -2227,24 +2227,24 @@ pub(crate) enum CodexPoolRoute<'a> {
     },
 }
 
-/// 合并目录里附加行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
+/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
 /// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
 /// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
-/// 附加第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
-const CODEX_POOL_COMP_HASH: &str = "cc-switch";
+/// 加进第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
+const CODEX_STACK_COMP_HASH: &str = "cc-switch";
 
-/// 附加名单非空时的模型目录：路由那家的行在前，各附加供应商的行按名单顺序在后，
+/// Stack 名单非空时的模型目录：路由那家的行在前，各 Stack 供应商的行按名单顺序在后，
 /// `priority` 统一重新编号。
 ///
 /// 窗口类全局键（`model_context_window`、`model_auto_compact_token_limit`）这时不写进
 /// `config.toml`（Codex 会拿它覆盖所有行），改由各家写进自己的行，见 [`sink_row_windows`]。
-pub(crate) fn plan_codex_pool_catalog(
-    route: CodexPoolRoute<'_>,
-    pool: &[CodexPoolCatalogMember<'_>],
+pub(crate) fn plan_codex_stack_catalog(
+    route: CodexStackRoute<'_>,
+    stack: &[CodexStackCatalogMember<'_>],
 ) -> Result<Value, AppError> {
     let mut entries = match route {
-        CodexPoolRoute::ThirdParty(row) => codex_pool_third_party_rows(&row)?,
-        CodexPoolRoute::Official {
+        CodexStackRoute::ThirdParty(row) => codex_stack_third_party_rows(&row)?,
+        CodexStackRoute::Official {
             mut native,
             config_text,
         } => {
@@ -2262,12 +2262,12 @@ pub(crate) fn plan_codex_pool_catalog(
             native
         }
     };
-    for member in pool {
-        for mut entry in codex_pool_third_party_rows(&member.row)? {
+    for member in stack {
+        for mut entry in codex_stack_third_party_rows(&member.row)? {
             let Some(obj) = entry.as_object_mut() else {
                 continue;
             };
-            obj.insert("comp_hash".to_string(), json!(CODEX_POOL_COMP_HASH));
+            obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
             let Some(model) = obj.get("slug").and_then(Value::as_str).map(str::to_string) else {
                 continue;
             };
@@ -2278,7 +2278,7 @@ pub(crate) fn plan_codex_pool_catalog(
                 .unwrap_or_else(|| model.clone());
             obj.insert(
                 "slug".to_string(),
-                json!(crate::mode::pool::encode(
+                json!(crate::mode::stack::encode(
                     &crate::app_config::AppType::Codex,
                     member.key,
                     &model,
@@ -2287,14 +2287,14 @@ pub(crate) fn plan_codex_pool_catalog(
             );
             obj.insert(
                 "display_name".to_string(),
-                json!(crate::mode::pool::display_name(
+                json!(crate::mode::stack::display_name(
                     &display,
                     member.provider_name
                 )),
             );
             obj.insert(
                 "description".to_string(),
-                json!(crate::mode::pool::routed_description(member.provider_name)),
+                json!(crate::mode::stack::routed_description(member.provider_name)),
             );
             // 第三方不支持 Responses Lite 协议。
             if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
@@ -2312,7 +2312,7 @@ pub(crate) fn plan_codex_pool_catalog(
 }
 
 /// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
-fn codex_pool_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
+fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
         return Ok(Vec::new());
@@ -2541,10 +2541,10 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         else {
             continue;
         };
-        // 附加模型的行（保留前缀）不属于路由那家，不能进它的编辑表单、再被保存回库里。
+        // Stack 模型的行（保留前缀）不属于路由那家，不能进它的编辑表单、再被保存回库里。
         if !matches!(
-            crate::mode::pool::decode(&crate::app_config::AppType::Codex, model),
-            crate::mode::pool::Decoded::Plain
+            crate::mode::stack::decode(&crate::app_config::AppType::Codex, model),
+            crate::mode::stack::Decoded::Plain
         ) {
             continue;
         }
@@ -4487,7 +4487,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn official_rows_stay_native_and_attached_rows_follow() {
+    fn official_rows_stay_native_and_stacked_rows_follow() {
         let native = normalize_codex_native_rows(vec![
             native_row(
                 "gpt-6-sol",
@@ -4503,17 +4503,17 @@ wire_api = "responses"
             ),
         ])
         .unwrap();
-        let attached_settings = json!({});
-        let catalog = plan_codex_pool_catalog(
-            CodexPoolRoute::Official {
+        let stacked_settings = json!({});
+        let catalog = plan_codex_stack_catalog(
+            CodexStackRoute::Official {
                 native,
                 config_text: "",
             },
-            &[CodexPoolCatalogMember {
+            &[CodexStackCatalogMember {
                 key: "ds",
                 provider_name: "DS",
                 row: CodexCatalogRow {
-                    settings: &attached_settings,
+                    settings: &stacked_settings,
                     config_text: "model = \"deepseek-v4-pro\"\n",
                     profile: CodexCatalogToolProfile::NativeResponses,
                 },
@@ -4522,7 +4522,7 @@ wire_api = "responses"
         .unwrap();
         let models = catalog["models"].as_array().unwrap();
         let slugs: Vec<&str> = models.iter().map(|m| m["slug"].as_str().unwrap()).collect();
-        // 官方的顺序（按 priority）不变，附加的在后面。
+        // 官方的顺序（按 priority）不变，Stack 的在后面。
         assert_eq!(
             slugs,
             vec![
@@ -4542,7 +4542,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn build_simplified_catalog_leaves_attached_models_out_of_the_route_row() {
+    fn build_simplified_catalog_leaves_stack_models_out_of_the_route_row() {
         let catalog = r#"{
             "models": [
                 { "slug": "deepseek/deepseek-v4" },
@@ -4561,7 +4561,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn the_route_rows_keep_the_comp_hash_they_have_without_attached_models() {
+    fn the_route_rows_keep_the_comp_hash_they_have_without_stack_models() {
         let route_settings =
             json!({ "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] } });
         let route_text = "model_provider = \"deepseek\"\nmodel = \"deepseek-v4-pro\"\n\
@@ -4572,25 +4572,25 @@ wire_api = "responses"
             .unwrap();
         assert_eq!(plain["models"][0]["comp_hash"], "3000");
 
-        let attached_settings = json!({});
-        let pooled = plan_codex_pool_catalog(
-            CodexPoolRoute::ThirdParty(CodexCatalogRow {
+        let stacked_settings = json!({});
+        let stacked = plan_codex_stack_catalog(
+            CodexStackRoute::ThirdParty(CodexCatalogRow {
                 settings: &route_settings,
                 config_text: route_text,
                 profile,
             }),
-            &[CodexPoolCatalogMember {
+            &[CodexStackCatalogMember {
                 key: "ds",
                 provider_name: "DS",
                 row: CodexCatalogRow {
-                    settings: &attached_settings,
+                    settings: &stacked_settings,
                     config_text: route_text,
                     profile,
                 },
             }],
         )
         .unwrap();
-        let models = pooled["models"].as_array().unwrap();
+        let models = stacked["models"].as_array().unwrap();
         assert_eq!(models[0]["slug"], "deepseek-v4-pro");
         assert_eq!(models[0]["comp_hash"], plain["models"][0]["comp_hash"]);
         assert_eq!(models[1]["slug"], "ccs-ds/deepseek-v4-pro");
@@ -4598,23 +4598,23 @@ wire_api = "responses"
     }
 
     #[test]
-    fn attached_rows_keep_their_own_tool_profile_and_never_use_responses_lite() {
+    fn stacked_rows_keep_their_own_tool_profile_and_never_use_responses_lite() {
         let route_settings = json!({ "modelCatalog": { "models": [{ "model": "route-model" }] } });
         let route_text = "model = \"route-model\"\n";
-        let attached_settings = json!({});
-        let attached_text = "model = \"claude-opus-5\"\nmodel_context_window = 400000\n";
-        let catalog = plan_codex_pool_catalog(
-            CodexPoolRoute::ThirdParty(CodexCatalogRow {
+        let stacked_settings = json!({});
+        let stacked_text = "model = \"claude-opus-5\"\nmodel_context_window = 400000\n";
+        let catalog = plan_codex_stack_catalog(
+            CodexStackRoute::ThirdParty(CodexCatalogRow {
                 settings: &route_settings,
                 config_text: route_text,
                 profile: CodexCatalogToolProfile::NativeResponses,
             }),
-            &[CodexPoolCatalogMember {
+            &[CodexStackCatalogMember {
                 key: "anth",
                 provider_name: "Anth",
                 row: CodexCatalogRow {
-                    settings: &attached_settings,
-                    config_text: attached_text,
+                    settings: &stacked_settings,
+                    config_text: stacked_text,
                     profile: CodexCatalogToolProfile::Anthropic,
                 },
             }],
@@ -4622,14 +4622,14 @@ wire_api = "responses"
         .expect("catalog");
         let models = catalog["models"].as_array().unwrap();
         assert_eq!(models.len(), 2);
-        let attached = &models[1];
-        assert_eq!(attached["slug"], "ccs-anth/claude-opus-5");
-        assert_eq!(attached["display_name"], "claude-opus-5（Anth）");
-        assert_eq!(attached["shell_type"], "shell_command");
-        assert!(attached.get("apply_patch_tool_type").is_none());
-        assert_eq!(attached["context_window"], 400000);
-        assert_eq!(attached["auto_compact_token_limit"], 360000);
-        assert_ne!(attached["use_responses_lite"], json!(true));
+        let stacked = &models[1];
+        assert_eq!(stacked["slug"], "ccs-anth/claude-opus-5");
+        assert_eq!(stacked["display_name"], "claude-opus-5（Anth）");
+        assert_eq!(stacked["shell_type"], "shell_command");
+        assert!(stacked.get("apply_patch_tool_type").is_none());
+        assert_eq!(stacked["context_window"], 400000);
+        assert_eq!(stacked["auto_compact_token_limit"], 360000);
+        assert_ne!(stacked["use_responses_lite"], json!(true));
         let priorities: Vec<u64> = models
             .iter()
             .map(|entry| entry["priority"].as_u64().unwrap())

@@ -369,8 +369,8 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
-  // 是否在主页面显示附加模式开关（默认关闭）。和 enableLocalProxy 二选一，只影响 Claude Code、Codex
-  enablePoolMode?: boolean;
+  // 是否在主页面显示 Stack 模式开关（默认关闭）。和 enableLocalProxy 二选一，只影响 Claude Code、Codex
+  enableStackMode?: boolean;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

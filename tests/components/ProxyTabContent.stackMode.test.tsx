@@ -10,7 +10,7 @@ const proxyStatus = vi.hoisted(() => ({
   isRunning: false,
   takeoverStatus: undefined as Record<string, boolean> | undefined,
 }));
-const poolActive = vi.hoisted(() => ({
+const stackActive = vi.hoisted(() => ({
   current: {} as Record<string, boolean>,
 }));
 const queueProps = vi.hoisted(() => ({ current: {} as Record<string, any> }));
@@ -42,9 +42,9 @@ vi.mock("@/components/proxy/FailoverQueueManager", () => ({
   },
 }));
 vi.mock("@/lib/query/proxy", () => ({
-  useProxyPool: (appType: string, enabled: boolean) => ({
+  useProxyStack: (appType: string, enabled: boolean) => ({
     data: enabled
-      ? { active: poolActive.current[appType] ?? false, members: [] }
+      ? { active: stackActive.current[appType] ?? false, members: [] }
       : undefined,
   }),
 }));
@@ -80,14 +80,14 @@ describe("ProxyTabContent main-page switches", () => {
     proxyStatus.takeoverStatus = undefined;
   });
 
-  it("sends apps in routing mode back to direct before turning on attached mode", async () => {
+  it("sends apps in routing mode back to direct before turning on Stack mode", async () => {
     exitAppsInMode.mockResolvedValue(["claude"]);
     const onAutoSave = await openProxySection();
 
-    await panelProps.current.onEnablePoolModeChange(true);
+    await panelProps.current.onEnableStackModeChange(true);
     await waitFor(() =>
       expect(onAutoSave).toHaveBeenCalledWith({
-        enablePoolMode: true,
+        enableStackMode: true,
         enableLocalProxy: false,
       }),
     );
@@ -121,7 +121,7 @@ describe("ProxyTabContent failover settings", () => {
   beforeEach(() => {
     proxyStatus.isRunning = true;
     proxyStatus.takeoverStatus = { claude: true };
-    poolActive.current = {};
+    stackActive.current = {};
     queueProps.current = {};
   });
 
@@ -147,17 +147,17 @@ describe("ProxyTabContent failover settings", () => {
 
     expect(queueProps.current.claude.disabled).toBe(false);
     expect(
-      screen.queryByText("proxy.poolMode.failoverUnavailable"),
+      screen.queryByText("proxy.stackMode.failoverUnavailable"),
     ).not.toBeInTheDocument();
   });
 
-  it("cannot be changed in attached mode, which has no failover", async () => {
-    poolActive.current = { claude: true };
+  it("cannot be changed in Stack mode, which has no failover", async () => {
+    stackActive.current = { claude: true };
     await openFailoverSection();
 
     expect(queueProps.current.claude.disabled).toBe(true);
     expect(
-      screen.getByText("proxy.poolMode.failoverUnavailable"),
+      screen.getByText("proxy.stackMode.failoverUnavailable"),
     ).toBeInTheDocument();
   });
 });

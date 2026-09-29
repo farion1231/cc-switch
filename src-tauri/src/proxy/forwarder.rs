@@ -191,9 +191,9 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
-    /// 附加模型的请求（`mode::pool`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
+    /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
-    pool_request: bool,
+    stack_request: bool,
 }
 
 impl RequestForwarder {
@@ -309,27 +309,27 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
-            pool_request: false,
+            stack_request: false,
         }
     }
 
-    /// 标记为附加模型的请求。
-    pub fn pool_request(mut self, pool_request: bool) -> Self {
-        self.pool_request = pool_request;
+    /// 标记为 Stack 模型的请求。
+    pub fn stack_request(mut self, stack_request: bool) -> Self {
+        self.stack_request = stack_request;
         self
     }
 
     /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
-    /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。附加模型的请求
+    /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。Stack 模型的请求
     /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
     fn routing_state_enabled(&self) -> bool {
-        !self.pool_request
+        !self.stack_request
     }
 
-    /// 请求体里的模型名已经是这家的上游名（附加模型的请求）：不按角色映射、不换成行里配置
+    /// 请求体里的模型名已经是这家的上游名（Stack 模型的请求）：不按角色映射、不换成行里配置
     /// 的模型。以后新增模型改写也先问它。
     fn keeps_resolved_model(&self) -> bool {
-        self.pool_request
+        self.stack_request
     }
 
     async fn record_success_result(
@@ -627,7 +627,7 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；附加模型的请求不碰熔断器。
+        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
         let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
 
         // 依次尝试每个供应商
@@ -1163,7 +1163,7 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
-        let codex_pool_request = self.pool_request && matches!(app_type, AppType::Codex);
+        let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1650,7 +1650,7 @@ impl RequestForwarder {
                     provider.id
                 );
             }
-            // 附加请求只做字段兼容。
+            // Stack 请求只做字段兼容。
             let upstream_model = if self.keeps_resolved_model() {
                 None
             } else {
@@ -1664,21 +1664,21 @@ impl RequestForwarder {
             );
         }
 
-        // 附加请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
-        // Anthropic 转换丢掉托管工具是同一件事。只对附加请求、只对名单上的上游生效；
-        // 路由请求和其他附加请求逐字节不变。
-        if codex_pool_request && !codex_responses_to_chat && !codex_responses_to_anthropic {
+        // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
+        // Anthropic 转换丢掉托管工具是同一件事。只对 Stack 请求、只对名单上的上游生效；
+        // 路由请求和其他 Stack 请求逐字节不变。
+        if codex_stack_request && !codex_responses_to_chat && !codex_responses_to_anthropic {
             let request_model = request_body
                 .get("model")
                 .and_then(|model| model.as_str())
                 .map(str::to_string);
-            if super::providers::codex_pool_upstream_rejects_web_search(
+            if super::providers::codex_stack_upstream_rejects_web_search(
                 provider,
                 request_model.as_deref(),
             ) && super::providers::strip_codex_hosted_web_search(&mut request_body)
             {
                 log::debug!(
-                    "[Codex] Dropped hosted web_search for an attached model (provider={})",
+                    "[Codex] Dropped hosted web_search for a stacked model (provider={})",
                     provider.id
                 );
             }
@@ -2140,12 +2140,12 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            // Codex 附加请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
-            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。附加目标不会是官方账号，
+            // Codex Stack 请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
+            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
             // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
-            // 是 Anthropic SDK 的正常请求头，附加请求照常转发。
+            // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
             if (codex_responses_to_anthropic
-                || (codex_pool_request && !codex_official_auth_passthrough))
+                || (codex_stack_request && !codex_official_auth_passthrough))
                 && is_codex_client_fingerprint_header(key_str)
             {
                 continue;
@@ -3936,7 +3936,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
-            pool_request: false,
+            stack_request: false,
         }
     }
 
@@ -4558,7 +4558,7 @@ mod tests {
             "x-stainless-lang",
             "x-stainless-runtime",
             "x-codex-turn-id",
-            // ChatGPT 登录态下的身份头，附加请求发往第三方时同样不能带出去。
+            // ChatGPT 登录态下的身份头，Stack 请求发往第三方时同样不能带出去。
             "x-oai-attestation",
             "x-openai-fedramp",
             "x-openai-account-routing-override",
@@ -5575,7 +5575,7 @@ mod tests {
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
     }
 
-    /// Codex 附加请求的转发改写：身份头、模型名、托管 web_search。
+    /// Codex Stack 请求的转发改写：身份头、模型名、托管 web_search。
     /// 在本机一个空闲端口上起假上游 `app`，返回它的地址。
     async fn serve_upstream(app: axum::Router) -> String {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -5588,7 +5588,7 @@ mod tests {
         format!("http://{addr}")
     }
 
-    mod codex_pool {
+    mod codex_stack {
         use super::*;
         use tokio::sync::Mutex;
 
@@ -5647,9 +5647,9 @@ mod tests {
             provider
         }
 
-        fn forwarder(pool: bool) -> RequestForwarder {
+        fn forwarder(stack: bool) -> RequestForwarder {
             let _ = rustls::crypto::ring::default_provider().install_default();
-            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).pool_request(pool)
+            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack)
         }
 
         /// 官方做路由时 Codex 每个请求都带的 ChatGPT 身份。
@@ -5707,7 +5707,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn attached_requests_never_carry_the_chatgpt_identity() {
+        async fn stacked_requests_never_carry_the_chatgpt_identity() {
             let upstream = upstream().await;
             for api_format in ["openai_responses", "openai_chat", "anthropic"] {
                 let seen = send(
@@ -5821,9 +5821,9 @@ mod tests {
             assert_eq!(seen.body["input"], plain["input"]);
         }
 
-        /// 剥身份头只针对 Codex：Claude Code 的附加请求照常带着 Anthropic SDK 的请求头。
+        /// 剥身份头只针对 Codex：Claude Code 的 Stack 请求照常带着 Anthropic SDK 的请求头。
         #[tokio::test]
-        async fn claude_attached_requests_keep_sdk_headers() {
+        async fn claude_stacked_requests_keep_sdk_headers() {
             let upstream = upstream().await;
             let mut provider = test_provider_with_type(None);
             provider.settings_config = json!({
@@ -5849,7 +5849,7 @@ mod tests {
                     http::Method::POST,
                     "/v1/messages",
                     json!({
-                        "model": "attached-model",
+                        "model": "stacked-model",
                         "max_tokens": 16,
                         "messages": [{ "role": "user", "content": "hi" }]
                     }),
@@ -5863,11 +5863,11 @@ mod tests {
             let seen = upstream.seen.lock().await.pop().expect("upstream request");
             assert_eq!(seen.headers["x-stainless-lang"], "js");
             assert_eq!(seen.headers["x-stainless-package-version"], "0.60.0");
-            assert_eq!(seen.body["model"], "attached-model");
+            assert_eq!(seen.body["model"], "stacked-model");
         }
 
         #[tokio::test]
-        async fn attached_requests_are_not_rewritten_to_the_rows_model() {
+        async fn stacked_requests_are_not_rewritten_to_the_rows_model() {
             let upstream = upstream().await;
             for api_format in ["openai_responses", "openai_chat", "anthropic"] {
                 let seen = send(
@@ -5894,7 +5894,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn attached_requests_drop_hosted_web_search_only_where_it_is_rejected() {
+        async fn stacked_requests_drop_hosted_web_search_only_where_it_is_rejected() {
             let upstream = upstream().await;
             let function = json!({ "type": "function", "name": "shell", "parameters": {} });
             let tools = json!([function.clone(), { "type": "web_search" }]);
@@ -5930,16 +5930,16 @@ mod tests {
             assert!(seen.body.get("tools").is_none(), "{}", seen.body);
 
             // 对照：支持的上游、路由请求都原样转发。
-            for (pool, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
+            for (stack, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
                 let seen = send(
-                    &forwarder(pool),
+                    &forwarder(stack),
                     &upstream,
                     provider(&upstream, "openai_responses"),
                     "/responses",
                     with_choice(model),
                 )
                 .await;
-                assert_eq!(seen.body["tools"], tools, "pool={pool} {model}");
+                assert_eq!(seen.body["tools"], tools, "stack={stack} {model}");
                 assert_eq!(seen.body["tool_choice"]["type"], "web_search");
             }
         }
@@ -6034,13 +6034,13 @@ mod tests {
         /// 上游明确说验不了别家签发的密文：去掉推理条目，对同一家只重试一次。
         #[tokio::test]
         async fn foreign_blob_rejection_is_retried_once_without_reasoning() {
-            for pool in [true, false] {
+            for stack in [true, false] {
                 let upstream = scripted_upstream(vec![blob_rejection(), response_ok()]).await;
                 let result =
-                    forward_codex(&forwarder(pool), provider(&upstream, "openai_responses")).await;
-                assert!(result.is_ok(), "pool={pool}");
+                    forward_codex(&forwarder(stack), provider(&upstream, "openai_responses")).await;
+                assert!(result.is_ok(), "stack={stack}");
                 let seen = upstream.seen.lock().await;
-                assert_eq!(seen.len(), 2, "pool={pool}");
+                assert_eq!(seen.len(), 2, "stack={stack}");
                 assert!(carries_reasoning(&seen[0]));
                 assert!(!carries_reasoning(&seen[1]));
                 assert_eq!(seen[1].body["input"].as_array().unwrap().len(), 3);
@@ -6059,7 +6059,7 @@ mod tests {
             assert_eq!(upstream.seen.lock().await.len(), 2);
         }
 
-        /// 附加模式下官方压缩过、再切到别家原生 Responses 模型：官方的压缩密文原样发出，
+        /// Stack 模式下官方压缩过、再切到别家原生 Responses 模型：官方的压缩密文原样发出，
         /// 那家网关不认识、报错措辞又不在清单里时，只换掉压缩条目对同一家重试一次，
         /// 这家自己的推理条目照旧发。
         #[tokio::test]
@@ -6743,7 +6743,7 @@ mod tests {
                 .contains(crate::proxy::media_sanitizer::UNSUPPORTED_IMAGE_MARKER));
         }
 
-        // ---- 附加模型：不读也不写任何路由状态 ----
+        // ---- Stack 模型：不读也不写任何路由状态 ----
 
         fn untouched() -> Books {
             Books {
@@ -6768,13 +6768,13 @@ mod tests {
                 .is_none()
         }
 
-        fn pool_forwarder() -> RequestForwarder {
+        fn stack_forwarder() -> RequestForwarder {
             // 请求开始时的「当前供应商」是别家：普通请求成功后会记一次故障转移并切路由。
-            forwarder(4, "route").pool_request(true)
+            forwarder(4, "route").stack_request(true)
         }
 
         #[tokio::test]
-        async fn attached_requests_leave_every_routing_state_alone() {
+        async fn stacked_requests_leave_every_routing_state_alone() {
             for script in [
                 vec![ok()],
                 vec![error(503, "overloaded")],
@@ -6782,7 +6782,7 @@ mod tests {
             ] {
                 let status = script[0].0;
                 let up = upstream(script).await;
-                let fwd = pool_forwarder();
+                let fwd = stack_forwarder();
 
                 let result = send(&fwd, vec![provider("kimi", &up)], plain_body()).await;
 
@@ -6798,7 +6798,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn attached_requests_keep_their_model() {
+        async fn stacked_requests_keep_their_model() {
             let up = upstream(vec![ok(), ok()]).await;
             let mut kimi = provider("kimi", &up);
             kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
@@ -6810,10 +6810,10 @@ mod tests {
                 .await
                 .map_err(|e| e.error)
                 .expect("routed");
-            send(&pool_forwarder(), vec![kimi], body)
+            send(&stack_forwarder(), vec![kimi], body)
                 .await
                 .map_err(|e| e.error)
-                .expect("attached");
+                .expect("stack mode");
 
             let requests = up.requests.lock().await;
             assert_eq!(requests[0]["model"], "kimi-k2");
@@ -6821,13 +6821,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn attached_requests_stay_attached_through_rectifier_retries() {
+        async fn stacked_requests_stay_stacked_through_rectifier_retries() {
             let up = upstream(vec![error(400, SIGNATURE_ERROR), ok()]).await;
             let mut kimi = provider("kimi", &up);
             kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
             let mut body = body_with_thinking_signature();
             body["model"] = json!("kimi-k3");
-            let fwd = pool_forwarder();
+            let fwd = stack_forwarder();
 
             send(&fwd, vec![kimi], body)
                 .await

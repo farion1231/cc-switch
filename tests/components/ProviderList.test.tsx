@@ -308,7 +308,7 @@ describe("ProviderList Component", () => {
     expect(lastProps("b")?.isDirectProvider).toBe(false);
   });
 
-  it("turns cards into add / remove / set-as-default in Claude attached mode", async () => {
+  it("turns cards into add / remove / set-as-default in Claude Stack mode", async () => {
     const route = createProvider({ id: "route", name: "Route" });
     const kimi = createProvider({ id: "kimi", name: "Kimi" });
     const other = createProvider({ id: "other", name: "Other" });
@@ -324,7 +324,7 @@ describe("ProviderList Component", () => {
     });
     const setCalls: unknown[] = [];
     server.use(
-      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
           active: true,
           members: [
@@ -342,7 +342,7 @@ describe("ProviderList Component", () => {
         }),
       ),
       http.post(
-        `${TAURI_ENDPOINT}/set_proxy_pool_member`,
+        `${TAURI_ENDPOINT}/set_proxy_stack_member`,
         async ({ request }) => {
           setCalls.push(await request.json());
           return HttpResponse.json(null);
@@ -365,21 +365,21 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    await waitFor(() => expect(lastProps("kimi")?.isPoolMode).toBe(true));
-    expect(lastProps("kimi")?.poolMember?.modelIds).toEqual([
+    await waitFor(() => expect(lastProps("kimi")?.isStackMode).toBe(true));
+    expect(lastProps("kimi")?.stackMember?.modelIds).toEqual([
       "ccs-claude-kimi--kimi-k3",
     ]);
-    expect(lastProps("other")?.poolMember).toBeUndefined();
-    expect(lastProps("other")?.onTogglePool).toBeTypeOf("function");
+    expect(lastProps("other")?.stackMember).toBeUndefined();
+    expect(lastProps("other")?.onToggleStack).toBeTypeOf("function");
     // 默认那家也在名单里（移除按钮由卡片禁用）；官方账号不能添加。
-    expect(lastProps("route")?.poolMember?.route).toBe(true);
-    expect(lastProps("route")?.onTogglePool).toBeTypeOf("function");
-    expect(lastProps("official")?.onTogglePool).toBeUndefined();
-    // 附加模式不做故障转移。
+    expect(lastProps("route")?.stackMember?.route).toBe(true);
+    expect(lastProps("route")?.onToggleStack).toBeTypeOf("function");
+    expect(lastProps("official")?.onToggleStack).toBeUndefined();
+    // Stack 模式不做故障转移。
     expect(lastProps("kimi")?.onToggleFailover).toBeUndefined();
     expect(lastProps("kimi")?.isAutoFailoverEnabled).toBe(false);
 
-    lastProps("kimi")?.onTogglePool(false);
+    lastProps("kimi")?.onToggleStack(false);
     await waitFor(() => expect(setCalls).toHaveLength(1));
     expect(setCalls[0]).toEqual({
       appType: "claude",
@@ -388,7 +388,7 @@ describe("ProviderList Component", () => {
     });
   });
 
-  it("keeps routing-mode cards when attached mode is off", async () => {
+  it("keeps routing-mode cards when Stack mode is off", async () => {
     const route = createProvider({ id: "route", name: "Route" });
     const kimi = createProvider({ id: "kimi", name: "Kimi" });
     useDragSortMock.mockReturnValue({
@@ -397,7 +397,7 @@ describe("ProviderList Component", () => {
       handleDragEnd: vi.fn(),
     });
     server.use(
-      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
           active: false,
           members: [
@@ -430,12 +430,12 @@ describe("ProviderList Component", () => {
     await waitFor(() =>
       expect(lastProps("kimi")?.onToggleFailover).toBeTypeOf("function"),
     );
-    expect(lastProps("kimi")?.isPoolMode).toBe(false);
-    expect(lastProps("kimi")?.poolMember).toBeUndefined();
-    expect(lastProps("kimi")?.onTogglePool).toBeUndefined();
+    expect(lastProps("kimi")?.isStackMode).toBe(false);
+    expect(lastProps("kimi")?.stackMember).toBeUndefined();
+    expect(lastProps("kimi")?.onToggleStack).toBeUndefined();
   });
 
-  it("never lets ChatGPT accounts be added in Codex attached mode", async () => {
+  it("never lets ChatGPT accounts be added in Codex Stack mode", async () => {
     const thirdParty = (id: string) =>
       createProvider({
         id,
@@ -467,7 +467,7 @@ describe("ProviderList Component", () => {
     });
     const setCalls: unknown[] = [];
     server.use(
-      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () =>
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
           active: true,
           members: [
@@ -486,7 +486,7 @@ describe("ProviderList Component", () => {
         }),
       ),
       http.post(
-        `${TAURI_ENDPOINT}/set_proxy_pool_member`,
+        `${TAURI_ENDPOINT}/set_proxy_stack_member`,
         async ({ request }) => {
           setCalls.push(await request.json());
           return HttpResponse.json(null);
@@ -509,16 +509,16 @@ describe("ProviderList Component", () => {
     );
 
     await waitFor(() =>
-      expect(lastProps("deepseek")?.poolMember).toBeDefined(),
+      expect(lastProps("deepseek")?.stackMember).toBeDefined(),
     );
-    expect(lastProps("deepseek")?.onTogglePool).toBeTypeOf("function");
+    expect(lastProps("deepseek")?.onToggleStack).toBeTypeOf("function");
     // 官方模型列表暂未取到：成员卡片带上提示。
-    expect(lastProps("deepseek")?.poolNotice).toBe("officialModelsBundled");
-    // 官方账号在附加模式下只能设为默认。
-    expect(lastProps("managed")?.isPoolMode).toBe(true);
-    expect(lastProps("managed")?.onTogglePool).toBeUndefined();
+    expect(lastProps("deepseek")?.stackNotice).toBe("officialModelsBundled");
+    // 官方账号在 Stack 模式下只能设为默认。
+    expect(lastProps("managed")?.isStackMode).toBe(true);
+    expect(lastProps("managed")?.onToggleStack).toBeUndefined();
 
-    lastProps("deepseek")?.onTogglePool(false);
+    lastProps("deepseek")?.onToggleStack(false);
     await waitFor(() => expect(setCalls).toHaveLength(1));
     expect(setCalls[0]).toEqual({
       appType: "codex",
@@ -527,17 +527,17 @@ describe("ProviderList Component", () => {
     });
   });
 
-  it("hides attached mode outside proxy mode and for apps without it", async () => {
+  it("hides Stack mode outside proxy mode and for apps without it", async () => {
     const provider = createProvider({ id: "a", name: "A" });
     useDragSortMock.mockReturnValue({
       sortedProviders: [provider],
       sensors: [],
       handleDragEnd: vi.fn(),
     });
-    let poolReads = 0;
+    let stackReads = 0;
     server.use(
-      http.post(`${TAURI_ENDPOINT}/get_proxy_pool`, () => {
-        poolReads += 1;
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () => {
+        stackReads += 1;
         return HttpResponse.json({ active: true, members: [] });
       }),
     );
@@ -562,12 +562,12 @@ describe("ProviderList Component", () => {
         />,
       );
       const props = providerCardRenderSpy.mock.calls.at(-1)?.[0];
-      expect(props?.isPoolMode, appId).toBe(false);
-      expect(props?.onTogglePool, appId).toBeUndefined();
-      expect(props?.poolMember, appId).toBeUndefined();
+      expect(props?.isStackMode, appId).toBe(false);
+      expect(props?.onToggleStack, appId).toBeUndefined();
+      expect(props?.stackMember, appId).toBeUndefined();
       unmount();
     }
-    expect(poolReads).toBe(0);
+    expect(stackReads).toBe(0);
   });
 
   it("filters providers with the search input", () => {

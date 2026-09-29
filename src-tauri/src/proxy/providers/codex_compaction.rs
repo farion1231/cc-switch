@@ -1,6 +1,6 @@
 //! Codex 远程压缩（Responses compaction V2）与第三方模型之间的桥接。
 //!
-//! Codex 按 provider 名称判断能否远程压缩：名为 "OpenAI" 的 provider 走 V2。附加模式下
+//! Codex 按 provider 名称判断能否远程压缩：名为 "OpenAI" 的 provider 走 V2。Stack 模式下
 //! 官方卡的镜像表就叫 "OpenAI"，于是挂在它下面的每个第三方模型也会收到 V2 压缩请求：
 //! 一个普通的 `/responses` 流式请求，input 末尾是 `{"type":"compaction_trigger"}`。
 //! codex-rs 的 `collect_compaction_output` 要求返回里**恰好一个**

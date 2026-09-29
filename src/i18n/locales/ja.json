@@ -103,18 +103,18 @@
     "needsRouting": "ルーティングが必要",
     "directProvider": "直接接続",
     "directProviderHint": "ルーティングを終了するとこのプロバイダに戻ります",
-    "poolBadge": "追加済み",
-    "poolBadgeHint": "{{client}} のモデル選択で選べます：{{models}}",
-    "poolBadgeNoModels": "モデルが設定されていないため、モデル選択には表示されません",
-    "poolSaved": "保存しました。{{client}} を再起動すると反映されます",
-    "poolReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で追加モデルを選び直してください",
-    "poolPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
-    "poolFailed": "追加モデルの保存に失敗しました：{{error}}",
-    "poolDefaultCannotRemove": "デフォルトのプロバイダーは削除できません。先に別のプロバイダーをデフォルトに設定してください",
+    "stackBadge": "Stack",
+    "stackBadgeHint": "{{client}} のモデル選択で選べます：{{models}}",
+    "stackBadgeNoModels": "モデルが設定されていないため、モデル選択には表示されません",
+    "stackSaved": "保存しました。{{client}} を再起動すると反映されます",
+    "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で Stack モデルを選び直してください",
+    "stackPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
+    "stackFailed": "Stack モデルの保存に失敗しました：{{error}}",
+    "stackDefaultCannotRemove": "デフォルトのプロバイダーは削除できません。先に別のプロバイダーをデフォルトに設定してください",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
-    "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、追加モデルは現在使用できません",
-    "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、追加モデルは Codex に表示されません",
-    "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、追加モデルは Codex に表示されません",
+    "officialModelsUnavailable": "Codex のモデル一覧を読み込めないため、Stack モデルは現在使用できません",
+    "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、Stack モデルは Codex に表示されません",
+    "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、Stack モデルは Codex に表示されません",
     "noRoutingSupport": "ルーティング非対応",
     "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
@@ -364,8 +364,8 @@
         "description": "ルーティングサービスの切り替え、ステータスとポート情報を表示",
         "enableFeature": "メインページにルーティング切り替えを表示",
         "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
-        "enablePoolMode": "メインページに追加モードのスイッチを表示",
-        "enablePoolModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが追加モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（クライアント再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
+        "enableStackMode": "メインページに Stack モードのスイッチを表示",
+        "enableStackModeDescription": "オンにすると、Claude Code と Codex のメインページのスイッチが Stack モードになります。OpenCode のように複数のプロバイダーを追加でき、それらのモデルがすべてクライアントのモデル一覧に表示されます（クライアント再起動後に反映）。フェイルオーバーは行いません。ローカルルーティングのスイッチとはどちらか一方のみで、切り替え時はオンになっている Claude Code、Codex をいったん直接接続に戻します",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
@@ -2890,15 +2890,15 @@
         "inactive": "{{appLabel}} のリクエストをローカルルーティング経由でルーティング"
       }
     },
-    "poolMode": {
-      "enabled": "{{app}} を追加モードにしました",
+    "stackMode": {
+      "enabled": "{{app}} を Stack モードにしました",
       "exitedToDirect": "{{apps}} を直接接続に戻しました",
       "tooltip": {
-        "active": "{{appLabel}} の追加モードがオンです：追加したプロバイダーのモデルがモデル一覧に表示されます（クライアント再起動後に反映）",
-        "inactive": "追加モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
+        "active": "{{appLabel}} の Stack モードがオンです：追加したプロバイダーのモデルがモデル一覧に表示されます（クライアント再起動後に反映）",
+        "inactive": "Stack モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
       },
-      "ariaLabel": "{{appLabel}} の追加モード",
-      "failoverUnavailable": "{{appLabel}} は追加モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります"
+      "ariaLabel": "{{appLabel}} の Stack モード",
+      "failoverUnavailable": "{{appLabel}} は Stack モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります"
     },
     "failover": {
       "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",

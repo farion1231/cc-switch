@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type {
   GlobalProxyConfig,
   AppProxyConfig,
-  ProxyPoolWriteError,
+  ProxyStackWriteError,
   ProxyTakeoverStatus,
 } from "@/types/proxy";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -64,30 +64,30 @@ export function useDirectProviderId(appType: string, enabled: boolean) {
 }
 
 /**
- * 附加模型名单。放在 ["providers", appId] 前缀下：编辑、删除供应商时随列表一起失效。
+ * Stack 模型名单。放在 ["providers", appId] 前缀下：编辑、删除供应商时随列表一起失效。
  */
-export function useProxyPool(appType: string, enabled: boolean) {
+export function useProxyStack(appType: string, enabled: boolean) {
   return useQuery({
-    queryKey: ["providers", appType, "pool"] as const,
-    queryFn: () => proxyApi.getProxyPool(appType),
+    queryKey: ["providers", appType, "stack"] as const,
+    queryFn: () => proxyApi.getProxyStack(appType),
     enabled,
   });
 }
 
-function isPoolWriteError(error: unknown): error is ProxyPoolWriteError {
+function isStackWriteError(error: unknown): error is ProxyStackWriteError {
   return (
     typeof error === "object" &&
     error !== null &&
-    typeof (error as ProxyPoolWriteError).partial === "boolean"
+    typeof (error as ProxyStackWriteError).partial === "boolean"
   );
 }
 
 /**
- * 把一家加入或移出附加模型。客户端只在启动时读模型列表，成功后提示重启。失败分两种：
+ * 把一家加入或移出 Stack 模型。客户端只在启动时读模型列表，成功后提示重启。失败分两种：
  * 什么都没改（弹后端的错误），已部分写入（下次操作或重启 CC Switch 时补完）。两种都按
  * 后端的状态重新显示，不在前端假设名单不变。
  */
-export function useSetProxyPoolMember() {
+export function useSetProxyStackMember() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -100,15 +100,15 @@ export function useSetProxyPoolMember() {
       appType: string;
       providerId: string;
       enabled: boolean;
-    }) => proxyApi.setProxyPoolMember(appType, providerId, enabled),
+    }) => proxyApi.setProxyStackMember(appType, providerId, enabled),
     onSuccess: (notice, variables) => {
       toast.success(
-        t("provider.poolSaved", {
+        t("provider.stackSaved", {
           client: getAppLabel(variables.appType),
         }),
         {
           description: variables.enabled
-            ? t("provider.poolReselectHint")
+            ? t("provider.stackReselectHint")
             : undefined,
           closeButton: true,
         },
@@ -118,15 +118,15 @@ export function useSetProxyPoolMember() {
       }
     },
     onError: (error: unknown) => {
-      if (isPoolWriteError(error) && error.partial) {
-        toast.warning(t("provider.poolPartial"), {
+      if (isStackWriteError(error) && error.partial) {
+        toast.warning(t("provider.stackPartial"), {
           description: error.message,
           closeButton: true,
         });
         return;
       }
       toast.error(
-        t("provider.poolFailed", { error: extractErrorMessage(error) }),
+        t("provider.stackFailed", { error: extractErrorMessage(error) }),
       );
     },
     onSettled: (_data, _error, variables) => {
@@ -149,12 +149,12 @@ export function useSetProxyTakeoverForApp() {
     mutationFn: ({
       appType,
       enabled,
-      pool = false,
+      stack = false,
     }: {
       appType: string;
       enabled: boolean;
-      pool?: boolean;
-    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, pool),
+      stack?: boolean;
+    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, stack),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
       // 进出路由模式会改「当前」显示的供应商（路由模式下是路由到的那家）。

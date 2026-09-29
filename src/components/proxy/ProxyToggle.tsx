@@ -4,14 +4,14 @@
  * 放置在主界面头部，用于一键启用/关闭代理模式
  * 启用时自动接管 Live 配置，关闭时恢复原始配置
  *
- * `pool` 为真时是附加模式开关（设置里和路由开关二选一，只用于 Claude Code、Codex）：
- * 打开进入附加模式，关掉回到直连。
+ * `stack` 为真时是 Stack 模式开关（设置里和路由开关二选一，只用于 Claude Code、Codex）：
+ * 打开进入 Stack 模式，关掉回到直连。
  */
 
 import { Layers, Radio, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import { useProxyPool } from "@/lib/query/proxy";
+import { useProxyStack } from "@/lib/query/proxy";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { getAppLabel, type ProxyAppId } from "@/config/appConfig";
@@ -19,13 +19,13 @@ import { getAppLabel, type ProxyAppId } from "@/config/appConfig";
 interface ProxyToggleProps {
   className?: string;
   activeApp: ProxyAppId;
-  pool?: boolean;
+  stack?: boolean;
 }
 
 export function ProxyToggle({
   className,
   activeApp,
-  pool = false,
+  stack = false,
 }: ProxyToggleProps) {
   const { t } = useTranslation();
   const {
@@ -36,26 +36,26 @@ export function ProxyToggle({
     isInitialStatusPending,
     status,
   } = useProxyStatus();
-  const { data: poolView } = useProxyPool(activeApp, pool);
+  const { data: stackView } = useProxyStack(activeApp, stack);
 
   const handleToggle = async (checked: boolean) => {
     try {
-      await setTakeoverForApp({ appType: activeApp, enabled: checked, pool });
+      await setTakeoverForApp({ appType: activeApp, enabled: checked, stack });
     } catch (error) {
       console.error("[ProxyToggle] Toggle takeover failed:", error);
     }
   };
 
   const takeoverEnabled = takeoverStatus?.[activeApp] || false;
-  // 附加模式开关只在附加模式下亮：路由模式（比如刚在设置里换过来）算关着，打开就换成附加模式。
-  const checked = takeoverEnabled && (!pool || poolView?.active === true);
+  // Stack 模式开关只在 Stack 模式下亮：路由模式（比如刚在设置里换过来）算关着，打开就换成 Stack 模式。
+  const checked = takeoverEnabled && (!stack || stackView?.active === true);
 
   const appLabel = getAppLabel(activeApp);
 
-  const tooltipText = pool
+  const tooltipText = stack
     ? checked
-      ? t("proxy.poolMode.tooltip.active", { appLabel })
-      : t("proxy.poolMode.tooltip.inactive", { appLabel })
+      ? t("proxy.stackMode.tooltip.active", { appLabel })
+      : t("proxy.stackMode.tooltip.inactive", { appLabel })
     : takeoverEnabled
       ? isRunning
         ? t("proxy.takeover.tooltip.active", {
@@ -73,7 +73,7 @@ export function ProxyToggle({
           defaultValue: `接管 ${appLabel} 的 Live 配置，让该应用请求走本地代理`,
         });
 
-  const Icon = pool ? Layers : Radio;
+  const Icon = stack ? Layers : Radio;
 
   return (
     <div
@@ -90,7 +90,7 @@ export function ProxyToggle({
           className={cn(
             "h-4 w-4 transition-colors",
             checked
-              ? pool
+              ? stack
                 ? "text-violet-500"
                 : "text-emerald-500 status-heartbeat"
               : "text-muted-foreground",
@@ -102,8 +102,8 @@ export function ProxyToggle({
         onCheckedChange={handleToggle}
         disabled={isPending || isInitialStatusPending}
         aria-label={
-          pool
-            ? t("proxy.poolMode.ariaLabel", { appLabel })
+          stack
+            ? t("proxy.stackMode.ariaLabel", { appLabel })
             : t("proxy.takeover.ariaLabel", { appLabel })
         }
       />

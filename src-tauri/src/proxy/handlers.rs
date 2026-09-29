@@ -87,7 +87,7 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// Codex live-setting import.
 ///
 /// Claude Code 的模型发现（`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`）也打到这里：
-/// 按 [`is_claude_model_discovery`] 认出来，返回 Anthropic 形状的附加模型列表。
+/// 按 [`is_claude_model_discovery`] 认出来，返回 Anthropic 形状的 Stack 模型列表。
 pub async fn handle_models(
     State(state): State<ProxyState>,
     uri: axum::http::Uri,
@@ -126,7 +126,7 @@ pub async fn handle_models(
 }
 
 // ============================================================================
-// 附加模型
+// Stack 模型
 // ============================================================================
 
 /// Claude Code 的模型发现请求：`GET /v1/models?limit=1000`，经 Anthropic SDK 发出，带
@@ -144,11 +144,11 @@ fn is_claude_model_discovery(uri: &axum::http::Uri, headers: &axum::http::Header
     has("limit") && !has("client_version")
 }
 
-/// Claude Code 的附加模型列表（Anthropic 形状）。只读数据库和 `live-state.json`，不做网络
+/// Claude Code 的 Stack 模型列表（Anthropic 形状）。只读数据库和 `live-state.json`，不做网络
 /// 请求：客户端只等 3 秒。不在代理模式、名单为空时返回空列表。
 fn claude_model_discovery(state: &ProxyState) -> Value {
-    let models = crate::mode::pool::claude_published_now(&state.db).unwrap_or_else(|error| {
-        log::warn!("[Claude] 读取附加模型失败，返回空列表: {error}");
+    let models = crate::mode::stack::claude_published_now(&state.db).unwrap_or_else(|error| {
+        log::warn!("[Claude] 读取 Stack 模型失败，返回空列表: {error}");
         Vec::new()
     });
     let data: Vec<Value> = models
@@ -168,7 +168,7 @@ fn claude_model_discovery(state: &ProxyState) -> Value {
     })
 }
 
-/// 附加模型（`mode::pool`）：请求带保留前缀的模型 id 时，查出附加的那一家，把请求体的
+/// Stack 模型（`mode::stack`）：请求带保留前缀的模型 id 时，查出 Stack 里的那一家，把请求体的
 /// `model` 换成上游名。解不出来（成员已移除、供应商已删除、key 没登记）就按客户端的协议
 /// 直接返回错误，不回落到默认路由。
 ///
@@ -176,21 +176,21 @@ fn claude_model_discovery(state: &ProxyState) -> Value {
 /// 它们的模型名不解码。普通模型名不读任何状态，路由请求的路径不变。
 ///
 /// `Err` 是在进入路由之前就拒绝的请求，直接返回给客户端（装箱：`Response` 太大）。
-fn resolve_pool_target(
+fn resolve_stack_target(
     state: &ProxyState,
     app_type: &AppType,
     body: &mut Value,
-) -> Result<Option<crate::mode::pool::PoolTarget>, Box<axum::response::Response>> {
-    use crate::mode::pool::{self, Decoded, Resolved};
+) -> Result<Option<crate::mode::stack::StackTarget>, Box<axum::response::Response>> {
+    use crate::mode::stack::{self, Decoded, Resolved};
 
     let Some(model) = body.get("model").and_then(Value::as_str) else {
         return Ok(None);
     };
-    if matches!(pool::decode(app_type, model), Decoded::Plain) {
+    if matches!(stack::decode(app_type, model), Decoded::Plain) {
         return Ok(None);
     }
     let model = model.to_string();
-    let resolved = pool::resolve(
+    let resolved = stack::resolve(
         &state.db,
         &crate::live::engine::DeviceStore::for_device(),
         app_type,
@@ -206,7 +206,7 @@ fn resolve_pool_target(
         Resolved::Miss(miss) => {
             let message = miss.message(&model);
             log::warn!("[{}] {message}", app_type.as_str());
-            let body = pool_miss_body(app_type, &message);
+            let body = stack_miss_body(app_type, &message);
             Err(Box::new(
                 (StatusCode::BAD_REQUEST, Json(body)).into_response(),
             ))
@@ -214,8 +214,8 @@ fn resolve_pool_target(
     }
 }
 
-/// 附加模型解不出来时的错误体：Claude 用 Anthropic 的错误信封，Codex 用 OpenAI 的。
-fn pool_miss_body(app_type: &AppType, message: &str) -> Value {
+/// Stack 模型解不出来时的错误体：Claude 用 Anthropic 的错误信封，Codex 用 OpenAI 的。
+fn stack_miss_body(app_type: &AppType, message: &str) -> Value {
     match app_type {
         AppType::Claude => json!({
             "type": "error",
@@ -300,8 +300,8 @@ async fn handle_messages_for_app(
         .to_bytes();
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    let pool = match resolve_pool_target(&state, &app_type, &mut body) {
-        Ok(pool) => pool,
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
+        Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
     };
 
@@ -312,7 +312,7 @@ async fn handle_messages_for_app(
         app_type.clone(),
         tag,
         app_type_str,
-        pool,
+        stack,
     )
     .await?;
 
@@ -905,8 +905,8 @@ pub async fn handle_chat_completions(
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    let pool = match resolve_pool_target(&state, &AppType::Codex, &mut body) {
-        Ok(pool) => pool,
+    let stack = match resolve_stack_target(&state, &AppType::Codex, &mut body) {
+        Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
     };
 
@@ -917,7 +917,7 @@ pub async fn handle_chat_completions(
         AppType::Codex,
         "Codex",
         "codex",
-        pool,
+        stack,
     )
     .await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
@@ -1007,8 +1007,8 @@ async fn handle_responses_for_app(
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    let pool = match resolve_pool_target(&state, &app_type, &mut body) {
-        Ok(pool) => pool,
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
+        Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
     };
 
@@ -1019,7 +1019,7 @@ async fn handle_responses_for_app(
         app_type.clone(),
         tag,
         app_type_str,
-        pool,
+        stack,
     )
     .await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
@@ -1319,8 +1319,8 @@ async fn handle_responses_compact_for_app(
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
     // 压缩请求也带着客户端选中的模型：不解码的话，会带着前缀落到默认路由。
-    let pool = match resolve_pool_target(&state, &app_type, &mut body) {
-        Ok(pool) => pool,
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
+        Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
     };
 
@@ -1331,7 +1331,7 @@ async fn handle_responses_compact_for_app(
         app_type.clone(),
         tag,
         app_type_str,
-        pool,
+        stack,
     )
     .await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
@@ -3870,8 +3870,8 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
 }
 
 #[cfg(test)]
-mod pool_tests {
-    //! 附加模型的入口：解不出来的带前缀 id 按客户端协议报错，不回落到默认路由；
+mod stack_tests {
+    //! Stack 模型的入口：解不出来的带前缀 id 按客户端协议报错，不回落到默认路由；
     //! `/v1/models` 按请求方返回各自的形状。
     use super::*;
     use crate::database::Database;
@@ -3899,7 +3899,7 @@ mod pool_tests {
     }
 
     #[tokio::test]
-    async fn unresolvable_attached_ids_are_rejected_in_the_clients_protocol() {
+    async fn unresolvable_stacked_ids_are_rejected_in_the_clients_protocol() {
         // 名单为空、没有任何供应商：回落到默认路由的话会报「没有供应商」，而不是 400。
         let state = proxy_state();
 
@@ -3960,7 +3960,7 @@ mod pool_tests {
     }
 
     #[tokio::test]
-    async fn attached_requests_go_to_one_provider_without_failover_timeouts() {
+    async fn stacked_requests_go_to_one_provider_without_failover_timeouts() {
         let state = proxy_state();
         // 应用开了故障转移、配了很短的超时，队列里还有别家。
         let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
@@ -3976,7 +3976,7 @@ mod pool_tests {
             json!({ "env": { "ANTHROPIC_MODEL": "kimi-k3" } }),
             None,
         );
-        let target = crate::mode::pool::PoolTarget {
+        let target = crate::mode::stack::StackTarget {
             provider: kimi,
             upstream_model: "kimi-k3".to_string(),
             original_model: "ccs-claude-kimi--kimi-k3".to_string(),
@@ -3995,7 +3995,7 @@ mod pool_tests {
         .await
         .expect("context");
 
-        assert!(ctx.is_pool);
+        assert!(ctx.is_stack);
         assert_eq!(
             ctx.get_providers()
                 .iter()

@@ -26,7 +26,7 @@ use crate::codex_config::{
     get_codex_model_catalog_path, plan_codex_model_catalog, CodexAuthStoreMode,
 };
 use crate::codex_config::{
-    plan_codex_pool_catalog, CodexCatalogRow, CodexPoolCatalogMember, CodexPoolRoute,
+    plan_codex_stack_catalog, CodexCatalogRow, CodexStackCatalogMember, CodexStackRoute,
 };
 use crate::config::sorted_json_bytes;
 use crate::database::Database;
@@ -41,7 +41,7 @@ use crate::live::project::codex::{
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
-use crate::mode::pool::Member;
+use crate::mode::stack::Member;
 use crate::mode::state::{Contract, PendingTarget};
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
@@ -87,12 +87,12 @@ pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
 pub(crate) enum Target<'a> {
     /// 直连：这个供应商（`None`：没有直连供应商，只清掉关键字段）。
     Direct(Option<&'a Provider>),
-    /// 代理契约：路由供应商；`base_url` 是本地代理给 Codex 的地址（带 `/v1`）；`pool` 是
-    /// 发布的附加供应商（不含路由那家），为空时和没有附加模型逐字节一致。
+    /// 代理契约：路由供应商；`base_url` 是本地代理给 Codex 的地址（带 `/v1`）；`stack` 是
+    /// 发布的 Stack 供应商（不含路由那家），为空时和没有 Stack 模型逐字节一致。
     Proxy {
         route: &'a Provider,
         base_url: &'a str,
-        pool: &'a [Member],
+        stack: &'a [Member],
     },
 }
 
@@ -126,7 +126,7 @@ pub(crate) struct Prepared {
     target_login: Option<(String, Value)>,
     /// 要切走的托管账号，和采纳 CLI 轮换后记下的盘上 refresh token。
     outgoing: Option<(String, CodexLiveAuthSwitchGuard)>,
-    /// 官方做路由、又发布了附加模型时目录里的官方行（[`prepare_official_rows`]）。
+    /// 官方做路由、又发布了 Stack 模型时目录里的官方行（[`prepare_official_rows`]）。
     native: Option<NativeRows>,
     /// 钥匙串里 Codex 的登录，在拿锁之前读好（见 [`prepare_official_rows`]）：钥匙串不归
     /// 写锁管，`security` 还可能弹出授权对话框，不能让写锁等着用户点。锁里没有就当读不出。
@@ -182,7 +182,7 @@ pub(crate) fn prepare(
     })
 }
 
-/// 官方做路由、又发布了附加模型时，按操作之后 Codex 会用的登录取官方模型行。可能联网，
+/// 官方做路由、又发布了 Stack 模型时，按操作之后 Codex 会用的登录取官方模型行。可能联网，
 /// 所以和 [`prepare`] 一样在拿写锁之前做；登录是按未加锁读到的内容预测的，拿锁后在
 /// [`run_with_edits`] 里按真实输入再核对一次。
 ///
@@ -194,10 +194,10 @@ pub(crate) async fn prepare_official_rows(
     target: &Target<'_>,
     prepared: &mut Prepared,
 ) -> Result<(), AppError> {
-    let Target::Proxy { route, pool, .. } = target else {
+    let Target::Proxy { route, stack, .. } = target else {
         return Ok(());
     };
-    if !needs_official_rows(route, pool) {
+    if !needs_official_rows(route, stack) {
         return Ok(());
     }
     if matches!(
@@ -226,9 +226,9 @@ pub(crate) async fn off_runtime<T: Send + 'static>(
         .map_err(|error| AppError::Message(format!("后台线程异常退出: {error}")))
 }
 
-/// 官方做路由、发布了附加模型：目录里要写全官方模型。
-pub(crate) fn needs_official_rows(route: &Provider, pool: &[Member]) -> bool {
-    !pool.is_empty() && is_official(route)
+/// 官方做路由、发布了 Stack 模型：目录里要写全官方模型。
+pub(crate) fn needs_official_rows(route: &Provider, stack: &[Member]) -> bool {
+    !stack.is_empty() && is_official(route)
 }
 
 /// 按未加锁读到的内容预测这次操作之后 Codex 会用的登录（能取官方列表的才返回）。钥匙串
@@ -591,18 +591,18 @@ pub(crate) fn plan(
         }
     };
 
-    let pool = match target {
-        Target::Proxy { pool, .. } => *pool,
+    let stack = match target {
+        Target::Proxy { stack, .. } => *stack,
         Target::Direct(_) => &[],
     };
-    let pool_catalog = match (provider, &projection) {
-        (Some(provider), Some(projection)) => pool_catalog(provider, projection, pool, prepared)?,
+    let stack_catalog = match (provider, &projection) {
+        (Some(provider), Some(projection)) => stack_catalog(provider, projection, stack, prepared)?,
         _ => None,
     };
-    let catalog = match (pool_catalog, provider, &projection) {
+    let catalog = match (stack_catalog, provider, &projection) {
         (Some(catalog), _, _) => {
             // 窗口类全局键会覆盖目录里的每一行，改由各家写进自己的行。
-            exclusive.retain(|(key, _)| !POOL_SUNK_WINDOW_KEYS.contains(&key.as_str()));
+            exclusive.retain(|(key, _)| !STACK_SUNK_WINDOW_KEYS.contains(&key.as_str()));
             Some(catalog)
         }
         (None, Some(provider), Some(projection)) => {
@@ -661,62 +661,62 @@ pub(crate) fn plan(
     })
 }
 
-/// 能不能附加：配置要能解析。之后才坏掉的成员在目录里跳过（见 [`pool_catalog`]）。
-pub(crate) fn check_pool_member(provider: &Provider) -> Result<(), AppError> {
+/// 能不能加进 Stack：配置要能解析。之后才坏掉的成员在目录里跳过（见 [`stack_catalog`]）。
+pub(crate) fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
     project(provider).map(|_| ()).map_err(|error| {
         AppError::Message(format!(
-            "「{name}」的配置有问题，不能作为附加模型 (The configuration of \"{name}\" is invalid, so it cannot be an attached model): {error}",
+            "「{name}」的配置有问题，不能作为 Stack 模型 (The configuration of \"{name}\" is invalid, so it cannot be a stacked model): {error}",
             name = provider.name
         ))
     })
 }
 
 /// 路由那家的行指定了自己管理的模型目录文件（`model_catalog_json`）：Codex 只读那个
-/// 文件，附加模型合并不进去。
+/// 文件，Stack 模型合并不进去。
 pub(crate) fn route_owns_catalog(route: &Provider) -> bool {
     project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_some())
 }
 
-/// 发布了附加模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。
-const POOL_SUNK_WINDOW_KEYS: &[&str] = &["model_context_window", "model_auto_compact_token_limit"];
+/// 发布了 Stack 模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。
+const STACK_SUNK_WINDOW_KEYS: &[&str] = &["model_context_window", "model_auto_compact_token_limit"];
 
-/// 发布了附加模型时的合并目录（路由那家的行在前，附加的在后）；没有要发布的附加模型，
+/// 发布了 Stack 模型时的合并目录（路由那家的行在前，Stack 里的在后）；没有要发布的 Stack 模型，
 /// 或者这次发布不了时为 `None`，目录照原来的规则算。
-fn pool_catalog(
+fn stack_catalog(
     route: &Provider,
     projection: &CodexProjection,
-    pool: &[Member],
+    stack: &[Member],
     prepared: &Prepared,
 ) -> Result<Option<serde_json::Value>, AppError> {
-    if pool.is_empty() {
+    if stack.is_empty() {
         return Ok(None);
     }
     // 路由那家的行指定了自己管理的目录文件：Codex 只读那个文件，合并不进去（界面上
     // 由 `route_owns_catalog` 给出提示）。
     if row_catalog_pointer(&projection.top).is_some() {
         log::warn!(
-            "Codex 路由供应商 {} 使用自己的模型目录文件，附加模型不发布",
+            "Codex 路由供应商 {} 使用自己的模型目录文件，Stack 模型不发布",
             route.id
         );
         return Ok(None);
     }
     let route_text = projection.catalog_input_text();
     let route_row = if is_official(route) {
-        // 写了目录之后 Codex 只认文件里的模型：拿不到官方行时不能写出只有附加模型的目录。
+        // 写了目录之后 Codex 只认文件里的模型：拿不到官方行时不能写出只有 Stack 模型的目录。
         match prepared.native.as_ref().and_then(NativeRows::rows) {
-            Some(rows) => CodexPoolRoute::Official {
+            Some(rows) => CodexStackRoute::Official {
                 native: rows.to_vec(),
                 config_text: &route_text,
             },
             None => {
                 if prepared.native.is_some() {
-                    log::warn!("读取不到 Codex 模型列表，附加模型暂不发布");
+                    log::warn!("读取不到 Codex 模型列表，Stack 模型暂不发布");
                 }
                 return Ok(None);
             }
         }
     } else {
-        CodexPoolRoute::ThirdParty(CodexCatalogRow {
+        CodexStackRoute::ThirdParty(CodexCatalogRow {
             settings: &route.settings_config,
             config_text: &route_text,
             profile: crate::proxy::providers::resolve_codex_catalog_tool_profile(route),
@@ -725,7 +725,7 @@ fn pool_catalog(
 
     // 一家的配置坏了（比如云同步带来的行解析不了）只跳过这一家：报错会让进出代理、换
     // 路由、启动时接上这些 Codex 写入全部失败。
-    let inputs: Vec<_> = pool
+    let inputs: Vec<_> = stack
         .iter()
         .filter_map(|member| match project(&member.provider) {
             Ok(projection) => Some((
@@ -735,16 +735,16 @@ fn pool_catalog(
             )),
             Err(error) => {
                 log::warn!(
-                    "附加模型「{}」的配置有问题，这次不发布它: {error}",
+                    "Stack 模型「{}」的配置有问题，这次不发布它: {error}",
                     member.provider.name
                 );
                 None
             }
         })
         .collect();
-    let members: Vec<CodexPoolCatalogMember<'_>> = inputs
+    let members: Vec<CodexStackCatalogMember<'_>> = inputs
         .iter()
-        .map(|(member, config_text, profile)| CodexPoolCatalogMember {
+        .map(|(member, config_text, profile)| CodexStackCatalogMember {
             key: &member.key,
             provider_name: &member.provider.name,
             row: CodexCatalogRow {
@@ -754,7 +754,7 @@ fn pool_catalog(
             },
         })
         .collect();
-    plan_codex_pool_catalog(route_row, &members).map(Some)
+    plan_codex_stack_catalog(route_row, &members).map(Some)
 }
 
 fn table_text(table: &Table) -> String {

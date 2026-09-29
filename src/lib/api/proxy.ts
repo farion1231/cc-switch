@@ -5,8 +5,8 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
-  ProxyPool,
-  ProxyPoolNotice,
+  ProxyStack,
+  ProxyStackNotice,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -39,19 +39,19 @@ export const proxyApi = {
     return invoke("get_proxy_takeover_status");
   },
 
-  // 为指定应用开启/关闭接管。pool 为真时进入的是附加模式（和路由模式二选一）
+  // 为指定应用开启/关闭接管。stack 为真时进入的是 Stack 模式（和路由模式二选一）
   async setProxyTakeoverForApp(
     appType: string,
     enabled: boolean,
-    pool = false,
+    stack = false,
   ): Promise<void> {
-    return invoke("set_proxy_takeover_for_app", { appType, enabled, pool });
+    return invoke("set_proxy_takeover_for_app", { appType, enabled, stack });
   },
 
-  // 设置里在路由和附加之间换时：处于另一种模式（pool 为真是附加模式）的 Claude Code、
+  // 设置里在路由和 Stack 之间换时：处于另一种模式（stack 为真是 Stack 模式）的 Claude Code、
   // Codex 先退回直连。返回退回直连的应用
-  async exitProxyAppsInMode(pool: boolean): Promise<string[]> {
-    return invoke("exit_proxy_apps_in_mode", { pool });
+  async exitProxyAppsInMode(stack: boolean): Promise<string[]> {
+    return invoke("exit_proxy_apps_in_mode", { stack });
   },
 
   // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
@@ -59,21 +59,21 @@ export const proxyApi = {
     return invoke("get_direct_provider", { appType });
   },
 
-  // ========== 附加模型 API ==========
+  // ========== Stack 模型 API ==========
 
-  // 附加模型名单：每一家和它发布的模型 id，以及提示
-  async getProxyPool(appType: string): Promise<ProxyPool> {
-    return invoke("get_proxy_pool", { appType });
+  // Stack 模型名单：每一家和它发布的模型 id，以及提示
+  async getProxyStack(appType: string): Promise<ProxyStack> {
+    return invoke("get_proxy_stack", { appType });
   },
 
-  // 把一家加入或移出附加模型（enabled 是目标值）。成功时返回客户端看不到或看不全附加模型
-  // 的提示；失败时抛出 ProxyPoolWriteError
-  async setProxyPoolMember(
+  // 把一家加入或移出 Stack 模型（enabled 是目标值）。成功时返回客户端看不到或看不全 Stack 模型
+  // 的提示；失败时抛出 ProxyStackWriteError
+  async setProxyStackMember(
     appType: string,
     providerId: string,
     enabled: boolean,
-  ): Promise<ProxyPoolNotice | null> {
-    return invoke("set_proxy_pool_member", { appType, providerId, enabled });
+  ): Promise<ProxyStackNotice | null> {
+    return invoke("set_proxy_stack_member", { appType, providerId, enabled });
   },
 
   // ========== v3+ 全局/应用级配置 API ==========

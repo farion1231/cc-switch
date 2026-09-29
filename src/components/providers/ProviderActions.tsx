@@ -50,11 +50,11 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
-  // 附加模式：主按钮是添加 / 移除，已添加的另有「设为默认」（onSwitch）。onTogglePool
+  // Stack 模式：主按钮是添加 / 移除，已添加的另有「设为默认」（onSwitch）。onToggleStack
   // 为空的（官方账号）不能添加，只能设为默认。
-  isPoolMode?: boolean;
-  isPoolMember?: boolean;
-  onTogglePool?: (enabled: boolean) => void;
+  isStackMode?: boolean;
+  isStackMember?: boolean;
+  onToggleStack?: (enabled: boolean) => void;
   isOfficialBlockedByProxy?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
@@ -97,9 +97,9 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
-  isPoolMode = false,
-  isPoolMember = false,
-  onTogglePool,
+  isStackMode = false,
+  isStackMember = false,
+  onToggleStack,
   isOfficialBlockedByProxy = false,
   isReadOnly = false,
   // OpenClaw: default model
@@ -122,9 +122,9 @@ export function ProviderActions({
     !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
   const isMembershipMode = isAdditiveMode;
   const piStateChangeHint = t("pi.current.stateUnavailableHint");
-  const canAttach = isPoolMode && onTogglePool !== undefined;
+  const canStack = isStackMode && onToggleStack !== undefined;
 
-  // 「设为默认 / 当前默认」按钮（OpenClaw、Hermes 的默认模型，附加模式的默认供应商）
+  // 「设为默认 / 当前默认」按钮（OpenClaw、Hermes 的默认模型，Stack 模式的默认供应商）
   const defaultButtonClassName = (isDefault: boolean) =>
     cn(
       "w-fit px-2.5",
@@ -140,9 +140,9 @@ export function ProviderActions({
       } else {
         onSwitch();
       }
-    } else if (canAttach) {
-      // 附加模式：添加 / 移除（默认那家的移除按钮是禁用的）
-      onTogglePool?.(!isPoolMember);
+    } else if (canStack) {
+      // Stack 模式：添加 / 移除（默认那家的移除按钮是禁用的）
+      onToggleStack?.(!isStackMember);
     } else if (isMembershipMode) {
       // 累加模式：切换配置状态（添加/移除）
       if (isInConfig) {
@@ -225,9 +225,9 @@ export function ProviderActions({
       };
     }
 
-    // 附加模式：已添加的可以移除（默认那家除外），没添加的可以添加
-    if (canAttach) {
-      if (isPoolMember) {
+    // Stack 模式：已添加的可以移除（默认那家除外），没添加的可以添加
+    if (canStack) {
+      if (isStackMember) {
         return {
           disabled: isCurrent,
           variant: "secondary" as const,
@@ -237,7 +237,7 @@ export function ProviderActions({
           ),
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
-          title: isCurrent ? t("provider.poolDefaultCannotRemove") : undefined,
+          title: isCurrent ? t("provider.stackDefaultCannotRemove") : undefined,
         };
       }
       return {
@@ -250,8 +250,8 @@ export function ProviderActions({
       };
     }
 
-    // 附加模式下不能添加的（官方账号）只能设为默认
-    if (isPoolMode && !isOfficialBlockedByProxy) {
+    // Stack 模式下不能添加的（官方账号）只能设为默认
+    if (isStackMode && !isOfficialBlockedByProxy) {
       return {
         disabled: isCurrent,
         variant: isCurrent ? ("secondary" as const) : ("default" as const),
@@ -416,7 +416,7 @@ export function ProviderActions({
           );
         })()}
 
-      {canAttach && isPoolMember && (
+      {canStack && isStackMember && (
         <Button
           size="sm"
           variant={isCurrent ? "secondary" : "default"}

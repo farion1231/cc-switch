@@ -114,24 +114,24 @@ export function useProxyStatus() {
     },
   });
 
-  // 按应用开启/关闭接管。pool 为真时进入的是附加模式（和路由模式二选一）
+  // 按应用开启/关闭接管。stack 为真时进入的是 Stack 模式（和路由模式二选一）
   const setTakeoverForAppMutation = useMutation({
     mutationFn: ({
       appType,
       enabled,
-      pool = false,
+      stack = false,
     }: {
       appType: string;
       enabled: boolean;
-      pool?: boolean;
-    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, pool),
+      stack?: boolean;
+    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, stack),
     onSuccess: (_data, variables) => {
       const appLabel = getAppLabel(variables.appType);
 
       toast.success(
         variables.enabled
-          ? variables.pool
-            ? t("proxy.poolMode.enabled", { app: appLabel })
+          ? variables.stack
+            ? t("proxy.stackMode.enabled", { app: appLabel })
             : t("proxy.takeover.enabled", {
                 app: appLabel,
                 defaultValue: `已接管 ${appLabel} 配置（请求将走本地代理）`,
@@ -162,13 +162,13 @@ export function useProxyStatus() {
     },
   });
 
-  // 设置里在路由和附加之间换时：处于另一种模式的 Claude Code、Codex 先退回直连
+  // 设置里在路由和 Stack 之间换时：处于另一种模式的 Claude Code、Codex 先退回直连
   const exitAppsInModeMutation = useMutation({
-    mutationFn: (pool: boolean) => proxyApi.exitProxyAppsInMode(pool),
+    mutationFn: (stack: boolean) => proxyApi.exitProxyAppsInMode(stack),
     onSuccess: (apps) => {
       if (apps.length > 0) {
         toast.success(
-          t("proxy.poolMode.exitedToDirect", {
+          t("proxy.stackMode.exitedToDirect", {
             apps: apps.map(getAppLabel).join(" / "),
           }),
           { closeButton: true },

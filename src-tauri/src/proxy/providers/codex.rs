@@ -516,10 +516,10 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
-/// 附加请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
+/// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
 /// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
 /// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
-pub fn codex_pool_upstream_rejects_web_search(
+pub fn codex_stack_upstream_rejects_web_search(
     provider: &Provider,
     request_model: Option<&str>,
 ) -> bool {

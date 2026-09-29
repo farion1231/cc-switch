@@ -1,4 +1,4 @@
-//! Codex 官方做路由、又发布了附加模型时，目录里的官方模型行。
+//! Codex 官方做路由、又发布了 Stack 模型时，目录里的官方模型行。
 //!
 //! 写了 `model_catalog_json` 之后 Codex 只认文件里的模型，也不再刷新自己的模型列表
 //! （codex-rs `StaticModelsManager` 忽略刷新策略），所以要把官方模型写全。来源依次是：
@@ -288,7 +288,7 @@ pub(crate) enum NativeRows {
     Fetched { identity: String, rows: Vec<Value> },
     /// Codex 自带的列表：官方列表暂未取到。
     Bundled { rows: Vec<Value> },
-    /// 两个来源都没有合格数据：不写目录，附加模型暂不可用。
+    /// 两个来源都没有合格数据：不写目录，Stack 模型暂不可用。
     Unavailable,
 }
 

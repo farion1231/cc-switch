@@ -19,10 +19,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { useProxyPool } from "@/lib/query/proxy";
+import { useProxyStack } from "@/lib/query/proxy";
 import {
   getAppLabel,
-  isPoolAppId,
+  isStackAppId,
   PROXY_APP_IDS,
   type ProxyAppId,
 } from "@/config/appConfig";
@@ -54,29 +54,29 @@ export function ProxyTabContent({
     isPending: isProxyPending,
   } = useProxyStatus();
 
-  // 主页面的路由开关和附加模式开关二选一。打开一个之前，处于另一种模式的 Claude Code、
-  // Codex 先退回直连（`pool` 为真是附加模式开关）。
+  // 主页面的路由开关和 Stack 模式开关二选一。打开一个之前，处于另一种模式的 Claude Code、
+  // Codex 先退回直连（`stack` 为真是 Stack 模式开关）。
   const handleMainPageSwitchChange = async (
-    pool: boolean,
+    stack: boolean,
     checked: boolean,
   ) => {
     if (checked) {
       try {
-        await exitAppsInMode(!pool);
+        await exitAppsInMode(!stack);
       } catch (error) {
         console.error("Exit apps in the other mode failed:", error);
         return;
       }
     }
     await onAutoSave(
-      pool
+      stack
         ? {
-            enablePoolMode: checked,
+            enableStackMode: checked,
             ...(checked && { enableLocalProxy: false }),
           }
         : {
             enableLocalProxy: checked,
-            ...(checked && { enablePoolMode: false }),
+            ...(checked && { enableStackMode: false }),
           },
     );
   };
@@ -165,8 +165,8 @@ export function ProxyTabContent({
               onEnableLocalProxyChange={(checked) =>
                 void handleMainPageSwitchChange(false, checked)
               }
-              enablePoolMode={settings?.enablePoolMode ?? false}
-              onEnablePoolModeChange={(checked) =>
+              enableStackMode={settings?.enableStackMode ?? false}
+              onEnableStackModeChange={(checked) =>
                 void handleMainPageSwitchChange(true, checked)
               }
               onToggleProxy={handleToggleProxy}
@@ -310,7 +310,7 @@ export function ProxyTabContent({
   );
 }
 
-// 一个应用的故障转移队列和参数：路由服务在跑且接管了这个应用时才能改。附加模式不做故障
+// 一个应用的故障转移队列和参数：路由服务在跑且接管了这个应用时才能改。Stack 模式不做故障
 // 转移（Claude Code、Codex），这时也不能改；队列和设置留着，回到路由模式恢复。
 function FailoverAppSettings({
   appType,
@@ -320,16 +320,19 @@ function FailoverAppSettings({
   routed: boolean;
 }) {
   const { t } = useTranslation();
-  const { data: pool } = useProxyPool(appType, routed && isPoolAppId(appType));
-  const attached = routed && pool?.active === true;
-  const disabled = !routed || attached;
+  const { data: stack } = useProxyStack(
+    appType,
+    routed && isStackAppId(appType),
+  );
+  const stackMode = routed && stack?.active === true;
+  const disabled = !routed || stackMode;
 
   return (
     <>
-      {attached && (
+      {stackMode && (
         <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
           <p className="text-sm text-yellow-600 dark:text-yellow-400">
-            {t("proxy.poolMode.failoverUnavailable", {
+            {t("proxy.stackMode.failoverUnavailable", {
               appLabel: getAppLabel(appType),
             })}
           </p>

@@ -2,7 +2,7 @@
 //!
 //! - `mode`、`attached`、`proxy_route`、`contract`：直连 / 代理模式（`mode::controller`）；
 //! - `written`：CC Switch 上次写进客户端文件、之后要按记录删掉的东西（Grok 的模型表）；
-//! - `pool`：代理模式的附加模型（`mode::pool`）；
+//! - `stack`：代理模式的 Stack 模型（`mode::stack`）；
 //! - `pending`：一次写客户端文件的操作在发布前写下的意图，按文件记录写前、写后的
 //!   hash 和已备好的临时文件，崩溃后据此前滚或丢弃（`mode::operation`）。
 //!
@@ -113,16 +113,16 @@ pub struct Written {
     pub extra: Map<String, Value>,
 }
 
-/// 代理模式的附加模型：这些供应商的模型以带前缀的 id 发布给客户端，选中后请求直达那一家
-/// （`mode::pool`）。
+/// 代理模式的 Stack 模型：这些供应商的模型以带前缀的 id 发布给客户端，选中后请求直达那一家
+/// （`mode::stack`）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct PoolState {
-    /// 附加模式：代理模式下发布附加模型、不做故障转移（界面上和路由模式二选一，见
+pub struct StackState {
+    /// Stack 模式：代理模式下发布 Stack 模型、不做故障转移（界面上和路由模式二选一，见
     /// `controller::enter`）。只在代理模式下有意义：每次进入代理时按用户选的模式写定，
     /// 退出代理时不动，名单也留着。
     #[serde(default, skip_serializing_if = "is_false")]
     pub enabled: bool,
-    /// 当前附加的供应商 id，按加入顺序。
+    /// 当前 Stack 里的供应商 id，按加入顺序。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<String>,
     /// key 登记簿：key → 供应商 id。一经分配永久归这家，移除成员、删除供应商都不回收：
@@ -133,7 +133,7 @@ pub struct PoolState {
     pub extra: Map<String, Value>,
 }
 
-impl PoolState {
+impl StackState {
     pub fn is_empty(&self) -> bool {
         !self.enabled && self.members.is_empty() && self.keys.is_empty() && self.extra.is_empty()
     }
@@ -166,8 +166,8 @@ pub struct AppLiveState {
     pub written: Option<Written>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
-    #[serde(default, skip_serializing_if = "PoolState::is_empty")]
-    pub pool: PoolState,
+    #[serde(default, skip_serializing_if = "StackState::is_empty")]
+    pub stack: StackState,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -176,7 +176,7 @@ impl AppLiveState {
     fn is_empty(&self) -> bool {
         self.pending.is_none()
             && self.written.is_none()
-            && self.pool.is_empty()
+            && self.stack.is_empty()
             && self.mode_state() == ModeState::default()
             && self.extra.is_empty()
     }
@@ -214,8 +214,8 @@ pub mod op {
     pub const ATTACH: &str = "attach";
     /// 代理模式下换路由（契约变了时同一操作里先改写客户端）。
     pub const ROUTE: &str = "route";
-    /// 增删附加模型（契约变了时同一操作里先改写客户端）。
-    pub const POOL: &str = "pool";
+    /// 增删 Stack 模型（契约变了时同一操作里先改写客户端）。
+    pub const STACK: &str = "stack";
 }
 
 /// 一次操作的写前意图。
@@ -257,10 +257,10 @@ pub struct PendingTarget {
     /// 写入记录：有值时整体替换。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub written: Option<Written>,
-    /// 附加模型：有值时整体替换这个应用的 `pool`（成员和登记簿一起）。不放进 `state`：
-    /// `state` 会整体替换，不认识 `pool` 的版本写下的 pending 前滚时就会把名单清空。
+    /// Stack 模型：有值时整体替换这个应用的 `stack`（成员和登记簿一起）。不放进 `state`：
+    /// `state` 会整体替换，不认识 `stack` 的版本写下的 pending 前滚时就会把名单清空。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pool: Option<PoolState>,
+    pub stack: Option<StackState>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -286,7 +286,7 @@ impl PendingTarget {
         self.pointer.is_none()
             && self.state.is_none()
             && self.written.is_none()
-            && self.pool.is_none()
+            && self.stack.is_none()
             && self.extra.is_empty()
     }
 }
@@ -389,23 +389,23 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
         .and_then(|state| state.written.clone()))
 }
 
-/// 这个应用的附加模型（成员和 key 登记簿）。
-pub fn pool(store: &DeviceStore, app: &str) -> Result<PoolState, AppError> {
+/// 这个应用的 Stack 模型（成员和 key 登记簿）。
+pub fn stack(store: &DeviceStore, app: &str) -> Result<StackState, AppError> {
     let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
     Ok(load(store)?
         .apps
         .get(app)
-        .map(|state| state.pool.clone())
+        .map(|state| state.stack.clone())
         .unwrap_or_default())
 }
 
-/// 这个应用在附加模式（代理模式且附加模式开着），状态文件只读一次。
-pub fn pool_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
+/// 这个应用在 Stack 模式（代理模式且 Stack 模式开着），状态文件只读一次。
+pub fn stack_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
     let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
     Ok(load(store)?
         .apps
         .get(app)
-        .is_some_and(|state| state.mode == Some(Mode::Proxy) && state.pool.enabled))
+        .is_some_and(|state| state.mode == Some(Mode::Proxy) && state.stack.enabled))
 }
 
 /// 有未完成操作的应用。

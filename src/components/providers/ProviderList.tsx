@@ -18,7 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
-import type { ProxyPoolMember, ProxyPoolNotice } from "@/types/proxy";
+import type { ProxyStackMember, ProxyStackNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -51,10 +51,10 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import {
   useDirectProviderId,
-  useProxyPool,
-  useSetProxyPoolMember,
+  useProxyStack,
+  useSetProxyStackMember,
 } from "@/lib/query/proxy";
-import { isPoolAppId, isProxyAppId } from "@/config/appConfig";
+import { isStackAppId, isProxyAppId } from "@/config/appConfig";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 
 interface ProviderListProps {
@@ -168,30 +168,30 @@ export function ProviderList({
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
 
-  // 附加模式（设置里和路由模式二选一）：供应商列表是累加式的，添加的各家模型挂进客户端的
+  // Stack 模式（设置里和路由模式二选一）：供应商列表是累加式的，添加的各家模型挂进客户端的
   // 模型选择器，「设为默认」那家承接不带前缀的请求；不做故障转移。
-  const { data: pool } = useProxyPool(
+  const { data: stack } = useProxyStack(
     appId,
-    isPoolAppId(appId) && isProxyTakeover === true,
+    isStackAppId(appId) && isProxyTakeover === true,
   );
-  const isPoolMode =
-    isPoolAppId(appId) && isProxyTakeover === true && pool?.active === true;
-  const poolMembers = pool?.members;
-  const poolNotice = isPoolMode ? pool?.notice : undefined;
-  const setPoolMember = useSetProxyPoolMember();
-  const poolMemberOf = useCallback(
-    (providerId: string): ProxyPoolMember | undefined =>
-      isPoolMode
-        ? poolMembers?.find((member) => member.providerId === providerId)
+  const isStackMode =
+    isStackAppId(appId) && isProxyTakeover === true && stack?.active === true;
+  const stackMembers = stack?.members;
+  const stackNotice = isStackMode ? stack?.notice : undefined;
+  const setStackMember = useSetProxyStackMember();
+  const stackMemberOf = useCallback(
+    (providerId: string): ProxyStackMember | undefined =>
+      isStackMode
+        ? stackMembers?.find((member) => member.providerId === providerId)
         : undefined,
-    [isPoolMode, poolMembers],
+    [isStackMode, stackMembers],
   );
 
   const isFailoverModeActive =
     supportsFailover &&
     isProxyTakeover === true &&
     isAutoFailoverEnabled === true &&
-    !isPoolMode;
+    !isStackMode;
 
   // 路由模式下「当前」是路由到的那家；直连供应商另外标出来，退出路由时写回它。
   const { data: directProviderId } = useDirectProviderId(
@@ -492,8 +492,8 @@ export function ProviderList({
                     : appId === "hermes"
                       ? isHermesCurrent
                       : provider.id === currentProviderId;
-            // 附加模式下官方账号只能设为默认，不能添加。
-            const canAttach = isPoolMode && !isOfficialAccount(appId, provider);
+            // Stack 模式下官方账号只能设为默认，不能添加。
+            const canStack = isStackMode && !isOfficialAccount(appId, provider);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -531,20 +531,20 @@ export function ProviderList({
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
                 onToggleFailover={
-                  supportsFailover && !isPoolMode
+                  supportsFailover && !isStackMode
                     ? (enabled) => handleToggleFailover(provider.id, enabled)
                     : undefined
                 }
                 activeProviderId={
                   supportsFailover ? activeProviderId : undefined
                 }
-                isPoolMode={isPoolMode}
-                poolMember={poolMemberOf(provider.id)}
-                poolNotice={poolNotice}
-                onTogglePool={
-                  canAttach
+                isStackMode={isStackMode}
+                stackMember={stackMemberOf(provider.id)}
+                stackNotice={stackNotice}
+                onToggleStack={
+                  canStack
                     ? (enabled) =>
-                        setPoolMember.mutate({
+                        setStackMember.mutate({
                           appType: appId,
                           providerId: provider.id,
                           enabled,
@@ -703,10 +703,10 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover?: (enabled: boolean) => void;
   activeProviderId?: string;
-  isPoolMode: boolean;
-  poolMember?: ProxyPoolMember;
-  poolNotice?: ProxyPoolNotice;
-  onTogglePool?: (enabled: boolean) => void;
+  isStackMode: boolean;
+  stackMember?: ProxyStackMember;
+  stackNotice?: ProxyStackNotice;
+  onToggleStack?: (enabled: boolean) => void;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -741,10 +741,10 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
-  isPoolMode,
-  poolMember,
-  poolNotice,
-  onTogglePool,
+  isStackMode,
+  stackMember,
+  stackNotice,
+  onToggleStack,
   isDefaultModel,
   isRemovalProtected,
   isStateChangeProtected,
@@ -800,10 +800,10 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
-        isPoolMode={isPoolMode}
-        poolMember={poolMember}
-        poolNotice={poolNotice}
-        onTogglePool={onTogglePool}
+        isStackMode={isStackMode}
+        stackMember={stackMember}
+        stackNotice={stackNotice}
+        onToggleStack={onToggleStack}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         isRemovalProtected={isRemovalProtected}

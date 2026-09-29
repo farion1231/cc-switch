@@ -1,17 +1,17 @@
-//! 附加模式（UI 叫「附加模式」，代码叫 pool）。
+//! Stack 模式（界面和代码都叫 Stack）。
 //!
-//! 附加模式和路由模式在界面上二选一，内部都是代理模式：附加模式多一个开关位
-//! （[`PoolState::enabled`]）。附加模式下供应商列表是累加式的：添加的每一家（第三方）的
+//! Stack 模式和路由模式在界面上二选一，内部都是代理模式：Stack 模式多一个开关位
+//! （[`StackState::enabled`]）。Stack 模式下供应商列表是累加式的：添加的每一家（第三方）的
 //! 模型以带保留前缀的 id 发布给客户端，选中后请求直达那一家；不带前缀的请求发往「默认」
 //! 那家（代理路由），不做故障转移。
 //!
-//! - 名单和 key 登记簿存在 `live-state.json`（[`PoolState`]），增删和客户端文件在同一个
-//!   操作里提交（`controller::set_pool_member`）；默认那家也在名单里，不能移除；
+//! - 名单和 key 登记簿存在 `live-state.json`（[`StackState`]），增删和客户端文件在同一个
+//!   操作里提交（`controller::set_stack_member`）；默认那家也在名单里，不能移除；
 //! - key 一经分配永久归这家（[`allocate_key`]）：客户端会一直带着选中过的 id，key 改了
 //!   指向，旧 id 就会被悄悄发到另一家；
 //! - 带保留前缀的 id 解不出来（成员已移除、供应商已删除、key 没登记）一律报错，不回落到
 //!   默认路由（[`resolve`]）：回落会用别家的钱、别家的模型回答，用户看不出来；
-//! - 附加请求不读也不写任何路由状态（熔断器、故障转移、「正在使用」、代理统计），见
+//! - Stack 请求不读也不写任何路由状态（熔断器、故障转移、「正在使用」、代理统计），见
 //!   `proxy::forwarder` 的 `routing_state_enabled`。
 
 use serde::Serialize;
@@ -25,13 +25,13 @@ use crate::live::project::claude::{env_string, has_one_m_marker, ONE_M_MARKER_FO
 use crate::provider::Provider;
 use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
 
-use super::state::{self, PoolState};
+use super::state::{self, StackState};
 
-/// Claude Code 的附加模型 id：`ccs-claude-<key>--<model>`。id 里要有 `claude` 才进
+/// Claude Code 的 Stack 模型 id：`ccs-claude-<key>--<model>`。id 里要有 `claude` 才进
 /// `/model` 选择器，不以 `claude-` 开头 MAX 窗口才生效。
 const CLAUDE_PREFIX: &str = "ccs-claude-";
 const CLAUDE_SEPARATOR: &str = "--";
-/// Codex 的附加模型 id：`ccs-<key>/<model>`。
+/// Codex 的 Stack 模型 id：`ccs-<key>/<model>`。
 const CODEX_PREFIX: &str = "ccs-";
 const CODEX_SEPARATOR: char = '/';
 
@@ -41,8 +41,8 @@ const KEY_MAX_LEN: usize = 24;
 /// Claude Code 在没有 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 时按这个窗口算。
 pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
-/// 支持附加模型的应用。
-pub fn supports_pool(app: &AppType) -> bool {
+/// 支持 Stack 模型的应用。
+pub fn supports_stack(app: &AppType) -> bool {
     matches!(app, AppType::Claude | AppType::Codex)
 }
 
@@ -51,8 +51,8 @@ pub fn supports_pool(app: &AppType) -> bool {
 ///
 /// 新 key 和登记簿里所有的 key 去重，不只是当前成员：已移除、已删除的供应商的 key 也
 /// 占着位置，旧 id 才不会被发给新来的这家。
-pub fn allocate_key(pool: &mut PoolState, provider: &Provider) -> String {
-    if let Some(key) = pool.key_of(&provider.id) {
+pub fn allocate_key(stack: &mut StackState, provider: &Provider) -> String {
+    if let Some(key) = stack.key_of(&provider.id) {
         return key.to_string();
     }
     let base = [provider.icon.as_deref(), Some(provider.name.as_str())]
@@ -70,11 +70,11 @@ pub fn allocate_key(pool: &mut PoolState, provider: &Provider) -> String {
         });
     let mut key = base.clone();
     let mut suffix = 2;
-    while pool.keys.contains_key(&key) {
+    while stack.keys.contains_key(&key) {
         key = format!("{base}-{suffix}");
         suffix += 1;
     }
-    pool.keys.insert(key.clone(), provider.id.clone());
+    stack.keys.insert(key.clone(), provider.id.clone());
     key
 }
 
@@ -96,7 +96,7 @@ fn slug(text: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// 附加模型 id。Claude 的上游是 1M 窗口时末尾带 `[1M]`，Claude Code 才按 1M 计算。
+/// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1M]`，Claude Code 才按 1M 计算。
 pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     match app {
         AppType::Codex => format!("{CODEX_PREFIX}{key}{CODEX_SEPARATOR}{model}"),
@@ -115,7 +115,7 @@ pub enum Decoded<'a> {
     /// 带保留前缀，但切不出 key 和模型。
     Malformed,
     /// 带保留前缀。`model` 可以含 `/` 和 `--`（key 里没有这两种分隔符，在第一个处切开）。
-    Pool {
+    Stack {
         key: &'a str,
         model: &'a str,
         /// Claude id 末尾带着 1M 标记。
@@ -146,16 +146,16 @@ pub fn decode<'a>(app: &AppType, id: &'a str) -> Decoded<'a> {
     };
     match rest.split_once(separator) {
         Some((key, model)) if !key.is_empty() && !model.is_empty() => {
-            Decoded::Pool { key, model, one_m }
+            Decoded::Stack { key, model, one_m }
         }
         _ => Decoded::Malformed,
     }
 }
 
-/// Claude 附加供应商发布给客户端的一个模型（Codex 的由目录条目描述，见
-/// `codex_config::plan_codex_pool_catalog`）。
+/// Claude Stack 供应商发布给客户端的一个模型（Codex 的由目录条目描述，见
+/// `codex_config::plan_codex_stack_catalog`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PoolModel {
+pub struct StackModel {
     /// 发布给客户端的 id（带保留前缀）。
     pub id: String,
     /// 发往上游的模型名：行里配置的原值（可能带 `[1M]`，转发时和路由请求一样处理）。
@@ -172,7 +172,7 @@ pub struct PoolModel {
 
 /// Claude 行发布的模型：`ANTHROPIC_MODEL` 和各档 `ANTHROPIC_DEFAULT_*_MODEL`，按去掉 1M
 /// 标记后的名字去重（任何一处带标记就按 1M）。显示名取对应档位的 `*_MODEL_NAME`。
-pub fn claude_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
+pub fn claude_models(key: &str, provider: &Provider) -> Vec<StackModel> {
     const ROLES: [(&str, Option<&str>); 5] = [
         ("ANTHROPIC_MODEL", None),
         (
@@ -249,7 +249,7 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
 
     found
         .into_iter()
-        .map(|found| PoolModel {
+        .map(|found| StackModel {
             id: encode(&AppType::Claude, key, &found.model, found.one_m),
             display_name: display_name(
                 found.name.as_deref().unwrap_or(&found.model),
@@ -264,7 +264,7 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<PoolModel> {
 }
 
 /// Codex 行发布的模型 id：行里的模型目录，没有配置目录时只有行的 `model`。显示名和窗口
-/// 由目录条目决定（`codex_config::plan_codex_pool_catalog`）。
+/// 由目录条目决定（`codex_config::plan_codex_stack_catalog`）。
 pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
     let config = provider
         .settings_config
@@ -277,17 +277,17 @@ pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
         .collect()
 }
 
-/// 选择器里附加模型的显示名：`<模型显示名>（<供应商名>）`。
+/// 选择器里 Stack 模型的显示名：`<模型显示名>（<供应商名>）`。
 pub fn display_name(model: &str, provider_name: &str) -> String {
     format!("{model}（{provider_name}）")
 }
 
-/// 选择器里附加模型的说明。
+/// 选择器里 Stack 模型的说明。
 pub fn routed_description(provider_name: &str) -> String {
     format!("经 CC Switch 路由到 {provider_name} (Routed by CC Switch to {provider_name})")
 }
 
-/// 一家附加供应商发布给客户端的模型 id。
+/// 一家 Stack 供应商发布给客户端的模型 id。
 fn model_ids_of(app: &AppType, key: &str, provider: &Provider) -> Vec<String> {
     match app {
         AppType::Claude => claude_models(key, provider)
@@ -310,11 +310,11 @@ pub struct Member {
 
 /// 名单里还在库里的成员，按加入顺序。库里已经没有的跳过（删除供应商会先把它移出名单，
 /// 删行前失败才会留下）。
-pub fn members(db: &Database, app: &AppType, pool: &PoolState) -> Result<Vec<Member>, AppError> {
-    let mut members = Vec::with_capacity(pool.members.len());
-    for id in &pool.members {
-        let Some(key) = pool.key_of(id) else {
-            log::warn!("{} 的附加模型成员 {id} 没有登记 key，跳过", app.as_str());
+pub fn members(db: &Database, app: &AppType, stack: &StackState) -> Result<Vec<Member>, AppError> {
+    let mut members = Vec::with_capacity(stack.members.len());
+    for id in &stack.members {
+        let Some(key) = stack.key_of(id) else {
+            log::warn!("{} 的 Stack 模型成员 {id} 没有登记 key，跳过", app.as_str());
             continue;
         };
         let Some(provider) = db.get_provider_by_id(id, app.as_str())? else {
@@ -330,75 +330,78 @@ pub fn members(db: &Database, app: &AppType, pool: &PoolState) -> Result<Vec<Mem
     Ok(members)
 }
 
-/// 这个成员发布附加模型：路由那家（`route`）不发布，它的模型已经通过默认路由出现，名单
+/// 这个成员发布 Stack 模型：路由那家（`route`）不发布，它的模型已经通过默认路由出现，名单
 /// 保留。契约、Codex 目录、Claude Code 的模型发现和给前端的名单都按这一条排除。
 pub fn is_published(member: &Member, route: Option<&str>) -> bool {
     Some(member.provider.id.as_str()) != route
 }
 
-/// 发布附加模型的成员（按名单顺序，见 [`is_published`]）。附加模式关着（路由模式）时
-/// 没有：名单留着，下次进入附加模式时恢复。
+/// 发布 Stack 模型的成员（按名单顺序，见 [`is_published`]）。Stack 模式关着（路由模式）时
+/// 没有：名单留着，下次进入 Stack 模式时恢复。
 pub fn published_members(
     db: &Database,
     app: &AppType,
-    pool: &PoolState,
+    stack: &StackState,
     route: Option<&str>,
 ) -> Result<Vec<Member>, AppError> {
-    if !pool.enabled || pool.members.is_empty() || !supports_pool(app) {
+    if !stack.enabled || stack.members.is_empty() || !supports_stack(app) {
         return Ok(Vec::new());
     }
-    let mut members = members(db, app, pool)?;
+    let mut members = members(db, app, stack)?;
     members.retain(|member| is_published(member, route));
     Ok(members)
 }
 
 /// Claude 的这些成员发布给客户端的模型，按名单顺序。
-pub fn claude_published(members: &[Member]) -> Vec<PoolModel> {
+pub fn claude_published(members: &[Member]) -> Vec<StackModel> {
     members
         .iter()
         .flat_map(|member| claude_models(&member.key, &member.provider))
         .collect()
 }
 
-/// 这个应用在附加模式（代理模式且附加模式开着）。读不出状态按不在处理。
-pub fn pool_mode_now(app: &AppType) -> bool {
-    if !supports_pool(app) {
+/// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
+pub fn stack_mode_now(app: &AppType) -> bool {
+    if !supports_stack(app) {
         return false;
     }
-    state::pool_mode(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|error| {
-        log::warn!("读取 {} 的附加模式失败，按不在处理: {error}", app.as_str());
+    state::stack_mode(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|error| {
+        log::warn!(
+            "读取 {} 的 Stack 模式失败，按不在处理: {error}",
+            app.as_str()
+        );
         false
     })
 }
 
-/// 在附加名单里（不管什么模式）。
+/// 在 Stack 名单里（不管什么模式）。
 pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
-    if !supports_pool(app) {
+    if !supports_stack(app) {
         return Ok(false);
     }
-    Ok(state::pool(&DeviceStore::for_device(), app.as_str())?.is_member(provider_id))
+    Ok(state::stack(&DeviceStore::for_device(), app.as_str())?.is_member(provider_id))
 }
 
-/// Claude Code 现在发布的附加模型：代理模式下按已落定的名单和路由算，不在代理模式时没有。
-pub fn claude_published_now(db: &Database) -> Result<Vec<PoolModel>, AppError> {
+/// Claude Code 现在发布的 Stack 模型：代理模式下按已落定的名单和路由算，不在代理模式时没有。
+pub fn claude_published_now(db: &Database) -> Result<Vec<StackModel>, AppError> {
     let app = AppType::Claude;
     let store = DeviceStore::for_device();
     let mode = state::mode_state(&store, app.as_str())?;
     if !mode.is_proxy() {
         return Ok(Vec::new());
     }
-    let pool = state::pool(&store, app.as_str())?;
+    let stack = state::stack(&store, app.as_str())?;
     Ok(claude_published(&published_members(
         db,
         &app,
-        &pool,
+        &stack,
         mode.proxy_route.as_deref(),
     )?))
 }
 
-/// 选中附加模型的请求要发往的那一家。
+/// 选中 Stack 模型的请求要发往的那一家。
 #[derive(Debug, Clone)]
-pub struct PoolTarget {
+pub struct StackTarget {
     pub provider: Provider,
     /// 发往上游的模型名。
     pub upstream_model: String,
@@ -408,27 +411,27 @@ pub struct PoolTarget {
 
 /// 带保留前缀的 id 为什么解不出来。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PoolMiss {
+pub enum StackMiss {
     /// key 没登记，或 id 切不出 key 和模型。
     Unknown,
-    /// 这家已经从附加名单移除。
+    /// 这家已经从 Stack 名单移除。
     Removed,
     /// 这家已经从 CC Switch 删除。
     Deleted,
 }
 
-impl PoolMiss {
+impl StackMiss {
     /// 返回给客户端的错误文案。
     pub fn message(&self, model: &str) -> String {
         match self {
             Self::Unknown => format!(
-                "附加模型 {model} 在 CC Switch 里不存在，请在模型列表里重新选择 (Attached model {model} is unknown to CC Switch; pick a model from the model list again)"
+                "Stack 模型 {model} 在 CC Switch 里不存在，请在模型列表里重新选择 (Stacked model {model} is unknown to CC Switch; pick a model from the model list again)"
             ),
             Self::Removed => format!(
-                "附加模型 {model} 已从 CC Switch 移除，请在模型列表里重新选择 (Attached model {model} was removed from CC Switch; pick a model from the model list again)"
+                "Stack 模型 {model} 已从 CC Switch 移除，请在模型列表里重新选择 (Stacked model {model} was removed from CC Switch; pick a model from the model list again)"
             ),
             Self::Deleted => format!(
-                "附加模型 {model} 对应的供应商已删除，请在模型列表里重新选择 (The provider of attached model {model} was deleted; pick a model from the model list again)"
+                "Stack 模型 {model} 对应的供应商已删除，请在模型列表里重新选择 (The provider of stacked model {model} was deleted; pick a model from the model list again)"
             ),
         }
     }
@@ -438,9 +441,9 @@ impl PoolMiss {
 pub enum Resolved {
     /// 普通模型名，照旧走代理路由。
     Plain,
-    Hit(Box<PoolTarget>),
+    Hit(Box<StackTarget>),
     /// 带保留前缀但解不出来：报错，不回落到默认路由。名单为空时也一样。
-    Miss(PoolMiss),
+    Miss(StackMiss),
 }
 
 /// 解析请求里的模型 id。不带保留前缀时不读任何状态，路由请求的路径不变。
@@ -452,19 +455,19 @@ pub fn resolve(
 ) -> Result<Resolved, AppError> {
     let (key, model_part, one_m) = match decode(app, model) {
         Decoded::Plain => return Ok(Resolved::Plain),
-        Decoded::Malformed => return Ok(Resolved::Miss(PoolMiss::Unknown)),
-        Decoded::Pool { key, model, one_m } => (key, model, one_m),
+        Decoded::Malformed => return Ok(Resolved::Miss(StackMiss::Unknown)),
+        Decoded::Stack { key, model, one_m } => (key, model, one_m),
     };
-    let pool = state::pool(store, app.as_str())?;
-    let Some(provider_id) = pool.keys.get(key) else {
-        return Ok(Resolved::Miss(PoolMiss::Unknown));
+    let stack = state::stack(store, app.as_str())?;
+    let Some(provider_id) = stack.keys.get(key) else {
+        return Ok(Resolved::Miss(StackMiss::Unknown));
     };
     let provider = db.get_provider_by_id(provider_id, app.as_str())?;
     let Some(provider) = provider else {
-        return Ok(Resolved::Miss(PoolMiss::Deleted));
+        return Ok(Resolved::Miss(StackMiss::Deleted));
     };
-    if !pool.is_member(provider_id) {
-        return Ok(Resolved::Miss(PoolMiss::Removed));
+    if !stack.is_member(provider_id) {
+        return Ok(Resolved::Miss(StackMiss::Removed));
     }
     // Claude 发往上游的是行里配置的原值（可能带 1M 标记），和路由请求映射出来的一样；
     // 行里已经没有这个模型时照原样发（上游自己决定认不认）。Codex 的 id 就是行里的模型名。
@@ -484,7 +487,7 @@ pub fn resolve(
             model_part.to_string()
         }
     });
-    Ok(Resolved::Hit(Box::new(PoolTarget {
+    Ok(Resolved::Hit(Box::new(StackTarget {
         provider,
         upstream_model,
         original_model: model.to_string(),
@@ -494,7 +497,7 @@ pub fn resolve(
 /// 给前端：名单里的一家。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PoolMemberView {
+pub struct StackMemberView {
     pub provider_id: String,
     /// 发布给客户端的模型 id。
     pub model_ids: Vec<String>,
@@ -503,27 +506,27 @@ pub struct PoolMemberView {
     pub route: bool,
 }
 
-/// 给前端：附加模式的状态、名单和提示。
+/// 给前端：Stack 模式的状态、名单和提示。
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PoolView {
-    /// 在附加模式（代理模式且附加模式开着）。
+pub struct StackView {
+    /// 在 Stack 模式（代理模式且 Stack 模式开着）。
     pub active: bool,
-    pub members: Vec<PoolMemberView>,
-    /// Codex 附加模型客户端看不到或看不全：`routeOwnsCatalog` 路由那家自己管理模型目录
-    /// 文件，附加模型不发布；`configOwnsCatalog` 用户在 `config.toml` 里指定了自己的模型
+    pub members: Vec<StackMemberView>,
+    /// Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由那家自己管理模型目录
+    /// 文件，Stack 模型不发布；`configOwnsCatalog` 用户在 `config.toml` 里指定了自己的模型
     /// 目录，生成的目录不生效；官方做路由时官方模型列表暂未取到：`officialModelsBundled`
-    /// 暂用 Codex 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` 附加模型
+    /// 暂用 Codex 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型
     /// 暂不可用。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<&'static str>,
 }
 
 /// `route` 是代理模式下的路由供应商（不在代理模式时为 `None`）。
-pub fn member_views(members: &[Member], route: Option<&str>) -> Vec<PoolMemberView> {
+pub fn member_views(members: &[Member], route: Option<&str>) -> Vec<StackMemberView> {
     members
         .iter()
-        .map(|member| PoolMemberView {
+        .map(|member| StackMemberView {
             provider_id: member.provider.id.clone(),
             model_ids: member.model_ids.clone(),
             route: !is_published(member, route),
@@ -549,16 +552,16 @@ mod tests {
 
     #[test]
     fn keys_come_from_the_icon_then_the_name() {
-        let mut pool = PoolState::default();
+        let mut stack = StackState::default();
         let kimi = provider("a", "Kimi For Coding", Some("kimi"), json!({}));
         let named = provider("b", "My Relay 2.0!", None, json!({}));
         let chinese = provider("c1b2c3d4-e5f6", "智谱", None, json!({}));
         let blank_icon = provider("d", "DeepSeek", Some("  "), json!({}));
 
-        assert_eq!(allocate_key(&mut pool, &kimi), "kimi");
-        assert_eq!(allocate_key(&mut pool, &named), "my-relay-2-0");
-        assert_eq!(allocate_key(&mut pool, &chinese), "pc1b2c3");
-        assert_eq!(allocate_key(&mut pool, &blank_icon), "deepseek");
+        assert_eq!(allocate_key(&mut stack, &kimi), "kimi");
+        assert_eq!(allocate_key(&mut stack, &named), "my-relay-2-0");
+        assert_eq!(allocate_key(&mut stack, &chinese), "pc1b2c3");
+        assert_eq!(allocate_key(&mut stack, &blank_icon), "deepseek");
     }
 
     #[test]
@@ -577,18 +580,18 @@ mod tests {
 
     #[test]
     fn a_key_stays_with_its_provider_forever() {
-        let mut pool = PoolState::default();
+        let mut stack = StackState::default();
         let a = provider("a", "Kimi", Some("kimi"), json!({}));
         let b = provider("b", "Kimi Coding Plan", Some("kimi"), json!({}));
 
-        assert_eq!(allocate_key(&mut pool, &a), "kimi");
-        pool.members.push("a".to_string());
+        assert_eq!(allocate_key(&mut stack, &a), "kimi");
+        stack.members.push("a".to_string());
         // A 移除（登记簿保留）后，同图标的 B 拿不到 A 的 key。
-        pool.members.clear();
-        assert_eq!(allocate_key(&mut pool, &b), "kimi-2");
+        stack.members.clear();
+        assert_eq!(allocate_key(&mut stack, &b), "kimi-2");
         // A 重新加入，拿回原来的 key。
-        assert_eq!(allocate_key(&mut pool, &a), "kimi");
-        assert_eq!(pool.keys.len(), 2);
+        assert_eq!(allocate_key(&mut stack, &a), "kimi");
+        assert_eq!(stack.keys.len(), 2);
     }
 
     #[test]
@@ -603,7 +606,7 @@ mod tests {
             let id = encode(&claude, "kimi", model, one_m);
             assert_eq!(
                 decode(&claude, &id),
-                Decoded::Pool {
+                Decoded::Stack {
                     key: "kimi",
                     model,
                     one_m
@@ -614,7 +617,7 @@ mod tests {
         // 标记大小写不敏感。
         assert_eq!(
             decode(&claude, "ccs-claude-k--m[1m]"),
-            Decoded::Pool {
+            Decoded::Stack {
                 key: "k",
                 model: "m",
                 one_m: true
@@ -629,7 +632,7 @@ mod tests {
         assert_eq!(id, "ccs-deepseek/deepseek/deepseek-v4-pro");
         assert_eq!(
             decode(&codex, &id),
-            Decoded::Pool {
+            Decoded::Stack {
                 key: "deepseek",
                 model: "deepseek/deepseek-v4-pro",
                 one_m: false
@@ -642,7 +645,7 @@ mod tests {
         let (claude, codex) = (AppType::Claude, AppType::Codex);
         assert_eq!(decode(&claude, "claude-sonnet-5"), Decoded::Plain);
         assert_eq!(decode(&claude, "kimi-k3"), Decoded::Plain);
-        // 路由那家自己的 `deepseek/…` 不被同名的附加 key 截走。
+        // 路由那家自己的 `deepseek/…` 不被同名的 Stack key 截走。
         assert_eq!(decode(&codex, "deepseek/deepseek-v4-pro"), Decoded::Plain);
         assert_eq!(decode(&codex, "ccs-without-separator"), Decoded::Plain);
         assert_eq!(
@@ -681,7 +684,7 @@ mod tests {
         assert_eq!(
             models,
             vec![
-                PoolModel {
+                StackModel {
                     id: "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
                     upstream: "glm-5.2[1M]".to_string(),
                     display_name: "GLM 5.2（Zhipu）".to_string(),
@@ -690,7 +693,7 @@ mod tests {
                     one_m: true,
                     window: 128_000,
                 },
-                PoolModel {
+                StackModel {
                     id: "ccs-claude-zhipu--glm-4.7-air".to_string(),
                     upstream: "glm-4.7-air".to_string(),
                     display_name: "glm-4.7-air（Zhipu）".to_string(),
@@ -739,11 +742,11 @@ mod tests {
             db.save_provider("claude", &row).unwrap();
         }
         state::update(&store, |live| {
-            let pool = &mut live.apps.entry("claude".to_string()).or_default().pool;
-            pool.enabled = true;
-            pool.members = ["kimi", "zhipu", "deleted"].map(str::to_string).to_vec();
+            let stack = &mut live.apps.entry("claude".to_string()).or_default().stack;
+            stack.enabled = true;
+            stack.members = ["kimi", "zhipu", "deleted"].map(str::to_string).to_vec();
             for id in ["kimi", "zhipu", "gone", "deleted"] {
-                pool.keys.insert(id.to_string(), id.to_string());
+                stack.keys.insert(id.to_string(), id.to_string());
             }
         })
         .unwrap();
@@ -769,7 +772,7 @@ mod tests {
         }
     }
 
-    fn miss(resolved: Resolved) -> PoolMiss {
+    fn miss(resolved: Resolved) -> StackMiss {
         match resolved {
             Resolved::Miss(miss) => miss,
             other => panic!("expected a miss, got {other:?}"),
@@ -779,8 +782,8 @@ mod tests {
     #[test]
     fn the_route_is_not_published_twice() {
         let fx = fixture();
-        let pool = state::pool(&fx.store, "claude").unwrap();
-        let members = |route| published_members(&fx.db, &AppType::Claude, &pool, route).unwrap();
+        let stack = state::stack(&fx.store, "claude").unwrap();
+        let members = |route| published_members(&fx.db, &AppType::Claude, &stack, route).unwrap();
         let ids = |route| {
             claude_published(&members(route))
                 .into_iter()
@@ -807,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn attached_ids_resolve_to_their_provider_and_upstream_model() {
+    fn stacked_ids_resolve_to_their_provider_and_upstream_model() {
         let fx = fixture();
         assert_eq!(
             hit(resolve_in(&fx, AppType::Claude, "ccs-claude-kimi--kimi-k3")),
@@ -833,19 +836,19 @@ mod tests {
     }
 
     #[test]
-    fn attached_ids_that_cannot_be_resolved_never_fall_back_to_the_route() {
+    fn stacked_ids_that_cannot_be_resolved_never_fall_back_to_the_route() {
         let fx = fixture();
         let claude = |id| miss(resolve_in(&fx, AppType::Claude, id));
-        assert_eq!(claude("ccs-claude-gone--g-1"), PoolMiss::Removed);
-        assert_eq!(claude("ccs-claude-deleted--d-1"), PoolMiss::Deleted);
-        assert_eq!(claude("ccs-claude-nobody--m"), PoolMiss::Unknown);
-        assert_eq!(claude("ccs-claude-kimi"), PoolMiss::Unknown);
-        // 名单为空（这个应用从没加过附加模型）也一样报错。
+        assert_eq!(claude("ccs-claude-gone--g-1"), StackMiss::Removed);
+        assert_eq!(claude("ccs-claude-deleted--d-1"), StackMiss::Deleted);
+        assert_eq!(claude("ccs-claude-nobody--m"), StackMiss::Unknown);
+        assert_eq!(claude("ccs-claude-kimi"), StackMiss::Unknown);
+        // 名单为空（这个应用从没加过 Stack 模型）也一样报错。
         assert_eq!(
             miss(resolve_in(&fx, AppType::Codex, "ccs-kimi/kimi-k3")),
-            PoolMiss::Unknown
+            StackMiss::Unknown
         );
-        let message = PoolMiss::Removed.message("ccs-claude-gone--g-1");
+        let message = StackMiss::Removed.message("ccs-claude-gone--g-1");
         assert!(message.contains("ccs-claude-gone--g-1"), "{message}");
     }
 
@@ -860,9 +863,9 @@ mod tests {
         });
         fx.db.save_provider("codex", &deepseek).unwrap();
         state::update(&fx.store, |live| {
-            let pool = &mut live.apps.entry("codex".to_string()).or_default().pool;
-            pool.members = vec!["ds".to_string()];
-            pool.keys.insert("deepseek".to_string(), "ds".to_string());
+            let stack = &mut live.apps.entry("codex".to_string()).or_default().stack;
+            stack.members = vec!["ds".to_string()];
+            stack.keys.insert("deepseek".to_string(), "ds".to_string());
         })
         .unwrap();
 

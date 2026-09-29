@@ -3,7 +3,7 @@
 //! 提供请求生命周期的上下文管理，封装通用初始化逻辑
 
 use crate::app_config::AppType;
-use crate::mode::pool::PoolTarget;
+use crate::mode::stack::StackTarget;
 use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
@@ -71,8 +71,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
-    /// 附加模型的请求（`mode::pool`）：直达附加的那一家，不读也不写任何路由状态。
-    pub is_pool: bool,
+    /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
+    pub is_stack: bool,
 }
 
 impl RequestContext {
@@ -85,7 +85,7 @@ impl RequestContext {
     /// * `app_type` - 应用类型
     /// * `tag` - 日志标签
     /// * `app_type_str` - 应用类型字符串
-    /// * `pool` - 附加模型的目标（请求体里的 `model` 已换成上游名）
+    /// * `stack` - Stack 模型的目标（请求体里的 `model` 已换成上游名）
     ///
     /// # Errors
     /// 返回 `ProxyError` 如果 Provider 选择失败
@@ -96,7 +96,7 @@ impl RequestContext {
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
-        pool: Option<PoolTarget>,
+        stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
@@ -124,15 +124,15 @@ impl RequestContext {
             session_result.client_provided
         );
 
-        let is_pool = pool.is_some();
-        let (provider, providers, current_provider_id, request_model) = match pool {
+        let is_stack = stack.is_some();
+        let (provider, providers, current_provider_id, request_model) = match stack {
             Some(target) => {
-                // 附加模型：只发往附加的那一家，不读代理路由、不经熔断器选家。按「单家、
+                // Stack 模型：只发往 Stack 里的那一家，不读代理路由、不经熔断器选家。按「单家、
                 // 不转移」处理：换成有效副本，转发和读响应两个阶段都从这里取，超时和重试
                 // 跟着关掉（见 `create_forwarder`）。
                 app_config.auto_failover_enabled = false;
                 log::debug!(
-                    "[{}] Attached model {} → provider {}, upstream model {}, session: {}",
+                    "[{}] Stacked model {} → provider {}, upstream model {}, session: {}",
                     tag,
                     target.original_model,
                     target.provider.name,
@@ -162,11 +162,11 @@ impl RequestContext {
                     .unwrap_or("unknown")
                     .to_string();
 
-                // 附加模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
+                // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
                 // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
-                let pool_mode =
-                    app_config.auto_failover_enabled && crate::mode::pool::pool_mode_now(&app_type);
-                let providers = if pool_mode {
+                let stack_mode = app_config.auto_failover_enabled
+                    && crate::mode::stack::stack_mode_now(&app_type);
+                let providers = if stack_mode {
                     app_config.auto_failover_enabled = false;
                     vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
                 } else {
@@ -220,7 +220,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
-            is_pool,
+            is_stack,
         })
     }
 
@@ -290,7 +290,7 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
-        .pool_request(self.is_pool)
+        .stack_request(self.is_stack)
     }
 
     /// 获取 Provider 列表（用于故障转移）

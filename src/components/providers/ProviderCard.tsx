@@ -12,7 +12,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { OpenClawProviderConfig, Provider } from "@/types";
-import type { ProxyPoolMember, ProxyPoolNotice } from "@/types/proxy";
+import type { ProxyStackMember, ProxyStackNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -77,10 +77,10 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
-  isPoolMode?: boolean; // 附加模式：卡片按钮是添加 / 移除 / 设为默认
-  poolMember?: ProxyPoolMember; // 附加模式：这家已添加时的名单条目
-  poolNotice?: ProxyPoolNotice; // 附加模式：客户端看不到或看不全附加模型的原因
-  onTogglePool?: (enabled: boolean) => void; // 附加模式下添加 / 移除（不能添加的为空）
+  isStackMode?: boolean; // Stack 模式：卡片按钮是添加 / 移除 / 设为默认
+  stackMember?: ProxyStackMember; // Stack 模式：这家已添加时的名单条目
+  stackNotice?: ProxyStackNotice; // Stack 模式：客户端看不到或看不全 Stack 模型的原因
+  onToggleStack?: (enabled: boolean) => void; // Stack 模式下添加 / 移除（不能添加的为空）
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -199,10 +199,10 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
-  isPoolMode = false,
-  poolMember,
-  poolNotice,
-  onTogglePool,
+  isStackMode = false,
+  stackMember,
+  stackNotice,
+  onToggleStack,
   // OpenClaw: default model
   isDefaultModel,
   isRemovalProtected,
@@ -508,18 +508,18 @@ export function ProviderCard({
               )}
 
               {/* 默认那家的模型走默认路由，不带前缀发布，不标。 */}
-              {poolMember && !poolMember.route && (
+              {stackMember && !stackMember.route && (
                 <ProviderStatusBadge
-                  tone={poolNotice ? "warning" : "success"}
-                  label={t("provider.poolBadge")}
+                  tone={stackNotice ? "warning" : "success"}
+                  label={t("provider.stackBadge")}
                   title={[
-                    poolMember.modelIds.length > 0
-                      ? t("provider.poolBadgeHint", {
+                    stackMember.modelIds.length > 0
+                      ? t("provider.stackBadgeHint", {
                           client: getAppLabel(appId),
-                          models: poolMember.modelIds.join(", "),
+                          models: stackMember.modelIds.join(", "),
                         })
-                      : t("provider.poolBadgeNoModels"),
-                    poolNotice ? t(`provider.${poolNotice}`) : null,
+                      : t("provider.stackBadgeNoModels"),
+                    stackNotice ? t(`provider.${stackNotice}`) : null,
                   ]
                     .filter(Boolean)
                     .join("\n")}
@@ -773,9 +773,9 @@ export function ProviderCard({
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
-              isPoolMode={isPoolMode}
-              isPoolMember={poolMember !== undefined}
-              onTogglePool={onTogglePool}
+              isStackMode={isStackMode}
+              isStackMember={stackMember !== undefined}
+              onToggleStack={onToggleStack}
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={
