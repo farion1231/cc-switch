@@ -15,6 +15,8 @@ mod gemini_editor;
 pub(crate) mod grok_direct;
 mod grok_editor;
 mod live;
+#[cfg(test)]
+mod opencode_tests;
 mod pi;
 mod usage;
 

@@ -584,6 +584,26 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.settings_config.clone()
             };
 
+            // A new ID cannot inherit an existing provider's built-in definition.
+            // Check at the write boundary as well as in the UI, including old copies.
+            let has_npm = config_to_write
+                .get("npm")
+                .and_then(Value::as_str)
+                .is_some_and(|npm| !npm.trim().is_empty());
+            let has_models = config_to_write
+                .get("models")
+                .and_then(Value::as_object)
+                .is_some_and(|models| !models.is_empty());
+            if (!has_npm || !has_models)
+                && !opencode_config::get_providers()?.contains_key(&provider.id)
+            {
+                return Err(AppError::localized(
+                    "provider.opencode.custom_definition_required",
+                    "新的 OpenCode 供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
+                    "A new OpenCode provider ID requires an npm package and at least one model; only an existing ID in the live config may inherit defaults",
+                ));
+            }
+
             // Validate with the existing type, but persist the original fragment:
             // the type does not describe every OpenCode provider/model field.
             let opencode_config_result =

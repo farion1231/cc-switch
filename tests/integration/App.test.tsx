@@ -390,6 +390,84 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it.each([
+    { options: { apiKey: "test-key" } },
+    { npm: "@ai-sdk/openai-compatible", models: {} },
+    { models: { "glm-5": { name: "GLM 5" } } },
+  ])(
+    "blocks incomplete OpenCode copies before saving or sorting: %j",
+    async (settingsConfig) => {
+      localStorage.setItem("cc-switch-last-app", "opencode");
+      setProviders("opencode", {
+        "opencode-go": {
+          id: "opencode-go",
+          name: "OpenCode Go",
+          settingsConfig,
+          sortIndex: 0,
+        },
+        other: { id: "other", name: "Other", settingsConfig: {}, sortIndex: 1 },
+      });
+      setCurrentProviderId("opencode", "opencode-go");
+      setLiveProviderIds("opencode", ["opencode-go"]);
+      const add = vi.spyOn(providersApi, "add");
+      const sort = vi.spyOn(providersApi, "updateSortOrder");
+      try {
+        const { default: App } = await import("@/App");
+        renderApp(App);
+        await waitFor(() =>
+          expect(screen.getByTestId("provider-list").textContent).toContain(
+            "opencode-go",
+          ),
+        );
+        fireEvent.click(screen.getByText("duplicate"));
+        await waitFor(() =>
+          expect(toastErrorMock).toHaveBeenCalledWith(
+            "opencode.duplicateRequiresDefinition",
+          ),
+        );
+        expect(add).not.toHaveBeenCalled();
+        expect(sort).not.toHaveBeenCalled();
+        expect(screen.getByTestId("provider-list").textContent).not.toContain(
+          "opencode-go-copy",
+        );
+      } finally {
+        add.mockRestore();
+        sort.mockRestore();
+      }
+    },
+  );
+
+  it("duplicates complete OpenCode providers using an unused ID", async () => {
+    localStorage.setItem("cc-switch-last-app", "opencode");
+    setProviders("opencode", {
+      custom: {
+        id: "custom",
+        name: "Custom",
+        sortIndex: 0,
+        settingsConfig: {
+          npm: "@ai-sdk/openai-compatible",
+          models: { "glm-5": { name: "GLM 5" } },
+        },
+      },
+    });
+    setCurrentProviderId("opencode", "custom");
+    setLiveProviderIds("opencode", ["custom-copy"]);
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "custom",
+      ),
+    );
+    fireEvent.click(screen.getByText("duplicate"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "custom-copy-2",
+      ),
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
   it("duplicates MiniMax Code providers under a generated unused key", async () => {
     localStorage.setItem("cc-switch-last-app", "mcode");
     const provider = (id: string, name: string) => ({
