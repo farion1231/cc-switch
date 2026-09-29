@@ -813,8 +813,19 @@ CI 日志泄露风险）。改为先经 `redact_secrets_in_config` 打码再比�
 - `cargo test --lib proxy::handler_context` —— 17/17（含 8 条 suffix 解析用例）。
 - `cargo test --lib openclaw_config` —— 5/5；`hermes_config` —— 57/57。
 - `cargo test --test codex_switch_e2e` —— 4/4。
+- **验收门：`cargo test --lib` 连跑 10 次 —— 10/10 全绿**（每次 3040 passed / 0 failed）。
+  对照：main 上该 flaky 记录为 1/4 失败、更早记录 3/5。
+- `default_model_noop_write_skips_backup` 单独连跑 10 次 —— 10/10 通过。
 - 全量 `cargo test --lib` 前后 `select count(*) from providers` 对真实库均为 29，
   已不再写入开发者真实 DB。
+
+### 真实库清理（已执行）
+
+经用户确认后，只删了 `kaixuan-local`（已回退代码的 id，发布版从未存在）。
+`kaixuan-kxpms` / `kaixuan-local-8782` 保留——它们的 `auth.OPENAI_API_KEY` 字段
+仍是被测试写入的 fixture 值（`sk-user-custom-original-key` /
+`sk-from-env-1234567890`），需要在 UI 里重填真 key。
+操作前已备份整库到 `~/cc-switch.db.bak-20260929-123407`。
 
 ## 第五轮遗留
 
