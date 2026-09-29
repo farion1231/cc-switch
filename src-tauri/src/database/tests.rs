@@ -1143,6 +1143,44 @@ fn model_pricing_seed_includes_claude_opus_5_5() {
 }
 
 #[test]
+fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices() {
+    let db = Database::memory().expect("create memory db");
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE model_pricing SET input_cost_per_million = '0.09',
+                output_cost_per_million = '0.29', cache_read_cost_per_million = '0.009',
+                cache_creation_cost_per_million = '0' WHERE model_id = 'mimo-v2.5';
+             UPDATE model_pricing SET input_cost_per_million = '9.99' WHERE model_id = 'o3-mini';",
+        )
+        .unwrap();
+    }
+    db.ensure_model_pricing_seeded().unwrap();
+    for _ in 0..2 {
+        {
+            let conn = db.conn.lock().unwrap();
+            let output: String = conn
+                .query_row(
+                    "SELECT output_cost_per_million FROM model_pricing WHERE model_id = 'mimo-v2.5'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(output, "0.28");
+            let custom: String = conn
+                .query_row(
+                    "SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'o3-mini'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(custom, "9.99");
+        }
+        db.ensure_model_pricing_seeded().unwrap();
+    }
+}
+
+#[test]
 fn model_pricing_seed_includes_gpt_6_astra() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1327,4 +1365,31 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         2,
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
+}
+
+#[test]
+fn incremental_vacuum_reclaims_entire_freelist() {
+    let temp = NamedTempFile::new().expect("create temp db file");
+    let conn = Connection::open(temp.path()).expect("open temp db");
+    conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+        .expect("set incremental auto_vacuum");
+    conn.execute_batch(
+        "CREATE TABLE bulk (payload BLOB);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+         INSERT INTO bulk SELECT zeroblob(4096) FROM n;
+         DELETE FROM bulk;",
+    )
+    .expect("fill and clear table");
+
+    let freelist = |conn: &Connection| -> i64 {
+        conn.query_row("PRAGMA freelist_count;", [], |row| row.get(0))
+            .expect("read freelist_count")
+    };
+    assert!(
+        freelist(&conn) > 100,
+        "deleting rows should leave free pages"
+    );
+
+    Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
+    assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }

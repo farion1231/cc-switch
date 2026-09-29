@@ -1,6 +1,6 @@
 # サードパーティ API 利用時に Codex のリモート操作と公式プラグインを保持する: CC Switch 設定ガイド
 
-> 対象バージョン: CC Switch v3.16.1 以降。本記事は現在のコード、ユーザーマニュアル、v3.16.1 Release Note をもとに整理しています。スクリーンショットは匿名化したサンプルデータを使用しており、実際の Access Token や API Key は含まれていません。
+> 対象バージョン: CC Switch v3.20.1 以降。画面の文言は v3.20.4 に準拠しています。本記事は現在のコード、ユーザーマニュアル、v3.16.1 / v3.20.1 Release Note をもとに整理しています。スクリーンショットは匿名化したサンプルデータを使用しており、実際の Access Token や API Key は含まれていません。一部のスクリーンショットは旧バージョンで撮影したものです。スイッチ名は本文の表記に従ってください。
 
 ## このガイドで解決すること
 
@@ -15,15 +15,17 @@ v3.16.1 で追加された **Codex アプリ拡張** スイッチは、この矛
 
 この機能自体は v3.16.0 から存在し、当時はデフォルトで有効でした。ただし一部のユーザーから不要というフィードバックがあったため、v3.16.1 で明示的なスイッチになりました。
 
+v3.20.1 からは切り替えロジックがさらに一段シンプルになりました。サードパーティ API Key は常に `config.toml` にだけ書き込まれ、`auth.json` に書き込まれることは決してありません。このスイッチが決めるのは今や 1 つだけです。ルーティング接管なしでサードパーティプロバイダーへ切り替えるとき（直接切替）、`auth.json` 内の公式ログインを保持するか削除するか、です。
+
 ## まず結論
 
 おすすめの手順は次のとおりです。
 
 1. CC Switch の Codex パネルで `OpenAI Official` に切り替える。
 2. Codex を起動し、公式 ChatGPT / Codex アカウントで一度ログインする。Free サブスクリプションでも構いません。
-3. CC Switch に戻り、`設定 → 一般 → Codex アプリ拡張 → サードパーティ切替時に公式ログインを保持` をオンにする。
+3. CC Switch に戻り、`設定 → 一般 → Codex アプリ拡張 → 直接切替時に公式ログインを保持` をオンにする。
 4. サードパーティ Codex プロバイダーを追加、または切り替える。
-5. そのプロバイダーが DeepSeek / Kimi / MiniMax などの Chat Completions プロトコルの場合は、ローカルルーティングも有効化し、Codex のルーティングをオンにする。
+5. そのプロバイダーが Chat Completions プロトコル（カードに `ルーティングが必要` バッジが付いているもの。たとえば SiliconFlow、ModelScope）の場合は、ローカルルーティングも有効化し、Codex のルーティングをオンにする。DeepSeek、Kimi、MiniMax、Zhipu GLM などのプリセットはすでにネイティブ直結のため、この手順は不要です。
 6. Codex を再起動し、`config.toml` とモデルカタログを再読み込みさせる。
 
 ![設定内の Codex アプリ拡張スイッチ](../images/codex-official-auth-preservation/01-codex-app-enhancement-setting.png)
@@ -32,7 +34,7 @@ v3.16.1 で追加された **Codex アプリ拡張** スイッチは、この矛
 
 次のものを用意してください。
 
-- CC Switch v3.16.1 以降。
+- CC Switch v3.20.1 以降。
 - インストール済みで起動できる Codex。app と CLI の両方を入れておくことをおすすめします。
 - Codex にログインできる公式 ChatGPT / Codex アカウント。Free サブスクリプションで構いません。
 - DeepSeek、Kimi、GLM、MiniMax、OpenRouter、SiliconFlow などのサードパーティ API Key。
@@ -60,26 +62,28 @@ CC Switch に戻り、次を開きます。
 次のスイッチをオンにします。
 
 ```text
-サードパーティ切替時に公式ログインを保持
+直接切替時に公式ログインを保持
 ```
 
 このスイッチはデフォルトでオフです。一部のユーザーはこの機能を必要としていないためです。「サードパーティ API + 公式リモート操作 / 公式プラグイン」を同時に使いたい場合だけ有効化してください。
 
-有効化すると、バックエンドで Codex サードパーティプロバイダーを切り替えるときに config-only の書き込み経路が使われます。
+有効化すると、ルーティング接管を有効にしていない状態でサードパーティプロバイダーへ切り替えたときに、次のようになります。
 
 - `auth.json`: 公式 ChatGPT / Codex ログインキャッシュを保持します。
 - `config.toml`: 現在のサードパーティプロバイダーのモデル、endpoint、`model_provider`、provider-scoped `experimental_bearer_token` を書き込みます。
 
+`config.toml` 側はスイッチとは無関係で、スイッチがオフでも同じように書き込まれます。スイッチが扱うのは `auth.json` を残すかどうかだけです。ルーティング接管中は、このスイッチに関係なく公式ログインが常に保持されます。
+
 ## Step 3: サードパーティ Codex プロバイダーを追加する
 
-Codex パネルに戻り、右上のプラスボタンからプロバイダーを追加します。DeepSeek、Kimi、MiniMax、GLM、SiliconFlow などの内蔵プリセットを優先して使うのがおすすめです。
+Codex パネルに戻り、右上のプラスボタンからプロバイダーを追加します。DeepSeek、Kimi、MiniMax、GLM、SiliconFlow などの内蔵プリセットを優先して使うのがおすすめです。プリセットを選んだ後は API Key を入力するだけで、プリセットが base URL、デフォルトモデル、モデルカタログ、上流フォーマットを自動で構成します。
 
-DeepSeek を例にすると、プリセットを選んだ後は API Key を入力するだけです。プリセットは base URL、デフォルトモデル、モデルマッピングテーブル、「ローカルルーティングが必要」設定を自動で構成します。
+保存したら、プロバイダーカードのバッジを確認します。
 
-![DeepSeek Codex プロバイダーフォーム](../images/codex-deepseek-routing/02-deepseek-codex-routing-form.png)
+- **バッジなし**: 上流が OpenAI Responses API をネイティブにサポートしており、直結できるため、ローカルルーティングは不要です。DeepSeek、Kimi、MiniMax、Zhipu GLM、千问AI平台 のプリセット、そして GPT モデルを提供する中継サービスは、いずれもこちらに当たります。
+- **`ルーティングが必要` バッジあり**: 上流フォーマットが `Chat Completions（ルーティング必須）` のもので、たとえば SiliconFlow、ModelScope です。この種のプロバイダーはローカルルーティングを必ず有効化し、CC Switch が Codex の Responses リクエストを Chat Completions リクエストへ変換できるようにしてください。
 
-サードパーティプロバイダーが OpenAI Responses API をネイティブにサポートしている場合、たとえば GPT モデルを提供する中継サービスであれば、ローカルルーティングは不要なことがあります。
-一方で DeepSeek / Kimi / MiniMax のように OpenAI Chat Completions だけをサポートする場合は、CC Switch が Codex の Responses リクエストを Chat Completions リクエストへ変換する必要があるため、ローカルルーティングを有効化してください。
+カスタムプロバイダーの上流フォーマットは、フォーム下部の `高級オプション` → `上流フォーマット` で選択します。
 
 ## Step 4: 必要に応じてローカルルーティングと Codex ルーティングを有効化する
 
@@ -96,7 +100,7 @@ DeepSeek を例にすると、プリセットを選んだ後は API Key を入�
 
 ![ローカルルーティング画面で Codex ルーティングを有効化](../images/codex-deepseek-routing/03-local-route-codex-takeover.png)
 
-ルーティング有効化後、Codex の live `config.toml` は一時的に CC Switch のローカルルートを指します。実際のサードパーティ API Key は CC Switch のプロバイダー設定内に残り、プロバイダー切り替え時に `config.toml` の `experimental_bearer_token` へ投影されます。
+ルーティング有効化後、Codex の live `config.toml` は一時的に CC Switch のローカルルートを指し、トークンの箇所にはプレースホルダー `PROXY_MANAGED` が書き込まれます。実際のサードパーティ API Key は CC Switch のプロバイダー設定内に残り、ローカルルートが転送時に注入します。ルーティング接管中は、`auth.json` 内の公式ログインが常に保持されます。
 
 ## Step 5: サードパーティプロバイダーへ切り替えて Codex を再起動する
 
@@ -126,7 +130,7 @@ Codex の設定は主に 2 つのファイルに分かれています。
 - `auth.json` は公式 ChatGPT / Codex ログインキャッシュを保存します。Codex App が公式アカウント、リモート操作、公式プラグインを認識するために必要なログイン材料です。
 - `config.toml` は現在のモデルプロバイダー、base URL、モデル、モデルカタログ、provider-scoped token などの実行時設定を保存します。
 
-`サードパーティ切替時に公式ログインを保持` を有効化すると、CC Switch はサードパーティプロバイダー API Key をプロバイダー設定から取り出し、`config.toml` の現在の provider 配下へ書き込みます。
+直接切替でサードパーティプロバイダーへ切り替えるとき、CC Switch はサードパーティプロバイダー API Key をプロバイダー設定から取り出し、`config.toml` の現在の provider 配下へ書き込みます（この処理はスイッチとは無関係です）。
 
 ```toml
 model_provider = "custom"
@@ -138,7 +142,7 @@ wire_api = "responses"
 experimental_bearer_token = "sk-..."
 ```
 
-同時に、`auth.json` は公式ログインキャッシュを保持したままです。そのため Codex App 側では公式アカウントを認識でき、モデルリクエストは `config.toml` の現在の provider と base URL に従ってサードパーティ API へ向かいます。
+`直接切替時に公式ログインを保持` をオンにしている場合、`auth.json` は公式ログインキャッシュを保持したままです。そのため Codex App 側では公式アカウントを認識でき、モデルリクエストは `config.toml` の現在の provider と base URL に従ってサードパーティ API へ向かいます。
 
 プロバイダーが Chat Completions プロトコルの場合、CC Switch のローカルルーティングがさらに変換層になります。
 
@@ -170,9 +174,11 @@ DeepSeek に切り替えた場合でも、Codex には公式アカウントが�
 
 Codex のモデルカタログは起動時に読み込まれます。CC Switch が新しいモデルカタログを生成していても、実行中の Codex がホットロードするとは限りません。モデルマッピングを変更した後は Codex を再起動してください。
 
-### スイッチをオフにすると旧動作に戻る
+### スイッチをオフにすると、直接切替で公式ログインが削除される
 
-`サードパーティ切替時に公式ログインを保持` をオフにすると、サードパーティプロバイダー切り替えは旧バージョン互換の動作になり、`auth.json` が再度書き込まれる可能性があります。公式リモート操作と公式プラグインを長期的に保持したい場合は、このスイッチをオンのままにすることをおすすめします。
+`直接切替時に公式ログインを保持` をオフにすると、ルーティング接管を有効にしていない状態でサードパーティプロバイダーへ切り替えたとき、CC Switch は `auth.json` を削除します。これにより Codex App は公式ログイン状態を失い、公式リモート操作や公式プラグインも使えなくなります。サードパーティ API Key はこの場合も `config.toml` にだけ書き込まれ、`auth.json` には書き込まれません。
+
+ルーティング接管中はこのスイッチの影響を受けず、公式ログインは常に保持されます。公式リモート操作と公式プラグインを長期的に保持したい場合は、このスイッチをオンのままにすることをおすすめします。
 
 ## よくある質問
 
@@ -186,11 +192,11 @@ Codex のモデルカタログは起動時に読み込まれます。CC Switch �
 
 **有効化しても公式プラグインやモバイルリモート操作が使えない場合は？**
 
-まず `OpenAI Official` に戻し、Codex を再起動して一度公式ログインを完了してください。その後、CC Switch の `設定 → 一般 → Codex アプリ拡張 → サードパーティ切替時に公式ログインを保持` がオンになっていることを確認し、再度サードパーティプロバイダーへ切り替えてください。
+まず `OpenAI Official` に戻し、Codex を再起動して一度公式ログインを完了してください。その後、CC Switch の `設定 → 一般 → Codex アプリ拡張 → 直接切替時に公式ログインを保持` がオンになっていることを確認し、再度サードパーティプロバイダーへ切り替えてください。
 
 **サードパーティリクエストが 404 になる、モデル一覧が違う、ストリーミング応答がおかしい場合は？**
 
-そのプロバイダーが Chat Completions プロトコルの場合、プロバイダーフォームで `ローカルルーティングが必要` が有効になっていること、さらに `設定 → ルーティング` でルーティング総スイッチと Codex ルーティングがオンになっていることを確認してください。
+そのプロバイダーが Chat Completions プロトコルの場合、プロバイダーフォームの `高級オプション` にある `上流フォーマット` が `Chat Completions（ルーティング必須）` になっていること、さらに `設定 → ルーティング` でルーティング総スイッチと Codex ルーティングがオンになっていることを確認してください。
 
 **ローカルルーティング中に OpenAI Official へ戻せますか？**
 
@@ -203,8 +209,9 @@ Codex アプリ拡張やルーティング管理は、必要ないユーザー�
 ## 参考リンク
 
 - [Codex デスクトップアプリでカスタムモデルが見えない？（よくある質問）](./codex-desktop-custom-model-visibility-ja.md)
-- [Codex DeepSeek ローカルルーティング実践ガイド](./codex-deepseek-routing-guide-ja.md)
+- [Codex で Chat 形式 API を使う: ローカルルーティングガイド](./codex-deepseek-routing-guide-ja.md)
 - [Codex プロバイダーの追加: Chat Completions ルーティングとモデルマッピング](../user-manual/ja/2-providers/2.1-add.md)
 - [ローカルプロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
 - [ローカルルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
 - [CC Switch v3.16.1 Release Note](../release-notes/v3.16.1-ja.md)
+- [CC Switch v3.20.1 Release Note](../release-notes/v3.20.1-ja.md)

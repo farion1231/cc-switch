@@ -14,7 +14,6 @@ import {
   X,
   Book,
   Brain,
-  Wrench,
   History,
   BarChart2,
   Download,
@@ -45,6 +44,7 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
+import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
@@ -95,7 +95,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
-import { McpIcon } from "@/components/BrandIcons";
+import { McpIcon, SkillsIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
@@ -763,11 +763,13 @@ function App() {
   const handleEditProvider = async ({
     provider,
     originalId,
+    editorSave,
   }: {
     provider: Provider;
     originalId?: string;
+    editorSave?: ProviderEditorSave;
   }) => {
-    await updateProvider(provider, originalId);
+    await updateProvider(provider, originalId, editorSave);
     setEditingProvider(null);
   };
 
@@ -881,8 +883,7 @@ function App() {
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
       activeApp === "pi" ||
-      activeApp === "ohmypi" ||
-      activeApp === "mcode"
+      activeApp === "ohmypi"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -936,6 +937,13 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+    } else if (activeApp === "mcode") {
+      // The MCode list already includes its live custom nodes; the backend
+      // rejects a key that MCode itself owns.
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1675,7 +1683,7 @@ function App() {
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("skills.manage")}
                               >
-                                <Wrench className="w-4 h-4" />
+                                <SkillsIcon className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1770,7 +1778,7 @@ function App() {
                                 )}
                                 title={t("skills.manage")}
                               >
-                                <Wrench className="flex-shrink-0 w-4 h-4" />
+                                <SkillsIcon className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

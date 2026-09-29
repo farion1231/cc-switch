@@ -32,6 +32,7 @@ import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 import {
   grokBuildOfficialPreset,
   grokBuildProviderPresets,
@@ -51,6 +52,7 @@ import {
   validateGrokBuildConfig,
 } from "@/utils/grokBuildConfig";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
@@ -76,6 +78,8 @@ export function GrokBuildProviderForm({
   onSubmittingChange,
   initialData,
   showButtons = true,
+  inactiveFields = [],
+  onEditorBaseChange,
 }: GrokBuildProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -110,6 +114,22 @@ export function GrokBuildProviderForm({
   const [rawConfig, setRawConfig] = useState(
     initialConfigText ?? buildGrokBuildConfig(initialConfig),
   );
+
+  // 新增：预设或模板投影到当前 config.toml 上显示。每次重置显示内容都要重新投影（或作废
+  // 投影），否则保存时三方比较的底和显示内容对不上。
+  const { projectDraft, clearDraftProjection } = useDraftEditorProjection(
+    "grokbuild",
+    onEditorBaseChange,
+  );
+  const projectGrokDraft = (config: string, presetCategory?: string) =>
+    projectDraft({ config }, presetCategory, (shown) =>
+      setRawConfig(typeof shown.config === "string" ? shown.config : config),
+    );
+  useEffect(() => {
+    if (!initialData) projectGrokDraft(rawConfig);
+    // 只在打开时投影一次：之后的投影跟着预设切换走。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [apiFormat, setApiFormat] = useState<CodexApiFormat>(
     (initialData?.meta?.apiFormat as CodexApiFormat | undefined) ??
       "openai_responses",
@@ -244,6 +264,7 @@ export function GrokBuildProviderForm({
       setPartnerPromotionKey(undefined);
       setPresetEndpoints([]);
       setRawConfig("");
+      clearDraftProjection();
       return;
     }
 
@@ -275,17 +296,17 @@ export function GrokBuildProviderForm({
     setUpstreamModel(presetModel);
     setApiFormat(presetApiFormat);
     setPresetEndpoints(preset.endpointCandidates ?? []);
-    setRawConfig(
-      buildGrokBuildConfig({
-        model: profile,
-        upstreamModel: presetModel,
-        baseUrl: presetBaseUrl,
-        name: presetName,
-        apiKey: presetApiKey,
-        apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
-        contextWindow: Number.parseInt(contextWindow, 10),
-      }),
-    );
+    const presetConfig = buildGrokBuildConfig({
+      model: profile,
+      upstreamModel: presetModel,
+      baseUrl: presetBaseUrl,
+      name: presetName,
+      apiKey: presetApiKey,
+      apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+      contextWindow: Number.parseInt(contextWindow, 10),
+    });
+    setRawConfig(presetConfig);
+    projectGrokDraft(presetConfig, preset.category);
   };
 
   const handleRawConfigChange = (value: string) => {
@@ -520,6 +541,12 @@ export function GrokBuildProviderForm({
               <FormLabel htmlFor="grokbuild-config-toml">
                 {t("grokBuild.rawConfig", { defaultValue: "config.toml" })}
               </FormLabel>
+              <p className="text-xs text-muted-foreground">
+                {t("grokBuild.keyFieldsHint", {
+                  defaultValue:
+                    "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
+                })}
+              </p>
               <JsonEditor
                 value={rawConfig}
                 onChange={handleRawConfigChange}
@@ -537,6 +564,20 @@ export function GrokBuildProviderForm({
                   })}
                 </p>
               )}
+              <InactiveFieldsPanel
+                fields={inactiveFields}
+                hint={t("grokBuild.inactiveFieldsHint", {
+                  count: inactiveFields.length,
+                  defaultValue:
+                    "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+                })}
+                action={{
+                  kind: "copy",
+                  copiedText: t("grokBuild.inactiveFieldCopied", {
+                    defaultValue: "已复制",
+                  }),
+                }}
+              />
             </div>
           </>
         )}

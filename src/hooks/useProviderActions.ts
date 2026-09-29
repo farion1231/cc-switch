@@ -17,6 +17,7 @@ import type {
   OpenClawDefaultModel,
 } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
+import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
 import {
   useAddProviderMutation,
@@ -91,6 +92,7 @@ export function useProviderActions(
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
+        editorSave?: ProviderEditorSave;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
@@ -147,10 +149,15 @@ export function useProviderActions(
 
   // 更新供应商
   const updateProvider = useCallback(
-    async (provider: Provider, originalId?: string) => {
+    async (
+      provider: Provider,
+      originalId?: string,
+      editorSave?: ProviderEditorSave,
+    ) => {
       await updateProviderMutation.mutateAsync({
         provider,
         originalId,
+        editorSave,
       });
 
       // 更新托盘菜单（失败不影响主操作）
@@ -336,6 +343,9 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "gemini") {
+            messageKey = "notifications.geminiRestartRequired";
+            defaultMessage = "切换成功，请重启 Gemini CLI 以生效";
           } else if (activeApp === "grokbuild") {
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
