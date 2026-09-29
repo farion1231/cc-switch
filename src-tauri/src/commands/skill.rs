@@ -280,10 +280,13 @@ pub fn uninstall_skill_for_app(
     let _ = parse_app_type(&app)?; // 验证参数
 
     // 通过 directory 找到对应的 skill id
-    let skills = SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())?;
+    let skills = app_state
+        .db
+        .get_all_installed_skills()
+        .map_err(|e| e.to_string())?;
 
     let skill = skills
-        .into_iter()
+        .into_values()
         .find(|s| s.directory.eq_ignore_ascii_case(&directory))
         .ok_or_else(|| format!("未找到已安装的 Skill: {directory}"))?;
 

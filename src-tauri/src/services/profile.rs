@@ -200,7 +200,8 @@ impl ProfileService {
     ) -> Result<ProfilePayload, AppError> {
         let mut payload = ProfilePayload::default();
         let mcp_servers = state.db.get_all_mcp_servers()?;
-        let skills = state.db.get_all_installed_skills()?;
+        let mut skills = state.db.get_all_installed_skills()?;
+        skills.retain(|_, skill| skill.is_user_managed());
 
         for app in scope.apps().iter() {
             if let Some(slot) = payload.providers.get_mut(app) {
@@ -415,9 +416,15 @@ impl ProfileService {
                 let skills = state.db.get_all_installed_skills()?;
                 let current: Vec<(String, bool)> = skills
                     .values()
+                    .filter(|s| s.is_user_managed())
                     .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
                     .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
+                let target_ids: Vec<String> = target_ids
+                    .iter()
+                    .filter(|id| skills.get(*id).is_none_or(|skill| skill.is_user_managed()))
+                    .cloned()
+                    .collect();
+                let (toggles, dangling) = plan_toggles(&current, &target_ids);
                 for id in dangling {
                     warnings.push(format!(
                         "[{app_str}] skill '{id}' no longer exists, skipped"

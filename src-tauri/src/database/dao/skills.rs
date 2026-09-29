@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, managed_by
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -52,6 +52,7 @@ impl Database {
                     installed_at: row.get(14)?,
                     content_hash: row.get(15)?,
                     updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    managed_by: row.get(18)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -71,7 +72,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, managed_by
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -99,6 +100,7 @@ impl Database {
                 installed_at: row.get(14)?,
                 content_hash: row.get(15)?,
                 updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                managed_by: row.get(18)?,
             })
         });
 
@@ -116,8 +118,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+              installed_at, content_hash, updated_at, enabled_mcode, managed_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 skill.id,
                 skill.name,
@@ -137,6 +139,7 @@ impl Database {
                 skill.content_hash,
                 skill.updated_at,
                 skill.apps.mcode,
+                skill.managed_by,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -327,7 +330,36 @@ mod tests {
             installed_at: 1,
             content_hash: Some(format!("{name}-hash")),
             updated_at: 2,
+            managed_by: None,
         }
+    }
+
+    #[test]
+    fn managed_skill_source_survives_reopening_and_metadata_updates() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("skills.db");
+        let open = || {
+            let db = Database {
+                conn: std::sync::Mutex::new(rusqlite::Connection::open(&path).unwrap()),
+            };
+            db.create_tables().unwrap();
+            db
+        };
+        let original = skill("internal:vps", "cc-switch-vps", SkillApps::default());
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["managedBy"] = serde_json::json!("vps");
+        let managed: InstalledSkill = serde_json::from_value(value).unwrap();
+        {
+            let db = open();
+            db.save_skill(&managed).unwrap();
+        }
+        let db = open();
+        let stored = db.get_installed_skill(&original.id).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(&stored).unwrap()["managedBy"], "vps");
+        assert_eq!(db.get_all_installed_skills().unwrap().len(), 1);
+        assert!(db.update_skill_metadata(&original).unwrap());
+        let stored = db.get_installed_skill(&original.id).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(stored).unwrap()["managedBy"], "vps");
     }
 
     #[test]

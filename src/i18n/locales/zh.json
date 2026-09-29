@@ -2497,6 +2497,7 @@
       "skillPathNotFound": "仓库 {{owner}}/{{name}} 中未找到技能路径 '{{path}}'",
       "skillDirNotFound": "技能目录不存在：{{path}}",
       "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
+      "managedByVps": "技能“{{directory}}”由 VPS 功能托管，不能在此修改或覆盖。",
       "emptyArchive": "下载的压缩包为空",
       "invalidRepoRef": "仓库地址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "压缩包解压后超过 {{limit_mb}} MB 上限，已中止",
@@ -2520,6 +2521,7 @@
         "checkRepoUrl": "请检查仓库地址和分支名称",
         "checkDiskSpace": "请检查磁盘空间",
         "checkPermission": "请检查目录权限",
+        "manageInVps": "请在 VPS 页面管理客户端接入。如需单独导入手动技能，请使用不同的 ID 和目录。",
         "uninstallFirst": "请先卸载已安装的同名技能",
         "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）"
       }

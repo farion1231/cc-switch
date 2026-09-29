@@ -466,6 +466,33 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 
+  it("explains managed ownership when a bulk request hits a stale Skill row", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "stale-id" })];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: [],
+      failed: [
+        {
+          item: "stale-id",
+          error: JSON.stringify({
+            code: "SKILL_MANAGED_BY_VPS",
+            context: { directory: "cc-switch-vps" },
+            suggestion: "manageInVps",
+          }),
+        },
+      ],
+    });
+    renderPanel();
+    await userEvent
+      .setup()
+      .click(screen.getByText("Claude:").closest("button")!);
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith("common.bulkToggleFailed", {
+        description:
+          "skills.error.managedByVps\n\nskills.error.suggestion.manageInVps",
+      }),
+    );
+  });
+
   it.each(["single", "bulk"] as const)(
     "disables row app toggles while a %s toggle is pending",
     async (pendingKind) => {

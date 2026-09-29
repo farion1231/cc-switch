@@ -2497,6 +2497,7 @@
       "skillPathNotFound": "Skill path '{{path}}' not found in repository {{owner}}/{{name}}",
       "skillDirNotFound": "Skill directory not found: {{path}}",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
+      "managedByVps": "Skill '{{directory}}' is managed by VPS and cannot be changed or overwritten here.",
       "emptyArchive": "Downloaded archive is empty",
       "invalidRepoRef": "Invalid repository reference: {{owner}}/{{name}}",
       "archiveTooLarge": "Archive exceeds the {{limit_mb}} MB extraction limit; aborted",
@@ -2520,6 +2521,7 @@
         "checkRepoUrl": "Please check repository URL and branch name",
         "checkDiskSpace": "Please check disk space",
         "checkPermission": "Please check directory permissions",
+        "manageInVps": "Manage client access on the VPS page. A separate manual Skill must use a different ID and directory.",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
         "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
       }

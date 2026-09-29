@@ -248,6 +248,15 @@ pub struct InstalledSkill {
     /// 最近更新时间（Unix 时间戳，0 = 从未更新）
     #[serde(default)]
     pub updated_at: i64,
+    /// 内部功能的持久化管理权；None 为普通 Skill，不从 Skill frontmatter 读取。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_by: Option<String>,
+}
+
+impl InstalledSkill {
+    pub fn is_user_managed(&self) -> bool {
+        self.managed_by.is_none()
+    }
 }
 
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）

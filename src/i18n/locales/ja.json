@@ -2497,6 +2497,7 @@
       "skillPathNotFound": "リポジトリ {{owner}}/{{name}} にスキルパス '{{path}}' がありません",
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
       "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
+      "managedByVps": "スキル「{{directory}}」は VPS 機能が管理しているため、ここでは変更や上書きができません。",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
       "invalidRepoRef": "リポジトリの指定が不正です：{{owner}}/{{name}}",
       "archiveTooLarge": "アーカイブが展開上限 {{limit_mb}} MB を超えたため中止しました",
@@ -2520,6 +2521,7 @@
         "checkRepoUrl": "リポジトリ URL とブランチ名を確認してください",
         "checkDiskSpace": "ディスク容量を確認してください",
         "checkPermission": "ディレクトリの権限を確認してください",
+        "manageInVps": "クライアントの接続設定は VPS ページで管理してください。別の手動スキルをインポートする場合は、異なる ID とディレクトリを使用してください。",
         "uninstallFirst": "同名のスキルを先にアンインストールしてください",
         "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください"
       }
