@@ -198,11 +198,22 @@ impl RequestContext {
             session_id
         );
 
-        // Codex-only: 解析 `@<toml_id>` 后缀分发。必须在 select_providers **之后**
+        let mut endpoint_dispatch: Option<EndpointDispatch> = None;
+        // Codex-only：解析 `@<toml_id>` 后缀分发。必须在 select_providers **之后**
         // 调，原 failover 链可能含不支持后缀语义的 provider；剥离后允许 failover 用
         // 剥离名继续。target_toml_id 同时是「四轮新增的 legacy `custom` 别名不算
         // 独立端点」的边界——`@custom` 不应作为目标（继承 RFC 0002 §2.4b 规则）。
-        let mut endpoint_dispatch: Option<EndpointDispatch> = None;
+        //
+        // 【为什么这个门控必须留着，删之前先读】
+        // 产出 `@<id>` slug 的只有 Codex 的 merged catalog（`append_endpoint_suffixed_entries`），
+        // Claude / Gemini 从来不会收到带后缀的模型名。所以本门控当前的实际影响面接近零——
+        // **但它不是冗余**，它把「后缀语义」这件事的边界钉在了唯一真正使用它的 app 上。
+        // 若将来给 Claude/Gemini 也做多端点 catalog，删这个门会让它们的请求被一个
+        // 属于 Codex 的后缀语法重新路由，而它们的转发出口（`handle_gemini` 走
+        // `forward_with_retry` 但**不**调 `strip_endpoint_suffix_from_body`）不会剥离后缀，
+        // 结果是 `model@id` 字面量打到上游。
+        // 反向也成立：Gemini 的模型名在 URI 路径里、body 无 `model` 字段，
+        // `request_model` 恒为 `"unknown"`，即使门控被删也解析不出后缀。
         if matches!(app_type, AppType::Codex) {
             // 先把解析结果复制成 owned String——避免后续 reassign request_model 时
             // 还持有 `&request_model` 的借用。
