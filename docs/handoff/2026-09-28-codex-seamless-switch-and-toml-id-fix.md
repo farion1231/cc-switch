@@ -931,3 +931,39 @@ proxy 返回 400: model 'claude-opus-5@local8782' 指向的端点不存在（pro
 **教训**：「根治某个模块的竞态」不等于「根治了竞态」——本轮我扫了 20 个文件改了
 17 个，漏掉的两处恰好是 `TempHome`（结构体式的守卫，不像 `set_var` 那样显眼）
 和一个「取锁写在函数中段」的测试。审计不指出来就不会发现。
+
+### 第五轮补充：当前 HEAD 的 10 轮稳定性复测
+
+上文「连跑 10 次全绿」是在 4 个 commit（`5b656dd4`）上测的。其后又增 2 个 commit，
+补了 2 条**会真起服务与 socket 的端到端测试**（`suffixed_model_pointing_at_legacy_custom_alias_is_rejected`
+真起两个上游 + 真起 proxy；`merged_catalog_excludes_legacy_custom_alias_endpoint` 纯函数级）。
+这类测试恰恰最容易在重复运行下抖，因此对当前 HEAD `05d61abf` 重新跑了 10 轮：
+
+| 轮次 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 结果 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+10 轮的 `test result` 行逐字一致：`3043 passed; 0 failed; 10 ignored`（耗时 10.16s ~ 10.83s）。
+全量跑前后真实库 `providers` 计数 28 → 28，未被测试写入。
+
+### 第五轮补充：消费者普查（纪律 #1 的执行记录）
+
+本轮纪律 #1 要求「改 provider 投影时必须列出所有消费者并逐个核」。对后缀分发做了完整普查：
+
+| 面 | 生产方 | 消费者 | 结论 |
+|---|---|---|---|
+| `MERGED_CATALOG_SOURCES_KEY` | `services/provider/live.rs:870` | `codex_config.rs:2714`（唯一生产消费者）；`provider_bundle.rs:1230` 是测试断言 | 已跳 `custom` |
+| `codex_provider_toml_id` | `codex_config.rs:1123` | `handler_context.rs:223`（链内匹配）、`:282`（DB 直取） | 两处共用同一 helper，写入侧与消费侧同源 |
+| `CATALOG_ENDPOINT_SUFFIX_SEP` | `codex_config.rs:2789` | 唯一生产者 | — |
+| 开关 | env | `codex_config.rs:2672` 唯一读者 | — |
+| 转发出口 | — | `forward_with_retry` 6 个调用点，`strip` 5 个 | 第 6 个见下 |
+
+**第 6 个转发出口不是漏网**：`handlers.rs:2131` 属于 `handle_gemini`，超出本轮
+「后缀分发仅 Codex 生效」的范围限定，且双重不可达——`handler_context.rs:206` 有真门控
+`matches!(app_type, AppType::Codex)`（非仅注释），而 `handle_gemini` 传的正是
+`AppType::Gemini`；另外 Gemini 的模型名在 URI 路径里、body 无 `model` 字段，
+`request_model` 恒为 `"unknown"`，根本解析不出后缀。
+
+该门控**刻意不补测试**：它是一行 `AppType` 判断，拆成可测函数即退化为「测常量」的
+装饰性门（无真实输入路径），而搭 Claude/Gemini 端到端用例成本高、证力低。改为把
+存废理由写进代码注释（commit `05d61abf`），防未来有人顺手删掉。
