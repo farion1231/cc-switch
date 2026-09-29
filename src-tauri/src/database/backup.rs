@@ -235,6 +235,7 @@ impl Database {
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
+            Self::preserve_local_managed_skills(&main_conn, &temp_conn)?;
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
@@ -289,6 +290,85 @@ impl Database {
             "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
             "Only SQL backups exported by CC Switch are supported.",
         ))
+    }
+
+    /// Generated Skills are device-local. Never grant ownership from an imported image.
+    fn preserve_local_managed_skills(
+        source: &Connection,
+        target: &Connection,
+    ) -> Result<(), AppError> {
+        use rusqlite::types::Value;
+        if !Self::has_column(target, "skills", "managed_by")? {
+            return Ok(());
+        }
+        let has_local = Self::has_column(source, "skills", "managed_by")?;
+        let columns = Self::get_table_columns(if has_local { source } else { target }, "skills")?;
+        let quoted = columns
+            .iter()
+            .map(|column| Self::quote_identifier(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let read_rows = |conn: &Connection| -> Result<Vec<Vec<Value>>, AppError> {
+            let mut statement = conn.prepare(&format!(
+                "SELECT {quoted} FROM skills WHERE managed_by IS NOT NULL ORDER BY id"
+            ))?;
+            let rows = statement
+                .query_map([], |row| {
+                    (0..columns.len())
+                        .map(|index| row.get::<_, Value>(index))
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        };
+        let local = if has_local {
+            read_rows(source)?
+        } else {
+            Vec::new()
+        };
+        target.execute("DELETE FROM skills WHERE managed_by IS NOT NULL", [])?;
+        let id_index = columns
+            .iter()
+            .position(|column| column == "id")
+            .ok_or_else(|| AppError::Database("Missing Skill id column".into()))?;
+        let dir_index = columns
+            .iter()
+            .position(|column| column == "directory")
+            .ok_or_else(|| AppError::Database("Missing Skill directory column".into()))?;
+        let placeholders = (1..=columns.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for values in &local {
+            let (Value::Text(id), Value::Text(directory)) = (&values[id_index], &values[dir_index])
+            else {
+                return Err(AppError::Database(
+                    "Invalid local managed Skill identity".into(),
+                ));
+            };
+            let conflict: bool = target.query_row(
+                "SELECT EXISTS(SELECT 1 FROM skills WHERE id = ?1 OR lower(directory) = lower(?2))",
+                rusqlite::params![id, directory],
+                |row| row.get(0),
+            )?;
+            if conflict {
+                return Err(AppError::Conflict(
+                    "Imported Skill conflicts with a locally managed VPS Skill; restore cancelled"
+                        .into(),
+                ));
+            }
+            target.execute(
+                &format!("INSERT INTO skills ({quoted}) VALUES ({placeholders})"),
+                rusqlite::params_from_iter(values.iter()),
+            )?;
+        }
+        // Imported triggers must not change local ownership or inject a replacement generated row.
+        if read_rows(target)? != local {
+            return Err(AppError::Conflict(
+                "Imported database changed local Skill ownership; restore cancelled".into(),
+            ));
+        }
+        Ok(())
     }
 
     fn restore_tables(
@@ -778,8 +858,16 @@ impl Database {
                 .join(", ");
             let insert_prefix = format!("INSERT INTO {quoted_table} ({quoted_columns}) VALUES ");
 
+            let owner_filter =
+                if table == "skills" && columns.iter().any(|column| column == "managed_by") {
+                    " WHERE managed_by IS NULL"
+                } else {
+                    ""
+                };
             let mut stmt = conn
-                .prepare(&format!("SELECT {quoted_columns} FROM {quoted_table}"))
+                .prepare(&format!(
+                    "SELECT {quoted_columns} FROM {quoted_table}{owner_filter}"
+                ))
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let mut rows = stmt
                 .query([])
@@ -1074,6 +1162,7 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            Self::preserve_local_managed_skills(&main_conn, &staging_conn)?;
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
@@ -1248,6 +1337,144 @@ mod tests {
         fn drop(&mut self) {
             let _ = update_settings(self.previous.clone());
         }
+    }
+
+    fn vps_owned_skill(id: &str, directory: &str) -> crate::app_config::InstalledSkill {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": "VPS owned", "directory": directory,
+            "apps": {"claude": true}, "installedAt": 1, "updatedAt": 0,
+            "managedBy": "vps",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    #[serial]
+    fn vps_managed_rows_are_excluded_from_sql_exports() {
+        let _home = TestHomeGuard::new();
+        let db = Database::memory().unwrap();
+        db.save_skill(&vps_owned_skill("internal:vps", "cc-switch-vps"))
+            .unwrap();
+        for sql in [
+            db.export_sql_string().unwrap(),
+            db.export_sql_string_for_sync().unwrap(),
+        ] {
+            assert!(!sql.contains("internal:vps"));
+            assert!(!sql.contains("VPS owned"));
+        }
+        assert_eq!(db.get_all_installed_skills().unwrap().len(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn vps_sql_import_ignores_remote_ownership_and_preserves_local_rows() {
+        let _home = TestHomeGuard::new();
+        let remote = Database::memory().unwrap();
+        let sql = format!("{}\nINSERT INTO skills (id, name, directory, managed_by) VALUES ('remote:vps', 'remote generated', 'remote-vps', 'vps');", remote.export_sql_string().unwrap());
+        for sync in [false, true] {
+            let local = Database::memory().unwrap();
+            let owned = vps_owned_skill("internal:vps", "cc-switch-vps");
+            local.save_skill(&owned).unwrap();
+            if sync {
+                local.import_sql_string_for_sync(&sql).unwrap();
+            } else {
+                local.import_sql_string(&sql).unwrap();
+            }
+            let skills = local.get_all_installed_skills().unwrap();
+            assert_eq!(skills.len(), 1);
+            let stored = skills.get("internal:vps").unwrap();
+            assert_eq!(stored.managed_by.as_deref(), Some("vps"));
+            assert_eq!(stored.apps, owned.apps);
+            assert!(!skills.contains_key("remote:vps"));
+        }
+        let fresh = Database::memory().unwrap();
+        fresh.import_sql_string(&sql).unwrap();
+        assert!(fresh.get_all_installed_skills().unwrap().is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn vps_sql_restore_rejects_manual_collisions_without_replacing_live_data() {
+        let _home = TestHomeGuard::new();
+        for (id, directory) in [("internal:vps", "other"), ("local:other", "CC-SWITCH-VPS")] {
+            let local = Database::memory().unwrap();
+            local
+                .save_skill(&vps_owned_skill("internal:vps", "cc-switch-vps"))
+                .unwrap();
+            local.set_setting("keep-before-conflict", "yes").unwrap();
+            let remote = Database::memory().unwrap();
+            let mut manual = vps_owned_skill(id, directory);
+            manual.managed_by = None;
+            remote.save_skill(&manual).unwrap();
+            assert!(local
+                .import_sql_string(&remote.export_sql_string().unwrap())
+                .is_err());
+            assert_eq!(
+                local
+                    .get_setting("keep-before-conflict")
+                    .unwrap()
+                    .as_deref(),
+                Some("yes")
+            );
+            assert_eq!(
+                local
+                    .get_installed_skill("internal:vps")
+                    .unwrap()
+                    .unwrap()
+                    .managed_by
+                    .as_deref(),
+                Some("vps")
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn vps_sql_restore_rejects_triggers_that_change_local_ownership() {
+        let _home = TestHomeGuard::new();
+        let local = Database::memory().unwrap();
+        local
+            .save_skill(&vps_owned_skill("internal:vps", "cc-switch-vps"))
+            .unwrap();
+        let sql = format!("{}\nCREATE TRIGGER alter_vps_owner AFTER INSERT ON skills BEGIN UPDATE skills SET managed_by = NULL WHERE id = NEW.id; END;", Database::memory().unwrap().export_sql_string().unwrap());
+        assert!(local.import_sql_string(&sql).is_err());
+        assert_eq!(
+            local
+                .get_installed_skill("internal:vps")
+                .unwrap()
+                .unwrap()
+                .managed_by
+                .as_deref(),
+            Some("vps")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn vps_raw_backup_restore_uses_local_ownership_not_backed_up_bindings() {
+        let home = TestHomeGuard::new();
+        let backup_dir = home.path().join(".cc-switch/backups");
+        std::fs::create_dir_all(&backup_dir).unwrap();
+        let remote = Database::memory().unwrap();
+        remote
+            .save_skill(&vps_owned_skill("remote:vps", "remote-vps"))
+            .unwrap();
+        let snapshot = remote.snapshot_to_memory().unwrap();
+        let mut file = Connection::open(backup_dir.join("foreign.db")).unwrap();
+        {
+            let copy = rusqlite::backup::Backup::new(&snapshot, &mut file).unwrap();
+            Database::complete_backup(&copy, "test backup").unwrap();
+        }
+        drop(file);
+        let local = Database::memory().unwrap();
+        local
+            .save_skill(&vps_owned_skill("internal:vps", "cc-switch-vps"))
+            .unwrap();
+        local.restore_from_backup("foreign.db").unwrap();
+        let skills = local.get_all_installed_skills().unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills["internal:vps"].managed_by.as_deref(), Some("vps"));
+        assert!(!skills.contains_key("remote:vps"));
     }
 
     #[test]

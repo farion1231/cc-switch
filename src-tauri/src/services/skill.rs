@@ -656,7 +656,7 @@ impl SkillService {
         )
     }
 
-    fn paths_overlap(left: &Path, right: &Path) -> bool {
+    pub(crate) fn paths_overlap(left: &Path, right: &Path) -> bool {
         let overlaps = |left: &Path, right: &Path| {
             left == right || left.starts_with(right) || right.starts_with(left)
         };
@@ -733,6 +733,15 @@ impl SkillService {
 
     /// Call under the Skill state lock, before writing files or registering a row.
     fn require_user_managed_target(db: &Arc<Database>, id: &str, directory: &str) -> Result<()> {
+        if (id == vps::SKILL_ID || directory.eq_ignore_ascii_case(vps::DIRECTORY))
+            && !vps::local_owned_paths()?.is_empty()
+        {
+            return Err(anyhow!(format_skill_error(
+                "SKILL_MANAGED_BY_VPS",
+                &[("directory", directory)],
+                Some("manageInVps")
+            )));
+        }
         for existing in db.get_all_installed_skills()?.values() {
             if existing.id == id || existing.directory.eq_ignore_ascii_case(directory) {
                 Self::require_user_managed(existing)?;
@@ -1503,6 +1512,8 @@ impl SkillService {
             .ok()
             .and_then(|source| Self::doc_path_for_source(&canonical_temp, &source));
 
+        vps::reject_generated_manifest(&source.join("SKILL.md"), &skill.directory)?;
+
         // Downloads do not mutate local state, so acquire only now and hold the
         // guard through the SSOT replacement, DB metadata update, and app sync.
         let _state_guard = skill_state_write_guard();
@@ -1968,6 +1979,10 @@ impl SkillService {
         Self::require_user_managed(&metadata.skill)?;
         Self::require_user_managed_target(db, &metadata.skill.id, &metadata.skill.directory)?;
         let backup_skill_dir = backup_path.join("skill");
+        vps::reject_generated_manifest(
+            &backup_skill_dir.join("SKILL.md"),
+            &metadata.skill.directory,
+        )?;
         if !backup_skill_dir.join("SKILL.md").exists() {
             return Err(anyhow!(
                 "Skill backup is invalid or missing SKILL.md: {}",
@@ -2115,7 +2130,7 @@ impl SkillService {
                 }
 
                 let skill_md = path.join("SKILL.md");
-                if !skill_md.exists() {
+                if !skill_md.exists() || vps::is_generated_manifest(&skill_md) {
                     continue;
                 }
                 let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
@@ -2210,6 +2225,8 @@ impl SkillService {
                 );
                 continue;
             }
+
+            vps::reject_generated_manifest(&source.join("SKILL.md"), &dir_name)?;
 
             // 复制到 SSOT
             let dest = ssot_dir.join(&dir_name);
@@ -2343,6 +2360,7 @@ impl SkillService {
     }
 
     fn preflight_install_destination(source: &Path, directory: &str, app: &AppType) -> Result<()> {
+        vps::reject_generated_manifest(&source.join("SKILL.md"), directory)?;
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         if !matches!(app, AppType::Pi | AppType::Mcode) {
@@ -4461,6 +4479,15 @@ fn save_repos_from_lock(
 /// 首次启动迁移：扫描应用目录，重建数据库
 pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     let _state_guard = skill_state_write_guard();
+    let mut generated_dirs: HashSet<String> = db
+        .get_all_installed_skills()?
+        .values()
+        .filter(|skill| !skill.is_user_managed())
+        .map(|skill| skill.directory.to_ascii_lowercase())
+        .collect();
+    if !vps::local_owned_paths()?.is_empty() {
+        generated_dirs.insert(vps::DIRECTORY.into());
+    }
     let ssot_dir = SkillService::get_ssot_dir()?;
     let agents_lock = parse_agents_lock();
     let snapshot: Vec<LegacySkillMigrationRow> =
@@ -4480,11 +4507,17 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     if has_snapshot {
         for row in &snapshot {
+            if generated_dirs.contains(&row.directory.to_ascii_lowercase()) {
+                continue;
+            }
             // snapshot 存在 settings 表里，而 settings 在同步范围内、可被远端快照
             // 覆盖。下面 discovered 的每个 key 都会被 join 成路径并写回 skills 表，
             // 所以脏值必须在进入 discovered 之前就滤掉。
             if SkillService::require_valid_directory(&row.directory).is_err() {
                 log::warn!("跳过 SSOT 迁移快照中非法的 directory: {:?}", row.directory);
+                continue;
+            }
+            if vps::is_generated_manifest(&ssot_dir.join(&row.directory).join("SKILL.md")) {
                 continue;
             }
             if let Ok(app) = row.app_type.parse::<AppType>() {
@@ -4521,6 +4554,12 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             if !path.join("SKILL.md").exists() {
                 continue;
             }
+            if generated_dirs.contains(&dir_name.to_ascii_lowercase())
+                || vps::is_generated_manifest(&path.join("SKILL.md"))
+            {
+                discovered.remove(&dir_name);
+                continue;
+            }
             if has_snapshot && !discovered.contains_key(&dir_name) {
                 continue;
             }
@@ -4540,8 +4579,8 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
         }
     }
 
-    // 重建数据库
-    db.clear_skills()?;
+    // 重建普通数据库记录，保留本机生成来源。
+    db.clear_user_managed_skills()?;
 
     // 将 lock 文件中发现的仓库保存到 skill_repos
     save_repos_from_lock(db, &agents_lock, discovered.keys());

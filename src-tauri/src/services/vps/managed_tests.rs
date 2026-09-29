@@ -277,6 +277,212 @@ fn symlink_deployments_keep_per_client_sources_and_clean_up_only_the_link() {
 
 #[test]
 #[serial_test::serial]
+fn generated_vps_copies_are_not_scanned_or_imported_after_a_database_restore() {
+    with_home(|db, service| {
+        service
+            .save_server_with_skills(db, server(&[AppType::Claude, AppType::Pi]))
+            .unwrap();
+        db.delete_skill("internal:vps").unwrap();
+        assert!(SkillService::scan_unmanaged(db).unwrap().is_empty());
+        assert!(SkillService::import_from_apps(
+            db,
+            vec![crate::services::skill::ImportSkillSelection {
+                directory: "cc-switch-vps".into(),
+                apps: SkillApps::only(&AppType::Claude),
+            }]
+        )
+        .is_err());
+        assert!(db.get_all_installed_skills().unwrap().is_empty());
+        assert!(!SkillService::get_ssot_dir()
+            .unwrap()
+            .join("cc-switch-vps")
+            .exists());
+        service.get_servers_with_skills(db).unwrap();
+        assert_eq!(
+            db.get_installed_skill("internal:vps")
+                .unwrap()
+                .unwrap()
+                .managed_by
+                .as_deref(),
+            Some("vps")
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn generated_vps_skill_survives_legacy_scanning_without_losing_ownership() {
+    with_home(|db, service| {
+        service
+            .save_server_with_skills(db, server(&[AppType::Pi]))
+            .unwrap();
+        db.set_setting(
+            "skills_ssot_migration_snapshot",
+            r#"[{"directory":"cc-switch-vps","app_type":"pi"}]"#,
+        )
+        .unwrap();
+        let count = crate::services::skill::migrate_skills_to_ssot(db).unwrap();
+        assert_eq!(count, 0);
+        let skills = db.get_all_installed_skills().unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills["internal:vps"].managed_by.as_deref(), Some("vps"));
+        assert!(!SkillService::get_ssot_dir()
+            .unwrap()
+            .join("cc-switch-vps")
+            .exists());
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn generated_vps_content_is_excluded_from_portable_skill_archives() {
+    with_home(|db, service| {
+        service
+            .save_server_with_skills(db, server(&[AppType::Claude]))
+            .unwrap();
+        let source = SkillService::get_ssot_dir().unwrap();
+        fs::create_dir_all(source.join("renamed-generated")).unwrap();
+        fs::copy(
+            deployment(&AppType::Claude).join("SKILL.md"),
+            source.join("renamed-generated/SKILL.md"),
+        )
+        .unwrap();
+        fs::create_dir_all(source.join("ordinary")).unwrap();
+        fs::write(source.join("ordinary/SKILL.md"), b"ordinary").unwrap();
+        let zip_path = service.root().join("portable.zip");
+        crate::services::webdav_sync::archive::zip_skills_ssot(&zip_path).unwrap();
+        let mut archive = zip::ZipArchive::new(fs::File::open(&zip_path).unwrap()).unwrap();
+        let names: Vec<_> = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .collect();
+        assert!(names.iter().any(|name| name == "ordinary/SKILL.md"));
+        assert!(
+            names.iter().all(|name| !name.contains("renamed-generated")),
+            "{names:?}"
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn generated_vps_archive_restore_is_rejected_before_replacing_user_skills() {
+    use std::io::Write;
+    with_home(|db, service| {
+        service
+            .save_server_with_skills(db, server(&[AppType::Claude]))
+            .unwrap();
+        let source = SkillService::get_ssot_dir().unwrap();
+        fs::create_dir_all(source.join("ordinary")).unwrap();
+        fs::write(source.join("ordinary/SKILL.md"), b"keep").unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "renamed-generated/SKILL.md",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer
+            .write_all(&fs::read(deployment(&AppType::Claude).join("SKILL.md")).unwrap())
+            .unwrap();
+        let raw = writer.finish().unwrap().into_inner();
+        assert!(crate::services::webdav_sync::archive::restore_skills_zip(&raw).is_err());
+        assert_eq!(fs::read(source.join("ordinary/SKILL.md")).unwrap(), b"keep");
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn vps_cloud_snapshot_roundtrip_keeps_local_bindings_but_does_not_clone_them() {
+    with_home(|db, service| {
+        let host = server(&[AppType::Claude]);
+        service.save_server_with_skills(db, host.clone()).unwrap();
+        let source = SkillService::get_ssot_dir().unwrap().join("ordinary");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), b"ordinary").unwrap();
+        db.save_skill(&manual_skill("local:ordinary", "ordinary"))
+            .unwrap();
+        let master = fs::read(service.root().join("servers.json")).unwrap();
+        let snapshot = crate::services::sync_protocol::build_local_snapshot(db).unwrap();
+        assert!(!String::from_utf8_lossy(&snapshot.db_sql).contains("internal:vps"));
+        assert!(!String::from_utf8_lossy(&snapshot.db_sql).contains(&host.host));
+        crate::services::sync_protocol::apply_snapshot(db, &snapshot.db_sql, &snapshot.skills_zip)
+            .unwrap();
+        service.get_servers_with_skills(db).unwrap();
+        assert_eq!(
+            fs::read(service.root().join("servers.json")).unwrap(),
+            master
+        );
+        assert_eq!(
+            db.get_installed_skill("internal:vps")
+                .unwrap()
+                .unwrap()
+                .managed_by
+                .as_deref(),
+            Some("vps")
+        );
+        assert_eq!(SkillService::get_all_installed(db).unwrap().len(), 1);
+        with_home(|fresh, destination| {
+            crate::services::sync_protocol::apply_snapshot(
+                fresh,
+                &snapshot.db_sql,
+                &snapshot.skills_zip,
+            )
+            .unwrap();
+            assert!(destination
+                .get_servers_with_skills(fresh)
+                .unwrap()
+                .is_empty());
+            assert!(fresh.get_installed_skill("internal:vps").unwrap().is_none());
+            assert!(!deployment(&AppType::Claude).exists());
+        });
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn vps_snapshot_database_conflict_rolls_back_ordinary_skill_files() {
+    use std::io::Write;
+    with_home(|db, service| {
+        service
+            .save_server_with_skills(db, server(&[AppType::Claude]))
+            .unwrap();
+        let source = SkillService::get_ssot_dir().unwrap().join("ordinary");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), b"original").unwrap();
+        let remote = Database::memory().unwrap();
+        remote
+            .save_skill(&manual_skill("internal:vps", "conflicting-directory"))
+            .unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "ordinary/SKILL.md",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(b"replacement").unwrap();
+        let zip = writer.finish().unwrap().into_inner();
+        assert!(crate::services::sync_protocol::apply_snapshot(
+            db,
+            remote.export_sql_string().unwrap().as_bytes(),
+            &zip
+        )
+        .is_err());
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), b"original");
+        assert_eq!(
+            db.get_installed_skill("internal:vps")
+                .unwrap()
+                .unwrap()
+                .managed_by
+                .as_deref(),
+            Some("vps")
+        );
+        assert!(deployment(&AppType::Claude).join("SKILL.md").exists());
+    });
+}
+
+#[test]
+#[serial_test::serial]
 fn selected_clients_receive_one_hidden_skill_with_distinct_catalogs() {
     with_home(|db, service| {
         let apps: Vec<_> = AppType::all()

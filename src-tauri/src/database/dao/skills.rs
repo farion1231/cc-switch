@@ -203,6 +203,14 @@ impl Database {
         Ok(())
     }
 
+    /// Legacy scanning may rebuild ordinary rows, never locally generated ownership.
+    pub(crate) fn clear_user_managed_skills(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM skills WHERE managed_by IS NULL", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     /// 更新 Skill 的应用启用状态
     pub fn update_skill_apps(&self, id: &str, apps: &SkillApps) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);

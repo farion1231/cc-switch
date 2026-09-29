@@ -240,6 +240,36 @@ mod path_tests {
     }
 }
 
+pub(crate) fn local_owned_paths() -> Result<Vec<PathBuf>> {
+    let root = get_app_config_dir().join("vps");
+    let (receipts, _) = load_receipts(&root)?;
+    Ok(receipts
+        .deployments
+        .into_iter()
+        .map(|receipt| receipt.path)
+        .collect())
+}
+
+pub(crate) fn is_generated_manifest(path: &Path) -> bool {
+    read_regular_file(path).ok().flatten().is_some_and(|bytes| {
+        String::from_utf8_lossy(&bytes)
+            .lines()
+            .take(8)
+            .any(|line| line == "cc-switch-generated: vps")
+    })
+}
+
+pub(crate) fn reject_generated_manifest(path: &Path, directory: &str) -> Result<()> {
+    if is_generated_manifest(path) {
+        return Err(anyhow!(format_skill_error(
+            "SKILL_MANAGED_BY_VPS",
+            &[("directory", directory)],
+            Some("manageInVps")
+        )));
+    }
+    Ok(())
+}
+
 impl SkillService {
     /// Caller holds the Skill state write guard, then the VPS document lock.
     pub(crate) fn prepare_vps_skill(
@@ -279,6 +309,11 @@ impl SkillService {
             }
         }
         let ssot = Self::get_ssot_dir()?;
+        if Self::paths_overlap(root, &ssot) {
+            return Err(anyhow!(
+                "Local VPS data must not overlap portable Skill storage"
+            ));
+        }
         if fs::symlink_metadata(ssot.join(DIRECTORY)).is_ok() {
             return Err(anyhow!(
                 "VPS Skill conflicts with an existing SSOT directory; it will not be adopted"

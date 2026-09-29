@@ -731,6 +731,10 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
+            if let Err(error) = services::vps::VpsService::new().get_servers_with_skills(&app_state.db) {
+                log::warn!("VPS Skill startup recovery is incomplete: {error:#}");
+            }
+
             // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
             //
             // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env

@@ -8,7 +8,7 @@ use zip::write::SimpleFileOptions;
 use zip::DateTime;
 
 use crate::error::AppError;
-use crate::services::skill::SkillService;
+use crate::services::skill::{vps, SkillService};
 
 use crate::services::sync_protocol::{
     io_context_localized, localized, MAX_SYNC_ARTIFACT_BYTES, REMOTE_SKILLS_ZIP,
@@ -36,6 +36,13 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             format!("Failed to resolve Skills SSOT directory: {e}"),
         )
     })?;
+    let mut protected = vps::local_owned_paths()
+        .map_err(|error| AppError::Config(format!("Read local VPS ownership: {error:#}")))?;
+    protected.push(crate::config::get_app_config_dir().join("vps"));
+    let protected: Vec<_> = protected
+        .into_iter()
+        .map(|path| path.canonicalize().unwrap_or(path))
+        .collect();
     if let Some(parent) = dest_path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -48,6 +55,15 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
 
     if source.exists() {
         let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
+        if protected
+            .iter()
+            .any(|path| canonical_root.starts_with(path))
+            || vps::is_generated_manifest(&canonical_root.join("SKILL.md"))
+        {
+            return Err(AppError::Conflict(
+                "Skill storage overlaps local VPS data; export cancelled".into(),
+            ));
+        }
         let mut visited = HashSet::new();
         mark_visited_dir(&canonical_root, &mut visited)?;
         zip_dir_recursive(
@@ -56,6 +72,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             &mut writer,
             options,
             &mut visited,
+            &protected,
         )?;
     }
 
@@ -70,6 +87,14 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
 }
 
 pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
+    let mut protected = vps::local_owned_paths()
+        .map_err(|error| AppError::Config(format!("Read local VPS ownership: {error:#}")))?;
+    let blocked_names: HashSet<_> = protected
+        .iter()
+        .filter_map(|path| path.file_name())
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .collect();
+    protected.push(crate::config::get_app_config_dir().join("vps"));
     let tmp = tempdir().map_err(|e| {
         io_context_localized(
             "webdav.sync.skills_extract_tmpdir_failed",
@@ -119,6 +144,21 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
         let Some(safe_name) = entry.enclosed_name() else {
             continue;
         };
+        if safe_name
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(AppError::InvalidInput(
+                "Skill archive contains parent traversal".into(),
+            ));
+        }
+        if safe_name.components().next().is_some_and(|part| {
+            blocked_names.contains(&part.as_os_str().to_string_lossy().to_ascii_lowercase())
+        }) {
+            return Err(AppError::Conflict(
+                "ZIP entry conflicts with a locally managed VPS Skill; restore cancelled".into(),
+            ));
+        }
         let out_path = extracted.join(safe_name);
         if entry.is_dir() {
             fs::create_dir_all(&out_path).map_err(|e| AppError::io(&out_path, e))?;
@@ -135,6 +175,16 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
             MAX_SYNC_ARTIFACT_BYTES,
             &out_path,
         )?;
+        drop(out);
+        if out_path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("SKILL.md"))
+            && vps::is_generated_manifest(&out_path)
+        {
+            return Err(AppError::Conflict(
+                "Generated VPS Skills cannot be restored as portable user Skills".into(),
+            ));
+        }
     }
 
     let ssot = SkillService::get_ssot_dir().map_err(|e| {
@@ -144,6 +194,14 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
             format!("Failed to resolve Skills SSOT directory: {e}"),
         )
     })?;
+    if protected
+        .iter()
+        .any(|path| SkillService::paths_overlap(path, &ssot))
+    {
+        return Err(AppError::Conflict(
+            "Skill storage overlaps local VPS data or deployments; restore cancelled".into(),
+        ));
+    }
     let bak = ssot.with_extension("bak");
 
     if ssot.exists() {
@@ -214,6 +272,7 @@ fn zip_dir_recursive(
     writer: &mut zip::ZipWriter<fs::File>,
     options: SimpleFileOptions,
     visited: &mut HashSet<PathBuf>,
+    protected: &[PathBuf],
 ) -> Result<(), AppError> {
     let mut entries: Vec<_> = fs::read_dir(current)
         .map_err(|e| AppError::io(current, e))?
@@ -242,6 +301,13 @@ fn zip_dir_recursive(
             Err(_) => path.clone(),
         };
 
+        if protected
+            .iter()
+            .any(|blocked| real_path.starts_with(blocked))
+            || real_path.is_dir() && vps::is_generated_manifest(&real_path.join("SKILL.md"))
+        {
+            continue;
+        }
         let rel = real_path
             .strip_prefix(root)
             .or_else(|_| path.strip_prefix(root))
@@ -271,7 +337,7 @@ fn zip_dir_recursive(
                         format!("Failed to write ZIP directory entry: {e}"),
                     )
                 })?;
-            zip_dir_recursive(root, &real_path, writer, options, visited)?;
+            zip_dir_recursive(root, &real_path, writer, options, visited, protected)?;
         } else {
             writer.start_file(&rel_str, options).map_err(|e| {
                 localized(

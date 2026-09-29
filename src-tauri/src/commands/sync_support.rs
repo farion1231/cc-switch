@@ -8,6 +8,11 @@ use crate::store::AppState;
 pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError> {
     let mut failures = Vec::new();
 
+    if let Err(error) =
+        crate::services::vps::VpsService::new().get_servers_with_skills(&app_state.db)
+    {
+        failures.push(format!("VPS Skills: {error:#}"));
+    }
     if let Err(error) = ProviderService::sync_current_to_live(app_state) {
         failures.push(format!("live configuration: {error}"));
     }
