@@ -200,36 +200,57 @@ fn find_think_close_tag(text: &str) -> Option<(usize, &'static str)> {
         .min_by_key(|(index, _)| *index)
 }
 
-/// 剥离缓冲区开头的 inline think 块，返回 (思考内容, 剩余正文)。
-fn split_leading_inline_think_block(buffer: &str) -> Option<(String, String)> {
-    let leading_ws_len = buffer.len() - buffer.trim_start().len();
-    let after_ws = &buffer[leading_ws_len..];
-    let open_tag = INLINE_THINK_TAG_PAIRS
-        .iter()
-        .find_map(|(open_tag, _)| after_ws.starts_with(open_tag).then_some(*open_tag))?;
-
-    let body_start = leading_ws_len + open_tag.len();
-    let (close_relative, close_tag) = find_think_close_tag(&buffer[body_start..])?;
-    let close_start = body_start + close_relative;
-    let answer_start = close_start + close_tag.len();
-
-    Some((
-        buffer[body_start..close_start].trim().to_string(),
-        buffer[answer_start..]
-            .trim_start_matches(['\r', '\n', '\t', ' '])
-            .to_string(),
-    ))
+/// 闭合标签之后的换行分隔符处理结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeparatorDecision {
+    /// 已剥掉一个换行分隔符
+    Stripped,
+    /// 首字符不是换行，无需剥离
+    NotPresent,
+    /// 只剩一个 "\r"，可能是被 chunk 边界切开的 "\r\n" 前半，需看后续增量再判定
+    NeedMore,
 }
 
-/// 剥掉缓冲区开头的开标签，剩余部分按思考内容处理（流结束时块未闭合的兜底）。
-fn strip_leading_inline_think_open_tag(buffer: &str) -> Option<String> {
-    let leading_ws_len = buffer.len() - buffer.trim_start().len();
-    let after_ws = &buffer[leading_ws_len..];
-    INLINE_THINK_TAG_PAIRS.iter().find_map(|(open_tag, _)| {
-        after_ws
-            .strip_prefix(open_tag)
-            .map(|value| value.trim().to_string())
-    })
+/// 剥掉紧随闭合标签的一个换行分隔符（"\r\n"、"\n" 或 "\r"）。
+/// 只动这一个分隔符：标签后正文的其余空白（缩进等）原样保留；
+/// 判定由调用方跨增量状态化，保证同一响应不随 SSE 分块方式产生不同输出。
+fn strip_one_newline(text: &str) -> (SeparatorDecision, &str) {
+    if let Some(rest) = text.strip_prefix("\r\n") {
+        (SeparatorDecision::Stripped, rest)
+    } else if let Some(rest) = text.strip_prefix('\n') {
+        (SeparatorDecision::Stripped, rest)
+    } else if let Some(rest) = text.strip_prefix('\r') {
+        if rest.is_empty() {
+            (SeparatorDecision::NeedMore, text)
+        } else {
+            (SeparatorDecision::Stripped, rest)
+        }
+    } else {
+        (SeparatorDecision::NotPresent, text)
+    }
+}
+
+/// Reasoning 态下需扣住不下发的尾部长度：buffer 末尾可能是某个闭合标签
+/// 真前缀的最长后缀（扣住等后续增量补全闭合标签再判定）。
+fn close_tag_holdback_len(buffer: &str) -> usize {
+    INLINE_THINK_TAG_PAIRS
+        .iter()
+        .filter_map(|(_, close_tag)| {
+            (1..close_tag.len())
+                .rev()
+                .find(|len| buffer.ends_with(&close_tag[..*len]))
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Detecting→Reasoning 转换：剥掉缓冲开头的空白与开标签，返回剩余内容。
+fn strip_leading_think_open_tag_prefix(buffer: &str) -> &str {
+    let after_ws = buffer.trim_start();
+    INLINE_THINK_TAG_PAIRS
+        .iter()
+        .find_map(|(open_tag, _)| after_ws.strip_prefix(open_tag))
+        .unwrap_or(after_ws)
 }
 
 fn non_empty(text: &str) -> Option<String> {
@@ -240,26 +261,33 @@ fn non_empty(text: &str) -> Option<String> {
     }
 }
 
-/// 流式 content 里流首 inline think 块的剥离状态（含跨 chunk 前缀缓冲：
-/// 标签被 chunk 边界切开时扣住不下发，等前缀判定明朗再放行）。
+/// 流式 content 里流首 inline think 块的剥离状态（跨 chunk 状态化）：
+/// Detecting 扣住可能构成开标签的前缀；Reasoning 即时下发思考内容、只扣住
+/// 可能是闭合标签前缀的短尾；Text 透传正文（闭合后跨增量剥一个换行分隔符）。
 #[derive(Debug, Default)]
 struct InlineThinkSseState {
     mode: InlineThinkMode,
+    /// Detecting: 流首前缀缓冲；Reasoning: 闭合标签前缀短尾；
+    /// Text: strip_separator 期间扣住待判定的 "\r"。
     buffer: String,
+    /// Text 态：闭合标签刚结束，待从后续增量中判定并剥掉紧随的一个换行分隔符。
+    strip_separator: bool,
 }
 
 impl InlineThinkSseState {
     /// 喂入一个 content 增量，返回 (thinking 增量, 正文增量)。
     fn push(&mut self, delta: &str) -> (Option<String>, Option<String>) {
         match self.mode {
-            InlineThinkMode::Text => (None, non_empty(delta)),
+            InlineThinkMode::Text => (None, self.push_text(delta)),
             InlineThinkMode::Detecting => {
                 self.buffer.push_str(delta);
                 match leading_think_prefix_decision(&self.buffer) {
                     ThinkPrefixDecision::NeedMore => (None, None),
                     ThinkPrefixDecision::Reasoning => {
                         self.mode = InlineThinkMode::Reasoning;
-                        self.drain_complete_block()
+                        let rest = strip_leading_think_open_tag_prefix(&self.buffer);
+                        self.buffer = rest.to_string();
+                        self.drain_reasoning()
                     }
                     ThinkPrefixDecision::Text => {
                         self.mode = InlineThinkMode::Text;
@@ -270,26 +298,78 @@ impl InlineThinkSseState {
             }
             InlineThinkMode::Reasoning => {
                 self.buffer.push_str(delta);
-                self.drain_complete_block()
+                self.drain_reasoning()
             }
         }
     }
 
-    /// 缓冲区内出现完整闭合标签时立刻拆出，避免整段攒到流结束。
-    fn drain_complete_block(&mut self) -> (Option<String>, Option<String>) {
-        let Some((reasoning, answer)) = split_leading_inline_think_block(&self.buffer) else {
-            return (None, None);
-        };
-        self.mode = InlineThinkMode::Text;
-        self.buffer.clear();
-        (non_empty(&reasoning), non_empty(&answer))
+    /// Text 态正文透传；刚闭合时先判定并剥掉紧随闭合标签的一个换行分隔符
+    /// （分隔符被 chunk 边界切开时跨增量扣住 "\r"，其余空白原样保留）。
+    fn push_text(&mut self, delta: &str) -> Option<String> {
+        if !self.strip_separator {
+            return non_empty(delta);
+        }
+        self.buffer.push_str(delta);
+        let held = std::mem::take(&mut self.buffer);
+        let (decision, rest) = strip_one_newline(&held);
+        match decision {
+            SeparatorDecision::NeedMore => {
+                // 继续扣住 "\r"，等下一增量判定是否 "\r\n"
+                self.buffer.push_str(rest);
+                None
+            }
+            SeparatorDecision::Stripped | SeparatorDecision::NotPresent => {
+                self.strip_separator = false;
+                non_empty(rest)
+            }
+        }
     }
 
-    /// 流边界（finish_reason / [DONE]）冲刷残留：
-    /// 未闭合的 think 块按思考内容下发，Detecting 缓冲按正文下发。幂等。
+    /// Reasoning 态推进：闭合标签完整出现 → 立即拆块转 Text；
+    /// 否则除可能是闭合标签前缀的短尾外，思考内容全部即时下发，
+    /// 避免活跃推送期间转换流长时间无输出被外层误判空闲。
+    fn drain_reasoning(&mut self) -> (Option<String>, Option<String>) {
+        if let Some((close_start, close_tag)) = find_think_close_tag(&self.buffer) {
+            let buffered = std::mem::take(&mut self.buffer);
+            self.mode = InlineThinkMode::Text;
+            let thinking = non_empty(&buffered[..close_start]);
+            let answer = &buffered[close_start + close_tag.len()..];
+            if answer.is_empty() {
+                // 闭合标签恰好收尾：分隔符可能还没到，留给下一增量判定
+                self.strip_separator = true;
+                return (thinking, None);
+            }
+            let (decision, rest) = strip_one_newline(answer);
+            match decision {
+                SeparatorDecision::NeedMore => {
+                    self.strip_separator = true;
+                    self.buffer.push_str(rest);
+                    (thinking, None)
+                }
+                SeparatorDecision::Stripped | SeparatorDecision::NotPresent => {
+                    self.strip_separator = false;
+                    (thinking, non_empty(rest))
+                }
+            }
+        } else {
+            let holdback = close_tag_holdback_len(&self.buffer);
+            let split_at = self.buffer.len() - holdback;
+            let thinking = self.buffer[..split_at].to_string();
+            self.buffer.drain(..split_at);
+            (non_empty(&thinking), None)
+        }
+    }
+
+    /// 流边界（finish_reason / [DONE] / 截断 EOF / 错误）冲刷残留，幂等：
+    /// 未闭合的 think 块按思考内容原样下发（保住已收到的载荷），
+    /// Detecting 缓冲与待定分隔符按正文下发。是否伪造成功终止事件由调用方决定。
     fn flush(&mut self) -> (Option<String>, Option<String>) {
         match self.mode {
-            InlineThinkMode::Text => (None, None),
+            InlineThinkMode::Text => {
+                self.strip_separator = false;
+                let held = std::mem::take(&mut self.buffer);
+                (None, non_empty(&held))
+            }
             InlineThinkMode::Detecting => {
                 self.mode = InlineThinkMode::Text;
                 let text = std::mem::take(&mut self.buffer);
@@ -298,11 +378,9 @@ impl InlineThinkSseState {
             InlineThinkMode::Reasoning => {
                 let buffered = std::mem::take(&mut self.buffer);
                 self.mode = InlineThinkMode::Text;
-                if let Some((reasoning, answer)) = split_leading_inline_think_block(&buffered) {
-                    return (non_empty(&reasoning), non_empty(&answer));
-                }
-                let reasoning = strip_leading_inline_think_open_tag(&buffered).unwrap_or(buffered);
-                (non_empty(&reasoning), None)
+                self.strip_separator = false;
+                // push 已即时拆块，此处残留不含完整闭合标签
+                (non_empty(&buffered), None)
             }
         }
     }
@@ -845,6 +923,22 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                 Err(e) => {
                     log::error!("Stream error: {e}");
                     stream_ended_with_error = true;
+                    // 错误路径同样冲刷 inline think 残留：先下发已收到的载荷，
+                    // 再以 error 事件收尾，不伪造成功终止事件。
+                    let (thinking, text) = inline_think.flush();
+                    for (block_type, delta) in [("thinking", thinking), ("text", text)] {
+                        if let Some(delta) = &delta {
+                            for sse_data in non_tool_block_events(
+                                block_type,
+                                delta,
+                                &mut next_content_index,
+                                &mut current_non_tool_block_type,
+                                &mut current_non_tool_block_index,
+                            ) {
+                                yield Ok(Bytes::from(sse_data));
+                            }
+                        }
+                    }
                     let error_event = json!({
                         "type": "error",
                         "error": {
@@ -856,6 +950,23 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                         serde_json::to_string(&error_event).unwrap_or_default());
                     yield Ok(Bytes::from(sse_data));
                     break;
+                }
+            }
+        }
+
+        // 流自然结束（含上游截断、无 finish_reason/[DONE]）也冲刷 inline think
+        // 残留：已收到的内容必须下发，不得整段留在缓冲区丢弃。
+        let (thinking, text) = inline_think.flush();
+        for (block_type, delta) in [("thinking", thinking), ("text", text)] {
+            if let Some(delta) = &delta {
+                for sse_data in non_tool_block_events(
+                    block_type,
+                    delta,
+                    &mut next_content_index,
+                    &mut current_non_tool_block_type,
+                    &mut current_non_tool_block_index,
+                ) {
+                    yield Ok(Bytes::from(sse_data));
                 }
             }
         }
@@ -1693,5 +1804,189 @@ mod tests {
             collect_delta_text(&events, "text_delta", "/delta/text"),
             "Done"
         );
+    }
+
+    fn content_chunk(id: &str, content: &str) -> String {
+        format!(
+            "data: {{\"id\":\"{id}\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n\n",
+            serde_json::to_string(content).unwrap()
+        )
+    }
+
+    /// 转换流的单个 yield 即一条完整 SSE 事件，解析出 data JSON。
+    fn parse_event(chunk: &Bytes) -> Value {
+        let text = String::from_utf8_lossy(chunk.as_ref());
+        let data = text
+            .lines()
+            .find_map(|line| strip_sse_field(line, "data"))
+            .unwrap_or_default();
+        serde_json::from_str(data).expect("valid SSE data JSON")
+    }
+
+    async fn collect_events(parts: Vec<String>) -> Vec<Value> {
+        let upstream = stream::iter(
+            parts
+                .into_iter()
+                .map(|part| Ok::<_, std::io::Error>(Bytes::from(part))),
+        );
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        chunks
+            .into_iter()
+            .map(|chunk| parse_event(&chunk.unwrap()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn review_progress_during_continuous_reasoning() {
+        // P1 回归：Reasoning 态必须逐增量下发思考内容。闭合标签迟迟未到时，
+        // 上游持续推送的每一条增量都应让转换流立即产生输出；修复前整段缓冲，
+        // 外层 failover 对转换后的 next() 计时会误判空闲并中断活跃流。
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
+        let upstream = async_stream::stream! {
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
+        };
+        let converted = create_anthropic_sse_stream(upstream);
+        tokio::pin!(converted);
+
+        // 流首开标签：确立 Reasoning 态，本身不产生输出。
+        tx.send(Ok(Bytes::from(content_chunk("progress", "<think>"))))
+            .await
+            .unwrap();
+
+        // 上游只发推理增量，闭合标签始终不到（模拟远超空闲阈值的长推理）。
+        for i in 0..20u32 {
+            let expected = format!("step {i} ");
+            tx.send(Ok(Bytes::from(content_chunk("progress", &expected))))
+                .await
+                .unwrap();
+
+            // 每个增量都必须在宽裕时限内产生 thinking 输出：只验证"有进展"，
+            // 不测量时延，避免 Windows 定时器粒度导致的抖动。
+            loop {
+                let item =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), converted.next())
+                        .await
+                        .unwrap_or_else(|_| {
+                            panic!("上游持续推送时转换流在第 {i} 条增量处停摆（假空闲）")
+                        })
+                        .expect("converted stream ended unexpectedly");
+                let event = parse_event(&item.unwrap());
+                if event_type(&event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str())
+                        == Some("thinking_delta")
+                {
+                    assert_eq!(
+                        event.pointer("/delta/thinking").and_then(|v| v.as_str()),
+                        Some(expected.as_str())
+                    );
+                    break;
+                }
+            }
+        }
+
+        // 上游此后不再发送（闭合标签仍未来），转换流不得伪造成功终止事件。
+        drop(tx);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .map(|chunk| parse_event(&chunk.unwrap()))
+            .collect();
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn review_answer_independent_of_content_chunk_partition() {
+        // P2 回归：同一逻辑响应无论 SSE 怎么分块，正文输出必须逐字节一致。
+        // 修复前闭合标签与正文同增量时 trim_start_matches 会剥掉正文缩进，
+        // 闭合标签在增量末尾时却原样保留，答案随分块方式变化。
+        let thinking_expect = "reason";
+        let answer_expect = "    return 42\n";
+        let partitions: Vec<Vec<&str>> = vec![
+            vec!["<think>reason</think>    return 42\n"], // 旧实现在此剥掉缩进
+            vec!["<think>reason</think>", "    return 42\n"], // 旧实现在此保留缩进
+            vec!["<think>", "reason", "</th", "ink>", "    return 42\n"], // 闭合标签跨增量
+            vec!["<think>reason</think>    ", "return 42\n"],
+        ];
+
+        for parts in partitions {
+            let events = collect_events(
+                parts
+                    .iter()
+                    .map(|content| content_chunk("partition", content))
+                    .collect(),
+            )
+            .await;
+            assert_eq!(
+                collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+                thinking_expect,
+                "thinking differs under partition {parts:?}"
+            );
+            assert_eq!(
+                collect_delta_text(&events, "text_delta", "/delta/text"),
+                answer_expect,
+                "answer whitespace must not depend on chunk partition {parts:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn review_eof_keeps_received_partial_payload() {
+        // P1 回归：未闭合推理在上游截断（无 finish_reason、无 [DONE]）直接 EOF 时，
+        // 已收到的内容必须下发。修复前缓冲整段丢弃，客户端只剩 message_start。
+        let events = collect_events(vec![content_chunk("eof", "<think>partial reas</th")]).await;
+
+        // 已收到的载荷全部下发（含扣住待定的闭合标签短尾），分类为思考内容。
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "partial reas</th"
+        );
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_start")));
+        // 截断流不得伪造成功终止事件。
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_stream_error_keeps_received_partial_payload() {
+        // 错误路径同样冲刷残留：先下发已收到的载荷，再以 error 事件收尾，
+        // 不伪造成功终止事件。
+        let upstream = stream::iter(vec![
+            Ok::<_, std::io::Error>(Bytes::from(content_chunk("err", "<think>partial reas</th"))),
+            Err(std::io::Error::other("upstream disconnected")),
+        ]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .map(|chunk| parse_event(&chunk.unwrap()))
+            .collect();
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "partial reas</th"
+        );
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("error")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
     }
 }
