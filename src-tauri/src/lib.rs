@@ -43,6 +43,9 @@ mod tray;
 mod usage_events;
 mod usage_script;
 
+#[cfg(test)]
+mod test_support;
+
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,

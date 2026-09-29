@@ -12,6 +12,7 @@ use crate::proxy::{
     ProxyError,
 };
 use axum::http::HeaderMap;
+use serde_json::Value;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -21,6 +22,44 @@ pub struct StreamingTimeoutConfig {
     pub first_byte_timeout: u64,
     /// 静默期超时（秒），0 表示禁用
     pub idle_timeout: u64,
+}
+
+/// Codex-only: 请求体 model 字段含 `@<toml_id>` 后缀、已被路由到目标 provider 时，
+/// 记录剥离后的模型名与目标 id。`None` 表示未触发（不剥离、原样转发）。
+///
+/// 设计要点：
+/// - 后缀剥离发生在 `select_providers` **之后**：原 failover 链可能含不支持后缀
+///   语义的 provider；剥离后允许 failover 用剥离名继续（不会把 `claude-opus-5@kxpms`
+///   原样发到不知后缀为何物的本地网关）。
+/// - 鉴权按**目标端点**取 key：进入本 dispatch 路径后 `ctx.provider` 已经是 target，
+///   forwarder 通过 `adapter.extract_auth(provider)` 取 key，不会沿用 active 端点的。
+/// - target_toml_id 同时作为「四轮新增的 legacy `custom` 别名不算独立端点」的边界
+///   信号——`@custom` 不应作为目标（继承 RFC 0002 §2.4b 的剔除规则）。
+#[derive(Debug, Clone)]
+pub struct EndpointDispatch {
+    pub stripped_model: String,
+    /// 冗余字段——主要用作日志与未来断言。`stripped_model` 已足够触发剥离逻辑，
+    /// 但保留 target_toml_id 让测试与日志能直接断言「最终打到了哪个 provider」。
+    #[allow(dead_code)]
+    pub target_toml_id: String,
+}
+
+/// 解析 `<model>@<toml_id>` 后缀。返回 `(Some(toml_id), stripped_model)` 当且仅当：
+/// - model 末尾含 `@<id>`，`rsplit_once` 保证前缀里的 `@` 不会误命中；
+/// - id 非空、字符集限于 `[A-Za-z0-9_-]`（TOML bare key 合法子集），避免把
+///   URL fragment / 邮箱 / 路径里的 `@` 当 toml_id；
+/// - 前缀非空（不接受 `@local` 这种「没真模型名」的形式）。
+pub fn parse_model_endpoint_suffix(model: &str) -> (Option<&str>, &str) {
+    let Some((prefix, suffix)) = model.rsplit_once('@') else {
+        return (None, model);
+    };
+    if suffix.is_empty() || prefix.is_empty() {
+        return (None, model);
+    }
+    if !suffix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return (None, model);
+    }
+    (Some(suffix), prefix)
 }
 
 /// 请求上下文
@@ -70,6 +109,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// Codex-only: `@<toml_id>` 后缀分发元数据，None 表示未触发。
+    pub endpoint_dispatch: Option<EndpointDispatch>,
 }
 
 impl RequestContext {
@@ -111,7 +152,7 @@ impl RequestContext {
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
 
         // 从请求体提取模型名称
-        let request_model = body
+        let mut request_model = body
             .get("model")
             .and_then(|m| m.as_str())
             .unwrap_or("unknown")
@@ -131,7 +172,7 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
+        let mut providers = state
             .provider_router
             .select_providers(app_type_str)
             .await
@@ -143,7 +184,7 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
-        let provider = providers
+        let mut provider = providers
             .first()
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
@@ -156,6 +197,54 @@ impl RequestContext {
             providers.len(),
             session_id
         );
+
+        // Codex-only: 解析 `@<toml_id>` 后缀分发。必须在 select_providers **之后**
+        // 调，原 failover 链可能含不支持后缀语义的 provider；剥离后允许 failover 用
+        // 剥离名继续。target_toml_id 同时是「四轮新增的 legacy `custom` 别名不算
+        // 独立端点」的边界——`@custom` 不应作为目标（继承 RFC 0002 §2.4b 规则）。
+        let mut endpoint_dispatch: Option<EndpointDispatch> = None;
+        if matches!(app_type, AppType::Codex) {
+            // 先把解析结果复制成 owned String——避免后续 reassign request_model 时
+            // 还持有 `&request_model` 的借用。
+            let (suffix_target, suffix_stripped): (Option<String>, String) =
+                match parse_model_endpoint_suffix(&request_model) {
+                    (Some(id), stripped) => (Some(id.to_string()), stripped.to_string()),
+                    (None, original) => (None, original.to_string()),
+                };
+            if let Some(toml_id) = suffix_target {
+                if toml_id == "custom" {
+                    log::warn!(
+                        "[{tag}] @custom 是四轮引入的 legacy 别名（RFC 0002 §2.4b），不作为独立目标；忽略后缀"
+                    );
+                } else if let Some(idx) = providers.iter().position(|p| p.id == toml_id) {
+                    let target = providers[idx].clone();
+                    let mut reordered = Vec::with_capacity(providers.len());
+                    reordered.push(target.clone());
+                    reordered.extend(
+                        providers
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| *i != idx)
+                            .map(|(_, p)| p.clone()),
+                    );
+                    provider = target;
+                    providers = reordered;
+                    request_model = suffix_stripped.clone();
+                    log::info!(
+                        "[{tag}] @<toml_id> dispatch: stripped={suffix_stripped} target={toml_id} chain_len={}",
+                        providers.len()
+                    );
+                    endpoint_dispatch = Some(EndpointDispatch {
+                        stripped_model: suffix_stripped,
+                        target_toml_id: toml_id,
+                    });
+                } else {
+                    log::warn!(
+                        "[{tag}] @<toml_id> suffix found ({suffix_stripped}@{toml_id}) but {toml_id} is not in current providers; falling back to active"
+                    );
+                }
+            }
+        }
 
         Ok(Self {
             start_time,
@@ -173,7 +262,27 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            endpoint_dispatch,
         })
+    }
+
+    /// Codex-only: 如果 ctx 已应用 `@<toml_id>` dispatch，把 body.model 改写为剥离
+    /// 后的名字。handler 必须在 `forward_with_retry` 之前调用本方法，否则上游会
+    /// 收到带后缀的模型名（多数 provider 不识别，触发 4xx）。
+    ///
+    /// 非 Codex app 上永远是 no-op（`endpoint_dispatch` 永远 None）。
+    pub fn strip_endpoint_suffix_from_body(&self, body: &mut Value) {
+        if let Some(dispatch) = &self.endpoint_dispatch {
+            if let Some(model_field) = body.get_mut("model") {
+                if let Some(model_str) = model_field.as_str() {
+                    if model_str == dispatch.stripped_model {
+                        // body 已经是剥离后的状态（罕见，但避免无谓覆盖）
+                        return;
+                    }
+                }
+                *model_field = Value::String(dispatch.stripped_model.clone());
+            }
+        }
     }
 
     /// 从 URI 提取模型名称（Gemini 专用）
@@ -300,7 +409,7 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_model_from_path;
+    use super::{extract_gemini_model_from_path, parse_model_endpoint_suffix};
 
     #[test]
     fn extract_model_with_action() {
@@ -373,5 +482,75 @@ mod tests {
                 .as_deref(),
             Some("gemini-2.0-flash"),
         );
+    }
+
+    // ── parse_model_endpoint_suffix（@<toml_id> 分发入口）─────────────────
+
+    #[test]
+    fn parse_suffix_accepts_alnum_underscore_dash() {
+        let (id, stripped) = parse_model_endpoint_suffix("claude-opus-5@kxpms");
+        assert_eq!(id, Some("kxpms"));
+        assert_eq!(stripped, "claude-opus-5");
+    }
+
+    #[test]
+    fn parse_suffix_accepts_digits_in_id() {
+        // 本机端点的 id 是 `local8782`（名字里的 8782 是历史遗留，不是端口契约
+        // ——端口由 base_url 承载）。解析器必须接受 id 里的数字。
+        let (id, stripped) = parse_model_endpoint_suffix("claude-opus-5@local8782");
+        assert_eq!(id, Some("local8782"));
+        assert_eq!(stripped, "claude-opus-5");
+    }
+
+    #[test]
+    fn parse_suffix_keeps_rsplit_behavior_for_inner_at_signs() {
+        // 内嵌 `@` 不应误命中——只剥末尾。
+        let (id, stripped) = parse_model_endpoint_suffix("user@example@kxpms");
+        assert_eq!(id, Some("kxpms"));
+        assert_eq!(stripped, "user@example");
+    }
+
+    #[test]
+    fn parse_suffix_rejects_empty_id() {
+        let (id, stripped) = parse_model_endpoint_suffix("claude-opus-5@");
+        assert_eq!(id, None);
+        assert_eq!(stripped, "claude-opus-5@");
+    }
+
+    #[test]
+    fn parse_suffix_rejects_empty_model() {
+        let (id, stripped) = parse_model_endpoint_suffix("@kxpms");
+        assert_eq!(id, None);
+        assert_eq!(stripped, "@kxpms");
+    }
+
+    #[test]
+    fn parse_suffix_rejects_url_punctuation() {
+        // URL/邮箱里的 `@` 不应被当成 toml_id 边界。带 `.`、`:``/` 等都不是合法 TOML bare key。
+        for bad in [
+            "foo@host/path",
+            "foo@host:8080",
+            "foo@v1.beta",
+            "foo@host.com",
+        ] {
+            let (id, _) = parse_model_endpoint_suffix(bad);
+            assert_eq!(id, None, "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn parse_suffix_accepts_plain_model_without_suffix() {
+        let (id, stripped) = parse_model_endpoint_suffix("claude-opus-5");
+        assert_eq!(id, None);
+        assert_eq!(stripped, "claude-opus-5");
+    }
+
+    /// 解析器的字符集不能因为自家 id 的形状而收窄：本机端点 id 是 `local8782`
+    /// （含数字），第三方 / 历史 provider 也可能是 `qwen3-v2`、`v2` 这类形式。
+    #[test]
+    fn parse_suffix_accepts_id_with_digits() {
+        let (id, stripped) = parse_model_endpoint_suffix("glm-5.2@qwen3-v2");
+        assert_eq!(id, Some("qwen3-v2"));
+        assert_eq!(stripped, "glm-5.2");
     }
 }

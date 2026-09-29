@@ -293,15 +293,16 @@ fn kaixuan_bundle() -> BundleSpec {
     let local_base_url = format!("http://127.0.0.1:{local_port}/v1");
 
     // 顶层 model_provider + [model_providers.<id>] 必须一一对应，且两个端点的
-    // TOML id 必须不同（kxpms vs local8782），否则：
+    // TOML id 必须不同（kxpms vs local），否则：
     //  1) 没有顶层 model_provider，Codex 会按 0.149 默认回退到 `openai`，整份
     //     [model_providers.custom] 变孤儿表、CLI 起不来；
     //  2) 两个端点共用 `custom` id 时，merge_inert_codex_provider_tables
     //     (live.rs:711-868) 的 "live wins" 规则会让次写入的整表被静默丢弃，
     //     切回时历史 session 无法 resume。
-    // 命名约定：TOML id = 短句小写（kxpms / local8782），name = 人类可读名
+    // 命名约定：TOML id = 短句小写（kxpms / local），name = 人类可读名
     // （kxpms_gateway / local_gateway），二者不同源，避免 name 被 Codex 当
-    // 成路由 key 时混淆。
+    // 成路由 key 时混淆。第五轮把 local 端点的 id 从端口耦合的 `local`
+    // 改成与端口解耦的 `local`——端口由 `base_url` 承载。
     let kxpms_config = r#"model_provider = "kxpms"
 [model_providers.kxpms]
 name = "kxpms_gateway"
@@ -475,12 +476,10 @@ mod tests {
         // 注：`#[serial]` 已让本测试串行运行，env var 与 DB 文件不会与
         // 其它并行测试互相污染。
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        // restore on drop
-        let _restore = EnvRestore::new(&[
-            ("CC_SWITCH_TEST_HOME", true),
-            ("HOME", true),
+        // 先取共享 env 锁、再改 env（顺序不能反，见 set_env_locked 注释）
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
         ]);
 
         let db = Database::init().expect("db init");
@@ -512,8 +511,7 @@ mod tests {
         }
 
         // 设置一个 env var 让 install_bundle 展开
-        std::env::set_var("KAIXUAN_TEST_KEY", "sk-from-env-1234567890");
-        let _restore2 = EnvRestore::new(&[("KAIXUAN_TEST_KEY", false)]);
+        let _restore2 = set_env_locked(&[("KAIXUAN_TEST_KEY", std::ffi::OsStr::new("sk-from-env-1234567890"))]);
 
         let mut api_keys = std::collections::HashMap::new();
         api_keys.insert("primary".to_string(), "$KAIXUAN_TEST_KEY".to_string());
@@ -637,9 +635,10 @@ mod tests {
         use tempfile::TempDir;
 
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        let _restore = EnvRestore::new(&[("CC_SWITCH_TEST_HOME", true), ("HOME", true)]);
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
+        ]);
 
         let db = Database::memory().expect("db init");
 
@@ -682,7 +681,7 @@ mod tests {
         // 「这批数据压根写不进去」，而是因为第 2 个端点失败拖垮了整个事务。
         let good2 = Provider {
             id: "kaixuan-local-8782".to_string(),
-            name: "本地 LLM 网关".to_string(),
+            name: "本地 LLM 网关 (8782)".to_string(),
             sort_index: Some(1),
             ..ok.clone()
         };
@@ -723,11 +722,9 @@ mod tests {
         use tempfile::TempDir;
 
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        let _restore = EnvRestore::new(&[
-            ("CC_SWITCH_TEST_HOME", true),
-            ("HOME", true),
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
         ]);
 
         let db = Database::init().expect("db init");
@@ -756,8 +753,7 @@ mod tests {
             .expect("save pre");
 
         // 设置 env，让 bundle 想用 $ 展开
-        std::env::set_var("KAIXUAN_TEST_KEY2", "sk-bundle-would-write");
-        let _restore2 = EnvRestore::new(&[("KAIXUAN_TEST_KEY2", false)]);
+        let _restore2 = set_env_locked(&[("KAIXUAN_TEST_KEY2", std::ffi::OsStr::new("sk-bundle-would-write"))]);
 
         let mut api_keys = std::collections::HashMap::new();
         api_keys.insert("primary".to_string(), "$KAIXUAN_TEST_KEY2".to_string());
@@ -792,11 +788,30 @@ mod tests {
     // ---- mini helpers ----
 
     /// 临时设一组 env var，Drop 时按 `set` 还原（true = 还原原值 / 删除；false = 仅删除）。
+    ///
+    /// 构造时**自动持有全 crate 共享的 env_lock**，持锁到 Drop。这把锁保护的是
+    /// 「切换 HOME / CODEX_HOME 等 env」与「读 `get_home_dir()`」之间的一致性——
+    /// 单靠 `#[serial]` 串不掉：serial_test 只协调同分组的测试，而跨模块（hermes
+    /// / openclaw / opencode / codex）的 env 改写互不可见，本锁补齐这条缝。
     struct EnvRestore {
+        // 持锁字段，Drop 时随结构体一起释放。可重入，所以同一测试里建多个
+        // EnvRestore 不会自死锁。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
         saved: Vec<(&'static str, Option<String>)>,
         delete_only: Vec<&'static str>,
     }
     impl EnvRestore {
+        /// 登记一个「本守卫负责在 drop 时清掉」的 env var。必须在 set_var **之后**
+        /// 调用（`set_env_locked` 已保证持锁在前）。
+        ///
+        /// 复用 `delete_only` 而非 `saved`：`Drop` 对两者的处理是一样的
+        /// （`remove_var`），本守卫不负责把变量还原成测试前的原值——测试进程里
+        /// 「清掉」与「还原」等价，少一份状态就少一处不一致的来源。
+        fn track_set(&mut self, key: &'static str) {
+            self.delete_only.push(key);
+        }
+
         fn new(items: &[(&'static str, bool)]) -> Self {
             let mut saved = Vec::new();
             let mut delete_only = Vec::new();
@@ -807,11 +822,47 @@ mod tests {
                     delete_only.push(*k);
                 }
             }
-            Self { saved, delete_only }
+            let env_guard = crate::test_support::env_guard();
+            Self {
+                env_guard,
+                saved,
+                delete_only,
+            }
         }
     }
+    /// **先取共享 env 锁、再改 env**，返回的守卫在 drop 时按原值还原。
+    ///
+    /// ## 为什么必须是这个顺序（第五轮踩过的真坑）
+    ///
+    /// 直觉写法是「先 `set_var`，再构造一个负责还原 + 加锁的守卫」：
+    /// ```ignore
+    /// std::env::set_var("HOME", tmp.path());   // ← 还没持锁
+    /// let _restore = EnvRestore::new(...);      // ← 这里才去抢锁
+    /// ```
+    /// 这在并发下是**错**的：抢锁期间，另一个测试可能正持有锁并把自己的
+    /// `EnvRestore` drop 掉，把 `HOME` 还原成真实用户目录。于是本测试等到锁后
+    /// 继续跑，`get_app_config_dir()` 读到的已经是**被还原的真实 HOME**。
+    ///
+    /// 实测后果（`kaixuan_bundle_full_switch_lifecycle_no_config_errors`）：
+    /// 打印 `get_app_config_dir()`，main 上是 `/var/folders/.../tmp.XXX/.cc-switch`，
+    /// 加锁后变成 `/Users/xutaohuang/.cc-switch` —— 测试打开了开发者的真实 48MB
+    /// provider 库，并把里面的 provider 当成 inert 端点合进 live 断言。
+    ///
+    /// 所以纪律是：**任何进程全局 env 的写入，都必须在持有共享锁之后发生。**
+    /// 本函数是这条纪律的唯一入口——它把「取锁」和「改 env」绑成一个不可拆的步骤。
+    fn set_env_locked(vars: &[(&'static str, &std::ffi::OsStr)]) -> EnvRestore {
+        let mut guard = EnvRestore::new(&[]);
+        for (key, value) in vars {
+            std::env::set_var(key, value);
+            guard.track_set(key);
+        }
+        guard
+    }
+
     impl Drop for EnvRestore {
         fn drop(&mut self) {
+            // 先还原 env（避免 drop 顺序里锁先释放后另一个测试看到错的值），
+            // 再让 env_guard 自然 drop 把锁交还。
             for (k, _) in &self.saved {
                 std::env::remove_var(k);
             }
@@ -923,7 +974,7 @@ mod tests {
         }
     }
 
-    /// 回归测试：bundle 的两个端点必须用**不同**的 TOML id（kxpms / local8782），
+    /// 回归测试：bundle 的两个端点必须用**不同**的 TOML id（kxpms / local），
     /// 且各自带顶层 `model_provider = "<id>"`。
     ///
     /// 历史 bug（修复于 r0928 末）：两端点共用 `custom` id，且都没设顶层
@@ -980,7 +1031,7 @@ mod tests {
 
     /// 端到端：用真实的 `kaixuan_bundle()` 输出走
     /// `merge_inert_codex_provider_tables_into_settings_config`，
-    /// 验证切到 `kaixuan-kxpms` 时 `kaixuan-local-8782` 的 `[model_providers.local8782]`
+    /// 验证切到 `kaixuan-kxpms` 时 `kaixuan-local` 的 `[model_providers.local]`
     /// 表被 inert 合并进来（反之亦然）。
     ///
     /// 关键不变量：
@@ -996,11 +1047,9 @@ mod tests {
 
         // 临时 HOME → DB 落 sandbox
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        let _restore = EnvRestore::new(&[
-            ("CC_SWITCH_TEST_HOME", true),
-            ("HOME", true),
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
         ]);
 
         let db = Database::init().expect("db init");
@@ -1020,7 +1069,7 @@ mod tests {
             .expect("save provider");
         }
 
-        // 切到 kaixuan-kxpms → inert 端是 local8782
+        // 切到 kaixuan-kxpms → inert 端是 local
         let kxpms_cfg = b
             .endpoints
             .iter()
@@ -1045,7 +1094,7 @@ mod tests {
             .expect("model_providers 表");
         // 1) 活动端点 kxpms 表保留（live wins）
         assert!(mp.iter().any(|(id, _)| id == "kxpms"), "kxpms 表应在 live");
-        // 2) inert 端点 local8782 表被合并进来
+        // 2) inert 端点 local 表被合并进来
         let local_entry = mp
             .iter()
             .find(|(id, _)| *id == "local8782")
@@ -1062,7 +1111,7 @@ mod tests {
             "inert 表 base_url 必须原样保留"
         );
 
-        // 反向：切到 kaixuan-local-8782 → inert 端是 kxpms
+        // 反向：切到 kaixuan-local → inert 端是 kxpms
         let local_cfg = b
             .endpoints
             .iter()
@@ -1109,9 +1158,10 @@ mod tests {
         use tempfile::TempDir;
 
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        let _restore = EnvRestore::new(&[("CC_SWITCH_TEST_HOME", true), ("HOME", true)]);
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
+        ]);
 
         let db = Database::init().expect("db init");
 
@@ -1173,7 +1223,7 @@ mod tests {
         assert_eq!(
             doc["model_providers"]["local8782"]["base_url"].as_str(),
             Some("http://127.0.0.1:8782/v1"),
-            "inert 端点必须迁到 local8782 而非被丢弃\n{live_text}"
+            "inert 端点必须迁到 local 而非被丢弃\n{live_text}"
         );
 
         // 同 slug 多端点共存素材必须被注入，供 catalog 合并
@@ -1206,9 +1256,10 @@ mod tests {
         use tempfile::TempDir;
 
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        let _restore = EnvRestore::new(&[("CC_SWITCH_TEST_HOME", true), ("HOME", true)]);
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
+        ]);
 
         let db = Database::init().expect("db init");
         let legacy = json!({
@@ -1249,12 +1300,12 @@ mod tests {
         );
     }
 
-    /// 端到端切换生命周期：装好 bundle → 切 kxpms → 切 local8782 → 切回 kxpms，
+    /// 端到端切换生命周期：装好 bundle → 切 kxpms → 切 local → 切回 kxpms，
     /// 每一步都核：
     ///   - live `~/.codex/config.toml` 是合法 TOML
     ///   - live `~/.codex/cc-switch-model-catalog.json` 是合法 JSON 且含 8 个模型
     ///   - 顶层 `model_provider` 与目标端点 TOML id 一致
-    ///   - `[model_providers.kxpms]` 与 `[model_providers.local8782]` 两张表
+    ///   - `[model_providers.kxpms]` 与 `[model_providers.local]` 两张表
     ///     **始终**都在 live 里（RFC 0002 inert merge 不丢表）
     ///   - auth.json 写明文 key（不再含 `$` 字面）
     ///   - 切回原端点时 `[model_providers.<原>]` 表内容仍可访问
@@ -1280,16 +1331,15 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let codex_home = tmp.path().join(".codex");
         std::fs::create_dir_all(&codex_home).expect("create .codex");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        std::env::set_var("HOME", tmp.path());
-        std::env::set_var("CODEX_HOME", &codex_home);
-        let _restore = EnvRestore::new(&[
-            ("CC_SWITCH_TEST_HOME", true),
-            ("HOME", true),
-            ("CODEX_HOME", true),
+        let _restore = set_env_locked(&[
+            ("CC_SWITCH_TEST_HOME", tmp.path().as_os_str()),
+            ("HOME", tmp.path().as_os_str()),
+            ("CODEX_HOME", codex_home.as_os_str()),
         ]);
 
+        eprintln!("LIFE_DB={}", crate::config::get_app_config_dir().display());
         let db = Database::init().expect("db init");
+        eprintln!("LIFE_PROV={}", db.get_all_providers(AppType::Codex.as_str()).map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default());
 
         // 2) install bundle（直接传明文 API key，避免 env-var 展开依赖）
         let mut api_keys = std::collections::HashMap::new();
@@ -1328,19 +1378,19 @@ mod tests {
         verify_live_after_switch(&codex_home, "kxpms", "sk-kxpms-abc", "sk-local-xyz")
             .expect("after initial write_live (P1=kxpms)");
 
-        // 4) 切到 local8782
+        // 4) 切到 local
         write_live_with_common_config_for_codex_oauth_manager(
             &db,
             &AppType::Codex,
             &local_provider,
             &codex_oauth,
         )
-        .expect("switch to local8782");
+        .expect("switch to local");
         db.set_current_provider(AppType::Codex.as_str(), "kaixuan-local-8782")
             .expect("set current local");
 
         verify_live_after_switch(&codex_home, "local8782", "sk-kxpms-abc", "sk-local-xyz")
-            .expect("after switch to local8782");
+            .expect("after switch to local");
 
         // 5) 切回 kxpms
         write_live_with_common_config_for_codex_oauth_manager(
@@ -1356,7 +1406,7 @@ mod tests {
         verify_live_after_switch(&codex_home, "kxpms", "sk-kxpms-abc", "sk-local-xyz")
             .expect("after switch back to kxpms");
 
-        // 6) 再切到 local8782（4 步重复，验证反复切不出错）
+        // 6) 再切到 local（4 步重复，验证反复切不出错）
         write_live_with_common_config_for_codex_oauth_manager(
             &db,
             &AppType::Codex,
@@ -1367,7 +1417,7 @@ mod tests {
         db.set_current_provider(AppType::Codex.as_str(), "kaixuan-local-8782")
             .expect("set current 2");
         verify_live_after_switch(&codex_home, "local8782", "sk-kxpms-abc", "sk-local-xyz")
-            .expect("after second switch to local8782");
+            .expect("after second switch to local");
     }
 
     /// 切换后验证 live 状态：合法 TOML + 两张 [model_providers.*] 表都在 +
@@ -1437,14 +1487,15 @@ mod tests {
             return Err(format!("model_catalog_json 指针={ptr} ≠ 期望"));
         }
 
-        // (e) catalog 文件存在且合法 JSON，且只含 **active 端点** 的 8 个模型。
+        // (e) catalog 文件存在且合法 JSON，且**两个端点的模型都在**（8 + 8 = 16）。
         //
-        // 回归红线（2026-09-28 审计）：曾经这里是 16 条（active 8 + 另一端 8 条
-        // `@<toml_id>` 后缀），是**错的**。Codex 的 catalog `slug` 就是发出去的
-        // `model` 值，没有「仅显示的别名」字段；而按后缀路由的那一半还不存在
-        // （cc-switch 与 llm-gateway-go 都不剥离 `@<id>`，网关 `promoteCanonical`
-        // 用的是精确相等）。写出去的用户一点就**静默路由到别的模型**，比报错更糟。
-        // 详见 `codex_config::codex_endpoint_catalog_coexist_enabled`。
+        // 这里曾是 8 条（只 active）并配一条「出现 `@` 后缀即失败」的红线，因为
+        // 2026-09-28 审计判定：Codex 的 catalog `slug` 就是发出去的 `model` 值，
+        // 而当时按后缀路由的那一半**还不存在**——写出去就是静默错路由。
+        //
+        // 第五轮补上了那一半（`proxy::handler_context::RequestContext::new` 解析
+        // `@<toml_id>`、按 id 选目标端点、转发前剥离后缀、按目标端点鉴权），
+        // 于是开关改为**默认开**，本断言随之翻转为「两个端点都在」。
         let catalog_path = get_codex_model_catalog_path();
         let catalog_text = std::fs::read_to_string(&catalog_path)
             .map_err(|e| format!("read {}: {e}", catalog_path.display()))?;
@@ -1454,9 +1505,10 @@ mod tests {
             .get("models")
             .and_then(|v| v.as_array())
             .ok_or_else(|| "catalog.models 非数组".to_string())?;
-        if models.len() != 8 {
+        // 8（active=kxpms 原样）+ 8（非 active=local8782 加 `@local8782` 后缀）
+        if models.len() != 16 {
             return Err(format!(
-                "catalog.models 长度 {} ≠ 期望 8（只含 active 端点模型）",
+                "catalog.models 长度 {} ≠ 期望 16（active 8 + 非 active 8）",
                 models.len()
             ));
         }
@@ -1464,16 +1516,50 @@ mod tests {
             .iter()
             .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
             .collect();
-        for must in ["claude-opus-5", "minimax-m3", "glm-5.2", "auto"] {
-            if !slugs.contains(&must) {
-                return Err(format!("catalog 缺 {must}：{slugs:?}"));
+        // 第五轮起带 `@` 的 slug 是**可路由的**（proxy 侧按 id 分发 + 剥离后缀 +
+        // 按目标端点鉴权），所以这里不再禁止 `@`；改为核对「后缀形态正确」。
+        // 真正的不变量（与当前谁 active 无关）：
+        //  1. 后缀 id 必须落在本 bundle 的两个端点 id 里 —— 写错 id 的条目分发不到
+        //     任何 provider，会退化成静默错路由；
+        //  2. 后缀 id **不得**等于 active 端点 id —— 那说明去重漏了，active 自己
+        //     不该出现 `@active` 形态；
+        //  3. 两个端点都必须有条目（active 用原名，另一个用后缀）。
+        const ENDPOINT_IDS: [&str; 2] = ["kxpms", "local8782"];
+        let mut suffixed_ids: Vec<&str> = Vec::new();
+        for slug in &slugs {
+            let Some((base, id)) = slug.rsplit_once('@') else {
+                continue;
+            };
+            if base.is_empty() || !ENDPOINT_IDS.contains(&id) {
+                return Err(format!(
+                    "live catalog 的后缀 slug 指向未知端点 id：{slug:?}（期望 @kxpms 或 @local8782）"
+                ));
             }
+            if id == expected_active_id {
+                return Err(format!(
+                    "live catalog 的 active 端点 {expected_active_id} 不该出现后缀形态 {slug:?}"
+                ));
+            }
+            suffixed_ids.push(id);
         }
-        // 写盘的每一条都必须能真被路由：绝不允许带 `@` 的 slug 混进 live catalog。
-        if let Some(bad) = slugs.iter().find(|s| s.contains('@')) {
+        if suffixed_ids.is_empty() {
+            return Err(format!("catalog 没有任何 `@<id>` 后缀条目（非 active 端点缺失）：{slugs:?}"));
+        }
+        // 后缀必须落在**非 active** 的那个端点上（active 自己用原名）。
+        let other_id = ENDPOINT_IDS
+            .iter()
+            .copied()
+            .find(|id| *id != expected_active_id)
+            .unwrap_or(expected_active_id);
+        if !suffixed_ids.contains(&other_id) {
             return Err(format!(
-                "live catalog 出现无法路由的带后缀 slug {bad:?}：{slugs:?}"
+                "catalog 缺非 active 端点条目（期望 @{other_id} 后缀）：{slugs:?}"
             ));
+        }
+        for must_active in ["claude-opus-5", "minimax-m3", "glm-5.2", "auto"] {
+            if !slugs.iter().any(|s| *s == must_active) {
+                return Err(format!("catalog 缺 active 端点原名条目 {must_active}：{slugs:?}"));
+            }
         }
         let mut dedup = slugs.clone();
         dedup.sort_unstable();

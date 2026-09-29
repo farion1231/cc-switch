@@ -1141,13 +1141,12 @@ pub fn read_memory_limits() -> Result<HermesMemoryLimits, AppError> {
 mod tests {
     use super::*;
     use serial_test::serial;
-    use std::sync::{Mutex, OnceLock};
 
-    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+    /// 返回全 crate 共享 env 锁的**可重入**守卫（见 crate::test_support）。
+    /// 必须可重入：同一个测试里可能有多层 env RAII 包装，非重入的 Mutex 会在
+    /// 第二次获取时永久阻塞在自己已持有的锁上。
+    fn test_guard() -> crate::test_support::EnvGuard {
+        crate::test_support::env_guard()
     }
 
     /// Run a test with an isolated temp home directory.

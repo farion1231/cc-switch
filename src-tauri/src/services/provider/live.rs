@@ -904,7 +904,7 @@ fn collect_codex_catalog_source_for_provider(
             //
             // 先剔除 legacy `custom` 别名：老 bundle 迁移后同一份存档里会同时存在
             // `custom`（老 session 兼容副本）和按端点区分的稳定 id（`kxpms` /
-            // `local8782`）。别名不算一个独立端点，留着会把「唯一一张」这条判据
+            // `local`）。别名不算一个独立端点，留着会把「唯一一张」这条判据
             // 变成永远不成立，模型目录就被静默丢掉。
             let mp = doc.get("model_providers").and_then(Item::as_table_like)?;
             let ids: Vec<&str> = mp
@@ -3964,7 +3964,7 @@ base_url = "https://a.example/v1"
     fn local_settings_config() -> Value {
         json!({
             "auth": { "OPENAI_API_KEY": "sk-local" },
-            // TOML id `local8782` 与 provider_bundle::kaixuan_bundle 一致。
+            // TOML id `local` 与 provider_bundle::kaixuan_bundle 一致。
             "config": "model_provider = \"local8782\"\nmodel = \"claude-opus-5\"\n\n[model_providers.local8782]\nname = \"local_gateway\"\nbase_url = \"http://localhost:8782/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
         })
     }
@@ -4035,7 +4035,7 @@ base_url = "https://a.example/v1"
         ))
         .expect("save local");
 
-        // Active = kxpms. Inert = local8782 (TOML id 与 active 完全不同)。
+        // Active = kxpms. Inert = local (TOML id 与 active 完全不同)。
         let active = kxpms_settings_config();
         let result = merge_inert_codex_provider_tables_into_settings_config(
             &db,
@@ -4051,7 +4051,7 @@ base_url = "https://a.example/v1"
         // Inert [model_providers.local8782] added（与 active 的 kxpms 不撞 id）。
         assert!(
             merged.contains("[model_providers.local8782]"),
-            "missing inert local8782 table: {merged}"
+            "missing inert local table: {merged}"
         );
         assert!(merged.contains("local_gateway"));
         assert_eq!(

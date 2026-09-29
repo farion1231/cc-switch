@@ -626,12 +626,15 @@ fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
-    fn opencode_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    // 本模块改的 XDG_DATA_HOME 是进程全局 env，历史上用本地 OnceLock 锁本模块
+    // 内的测试，但跨模块（openclaw/codex 等改 HOME/CODEX_HOME 的测试）一起跑
+    // 仍会互相串。委托到 crate 共享 env_lock（详见 crate::test_support）。
+    use crate::test_support;
+
+    fn opencode_env_lock() -> test_support::EnvGuard {
+        test_support::env_guard()
     }
 
     fn create_sqlite_schema(conn: &Connection) {
@@ -782,7 +785,7 @@ mod tests {
     #[test]
     #[allow(deprecated)] // set_var/remove_var deprecated since Rust 1.81; safe here under mutex
     fn scan_sessions_sqlite_reads_temp_database() {
-        let _guard = opencode_env_lock().lock().expect("lock");
+        let _guard = opencode_env_lock();
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
         std::env::set_var("XDG_DATA_HOME", temp.path());
@@ -896,7 +899,7 @@ mod tests {
 
     #[test]
     fn delete_session_sqlite_removes_session() {
-        let _guard = opencode_env_lock().lock().expect("lock");
+        let _guard = opencode_env_lock();
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
         #[allow(deprecated)]
@@ -966,7 +969,7 @@ mod tests {
 
     #[test]
     fn delete_session_sqlite_rejects_foreign_db_path() {
-        let _guard = opencode_env_lock().lock().expect("lock");
+        let _guard = opencode_env_lock();
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
         #[allow(deprecated)]

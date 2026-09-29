@@ -122,6 +122,10 @@ open -a cc-switch
 bundle 安装时会用 `http://127.0.0.1:8899/v1` 作为 base_url；启动入口也会用
 8899 端口。
 
+端点 id 固定是 `local8782`，**与端口无关**。改 `KAIXUAN_LOCAL_GATEWAY_PORT` 只改
+`base_url`，不改 id——所以已经把这个 id 记进 `session_meta.model_provider` 的
+历史 Codex 会话，在换端口后依然能解析到表。
+
 ### 5.2 Windows
 
 `start_local_gateway` 走的是 shell；Windows 上自动用 `cmd.exe /C` 而不是
@@ -138,5 +142,19 @@ bundle 安装时会用 `http://127.0.0.1:8899/v1` 作为 base_url；启动入口
 | 故障转移 | 需要手动把两个都加入队列                                           | 自动入队 + 开启 auto_failover                               |
 | 默认模型 | 两个独立 `default` 切换                                            | bundle 装好后 P1 = kxpms                                    |
 | 配置覆盖 | 重装会覆盖用户编辑的 api key                                       | 同 id 已存在时保留用户 settings_config（只刷新 membership） |
+
+## 七、两个端点的模型同时出现在 `/model` 里
+
+两个端点各自有一张独立的 TOML 表（`kxpms` 和 `local8782`），顶层 `model_provider`
+指向当前激活的那张，所以切换不冲突，两张表也都留在 live 配置里。
+
+模型目录里，两侧的模型会一起出现：`claude-opus-5`（当前激活端点）之外，还有
+`claude-opus-5@kxpms` / `claude-opus-5@local8782`。`@<id>` 后缀**不是显示标签，而是
+真正的路由指令**——代理收到带后缀的模型名时，会按 id 分发到那个端点，转发前
+剥掉后缀，并用**目标端点**的 key 鉴权（不会沿用 active 端点的）。不带后缀的
+`claude-opus-5` 仍然走当前激活端点。
+
+排查路由问题时可以关掉带后缀的条目：启动 cc-switch 前设
+`CC_SWITCH_CODEX_ENDPOINT_CATALOG=0`。默认是开的。
 
 旧的两个独立预设（`codexProviderPresets.ts` 里的 `开轩 LLM 网关` / `本地 LLM 网关 (8782)`）保留，可继续单条使用；不冲突。

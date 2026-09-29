@@ -609,6 +609,9 @@ context_window = 500000
     #[test]
     #[serial]
     fn official_provider_roundtrips_without_custom_model_tables() {
+        // 持有全 crate 共享 env_lock，保护 CC_SWITCH_TEST_HOME 与 get_home_dir()
+        // 之间的一致性——单靠 #[serial] 串不掉跨模块并发（详见 crate::test_support）。
+        let _env_guard = crate::test_support::env_guard();
         let temp = TempDir::new().expect("temp dir");
         let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
@@ -655,6 +658,7 @@ context_window = 500000
     #[test]
     #[serial]
     fn writes_and_reads_live_config() {
+        let _env_guard = crate::test_support::env_guard();
         let temp = TempDir::new().expect("temp dir");
         let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());

@@ -697,3 +697,134 @@ catalog 素材收集，它靠顶层 + 表唯一性做归属判定，两条隐式
 >    第四轮提交时又遇到一次（第四轮 §并发会话在我提交时改了同一批文件）。
 >    未提交的新代码一律先建 `git worktree` 隔离，不要在共享工作区攒；
 >    提交前用 `git diff` 的 hunk 头（`@@` 行号）确认暂存区只有自己的 hunk。
+
+## 第五轮（2026-09-29）：env 锁根治 + `@<toml_id>` 分发落地
+
+### 1. 跨模块 env 竞态：新增全 crate 共享 env 锁
+
+新增 `src-tauri/src/test_support.rs`（`#[cfg(test)]`）：
+
+- `env_lock() -> &'static Mutex<()>`：`OnceLock<Mutex<()>>`，全 crate 一把；
+- `env_guard() -> EnvGuard`：**可重入**守卫，thread-local 深度计数，最外层才真正加锁；
+- `redact_secrets_in_config()`：把 `"k": "v"` / `k: 'v'` 的 value 换成 `<REDACTED len=N>`，
+  保留长度便于定位「文件大小是否变化」。
+
+`openclaw_config::test_guard()` / `hermes_config::test_guard()` /
+`services::provider::test_guard()` 三处模块私有锁全部改为委托 `env_guard()`；
+其余直接改 `CC_SWITCH_TEST_HOME` / `HOME` / `CODEX_HOME` 的测试
+（app_config / codex_config / codex_history_migration / database::backup /
+deeplink / grok_config / opencode_config / provider_bundle / proxy::http_client /
+proxy::provider_router / services::{proxy,skill,model_pricing,session_usage_codex} /
+session_manager::providers::opencode / commands::{webdav_sync,s3_sync}）统一持有它。
+
+**API 形态教训：锁必须先于 env 写入。** 直觉写法「先 `set_var`，再构造一个负责
+还原 + 加锁的守卫」是**错的**：抢锁期间另一个测试可能正持有锁并把 `HOME` 还原，
+本测试等到锁后继续跑时 `get_home_dir()` 已经是真实目录。详见 §第五轮 2。
+
+### 2. ⚠️ 我自己引入的回归：测试打开开发者真实 DB（已修，且已污染真实库）
+
+`kaixuan_bundle_full_switch_lifecycle_no_config_errors` 在加了 env 锁之后开始
+**打开 `/Users/xutaohuang/.cc-switch/cc-switch.db`**。对照实测：
+
+| 版本 | `get_app_config_dir()` 解析到 |
+|---|---|
+| main | `/var/folders/.../tmp.XXX/.cc-switch`（正确隔离） |
+| 加锁后 | `/Users/xutaohuang/.cc-switch`（真实库） |
+
+后果不是断言红，而是**测试把 fixture provider 写进开发者真实库**，并把库里的
+provider 当成 inert 端点合进 live 断言（实测 merge 出了 FE 预设那条
+`http://localhost:8782/v1`，而 bundle 端点是 `http://127.0.0.1:8782/v1`）。
+
+根因即 §1 的顺序问题：`EnvRestore::new` 在 `set_var` **之后**才去抢锁。
+
+修法：`provider_bundle::tests::set_env_locked(&[(key, value), ...])` 作为唯一入口，
+把「取锁」和「改 env」绑成一个不可拆的步骤；9 处调用点全部改走它。
+
+**⚠️ 真实库已被早前几轮测试污染**（本轮修复前）：
+
+```
+kaixuan-kxpms     → sk-user-custom-original-key   （测试 fixture）
+kaixuan-local     → sk-legacy                      （第五轮改名期的 id，代码已回退）
+kaixuan-local-8782→ sk-from-env-1234567890         （测试 fixture）
+```
+
+`kaixuan-local` 这个 id 在已发布代码里从未存在过，是本轮中途的改名产物。
+**尚未清理**——删真实库数据需要人工确认。修复后重跑已验证不再写入。
+
+### 3. `EnvRestore` 重入自死锁
+
+`install_bundle_preserves_user_prefilled_settings` 在同一测试里建了两个
+`EnvRestore`（先包 HOME/CC_SWITCH_TEST_HOME，后包 KAIXUAN_TEST_KEY2）。加上锁之后
+第二个包装会**永久阻塞在自己已持有的非重入 `std::sync::Mutex` 上**——
+`#[serial]` 挡不住，它只协调测试之间的并发，看不见测试内部的两次获取。
+这是 `env_guard()` 必须可重入的直接原因。
+
+### 4. `@<toml_id>` 分发真正落地，开关改为默认开
+
+`proxy::handler_context`：
+
+- `parse_model_endpoint_suffix(model) -> (Option<&id>, &stripped)`：`rsplit_once('@')`，
+  id 字符集限 `[A-Za-z0-9_-]`，拒空 id / 空模型名。**URL 里的 `@` 不会被误判**
+  （`foo@host/path`、`foo@host.com` 全部拒绝）。
+- `RequestContext::new` 在 `select_providers` **之后**做分发：按 id 把目标 provider
+  提到 failover 链首位，其余顺延；`ctx.provider` 同步改指目标，鉴权随之按目标端点
+  取 key（`adapter.extract_auth(provider)`，不沿用 active 的）。
+- `ctx.strip_endpoint_suffix_from_body(&mut body)`：转发前把 `body.model` 改回剥离名。
+  四个 codex 入口都调了它（messages / chat_completions / responses / responses_compact）。
+
+**设计要点落地**：① 剥离发生在 failover 链构建**之后**但**转发之前**，failover 续跑
+用的是已剥离的模型名，不会把 `claude-opus-5@kxpms` 原样发给不懂后缀的端点；
+② 鉴权按目标端点。③ 第四轮的 `custom` 别名不作为分发目标——它一义多指，
+`@custom` 只记 warn 后忽略（沿用 RFC 0002 §2.4b「别名不算独立端点」）。
+
+`codex_config::codex_endpoint_catalog_coexist_enabled()` 改为**默认开**，
+`CC_SWITCH_CODEX_ENDPOINT_CATALOG=0|false|off` 关闭。原先那条「出现 `@` slug 即失败」
+的红线随之翻转为「后缀 id 必须落在两个端点 id 内、且不得等于 active 端点 id」。
+
+### 5. `local8782` 改名：实测后回退，只加注释
+
+曾把本机端点 id 改成与端口解耦的 `local`，**实测撞 id 后回退**：
+
+- FE 预设「本地 LLM 网关 (8782)」那张 `[model_providers.custom]` 表 `name` 同样是
+  `local_gateway`，改 id 会连带扩大 legacy 迁移作用域，让它也被映射到 `local`，
+  与 bundle 端点**撞同一个 `[model_providers.local]`**；
+- 撞 id 后 `merge_inert_*` 的 "live wins" 先到先得，实测 merge 出了 FE 预设那条
+  `http://localhost:8782/v1` 而不是 bundle 的 `http://127.0.0.1:8782/v1`。
+
+**教训**：这正是本轮开头那条纪律的复现——改「provider 投影 / id 归属」前要列消费者，
+而这次消费者是 **FE 预设 + bundle 两套定义共用同一个 name-based 迁移映射**，
+只看 bundle 侧的测试是发现不了的。
+
+最终取目标里明确允许的第二个选项：保留 `local8782`，在 bundle / FE 预设 /
+`LEGACY_CODEX_TOML_ID_MIGRATIONS` 三处写清「id 里的 8782 是历史遗留、不是端口契约；
+端口由 `base_url` 承载，改端口不会作废历史 session 的 `session_meta.model_provider`」。
+
+### 6. panic 输出不再 dump 整份 openclaw.json
+
+`default_model_noop_write_skips_backup` 的 `assert_eq!(second_written, first_written)`
+会把 `~/.openclaw/openclaw.json` 整份打进 panic（含各 provider 的 API key，
+CI 日志泄露风险）。改为先经 `redact_secrets_in_config` 打码再比较，长度仍保留。
+
+## 第五轮测试证据
+
+- `cargo test --lib` —— **3040 passed / 0 failed / 10 ignored**（main 是 3025/0）。
+- `cargo test --lib provider_bundle` —— 18/18。
+- `cargo test --lib codex_config` —— 128/128。
+- `cargo test --lib proxy::handler_context` —— 17/17（含 8 条 suffix 解析用例）。
+- `cargo test --lib openclaw_config` —— 5/5；`hermes_config` —— 57/57。
+- `cargo test --test codex_switch_e2e` —— 4/4。
+- 全量 `cargo test --lib` 前后 `select count(*) from providers` 对真实库均为 29，
+  已不再写入开发者真实 DB。
+
+## 第五轮遗留
+
+1. **真实 `~/.cc-switch/cc-switch.db` 仍带着测试写入的 3 行 fixture**（见 §2），
+   其中 `kaixuan-local` 是已回退代码的产物。清理需人工确认后执行。
+2. **`cargo test --lib` 连跑 10 次全绿尚未跑完**（本轮跑了 1 次全量 + 各模块多次）。
+   env 锁的根治效果需要在连续多跑里验证。
+3. **「两个 provider 撞同一 TOML id」是独立缺陷**：merge 按表 id 选表，而不是按
+   provider 身份。真正要解耦本机端点 id，得先修这条。FE 预设与 bundle 目前就
+   共用 `local_gateway` 这个 name-based 映射，只是恰好目标 id 一致才没出事。
+4. `merged_catalog_enabled_path_produces_well_formed_suffixed_entries` 仍是**纯函数级**
+   断言，没升级成「真起 proxy、真发请求、断言打到另一端点」的端到端。
+5. 后缀分发只在 Codex 上生效（按目标刻意限定），Claude / Gemini 未做。

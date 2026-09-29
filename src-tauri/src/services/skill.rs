@@ -6002,19 +6002,27 @@ mod tests {
             .is_none());
     }
 
-    /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
-    /// 守卫只负责在测试结束后恢复原值）。
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    /// CC_SWITCH_TEST_HOME 隔离守卫。构造时持有全 crate 共享 env_lock（详见
+    /// crate::test_support），持锁到 Drop——避免与跨模块 openclaw/codex 等
+    /// 改 HOME 的测试并发执行，单靠 #[serial] 串不掉。
+    struct TestHomeGuard {
+        prev: Option<std::ffi::OsString>,
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
+    }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let env_guard = crate::test_support::env_guard();
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            guard
+            Self {
+                prev: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                env_guard,
+            }
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            match self.0.take() {
+            match self.prev.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
@@ -6554,17 +6562,26 @@ mod tests {
         // 回归：曾直呼 dirs::home_dir() 绕过 CC_SWITCH_TEST_HOME——Unix 上碰巧跟 $HOME
         // 一致所以测试能过，Windows 上 dirs 走 Known Folder API，测试隔离整体失效
         // （tests/skill_sync.rs 扫到 runner 真实用户目录）。
-        struct EnvGuard(Option<std::ffi::OsString>);
+        // 同时持有全 crate 共享 env_lock（详见 crate::test_support）。
+        struct EnvGuard {
+            prev: Option<std::ffi::OsString>,
+            #[allow(dead_code)]
+            env_guard: crate::test_support::EnvGuard,
+        }
         impl Drop for EnvGuard {
             fn drop(&mut self) {
-                match self.0.take() {
+                match self.prev.take() {
                     Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                     None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
                 }
             }
         }
         let temp = tempdir().expect("tempdir");
-        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        let env_guard = crate::test_support::env_guard();
+        let _guard = EnvGuard {
+            prev: std::env::var_os("CC_SWITCH_TEST_HOME"),
+            env_guard,
+        };
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
 
         let dir =

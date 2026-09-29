@@ -339,6 +339,8 @@ mod tests {
     #[test]
     #[serial]
     fn persist_sync_error_updates_status_without_overwriting_credentials() {
+        // 持有全 crate 共享 env_lock（详见 crate::test_support）
+        let _env_guard = crate::test_support::env_guard();
         let test_home = std::env::temp_dir().join("cc-switch-sync-error-status-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");
@@ -384,6 +386,7 @@ mod tests {
     #[test]
     #[serial]
     fn require_enabled_webdav_settings_rejects_disabled_config() {
+        let _env_guard = crate::test_support::env_guard();
         let test_home = std::env::temp_dir().join("cc-switch-sync-enabled-disabled-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");
@@ -409,6 +412,7 @@ mod tests {
     #[test]
     #[serial]
     fn require_enabled_webdav_settings_returns_settings_when_enabled() {
+        let _env_guard = crate::test_support::env_guard();
         let test_home = std::env::temp_dir().join("cc-switch-sync-enabled-ok-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");

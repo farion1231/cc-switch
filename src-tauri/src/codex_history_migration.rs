@@ -1289,13 +1289,21 @@ mod tests {
     struct EnvVarGuard {
         key: &'static str,
         previous: Option<OsString>,
+        // 持有全 crate 共享 env_lock 到 Drop。详见 crate::test_support。
+        #[allow(dead_code)]
+        env_guard: crate::test_support::EnvGuard,
     }
 
     impl EnvVarGuard {
         fn set(key: &'static str, value: &Path) -> Self {
+            let env_guard = crate::test_support::env_guard();
             let previous = std::env::var_os(key);
             std::env::set_var(key, value);
-            Self { key, previous }
+            Self {
+                key,
+                previous,
+                env_guard,
+            }
         }
     }
 

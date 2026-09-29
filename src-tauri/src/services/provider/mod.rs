@@ -131,7 +131,7 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     struct TempHome {
@@ -240,11 +240,9 @@ mod tests {
             .join(format!("{PROFILE_ID}.json"))
     }
 
-    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+    /// 返回全 crate 共享 env 锁的**可重入**守卫（见 crate::test_support）。
+    fn test_guard() -> crate::test_support::EnvGuard {
+        crate::test_support::env_guard()
     }
 
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
