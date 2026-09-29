@@ -801,6 +801,10 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     // 同一趟遍历里收集，因为两者读的是同一批 provider 行 —— 两趟遍历会让
     // 「表合并了但模型没合并」这种半拉子状态很难排查。
     let mut merged_catalog_sources: Vec<Value> = Vec::new();
+    // Ids some DB provider actually declares. The session-shadow step needs this
+    // to tell "a real inert table that must not be clobbered" from "a shadow we
+    // minted ourselves, which must be refreshed".
+    let mut db_declared_ids: std::collections::BTreeSet<String> = Default::default();
     for (db_id, provider) in providers.iter() {
         // active provider 自己不参与：它的表就是 live 的主体（下面的
         // active_toml_id 碰撞检查只挡「别的 provider 恰好同名」），它的模型目录
@@ -855,6 +859,7 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
                     continue;
                 }
             }
+            db_declared_ids.insert(id.to_string());
             merge_inert_provider_table(&mut live_doc, id, item, &mut merged_count);
         }
     }
@@ -865,6 +870,7 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     merge_session_referenced_shadow_tables(
         &mut live_doc,
         active_toml_id.as_deref(),
+        &db_declared_ids,
         history_dir,
         &mut merged_count,
     );
@@ -1004,6 +1010,33 @@ fn merge_inert_provider_table(
     *merged_count += 1;
 }
 
+/// Write (or refresh) a session shadow table. Unlike `merge_inert_provider_table`
+/// this **overwrites**: the shadow is ours, and a stale copy silently breaks
+/// every session that resumes through it.
+fn write_session_shadow_table(live_doc: &mut DocumentMut, id: &str, active_table: &Item) {
+    let Some(table) = active_table.as_table_like() else {
+        return;
+    };
+    if table.get("name").and_then(Item::as_str).is_none()
+        || table.get("base_url").and_then(Item::as_str).is_none()
+    {
+        // Same guard as the inert merge: Codex 0.149+ refuses a table missing
+        // name/base_url, so a malformed shadow would break the whole config.
+        log::warn!("session 影子表：active 表缺少 name/base_url，跳过 id '{id}'");
+        return;
+    }
+    let live_root = live_doc.as_table_mut();
+    if !live_root.contains_key("model_providers") {
+        live_root.insert("model_providers", Item::Table(toml_edit::Table::new()));
+    }
+    if let Some(mp) = live_root
+        .get_mut("model_providers")
+        .and_then(Item::as_table_mut)
+    {
+        mp.insert(id, active_table.clone());
+    }
+}
+
 /// Give every `model_provider` id referenced by session history a table, even
 /// when no DB row owns it.
 ///
@@ -1024,6 +1057,7 @@ fn merge_inert_provider_table(
 fn merge_session_referenced_shadow_tables(
     live_doc: &mut DocumentMut,
     active_toml_id: Option<&str>,
+    db_declared_ids: &std::collections::BTreeSet<String>,
     history_dir: Option<&Path>,
     merged_count: &mut usize,
 ) {
@@ -1070,14 +1104,19 @@ fn merge_session_referenced_shadow_tables(
         if !crate::codex_config::is_custom_codex_model_provider_id(&id) {
             continue;
         }
-        let already_defined = live_doc
-            .get("model_providers")
-            .and_then(Item::as_table_like)
-            .is_some_and(|table| table.contains_key(&id));
-        if already_defined {
+        // A table a DB provider really declares is inert state we must not
+        // clobber (§2.4 live wins). Anything else under this id is a shadow we
+        // minted on an earlier pass, and it **must be refreshed**: takeover runs
+        // after the switch path, so a shadow first written by the switch holds a
+        // pre-takeover copy of the active table — no `experimental_bearer_token`,
+        // so every session resumed through it 401s with "Missing or malformed
+        // Authorization header". Observed on the 2026-09-29 deploy run:
+        // `[model_providers.kxpms]` had the token, the shadows did not.
+        if db_declared_ids.contains(&id) {
             continue;
         }
-        merge_inert_provider_table(live_doc, &id, &active_table, merged_count);
+        write_session_shadow_table(live_doc, &id, &active_table);
+        *merged_count += 1;
         shadowed.push(id);
     }
     if !shadowed.is_empty() {
@@ -4145,9 +4184,15 @@ base_url = "https://a.example/v1"
         );
     }
 
-    /// 同一张表已有定义时不得被影子副本覆盖（live wins，§2.4 rule 1）。
+    /// 无人认领的表**要**被影子刷新；DB 声明的表才不动。
+    ///
+    /// 上一轮这条测试锁的是相反的规则（"已存在就跳过"），而那个规则正是实机
+    /// 401 的成因：切换路径先建的影子停在**接管前**的副本（直连 base_url、无
+    /// 认证字段），接管路径再跑时被跳过。修法不是只补认证字段——那会造成
+    /// 「直连地址 + PROXY_MANAGED 占位 token」的新不一致，被网关拒收——而是
+    /// 按 §2.4b「副本逐字相同」整表刷新。
     #[test]
-    fn merge_does_not_shadow_over_an_existing_table() {
+    fn session_shadow_refreshes_a_stale_table_it_owns() {
         let db = Database::memory().expect("memory db");
         db.save_provider(
             "codex",
@@ -4187,10 +4232,14 @@ base_url = "https://a.example/v1"
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
 
+        assert!(
+            !merged.contains("http://localhost:8782/v1"),
+            "无人认领的 local8782 是我们自己的过期影子，必须被刷新成 active 的当前副本: {merged}"
+        );
         assert_eq!(
-            merged.matches("http://localhost:8782/v1").count(),
+            merged.matches("[model_providers.local8782]").count(),
             1,
-            "已存在的 local8782 表必须原样保留，不能被 active 副本改道: {merged}"
+            "刷新是覆盖而非追加，id 仍只出现一次: {merged}"
         );
     }
 
@@ -4397,6 +4446,135 @@ base_url = "https://a.example/v1"
         assert!(
             text.contains("[model_providers.kxpms]"),
             "有 DB 归属的 id 在官方档也必须补表: {text}"
+        );
+    }
+
+    /// 影子表必须**随 active 表刷新**，否则继承不到认证字段。
+    ///
+    /// 实机（2026-09-29 部署）看到的形状：`[model_providers.kxpms]` 带
+    /// `experimental_bearer_token = "PROXY_MANAGED"`，而 `cc-switch-official` /
+    /// `evol` / `custom` 三张影子表**没有**——因为它们是切换路径先建的（那时接管
+    /// 字段还没加 token），接管路径再跑时被 "live wins" 跳过，永远停在旧副本。
+    /// 后果：走影子表恢复的旧 session 401 `Missing or malformed Authorization
+    /// header`。
+    #[test]
+    fn session_shadow_is_refreshed_when_active_gains_auth_fields() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+
+        let history = tempfile::tempdir().expect("history dir");
+        let sessions = history.path().join("sessions/2026/09/29");
+        std::fs::create_dir_all(&sessions).expect("mkdir");
+        std::fs::write(
+            sessions.join("rollout-a.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"cc-switch-official\"}}\n",
+        )
+        .expect("write rollout");
+
+        // Pass 1 — switch path: the active table has NO auth field yet.
+        let pre_takeover = "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\n";
+        let first = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &json!({ "config": pre_takeover }),
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("pass 1");
+        let first_text = first.get("config").and_then(Value::as_str).expect("text");
+        let first_doc: DocumentMut = first_text.parse().expect("parse");
+        assert!(
+            first_doc["model_providers"]["cc-switch-official"]
+                .get("experimental_bearer_token")
+                .is_none(),
+            "前置条件：pass1 的影子表本来就没有认证字段"
+        );
+
+        // Pass 2 — takeover path: the same shadow must pick up the new field.
+        let post_takeover = "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"PROXY_MANAGED\"\n\n[model_providers.cc-switch-official]\nname = \"kxpms_gateway\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nwire_api = \"responses\"\n";
+        let second = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &json!({ "config": post_takeover }),
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("pass 2");
+        let second_text = second.get("config").and_then(Value::as_str).expect("text");
+        let second_doc: DocumentMut = second_text.parse().expect("parse");
+
+        assert_eq!(
+            second_doc["model_providers"]["cc-switch-official"]
+                .get("experimental_bearer_token")
+                .and_then(|v| v.as_str()),
+            Some("PROXY_MANAGED"),
+            "影子表必须刷新到 active 表的当前内容，否则走它恢复的 session 全部 401: {second_text}"
+        );
+        assert_eq!(
+            second_doc["model_providers"]["cc-switch-official"]["base_url"].as_str(),
+            second_doc["model_providers"]["kxpms"]["base_url"].as_str(),
+            "刷新后的影子表必须与 active 表同指向，不能停在切换时的直连地址"
+        );
+    }
+
+    /// 反面：DB 声明的 inert 表**不能**被影子刷新覆盖（§2.4 live wins）。
+    #[test]
+    fn session_shadow_never_clobbers_a_db_declared_inert_table() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "local-gateway-8782".to_string(),
+                "本地 8782".to_string(),
+                local_settings_config(),
+                None,
+            ),
+        )
+        .expect("save local");
+
+        // History references `local8782`, which a DB provider really declares.
+        let history = tempfile::tempdir().expect("history dir");
+        let sessions = history.path().join("sessions/2026/09/29");
+        std::fs::create_dir_all(&sessions).expect("mkdir");
+        std::fs::write(
+            sessions.join("rollout-a.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"local8782\"}}\n",
+        )
+        .expect("write rollout");
+
+        let merged = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &kxpms_settings_config(),
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("merge");
+        let text = merged.get("config").and_then(Value::as_str).expect("text");
+
+        assert_eq!(
+            text.matches("http://localhost:8782/v1").count(),
+            1,
+            "DB 声明的 local8782 表必须原样保留一次，不能被 active 副本改道: {text}"
         );
     }
 
