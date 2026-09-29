@@ -5177,6 +5177,76 @@ mod tests {
         );
     }
 
+    /// 第四轮为兼容老 session 留的 legacy `custom` 是**别名**、不是独立端点
+    /// （RFC 0002 §2.4b）。本轮把关掉开关默认打开后，第三方 OpenAI 兼容预设
+    /// （表 id 恰好就叫 `custom`，见 `live.rs` 的归属判定回退分支）这条路径
+    /// 变得**真实可达**：它会往 catalog 写出一批 `slug@custom` 条目。
+    ///
+    /// 这类条目**不可路由**：proxy 侧明确拒绝 `custom` 作分发目标，而网关收到
+    /// `claude-opus-5@custom` 会 404 或静默回退到别的模型。别名必须在**生成侧**
+    /// 就被剔除，而不是等请求时才发现。
+    ///
+    /// 关键场景是**非 active** 的 `custom`：active 的那个本来就会被
+    /// `active_toml_id_of_settings_config` 那条 `continue` 挡掉，测它证明不了任何事。
+    #[test]
+    fn merged_catalog_excludes_legacy_custom_alias_endpoint() {
+        // 照抄生产形状：active = kxpms；另一个第三方 OpenAI 兼容预设的表 id 是 `custom`。
+        let settings = json!({
+            "config": "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\n",
+            "modelCatalog": { "models": [
+                { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 }
+            ]},
+            MERGED_CATALOG_SOURCES_KEY: [
+                // 别名端点：模型名与 active 同名，另有独占模型
+                { "toml_id": "custom", "models": [
+                    { "model": "claude-opus-5", "displayName": "Claude Opus 5", "contextWindow": 1000000 },
+                    { "model": "glm-5.2" }
+                ]},
+                // 正常端点：用来证明剔除 custom 没有误伤别人
+                { "toml_id": "local8782", "models": [ { "model": "minimax-m3" } ] }
+            ]
+        });
+        let template = load_codex_native_responses_template();
+        let active = codex_catalog_model_specs(&settings);
+        let entries = codex_model_catalog_entries_from_specs(
+            &active,
+            &template,
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+
+        let merged = append_endpoint_suffixed_entries(
+            entries,
+            &settings,
+            ExpansionSource::Template(&template),
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+        let slugs: Vec<&str> = merged.iter().filter_map(|e| e["slug"].as_str()).collect();
+
+        assert!(
+            !slugs.iter().any(|s| s.ends_with("@custom")),
+            "catalog 绝不能产出 @custom 条目（别名不是独立端点）: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"glm-5.2"),
+            "custom 端点的独占模型不得混进 catalog: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"claude-opus-5@custom"),
+            "custom 端点的同 slug 不得带 @custom 后缀共存: {slugs:?}"
+        );
+        // 反向证明：剔除 custom 是**选择性**的，没有把别的端点一起干掉。
+        assert!(
+            slugs.contains(&"minimax-m3@local8782"),
+            "正常端点必须照常合并，不能被 custom 的剔除误伤: {slugs:?}"
+        );
+        assert!(
+            slugs.contains(&"claude-opus-5"),
+            "active 端裸 slug 必须保留: {slugs:?}"
+        );
+    }
+
     /// 没有 `__cc_switch_merged_catalog_sources` 时行为必须与改动前逐字一致
     /// —— 绝大多数 provider（OpenAI 官方、Claude 等）走的是这条路径。
     #[test]

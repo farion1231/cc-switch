@@ -475,7 +475,6 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{extract_gemini_model_from_path, parse_model_endpoint_suffix};
-    use crate::app_config::AppType;
     use crate::provider::Provider;
     use serde_json::Value;
 
@@ -752,7 +751,6 @@ mod tests {
     async fn run_dispatch_e2e() -> Result<(), String> {
         use crate::app_config::AppType;
         use crate::database::Database;
-        use crate::services::proxy::ProxyService;
         use crate::store::AppState;
         use std::sync::Arc;
 
@@ -861,6 +859,132 @@ mod tests {
         }
 
         let _ = state.proxy_service.stop().await;
+        Ok(())
+    }
+
+    /// 第四轮为兼容老 session 留下的 legacy `custom` 是**别名**、不是独立端点
+    /// （RFC 0002 §2.4b）。`@custom` 必须**报错**，不能"记一条 warn 就跳过"——
+    /// 跳过的后果是 body 里的 `model` 仍是 `claude-opus-5@custom` 原样发给上游，
+    /// 等于请求一个不存在的模型名：网关会 404，或者更糟——静默回退到别的模型，
+    /// 用户拿到一个"看起来能用"的错误结果。
+    ///
+    /// 这条路径在本轮把关掉开关默认打开后变得真实可达（第三方 OpenAI 兼容预设的
+    /// 表 id 常常就是 `custom`）。
+    #[tokio::test]
+    async fn suffixed_model_pointing_at_legacy_custom_alias_is_rejected() {
+        // 共享 env 锁：全 crate 共享那把，见 crate::test_support。
+        let _env_guard = crate::test_support::env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prev_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let prev_home = std::env::var_os("HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        std::env::set_var("HOME", tmp.path());
+
+        let result = run_custom_alias_rejection_e2e().await;
+
+        match prev_test_home {
+            Some(v) => std::env::set_var("CC_SWITCH_TEST_HOME", v),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        result.expect("@custom 必须被拒绝而不是被转发");
+    }
+
+    async fn run_custom_alias_rejection_e2e() -> Result<(), String> {
+        use crate::app_config::AppType;
+        use crate::database::Database;
+        use crate::store::AppState;
+        use std::sync::Arc;
+
+        // 两个真实上游，断言**一个都没收到**。
+        let (_active_base, mut active_rx) = spawn_recording_upstream("kxpms").await;
+        let (_other_base, mut other_rx) = spawn_recording_upstream("customish").await;
+
+        let db = Arc::new(Database::memory().map_err(|e| e.to_string())?);
+        let db2 = db.clone();
+        // 生产真实形状：provider id 与 TOML 表 id 是**两个不同的值**
+        // （`kaixuan-kxpms` vs `kxpms`）——把它们设成同值会把这个 bug 藏起来。
+        let active_base = _active_base.clone();
+        let other_base = _other_base.clone();
+        db.save_provider(
+            AppType::Codex.as_str(),
+            &codex_provider("kaixuan-kxpms", "kxpms", &active_base, "sk-kxpms-only"),
+        )
+        .map_err(|e| e.to_string())?;
+        // 第三方 OpenAI 兼容预设的表 id 就是 `custom`（legacy 别名）
+        db.save_provider(
+            AppType::Codex.as_str(),
+            &codex_provider("kaixuan-legacy", "custom", &other_base, "sk-custom-only"),
+        )
+        .map_err(|e| e.to_string())?;
+        db.set_current_provider(AppType::Codex.as_str(), "kaixuan-kxpms")
+            .map_err(|e| e.to_string())?;
+
+        let mut cfg = db.get_proxy_config_for_app(AppType::Codex.as_str()).await
+            .map_err(|e| e.to_string())?;
+        cfg.auto_failover_enabled = false;
+        db.update_proxy_config_for_app(cfg).await.map_err(|e| e.to_string())?;
+
+        {
+            let mut cfg = db2
+                .get_proxy_config_for_app(AppType::Codex.as_str())
+                .await
+                .map_err(|e| e.to_string())?;
+            cfg.enabled = true;
+            db2.update_proxy_config_for_app(cfg).await.map_err(|e| e.to_string())?;
+        }
+        {
+            let mut cfg = db2.get_proxy_config().await.map_err(|e| e.to_string())?;
+            cfg.listen_port = 0;
+            db2.update_proxy_config(cfg).await.map_err(|e| e.to_string())?;
+        }
+
+        let state = AppState::new(db);
+        let info = state.proxy_service.start().await.map_err(|e| e.to_string())?;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://127.0.0.1:{}/v1/responses", info.port))
+            .json(&serde_json::json!({
+                "model": "claude-opus-5@custom",
+                "input": "ping",
+                "stream": false,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("发请求失败: {e}"))?;
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+
+        let _ = state.proxy_service.stop().await;
+
+        // 核心断言 1：必须**报错**，不能看起来像成功。
+        if status.is_success() {
+            return Err(format!(
+                "@custom 被静默受理了（HTTP {status}）：{body_text}——别名不是独立端点，必须报错"
+            ));
+        }
+
+        // 核心断言 2：两个上游都**不能**收到请求。
+        // 只断言状态码是不够的：即使 proxy 回了 5xx，只要它已经把带后缀的
+        // body 转发出去，字面量 `claude-opus-5@custom` 就已经打到网关了。
+        for (tag, rx) in [("active/kxpms", &mut active_rx), ("custom 端点", &mut other_rx)] {
+            if let Ok(Some(observed)) = tokio::time::timeout(
+                std::time::Duration::from_millis(400),
+                rx.recv(),
+            )
+            .await
+            {
+                return Err(format!(
+                    "{tag} 上游收到了请求（model={:?}）——@custom 的字面量被转发出去了，\
+                     等于向网关请求一个不存在的模型名",
+                    observed.model
+                ));
+            }
+        }
         Ok(())
     }
 }
