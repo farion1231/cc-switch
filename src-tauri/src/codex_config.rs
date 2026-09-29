@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::config::{
@@ -4394,7 +4394,47 @@ pub fn preflight_codex_live_write(
     .map(|_| ())
 }
 
-pub fn write_codex_live_for_provider(
+/// Model provider ids that session history references but `config_text` does
+/// not define a table for — i.e. the sessions Codex will refuse to load.
+///
+/// Exists as a diagnostic because the existing preflight
+/// (`preflight_codex_provider_table_conflicts`) only judges *field legality* of
+/// the tables that are present; a completely absent id passes it every time,
+/// which is why this class of breakage reached the user three times.
+///
+/// Deliberately not a hard gate yet: the official-route write path does not run
+/// the inert-merge hook, so on a switch to official it would report every
+/// third-party id as missing and refuse a switch the user legitimately needs.
+/// Until that path heals too, this reports rather than blocks.
+pub fn codex_unresolved_session_provider_ids(config_text: &str) -> Vec<String> {
+    let codex_dir = get_codex_config_dir();
+    codex_unresolved_session_provider_ids_in(&codex_dir, config_text)
+}
+
+/// Same check against an explicit Codex dir, so tests do not read the
+/// developer's real `~/.codex`.
+pub fn codex_unresolved_session_provider_ids_in(
+    codex_dir: &std::path::Path,
+    config_text: &str,
+) -> Vec<String> {
+    if !codex_dir.is_dir() {
+        return Vec::new();
+    }
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    let defined: BTreeSet<&str> = doc
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .map(|table| table.iter().map(|(id, _)| id).collect())
+        .unwrap_or_default();
+    crate::codex_session_providers::collect_session_referenced_provider_ids(codex_dir, config_text)
+        .into_iter()
+        .filter(|id| !defined.contains(id.as_str()))
+        .collect()
+}
+
+    pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
@@ -4405,6 +4445,17 @@ pub fn write_codex_live_for_provider(
         config_text,
         crate::settings::preserve_codex_official_auth_on_switch(),
     )?;
+    if let Some(text) = plan.config_text.as_deref() {
+        let unresolved = codex_unresolved_session_provider_ids(text);
+        if !unresolved.is_empty() {
+            // Loud, because the alternative is the user discovering it as
+            // "Model provider X not found" on a thread they are trying to open.
+            log::error!(
+                "codex live 写入：历史 session 引用的 provider id 缺表 {:?}，这些 session 将无法 resume",
+                unresolved
+            );
+        }
+    }
     if plan.write_full_auth {
         return write_codex_live_atomic(auth, plan.config_text.as_deref());
     }
@@ -4709,6 +4760,43 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 }
 
 #[cfg(test)]
+    /// 覆盖判据（而非字段合法性）才是真正的门：一个**完全缺失**的 id 能通过
+    /// `preflight_codex_provider_table_conflicts`，这正是它三次都没拦住的原因。
+    #[test]
+    fn unresolved_session_provider_ids_reports_absent_tables_only() {
+        use std::io::Write as _;
+
+        let history = tempfile::tempdir().expect("history dir");
+        let rollout = history
+            .path()
+            .join("sessions/2026/09/29/rollout-a.jsonl");
+        std::fs::create_dir_all(rollout.parent().unwrap()).expect("mkdir");
+        let mut file = std::fs::File::create(&rollout).expect("create");
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"model_provider":"cc-switch-official"}}}}"#
+        )
+        .expect("write");
+        writeln!(
+            file,
+            r#"{{"type":"session_meta","payload":{{"model_provider":"kxpms"}}}}"#
+        )
+        .expect("write");
+
+        let live = "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"n\"\nbase_url = \"https://x/v1\"\nwire_api = \"responses\"\n";
+        assert_eq!(
+            codex_unresolved_session_provider_ids_in(history.path(), live),
+            vec!["cc-switch-official".to_string()],
+            "只有真正缺表的 id 应被报出"
+        );
+
+        let healed = format!("{live}\n[model_providers.cc-switch-official]\nname = \"n\"\nbase_url = \"https://x/v1\"\nwire_api = \"responses\"\n");
+        assert!(
+            codex_unresolved_session_provider_ids_in(history.path(), &healed).is_empty(),
+            "补表之后必须归零，否则每次切换都会误报"
+        );
+    }
+
 mod tests {
     use super::*;
     use serde_json::json;

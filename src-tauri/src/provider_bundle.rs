@@ -1033,6 +1033,7 @@ mod tests {
             AppType::Codex.as_str(),
             &kxpms_cfg,
             "kaixuan-kxpms",
+        None,
         )
         .expect("merge kxpms-active");
         let merged_text = merged.get("config").and_then(Value::as_str).expect("text");
@@ -1075,6 +1076,7 @@ mod tests {
             AppType::Codex.as_str(),
             &local_cfg,
             "kaixuan-local-8782",
+        None,
         )
         .expect("merge local-active");
         let doc2: toml_edit::DocumentMut = merged2
@@ -1144,6 +1146,7 @@ mod tests {
             AppType::Codex.as_str(),
             &legacy_kxpms,
             "kaixuan-kxpms",
+        None,
         )
         .expect("inert merge");
 

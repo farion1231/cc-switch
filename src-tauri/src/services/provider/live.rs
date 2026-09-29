@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -727,11 +728,18 @@ pub(crate) fn build_effective_settings_with_common_config(
 /// **Returns** the input `settings_config` unchanged when no inert table
 /// applies (fast path) or when the live config cannot be parsed (defensive:
 /// preserves whatever the caller passed).
+/// `history_dir` is where Codex session history lives, consulted to keep a table
+/// for every `model_provider` id that history references (see
+/// `merge_session_referenced_shadow_tables`). `None` means "no history to
+/// consult" and is what tests pass: reading the developer's real `~/.codex`
+/// would make assertions depend on their personal sessions — a test that passes
+/// on a clean machine and fails on a used one.
 pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     db: &Database,
     app_type_str: &str,
     settings_config: &Value,
     current_provider_db_id: &str,
+    history_dir: Option<&Path>,
 ) -> Result<Value, AppError> {
     // Pre-flight: only proceed for Codex. Other app types have no
     // `[model_providers.*]` semantics that session metadata would reference.
@@ -783,9 +791,7 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
     let providers: IndexMap<String, Provider> = match db.get_all_providers(app_type_str) {
         Ok(p) => p,
         Err(err) => {
-            log::warn!(
-                "惰性合并 inert [model_providers.*] 表失败：枚举 codex 供应商失败: {err}"
-            );
+            log::warn!("惰性合并 inert [model_providers.*] 表失败：枚举 codex 供应商失败: {err}");
             return Ok(settings_config.clone());
         }
     };
@@ -852,6 +858,16 @@ pub(crate) fn merge_inert_codex_provider_tables_into_settings_config(
             merge_inert_provider_table(&mut live_doc, id, item, &mut merged_count);
         }
     }
+
+    // History may reference a provider id that no DB row owns — see
+    // `merge_session_referenced_shadow_tables`. Runs even when the loop above
+    // merged nothing, so the early return below stays a true no-op check.
+    merge_session_referenced_shadow_tables(
+        &mut live_doc,
+        active_toml_id.as_deref(),
+        history_dir,
+        &mut merged_count,
+    );
 
     if merged_count == 0 && merged_catalog_sources.is_empty() {
         return Ok(settings_config.clone());
@@ -970,10 +986,7 @@ fn merge_inert_provider_table(
     // Ensure `model_providers` table exists in live.
     let live_root = live_doc.as_table_mut();
     if !live_root.contains_key("model_providers") {
-        live_root.insert(
-            "model_providers",
-            Item::Table(toml_edit::Table::new()),
-        );
+        live_root.insert("model_providers", Item::Table(toml_edit::Table::new()));
     }
     let Some(mp) = live_root
         .get_mut("model_providers")
@@ -989,6 +1002,81 @@ fn merge_inert_provider_table(
 
     mp.insert(id, item.clone());
     *merged_count += 1;
+}
+
+/// Give every `model_provider` id referenced by session history a table, even
+/// when no DB row owns it.
+///
+/// The DB-driven merge above can only restore ids that exist as provider rows.
+/// Projection-minted ids — `cc-switch-official`, written into the live config by
+/// `apply_codex_official_proxy_route` during official takeover and never stored
+/// anywhere — belong to no row, so they were dropped on the next switch and took
+/// every session created under the previous route down with it
+/// (`Model provider 'cc-switch-official' not found`). RFC §2.4b fixed only the
+/// mirror direction by aliasing `custom`; this closes the general case.
+///
+/// The shadow is a verbatim copy of the active table, matching §2.4b's rule that
+/// an alias resolves rather than re-routes. It stays inert: the top-level
+/// `model_provider` still points at the active id, so no new traffic uses it.
+/// A resumed old session does reach a different upstream than the one it was
+/// created against — that is the accepted trade for resuming at all, and it is
+/// the same trade §2.4b already documents for colliding `custom` copies.
+fn merge_session_referenced_shadow_tables(
+    live_doc: &mut DocumentMut,
+    active_toml_id: Option<&str>,
+    history_dir: Option<&Path>,
+    merged_count: &mut usize,
+) {
+    let Some(codex_dir) = history_dir else {
+        return;
+    };
+    if !codex_dir.is_dir() {
+        return;
+    }
+    let live_text = live_doc.to_string();
+    let referenced = crate::codex_session_providers::collect_session_referenced_provider_ids(
+        codex_dir, &live_text,
+    );
+    if referenced.is_empty() {
+        return;
+    }
+
+    let Some(active) = active_toml_id else {
+        // No top-level route: there is no active table to shadow from, and an
+        // official projection must not have one invented for it.
+        return;
+    };
+    let Some(active_table) = live_doc
+        .get("model_providers")
+        .and_then(Item::as_table_like)
+        .and_then(|table| table.get(active))
+        .cloned()
+    else {
+        return;
+    };
+
+    let mut shadowed = Vec::new();
+    for id in referenced {
+        if id == active {
+            continue;
+        }
+        let already_defined = live_doc
+            .get("model_providers")
+            .and_then(Item::as_table_like)
+            .is_some_and(|table| table.contains_key(&id));
+        if already_defined {
+            continue;
+        }
+        merge_inert_provider_table(live_doc, &id, &active_table, merged_count);
+        shadowed.push(id);
+    }
+    if !shadowed.is_empty() {
+        log::info!(
+            "session 引用影子表：为历史 session 引用但无 DB provider 归属的 id 补表 {:?}（副本取自 active 表 '{}'，保持 inert）",
+            shadowed,
+            active
+        );
+    }
 }
 
 pub(crate) fn write_live_with_common_config_for_state(
@@ -1078,6 +1166,7 @@ pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
         app_type.as_str(),
         &effective_provider.settings_config,
         &provider.id,
+        Some(&crate::codex_config::get_codex_config_dir()),
     )?;
 
     write_live_snapshot(app_type, &effective_provider)
@@ -3976,22 +4065,178 @@ base_url = "https://a.example/v1"
         })
     }
 
+    /// 官方接管期开的 session，切到第三方后仍必须有表可解析 —— 这是三次同型
+    /// 复发的镜像方向：09-28 修的是「切官方丢 custom 表」（§2.4b 的 custom
+    /// 别名），切走官方时新出现的 `cc-switch-official` 没人管。
+    ///
+    /// 关键点：这个 id **在 DB 里没有对应 provider 行**（它是
+    /// `apply_codex_official_proxy_route` 写进 live config 的投影产物，官方档
+    /// 存档里也不含它），所以枚举 DB 行的惰性合并在设计上就补不回来。测试把
+    /// 「历史引用集合」和「DB provider 集合」故意错开，让这个区别可见。
+    #[test]
+    fn merge_shadows_table_for_session_referenced_id_owned_by_no_db_provider() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+
+        let history = tempfile::tempdir().expect("history dir");
+        let rollout = history
+            .path()
+            .join("sessions/2026/09/29/rollout-official-era.jsonl");
+        std::fs::create_dir_all(rollout.parent().unwrap()).expect("mkdir");
+        std::fs::write(
+            &rollout,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"a","model_provider":"cc-switch-official"}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"note":"body never read"}}"#,
+                "\n"
+            ),
+        )
+        .expect("write rollout");
+
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &kxpms_settings_config(),
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+        let doc: DocumentMut = merged.parse().expect("parse merged");
+
+        assert!(
+            doc["model_providers"]
+                .as_table()
+                .is_some_and(|t| t.contains_key("cc-switch-official")),
+            "session 引用但无 DB 归属的 id 必须有影子表: {merged}"
+        );
+        // Shadow must resolve, not re-route: the active route is untouched.
+        assert_eq!(
+            doc.get("model_provider").and_then(|v| v.as_str()),
+            Some("kxpms"),
+            "影子表必须 inert：顶层路由仍指向 active provider"
+        );
+        // §2.4b rule: the copy is verbatim, so an old session resolves the same
+        // content rather than being silently re-pointed at a different table.
+        assert_eq!(
+            doc["model_providers"]["cc-switch-official"]["base_url"].as_str(),
+            doc["model_providers"]["kxpms"]["base_url"].as_str(),
+            "影子表必须是 active 表的逐字副本（§2.4b）"
+        );
+    }
+
+    /// 同一张表已有定义时不得被影子副本覆盖（live wins，§2.4 rule 1）。
+    #[test]
+    fn merge_does_not_shadow_over_an_existing_table() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+
+        let history = tempfile::tempdir().expect("history dir");
+        let rollout = history
+            .path()
+            .join("sessions/2026/09/29/rollout-legacy.jsonl");
+        std::fs::create_dir_all(rollout.parent().unwrap()).expect("mkdir");
+        std::fs::write(
+            &rollout,
+            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"local8782\"}}\n",
+        )
+        .expect("write rollout");
+
+        let mut active = kxpms_settings_config();
+        active["config"] = Value::String(
+            "model_provider = \"kxpms\"\n\n[model_providers.kxpms]\nname = \"kxpms_gateway\"\nbase_url = \"https://llm.kxpms.cn/v1\"\nwire_api = \"responses\"\n\n[model_providers.local8782]\nname = \"local_gateway\"\nbase_url = \"http://localhost:8782/v1\"\nwire_api = \"responses\"\n"
+                .to_string(),
+        );
+
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &active,
+            "kxpms-gateway",
+            Some(history.path()),
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+
+        assert_eq!(
+            merged.matches("http://localhost:8782/v1").count(),
+            1,
+            "已存在的 local8782 表必须原样保留，不能被 active 副本改道: {merged}"
+        );
+    }
+
+    /// 没有历史目录时整个合并步骤是 no-op，既有 inert 行为不受影响。
+    #[test]
+    fn merge_without_history_dir_is_a_no_op_on_shadowing() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
+        .expect("save kxpms");
+
+        let result = merge_inert_codex_provider_tables_into_settings_config(
+            &db,
+            "codex",
+            &kxpms_settings_config(),
+            "kxpms-gateway",
+            None,
+        )
+        .expect("merge");
+        let merged = result.get("config").and_then(Value::as_str).expect("text");
+        assert_eq!(
+            merged.matches("[model_providers.").count(),
+            1,
+            "无历史可参考时只有 active 自己一张表: {merged}"
+        );
+    }
+
     #[test]
     fn merge_inert_preserves_custom_table_when_switching_to_official() {
         let db = Database::memory().expect("memory db");
-        db.save_provider("codex", &Provider::with_id(
-            "kxpms-gateway".to_string(),
-            "开轩 LLM 网关".to_string(),
-            kxpms_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩 LLM 网关".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
         .expect("save kxpms");
-        db.save_provider("codex", &Provider::with_id(
-            "codex-official".to_string(),
-            "OpenAI Official".to_string(),
-            official_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "codex-official".to_string(),
+                "OpenAI Official".to_string(),
+                official_settings_config(),
+                None,
+            ),
+        )
         .expect("save official");
 
         // Active provider = codex-official. Inert = kxpms-gateway (custom).
@@ -4000,6 +4245,7 @@ base_url = "https://a.example/v1"
             "codex",
             &official_settings_config(),
             "codex-official",
+            None,
         )
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
@@ -4020,19 +4266,25 @@ base_url = "https://a.example/v1"
     #[test]
     fn merge_inert_preserves_other_third_party_when_switching_third_party() {
         let db = Database::memory().expect("memory db");
-        db.save_provider("codex", &Provider::with_id(
-            "kxpms-gateway".to_string(),
-            "开轩".to_string(),
-            kxpms_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
         .expect("save kxpms");
-        db.save_provider("codex", &Provider::with_id(
-            "local-gateway-8782".to_string(),
-            "本地 8782".to_string(),
-            local_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "local-gateway-8782".to_string(),
+                "本地 8782".to_string(),
+                local_settings_config(),
+                None,
+            ),
+        )
         .expect("save local");
 
         // Active = kxpms. Inert = local8782 (TOML id 与 active 完全不同)。
@@ -4042,6 +4294,7 @@ base_url = "https://a.example/v1"
             "codex",
             &active,
             "kxpms-gateway",
+            None,
         )
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
@@ -4065,19 +4318,25 @@ base_url = "https://a.example/v1"
     fn merge_inert_skips_active_provider_and_id_collision() {
         let db = Database::memory().expect("memory db");
         // Two providers both using model_provider = "custom" (id collision).
-        db.save_provider("codex", &Provider::with_id(
-            "kxpms-gateway".to_string(),
-            "开轩".to_string(),
-            kxpms_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
         .expect("save kxpms");
-        db.save_provider("codex", &Provider::with_id(
-            "codex-extra".to_string(),
-            "另一个 custom id".to_string(),
-            kxpms_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "codex-extra".to_string(),
+                "另一个 custom id".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
         .expect("save extra");
 
         let active = kxpms_settings_config();
@@ -4086,6 +4345,7 @@ base_url = "https://a.example/v1"
             "codex",
             &active,
             "kxpms-gateway",
+            None,
         )
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
@@ -4103,22 +4363,28 @@ base_url = "https://a.example/v1"
     #[test]
     fn merge_inert_handles_invalid_db_config() {
         let db = Database::memory().expect("memory db");
-        db.save_provider("codex", &Provider::with_id(
-            "kxpms-gateway".to_string(),
-            "开轩".to_string(),
-            kxpms_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
         .expect("save kxpms");
         // Second provider has unparseable stored config — must be skipped, not abort.
-        db.save_provider("codex", &Provider::with_id(
-            "codex-extra".to_string(),
-            "另一个".to_string(),
-            json!({
-                "config": "this is = not [valid TOML (((((((( ",
-            }),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "codex-extra".to_string(),
+                "另一个".to_string(),
+                json!({
+                    "config": "this is = not [valid TOML (((((((( ",
+                }),
+                None,
+            ),
+        )
         .expect("save broken");
 
         let active = official_settings_config();
@@ -4127,6 +4393,7 @@ base_url = "https://a.example/v1"
             "codex",
             &active,
             "codex-official",
+            None,
         )
         .expect("merge must succeed despite broken DB row");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
@@ -4169,6 +4436,7 @@ base_url = "https://a.example/v1"
             "codex",
             &active,
             "codex-official",
+            None,
         )
         .expect("merge");
         let merged = result.get("config").and_then(Value::as_str).expect("text");
@@ -4181,12 +4449,15 @@ base_url = "https://a.example/v1"
     #[test]
     fn merge_inert_idempotent() {
         let db = Database::memory().expect("memory db");
-        db.save_provider("codex", &Provider::with_id(
-            "kxpms-gateway".to_string(),
-            "开轩".to_string(),
-            kxpms_settings_config(),
-            None,
-        ))
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "kxpms-gateway".to_string(),
+                "开轩".to_string(),
+                kxpms_settings_config(),
+                None,
+            ),
+        )
         .expect("save kxpms");
 
         let active = official_settings_config();
@@ -4195,6 +4466,7 @@ base_url = "https://a.example/v1"
             "codex",
             &active,
             "codex-official",
+            None,
         )
         .expect("merge once");
         let merged_twice = merge_inert_codex_provider_tables_into_settings_config(
@@ -4202,6 +4474,7 @@ base_url = "https://a.example/v1"
             "codex",
             &merged_once,
             "codex-official",
+            None,
         )
         .expect("merge twice");
         assert_eq!(
@@ -4232,6 +4505,7 @@ base_url = "https://a.example/v1"
             "claude",
             &json!({"env": {}}),
             "kxpms",
+            None,
         )
         .expect("merge");
         // Non-codex path returns input unchanged.

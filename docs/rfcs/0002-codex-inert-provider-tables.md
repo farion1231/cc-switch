@@ -140,6 +140,45 @@ live config 缺失 provider 表导致旧 session 永远卡死。
 | 多端点冲突 | 两端点各自带一份 `custom` 副本时，合并按既有 "live wins" 规则取先到者；能解析即可，不保证端点归属（`custom` 本就一义多指） |
 | 归属判定 | catalog 素材收集的「唯一一张自定义表」回退判据必须**先剔除 `custom` 副本**，否则多端点场景永远判不出 toml_id，模型目录被静默丢弃 |
 
+### 2.4b' 保留判据必须来自 session 历史本身（2026-09-29 第三轮审计追加）
+
+2.4b 是**按 id 逐个补规则**的补丁：先发现 `custom` 会丢，就为 `custom` 写一条别名
+规则。它没有改变 §2.1 的判据来源，于是镜像方向必然复发——
+
+| 次序 | 切换方向 | 报错的 id | 谁产生的 | 修法 |
+|---|---|---|---|---|
+| 1 | 切到 official | `custom` | 端点 id 迁移改名 | 82a731d9 + 2.4b 别名 |
+| 2 | 切离 official | `cc-switch-official` | **投影产物** | 本节 |
+| 3（实测复发） | 切离 official | `evol` | 未知来源的投影 id | 本节 |
+
+关键事实：`cc-switch-official` 由 `apply_codex_official_proxy_route` 直接写进 live
+config，**DB 里没有对应 provider 行，官方档存档里也没有这张表**。所以「枚举 DB 行」
+这个判据在**设计上**就不可能把它补回来——只要 id 的产生路径能绕开实体表，两者就
+不等价。§2.1 写的「把 DB 里所有其它 provider 的表合并进来」是真约束的一个**错误
+代理指标**。
+
+因此判据改为：**「历史 session 引用过的每个 `model_provider` 都必须有同名表」**，
+集合从历史本身采集（`codex_session_providers`）：
+
+| 规则 | 内容 |
+|---|---|
+| 集合来源 | rollout `.jsonl` 首行 `session_meta.payload.model_provider` ∪ state DB `threads.model_provider`。**两个源都要扫**：Codex 分别写二者，可能只有一边有某条 thread（`codex doctor` 就会报 rollout 缺失） |
+| 扫描成本 | 只读每个文件的首行（`session_meta` 在最前），不全文扫。实机 155 个文件 / 347MB 实测 0.01s |
+| 补表规则 | 引用集合里**没有 DB provider 归属**的 id，落一张 active 表的逐字副本（沿用 2.4b 的副本语义），inert，不影响新流量 |
+| 已存在则不覆盖 | live 已有该 id 时保持 "live wins"（§2.4 rule 1），不被副本改道 |
+| 已知代价 | 旧官方 session 恢复后会走到当前 active 上游而非它当初的端点。这是「能恢复」换来的，2.4b 的 `custom` 冲突已是同一取舍 |
+
+配套要求：
+
+- **前置门要判覆盖，不只判合法性**。`preflight_codex_provider_table_conflicts` 只校验
+  存在表的字段组合，一个**完全缺失**的 id 能一路绿灯——这三次它一次都没拦住。
+  新增 `codex_unresolved_session_provider_ids` 做覆盖诊断。
+- **一次性迁移的「已完成」只能由真实迁移置位**。`codexThirdPartyHistoryProviderBucketV1`
+  曾于 2026-09-28T16:45 在 `source_provider_ids` 为空时写下 `scanned: true / 0 / 0`，
+  此后被 `is_..._migrated()` 永久短路，既没修好历史也堵死重试。
+- **回归用例必须是四步闭环**：切 official → 建 session → 切回第三方 → 断言该 id 有表。
+  单步断言（切完检查表内容）看不见这条缺口。
+
 ### 2.4c 顶层 `model_provider` 的补写必须分 provider 类别（2026-09-29 审计追加）
 
 legacy id 迁移在「顶层 `model_provider` 缺失」时是否补写，取决于**那张表是不是该
