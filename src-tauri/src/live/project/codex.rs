@@ -349,9 +349,16 @@ fn row_key(doc: &DocumentMut, table: Option<&Table>, input: &RowInput<'_>) -> Op
         .or_else(|| non_empty_str(doc.get("experimental_bearer_token")))
 }
 
+const KEYLESS_FALLBACK_ERROR: &str = "provider.codex.config.official_auth_fallback";
+
+/// 是不是 [`keyless_fallback_error`]：行没有 Key，却会回退去用 `auth.json` 里的登录。
+pub fn is_keyless_fallback(error: &AppError) -> bool {
+    matches!(error, AppError::Localized { key, .. } if *key == KEYLESS_FALLBACK_ERROR)
+}
+
 fn keyless_fallback_error() -> AppError {
     AppError::localized(
-        "provider.codex.config.official_auth_fallback",
+        KEYLESS_FALLBACK_ERROR,
         "该 Codex 配置没有可用的 API 密钥，而 requires_openai_auth = true（或顶层 openai_base_url）会让 Codex 回退使用 auth.json 里的登录凭据访问第三方地址。请为供应商填写 API 密钥，或移除该回退指令",
         "This Codex config has no usable API key, and requires_openai_auth = true (or a top-level openai_base_url) would make Codex fall back to whatever login auth.json holds for a third-party route. Add an API key to the provider or remove the fallback directive",
     )

@@ -6086,4 +6086,160 @@ model_provider = "c"
         let restored: Value = crate::config::read_json_file(&codex_auth_path()).unwrap();
         assert_eq!(restored["tokens"]["account_id"], "ws");
     }
+
+    /// `src/config/codexTemplates.ts` 的 `getCodexCustomTemplate()`：Key 为空、
+    /// `requires_openai_auth = true`。新增对话框一打开就投影它。
+    fn codex_keyless_template() -> Value {
+        json!({
+            "auth": { "OPENAI_API_KEY": "" },
+            "config": "model_provider = \"custom\"\nmodel = \"gpt-5.6-sol\"\n\n[model_providers.custom]\nname = \"custom\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+        })
+    }
+
+    /// 没填 Key 的草稿：显示「切过去之后的样子」和只存行都不拿切换的安全闸拒绝，要进 live
+    /// 时（路由到它、直连切到它）照样拒绝，否则会把 ChatGPT 登录发给第三方。
+    #[tokio::test]
+    #[serial]
+    async fn codex_keyless_draft_is_shown_and_saved_but_never_written_to_live() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex("model = \"gpt-5.4\"\n", Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, b, official.clone()], &official.id).await;
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("official");
+        let template = codex_keyless_template();
+        let view = |state: &AppState, label: &str| -> Value {
+            let view = ProviderService::editor_view(state, AppType::Codex, &template, None)
+                .unwrap_or_else(|err| panic!("{label}: cannot show the template: {err}"));
+            let shown = view.settings["config"].as_str().unwrap().to_string();
+            assert!(!shown.contains("pending-key"), "{label}: {shown}");
+            let doc: toml::Table = toml::from_str(&shown).unwrap();
+            assert_eq!(
+                doc["model_provider"].as_str(),
+                Some("custom"),
+                "{label}: {shown}"
+            );
+            assert!(doc.get("openai_base_url").is_none(), "{label}: {shown}");
+            let route = &doc["model_providers"]["custom"];
+            assert_eq!(
+                route["requires_openai_auth"].as_bool(),
+                Some(true),
+                "{label}: {shown}"
+            );
+            assert!(
+                route.get("experimental_bearer_token").is_none(),
+                "{label}: {shown}"
+            );
+            view.settings
+        };
+
+        // 直连（当前是官方卡）。
+        view(&state, "direct");
+        // 代理的官方路由：live 顶层是 openai_base_url。
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        let routed = codex_text();
+        assert!(routed.contains("openai_base_url"), "{routed}");
+        let shown = view(&state, "official proxy route");
+
+        // 表单确认过「不填 Key 也保存」：只存行，live 不动，占位 Key 不进行。
+        let draft = Provider::with_id("c".into(), "C".into(), template.clone(), None);
+        add_from_editor(&state, AppType::Codex, draft, shown.clone(), shown)
+            .expect("a keyless row can be saved");
+        assert_eq!(codex_text(), routed);
+        let c = state.db.get_provider_by_id("c", "codex").unwrap().unwrap();
+        let c_config = c.settings_config["config"].as_str().unwrap();
+        assert!(!c_config.contains("pending-key"), "{c_config}");
+        assert!(
+            !c_config.contains("experimental_bearer_token"),
+            "{c_config}"
+        );
+        assert!(
+            c_config.contains("requires_openai_auth = true"),
+            "{c_config}"
+        );
+
+        // 路由到它、直连切到它都拒绝，live 不动。
+        let err = ProviderService::switch(&state, AppType::Codex, "c").expect_err("route to c");
+        assert!(err.to_string().contains("requires_openai_auth"), "{err}");
+        assert_eq!(codex_text(), routed);
+        exit(&state, &AppType::Codex).await.expect("exit");
+        let direct_live = codex_text();
+        let err = ProviderService::switch(&state, AppType::Codex, "c").expect_err("switch to c");
+        assert!(err.to_string().contains("requires_openai_auth"), "{err}");
+        assert_eq!(codex_text(), direct_live);
+        assert_eq!(
+            direct(&state, &AppType::Codex).as_deref(),
+            Some(official.id.as_str())
+        );
+    }
+
+    /// 直连模式下编辑当前供应商：保存会把关键字段一起换进 live，这时去掉 Key 照样拒绝，行
+    /// 撤回、live 不动。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editing_the_current_provider_into_a_keyless_row_is_refused() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex(CODEX_USER_LIVE, Some(&chatgpt_login("acct")));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        ProviderService::switch(&state, AppType::Codex, "a").expect("a");
+        let before_live = codex_text();
+        let mut row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let before_row = row.settings_config.clone();
+
+        let base = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
+            .expect("view")
+            .settings;
+        let mut doc: toml_edit::DocumentMut = base["config"].as_str().unwrap().parse().unwrap();
+        doc["model_providers"]["custom"]["requires_openai_auth"] = toml_edit::value(true);
+        let mut edited = base.clone();
+        edited["config"] = json!(doc.to_string());
+        edited["auth"]["OPENAI_API_KEY"] = json!("");
+        row.settings_config = edited;
+        let err = ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            None,
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect_err("the current provider cannot lose its key");
+        assert!(err.to_string().contains("requires_openai_auth"), "{err}");
+        assert_eq!(codex_text(), before_live);
+        assert_eq!(
+            state
+                .db
+                .get_provider_by_id("a", "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config,
+            before_row
+        );
+    }
+
+    /// 新增第一个供应商会同时写进 live：没填 Key 照样拒绝，行不留。
+    #[tokio::test]
+    #[serial]
+    async fn codex_adding_a_keyless_first_provider_is_refused() {
+        let _home = Home::new();
+        set_preservation(true);
+        seed_codex("model = \"gpt-5.4\"\n", Some(&chatgpt_login("acct")));
+        let state = state_without_providers().await;
+        let before = codex_text();
+        let template = codex_keyless_template();
+        let base = ProviderService::editor_view(&state, AppType::Codex, &template, None)
+            .expect("view")
+            .settings;
+        let draft = Provider::with_id("c".into(), "C".into(), template, None);
+        let err = add_from_editor(&state, AppType::Codex, draft, base.clone(), base)
+            .expect_err("a keyless first provider would go live");
+        assert!(err.to_string().contains("requires_openai_auth"), "{err}");
+        assert!(state.db.get_provider_by_id("c", "codex").unwrap().is_none());
+        assert_eq!(codex_text(), before);
+    }
 }
