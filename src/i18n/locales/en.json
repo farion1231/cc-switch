@@ -771,7 +771,7 @@
     "grokConfigDir": "Grok Build Configuration Directory",
     "grokConfigDirDescription": "Override Grok Build configuration directory (config.toml).",
     "opencodeConfigDir": "OpenCode Configuration Directory",
-    "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
+    "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json / opencode.jsonc).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
