@@ -205,6 +205,12 @@ pub struct RectifierConfig {
     /// 处理错误：budget_tokens + thinking 相关约束
     #[serde(default = "default_true")]
     pub request_thinking_budget: bool,
+    /// 请求整流：启用 adaptive thinking 整流器（默认开启）
+    ///
+    /// 处理错误：thinking 常开的模型拒绝 `thinking: disabled` 或强制 tool_choice
+    /// （如 "requires adaptive thinking; omit thinking ..."）
+    #[serde(default = "default_true")]
+    pub request_adaptive_thinking: bool,
     /// 请求整流：不支持的图片降级（默认开启）
     ///
     /// 上游拒绝图片输入时，把图片块替换为 [Unsupported Image] 标记，
@@ -234,6 +240,7 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_adaptive_thinking: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
@@ -386,6 +393,10 @@ mod tests {
             "thinking budget 整流器默认应为 true"
         );
         assert!(
+            config.request_adaptive_thinking,
+            "adaptive thinking 整流器默认应为 true"
+        );
+        assert!(
             config.request_media_fallback,
             "media 降级总开关默认应为 true"
         );
@@ -403,6 +414,10 @@ mod tests {
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(
+            config.request_adaptive_thinking,
+            "缺 requestAdaptiveThinking 时应回退默认值 true（旧配置升级兼容）"
+        );
         assert!(
             config.request_media_fallback,
             "缺 requestMediaFallback 时应回退默认值 true"
