@@ -8,6 +8,7 @@
 //! Key 写成路由表的 `experimental_bearer_token`：Codex 0.149 起自定义 provider 不再读
 //! `auth.json` 里的 Key，`auth.json` 只留给官方登录。
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value;
@@ -548,6 +549,7 @@ pub fn row_catalog_pointer(top: &[(String, TomlValue)]) -> Option<&(String, Toml
 
 impl CodexConfigPatch {
     pub fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
+        let protected_before = protected_top_snapshot(doc.as_table());
         let target_top: Vec<&str> = self
             .top
             .iter()
@@ -647,6 +649,27 @@ impl CodexConfigPatch {
             if !user_pointer {
                 put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(CATALOG_FILENAME));
             }
+        }
+
+        let protected_after = protected_top_snapshot(doc.as_table());
+        let mut changed = Vec::new();
+        for (key, before) in &protected_before {
+            if protected_after.get(key) != Some(before) {
+                changed.push(key.clone());
+            }
+        }
+        for key in protected_after.keys() {
+            if !protected_before.contains_key(key) {
+                changed.push(key.clone());
+            }
+        }
+        changed.sort();
+        changed.dedup();
+        if !changed.is_empty() {
+            return Err(LiveWriteError::ConfigLoss {
+                path: path.to_path_buf(),
+                keys: changed,
+            });
         }
 
         check_effective_route(doc, selector)
@@ -791,6 +814,36 @@ impl CodexConfigPatch {
     }
 }
 
+fn patch_owned_top(key: &str) -> bool {
+    floor::CODEX_FLOOR_TOP.contains(&key)
+        || floor::CODEX_EXCLUSIVE_TOP.contains(&key)
+        || key == "model_providers"
+}
+
+fn protected_top_snapshot(root: &Table) -> BTreeMap<String, String> {
+    root.iter()
+        .filter(|(key, _)| !patch_owned_top(key))
+        .filter_map(|(key, item)| {
+            let mut protected = item.clone();
+            if matches!(key, "agents" | "memories") {
+                let table = protected.as_table_like_mut()?;
+                for segments in floor::CODEX_FLOOR_NESTED {
+                    let [parent, nested] = segments else {
+                        continue;
+                    };
+                    if *parent == key {
+                        table.remove(nested);
+                    }
+                }
+                if table.is_empty() {
+                    return None;
+                }
+            }
+            Some((key.to_string(), protected.to_string()))
+        })
+        .collect()
+}
+
 fn holds_placeholder(item: &Item) -> bool {
     item.as_table_like()
         .and_then(|table| table.get("experimental_bearer_token"))
@@ -911,6 +964,19 @@ mod tests {
         match &projection.route {
             Route::Custom { table, auth } => (table, *auth),
             other => panic!("expected custom route, got {other:?}"),
+        }
+    }
+
+    fn patch_from_projection(projection: &CodexProjection) -> CodexConfigPatch {
+        let (table, _) = custom(projection);
+        CodexConfigPatch {
+            top: projection.top.clone(),
+            nested: projection.nested.clone(),
+            exclusive: projection.exclusive.clone(),
+            outgoing: Vec::new(),
+            route: RouteWrite::Custom(table.clone()),
+            catalog: false,
+            retired: Vec::new(),
         }
     }
 
@@ -1037,6 +1103,80 @@ mod tests {
                 project(&model_only).unwrap().route,
                 Route::Default
             ));
+        }
+    }
+
+    #[test]
+    fn provider_switch_preserves_user_owned_top_level_tables() {
+        let settings = row(json!({ "OPENAI_API_KEY": "sk-relay" }), RELAY);
+        let projection = project(&settings).unwrap();
+        let patch = patch_from_projection(&projection);
+        let mut doc = r#"
+model = "old"
+
+[mcp_servers.fs]
+command = "fs-server"
+
+[plugins."example"]
+enabled = true
+
+[hooks]
+Stop = []
+
+[projects.'D:/work']
+trust_level = "trusted"
+
+[desktop]
+theme = "dark"
+
+[features]
+codex_hooks = true
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+
+        patch
+            .apply_to(Path::new("config.toml"), &mut doc)
+            .expect("provider switch should preserve user config");
+        let after = doc.to_string();
+        for expected in [
+            "[mcp_servers.fs]\ncommand = \"fs-server\"",
+            "[plugins.\"example\"]\nenabled = true",
+            "[hooks]\nStop = []",
+            "[projects.'D:/work']\ntrust_level = \"trusted\"",
+            "[desktop]\ntheme = \"dark\"",
+            "[features]\ncodex_hooks = true",
+        ] {
+            assert!(after.contains(expected), "missing user config:\n{after}");
+        }
+    }
+
+    #[test]
+    fn provider_switch_refuses_to_overwrite_user_owned_config() {
+        let settings = row(json!({ "OPENAI_API_KEY": "sk-relay" }), RELAY);
+        let projection = project(&settings).unwrap();
+        let mut patch = patch_from_projection(&projection);
+        patch.top.push((
+            "mcp_servers".to_string(),
+            TomlValue::InlineTable(InlineTable::new()),
+        ));
+        let mut doc = r#"
+model = "old"
+
+[mcp_servers.fs]
+command = "fs-server"
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+
+        let err = patch
+            .apply_to(Path::new("config.toml"), &mut doc)
+            .expect_err("a patch that overwrites MCP config must be refused");
+        match err {
+            LiveWriteError::ConfigLoss { keys, .. } => {
+                assert_eq!(keys, vec!["mcp_servers".to_string()]);
+            }
+            other => panic!("expected ConfigLoss, got {other:?}"),
         }
     }
 }
