@@ -1586,6 +1586,7 @@ pub fn run() {
             commands::switch_proxy_provider,
             commands::get_proxy_stack,
             commands::set_proxy_stack_member,
+            commands::restart_codex_app_server_daemon,
             // Proxy failover commands
             commands::get_provider_health,
             commands::reset_circuit_breaker,

@@ -2918,7 +2918,19 @@
         "inactive": "进入 Stack 模式：添加多家供应商，它们的模型都出现在 {{appLabel}} 的模型列表里"
       },
       "ariaLabel": "{{appLabel}} Stack 模式",
-      "failoverUnavailable": "{{appLabel}} 在 Stack 模式，不做故障转移。队列和设置保留，回到路由模式后恢复"
+      "failoverUnavailable": "{{appLabel}} 在 Stack 模式，不做故障转移。队列和设置保留，回到路由模式后恢复",
+      "codexStale": {
+        "title": "Codex 还在用旧的模型列表，Stack 模型不会出现",
+        "daemon": "命令行：重开 codex 不够，要重启后台的守护进程。",
+        "others": "桌面版：要彻底退出再重开（macOS 上按 ⌘Q，只关窗口不行）；编辑器插件要重开编辑器窗口。",
+        "restart": "重启 Codex 守护进程",
+        "confirmTitle": "重启 Codex 守护进程？",
+        "confirmMessage": "所有终端里的 codex 共用这个守护进程，正在运行的任务会被中断。重启之后重新打开 codex，就能看到 Stack 模型。",
+        "confirm": "重启",
+        "restarted": "Codex 守护进程已重启，重新打开 codex 就能看到 Stack 模型",
+        "notRunning": "Codex 守护进程没在运行，下次打开 codex 时会读到新的模型列表",
+        "failed": "重启 Codex 守护进程失败：{{error}}"
+      }
     },
     "failover": {
       "proxyRequired": "需要先启动路由服务才能配置故障转移",

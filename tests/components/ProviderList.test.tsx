@@ -527,6 +527,70 @@ describe("ProviderList Component", () => {
     });
   });
 
+  it("warns when Codex clients still use an old model list in Stack mode", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    let active = true;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active,
+          members: [
+            { providerId: "route", modelIds: [], route: true },
+          ],
+          staleClients: { daemon: true, others: false },
+        }),
+      ),
+    );
+
+    const view = renderWithQueryClient(
+      <ProviderList
+        providers={{ route }}
+        currentProviderId="route"
+        appId="codex"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "proxy.stackMode.codexStale.restart" }),
+    ).toBeInTheDocument();
+    view.unmount();
+
+    // 不在 Stack 模式：不提示。
+    active = false;
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route }}
+        currentProviderId="route"
+        appId="codex"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(lastProps("route")?.isStackMode).toBe(false),
+    );
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides Stack mode outside proxy mode and for apps without it", async () => {
     const provider = createProvider({ id: "a", name: "A" });
     useDragSortMock.mockReturnValue({

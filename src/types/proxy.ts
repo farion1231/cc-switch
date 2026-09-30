@@ -72,13 +72,26 @@ export type ProxyStackNotice =
   | "officialModelsBundled"
   | "officialModelsUnavailable";
 
+/**
+ * 还在用旧模型列表的 Codex 客户端（它们只在启动时读模型目录）：`daemon` 是 `codex` 命令行连的
+ * 托管守护进程，可以一键重启；`others` 是桌面版、编辑器插件，要用户自己彻底退出再开。
+ */
+export interface CodexStaleClients {
+  daemon: boolean;
+  others: boolean;
+}
+
 /** Stack 模式的状态、名单和提示。 */
 export interface ProxyStack {
   /** 在 Stack 模式（代理模式且 Stack 模式开着）。 */
   active: boolean;
   members: ProxyStackMember[];
   notice?: ProxyStackNotice;
+  staleClients?: CodexStaleClients;
 }
+
+/** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */
+export type CodexDaemonRestartOutcome = "restarted" | "notRunning";
 
 /** 增删 Stack 模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
 export interface ProxyStackWriteError {

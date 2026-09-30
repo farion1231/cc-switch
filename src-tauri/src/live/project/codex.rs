@@ -550,6 +550,15 @@ pub fn live_catalog_is_foreign(config_text: &str) -> bool {
     })
 }
 
+/// live 的 `model_catalog_json` 指向 CC Switch 生成的目录：新启动的 Codex 读的是它。
+pub fn live_catalog_is_ours(config_text: &str) -> bool {
+    config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
+        doc.get(MODEL_CATALOG_JSON)
+            .and_then(Item::as_str)
+            .is_some_and(is_cc_switch_catalog)
+    })
+}
+
 /// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和独有字段
 /// 一样跟着这一家走：切走时 live 里的值还相同就删（见 [`CodexConfigPatch::outgoing`]），
 /// 否则第 1 步会把它当成用户的指针留下，之后每一家都用它的模型目录。

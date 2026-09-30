@@ -34,6 +34,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -178,6 +179,8 @@ export function ProviderList({
     isStackAppId(appId) && isProxyTakeover === true && stack?.active === true;
   const stackMembers = stack?.members;
   const stackNotice = isStackMode ? stack?.notice : undefined;
+  const codexStaleClients =
+    isStackMode && appId === "codex" ? stack?.staleClients : undefined;
   const setStackMember = useSetProxyStackMember();
   const stackMemberOf = useCallback(
     (providerId: string): ProxyStackMember | undefined =>
@@ -584,6 +587,9 @@ export function ProviderList({
   return (
     <div className="mt-4 space-y-4">
       {piStateErrorNotice}
+      {codexStaleClients && (
+        <CodexStaleClientsNotice staleClients={codexStaleClients} />
+      )}
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">

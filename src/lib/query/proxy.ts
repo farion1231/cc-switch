@@ -137,6 +137,40 @@ export function useSetProxyStackMember() {
   });
 }
 
+/**
+ * 重启 Codex 的托管守护进程，让它重读模型目录。结束后重新查 Stack 名单：重启成功时
+ * 「还在用旧模型列表」的提示随之消失。
+ */
+export function useRestartCodexAppServerDaemon() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: () => proxyApi.restartCodexAppServerDaemon(),
+    onSuccess: (outcome) => {
+      if (outcome === "notRunning") {
+        toast.info(t("proxy.stackMode.codexStale.notRunning"), {
+          closeButton: true,
+        });
+        return;
+      }
+      toast.success(t("proxy.stackMode.codexStale.restarted"), {
+        closeButton: true,
+      });
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        t("proxy.stackMode.codexStale.failed", {
+          error: extractErrorMessage(error),
+        }),
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    },
+  });
+}
+
 // ========== 代理服务器控制 Hooks ==========
 
 /**

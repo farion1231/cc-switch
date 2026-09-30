@@ -2919,7 +2919,19 @@
         "inactive": "進入 Stack 模式：新增多家供應商，它們的模型都出現在 {{appLabel}} 的模型清單裡"
       },
       "ariaLabel": "{{appLabel}} Stack 模式",
-      "failoverUnavailable": "{{appLabel}} 在 Stack 模式，不做故障轉移。佇列和設定保留，回到路由模式後恢復"
+      "failoverUnavailable": "{{appLabel}} 在 Stack 模式，不做故障轉移。佇列和設定保留，回到路由模式後恢復",
+      "codexStale": {
+        "title": "Codex 還在用舊的模型清單，Stack 模型不會出現",
+        "daemon": "命令列：重開 codex 不夠，要重新啟動背景的守護行程。",
+        "others": "桌面版：要完全結束再重開（macOS 上按 ⌘Q，只關視窗不行）；編輯器擴充功能要重開編輯器視窗。",
+        "restart": "重新啟動 Codex 守護行程",
+        "confirmTitle": "重新啟動 Codex 守護行程？",
+        "confirmMessage": "所有終端機裡的 codex 共用這個守護行程，正在執行的任務會被中斷。重新啟動後重開 codex，就能看到 Stack 模型。",
+        "confirm": "重新啟動",
+        "restarted": "Codex 守護行程已重新啟動，重開 codex 就能看到 Stack 模型",
+        "notRunning": "Codex 守護行程沒有在執行，下次開啟 codex 時會讀到新的模型清單",
+        "failed": "重新啟動 Codex 守護行程失敗：{{error}}"
+      }
     },
     "failover": {
       "proxyRequired": "需要先啟動路由服務才能設定故障轉移",

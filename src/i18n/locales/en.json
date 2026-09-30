@@ -2918,7 +2918,19 @@
         "inactive": "Enter Stack mode: add several providers and all their models appear in the {{appLabel}} model list"
       },
       "ariaLabel": "{{appLabel}} Stack mode",
-      "failoverUnavailable": "{{appLabel}} is in Stack mode, which has no failover. The queue and settings are kept and apply again in routing mode"
+      "failoverUnavailable": "{{appLabel}} is in Stack mode, which has no failover. The queue and settings are kept and apply again in routing mode",
+      "codexStale": {
+        "title": "Codex is still using an old model list, so Stack models won't show",
+        "daemon": "CLI: reopening codex isn't enough; its background daemon needs a restart.",
+        "others": "Desktop app: quit it completely and reopen it (⌘Q on macOS; closing the window isn't enough). Editor extensions: reopen the editor window.",
+        "restart": "Restart Codex daemon",
+        "confirmTitle": "Restart the Codex daemon?",
+        "confirmMessage": "Every codex session in your terminals shares this daemon, so running tasks will be interrupted. Reopen codex afterwards to see the Stack models.",
+        "confirm": "Restart",
+        "restarted": "Codex daemon restarted. Reopen codex to see the Stack models",
+        "notRunning": "The Codex daemon isn't running. codex will load the new model list the next time it starts",
+        "failed": "Failed to restart the Codex daemon: {{error}}"
+      }
     },
     "failover": {
       "proxyRequired": "Routing service must be started to configure failover",

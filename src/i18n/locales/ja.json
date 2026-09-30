@@ -2918,7 +2918,19 @@
         "inactive": "Stack モードに入る：複数のプロバイダーを追加し、それらのモデルをすべて {{appLabel}} のモデル一覧に表示します"
       },
       "ariaLabel": "{{appLabel}} の Stack モード",
-      "failoverUnavailable": "{{appLabel}} は Stack モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります"
+      "failoverUnavailable": "{{appLabel}} は Stack モードのため、フェイルオーバーは行いません。キューと設定は保持され、ルーティングモードに戻すと再び有効になります",
+      "codexStale": {
+        "title": "Codex が古いモデル一覧を使っているため、Stack モデルが表示されません",
+        "daemon": "CLI：codex を開き直すだけでは反映されません。バックグラウンドのデーモンを再起動する必要があります。",
+        "others": "デスクトップ版：完全に終了してから開き直してください（macOS では ⌘Q。ウィンドウを閉じるだけでは不十分です）。エディター拡張：エディターのウィンドウを開き直してください。",
+        "restart": "Codex デーモンを再起動",
+        "confirmTitle": "Codex デーモンを再起動しますか？",
+        "confirmMessage": "ターミナルで動いているすべての codex がこのデーモンを共有しているため、実行中のタスクは中断されます。再起動後に codex を開き直すと Stack モデルが表示されます。",
+        "confirm": "再起動",
+        "restarted": "Codex デーモンを再起動しました。codex を開き直すと Stack モデルが表示されます",
+        "notRunning": "Codex デーモンは動いていません。次に codex を起動したときに新しいモデル一覧が読み込まれます",
+        "failed": "Codex デーモンの再起動に失敗しました：{{error}}"
+      }
     },
     "failover": {
       "proxyRequired": "フェイルオーバーを設定するには、ルーティングサービスを先に起動する必要があります",

@@ -7,6 +7,7 @@ import type {
   AppProxyConfig,
   ProxyStack,
   ProxyStackNotice,
+  CodexDaemonRestartOutcome,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -74,6 +75,12 @@ export const proxyApi = {
     enabled: boolean,
   ): Promise<ProxyStackNotice | null> {
     return invoke("set_proxy_stack_member", { appType, providerId, enabled });
+  },
+
+  // 重启 Codex 的托管守护进程（codex 命令行连的那个），让它重读模型目录。会中断正在运行的
+  // 任务，只在用户确认之后调
+  async restartCodexAppServerDaemon(): Promise<CodexDaemonRestartOutcome> {
+    return invoke("restart_codex_app_server_daemon");
   },
 
   // ========== v3+ 全局/应用级配置 API ==========

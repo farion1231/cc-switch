@@ -1075,7 +1075,10 @@ pub(crate) fn run_with_edits(
         });
     }
 
-    write.run(op, &changes, pending)
+    let report = write.run(op, &changes, pending);
+    // 按磁盘上的实际内容记新启动的 Codex 会读到的目录：失败时可能已经发布了一部分。
+    super::codex_client_catalog::observe(store);
+    report
 }
 
 /// 直连写入：`prepare` → `plan` → `run`。

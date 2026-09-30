@@ -95,14 +95,26 @@ pub fn get_direct_provider(
     crate::mode::controller::direct_provider_id(state.inner(), &app).map_err(|e| e.to_string())
 }
 
-/// Stack 模型：名单里的每一家和它发布的模型 id
+/// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端
 #[tauri::command]
-pub fn get_proxy_stack(
+pub async fn get_proxy_stack(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<crate::mode::stack::StackView, String> {
     let app = require_proxy_app(&app_type)?;
-    crate::mode::controller::stack_views(state.inner(), &app)
+    crate::mode::controller::stack_view_with_clients(state.inner(), &app).await
+}
+
+/// 重启 Codex 的托管守护进程（`codex` TUI 连的那个），让它重读模型目录。会中断守护进程里
+/// 正在运行的任务，只在用户确认之后调。
+#[tauri::command]
+pub async fn restart_codex_app_server_daemon(
+) -> Result<crate::services::provider::codex_client_catalog::RestartOutcome, String> {
+    crate::services::provider::codex_direct::off_runtime(
+        crate::services::provider::codex_client_catalog::restart_daemon,
+    )
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Stack 模型：把一家加入或移出名单（`enabled` 是目标值）。成功时返回客户端看不到或看不全

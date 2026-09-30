@@ -26,6 +26,7 @@ use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{env_string, has_one_m_marker, ONE_M_MARKER_FOR_CLIENT};
 use crate::provider::{ClaudeStackModel, Provider};
 use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
+use crate::services::provider::codex_client_catalog::StaleClients;
 
 use super::state::{self, StackState};
 
@@ -596,6 +597,9 @@ pub struct StackView {
     /// 暂不可用。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<&'static str>,
+    /// Codex 客户端还在用旧的模型列表（启动时读的目录），Stack 模型看不到，要重启才行。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_clients: Option<StaleClients>,
 }
 
 pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {

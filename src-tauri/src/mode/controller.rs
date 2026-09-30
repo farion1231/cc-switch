@@ -31,6 +31,7 @@ use crate::live::project::claude::{
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
 use crate::provider::Provider;
+use crate::services::provider::codex_client_catalog;
 use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::codex_official_models;
 use crate::services::provider::{claude_direct, gemini_direct, grok_direct};
@@ -1008,7 +1009,38 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
         active: mode.is_proxy() && stack.enabled,
         members: stack::member_views(&members),
         notice,
+        stale_clients: None,
     })
+}
+
+/// [`stack_views`] 再加上 Codex 客户端是不是还在用旧的模型列表（要读进程表，放到阻塞线程池
+/// 里）。路由那家自己管理目录、或者用户自己指定了目录时，Stack 模型本来就不发布或不生效，重启
+/// 也看不到，已经有 `notice` 说明，不再查。
+pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
+    let mut view = stack_views(state, app)?;
+    if matches!(app, AppType::Codex)
+        && view.active
+        && !matches!(view.notice, Some("routeOwnsCatalog" | "configOwnsCatalog"))
+        && codex_publishes_stack_models(state, &settled_stack(app)?)
+    {
+        view.stale_clients = codex_direct::off_runtime(|| {
+            codex_client_catalog::stale_clients(&DeviceStore::for_device())
+        })
+        .await
+        .map_err(err)?;
+    }
+    Ok(view)
+}
+
+/// Codex 接着代理，名单里有要发布的 Stack 模型。
+fn codex_publishes_stack_models(state: &AppState, stack: &StackState) -> bool {
+    attached_route(state, &AppType::Codex)
+        .ok()
+        .flatten()
+        .is_some_and(|(_, route)| {
+            stack::published_members(&state.db, &AppType::Codex, stack, Some(&route.id))
+                .is_ok_and(|published| !published.is_empty())
+        })
 }
 
 /// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
@@ -1224,6 +1256,8 @@ pub async fn startup(state: &AppState) {
     }
     // 接上失败退回直连的应用可能已经把代理拉起来了。
     stop_server_if_unused(state).await;
+    // 记一次新启动的 Codex 会读到的目录：兜住启动时补完的操作和 CC Switch 没开时的外部修改。
+    codex_client_catalog::observe(&DeviceStore::for_device());
 }
 
 async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
@@ -5346,6 +5380,121 @@ model_provider = "c"
             .await
             .expect("detach");
         assert_eq!(notice, None);
+    }
+
+    /// 假的进程表和时钟（见 `codex_client_catalog::Env`），结束时换回真的。
+    struct FakeClients {
+        now_ms: Arc<std::sync::atomic::AtomicU64>,
+        table: Arc<std::sync::Mutex<String>>,
+    }
+
+    impl FakeClients {
+        const START_MS: u64 = 1_800_000_000_000;
+
+        fn install() -> Self {
+            let now_ms = Arc::new(std::sync::atomic::AtomicU64::new(Self::START_MS));
+            let table = Arc::new(std::sync::Mutex::new(String::new()));
+            let (clock, rows) = (now_ms.clone(), table.clone());
+            codex_client_catalog::set_test_env(codex_client_catalog::Env {
+                process_table: Box::new(move || Some(rows.lock().unwrap().clone())),
+                now_ms: Box::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+                restart: Box::new(|_| Err("not in tests".to_string())),
+            });
+            Self { now_ms, table }
+        }
+
+        /// 桌面版的 app-server，已经跑了 `etime`（`ps` 的格式）。
+        fn desktop_running_for(&self, etime: &str) {
+            *self.table.lock().unwrap() = format!(
+                "62347 {etime} /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c features.code_mode_host=true app-server"
+            );
+        }
+
+        fn advance(&self, ms: u64) {
+            self.now_ms
+                .fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl Drop for FakeClients {
+        fn drop(&mut self) {
+            codex_client_catalog::reset_test_env();
+        }
+    }
+
+    async fn stale_clients_of(state: &AppState) -> Option<codex_client_catalog::StaleClients> {
+        stack_view_with_clients(state, &AppType::Codex)
+            .await
+            .expect("stack view")
+            .stale_clients
+    }
+
+    /// 桌面版在目录变化之前启动：Stack 视图带上 `staleClients`；之后启动的不算旧。路由模式、
+    /// 路由那家自己管理目录（Stack 模型本来就不发布）时不查。
+    #[tokio::test]
+    #[serial]
+    async fn codex_stack_view_reports_clients_on_an_old_catalog() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        seed_codex("", None);
+        clients.desktop_running_for("10:00");
+        let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(
+            stale_clients_of(&state).await,
+            Some(codex_client_catalog::StaleClients {
+                daemon: false,
+                others: true
+            })
+        );
+        // 普通的 Stack 视图不读进程表。
+        assert_eq!(
+            stack_views(&state, &AppType::Codex).unwrap().stale_clients,
+            None
+        );
+
+        // 桌面版重开之后启动：读到的正是现在这份目录。
+        clients.advance(10_000);
+        clients.desktop_running_for("00:05");
+        assert_eq!(stale_clients_of(&state).await, None);
+
+        // 目录又变了（再加一家）：刚才那个桌面版又旧了。
+        clients.advance(10_000);
+        set_codex_member(&state, "zhipu", true).await;
+        clients.desktop_running_for("00:15");
+        assert!(stale_clients_of(&state).await.is_some());
+
+        // 换成路由模式：不是 Stack 模式，不查。
+        enter(&state, &AppType::Codex, false)
+            .await
+            .expect("routing");
+        clients.desktop_running_for("10:00");
+        assert_eq!(stale_clients_of(&state).await, None);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_route_with_its_own_catalog_skips_the_client_check() {
+        let _home = Home::new();
+        let clients = FakeClients::install();
+        seed_codex("", None);
+        clients.desktop_running_for("10:00");
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"/opt/team/models.json\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        let view = stack_view_with_clients(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert_eq!(view.notice, Some("routeOwnsCatalog"));
+        assert_eq!(view.stale_clients, None);
     }
 
     /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。
