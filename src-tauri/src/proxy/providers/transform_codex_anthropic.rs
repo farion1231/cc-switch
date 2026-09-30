@@ -612,15 +612,35 @@ fn convert_input_to_messages(
             Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
                 let output = tool_result_content_from_responses_item(item);
-                let mut block = json!({
-                    "type": "tool_result",
-                    "tool_use_id": call_id,
-                    "content": output.content
-                });
-                if output.is_error {
-                    block["is_error"] = json!(true);
+                if call_id.trim().is_empty() {
+                    match output.content {
+                        Value::String(s) => {
+                            if is_meaningful_text(&s) {
+                                push_block(
+                                    &mut messages,
+                                    "user",
+                                    json!({ "type": "text", "text": s }),
+                                );
+                            }
+                        }
+                        Value::Array(arr) => {
+                            for block in arr {
+                                push_block(&mut messages, "user", block);
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    let mut block = json!({
+                        "type": "tool_result",
+                        "tool_use_id": call_id,
+                        "content": output.content
+                    });
+                    if output.is_error {
+                        block["is_error"] = json!(true);
+                    }
+                    push_tool_result_block(&mut messages, block);
                 }
-                push_tool_result_block(&mut messages, block);
             }
             Some("input_text") => {
                 if let Some(text) = item
@@ -3052,4 +3072,38 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
         );
         assert!(anthropic_sse_to_message_value(sse).is_err());
     }
+
+    #[test]
+    fn test_responses_to_anthropic_synthetic_heartbeat_without_call_id() {
+        let input = json!({
+            "model": "claude-sonnet-4-5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "start task" }]
+                },
+                {
+                    "type": "function_call_output",
+                    "id": "fco_01a052f8",
+                    "name": "automation_update",
+                    "namespace": "codex_app",
+                    "output": "<heartbeat>\n  <instructions>check progress</instructions>\n</heartbeat>"
+                }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["text"], "start task");
+        assert_eq!(
+            content[1]["text"],
+            "<heartbeat>\n  <instructions>check progress</instructions>\n</heartbeat>"
+        );
+    }
 }
+
