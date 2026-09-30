@@ -454,6 +454,76 @@ mod tests {
         body: Value,
     }
 
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn codex_official_models_require_client_auth_on_both_aliases() {
+        struct RestoreHome(Option<std::ffi::OsString>);
+        impl Drop for RestoreHome {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+                let _ = crate::settings::reload_settings();
+            }
+        }
+        let home = tempfile::tempdir().unwrap();
+        let _restore = RestoreHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let mut provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({"auth": {}, "config": "model_provider = \"openai\""}),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        db.save_provider("codex", &provider).unwrap();
+        db.set_current_provider("codex", &provider.id).unwrap();
+        let proxy = ProxyServer::new(ProxyConfig::default(), db.clone(), None);
+
+        for path in ["/models", "/v1/models"] {
+            for authorization in [None, Some("Bearer PROXY_MANAGED")] {
+                let mut request =
+                    http::Request::builder().uri(format!("{path}?client_version=0.155.0"));
+                if let Some(value) = authorization {
+                    request = request.header(header::AUTHORIZATION, value);
+                }
+                let response = tower::Service::call(
+                    &mut proxy.build_router(),
+                    request.body(axum::body::Body::empty()).unwrap(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+            }
+        }
+
+        // Switching back to a third-party provider must restore local catalog
+        // handling, without requiring or sending native ChatGPT credentials.
+        let custom = Provider::with_id(
+            "custom-catalog-provider".to_string(),
+            "Custom".to_string(),
+            json!({"base_url": "http://127.0.0.1:1/v1", "auth": {"OPENAI_API_KEY": "custom-key"}}),
+            None,
+        );
+        db.save_provider("codex", &custom).unwrap();
+        db.set_current_provider("codex", &custom.id).unwrap();
+        for path in ["/models", "/v1/models"] {
+            let response = tower::Service::call(
+                &mut proxy.build_router(),
+                http::Request::builder()
+                    .uri(path)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+
     /// A base URL pasted as a complete endpoint with the full-URL switch left off
     /// must derive the sibling standalone endpoint instead of having the
     /// standalone path appended to it.
