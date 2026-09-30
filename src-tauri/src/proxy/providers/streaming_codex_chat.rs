@@ -80,6 +80,7 @@ struct ChatToResponsesState {
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
     tool_context: CodexToolContext,
+    last_message_snapshot: String,
     /// 本回合因缺少合法函数名而被丢弃的工具调用数（见 `finalize_tools`）。
     dropped_tool_calls: usize,
 }
@@ -102,6 +103,7 @@ impl Default for ChatToResponsesState {
             latest_usage: None,
             finish_reason: None,
             tool_context: CodexToolContext::default(),
+            last_message_snapshot: String::new(),
             dropped_tool_calls: 0,
         }
     }
@@ -150,10 +152,8 @@ impl ChatToResponsesState {
                 self.append_reasoning_to_active_tools(&reasoning);
             }
 
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
-                }
+            if let Some(content) = delta.get("content").and_then(chat_delta_content_text) {
+                events.extend(self.push_content_delta(&content));
             }
 
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
@@ -164,6 +164,25 @@ impl ChatToResponsesState {
                     events.extend(
                         self.push_tool_call_delta(tool_call, reasoning_for_tool_call.as_deref()),
                     );
+                }
+            }
+        }
+
+        if let Some(message) = choice.get("message") {
+            if let Some(content) = message.get("content").and_then(chat_delta_content_text) {
+                if self.text.text.is_empty() {
+                    events.extend(self.push_content_delta(&content));
+                    self.last_message_snapshot = content;
+                } else if let Some(remainder) = content.strip_prefix(&self.text.text) {
+                    if !remainder.is_empty() {
+                        events.extend(self.push_content_delta(remainder));
+                        self.last_message_snapshot = content;
+                    }
+                } else if let Some(remainder) = content.strip_prefix(&self.last_message_snapshot) {
+                    if !remainder.is_empty() {
+                        events.extend(self.push_content_delta(remainder));
+                        self.last_message_snapshot = content;
+                    }
                 }
             }
         }
@@ -775,6 +794,24 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
+fn chat_delta_content_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    let parts = value.as_array()?;
+    let text: String = parts
+        .iter()
+        .filter_map(|part| match part.get("type").and_then(|v| v.as_str()) {
+            Some(t) if t != "text" => None,
+            _ => part
+                .get("text")
+                .and_then(|v| v.as_str())
+                .or_else(|| part.as_str()),
+        })
+        .collect();
+    (!text.is_empty()).then_some(text)
+}
+
 enum ThinkPrefixDecision {
     NeedMore,
     Reasoning,
@@ -981,6 +1018,74 @@ mod tests {
             2
         );
         assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
+    }
+
+    #[tokio::test]
+    async fn converts_content_parts_array_chat_sse_to_responses_sse() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parts\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"Hel\"}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parts\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"lo\"}]},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hel\""));
+        assert!(output.contains("\"delta\":\"lo\""));
+        assert!(output.contains("\"text\":\"Hello\""));
+    }
+
+    #[tokio::test]
+    async fn converts_message_snapshot_chat_sse_to_responses_sse() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_msg\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_msg\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Full answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Full answer\""));
+        assert!(output.contains("\"text\":\"Full answer\""));
+    }
+
+    #[tokio::test]
+    async fn reconciles_cumulative_message_snapshots() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_cum\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_cum\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hel\""));
+        assert!(output.contains("\"delta\":\"lo\""));
+        assert!(output.contains("\"text\":\"Hello\""));
+    }
+
+    #[tokio::test]
+    async fn appends_message_snapshot_remainder_after_partial_delta() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_rem\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_rem\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hel\""));
+        assert!(output.contains("\"delta\":\"lo\""));
+        assert!(output.contains("\"text\":\"Hello\""));
+    }
+
+    #[tokio::test]
+    async fn content_parts_array_ignores_non_text_parts() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parts2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"image\",\"image_url\":\"x\"},{\"type\":\"text\",\"text\":\"Hi\"}]},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hi\""));
+        assert!(!output.contains("image_url"));
+        assert!(output.contains("\"text\":\"Hi\""));
     }
 
     #[tokio::test]
