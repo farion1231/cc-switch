@@ -818,6 +818,25 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    if (
+      activeApp === "opencode" &&
+      provider.category !== "omo" &&
+      provider.category !== "omo-slim"
+    ) {
+      const { npm, models } = provider.settingsConfig;
+      if (
+        typeof npm !== "string" ||
+        !npm.trim() ||
+        !models ||
+        typeof models !== "object" ||
+        Array.isArray(models) ||
+        Object.keys(models).length === 0
+      ) {
+        toast.error(t("opencode.duplicateRequiresDefinition"));
+        return;
+      }
+    }
+
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
