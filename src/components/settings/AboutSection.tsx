@@ -84,6 +84,7 @@ interface PendingUpgrade {
   toolNames: ToolName[];
   plans: ToolInstallationReport[];
   fromBatchEntry: boolean;
+  wslShellByTool: Record<string, WslShellPreference>;
 }
 
 type WslShellPreference = {
@@ -229,6 +230,8 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
 // 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
 const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
 const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
+let toolVersionRequestSequence = 0;
+const latestToolVersionRequests = new Map<string, number>();
 
 interface ToolManagementState {
   toolVersionsCache: { data: ToolVersion[]; at: number } | null;
@@ -344,6 +347,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     ): Promise<ToolVersion[]> => {
       if (toolNames.length === 0) return [];
 
+      // 请求顺序跨组件挂载保留，旧页面的迟到响应不能覆盖后续刷新或升级结果。
+      const requestId = ++toolVersionRequestSequence;
+      toolNames.forEach((name) =>
+        latestToolVersionRequests.set(name, requestId),
+      );
+
       // 单工具刷新使用统一后端入口（get_tool_versions）并带工具过滤。
       setLoadingTools((prev) => {
         const next = { ...prev };
@@ -356,6 +365,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           toolNames,
           wslOverrides,
         );
+        const current = updated.filter(
+          (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+        );
+        if (current.length === 0) return [];
 
         // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
         // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
@@ -364,20 +377,24 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         const cache = toolManagementState.toolVersionsCache;
         updateToolManagementState({
           toolVersionsCache: {
-            data: mergeToolVersions(cache?.data ?? [], updated),
+            data: mergeToolVersions(cache?.data ?? [], current),
             at: cache?.at ?? 0,
           },
         });
 
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
-        return updated;
+        return current;
       } catch (error) {
         console.error("[AboutSection] Failed to refresh tools", error);
         return [];
       } finally {
         setLoadingTools((prev) => {
           const next = { ...prev };
-          for (const name of toolNames) next[name] = false;
+          for (const name of toolNames) {
+            if (latestToolVersionRequests.get(name) === requestId) {
+              next[name] = false;
+            }
+          }
           return next;
         });
       }
@@ -634,7 +651,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   // 已通过必要的确认后，各工具独立提交、刷新和解锁；安装写入由后端串行调度。
   const executeRun = useCallback(
-    async (toolNames: ToolName[], action: ToolLifecycleAction) => {
+    async (
+      toolNames: ToolName[],
+      action: ToolLifecycleAction,
+      wslOverrides: Record<string, WslShellPreference>,
+    ) => {
       const isBatch = toolNames.length > 1;
 
       // 每个工具独立调用后端，一个失败不会中断其它工具。
@@ -658,12 +679,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             await settingsApi.runToolLifecycleAction(
               [toolName],
               action,
-              wslShellByTool,
+              wslOverrides,
             );
             // 静默执行真正结束后刷新该工具版本，卡片立即反映结果。
             const refreshed = await refreshToolVersions(
               [toolName],
-              wslShellByTool,
+              wslOverrides,
             );
             const tool = refreshed.find((t) => t.name === toolName);
             if (tool?.version) {
@@ -800,7 +821,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     },
     [
       t,
-      wslShellByTool,
       toolVersionByName,
       refreshToolVersions,
       diagnoseToolSilently,
@@ -819,6 +839,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         (name) => !toolManagementState.busyTools.has(name),
       );
       if (toolNames.length === 0) return;
+      // 确认可能发生在重新挂载的页面，执行与结果刷新均使用提交时的参数快照。
+      const wslOverrides = Object.fromEntries(
+        Object.entries(wslShellByTool).map(([name, pref]) => [
+          name,
+          { ...pref },
+        ]),
+      );
       updateToolManagementState({
         busyTools: new Map([
           ...toolManagementState.busyTools,
@@ -835,7 +862,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       try {
         if (action === "install") {
           toolsToRelease = [];
-          await executeRun(toolNames, action);
+          await executeRun(toolNames, action, wslOverrides);
           return;
         }
         let reports: ToolInstallationReport[];
@@ -845,7 +872,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           // 探测失败不应阻断升级：退回直接执行（等同旧行为）。
           console.error("[AboutSection] probeToolInstallations failed", error);
           toolsToRelease = [];
-          await executeRun(toolNames, action);
+          await executeRun(toolNames, action, wslOverrides);
           return;
         }
         // 认不出安装渠道的原生安装（winget / Scoop / 手动下载的二进制等）不执行升级：
@@ -877,14 +904,19 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           (r) => r.needs_confirmation && !r.unmanaged,
         );
         if (needConfirm.length === 0) {
-          await executeRun(runnableTools, action);
+          await executeRun(runnableTools, action, wslOverrides);
           return;
         }
         // 并发探测的确认按到达顺序排队，切页后也能继续确认或取消。
         updateToolManagementState({
           pendingUpgrades: [
             ...toolManagementState.pendingUpgrades,
-            { toolNames: runnableTools, plans: needConfirm, fromBatchEntry },
+            {
+              toolNames: runnableTools,
+              plans: needConfirm,
+              fromBatchEntry,
+              wslShellByTool: wslOverrides,
+            },
           ],
         });
       } finally {
@@ -894,7 +926,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         releaseTools(toolsToRelease);
       }
     },
-    [executeRun, releaseTools, t],
+    [executeRun, releaseTools, t, wslShellByTool],
   );
 
   const handleConfirmUpgrade = useCallback(() => {
@@ -906,11 +938,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     updateToolManagementState({
       pendingUpgrades: toolManagementState.pendingUpgrades.slice(1),
     });
-    const { toolNames, fromBatchEntry } = pendingUpgrade;
+    const {
+      toolNames,
+      fromBatchEntry,
+      wslShellByTool: wslOverrides,
+    } = pendingUpgrade;
     if (fromBatchEntry) {
       updateToolManagementState({ batchAction: "update" });
     }
-    void executeRun(toolNames, "update").finally(() => {
+    void executeRun(toolNames, "update", wslOverrides).finally(() => {
       if (fromBatchEntry) {
         updateToolManagementState({ batchAction: null });
       }

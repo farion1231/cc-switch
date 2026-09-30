@@ -8,7 +8,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ToolInstallationReport } from "@/lib/api/settings";
+import type { settingsApi, ToolInstallationReport } from "@/lib/api/settings";
+
+type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
 const mocks = vi.hoisted(() => ({
   getToolVersions: vi.fn(),
@@ -282,6 +284,117 @@ describe("AboutSection concurrent CLI upgrades", () => {
       expect(mocks.success).not.toHaveBeenCalled();
     },
   );
+
+  it("ignores a late probe from the old page after the remounted page upgrades a tool", async () => {
+    const stale = deferred<ToolVersions>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    let firstClaudeProbe = true;
+    let oldResult: ToolVersions = [];
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      if (tools.includes("claude") && firstClaudeProbe) {
+        firstClaudeProbe = false;
+        oldResult = await getVersions(tools);
+        return stale.promise;
+      }
+      return getVersions(tools);
+    });
+    const { AboutSection } = await import("@/components/settings/AboutSection");
+    const view = render(<AboutSection isPortable={false} />);
+    await waitFor(() => expect(mocks.getToolVersions).toHaveBeenCalledTimes(9));
+    view.unmount();
+    const remounted = await renderAbout();
+    fireEvent.click(updateButton("Claude Code"));
+    await waitFor(() =>
+      expect(
+        card("Claude Code").queryByText("settings.toolReady"),
+      ).not.toBeNull(),
+    );
+
+    await act(async () => stale.resolve(oldResult));
+    expect(
+      card("Claude Code").queryByText("settings.toolReady"),
+    ).not.toBeNull();
+    expect(card("Claude Code").queryByText("1.0.0")).not.toBeInTheDocument();
+    remounted.unmount();
+    await renderAbout();
+    expect(
+      card("Claude Code").getByText("settings.toolReady"),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves WSL execution and refresh parameters when confirming a mixed batch after remount", async () => {
+    const preflight = deferred<ToolInstallationReport[]>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((tool) =>
+        tool.name === "claude"
+          ? { ...tool, env_type: "wsl", wsl_distro: "Ubuntu" }
+          : tool,
+      ),
+    );
+    mocks.probeToolInstallations.mockImplementationOnce(
+      () => preflight.promise,
+    );
+    const scrollIntoView = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    try {
+      const user = userEvent.setup();
+      const view = await renderAbout();
+      await user.click(card("Claude Code").getAllByRole("combobox")[0]);
+      await user.click(screen.getByRole("option", { name: "bash" }));
+      await waitFor(() => expect(updateButton("Claude Code")).toBeEnabled());
+      await user.click(card("Claude Code").getAllByRole("combobox")[1]);
+      await user.click(screen.getByRole("option", { name: "-lic" }));
+      await waitFor(() => expect(updateButton("Claude Code")).toBeEnabled());
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.updateAllTools" }),
+      );
+      view.unmount();
+      // WSL tools do not request confirmation themselves; a native tool in
+      // the same batch can hold the whole batch pending confirmation.
+      await act(async () =>
+        preflight.resolve([
+          report("claude"),
+          report("codex", { needs_confirmation: true }),
+          report("gemini"),
+        ]),
+      );
+      await renderAbout();
+      mocks.getToolVersions.mockClear();
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.toolUpgradeConfirmBtn" }),
+      );
+      await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
+      const preferences = {
+        claude: { wslShell: "bash", wslShellFlag: "-lic" },
+      };
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+        ["claude"],
+        "update",
+        preferences,
+      );
+      expect(mocks.getToolVersions).toHaveBeenCalledWith(
+        ["claude"],
+        preferences,
+      );
+    } finally {
+      if (scrollIntoView) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          scrollIntoView,
+        );
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      }
+    }
+  });
 
   it("preserves batch progress across remounts and updates each completed tool", async () => {
     const runs = new Map(
