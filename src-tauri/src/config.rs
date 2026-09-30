@@ -356,19 +356,29 @@ pub fn write_json_file_with_contents<T: Serialize>(
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
 
+    let contents = sorted_json_bytes(data)?;
+    atomic_write(path, &contents)?;
+    Ok(contents)
+}
+
+pub(crate) fn sorted_json_bytes<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
     let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
     let sorted_value = sort_json_keys(&value);
     let json = serde_json::to_string_pretty(&sorted_value)
         .map_err(|e| AppError::JsonSerialize { source: e })?;
-
-    let contents = json.into_bytes();
-    atomic_write(path, &contents)?;
-    Ok(contents)
+    Ok(json.into_bytes())
 }
 
 /// 写入 JSON 配置文件（键按字母排序，确保确定性输出）
 pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
     write_json_file_with_contents(path, data).map(|_| ())
+}
+
+/// 同 [`write_json_file`]，用于含凭据的 live 文件（Codex `auth.json`、Claude Code
+/// `settings.json`）：Unix 下新文件和替换文件都是 0600。普通写入新建文件时按 umask
+/// 落成 0644，Key 就对同机其他用户可读。
+pub fn write_json_file_private<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
+    atomic_write_private(path, &sorted_json_bytes(data)?)
 }
 
 /// 原子写入文本文件（用于 TOML/纯文本）
@@ -377,6 +387,12 @@ pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
     atomic_write(path, data.as_bytes())
+}
+
+/// 同 [`write_text_file`]，用于含凭据的 live 文件（Codex / Grok Build 的
+/// `config.toml`，第三方 Key 就写在里面）：Unix 下 0600。
+pub fn write_text_file_private(path: &Path, data: &str) -> Result<(), AppError> {
+    atomic_write_private(path, data.as_bytes())
 }
 
 /// 原子写入：写入临时文件后 rename 替换，避免半写状态
@@ -394,6 +410,38 @@ fn atomic_write_with_unix_mode(
     data: &[u8],
     unix_mode: Option<u32>,
 ) -> Result<(), AppError> {
+    stage_write(path, data, unix_mode, false)?.commit()
+}
+
+/// 已写好、还没替换目标的临时文件。原子写的前半步：写入引擎先把一次操作涉及的
+/// 所有文件都备好临时文件、记下写前意图，再逐个 [`StagedWrite::commit`]。
+#[derive(Debug)]
+pub struct StagedWrite {
+    tmp: PathBuf,
+    path: PathBuf,
+}
+
+impl StagedWrite {
+    pub fn tmp_path(&self) -> &Path {
+        &self.tmp
+    }
+
+    /// 用临时文件替换目标（失败时删掉临时文件）。
+    pub fn commit(self) -> Result<(), AppError> {
+        commit_staged(&self.tmp, &self.path).inspect_err(|_| {
+            let _ = fs::remove_file(&self.tmp);
+        })
+    }
+}
+
+/// 写入临时文件：Unix 下 `unix_mode` 为 `None` 时沿用目标文件现有的权限位。
+/// `durable` 为真时写完先 fsync，崩溃恢复要靠这份临时文件前滚。
+pub(crate) fn stage_write(
+    path: &Path,
+    data: &[u8],
+    unix_mode: Option<u32>,
+    durable: bool,
+) -> Result<StagedWrite, AppError> {
     #[cfg(not(unix))]
     let _ = unix_mode;
 
@@ -442,7 +490,11 @@ fn atomic_write_with_unix_mode(
         Err(AppError::io(&candidate, source))
     })()?;
 
-    if let Err(source) = file.write_all(data).and_then(|_| file.flush()) {
+    let written = file
+        .write_all(data)
+        .and_then(|_| file.flush())
+        .and_then(|_| if durable { file.sync_all() } else { Ok(()) });
+    if let Err(source) = written {
         drop(file);
         let _ = fs::remove_file(&tmp);
         return Err(AppError::io(&tmp, source));
@@ -463,6 +515,17 @@ fn atomic_write_with_unix_mode(
         }
     }
 
+    Ok(StagedWrite {
+        tmp,
+        path: path.to_path_buf(),
+    })
+}
+
+/// 原子写的后半步：用 `tmp` 替换 `path`。崩溃恢复也用它提交上次留下的临时文件。
+///
+/// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
+/// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
+pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -511,7 +574,7 @@ fn atomic_write_with_unix_mode(
                 break;
             }
 
-            match fs::rename(&tmp, path) {
+            match fs::rename(tmp, path) {
                 Ok(()) => {
                     completed = true;
                     break;
@@ -533,7 +596,6 @@ fn atomic_write_with_unix_mode(
 
         if !completed {
             let source = last_error.unwrap_or_else(std::io::Error::last_os_error);
-            let _ = fs::remove_file(&tmp);
             return Err(AppError::IoContext {
                 context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
                 source,
@@ -543,8 +605,7 @@ fn atomic_write_with_unix_mode(
 
     #[cfg(not(windows))]
     {
-        if let Err(source) = fs::rename(&tmp, path) {
-            let _ = fs::remove_file(&tmp);
+        if let Err(source) = fs::rename(tmp, path) {
             return Err(AppError::IoContext {
                 context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
                 source,
@@ -583,6 +644,24 @@ mod tests {
     fn atomic_write_replaces_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         assert_atomic_write_replaces_existing_file(dir.path());
+    }
+
+    #[test]
+    fn a_failed_replace_keeps_the_staged_file_for_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        // 目标是个非空目录：替换一定失败。
+        let path = dir.path().join("target");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("occupied"), b"x").unwrap();
+        let staged = stage_write(&path, b"new contents", Some(0o600), false).unwrap();
+        let tmp = staged.tmp_path().to_path_buf();
+
+        assert!(commit_staged(&tmp, &path).is_err());
+        assert_eq!(std::fs::read(&tmp).unwrap(), b"new contents");
+
+        // 一次性的原子写不留临时文件。
+        assert!(staged.commit().is_err());
+        assert!(!tmp.exists());
     }
 
     #[cfg(windows)]

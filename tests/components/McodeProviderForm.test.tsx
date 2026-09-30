@@ -1,8 +1,17 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { McodeProviderForm } from "@/components/providers/forms/McodeProviderForm";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
+import { setProviders } from "../msw/state";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -21,6 +30,13 @@ vi.mock("@/components/JsonEditor", () => ({
     />
   ),
 }));
+
+const render = (ui: ReactElement) =>
+  rtlRender(
+    <QueryClientProvider client={createTestQueryClient()}>
+      {ui}
+    </QueryClientProvider>,
+  );
 
 const original = {
   kind: "custom",
@@ -113,6 +129,66 @@ describe("McodeProviderForm", () => {
     expect(saved.options.apiKey).toBe("test-key");
     expect(saved).not.toHaveProperty("npm");
     expect(saved.models).toHaveProperty("MiniMax-M3");
+    expect(submit.mock.calls[0][0].providerKey).toBe("cc-switch-mini-max");
+  });
+
+  it("requires a well-formed, unused provider key for new providers", async () => {
+    setProviders("mcode", {
+      taken: { id: "taken", name: "Taken", settingsConfig: original },
+    });
+    const submit = vi.fn();
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Minimax MiniMax$/ }));
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "test-key" },
+    });
+    const key = screen.getByLabelText(/opencode\.providerKey/);
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(key).toHaveValue("cc-switch-mini-max");
+    expect(save).toBeEnabled();
+
+    fireEvent.change(key, { target: { value: "" } });
+    expect(save).toBeDisabled();
+    fireEvent.change(key, { target: { value: "-bad-" } });
+    expect(screen.getByText("opencode.providerKeyInvalid")).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    fireEvent.change(key, { target: { value: "taken" } });
+    expect(
+      await screen.findByText("opencode.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+    expect(save).toBeDisabled();
+
+    fireEvent.change(key, { target: { value: "My Key!" } });
+    expect(key).toHaveValue("mykey");
+    fireEvent.click(save);
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0].providerKey).toBe("mykey");
+  });
+
+  it("locks the provider key when editing", () => {
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        providerId="existing"
+        initialData={{ name: "Existing", settingsConfig: original }}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const key = screen.getByLabelText(/opencode\.providerKey/);
+    expect(key).toHaveValue("existing");
+    expect(key).toBeDisabled();
+    expect(
+      screen.getByText("opencode.providerKeyLockedHint"),
+    ).toBeInTheDocument();
   });
 
   it("keeps invalid JSON drafts from breaking the structured fields", () => {

@@ -668,6 +668,114 @@ export const piModelCatalog = {
       maxTokens: 32_768,
     },
   },
+  "deepseek/deepseek-flash": {
+    capabilities: {
+      name: "DeepSeek V4.1 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 384000,
+    },
+  },
+  "stepfun/step-5-preview": {
+    capabilities: {
+      name: "Step 5 Preview",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 64000,
+    },
+  },
+  "stepfun/step-3.7-flash": {
+    capabilities: {
+      name: "Step 3.7 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 256000,
+      maxTokens: 256000,
+    },
+  },
+  "anthropic/claude-opus-5.5": {
+    capabilities: {
+      name: "Claude Opus 5.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "anthropic/claude-fable-5.1": {
+    capabilities: {
+      name: "Claude Fable 5.1",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6-sol": {
+    capabilities: {
+      name: "GPT-6 Sol",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1050000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6-luna": {
+    capabilities: {
+      name: "GPT-6 Luna",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1050000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6-astra": {
+    capabilities: {
+      name: "GPT-6 Astra",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1050000,
+      maxTokens: 128000,
+    },
+  },
+  "google/gemini-3.8-flash": {
+    capabilities: {
+      name: "Gemini 3.8 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 65536,
+    },
+  },
+  "xiaomi/mimo-v2.6-pro": {
+    capabilities: {
+      name: "MiMo V2.6 Pro",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
+  "xiaomi/mimo-v2.6-flash": {
+    capabilities: {
+      name: "MiMo V2.6 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
+  "xiaomi/mimo-v2.6-pro-ultraspeed": {
+    capabilities: {
+      name: "MiMo V2.6 Pro UltraSpeed",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
 } as const satisfies Record<string, PiModelCatalogEntry>;
 
 export type PiModelCatalogKey = keyof typeof piModelCatalog;

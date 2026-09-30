@@ -88,6 +88,21 @@ export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
 }
 
+/**
+ * 切换只替换关键字段的应用：供应商编辑器显示「切到这个供应商之后配置文件的样子」，由后端
+ * `ProviderService::editor_view` 投影。
+ */
+export const EDITOR_VIEW_APP_IDS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+];
+
+export function usesEditorView(appId: AppId): boolean {
+  return EDITOR_VIEW_APP_IDS.includes(appId);
+}
+
 /** Pi has no native MCP registry; do not manufacture a disabled mirror. */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
 export const MCP_APP_IDS: McpAppId[] = [

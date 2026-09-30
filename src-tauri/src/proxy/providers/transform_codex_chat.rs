@@ -1421,9 +1421,18 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
 
     let mut function = json!({
         "name": chat_name,
-        "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
+    // Omit a missing description instead of serializing null — hosted tools
+    // and undescribed custom tools reach this branch without the field, and
+    // strict OpenAI-compatible upstreams reject the whole request on a null
+    // value (400 "expected string, received null"). Same treatment as the
+    // anthropic→chat/responses converters; insertion keeps the original
+    // name→description→parameters key order for byte-identical output when
+    // the description is present.
+    if let Some(description) = tool.get("description").filter(|d| !d.is_null()) {
+        function["description"] = description.clone();
+    }
+    function["parameters"] = normalize_function_parameters(tool.get("parameters"));
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
     }
@@ -2416,6 +2425,29 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_omits_missing_tool_description() {
+        // A missing description must be omitted, not serialized as null —
+        // strict OpenAI-compatible upstreams reject the whole request on a
+        // null value (400 "expected string, received null").
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ],
+            "tools": [
+                {"type": "function", "name": "no_desc", "parameters": {"type": "object"}},
+                {"type": "function", "name": "with_desc", "description": "Has one", "parameters": {"type": "object"}}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools[0]["function"].get("description").is_none());
+        assert_eq!(tools[1]["function"]["description"], "Has one");
     }
 
     #[test]

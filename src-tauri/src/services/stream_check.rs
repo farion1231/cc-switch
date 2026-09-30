@@ -35,9 +35,8 @@ pub enum HealthStatus {
     Failed,
 }
 
-/// 连通性检查配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// 连通性检查参数（固定默认值，不对用户开放）
+#[derive(Debug, Clone)]
 pub struct StreamCheckConfig {
     /// 单次探测超时（秒）
     pub timeout_secs: u64,
@@ -69,13 +68,8 @@ pub struct StreamCheckResult {
     pub message: String,
     pub response_time_ms: Option<u64>,
     pub http_status: Option<u16>,
-    /// 保留字段以兼容 `stream_check_logs` 表结构；连通性检查恒为空串。
-    pub model_used: String,
     pub tested_at: i64,
     pub retry_count: u32,
-    /// 细粒度错误分类；连通性检查不再细分，恒为 None。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_category: Option<String>,
 }
 
 /// 连通性检查服务
@@ -123,10 +117,8 @@ impl StreamCheckService {
             message: "Check failed".to_string(),
             response_time_ms: None,
             http_status: None,
-            model_used: String::new(),
             tested_at: chrono::Utc::now().timestamp(),
             retry_count: config.max_retries,
-            error_category: None,
         }))
     }
 
@@ -245,10 +237,8 @@ impl StreamCheckService {
                 message: "Reachable".to_string(),
                 response_time_ms: Some(response_time),
                 http_status: Some(status),
-                model_used: String::new(),
                 tested_at,
                 retry_count: 0,
-                error_category: None,
             },
             Err(e) => StreamCheckResult {
                 status: HealthStatus::Failed,
@@ -256,10 +246,8 @@ impl StreamCheckService {
                 message: e.to_string(),
                 response_time_ms: Some(response_time),
                 http_status: None,
-                model_used: String::new(),
                 tested_at,
                 retry_count: 0,
-                error_category: None,
             },
         }
     }
@@ -385,7 +373,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[serial_test::serial(http_proxy_env)]
+    #[serial_test::serial]
     async fn test_check_once_stops_at_first_redirect() {
         use axum::{http::StatusCode, response::Redirect, routing::get, Router};
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -484,8 +472,6 @@ mod tests {
             assert!(r.success, "status {status} should be reachable");
             assert_eq!(r.status, HealthStatus::Operational);
             assert_eq!(r.http_status, Some(status));
-            assert!(r.model_used.is_empty());
-            assert!(r.error_category.is_none());
         }
     }
 
