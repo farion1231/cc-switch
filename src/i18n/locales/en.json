@@ -1580,6 +1580,7 @@
     "builtinDefaults": "Use OpenCode built-in provider defaults",
     "customProviderRequired": "A new provider ID requires an npm package and at least one model. Only an existing ID in the live config may inherit defaults.",
     "duplicateRequiresDefinition": "This provider is missing an npm package or model definitions and cannot be duplicated directly. Specify an npm package and at least one model before copying it as a custom provider.",
+    "duplicateRequiresNativeDefinition": "This native V2 provider is missing a package or model definitions and cannot be duplicated directly. Add a package and at least one model before copying it under a new ID.",
     "baseUrl": "Base URL",
     "baseUrlHint": "Custom API endpoint URL",
     "models": "Models",
