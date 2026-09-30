@@ -2349,10 +2349,8 @@ impl RequestForwarder {
             None => raw.to_vec(),
         };
 
-        if let Some(message) = codex_anthropic_error_envelope_message(&decoded) {
-            return Err(ProxyError::TransformError(format!(
-                "Anthropic upstream returned a 2xx error envelope: {message}"
-            )));
+        if let Some(envelope) = codex_anthropic_failure_envelope(&decoded) {
+            return Err(upstream_failure_on_success_path(&envelope));
         }
 
         Ok(ProxyResponse::buffered(status, headers, raw))
@@ -2376,10 +2374,8 @@ impl RequestForwarder {
             None => raw.to_vec(),
         };
 
-        if let Some(message) = responses_error_envelope_message(&decoded) {
-            return Err(ProxyError::TransformError(format!(
-                "Responses upstream returned a 2xx failure: {message}"
-            )));
+        if let Some(envelope) = responses_failure_envelope(&decoded) {
+            return Err(upstream_failure_on_success_path(&envelope));
         }
 
         Ok(ProxyResponse::buffered(status, headers, raw))
@@ -2900,23 +2896,60 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
         || key_str.starts_with("x-codex-")
 }
 
-fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
+/// A semantic failure envelope extracted from an upstream body that arrived on
+/// an HTTP-2xx success path (Responses `status:failed` / Anthropic
+/// `type:error` documents, or the matching SSE events).
+struct UpstreamFailureEnvelope {
+    error_type: String,
+    message: String,
+}
+
+/// An upstream failure envelope on a 2xx success path is an upstream failure,
+/// not a local conversion defect: the response transformer never produced a
+/// wrong payload — the upstream itself reported the failure. Carry the original
+/// `type` and message in a 502 so clients see a retryable upstream error with
+/// the upstream's own wording, instead of a 422 "格式转换错误" that hides the
+/// real cause (#7581). 502 stays in the retryable status bucket of
+/// `categorize_proxy_error`, so failover semantics are unchanged.
+fn upstream_failure_on_success_path(envelope: &UpstreamFailureEnvelope) -> ProxyError {
+    ProxyError::UpstreamError {
+        status: http::StatusCode::BAD_GATEWAY.as_u16(),
+        body: Some(
+            serde_json::json!({
+                "error": {
+                    "type": envelope.error_type,
+                    "message": envelope.message,
+                }
+            })
+            .to_string(),
+        ),
+    }
+}
+
+fn codex_anthropic_failure_envelope(body: &[u8]) -> Option<UpstreamFailureEnvelope> {
     let value: Value = serde_json::from_slice(body).ok()?;
     if value.get("type").and_then(Value::as_str) != Some("error") && value.get("error").is_none() {
         return None;
     }
     let error = value.get("error").unwrap_or(&value);
-    let error_type = error.get("type").and_then(Value::as_str).unwrap_or("error");
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("error")
+        .to_string();
     let message = error
         .get("message")
         .and_then(Value::as_str)
         .or_else(|| error.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| error.to_string());
-    Some(format!("{error_type}: {message}"))
+    Some(UpstreamFailureEnvelope {
+        error_type,
+        message,
+    })
 }
 
-fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
+fn responses_failure_envelope(body: &[u8]) -> Option<UpstreamFailureEnvelope> {
     let value: Value = serde_json::from_slice(body).ok()?;
     let status = value.get("status").and_then(Value::as_str);
     let has_error = value.get("error").is_some_and(|error| !error.is_null());
@@ -2929,7 +2962,8 @@ fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
         .get("type")
         .and_then(Value::as_str)
         .or_else(|| error.get("code").and_then(Value::as_str))
-        .unwrap_or_else(|| status.unwrap_or("error"));
+        .unwrap_or(status.unwrap_or("error"))
+        .to_string();
     let message = error
         .get("message")
         .and_then(Value::as_str)
@@ -2938,8 +2972,12 @@ fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
         .unwrap_or(match status {
             Some("cancelled") => "response generation was cancelled",
             _ => "response generation failed",
-        });
-    Some(format!("{error_type}: {message}"))
+        })
+        .to_string();
+    Some(UpstreamFailureEnvelope {
+        error_type,
+        message,
+    })
 }
 
 /// Prompt caching is part of the Codex→Anthropic protocol bridge rather than an
@@ -2964,10 +3002,8 @@ fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError
         return None;
     }
     let _: Value = serde_json::from_str(trimmed).ok()?;
-    if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
-        return Some(Err(ProxyError::TransformError(format!(
-            "Responses upstream returned a 2xx failure: {message}"
-        ))));
+    if let Some(envelope) = responses_failure_envelope(trimmed.as_bytes()) {
+        return Some(Err(upstream_failure_on_success_path(&envelope)));
     }
     Some(Ok(()))
 }
@@ -3009,16 +3045,21 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
             .get("message")
             .and_then(Value::as_str)
             .or_else(|| error.as_str())
-            .unwrap_or("Responses upstream failed before output");
+            .unwrap_or("Responses upstream failed before output")
+            .to_string();
         let error_type = error
             .get("type")
             .and_then(Value::as_str)
             .or_else(|| error.get("code").and_then(Value::as_str))
             .or_else(|| response.get("status").and_then(Value::as_str))
-            .unwrap_or("upstream_error");
-        return Some(Err(ProxyError::TransformError(format!(
-            "Responses upstream {error_type}: {message}"
-        ))));
+            .unwrap_or("upstream_error")
+            .to_string();
+        return Some(Err(upstream_failure_on_success_path(
+            &UpstreamFailureEnvelope {
+                error_type,
+                message,
+            },
+        )));
     }
 
     match event {
@@ -3028,15 +3069,20 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
                 .get("message")
                 .and_then(Value::as_str)
                 .or_else(|| error.as_str())
-                .unwrap_or("Responses upstream emitted an error before output");
+                .unwrap_or("Responses upstream emitted an error before output")
+                .to_string();
             let error_type = error
                 .get("type")
                 .and_then(Value::as_str)
                 .or_else(|| error.get("code").and_then(Value::as_str))
-                .unwrap_or("upstream_error");
-            Some(Err(ProxyError::TransformError(format!(
-                "Responses upstream {error_type}: {message}"
-            ))))
+                .unwrap_or("upstream_error")
+                .to_string();
+            Some(Err(upstream_failure_on_success_path(
+                &UpstreamFailureEnvelope {
+                    error_type,
+                    message,
+                },
+            )))
         }
         "response.created" | "response.in_progress" | "response.queued" => None,
         "" => None,
@@ -4380,40 +4426,62 @@ mod tests {
     #[test]
     fn codex_anthropic_2xx_error_envelope_is_detected_for_failover() {
         let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#;
-        assert_eq!(
-            codex_anthropic_error_envelope_message(body).as_deref(),
-            Some("overloaded_error: busy")
-        );
-        assert!(
-            codex_anthropic_error_envelope_message(br#"{"type":"message","content":[]}"#).is_none()
-        );
+        let envelope = codex_anthropic_failure_envelope(body).expect("failure envelope");
+        assert_eq!(envelope.error_type, "overloaded_error");
+        assert_eq!(envelope.message, "busy");
+        assert!(codex_anthropic_failure_envelope(br#"{"type":"message","content":[]}"#).is_none());
     }
 
     #[test]
     fn responses_2xx_failure_is_detected_for_failover() {
-        assert_eq!(
-            responses_error_envelope_message(
-                br#"{"status":"failed","error":{"type":"server_error","message":"busy"},"output":[]}"#
-            )
-            .as_deref(),
-            Some("server_error: busy")
-        );
-        assert_eq!(
-            responses_error_envelope_message(br#"{"status":"cancelled","output":[]}"#).as_deref(),
-            Some("cancelled: response generation was cancelled")
-        );
-        assert!(responses_error_envelope_message(
+        let envelope = responses_failure_envelope(
+            br#"{"status":"failed","error":{"type":"server_error","message":"busy"},"output":[]}"#,
+        )
+        .expect("failure envelope");
+        assert_eq!(envelope.error_type, "server_error");
+        assert_eq!(envelope.message, "busy");
+
+        let cancelled = responses_failure_envelope(br#"{"status":"cancelled","output":[]}"#)
+            .expect("failure envelope");
+        assert_eq!(cancelled.error_type, "cancelled");
+        assert_eq!(cancelled.message, "response generation was cancelled");
+
+        assert!(responses_failure_envelope(
             br#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#
         )
         .is_none());
-        assert!(responses_error_envelope_message(
-            br#"{"status":"completed","error":null,"output":[]}"#
-        )
-        .is_none());
+        assert!(
+            responses_failure_envelope(br#"{"status":"completed","error":null,"output":[]}"#)
+                .is_none()
+        );
     }
 
     #[test]
-    fn responses_stream_start_semantic_failure_is_retryable() {
+    fn upstream_failure_on_success_path_carries_type_and_message_at_502() {
+        let envelope = UpstreamFailureEnvelope {
+            error_type: "upstream_error".to_string(),
+            message: "Upstream service temporarily unavailable".to_string(),
+        };
+        let ProxyError::UpstreamError { status, body } =
+            upstream_failure_on_success_path(&envelope)
+        else {
+            panic!("expected an upstream error");
+        };
+        assert_eq!(status, 502);
+        let parsed: Value =
+            serde_json::from_str(&body.expect("envelope body")).expect("valid json body");
+        assert_eq!(
+            parsed.pointer("/error/type").and_then(Value::as_str),
+            Some("upstream_error")
+        );
+        assert_eq!(
+            parsed.pointer("/error/message").and_then(Value::as_str),
+            Some("Upstream service temporarily unavailable")
+        );
+    }
+
+    #[test]
+    fn responses_stream_start_semantic_failure_maps_to_retryable_upstream_error() {
         let created = concat!(
             "event: response.created\n",
             "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}"
@@ -4424,10 +4492,28 @@ mod tests {
             "event: response.failed\n",
             "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"message\":\"boom\"}}}"
         );
-        assert!(matches!(
-            inspect_responses_start_event(failed),
-            Some(Err(ProxyError::TransformError(message))) if message.contains("boom")
-        ));
+        match inspect_responses_start_event(failed) {
+            Some(Err(ProxyError::UpstreamError { status, body })) => {
+                assert_eq!(status, 502);
+                let body = body.as_deref().expect("envelope body");
+                assert!(body.contains("\"type\":\"server_error\""));
+                assert!(body.contains("boom"));
+            }
+            other => panic!("expected an upstream error, got {other:?}"),
+        }
+        // The upstream failure must keep failover semantics: 502 stays retryable.
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::UpstreamError {
+                    status: 502,
+                    body: None,
+                },
+                &provider,
+            ),
+            ErrorCategory::Retryable
+        );
 
         let delta = concat!(
             "event: response.output_text.delta\n",
@@ -4453,9 +4539,14 @@ mod tests {
         let failed = inspect_responses_json_document(
             r#"{"status":"failed","error":{"message":"backend unavailable"}}"#,
         );
-        assert!(
-            matches!(failed, Some(Err(ProxyError::TransformError(message))) if message.contains("backend unavailable"))
-        );
+        match failed {
+            Some(Err(ProxyError::UpstreamError { status, body })) => {
+                assert_eq!(status, 502);
+                let body = body.as_deref().expect("envelope body");
+                assert!(body.contains("backend unavailable"));
+            }
+            other => panic!("expected an upstream error, got {other:?}"),
+        }
     }
 
     #[test]
