@@ -76,6 +76,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-violet-600 dark:text-violet-400",
     iconBg: "bg-violet-500/10",
   },
+  mcode: {
+    accent: "text-orange-600 dark:text-orange-400",
+    iconBg: "bg-orange-500/10",
+  },
   pi: {
     accent: "text-fuchsia-600 dark:text-fuchsia-400",
     iconBg: "bg-fuchsia-500/10",

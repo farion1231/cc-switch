@@ -255,7 +255,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 fn is_agent_session(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.starts_with("agent-"))
+        .map(|name| name.starts_with("agent-") || name == "journal.jsonl")
         .unwrap_or(false)
 }
 
@@ -496,5 +496,42 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
+    }
+
+    #[test]
+    fn workflow_journal_log_is_excluded_from_sessions() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("journal.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"started\",\"key\":\"k\",\"agentId\":\"a\"}\n",
+        )
+        .expect("write");
+
+        assert!(is_agent_session(&path));
+    }
+
+    #[test]
+    fn agent_session_files_are_still_excluded() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("agent-abc123.jsonl");
+        std::fs::write(&path, "{\"type\":\"user\",\"isSidechain\":true}\n").expect("write");
+
+        assert!(is_agent_session(&path));
+    }
+
+    #[test]
+    fn real_session_file_is_not_excluded() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp
+            .path()
+            .join("8f8e7c8e-0000-0000-0000-000000000000.jsonl");
+        std::fs::write(
+            &path,
+            "{\"sessionId\":\"8f8e7c8e-0000-0000-0000-000000000000\"}\n",
+        )
+        .expect("write");
+
+        assert!(!is_agent_session(&path));
     }
 }

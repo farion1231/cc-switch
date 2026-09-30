@@ -35,9 +35,12 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::ZhipuCn)
     } else if url.contains("api.z.ai") {
         Some(CodingPlanProvider::ZhipuEn)
-    } else if url.contains("api.minimaxi.com") {
+    } else if crate::codex_config::codex_url_host_matches_any(
+        base_url,
+        &["api.minimaxi.com", "api.minimax.cn"],
+    ) {
         Some(CodingPlanProvider::MiniMaxCn)
-    } else if url.contains("api.minimax.io") {
+    } else if crate::codex_config::codex_url_host_matches_any(base_url, &["api.minimax.io"]) {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
@@ -423,6 +426,8 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
 async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
+    // 额度接口只在 api.minimaxi.com / api.minimax.io 有公开出处；国内新推理域名
+    // api.minimax.cn 未见该接口文档，沿用旧域名（同一账号体系与 Key）
     let api_domain = if is_cn {
         "api.minimaxi.com"
     } else {
@@ -1478,6 +1483,26 @@ mod tests {
         TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    #[test]
+    fn minimax_cn_detects_current_and_legacy_hosts() {
+        for base_url in [
+            "https://api.minimax.cn/v1",
+            "https://API.MINIMAX.CN/anthropic",
+            "https://api.minimaxi.com/v1",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::MiniMaxCn)
+            ));
+        }
+        assert!(matches!(
+            detect_provider("https://api.minimax.io/v1"),
+            Some(CodingPlanProvider::MiniMaxEn)
+        ));
+        assert!(detect_provider("https://api.minimax.cn.example.com/v1").is_none());
+        assert!(detect_provider("https://api.minimax.io.example.com/v1").is_none());
+    }
 
     #[test]
     fn opencode_go_detects_both_base_variants_but_not_zen() {

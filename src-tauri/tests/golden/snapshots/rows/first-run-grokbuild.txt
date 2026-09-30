@@ -1,0 +1,28 @@
+id: default
+name: default
+settings_config: {"config":"[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://relay.example/v1\"\nname = \"Relay\"\napi_key = \"xai-live\"\napi_backend = \"responses\"\ncontext_window = 500000\n"}
+website_url: NULL
+category: custom
+sort_index: NULL
+notes: NULL
+icon: NULL
+icon_color: NULL
+meta: {}
+is_current: true
+in_failover_queue: false
+
+id: grokbuild-official
+name: Grok Official
+settings_config: {"config":""}
+website_url: https://x.ai/grok
+category: official
+sort_index: 0
+notes: NULL
+icon: grok
+icon_color: currentColor
+meta: {}
+is_current: false
+in_failover_queue: false
+
+
+common config snippet: NULL

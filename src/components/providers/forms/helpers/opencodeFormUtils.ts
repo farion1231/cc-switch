@@ -1,5 +1,4 @@
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
-import type { PricingModelSourceOption } from "../ProviderAdvancedConfig";
 
 // ── Default configs ──────────────────────────────────────────────────
 
@@ -81,7 +80,7 @@ export function parseOpencodeConfig(
   const normalize = (
     parsed: Partial<OpenCodeProviderConfig>,
   ): OpenCodeProviderConfig => ({
-    npm: parsed.npm || OPENCODE_DEFAULT_NPM,
+    npm: parsed.npm ?? (settingsConfig ? "" : OPENCODE_DEFAULT_NPM),
     options:
       parsed.options && typeof parsed.options === "object"
         ? (parsed.options as OpenCodeProviderConfig["options"])
@@ -113,7 +112,7 @@ export function parseOpencodeConfigStrict(
     settingsConfig ? JSON.stringify(settingsConfig) : OPENCODE_DEFAULT_CONFIG,
   ) as Partial<OpenCodeProviderConfig>;
   return {
-    npm: parsed.npm || OPENCODE_DEFAULT_NPM,
+    npm: parsed.npm ?? (settingsConfig ? "" : OPENCODE_DEFAULT_NPM),
     options:
       parsed.options && typeof parsed.options === "object"
         ? (parsed.options as OpenCodeProviderConfig["options"])
@@ -158,8 +157,3 @@ export function toOpencodeExtraOptions(
 }
 
 export { buildOmoProfilePreview } from "@/types/omo";
-
-export const normalizePricingSource = (
-  value?: string,
-): PricingModelSourceOption =>
-  value === "request" || value === "response" ? value : "inherit";
