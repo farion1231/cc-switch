@@ -2662,7 +2662,8 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
-/// Whether a live Codex config is the official route projected by CC Switch.
+/// Whether a live Codex config is the official route projected by an older CC Switch
+/// (`model_provider = "cc-switch-official"`).
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
     if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return false;
@@ -2677,6 +2678,38 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
         })
         .as_deref()
         == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+}
+
+/// live 的 `config.toml` 是不是现在的代理官方路由（`is_proxy_url` 认本地代理给 Codex 的
+/// 地址）：没开统一会话历史时不选别的 provider、顶层 `openai_base_url` 改道到代理；开了
+/// 时选 custom，表是指向代理的官方镜像。两种都没有占位 Key，只能按地址认。
+pub fn codex_config_routes_official_to_proxy(
+    config_text: &str,
+    is_proxy_url: impl Fn(&str) -> bool,
+) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let same_url = |item: Option<&toml_edit::Item>| {
+        item.and_then(|item| item.as_str())
+            .is_some_and(|url| is_proxy_url(url.trim().trim_end_matches('/')))
+    };
+    match doc.get("model_provider").and_then(|item| item.as_str()) {
+        None | Some("openai") => same_url(doc.get("openai_base_url")),
+        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) => doc
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+            .and_then(|item| item.as_table_like())
+            .is_some_and(|table| {
+                table
+                    .get("requires_openai_auth")
+                    .and_then(|item| item.as_bool())
+                    == Some(true)
+                    && same_url(table.get("base_url"))
+            }),
+        Some(_) => false,
+    }
 }
 
 fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
@@ -2761,6 +2794,29 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    #[test]
+    fn official_proxy_route_is_recognized_by_its_address() {
+        let proxy = |url: &str| url == "http://127.0.0.1:15721/v1";
+        for (config, expected) in [
+            ("openai_base_url = \"http://127.0.0.1:15721/v1/\"\n", true),
+            ("model_provider = \"openai\"\nopenai_base_url = \"http://127.0.0.1:15721/v1\"\n", true),
+            ("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n", true),
+            // 别的地址（比如其他工具改道到自己的本地服务）不算。
+            ("openai_base_url = \"http://127.0.0.1:10531/v1\"\n", false),
+            // 选了别的 provider，改道不生效。
+            ("model_provider = \"relay\"\nopenai_base_url = \"http://127.0.0.1:15721/v1\"\n", false),
+            // 官方直连的统一会话镜像表没有地址。
+            ("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n", false),
+            ("model = \"gpt-5.5\"\n", false),
+        ] {
+            assert_eq!(
+                codex_config_routes_official_to_proxy(config, proxy),
+                expected,
+                "{config}"
+            );
+        }
+    }
 
     #[test]
     fn codex_id_token_user_identity_requires_a_nonempty_subject() {

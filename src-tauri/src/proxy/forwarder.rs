@@ -3094,6 +3094,8 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
             | "openai-beta"
             | "openai-organization"
             | "openai-project"
+            // Codex 内置 openai 的固定请求头（值是 Codex 版本号）。
+            | "version"
     ) || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-codex-")
         // ChatGPT 登录态下 Codex 每个请求都带：`x-oai-attestation`（设备证明）、
@@ -4555,6 +4557,7 @@ mod tests {
             "openai-beta",
             "openai-organization",
             "openai-project",
+            "version",
             "x-stainless-lang",
             "x-stainless-runtime",
             "x-codex-turn-id",

@@ -965,6 +965,22 @@ pub async fn handle_chat_completions(
     .await
 }
 
+/// Responses 的 WebSocket 握手（GET 升级请求）：本地代理只讲 HTTP/SSE，回 426。Codex 内置
+/// 的 openai 默认先连 WebSocket，握手拿到 426 就在本会话里改走 HTTP，其它失败要把重试
+/// 用完才回退。
+pub async fn handle_responses_websocket() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::UPGRADE_REQUIRED,
+        Json(json!({
+            "error": {
+                "type": "invalid_request_error",
+                "code": "websocket_not_supported",
+                "message": "CC Switch local routing does not support Responses over WebSocket; use HTTP",
+            }
+        })),
+    )
+}
+
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,

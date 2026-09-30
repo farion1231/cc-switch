@@ -330,11 +330,24 @@ impl ProxyServer {
             // OpenAI Models API (Codex CLI reachability check)
             .route("/models", get(handlers::handle_models))
             .route("/v1/models", get(handlers::handle_models))
-            // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
-            .route("/responses", post(handlers::handle_responses))
-            .route("/v1/responses", post(handlers::handle_responses))
-            .route("/v1/v1/responses", post(handlers::handle_responses))
-            .route("/codex/v1/responses", post(handlers::handle_responses))
+            // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)。GET 是 WebSocket
+            // 握手：Codex 内置的 openai（代理的官方路由）会先试 WebSocket。
+            .route(
+                "/responses",
+                post(handlers::handle_responses).get(handlers::handle_responses_websocket),
+            )
+            .route(
+                "/v1/responses",
+                post(handlers::handle_responses).get(handlers::handle_responses_websocket),
+            )
+            .route(
+                "/v1/v1/responses",
+                post(handlers::handle_responses).get(handlers::handle_responses_websocket),
+            )
+            .route(
+                "/codex/v1/responses",
+                post(handlers::handle_responses).get(handlers::handle_responses_websocket),
+            )
             // Grok Build uses the Responses protocol but has an independent
             // provider namespace and failover queue.
             .route(
@@ -460,6 +473,40 @@ mod tests {
         path_and_query: String,
         authorization: Option<String>,
         body: Value,
+    }
+
+    /// Codex 内置的 openai 先用 WebSocket 连 Responses：握手回 426 它才立刻改走 HTTP。
+    #[tokio::test]
+    async fn responses_websocket_handshake_is_answered_with_upgrade_required() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        for path in [
+            "/responses",
+            "/v1/responses",
+            "/v1/v1/responses",
+            "/codex/v1/responses",
+        ] {
+            let response = client
+                .get(format!("http://127.0.0.1:{}{path}", proxy_info.port))
+                .header(header::CONNECTION, "Upgrade")
+                .header(header::UPGRADE, "websocket")
+                .header("sec-websocket-version", "13")
+                .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+                .send()
+                .await
+                .expect("websocket handshake");
+            assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED, "{path}");
+        }
+        proxy.stop().await.expect("stop test proxy");
     }
 
     /// A base URL pasted as a complete endpoint with the full-URL switch left off

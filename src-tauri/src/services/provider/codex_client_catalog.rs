@@ -523,7 +523,7 @@ mod tests {
             Some(content) => {
                 std::fs::write(
                     &config,
-                    "model_provider = \"cc-switch-official\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
+                    "openai_base_url = \"http://127.0.0.1:15721/v1\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
                 )
                 .unwrap();
                 std::fs::write(get_codex_model_catalog_path(), content).unwrap();

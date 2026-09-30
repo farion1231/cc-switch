@@ -2612,17 +2612,20 @@ mod mode_tests {
         ProviderService::switch(&state, AppType::Codex, &official.id).expect("route to official");
         let official_contract = fs::read_to_string(&config_path).unwrap();
         let doc: toml::Table = toml::from_str(&official_contract).unwrap();
-        assert_eq!(
-            doc["model_provider"].as_str(),
-            Some("cc-switch-official"),
+        // 和官方直连同一个会话桶（内置 openai）：不写选路，顶层改道到代理，客户端带自己的登录。
+        assert!(doc.get("model_provider").is_none(), "{official_contract}");
+        let base_url = doc["openai_base_url"].as_str().unwrap();
+        assert!(
+            base_url.starts_with("http://127.0.0.1:") && base_url.ends_with("/v1"),
             "{official_contract}"
         );
-        let route = &doc["model_providers"]["cc-switch-official"];
         assert!(
-            route.get("experimental_bearer_token").is_none(),
-            "the official contract carries the client's own login: {official_contract}"
+            doc["model_providers"].get("cc-switch-official").is_none(),
+            "{official_contract}"
         );
-        assert_eq!(route["requires_openai_auth"].as_bool(), Some(true));
+        assert!(state
+            .proxy_service
+            .live_has_proxy_placeholder(&AppType::Codex));
         // 第三方路由留下的 custom 表改成休眠形态：指向本地代理、只有占位 Key。
         let dormant = &doc["model_providers"]["custom"];
         assert_eq!(
@@ -2634,14 +2637,104 @@ mod mode_tests {
         assert_eq!(auth(), native_auth);
 
         ProviderService::switch(&state, AppType::Codex, "relay").expect("route back");
-        assert!(fs::read_to_string(&config_path)
-            .unwrap()
-            .contains(PROXY_TOKEN_PLACEHOLDER));
+        let third_party = fs::read_to_string(&config_path).unwrap();
+        assert!(third_party.contains(PROXY_TOKEN_PLACEHOLDER));
+        assert!(!third_party.contains("openai_base_url"), "{third_party}");
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(auth(), native_auth);
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    /// 官方做路由时会话和官方直连落在同一个桶：进出代理不换 Codex 选中的 provider id。
+    #[tokio::test]
+    #[serial]
+    async fn codex_official_route_keeps_the_direct_session_bucket() {
+        for unified in [false, true] {
+            let _home = Home::new();
+            let native_auth = json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "native-id",
+                    "access_token": "native-access",
+                    "refresh_token": "native-refresh",
+                    "account_id": "acct-native"
+                },
+                "last_refresh": "2026-01-01T00:00:00Z"
+            });
+            crate::codex_config::write_codex_live_atomic(
+                &native_auth,
+                Some("model = \"gpt-5.4\"\n"),
+            )
+            .unwrap();
+            let mut official = Provider::with_id(
+                crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+                "OpenAI Official".to_string(),
+                json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+                None,
+            );
+            official.category = Some("official".to_string());
+            crate::settings::update_settings(crate::settings::AppSettings {
+                preserve_codex_official_auth_on_switch: true,
+                unify_codex_session_history: unified,
+                ..Default::default()
+            })
+            .unwrap();
+            let state = state_with(AppType::Codex, &[official.clone()], &official.id).await;
+            ProviderService::switch(&state, AppType::Codex, &official.id).expect("direct official");
+            let config_path = crate::codex_config::get_codex_config_path();
+            let selector = || -> Option<String> {
+                let text = fs::read_to_string(&config_path).unwrap();
+                let doc: toml::Table = toml::from_str(&text).unwrap();
+                doc.get("model_provider")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            };
+            let bucket = if unified {
+                Some("custom".to_string())
+            } else {
+                None
+            };
+            assert_eq!(selector(), bucket, "direct, unified={unified}");
+
+            enter(&state, &AppType::Codex, false).await.expect("enter");
+            let contract = fs::read_to_string(&config_path).unwrap();
+            assert_eq!(selector(), bucket, "proxy, unified={unified}: {contract}");
+            let doc: toml::Table = toml::from_str(&contract).unwrap();
+            if unified {
+                assert!(doc.get("openai_base_url").is_none(), "{contract}");
+                let mirror = &doc["model_providers"]["custom"];
+                assert_eq!(mirror["name"].as_str(), Some("OpenAI"));
+                assert_eq!(mirror["requires_openai_auth"].as_bool(), Some(true));
+                assert_eq!(mirror["supports_websockets"].as_bool(), Some(false));
+                assert!(mirror.get("experimental_bearer_token").is_none());
+                assert!(
+                    mirror["base_url"].as_str().unwrap().ends_with("/v1"),
+                    "{contract}"
+                );
+            } else {
+                assert!(doc["openai_base_url"].as_str().is_some(), "{contract}");
+                assert!(doc.get("model_providers").is_none(), "{contract}");
+            }
+            assert!(state
+                .proxy_service
+                .live_has_proxy_placeholder(&AppType::Codex));
+            assert_eq!(
+                crate::config::read_json_file::<Value>(&crate::codex_config::get_codex_auth_path())
+                    .unwrap(),
+                native_auth
+            );
+
+            exit(&state, &AppType::Codex).await.expect("exit");
+            let restored = fs::read_to_string(&config_path).unwrap();
+            assert_eq!(selector(), bucket, "exit, unified={unified}: {restored}");
+            assert!(!restored.contains("openai_base_url"), "{restored}");
+            assert!(!state
+                .proxy_service
+                .live_has_proxy_placeholder(&AppType::Codex));
+        }
     }
 
     // ---------- Codex：只替换关键字段 ----------

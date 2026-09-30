@@ -82,6 +82,28 @@ pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
     )
 }
 
+/// `config_text` 是不是代理的官方路由（指向本地代理，但不带占位 Key）。
+pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool {
+    let (address, port) = db.get_proxy_listen_sync();
+    crate::codex_config::codex_config_routes_official_to_proxy(config_text, |url| {
+        is_proxy_base_url(url, &address, port)
+    })
+}
+
+/// `url`（去掉末尾 `/`）是不是本地代理给 Codex 的地址。端口配成 0 时代理用系统分配的
+/// 端口，只核对主机和路径。
+fn is_proxy_base_url(url: &str, address: &str, port: u16) -> bool {
+    let origin = crate::services::proxy::proxy_origin(address, port);
+    if port != 0 {
+        return url == format!("{origin}/v1");
+    }
+    // `http://127.0.0.1:0` → `http://127.0.0.1:`
+    let host = origin.strip_suffix('0').unwrap_or(&origin);
+    url.strip_prefix(host)
+        .and_then(|rest| rest.strip_suffix("/v1"))
+        .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// 写成什么样。
 #[derive(Clone, Copy)]
 pub(crate) enum Target<'a> {
@@ -577,7 +599,10 @@ pub(crate) fn plan(
                     None => AuthGoal::Official(row_auth(route)),
                 };
                 (
-                    RouteWrite::OfficialProxy(official_mirror_table(Some(base_url), false)),
+                    RouteWrite::OfficialProxy {
+                        base_url: base_url.to_string(),
+                        unified: crate::settings::unify_codex_session_history(),
+                    },
                     None,
                     auth,
                 )
@@ -781,10 +806,15 @@ fn contract_of(
     };
     let (selector, table) = match &config.route {
         RouteWrite::Custom(table) => (ROUTE_ID, table_text(table)),
-        RouteWrite::OfficialProxy(table) => (
-            crate::live::project::codex::OFFICIAL_PROXY_ROUTE_ID,
-            table_text(table),
+        RouteWrite::OfficialProxy {
+            base_url,
+            unified: true,
+        } => (
+            ROUTE_ID,
+            table_text(&official_mirror_table(Some(base_url), false)),
         ),
+        // 不写选路，改道写在顶层（地址已经在 `url` 里）。
+        RouteWrite::OfficialProxy { unified: false, .. } => ("", "openai_base_url".to_string()),
         _ => ("", String::new()),
     };
     let pairs = |entries: &[(String, TomlValue)]| -> Vec<Value> {
@@ -1100,4 +1130,46 @@ pub(crate) fn write_direct(
 pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
     let target = Target::Direct(Some(provider));
     plan(db, &Owner::None, &target, &Prepared::default()).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_proxy_base_url;
+
+    #[test]
+    fn the_proxy_base_url_matches_the_listen_address() {
+        assert!(is_proxy_base_url(
+            "http://127.0.0.1:15721/v1",
+            "127.0.0.1",
+            15721
+        ));
+        assert!(is_proxy_base_url(
+            "http://127.0.0.1:15721/v1",
+            "0.0.0.0",
+            15721
+        ));
+        assert!(!is_proxy_base_url(
+            "http://127.0.0.1:10531/v1",
+            "127.0.0.1",
+            15721
+        ));
+        assert!(is_proxy_base_url("http://[::1]:15721/v1", "::", 15721));
+        // 端口 0：系统分配的端口，只核对主机和路径。
+        assert!(is_proxy_base_url(
+            "http://127.0.0.1:54321/v1",
+            "127.0.0.1",
+            0
+        ));
+        assert!(!is_proxy_base_url("http://127.0.0.1:/v1", "127.0.0.1", 0));
+        assert!(!is_proxy_base_url(
+            "http://127.0.0.1:54321/v2",
+            "127.0.0.1",
+            0
+        ));
+        assert!(!is_proxy_base_url(
+            "http://10.0.0.1:54321/v1",
+            "127.0.0.1",
+            0
+        ));
+    }
 }
