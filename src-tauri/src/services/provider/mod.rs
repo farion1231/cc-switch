@@ -1820,6 +1820,412 @@ GEMINI_TIMEOUT_MS=30000
         assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
     }
 
+    /// Legal settings for a Claude Desktop direct provider (passes
+    /// `validate_direct_provider`). The aggregate checks run after the direct
+    /// ones, so a fixture has to clear the direct gate first.
+    fn claude_desktop_direct_settings() -> serde_json::Value {
+        json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://aggregate.example",
+                "ANTHROPIC_AUTH_TOKEN": "agg-token"
+            }
+        })
+    }
+
+    /// Returns the stable key of an `AppError::Localized`, so the assertions
+    /// pin the error identity rather than its localized text (which is written
+    /// once in the UI's language and is free to be reworded).
+    fn localized_key(err: &AppError) -> &'static str {
+        match err {
+            AppError::Localized { key, .. } => key,
+            other => panic!("expected a localized error, got: {other}"),
+        }
+    }
+
+    /// Builds a provider carrying an aggregate route table (Provider does not
+    /// derive Default, so it is built through with_id).
+    fn aggregate_provider(id: &str, routes: crate::aggregate::AggregateRoutes) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            "Aggregate".to_string(),
+            claude_desktop_direct_settings(),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            aggregate_routes: Some(routes),
+            ..Default::default()
+        });
+        provider
+    }
+
+    fn slot(route_id: &str, provider_id: &str) -> crate::aggregate::AggregateRouteSlot {
+        crate::aggregate::AggregateRouteSlot {
+            route_id: route_id.into(),
+            tier: crate::aggregate::AggregateTier::Sonnet,
+            provider_id: provider_id.into(),
+            upstream_model: "m".into(),
+            label: None,
+            supports_1m: false,
+        }
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_empty_slots() {
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("x".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("empty slots must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.slots_empty");
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_self_reference() {
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                // a slot pointing at the aggregate itself
+                slots: vec![slot("claude-sonnet-agg", "agg")],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("agg".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("self reference must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.self_reference");
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_duplicate_route_ids() {
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("claude-sonnet-a", "p1"), slot("claude-sonnet-a", "p1")],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("p1".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("duplicate slot ids must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.duplicate_route_id");
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_unsafe_route_id() {
+        // A slot id without a role prefix is rejected by Claude Desktop as a
+        // whole group
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("glm-5.3", "p1")],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("p1".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("unsafe route id must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.invalid_route_id");
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_incomplete_slot() {
+        // Either an empty target provider or an empty upstream model must be
+        // rejected
+        let mut bad_target = slot("claude-sonnet-a", "p1");
+        bad_target.provider_id = "   ".into();
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![bad_target],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("p1".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("empty target provider must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.slot_incomplete");
+
+        let mut bad_model = slot("claude-sonnet-a", "p1");
+        bad_model.upstream_model = "  ".into();
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![bad_model],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("p1".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("empty upstream model must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.slot_incomplete");
+    }
+
+    #[test]
+    fn validate_aggregate_accepts_valid_table() {
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("claude-sonnet-1", "p1"), slot("claude-opus-1", "p1")],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("p1".into()),
+            },
+        );
+        ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect("a self-consistent route table must pass");
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_blank_provider_default_target() {
+        // Leaving the default target blank (value is whitespace) makes any
+        // request that matches no slot fail hard at runtime, so it is caught at
+        // save time
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("claude-sonnet-1", "p1")],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("   ".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("blank provider-id default target must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.default_target_invalid");
+    }
+
+    #[test]
+    fn validate_aggregate_rejects_default_target_naming_missing_slot() {
+        // A default target naming a slot that does not exist (e.g. dangling
+        // after a renumber) must be rejected
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("claude-sonnet-1", "p1")],
+                default_target: crate::aggregate::DefaultTarget::SlotId("claude-opus-gone".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("slot-id default target naming a missing slot must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.default_target_invalid");
+    }
+
+    #[test]
+    fn validate_aggregate_accepts_slot_default_target_present_in_slots() {
+        // Control case: a default target that does name an existing slot must
+        // pass (the check must not reject a legal configuration)
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("claude-sonnet-1", "p1")],
+                default_target: crate::aggregate::DefaultTarget::SlotId("claude-sonnet-1".into()),
+            },
+        );
+        ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect("a slot-id default target that exists must pass");
+    }
+
+    #[test]
+    fn validate_aggregate_leaves_non_aggregate_provider_untouched() {
+        // An ordinary provider carries no aggregate_routes: the new checks must
+        // not reject it
+        let provider = Provider::with_id(
+            "plain".into(),
+            "Plain".into(),
+            claude_desktop_direct_settings(),
+            None,
+        );
+        ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect("an ordinary provider must still save");
+    }
+
+    /// A Claude Desktop save writes the real 3P profile, so the test home has to
+    /// cover that path too: on Windows the profile path reads LOCALAPPDATA
+    /// directly (see `claude_desktop_config::windows_local_app_data_dir`),
+    /// which honours neither CC_SWITCH_TEST_HOME nor HOME; on macOS/Linux it
+    /// follows HOME / XDG_CONFIG_HOME. `TempHome` pins all of them. Settings are
+    /// reloaded afterwards because the current-provider pointer is cached in
+    /// process memory.
+    ///
+    /// Must be used with `#[serial]`: it mutates process-wide env vars.
+    fn with_isolated_test_home<T>(test: impl FnOnce() -> T) -> T {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        test()
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_rejects_nested_aggregate() {
+        // The target provider is itself an aggregate provider -> the save layer
+        // rejects it (this needs cross-provider information)
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            let target = aggregate_provider(
+                "target-agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-1", "p-glm")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("p-glm".into()),
+                },
+            );
+            state
+                .db
+                .save_provider(AppType::ClaudeDesktop.as_str(), &target)
+                .expect("save target aggregate");
+
+            let nested = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-nested", "target-agg")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("p-glm".into()),
+                },
+            );
+            let err = ProviderService::add(&state, AppType::ClaudeDesktop, nested, false)
+                .expect_err("nesting an aggregate must be rejected");
+            assert_eq!(localized_key(&err), "aggregate.nested_aggregate");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_rejects_ordinary_provider_becoming_referenced_aggregate() {
+        // One-way hole: an ordinary provider B is first referenced by a slot of
+        // aggregate provider A; turning B into an aggregate must be rejected
+        // too - the forward check over P's own slots would let it through, and
+        // at runtime A -> B would resolve to a target that has no
+        // endpoint/credentials (design §9 forbids that state).
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            let target = Provider::with_id(
+                "target".into(),
+                "Target".into(),
+                claude_desktop_direct_settings(),
+                None,
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, target, false)
+                .expect("ordinary provider saves");
+
+            let agg = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-target", "target")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("target".into()),
+                },
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, agg, false)
+                .expect("aggregate referencing an ordinary provider saves");
+
+            // Turn B into an aggregate provider: B gains a route table pointing
+            // at another ordinary provider.
+            let converted = aggregate_provider(
+                "target",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-other", "other")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("other".into()),
+                },
+            );
+            let err =
+                ProviderService::update(&state, AppType::ClaudeDesktop, Some("target"), converted)
+                    .expect_err("a referenced provider must not become an aggregate");
+            assert_eq!(
+                localized_key(&err),
+                "aggregate.provider_becomes_aggregate_while_referenced"
+            );
+
+            // An unreferenced ordinary provider still saves (no collateral
+            // damage).
+            let plain = Provider::with_id(
+                "plain".into(),
+                "Plain".into(),
+                claude_desktop_direct_settings(),
+                None,
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, plain, false)
+                .expect("an unreferenced ordinary provider must still save");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn delete_rejects_provider_referenced_by_aggregate() {
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            state
+                .db
+                .save_provider(
+                    AppType::ClaudeDesktop.as_str(),
+                    &Provider::with_id(
+                        "target".into(),
+                        "Target".into(),
+                        claude_desktop_direct_settings(),
+                        None,
+                    ),
+                )
+                .expect("save target");
+            let agg = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-target", "target")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("target".into()),
+                },
+            );
+            state
+                .db
+                .save_provider(AppType::ClaudeDesktop.as_str(), &agg)
+                .expect("save aggregate");
+
+            let err = ProviderService::delete(&state, AppType::ClaudeDesktop, "target")
+                .expect_err("referenced provider must not be deletable");
+            assert_eq!(localized_key(&err), "aggregate.provider_in_use");
+
+            // The aggregate itself is deletable (once the reference is gone the
+            // target becomes deletable too)
+            ProviderService::delete(&state, AppType::ClaudeDesktop, "agg")
+                .expect("aggregate itself is deletable");
+            ProviderService::delete(&state, AppType::ClaudeDesktop, "target")
+                .expect("target is deletable once no longer referenced");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn delete_allows_provider_referenced_by_ordinary_provider() {
+        // Collateral-damage guard: an ordinary provider (no aggregate_routes)
+        // mentioning some id must not block its deletion
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            state
+                .db
+                .save_provider(
+                    AppType::ClaudeDesktop.as_str(),
+                    &Provider::with_id(
+                        "target".into(),
+                        "Target".into(),
+                        claude_desktop_direct_settings(),
+                        None,
+                    ),
+                )
+                .expect("save target");
+            // The ordinary provider's settings also mention "target", but it is
+            // not an aggregate route table
+            let mut plain = Provider::with_id(
+                "plain".into(),
+                "Plain".into(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://plain.example",
+                        "ANTHROPIC_AUTH_TOKEN": "plain-token"
+                    },
+                    "referencedProvider": "target"
+                }),
+                None,
+            );
+            plain.meta = Some(ProviderMeta::default());
+            state
+                .db
+                .save_provider(AppType::ClaudeDesktop.as_str(), &plain)
+                .expect("save plain provider");
+
+            ProviderService::delete(&state, AppType::ClaudeDesktop, "target")
+                .expect("a merely-mentioned provider id must remain deletable");
+        });
+    }
+
     #[test]
     fn extract_credentials_returns_expected_values() {
         let provider = Provider::with_id(
@@ -4913,6 +5319,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
+        Self::validate_aggregate_not_nested(state, &app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
@@ -5448,6 +5855,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
+        Self::validate_aggregate_not_nested(state, &app_type, &provider)?;
         if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
@@ -5712,6 +6120,10 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
+        // Delete protection: a provider targeted by any aggregate routing
+        // table under the same app cannot be removed (checked before the
+        // removal itself).
+        Self::reject_if_referenced_by_aggregate(state, &app_type, id)?;
 
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
@@ -7015,6 +7427,183 @@ impl ProviderService {
             }
         }
 
+        // Aggregate provider validation. Slot ids are generated by the editor and
+        // submitted with the form (the backend only validates them, never
+        // generates them), so what matters here is that the table it receives is
+        // self-consistent: at least one slot, target and model filled in, no
+        // self-reference, slot ids valid and unique.
+        if let Some(routes) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.aggregate_routes.as_ref())
+        {
+            if routes.slots.is_empty() {
+                return Err(AppError::localized(
+                    "aggregate.slots_empty",
+                    "聚合供应商至少需要一个槽位",
+                    "Aggregate provider requires at least one slot",
+                ));
+            }
+            let mut seen: Vec<String> = Vec::new();
+            for slot in &routes.slots {
+                if slot.provider_id.trim().is_empty() || slot.upstream_model.trim().is_empty() {
+                    return Err(AppError::localized(
+                        "aggregate.slot_incomplete",
+                        "槽位必须同时指定目标供应商与上游模型",
+                        "Each slot must specify both a target provider and an upstream model",
+                    ));
+                }
+                if slot.provider_id == provider.id {
+                    return Err(AppError::localized(
+                        "aggregate.self_reference",
+                        "聚合供应商不能把自身作为目标",
+                        "An aggregate provider cannot target itself",
+                    ));
+                }
+                // Slot ids come from the editor (the preview is the committed
+                // value), so they are only validated here.
+                let route_id = slot.route_id.trim();
+                if route_id.is_empty()
+                    || !crate::claude_desktop_config::is_claude_safe_model_id(route_id)
+                {
+                    return Err(AppError::localized(
+                        "aggregate.invalid_route_id",
+                        "槽位 ID 不合法（须形如 claude-sonnet-1）；Claude Desktop 会整组拒收",
+                        "Invalid slot id (expected e.g. claude-sonnet-1); Claude Desktop would reject the whole group",
+                    ));
+                }
+                if seen.iter().any(|s| s == route_id) {
+                    return Err(AppError::localized(
+                        "aggregate.duplicate_route_id",
+                        "槽位 ID 重复",
+                        "Duplicate slot id",
+                    ));
+                }
+                seen.push(route_id.to_string());
+            }
+
+            // The default target is mandatory and must resolve: requests that
+            // name no slot (Claude Desktop's own internal calls - session
+            // titles and summaries are exactly that - fall back to it), and a
+            // missing or dangling one would fail hard at runtime, so it is
+            // caught at save time.
+            match &routes.default_target {
+                crate::aggregate::DefaultTarget::ProviderId(id) => {
+                    if id.trim().is_empty() {
+                        return Err(AppError::localized(
+                            "aggregate.default_target_invalid",
+                            "聚合供应商必须指定默认目标：未命中槽位的请求会回落到它",
+                            "Aggregate provider must specify a default target: unmatched requests fall back to it",
+                        ));
+                    }
+                }
+                crate::aggregate::DefaultTarget::SlotId(id) => {
+                    let id = id.trim();
+                    if !seen.iter().any(|s| s == id) {
+                        return Err(AppError::localized(
+                            "aggregate.default_target_invalid",
+                            "聚合供应商的默认目标缺失，或指向了不存在的槽位（可能因槽位改动而失效，请重新选择）",
+                            "Aggregate default target is missing or points to a non-existent slot (it may have been invalidated by slot changes; please reselect)",
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Shared "is this provider referenced" check, used by both the
+    /// reverse-nesting check and the delete protection so the rule lives in
+    /// one place.
+    fn referencing_aggregate_exists(
+        state: &AppState,
+        app_type: &AppType,
+        target_id: &str,
+    ) -> Result<bool, AppError> {
+        Ok(state
+            .db
+            .get_all_providers(app_type.as_str())?
+            .values()
+            .any(|other| {
+                other
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.aggregate_routes.as_ref())
+                    .is_some_and(|routes| {
+                        routes
+                            .slots
+                            .iter()
+                            .any(|slot| slot.provider_id == target_id)
+                    })
+            }))
+    }
+
+    /// An aggregate provider's slots must not point at another aggregate
+    /// provider.
+    ///
+    /// This needs cross-provider information (whether the target itself carries
+    /// `aggregate_routes`), so it lives in the save path rather than in the
+    /// pure validation layer `validate_provider_settings`.
+    fn validate_aggregate_not_nested(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        let Some(routes) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.aggregate_routes.as_ref())
+        else {
+            return Ok(());
+        };
+        for slot in &routes.slots {
+            // Whether the target exists is resolve_target's job at runtime; here
+            // only nesting is rejected.
+            let Some(target) = state
+                .db
+                .get_provider_by_id(&slot.provider_id, app_type.as_str())?
+            else {
+                continue;
+            };
+            if crate::aggregate::is_aggregate_provider(&target) {
+                return Err(AppError::localized(
+                    "aggregate.nested_aggregate",
+                    "聚合供应商的槽位不能指向另一个聚合供应商",
+                    "An aggregate provider's slot cannot target another aggregate provider",
+                ));
+            }
+        }
+        // Reverse check: the provider being saved carries a routing table, so
+        // if some other aggregate provider under the same app already targets
+        // it, saving would create the nesting A -> P. The forward check only
+        // covers "P points at someone"; this closes the one-way hole where an
+        // ordinary provider is first referenced and later turned into an
+        // aggregate.
+        if Self::referencing_aggregate_exists(state, app_type, &provider.id)? {
+            return Err(AppError::localized(
+                "aggregate.provider_becomes_aggregate_while_referenced",
+                "该供应商已被聚合供应商引用，不能再改造成聚合供应商",
+                "This provider is referenced by an aggregate provider and cannot itself become an aggregate provider",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Delete protection: a provider referenced by any aggregate routing table
+    /// under the same app cannot be removed.
+    fn reject_if_referenced_by_aggregate(
+        state: &AppState,
+        app_type: &AppType,
+        provider_id: &str,
+    ) -> Result<(), AppError> {
+        if Self::referencing_aggregate_exists(state, app_type, provider_id)? {
+            return Err(AppError::localized(
+                "aggregate.provider_in_use",
+                "该供应商被聚合供应商引用，需先移除对应槽位",
+                "This provider is referenced by an aggregate provider; remove the slot first",
+            ));
+        }
         Ok(())
     }
 
