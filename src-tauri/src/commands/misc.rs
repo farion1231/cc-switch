@@ -210,12 +210,8 @@ impl ToolLifecycleCoordinator {
                     .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?
                     .clone()
                     .try_lock_owned()
-                    .map_err(|_| {
-                        format!(
-                            "{} already has an installation or update in progress",
-                            tool_display_name(tool)
-                        )
-                    })
+                    // 稳定错误码供前端区分后台任务仍在进行与真正的执行失败。
+                    .map_err(|_| "TOOL_ACTION_IN_PROGRESS".to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
         let execution_guard = self.execution.clone().lock_owned().await;
@@ -5335,11 +5331,13 @@ mod tests {
         started_rx.await.unwrap();
 
         // 独立调用者（例如重挂后的页面）不能重复启动正在执行的工具。
-        assert!(coordinator
-            .run(vec!["codex"], |_| panic!("duplicate must not execute"))
-            .await
-            .unwrap_err()
-            .contains("in progress"));
+        assert_eq!(
+            coordinator
+                .run(vec!["codex"], |_| panic!("duplicate must not execute"))
+                .await
+                .unwrap_err(),
+            "TOOL_ACTION_IN_PROGRESS"
+        );
         // 批次部分取锁失败时，已取得的其他工具锁也必须释放。
         assert!(coordinator
             .run(vec!["claude", "codex"], |_| panic!(
@@ -5357,13 +5355,15 @@ mod tests {
         tokio::pin!(second);
         assert!(futures::poll!(second.as_mut()).is_pending());
         assert!(!output.exists(), "first write has not finished yet");
-        assert!(coordinator
-            .run(vec!["claude"], |_| panic!(
-                "queued duplicate must not execute"
-            ))
-            .await
-            .unwrap_err()
-            .contains("in progress"));
+        assert_eq!(
+            coordinator
+                .run(vec!["claude"], |_| panic!(
+                    "queued duplicate must not execute"
+                ))
+                .await
+                .unwrap_err(),
+            "TOOL_ACTION_IN_PROGRESS"
+        );
 
         finish_tx.send(()).unwrap();
         first.await.unwrap().unwrap();

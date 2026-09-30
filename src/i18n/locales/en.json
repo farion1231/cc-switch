@@ -819,6 +819,8 @@
     "toolActionDone": "{{action}} completed for {{count}} tool(s)",
     "toolActionPartial": "{{action}} succeeded for {{succeeded}}, failed for {{failed}}",
     "toolActionFailed": "Install/update command failed",
+    "toolActionInProgress": "Installation or update still in progress",
+    "toolActionInProgressDetail": "An installation or update for {{tool}} is already being handled in the background. Please wait for it to finish; there is no need to start it again.",
     "toolNotRunnable": "Installed but not runnable (no version detected)",
     "toolActionVersionUnchangedTitle": "Version did not change",
     "toolActionVersionUnchanged": "Still on {{version}} (latest: {{latest}}). The updater may have reported success without applying the update.",
