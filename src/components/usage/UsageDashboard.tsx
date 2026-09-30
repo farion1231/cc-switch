@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
+import { HermesCapturePanel } from "./HermesCapturePanel";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import {
@@ -588,13 +589,15 @@ export function UsageDashboard({
           >
             <TabsContent value="logs" className="mt-0">
               {appType === "hermes" ? (
-                <div
-                  className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-6 text-center text-sm text-muted-foreground"
-                  role="note"
-                  data-testid="hermes-request-details-notice"
-                >
-                  {t("usage.hermes.requestDetailsUnavailable")}
-                </div>
+                <HermesCapturePanel
+                  startMs={resolvedRange.startDate * 1000}
+                  endMs={resolvedRange.endDate * 1000}
+                  profileName={profileName}
+                  task={task}
+                  providerName={providerName}
+                  model={model}
+                  refreshIntervalMs={refreshIntervalMs}
+                />
               ) : (
                 <RequestLogTable
                   range={range}

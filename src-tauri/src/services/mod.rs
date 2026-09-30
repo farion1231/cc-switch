@@ -22,6 +22,7 @@ pub mod session_usage_codex;
 pub mod session_usage_gemini;
 pub mod session_usage_grokbuild;
 pub mod session_usage_hermes;
+pub mod session_usage_hermes_capture;
 pub mod session_usage_opencode;
 pub mod session_usage_pi;
 pub mod skill;

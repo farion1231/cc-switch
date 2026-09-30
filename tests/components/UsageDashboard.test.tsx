@@ -78,6 +78,10 @@ vi.mock("@/components/usage/RequestLogTable", () => ({
   RequestLogTable: () => <div data-testid="request-log-table" />,
 }));
 
+vi.mock("@/components/usage/HermesCapturePanel", () => ({
+  HermesCapturePanel: () => <div data-testid="hermes-capture-panel" />,
+}));
+
 vi.mock("@/components/usage/ProviderStatsTable", () => ({
   ProviderStatsTable: () => <div data-testid="provider-stats-table" />,
 }));
@@ -181,7 +185,7 @@ describe("UsageDashboard", () => {
     expect(KNOWN_APP_TYPES).toContain("hermes");
   });
 
-  it("renders Hermes filters, precision notices, and suppresses request details", () => {
+  it("renders Hermes filters, precision notices, and captured request panel", () => {
     renderDashboard();
 
     expect(
@@ -205,9 +209,7 @@ describe("UsageDashboard", () => {
     expect(screen.getByText("profile-a")).toBeInTheDocument();
     expect(screen.getByText("task-a")).toBeInTheDocument();
     expect(screen.getByTestId("hermes-precision-notice")).toBeInTheDocument();
-    expect(
-      screen.getByTestId("hermes-request-details-notice"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("hermes-capture-panel")).toBeInTheDocument();
     expect(screen.queryByTestId("request-log-table")).not.toBeInTheDocument();
   });
 
@@ -333,6 +335,8 @@ describe("UsageDashboard", () => {
       expect(locale.usage.hermes.precisionNotice).toBeTruthy();
       expect(locale.usage.hermes.syncWindowNotice).toBeTruthy();
       expect(locale.usage.hermes.requestDetailsUnavailable).toBeTruthy();
+      expect(locale.usage.hermes.captureTitle).toBeTruthy();
+      expect(locale.usage.hermes.historyEstimate).toBeTruthy();
       expect(locale.usage.countLabel.requests).toBeTruthy();
       expect(locale.usage.countLabel.hermesApiCalls).toBeTruthy();
       expect(locale.usage.countLabel.mixedActivity).toBeTruthy();

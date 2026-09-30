@@ -1612,6 +1612,10 @@ pub fn run() {
             commands::rebuild_codex_usage,
             commands::get_usage_data_sources,
             commands::get_hermes_usage_metadata,
+            commands::get_hermes_request_events,
+            commands::get_hermes_history_estimates,
+            commands::replay_hermes_history,
+            commands::enable_hermes_capture_plugin,
             // Stream health check
             commands::stream_check_provider,
             // Session manager

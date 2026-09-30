@@ -331,6 +331,57 @@ pub fn get_hermes_usage_metadata(
     state.db.get_hermes_usage_metadata()
 }
 
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn get_hermes_request_events(
+    state: State<'_, AppState>,
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
+    profile_name: Option<String>,
+    task: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+    offset: Option<i64>,
+) -> Result<Vec<crate::services::session_usage_hermes_capture::HermesRequestEvent>, AppError> {
+    crate::services::session_usage_hermes_capture::get_hermes_request_events(
+        &state.db,
+        start_ms,
+        end_ms,
+        profile_name.as_deref(),
+        task.as_deref(),
+        provider_name.as_deref(),
+        model.as_deref(),
+        offset,
+    )
+}
+
+#[tauri::command]
+pub fn get_hermes_history_estimates(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::services::session_usage_hermes_capture::HermesHistoryEstimate>, AppError> {
+    crate::services::session_usage_hermes_capture::get_hermes_history_estimates(&state.db)
+}
+
+#[tauri::command]
+pub async fn replay_hermes_history(
+    state: State<'_, AppState>,
+) -> Result<crate::services::session_usage_hermes_capture::HermesReplayResult, AppError> {
+    let db = state.db.clone();
+    let _guard = crate::services::session_usage::session_sync_mutex()
+        .lock()
+        .await;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::session_usage_hermes_capture::replay_hermes_history(&db)
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Hermes history replay failed: {error}")))?
+}
+
+#[tauri::command]
+pub fn enable_hermes_capture_plugin(profile_name: Option<String>) -> Result<String, AppError> {
+    crate::hermes_config::enable_hermes_capture_plugin(profile_name.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

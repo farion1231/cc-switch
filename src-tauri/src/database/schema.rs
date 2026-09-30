@@ -302,6 +302,7 @@ impl Database {
         // Hermes owns session_model_usage; these tables are CC Switch-owned and
         // deliberately do not mirror cumulative rows into proxy_request_logs.
         Self::create_hermes_usage_tables_on_conn(conn)?;
+        Self::create_hermes_capture_tables_on_conn(conn)?;
 
         // 19. Session Log Sync 表 (会话日志同步状态)
         //
@@ -576,6 +577,10 @@ impl Database {
                         );
                         Self::migrate_v19_to_v20(conn)?;
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        Self::create_hermes_capture_tables_on_conn(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1803,6 +1808,34 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    fn create_hermes_capture_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS hermes_request_events (
+            source_key TEXT NOT NULL, event_id TEXT NOT NULL, profile_name TEXT NOT NULL,
+            kind TEXT NOT NULL, session_id TEXT NOT NULL, task_id TEXT NOT NULL,
+            aux_task TEXT NOT NULL, model TEXT NOT NULL, provider TEXT NOT NULL,
+            started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER NOT NULL,
+            status TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER,
+            usage_available INTEGER NOT NULL, input_tokens INTEGER, output_tokens INTEGER,
+            cache_read_tokens INTEGER, cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+            PRIMARY KEY (source_key, event_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_hermes_request_events_time
+            ON hermes_request_events(started_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS hermes_history_estimates (
+            source_key TEXT PRIMARY KEY, profile_name TEXT NOT NULL UNIQUE,
+            captured_at_ms INTEGER NOT NULL, request_count INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL,
+            reasoning_tokens INTEGER NOT NULL, cost_usd TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS hermes_capture_cursors (
+            source_key TEXT PRIMARY KEY, last_rowid INTEGER NOT NULL
+        );",
+        )?;
         Ok(())
     }
 
@@ -3901,6 +3934,34 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrate_v20_to_v21_adds_capture_tables_without_changing_existing_rows(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "DROP TABLE hermes_capture_cursors;
+            DROP TABLE hermes_history_estimates;
+            DROP TABLE hermes_request_events;
+            CREATE TABLE migration_sentinel (value TEXT);
+            INSERT INTO migration_sentinel VALUES ('preserved');",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, 21);
+        for table in [
+            "hermes_capture_cursors",
+            "hermes_history_estimates",
+            "hermes_request_events",
+        ] {
+            assert!(Database::table_exists(&conn, table)?);
+        }
+        let value: String =
+            conn.query_row("SELECT value FROM migration_sentinel", [], |row| row.get(0))?;
+        assert_eq!(value, "preserved");
+        Ok(())
+    }
 
     #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {

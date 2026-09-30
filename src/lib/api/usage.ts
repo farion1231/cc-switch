@@ -20,6 +20,47 @@ import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
 
+export interface HermesRequestEvent {
+  eventId: string;
+  profileName: string;
+  kind: string;
+  sessionId: string;
+  taskId: string;
+  auxTask: string;
+  model: string;
+  provider: string;
+  startedAtMs: number;
+  endedAtMs: number;
+  status: string;
+  statusCode: number | null;
+  durationMs: number | null;
+  usageAvailable: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  reasoningTokens: number | null;
+}
+
+export interface HermesHistoryEstimate {
+  profileName: string;
+  capturedAtMs: number;
+  requestCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  costUsd: string;
+}
+
+export interface HermesReplayResult {
+  imported: number;
+  skipped: number;
+  unavailable: number;
+  errors: string[];
+}
+
 export const usageApi = {
   // Provider usage script methods
   query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
@@ -234,5 +275,31 @@ export const usageApi = {
 
   getHermesUsageMetadata: async (): Promise<HermesUsageMetadata> => {
     return invoke("get_hermes_usage_metadata");
+  },
+
+  getHermesRequestEvents: async (
+    filters: {
+      startMs?: number;
+      endMs?: number;
+      profileName?: string;
+      task?: string;
+      providerName?: string;
+      model?: string;
+      offset?: number;
+    } = {},
+  ): Promise<HermesRequestEvent[]> => {
+    return invoke("get_hermes_request_events", filters);
+  },
+
+  getHermesHistoryEstimates: async (): Promise<HermesHistoryEstimate[]> => {
+    return invoke("get_hermes_history_estimates");
+  },
+
+  replayHermesHistory: async (): Promise<HermesReplayResult> => {
+    return invoke("replay_hermes_history");
+  },
+
+  enableHermesCapturePlugin: async (profileName?: string): Promise<string> => {
+    return invoke("enable_hermes_capture_plugin", { profileName });
   },
 };
