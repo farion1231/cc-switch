@@ -17,6 +17,7 @@ export function RectifierConfigPanel() {
     requestThinkingBudget: true,
     requestMediaFallback: true,
     requestMediaHeuristic: true,
+    responseModelRewrite: false,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
     enabled: false,
@@ -139,6 +140,27 @@ export function RectifierConfigPanel() {
             disabled={!config.enabled || !config.requestMediaFallback}
             onCheckedChange={(checked) =>
               handleChange({ requestMediaHeuristic: checked })
+            }
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h4 className="text-sm font-medium text-muted-foreground">
+          {t("settings.advanced.rectifier.responseGroup")}
+        </h4>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.modelRewrite")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.modelRewriteDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.responseModelRewrite}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ responseModelRewrite: checked })
             }
           />
         </div>
