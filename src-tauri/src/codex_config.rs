@@ -541,6 +541,12 @@ pub fn codex_auth_matches_recorded_managed_oauth(
     };
     let auth_user_identity = extract_codex_auth_user_identity(auth);
     let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    // No marker is the normal state for a native ChatGPT login (no managed
+    // account ever wrote auth.json, or it was cleaned up when switching away);
+    // only a marker that exists but cannot be read is worth a warning.
+    if !marker_path.exists() {
+        return Ok(false);
+    }
     let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
         Ok(marker) => marker,
         Err(err) => {
@@ -3155,6 +3161,31 @@ base_url = "https://single.example.com/v1"
             &api_key_auth,
             "local-account-a"
         ));
+    }
+
+    /// 原生 ChatGPT 登录没有 marker 是常态：不认所有权，也不算读取失败；marker 坏了同样
+    /// 不认。
+    #[test]
+    #[serial]
+    fn missing_or_malformed_marker_never_establishes_ownership() {
+        let _home = CodexLiveTestHome::new();
+        let id_token = test_codex_id_token("user-a");
+        let auth = codex_managed_oauth_auth_value(
+            "workspace-a",
+            "access",
+            Some(&id_token),
+            "refresh",
+            "2026-01-01T00:00:00Z",
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("write live auth");
+        let marker = get_codex_managed_oauth_live_auth_marker_path();
+
+        assert!(!marker.exists());
+        assert!(!codex_auth_matches_recorded_managed_oauth(&auth, "local-account-a").unwrap());
+        assert!(!codex_live_auth_matches_managed_request("local-account-a", "access").unwrap());
+
+        crate::config::write_text_file(&marker, "{not json").expect("write malformed marker");
+        assert!(!codex_auth_matches_recorded_managed_oauth(&auth, "local-account-a").unwrap());
     }
 
     #[test]
