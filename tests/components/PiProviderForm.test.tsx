@@ -644,37 +644,24 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
     fireEvent.change(screen.getByPlaceholderText("my-provider"), {
       target: { value: "identity-provider" },
     });
     fireEvent.change(screen.getByLabelText("provider.name"), {
       target: { value: "Identity provider" },
     });
-    await user.click(document.querySelector("#pi-provider-api-select")!);
-    await user.click(
-      await screen.findByRole("option", { name: "Anthropic Messages" }),
-    );
-    fireEvent.change(
-      screen.getByPlaceholderText("https://api.example.com/v1"),
-      {
-        target: { value: "https://api.example.com" },
+
+    // Keep the create-provider path, but seed unrelated API/model fields in one
+    // change so CI time is spent on header editing and submission.
+    fireEvent.change(screen.getByLabelText("provider.configJson"), {
+      target: {
+        value: JSON.stringify({
+          name: "Identity provider",
+          api: "anthropic-messages",
+          baseUrl: "https://api.example.com",
+          models: [completeModel("identity-model")],
+        }),
       },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    fireEvent.change(screen.getByPlaceholderText("model-id"), {
-      target: { value: "identity-model" },
-    });
-    await user.click(
-      screen.getByRole("button", { name: "展开或收起模型详情" }),
-    );
-    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
-      target: { value: "128000" },
-    });
-    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
-      target: { value: "16384" },
     });
 
     await user.click(screen.getByRole("button", { name: "Add header" }));
@@ -689,8 +676,11 @@ describe("PiProviderForm", () => {
     await user.click(screen.getByRole("button", { name: "Save identity" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].providerKey).toBe("identity-provider");
     const config = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(config.api).toBe("anthropic-messages");
     expect(config.headers).toEqual({ "X-Client-Name": "pi-ui" });
+    expect(config).not.toHaveProperty("apiKey");
     expect(config).not.toHaveProperty("authHeader");
     expect(config.headers).not.toHaveProperty("authorization");
     expect(config.headers).not.toHaveProperty("x-api-key");
