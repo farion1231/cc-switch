@@ -613,7 +613,7 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
-    t["type"] = toml_edit::value(typ);
+    // Codex infers the transport from command/url; `type` is not a supported config key.
 
     // 定义核心字段（已在下方处理，跳过通用转换）
     let core_fields = match typ {
@@ -816,6 +816,22 @@ mod tests {
     }
 
     #[test]
+    fn stdio_transport_is_not_written_to_codex_config() {
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "example-mcp"],
+            "tool_timeout_sec": 300
+        }))
+        .expect("server table");
+
+        assert!(table.get("type").is_none());
+        assert_eq!(table["command"].as_str(), Some("npx"));
+        assert_eq!(table["args"].as_array().unwrap().len(), 2);
+        assert_eq!(table["tool_timeout_sec"].as_integer(), Some(300));
+    }
+
+    #[test]
     fn http_headers_are_only_written_to_codex_http_headers() {
         let table = json_server_to_toml_table(&json!({
             "type": "http",
@@ -828,6 +844,7 @@ mod tests {
         }))
         .unwrap();
 
+        assert!(table.get("type").is_none());
         let headers = table
             .get("http_headers")
             .and_then(|item| item.as_table())
