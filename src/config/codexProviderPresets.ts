@@ -2791,7 +2791,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
   },
   {
     name: "cocodot",
-    websiteUrl: "https://cocodot.co/ccswitch",
+    websiteUrl: "https://cocodot.co/ccswitch?utm_source=github&utm_medium=preset&utm_campaign=cc-switch",
     apiKeyUrl: "https://cocodot.co/dashboard/ai",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(

@@ -9,7 +9,7 @@ describe("cocodot provider presets", () => {
     const preset = providerPresets.find((item) => item.name === "cocodot");
 
     expect(preset).toMatchObject({
-      websiteUrl: "https://cocodot.co/ccswitch",
+      websiteUrl: "https://cocodot.co/ccswitch?utm_source=github&utm_medium=preset&utm_campaign=cc-switch",
       apiKeyUrl: "https://cocodot.co/dashboard/ai",
       category: "aggregator",
       endpointCandidates: ["https://cocodot.co/api/ai"],
@@ -33,7 +33,7 @@ describe("cocodot provider presets", () => {
     const preset = codexProviderPresets.find((item) => item.name === "cocodot");
 
     expect(preset).toMatchObject({
-      websiteUrl: "https://cocodot.co/ccswitch",
+      websiteUrl: "https://cocodot.co/ccswitch?utm_source=github&utm_medium=preset&utm_campaign=cc-switch",
       apiKeyUrl: "https://cocodot.co/dashboard/ai",
       auth: { OPENAI_API_KEY: "" },
       category: "aggregator",
