@@ -188,6 +188,13 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// Upstream model name to rewrite when an aggregate route matched
+    /// (`None` = no rewrite, use the existing model mapping).
+    ///
+    /// Resolved by `RequestContext` when it picks an aggregate provider and injected
+    /// via `with_aggregate_override`; there is one forwarder per request, so this is
+    /// request-level state.
+    aggregate_override: Option<String>,
 }
 
 impl RequestForwarder {
@@ -278,7 +285,15 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            aggregate_override: None,
         }
+    }
+
+    /// Injects the upstream model name an aggregate route wants written
+    /// (see `RequestContext::aggregate_override`).
+    pub fn with_aggregate_override(mut self, value: Option<String>) -> Self {
+        self.aggregate_override = value;
+        self
     }
 
     async fn record_success_result(
@@ -1245,9 +1260,25 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        //
+        // An aggregate route does not go through the target provider's own route
+        // table: the model comes straight from the aggregate table (the slot's
+        // upstream model). The two route_id spaces are unrelated, so mapping with
+        // the target would fail with route_unknown / routes_missing.
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            match self.aggregate_override.as_deref() {
+                Some(upstream) => {
+                    let mut body = body.clone();
+                    if let Some(obj) = body.as_object_mut() {
+                        obj.insert("model".to_string(), Value::String(upstream.to_string()));
+                    }
+                    body
+                }
+                None => {
+                    crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                        .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+                }
+            }
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -3892,6 +3923,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            aggregate_override: None,
         }
     }
 

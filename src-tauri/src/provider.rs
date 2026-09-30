@@ -461,6 +461,15 @@ pub struct ProviderMeta {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
+    /// Aggregate provider routing table: the provider itself has no endpoint and
+    /// no credentials, and routes each request to another provider based on the
+    /// requested model. `None` = an ordinary provider.
+    #[serde(
+        default,
+        rename = "aggregateRoutes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub aggregate_routes: Option<crate::aggregate::AggregateRoutes>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -1657,5 +1666,43 @@ mod tests {
             p.resolve_usage_credentials(&AppType::Claude),
             (String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn provider_meta_round_trips_aggregate_routes() {
+        let meta: ProviderMeta = serde_json::from_value(serde_json::json!({
+            "aggregateRoutes": {
+                "slots": [
+                    {
+                        "routeId": "claude-sonnet-1",
+                        "tier": "sonnet",
+                        "providerId": "p-glm",
+                        "upstreamModel": "glm-5.3",
+                        "label": "Zhipu GLM-5.3",
+                        "supports1m": true
+                    }
+                ],
+                "defaultTarget": { "kind": "providerId", "value": "p-glm" }
+            }
+        }))
+        .expect("deserialize");
+        let routes = meta.aggregate_routes.expect("aggregate routes present");
+        assert_eq!(routes.slots.len(), 1);
+        assert_eq!(routes.slots[0].route_id, "claude-sonnet-1");
+        assert_eq!(routes.slots[0].upstream_model, "glm-5.3");
+        assert_eq!(
+            routes.slots[0].tier,
+            crate::aggregate::AggregateTier::Sonnet
+        );
+        assert!(routes.slots[0].supports_1m);
+        assert_eq!(
+            routes.default_target,
+            crate::aggregate::DefaultTarget::ProviderId("p-glm".to_string())
+        );
+
+        // Unset must not appear in the serialised form.
+        let empty = ProviderMeta::default();
+        let value = serde_json::to_value(&empty).expect("serialize");
+        assert!(value.get("aggregateRoutes").is_none());
     }
 }

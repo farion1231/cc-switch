@@ -53,6 +53,9 @@ pub struct RequestContext {
     /// usage 归因的兜底顺序：上游响应回显 → outbound_model → request_model。
     /// 不能直接用 request_model 兜底：接管场景下它是映射前的客户端别名。
     pub outbound_model: Option<String>,
+    /// Upstream model name to rewrite when an aggregate route matched
+    /// (`None` = no rewrite, use the existing mapping).
+    pub aggregate_override: Option<String>,
     /// 日志标签（如 "Claude"、"Codex"、"Gemini"）
     pub tag: &'static str,
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
@@ -110,7 +113,7 @@ impl RequestContext {
         let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
             .ok()
             .flatten();
-        let current_provider_id = current_provider
+        let mut current_provider_id = current_provider
             .as_ref()
             .map(|provider| provider.id.clone())
             .unwrap_or_default();
@@ -136,7 +139,7 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
+        let mut providers = state
             .provider_router
             .select_providers_with_current(app_type_str, current_provider)
             .await
@@ -148,10 +151,67 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
-        let provider = providers
+        let mut provider = providers
             .first()
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
+
+        // Aggregate provider: swap the provider used for *this* request to the
+        // target named by the route table, keyed on the requested model. The target
+        // provider owns the endpoint / credentials / protocol conversion / circuit
+        // breaker; `aggregate_override` records the upstream model name to write,
+        // and `body.model` is rewritten from it before forwarding.
+        //
+        // Aggregate routing is a Claude Desktop-only capability: the forwarder
+        // (`forwarder.rs`) only applies the `aggregate_override` model rewrite under
+        // `AppType::ClaudeDesktop`. Gating on the app type here too is what keeps a
+        // non-claude-desktop provider that happens to carry `aggregate_routes` from
+        // ending up "routed to the target but model not rewritten" — a
+        // half-applied state. Both layers must agree.
+        let aggregate_override = if matches!(app_type, AppType::ClaudeDesktop)
+            && crate::aggregate::is_aggregate_provider(&provider)
+        {
+            let (target, upstream) = crate::aggregate::resolve_target(
+                &state.db,
+                app_type_str,
+                &provider,
+                &request_model,
+            )
+            .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+            log::debug!(
+                "[{}] Aggregate route: {} -> provider {} (upstream model: {:?})",
+                tag,
+                request_model,
+                target.name,
+                upstream
+            );
+            // The forwarder walks the `providers` list one entry at a time (see
+            // `forward_with_retry_inner`), so replacing only the `provider` field is
+            // not enough: the head of the list must be the target too, otherwise the
+            // request would still be sent by the endpoint-less, credential-less
+            // aggregate provider.
+            providers[0] = target.clone();
+            // Keep only the target: `aggregate_override` is a request-level field, so
+            // if any other chain member were attempted it would receive the slot's
+            // upstream model name — bypassing its own routing, a model it was never
+            // configured for. And if that member succeeded, the success write-back
+            // would switch the user's aggregate provider away, silently disabling
+            // aggregation. Design §6 specifies that the aggregate layer introduces no
+            // failover policy of its own: an open circuit on the target counts as
+            // unavailable (an explicit failure). Truncating also means the
+            // `current_provider_id` suppression below is not merely "correct for the
+            // first hop".
+            providers.truncate(1);
+            // Point `current_provider_id` at the target: otherwise a successful
+            // forward is read as a failover ("actual provider != current provider")
+            // and triggers a switch, moving the user off the aggregate provider they
+            // selected — the next request would no longer hit the aggregate route.
+            current_provider_id = target.id.clone();
+            provider = target;
+            upstream
+        } else {
+            None
+        };
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
@@ -170,6 +230,7 @@ impl RequestContext {
             current_provider_id,
             request_model,
             outbound_model: None,
+            aggregate_override,
             tag,
             app_type_str,
             app_type,
@@ -247,6 +308,10 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
+        // When an aggregate route matched, hand the upstream model name to the
+        // forwarder: the model mapping comes from the aggregate route table, not
+        // from the target provider's own route table.
+        .with_aggregate_override(self.aggregate_override.clone())
     }
 
     /// 获取 Provider 列表（用于故障转移）

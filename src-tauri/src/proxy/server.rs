@@ -1240,4 +1240,281 @@ mod tests {
             "full URL"
         );
     }
+
+    /// End to end: the aggregate provider routes the request to the target
+    /// provider named by the slot (keyed on the requested model) and writes the
+    /// slot's upstream model name into the outbound body — the acceptance core
+    /// of this task. Drives `/claude-desktop/v1/messages` through a real
+    /// `ProxyServer` plus a mock upstream, and asserts on the body and the auth
+    /// the mock upstream **actually receives**.
+    #[tokio::test]
+    async fn aggregate_routes_rewrite_model_and_use_target_provider() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post({
+                let captured = captured.clone();
+                move |request: axum::extract::Request| {
+                    let captured = captured.clone();
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = axum::body::to_bytes(body, 1024 * 1024)
+                            .await
+                            .expect("read mock request body");
+                        captured.lock().await.push(CapturedRequest {
+                            path_and_query: parts
+                                .uri
+                                .path_and_query()
+                                .map(|value| value.as_str().to_string())
+                                .unwrap_or_else(|| parts.uri.path().to_string()),
+                            authorization: parts
+                                .headers
+                                .get(header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            body: serde_json::from_slice(&body).expect("parse mock request body"),
+                        });
+
+                        (
+                            StatusCode::OK,
+                            [(header::CONTENT_TYPE, "application/json")],
+                            r#"{"id":"msg_1","type":"message","role":"assistant","model":"glm-5.3","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":3,"output_tokens":2}}"#,
+                        )
+                    }
+                }
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+
+        // Slot target: both its endpoint and its credentials are its own
+        let glm_target = Provider::with_id(
+            "glm-target".to_string(),
+            "GLM Target".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                    "ANTHROPIC_AUTH_TOKEN": "target-secret"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude-desktop", &glm_target)
+            .expect("save slot target");
+
+        // Default target: the fallback when no route matches. It carries a route
+        // of its own (mapping to an upstream of the same name), which is what
+        // proves that "a miss must not apply the slot's upstream model name".
+        let mut default_target = Provider::with_id(
+            "default-target".to_string(),
+            "Default Target".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://{mock_addr}"),
+                    "ANTHROPIC_AUTH_TOKEN": "default-secret"
+                }
+            }),
+            None,
+        );
+        default_target.meta = Some(ProviderMeta {
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-haiku-4-5".to_string(),
+                crate::provider::ClaudeDesktopModelRoute {
+                    model: "claude-haiku-4-5".to_string(),
+                    label_override: None,
+                    supports_1m: None,
+                },
+            )]),
+            ..Default::default()
+        });
+        db.save_provider("claude-desktop", &default_target)
+            .expect("save default target");
+
+        // Aggregate provider: no endpoint, no credentials, just a route table
+        let mut aggregate = Provider::with_id(
+            "agg".to_string(),
+            "Aggregate".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        aggregate.meta = Some(ProviderMeta {
+            aggregate_routes: Some(crate::aggregate::AggregateRoutes {
+                slots: vec![crate::aggregate::AggregateRouteSlot {
+                    route_id: "claude-sonnet-1".to_string(),
+                    tier: crate::aggregate::AggregateTier::Sonnet,
+                    provider_id: "glm-target".to_string(),
+                    upstream_model: "glm-5.3".to_string(),
+                    label: None,
+                    supports_1m: false,
+                }],
+                default_target: crate::aggregate::DefaultTarget::ProviderId(
+                    "default-target".to_string(),
+                ),
+            }),
+            ..Default::default()
+        });
+        db.save_provider("claude-desktop", &aggregate)
+            .expect("save aggregate provider");
+        db.set_current_provider("claude-desktop", "agg")
+            .expect("select aggregate provider");
+
+        let token = crate::claude_desktop_config::get_or_create_gateway_token(db.as_ref())
+            .expect("gateway token");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: true,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let messages_url = format!(
+            "http://127.0.0.1:{}/claude-desktop/v1/messages",
+            proxy_info.port
+        );
+
+        // Hit: model = slot id -> target provider + upstream model name rewrite
+        let hit = client
+            .post(&messages_url)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .json(&json!({
+                "model": "claude-sonnet-1",
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .send()
+            .await
+            .expect("send aggregate hit request");
+        assert_eq!(hit.status(), StatusCode::OK, "aggregate hit");
+
+        {
+            let captured = captured.lock().await;
+            assert_eq!(captured.len(), 1, "hit reached upstream exactly once");
+            let request = &captured[0];
+            assert_eq!(
+                request.body["model"], "glm-5.3",
+                "slot upstream model must reach the outbound body"
+            );
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer target-secret"),
+                "auth must come from the slot target, not the aggregate provider"
+            );
+        }
+
+        // Usage is billed to the provider that actually served the request
+        let (log_count, input_tokens, output_tokens): (i64, i64, i64) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let totals = {
+                        let conn = crate::database::lock_conn!(db.conn);
+                        match conn.query_row(
+                            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0)
+                             FROM proxy_request_logs WHERE provider_id = ?1",
+                            ["glm-target"],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        ) {
+                            Ok(totals) => totals,
+                            Err(error) => panic!("query aggregate usage logs: {error}"),
+                        }
+                    };
+
+                    if totals.0 == 1 {
+                        break Ok::<_, AppError>(totals);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("aggregate hit usage was not recorded against the slot target")
+            .expect("read aggregate hit usage logs");
+        assert_eq!(log_count, 1, "exactly one usage row for the slot target");
+        assert_eq!(input_tokens, 3);
+        assert_eq!(output_tokens, 2);
+
+        {
+            let aggregate_logs: i64 = async {
+                let conn = crate::database::lock_conn!(db.conn);
+                Ok::<_, AppError>(
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
+                        ["agg"],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| {
+                        AppError::Database(format!("query aggregate usage logs: {error}"))
+                    })?,
+                )
+            }
+            .await
+            .expect("query aggregate provider usage logs");
+            assert_eq!(
+                aggregate_logs, 0,
+                "usage must not be attributed to the endpoint-less aggregate provider"
+            );
+        }
+
+        // The aggregate provider must still be the persisted current provider
+        // (the UI must not be switched away from it), and no pseudo-failover may
+        // happen along the way.
+        assert_eq!(
+            db.get_current_provider("claude-desktop")
+                .expect("read current provider")
+                .as_deref(),
+            Some("agg"),
+            "aggregate provider must stay the persisted current provider"
+        );
+        assert_eq!(
+            proxy.get_status().await.failover_count,
+            0,
+            "aggregate routing must not be mistaken for a failover switch"
+        );
+
+        // Miss: no slot matches -> default target, and the aggregate layer does
+        // not rewrite the model name
+        let miss = client
+            .post(&messages_url)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .json(&json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .send()
+            .await
+            .expect("send aggregate miss request");
+        assert_eq!(miss.status(), StatusCode::OK, "aggregate miss");
+
+        {
+            let captured = captured.lock().await;
+            assert_eq!(captured.len(), 2, "miss reached upstream");
+            let request = &captured[1];
+            assert_eq!(
+                request.body["model"], "claude-haiku-4-5",
+                "miss must not apply the slot's upstream model"
+            );
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer default-secret"),
+                "miss must be routed to the default target"
+            );
+        }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
 }
