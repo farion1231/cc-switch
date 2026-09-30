@@ -68,7 +68,7 @@ fn conversation_fingerprint(body: &Value) -> Option<String> {
     let mut hasher = Sha256::new();
     let mut fed = false;
     if let Some(system) = body.get("system") {
-        hasher.update(system.to_string().as_bytes());
+        hasher.update(without_cache_control(system).to_string().as_bytes());
         fed = true;
     }
     if let Some(first_user) = body
@@ -80,7 +80,7 @@ fn conversation_fingerprint(body: &Value) -> Option<String> {
                 .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
         })
     {
-        hasher.update(first_user.to_string().as_bytes());
+        hasher.update(without_cache_control(first_user).to_string().as_bytes());
         fed = true;
     }
     if !fed {
@@ -88,6 +88,61 @@ fn conversation_fingerprint(body: &Value) -> Option<String> {
     }
     let digest = format!("{:x}", hasher.finalize());
     Some(format!("ccsw-{}", &digest[..32]))
+}
+
+/// A stable session header the client already sends and the gateway recognises
+/// natively (Claude Code, Codex). Checked before deriving an id of our own.
+fn native_session_header(headers: &http::HeaderMap) -> Option<&str> {
+    [
+        "x-claude-code-session-id",
+        "session-id",
+        "session_id",
+        "x-session-id",
+    ]
+    .iter()
+    .find_map(|name| {
+        headers
+            .get(*name)?
+            .to_str()
+            .ok()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
+
+/// Pick the value for `x-opencode-session`, most stable identity first: a native
+/// session header the client already sends, the client-provided session id, the
+/// conversation fingerprint, then the generated id.
+fn pick_opencode_session<'a>(
+    native: Option<&'a str>,
+    client_provided: Option<&'a str>,
+    fingerprint: Option<&'a str>,
+    generated: &'a str,
+) -> Option<String> {
+    [native, client_provided, fingerprint, Some(generated)]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Clone `value` without any `cache_control` key, at any depth.
+///
+/// Clients move that marker between messages as the conversation grows (Claude
+/// Code puts it on the first user message, then on the last one), so hashing it
+/// would change the session id once, mid-conversation.
+fn without_cache_control(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| key.as_str() != "cache_control")
+                .map(|(key, value)| (key.clone(), without_cache_control(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_cache_control).collect()),
+        other => other.clone(),
+    }
 }
 
 fn codex_bearer_access_token(headers: &http::HeaderMap) -> Option<&str> {
@@ -1325,6 +1380,7 @@ impl RequestForwarder {
             .and_then(|u| u.authority().map(|a| a.to_string()));
         let opencode_conversation_fingerprint = if !self.session_client_provided
             && !headers.contains_key("x-opencode-session")
+            && native_session_header(headers).is_none()
             && is_opencode_upstream(base_url_host.as_deref())
         {
             conversation_fingerprint(&mapped_body)
@@ -2065,35 +2121,39 @@ impl RequestForwarder {
         // OpenCode Go places two hard requirements on clients
         // (<https://opencode.ai/docs/go/>); satisfy both, only for its upstream.
         //
-        // 1) User-Agent: the gateway sits behind Cloudflare and rejects clients
-        //    that do not identify themselves (403 Access denied; a UA clears it).
-        //    An explicitly configured custom UA still wins.
-        let custom_user_agent =
+        // 1) User-Agent: a client that identifies itself is passed through
+        //    untouched (Claude Code, Codex, ...). Only a request that carries no
+        //    UA at all gets this fallback - the gateway sits behind Cloudflare and
+        //    rejects unidentified clients (403 Access denied; a UA clears it).
+        //    The fallback is therefore applied after the header loop, next to the
+        //    custom UA. An explicitly configured custom UA still wins.
+        let opencode_fallback_user_agent =
             if custom_user_agent.is_none() && is_opencode_upstream(upstream_host.as_deref()) {
                 Some(http::HeaderValue::from_static(concat!(
                     "cc-switch/",
                     env!("CARGO_PKG_VERSION")
                 )))
             } else {
-                custom_user_agent
+                None
             };
 
         // 2) Session header: without `x-opencode-session` the gateway answers
         //    400 MissingSessionID. Pass it through when the client already sends
-        //    one, otherwise prefer a client-provided session id (stable per
-        //    conversation) and fall back to the conversation fingerprint -
-        //    Claude Desktop mints a new id on every request.
+        //    one, otherwise send the most stable identity we have
+        //    (`pick_opencode_session`) - a native client header, the client's
+        //    session id, the conversation fingerprint, or the generated id.
         if is_opencode_upstream(upstream_host.as_deref())
             && !headers.contains_key("x-opencode-session")
         {
-            let session = if self.session_client_provided {
-                Some(self.session_id.trim().to_string())
-            } else {
-                opencode_conversation_fingerprint
-                    .clone()
-                    .or_else(|| Some(self.session_id.trim().to_string()))
-            };
-            if let Some(session) = session.filter(|s| !s.is_empty()) {
+            let client_id = self
+                .session_client_provided
+                .then_some(self.session_id.as_str());
+            if let Some(session) = pick_opencode_session(
+                native_session_header(headers),
+                client_id,
+                opencode_conversation_fingerprint.as_deref(),
+                &self.session_id,
+            ) {
                 if let Ok(value) = http::HeaderValue::from_str(&session) {
                     auth_headers.push((http::HeaderName::from_static("x-opencode-session"), value));
                 }
@@ -2340,7 +2400,10 @@ impl RequestForwarder {
         }
 
         if !saw_user_agent {
-            if let Some(ref ua) = custom_user_agent {
+            if let Some(ua) = custom_user_agent
+                .as_ref()
+                .or(opencode_fallback_user_agent.as_ref())
+            {
                 ordered_headers.append(http::header::USER_AGENT, ua.clone());
             }
         }
@@ -4021,6 +4084,97 @@ mod tests {
     #[test]
     fn conversation_fingerprint_requires_conversation_content() {
         assert!(conversation_fingerprint(&json!({"model": "x"})).is_none());
+    }
+
+    #[test]
+    fn conversation_fingerprint_ignores_cache_control() {
+        // Clients move `cache_control` between messages as a conversation grows
+        // (Claude Code puts it on the first user message, then on the last one);
+        // the session id must not change with it.
+        let first = json!({
+            "system": "You are an assistant.",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}
+                ]
+            }]
+        });
+        let later = json!({
+            "system": "You are an assistant.",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "again", "cache_control": {"type": "ephemeral"}}
+                ]}
+            ]
+        });
+        assert_eq!(
+            conversation_fingerprint(&first),
+            conversation_fingerprint(&later),
+            "cache_control placement must not change the session id"
+        );
+    }
+
+    #[test]
+    fn opencode_session_precedence() {
+        // native client header > client-provided id > fingerprint > generated id
+        assert_eq!(
+            pick_opencode_session(Some("native"), Some("client"), Some("fp"), "gen").as_deref(),
+            Some("native")
+        );
+        assert_eq!(
+            pick_opencode_session(None, Some("client"), Some("fp"), "gen").as_deref(),
+            Some("client")
+        );
+        assert_eq!(
+            pick_opencode_session(None, None, Some("fp"), "gen").as_deref(),
+            Some("fp")
+        );
+        assert_eq!(
+            pick_opencode_session(None, None, None, "gen").as_deref(),
+            Some("gen")
+        );
+        // Blank candidates are skipped, and nothing is sent when all are blank.
+        assert_eq!(
+            pick_opencode_session(Some("   "), None, None, "gen").as_deref(),
+            Some("gen")
+        );
+        assert_eq!(pick_opencode_session(None, None, None, "  "), None);
+    }
+
+    #[test]
+    fn native_session_header_recognises_real_client_headers() {
+        // Claude Code and Codex each send one of these; unknown headers do not count.
+        for name in [
+            "x-claude-code-session-id",
+            "session-id",
+            "session_id",
+            "x-session-id",
+        ] {
+            let mut headers = http::HeaderMap::new();
+            headers.insert(
+                http::HeaderName::from_static(name),
+                http::HeaderValue::from_static("abc123"),
+            );
+            assert_eq!(native_session_header(&headers), Some("abc123"), "{name}");
+        }
+
+        let mut blank = http::HeaderMap::new();
+        blank.insert(
+            http::HeaderName::from_static("session_id"),
+            http::HeaderValue::from_static("  "),
+        );
+        assert_eq!(native_session_header(&blank), None);
+
+        let mut other = http::HeaderMap::new();
+        other.insert(
+            http::HeaderName::from_static("x-request-id"),
+            http::HeaderValue::from_static("ignored"),
+        );
+        assert_eq!(native_session_header(&other), None);
+        assert_eq!(native_session_header(&http::HeaderMap::new()), None);
     }
 
     fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
