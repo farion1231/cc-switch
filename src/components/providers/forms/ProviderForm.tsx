@@ -938,6 +938,7 @@ function ProviderFormFull({
   const {
     data: opencodeLiveProviderIds = [],
     isLoading: isOpencodeLiveProviderIdsLoading,
+    isSuccess: isOpencodeLiveProviderIdsSuccess,
   } = useQuery({
     queryKey: ["opencodeLiveProviderIds"],
     queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
@@ -951,6 +952,13 @@ function ProviderFormFull({
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
+
+  const canKeepExistingOpencodeOverride =
+    isEditMode &&
+    !!providerId &&
+    opencodeForm.opencodeProviderKey === providerId &&
+    isOpencodeLiveProviderIdsSuccess &&
+    opencodeLiveProviderIds.includes(providerId);
 
   const initialOmoSettings =
     appId === "opencode" &&
@@ -1152,8 +1160,14 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      if (Object.keys(opencodeForm.opencodeModels).length === 0) {
-        issues.push(t("opencode.modelsRequired"));
+      // Only an unchanged ID already in the live config may inherit defaults.
+      if (
+        !canKeepExistingOpencodeOverride &&
+        (!opencodeForm.opencodeNpm.trim() ||
+          Object.keys(opencodeForm.opencodeModels).length === 0)
+      ) {
+        toast.error(t("opencode.customProviderRequired"));
+        return;
       }
     }
 
@@ -2501,6 +2515,7 @@ function ProviderFormFull({
 
           {appId === "opencode" && !isAnyOmoCategory && (
             <OpenCodeFormFields
+              allowBuiltinDefaults={canKeepExistingOpencodeOverride}
               npm={opencodeForm.opencodeNpm}
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
               apiKey={opencodeForm.opencodeApiKey}
