@@ -88,13 +88,23 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-flash", ["low", "high", "max"]],
     ["DeepSeek", "deepseek-v4-pro", ["low", "high", "max"]],
-    // MiniMax/MiMo 官方 catalog=none/high（与模板默认一致，声明只为表单可见）
+    // MiniMax 官方 catalog=none/high；MiMo 2026-09-23 官方目录为四档、默认 low。
     ["MiniMax", "MiniMax-M3", ["none", "high"]],
     ["MiniMax en", "MiniMax-M3", ["none", "high"]],
-    ["Xiaomi MiMo", "mimo-v2.5-pro", ["none", "high"]],
-    ["Xiaomi MiMo", "mimo-v2.5", ["none", "high"]],
-    ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5-pro", ["none", "high"]],
-    ["Xiaomi MiMo Token Plan (China)", "mimo-v2.5", ["none", "high"]],
+    ["Xiaomi MiMo", "mimo-v2.5-pro", ["none", "low", "medium", "high"], "low"],
+    ["Xiaomi MiMo", "mimo-v2.5", ["none", "low", "medium", "high"], "low"],
+    [
+      "Xiaomi MiMo Token Plan (China)",
+      "mimo-v2.5-pro",
+      ["none", "low", "medium", "high"],
+      "low",
+    ],
+    [
+      "Xiaomi MiMo Token Plan (China)",
+      "mimo-v2.5",
+      ["none", "low", "medium", "high"],
+      "low",
+    ],
     // 智谱官方 Codex 接入页自带 models.json（docs.bigmodel.cn/cn/coding-plan/tool/
     // codex、docs.z.ai/devpack/tool/codex，2026-09-04 核对）：glm-5.3 档位
     // low/high/max、默认 max（≠ 后端回落的模板默认 high，故显式声明）；

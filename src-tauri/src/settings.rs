@@ -1052,8 +1052,10 @@ pub fn get_effective_current_provider(
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
-        let providers = db.get_all_providers(app_type.as_str())?;
-        if providers.contains_key(&local_id) {
+        if db
+            .get_provider_by_id(&local_id, app_type.as_str())?
+            .is_some()
+        {
             // 存在，直接返回
             return Ok(Some(local_id));
         }

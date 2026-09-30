@@ -1,8 +1,7 @@
-use crate::config::write_json_file_with_contents;
+use crate::config::atomic_write;
 use crate::error::AppError;
-use crate::provider::OpenCodeProviderConfig;
+use crate::jsonc_document::JsoncDocument;
 use crate::settings::get_opencode_override_dir;
-use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -55,8 +54,18 @@ pub fn get_opencode_dir() -> PathBuf {
         .join("opencode")
 }
 
-pub fn get_opencode_config_path() -> PathBuf {
-    get_opencode_dir().join("opencode.json")
+pub fn get_opencode_config_path() -> Result<PathBuf, AppError> {
+    resolve_config_path(&get_opencode_dir())
+}
+
+fn resolve_config_path(dir: &Path) -> Result<PathBuf, AppError> {
+    for name in ["opencode.jsonc", "opencode.json"] {
+        let path = dir.join(name);
+        if path.try_exists().map_err(|e| AppError::io(&path, e))? {
+            return Ok(path);
+        }
+    }
+    Ok(dir.join("opencode.json"))
 }
 
 /// 获取 OpenCode SQLite 数据库路径
@@ -98,51 +107,72 @@ pub fn get_opencode_env_path() -> PathBuf {
     get_opencode_dir().join(".env")
 }
 
-fn read_opencode_config_from_path(path: &Path) -> Result<Value, AppError> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(json!({
-                "$schema": "https://opencode.ai/config.json"
-            }));
-        }
-        Err(err) => return Err(AppError::io(path, err)),
-    };
-    let value: Value = json5::from_str(&content).map_err(|e| {
-        AppError::Config(format!(
-            "Failed to parse OpenCode config: {}: {e}",
-            path.display()
-        ))
-    })?;
+struct OpenCodeDocument {
+    path: PathBuf,
+    previous_contents: Option<Vec<u8>>,
+    document: JsoncDocument,
+}
 
-    // 根节点必须是对象：下游 set_provider / set_mcp_server / add_plugin 都对它做
-    // `config["key"] = …` 索引赋值，而 serde_json 只把 Null 自动升级成对象，
-    // 数组或标量会直接 panic（panic 发生在 Tauri command 内、跨 FFI 展开）。
-    //
-    // 这里选择报错而不是重建根节点：opencode.json 里还有 model / theme 等用户自有
-    // 配置，静默重建等于删掉它们。让用户自己修文件，与 read_claude_live 的做法一致。
-    if !value.is_object() {
-        return Err(AppError::Config(format!(
-            "OpenCode 配置文件根节点必须是 JSON 对象: {}",
-            path.display()
-        )));
+impl OpenCodeDocument {
+    fn load(path: &Path) -> Result<Self, AppError> {
+        let previous_contents = read_config_contents(path)?;
+        let source = match &previous_contents {
+            Some(contents) => std::str::from_utf8(contents).map_err(|e| {
+                AppError::Config(format!(
+                    "Invalid UTF-8 in OpenCode config {}: {e}",
+                    path.display()
+                ))
+            })?,
+            None => "{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n",
+        };
+        let document = JsoncDocument::parse(source).map_err(|e| {
+            AppError::Config(format!("Invalid OpenCode config {}: {e}", path.display()))
+        })?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            previous_contents,
+            document,
+        })
     }
 
-    Ok(value)
+    // The caller holds opencode_config_lock from path selection through commit.
+    fn save(self) -> Result<(), AppError> {
+        let source = self.document.validated_source()?;
+        if read_config_contents(&self.path)? != self.previous_contents {
+            return Err(AppError::Config(format!(
+                "OpenCode config changed on disk. Please reload and try again: {}",
+                self.path.display()
+            )));
+        }
+        if self.previous_contents.as_deref() != Some(source.as_bytes()) {
+            atomic_write(&self.path, source.as_bytes())?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn read_opencode_config_from_path(path: &Path) -> Result<Value, AppError> {
+    Ok(OpenCodeDocument::load(path)?.document.value().clone())
 }
 
 pub fn read_opencode_config() -> Result<Value, AppError> {
-    read_opencode_config_from_path(&get_opencode_config_path())
+    read_opencode_config_from_path(&get_opencode_config_path()?)
 }
 
-fn write_opencode_config_to_path_with_contents(
-    path: &Path,
-    config: &Value,
-) -> Result<Vec<u8>, AppError> {
-    let contents = write_json_file_with_contents(path, config)?;
-
-    log::debug!("OpenCode config written to {path:?}");
-    Ok(contents)
+fn edit_config(
+    resolve_path: impl FnOnce() -> Result<PathBuf, AppError>,
+    edit: impl FnOnce(&mut Value),
+) -> Result<bool, AppError> {
+    let _guard = opencode_config_lock().lock()?;
+    let path = resolve_path()?;
+    let mut document = OpenCodeDocument::load(&path)?;
+    let mut desired = document.document.value().clone();
+    edit(&mut desired);
+    if !document.document.apply(&desired)? {
+        return Ok(false);
+    }
+    document.save()?;
+    Ok(true)
 }
 
 pub fn get_providers() -> Result<Map<String, Value>, AppError> {
@@ -155,65 +185,25 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
 }
 
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let path = get_opencode_config_path();
-    let mut full_config = read_opencode_config_from_path(&path)?;
-
-    // 判空要连「存在但不是对象」一起算：否则下面 as_object_mut 拿不到，
-    // 写入会静默失效——界面显示添加成功而文件里没有。provider 段是 cc-switch
-    // 的投影区，归一化不会碰用户自有的 model / theme 等顶层配置。
-    if !full_config.get("provider").is_some_and(Value::is_object) {
-        if full_config.get("provider").is_some() {
-            log::warn!("opencode.json 的 provider 不是对象，已重置为空对象");
+    edit_config(get_opencode_config_path, |full_config| {
+        if !full_config.get("provider").is_some_and(Value::is_object) {
+            if full_config.get("provider").is_some() {
+                log::warn!("OpenCode 的供应商配置格式有误，将清空原有供应商配置，再保存当前供应商");
+            }
+            full_config["provider"] = json!({});
         }
-        full_config["provider"] = json!({});
-    }
-
-    if let Some(providers) = full_config
-        .get_mut("provider")
-        .and_then(|v| v.as_object_mut())
-    {
-        providers.insert(id.to_string(), config);
-    }
-
-    write_opencode_config_to_path_with_contents(&path, &full_config).map(|_| ())
+        full_config["provider"][id] = config;
+    })
+    .map(|_| ())
 }
 
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let path = get_opencode_config_path();
-    let mut config = read_opencode_config_from_path(&path)?;
-
-    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
-        providers.remove(id);
-    } else if config.get("provider").is_some() {
-        log::warn!("opencode.json 的 provider 不是对象，无法删除供应商 '{id}'");
-    }
-
-    write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
-}
-
-pub fn get_typed_providers() -> Result<IndexMap<String, OpenCodeProviderConfig>, AppError> {
-    let providers = get_providers()?;
-    let mut result = IndexMap::new();
-
-    for (id, value) in providers {
-        match serde_json::from_value::<OpenCodeProviderConfig>(value.clone()) {
-            Ok(config) => {
-                result.insert(id, config);
-            }
-            Err(e) => {
-                log::warn!("Failed to parse provider '{id}': {e}");
-            }
+    edit_config(get_opencode_config_path, |config| {
+        if let Some(providers) = config.get_mut("provider").and_then(Value::as_object_mut) {
+            providers.remove(id);
         }
-    }
-
-    Ok(result)
-}
-
-pub fn set_typed_provider(id: &str, config: &OpenCodeProviderConfig) -> Result<(), AppError> {
-    let value = serde_json::to_value(config).map_err(|e| AppError::JsonSerialize { source: e })?;
-    set_provider(id, value)
+    })
+    .map(|_| ())
 }
 
 pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
@@ -226,143 +216,104 @@ pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
 }
 
 pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let path = get_opencode_config_path();
-    let mut full_config = read_opencode_config_from_path(&path)?;
-
-    if !full_config.get("mcp").is_some_and(Value::is_object) {
-        if full_config.get("mcp").is_some() {
-            log::warn!("opencode.json 的 mcp 不是对象，已重置为空对象");
+    edit_config(get_opencode_config_path, |full_config| {
+        if !full_config.get("mcp").is_some_and(Value::is_object) {
+            if full_config.get("mcp").is_some() {
+                log::warn!(
+                    "OpenCode 的 MCP 服务配置格式有误，将清空原有 MCP 服务配置，再保存当前服务"
+                );
+            }
+            full_config["mcp"] = json!({});
         }
-        full_config["mcp"] = json!({});
-    }
-
-    if let Some(mcp) = full_config.get_mut("mcp").and_then(|v| v.as_object_mut()) {
-        mcp.insert(id.to_string(), config);
-    }
-
-    write_opencode_config_to_path_with_contents(&path, &full_config).map(|_| ())
+        full_config["mcp"][id] = config;
+    })
+    .map(|_| ())
 }
 
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let path = get_opencode_config_path();
-    let mut config = read_opencode_config_from_path(&path)?;
-
-    if let Some(mcp) = config.get_mut("mcp").and_then(|v| v.as_object_mut()) {
-        mcp.remove(id);
-    } else if config.get("mcp").is_some() {
-        log::warn!("opencode.json 的 mcp 不是对象，无法删除服务器 '{id}'");
-    }
-
-    write_opencode_config_to_path_with_contents(&path, &config).map(|_| ())
+    edit_config(get_opencode_config_path, |config| {
+        if let Some(mcp) = config.get_mut("mcp").and_then(Value::as_object_mut) {
+            mcp.remove(id);
+        }
+    })
+    .map(|_| ())
 }
 
-pub fn add_plugin(path: &Path, plugin_name: &str) -> Result<(), AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let mut config = read_opencode_config_from_path(path)?;
-    let normalized_plugin_name = canonicalize_plugin_name(plugin_name);
-    let target_is_omo =
-        matches_any_plugin_prefix(&normalized_plugin_name, &STANDARD_OMO_PLUGIN_PREFIXES)
-            || matches_any_plugin_prefix(&normalized_plugin_name, &SLIM_OMO_PLUGIN_PREFIXES);
-    let mut changed = false;
+pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
+    edit_config(get_opencode_config_path, |config| {
+        insert_plugin(config, plugin_name)
+    })
+    .map(|_| ())
+}
 
-    let plugins = config.get_mut("plugin").and_then(|v| v.as_array_mut());
-
-    match plugins {
-        Some(arr) => {
-            let mut found_target = false;
-            arr.retain(|value| {
-                let Some(existing_name) = value.as_str() else {
-                    return true;
-                };
-                if existing_name == normalized_plugin_name {
-                    if found_target {
-                        changed = true;
-                        return false;
-                    }
-                    found_target = true;
-                    return true;
-                }
-
-                // Standard OMO and OMO Slim are mutually exclusive.
-                if target_is_omo
-                    && (matches_any_plugin_prefix(existing_name, &STANDARD_OMO_PLUGIN_PREFIXES)
-                        || matches_any_plugin_prefix(existing_name, &SLIM_OMO_PLUGIN_PREFIXES))
-                {
-                    changed = true;
-                    return false;
-                }
-                true
-            });
-
-            if !found_target {
-                arr.push(Value::String(normalized_plugin_name));
-                changed = true;
+fn insert_plugin(config: &mut Value, plugin_name: &str) {
+    let normalized = canonicalize_plugin_name(plugin_name);
+    let target_is_omo = matches_any_plugin_prefix(&normalized, &STANDARD_OMO_PLUGIN_PREFIXES)
+        || matches_any_plugin_prefix(&normalized, &SLIM_OMO_PLUGIN_PREFIXES);
+    if let Some(plugins) = config.get_mut("plugin").and_then(Value::as_array_mut) {
+        let mut found = false;
+        plugins.retain(|value| {
+            let Some(name) = value.as_str() else {
+                return true;
+            };
+            if name == normalized {
+                let keep = !found;
+                found = true;
+                return keep;
             }
+            // Standard OMO and OMO Slim remain mutually exclusive.
+            !(target_is_omo
+                && (matches_any_plugin_prefix(name, &STANDARD_OMO_PLUGIN_PREFIXES)
+                    || matches_any_plugin_prefix(name, &SLIM_OMO_PLUGIN_PREFIXES)))
+        });
+        if !found {
+            plugins.push(Value::String(normalized));
         }
-        None => {
-            config["plugin"] = json!([normalized_plugin_name]);
-            changed = true;
-        }
+    } else {
+        config["plugin"] = json!([normalized]);
     }
-
-    if !changed {
-        return Ok(());
-    }
-
-    write_opencode_config_to_path_with_contents(path, &config).map(|_| ())
 }
 
-pub fn remove_plugins_by_prefixes(path: &Path, prefixes: &[&str]) -> Result<bool, AppError> {
-    let _guard = opencode_config_lock().lock()?;
-    let previous_contents = read_config_contents(path)?;
-    let mut config = read_opencode_config_from_path(path)?;
+pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<bool, AppError> {
+    edit_config(get_opencode_config_path, |config| {
+        remove_plugins(config, prefixes)
+    })
+}
 
-    let mut changed = false;
-    if let Some(arr) = config.get_mut("plugin").and_then(|v| v.as_array_mut()) {
-        let previous_len = arr.len();
-        arr.retain(|v| {
-            v.as_str()
-                .map(|s| !matches_any_plugin_prefix(s, prefixes))
-                .unwrap_or(true)
+fn remove_plugins(config: &mut Value, prefixes: &[&str]) {
+    if let Some(plugins) = config.get_mut("plugin").and_then(Value::as_array_mut) {
+        let previous_len = plugins.len();
+        plugins.retain(|value| {
+            value
+                .as_str()
+                .is_none_or(|name| !matches_any_plugin_prefix(name, prefixes))
         });
-        changed = arr.len() != previous_len;
-
-        if changed && arr.is_empty() {
-            config.as_object_mut().map(|obj| obj.remove("plugin"));
+        if plugins.len() != previous_len && plugins.is_empty() {
+            config
+                .as_object_mut()
+                .expect("validated object root")
+                .remove("plugin");
         }
     }
-
-    if !changed {
-        return Ok(false);
-    }
-
-    let current_contents = read_config_contents(path)?;
-    if current_contents != previous_contents {
-        return Err(AppError::Config(
-            "OpenCode config changed on disk. Please reload and try again.".to_string(),
-        ));
-    }
-
-    write_opencode_config_to_path_with_contents(path, &config)?;
-    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    struct TestHomeGuard(Option<std::ffi::OsString>, crate::settings::AppSettings);
     impl TestHomeGuard {
         fn set(home: &std::path::Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let previous_env = std::env::var_os("CC_SWITCH_TEST_HOME");
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            let guard = Self(previous_env, crate::settings::get_settings());
+            crate::settings::update_settings(Default::default()).unwrap();
             guard
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
+            crate::settings::update_settings(self.1.clone()).unwrap();
             match self.0.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -423,11 +374,66 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn unicode_line_comments_do_not_panic_or_poison_later_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        std::fs::create_dir_all(get_opencode_dir()).unwrap();
+        let path = get_opencode_dir().join("opencode.jsonc");
+
+        for suffix in [
+            "// 中文",
+            "// 😀",
+            "/* 中文 */ // 尾",
+            "// ab\u{2028}",
+            "// 中文\u{2028}",
+            "// ab\u{2029}",
+            "// 中文\u{2029}",
+        ] {
+            let source = format!("{{\"provider\":{{}}}} {suffix}");
+            std::fs::write(&path, &source).unwrap();
+
+            // Startup import uses this read path without holding the write lock.
+            let read = std::panic::catch_unwind(read_opencode_config)
+                .expect("valid Unicode line comments must not panic during reads")
+                .unwrap();
+            assert_eq!(read, json!({"provider":{}}));
+            assert_eq!(std::fs::read(&path).unwrap(), source.as_bytes());
+
+            // These inputs used to unwind while holding opencode_config_lock.
+            std::panic::catch_unwind(|| set_provider("first", json!({"name":"First"})))
+                .expect("valid Unicode line comments must not panic during edits")
+                .unwrap();
+            assert!(!opencode_config_lock().is_poisoned());
+            assert!(std::fs::read_to_string(&path).unwrap().ends_with(suffix));
+
+            // Repeat the reported recovery scenario: replace the config with plain
+            // JSON and verify all three writers still work in the same process.
+            std::fs::write(&path, "{}").unwrap();
+            set_provider("next", json!({"name":"Next"})).unwrap();
+            set_mcp_server("tool", json!({"type":"local","command":["echo"]})).unwrap();
+            add_plugin("oh-my-openagent@latest").unwrap();
+            assert_eq!(
+                read_opencode_config().unwrap(),
+                json!({
+                    "provider":{"next":{"name":"Next"}},
+                    "mcp":{"tool":{"type":"local","command":["echo"]}},
+                    "plugin":["oh-my-openagent@latest"]
+                })
+            );
+        }
+    }
+
+    #[test]
     fn remove_missing_plugin_does_not_create_config_file() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("opencode.json");
 
-        let result = remove_plugins_by_prefixes(&path, &["oh-my-openagent"]).unwrap();
+        let result = edit_config(
+            || Ok(path.clone()),
+            |config| remove_plugins(config, &["oh-my-openagent"]),
+        )
+        .unwrap();
 
         assert!(!result);
         assert!(!path.exists());
@@ -444,7 +450,11 @@ mod tests {
 }"#;
         std::fs::write(&path, original).unwrap();
 
-        let result = remove_plugins_by_prefixes(&path, &["oh-my-openagent"]).unwrap();
+        let result = edit_config(
+            || Ok(path.clone()),
+            |config| remove_plugins(config, &["oh-my-openagent"]),
+        )
+        .unwrap();
 
         assert!(!result);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
@@ -461,8 +471,230 @@ mod tests {
 }"#;
         std::fs::write(&path, original).unwrap();
 
-        add_plugin(&path, "oh-my-openagent@latest").unwrap();
+        edit_config(
+            || Ok(path.clone()),
+            |config| insert_plugin(config, "oh-my-openagent@latest"),
+        )
+        .unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn selection_and_crud_preserve_selected_file_and_leave_other_file_untouched() {
+        for custom in [false, true] {
+            for (has_json, has_jsonc) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let temp = tempfile::tempdir().unwrap();
+                let _guard = TestHomeGuard::set(temp.path());
+                let dir = if custom {
+                    let dir = temp.path().join("custom");
+                    crate::settings::update_settings(crate::settings::AppSettings {
+                        opencode_config_dir: Some(dir.to_string_lossy().into_owned()),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    dir
+                } else {
+                    temp.path().join(".config/opencode")
+                };
+                std::fs::create_dir_all(&dir).unwrap();
+                let json_path = dir.join("opencode.json");
+                let jsonc_path = dir.join("opencode.jsonc");
+                let original = "{\r\n\t/* 中文注释 */\r\n\t\"model\": \"keep\", // 模型\r\n\t\"provider\": {},\r\n\t\"mcp\": {},\r\n}\r\n";
+                if has_json {
+                    std::fs::write(&json_path, original).unwrap();
+                }
+                if has_jsonc {
+                    std::fs::write(&jsonc_path, original).unwrap();
+                }
+                let selected = if has_jsonc { &jsonc_path } else { &json_path };
+                assert_eq!(get_opencode_config_path().unwrap(), *selected);
+                remove_provider("missing").unwrap();
+                remove_mcp_server("missing").unwrap();
+                assert_eq!(selected.exists(), has_json || has_jsonc);
+
+                for value in ["first", "updated"] {
+                    set_provider("escaped\"供应商", json!({"options":{"apiKey":value}})).unwrap();
+                    set_mcp_server("tool", json!({"type":"local","command":[value]})).unwrap();
+                    assert_eq!(
+                        get_providers().unwrap()["escaped\"供应商"]["options"]["apiKey"],
+                        value
+                    );
+                    assert_eq!(get_mcp_servers().unwrap()["tool"]["command"][0], value);
+                    let before = std::fs::read(selected).unwrap();
+                    let modified = std::fs::metadata(selected).unwrap().modified().unwrap();
+                    set_provider("escaped\"供应商", json!({"options":{"apiKey":value}})).unwrap();
+                    set_mcp_server("tool", json!({"type":"local","command":[value]})).unwrap();
+                    assert_eq!(std::fs::read(selected).unwrap(), before);
+                    assert_eq!(
+                        std::fs::metadata(selected).unwrap().modified().unwrap(),
+                        modified
+                    );
+                }
+                add_plugin("unrelated").unwrap();
+                add_plugin("oh-my-opencode@latest").unwrap();
+                assert_eq!(
+                    read_opencode_config().unwrap()["plugin"],
+                    json!(["unrelated", "oh-my-openagent@latest"])
+                );
+                add_plugin("oh-my-opencode-slim@latest").unwrap();
+                assert_eq!(
+                    read_opencode_config().unwrap()["plugin"],
+                    json!(["unrelated", "oh-my-opencode-slim@latest"])
+                );
+                assert!(remove_plugins_by_prefixes(&SLIM_OMO_PLUGIN_PREFIXES).unwrap());
+                assert_eq!(
+                    read_opencode_config().unwrap()["plugin"],
+                    json!(["unrelated"])
+                );
+                remove_provider("escaped\"供应商").unwrap();
+                remove_mcp_server("tool").unwrap();
+                assert!(get_providers().unwrap().is_empty());
+                assert!(get_mcp_servers().unwrap().is_empty());
+                let saved = std::fs::read_to_string(selected).unwrap();
+                if has_json || has_jsonc {
+                    assert!(
+                        saved.contains("\t/* 中文注释 */\r\n\t\"model\": \"keep\", // 模型\r\n")
+                    );
+                    assert!(!saved.replace("\r\n", "").contains('\n'));
+                }
+                if has_json && has_jsonc {
+                    assert_eq!(std::fs::read_to_string(&json_path).unwrap(), original);
+                }
+                assert_eq!(jsonc_path.exists(), has_jsonc);
+                assert_eq!(json_path.exists(), has_json || !has_jsonc);
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn invalid_selected_config_never_falls_back_or_overwrites_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        write_config(temp.path(), "{\"model\":\"fallback\"}");
+        let path = get_opencode_dir().join("opencode.jsonc");
+        for invalid in ["{broken", "[]", "null", "42", "\"text\""] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(read_opencode_config().is_err());
+            assert!(set_provider("p", json!({})).is_err());
+            assert!(remove_provider("p").is_err());
+            assert!(set_mcp_server("m", json!({})).is_err());
+            assert!(remove_mcp_server("m").is_err());
+            assert!(add_plugin("oh-my-openagent").is_err());
+            assert!(remove_plugins_by_prefixes(&STANDARD_OMO_PLUGIN_PREFIXES).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+        }
+        assert_eq!(
+            std::fs::read_to_string(get_opencode_dir().join("opencode.json")).unwrap(),
+            "{\"model\":\"fallback\"}"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(read_opencode_config().is_err());
+        assert!(set_provider("p", json!({})).is_err());
+    }
+
+    #[test]
+    fn edits_detect_external_changes_and_pin_the_selected_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.json");
+        for original in [None, Some("{}")] {
+            if let Some(original) = original {
+                std::fs::write(&path, original).unwrap();
+            }
+            let error = edit_config(
+                || resolve_config_path(temp.path()),
+                |value| {
+                    value["model"] = json!("ours");
+                    std::fs::write(&path, "{\"model\":\"external\"}").unwrap();
+                },
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("changed on disk"));
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                "{\"model\":\"external\"}"
+            );
+        }
+        edit_config(
+            || resolve_config_path(temp.path()),
+            |value| {
+                value["model"] = json!("ours");
+                std::fs::write(temp.path().join("opencode.jsonc"), "{}").unwrap();
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_opencode_config_from_path(&path).unwrap()["model"],
+            "ours"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("opencode.jsonc")).unwrap(),
+            "{}"
+        );
+        assert!(edit_config(
+            || Ok(path.clone()),
+            |value| {
+                value["model"] = json!("next");
+                std::fs::remove_file(&path).unwrap();
+            }
+        )
+        .is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn path_lookup_propagates_access_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(resolve_config_path(&temp.path().join("invalid\0directory")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unreadable_selected_file_never_falls_back() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.jsonc");
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::write(temp.path().join("opencode.json"), "{\"keep\":true}").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        assert!(edit_config(
+            || resolve_config_path(temp.path()),
+            |value| value["new"] = json!(true)
+        )
+        .is_err());
+        drop(held);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("opencode.json")).unwrap(),
+            "{\"keep\":true}"
+        );
+    }
+
+    #[test]
+    fn invalid_output_never_overwrites_original_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.jsonc");
+        let original = "{/* keep */\"model\":\"original\"}";
+        std::fs::write(&path, original).unwrap();
+        for parseable in [false, true] {
+            let _guard = opencode_config_lock().lock().unwrap();
+            let mut document = OpenCodeDocument::load(&path).unwrap();
+            document
+                .document
+                .apply(&json!({"model":"changed"}))
+                .unwrap();
+            document.document.corrupt_output_for_test(parseable);
+            assert!(document.save().is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
     }
 }

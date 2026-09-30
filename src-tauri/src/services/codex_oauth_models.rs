@@ -161,13 +161,15 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
-        assert!(parts.as_slice() >= [0, 153, 0].as_slice());
+        // Sol and Luna are absent from the 0.153.4 catalog for this account.
+        assert!(parts.as_slice() >= [0, 155, 0].as_slice());
         assert_eq!(request.headers()["version"], version);
-        let models = parse_models(json!({"models": [{
-            "slug": "gpt-6-astra", "minimal_client_version": "0.153.0"
-        }]}));
-        assert_eq!(models[0].id, "gpt-6-astra");
+        let models = parse_models(json!({"models": [
+            {"slug": "gpt-6-sol", "minimal_client_version": "0.155.0"},
+            {"slug": "gpt-6-luna", "minimal_client_version": "0.155.0"}
+        ]}));
+        assert_eq!(models[0].id, "gpt-6-luna");
+        assert_eq!(models[1].id, "gpt-6-sol");
     }
 
     #[test]
