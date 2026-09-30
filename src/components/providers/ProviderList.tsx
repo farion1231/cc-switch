@@ -32,6 +32,7 @@ import {
   useHermesModelConfig,
 } from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
+import { useStackModelsChangedHint } from "@/hooks/useStackModelsChangedHint";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
@@ -171,12 +172,17 @@ export function ProviderList({
 
   // Stack 模式（设置里和路由模式二选一）：供应商列表是累加式的，添加的各家模型挂进客户端的
   // 模型选择器，「设为默认」那家承接不带前缀的请求；不做故障转移。
-  const { data: stack } = useProxyStack(
+  const { data: stack, dataUpdatedAt: stackUpdatedAt } = useProxyStack(
     appId,
     isStackAppId(appId) && isProxyTakeover === true,
   );
   const isStackMode =
     isStackAppId(appId) && isProxyTakeover === true && stack?.active === true;
+  const skipNextStackModelsHint = useStackModelsChangedHint(
+    appId,
+    isStackMode ? stack : undefined,
+    stackUpdatedAt,
+  );
   const stackMembers = stack?.members;
   const stackNotice = isStackMode ? stack?.notice : undefined;
   const codexStaleClients =
@@ -546,12 +552,15 @@ export function ProviderList({
                 stackNotice={stackNotice}
                 onToggleStack={
                   canStack
-                    ? (enabled) =>
+                    ? (enabled) => {
+                        // 保存成功的提示已经说了要重启，别再提示一次。
+                        skipNextStackModelsHint();
                         setStackMember.mutate({
                           appType: appId,
                           providerId: provider.id,
                           enabled,
-                        })
+                        });
+                      }
                     : undefined
                 }
                 isDefaultModel={

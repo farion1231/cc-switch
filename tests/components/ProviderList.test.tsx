@@ -1,11 +1,31 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
+import {
+  QueryClient,
+  QueryClientProvider,
+  focusManager,
+} from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
 import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
 import type { Provider } from "@/types";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { server } from "../msw/server";
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+  },
+}));
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -386,6 +406,78 @@ describe("ProviderList Component", () => {
       providerId: "kimi",
       enabled: false,
     });
+  });
+
+  it("reminds to restart Claude Code when Stack models change outside add / remove", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    const kimi = createProvider({ id: "kimi", name: "Kimi" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, kimi],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const routeMember = (modelIds: string[]) => ({
+      providerId: "route",
+      modelIds,
+      route: true,
+    });
+    let members = [
+      routeMember(["ccs-claude-route--route-1"]),
+      {
+        providerId: "kimi",
+        modelIds: ["ccs-claude-kimi--kimi-k3"],
+        route: false,
+      },
+    ];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: true, members }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () =>
+        HttpResponse.json(null),
+      ),
+    );
+    vi.mocked(toast.info).mockClear();
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, kimi }}
+        currentProviderId="route"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(lastProps("kimi")?.stackMember).toBeDefined());
+
+    // 移出名单：保存成功的提示已经说了要重启，不再提示。
+    members = [routeMember(["ccs-claude-route--route-1"])];
+    lastProps("kimi")?.onToggleStack(false);
+    await waitFor(() => expect(lastProps("kimi")?.stackMember).toBeUndefined());
+    expect(toast.info).not.toHaveBeenCalled();
+
+    // 别处改了默认那家的模型（编辑供应商、同步）：回到窗口时重查，提示重启。
+    members = [
+      routeMember(["ccs-claude-route--route-1", "ccs-claude-route--route-2"]),
+    ];
+    try {
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          "provider.stackModelsChanged",
+          expect.anything(),
+        ),
+      );
+    } finally {
+      focusManager.setFocused(undefined);
+    }
   });
 
   it("keeps routing-mode cards when Stack mode is off", async () => {

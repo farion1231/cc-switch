@@ -107,6 +107,7 @@
     "stackBadgeHint": "在 {{client}} 的模型选择器里选择：{{models}}",
     "stackBadgeNoModels": "这家没有配置模型，不会出现在模型选择器里",
     "stackSaved": "已保存，重启 {{client}} 后生效",
+    "stackModelsChanged": "Stack 模型有变化，重启 {{client}} 后生效",
     "stackReselectHint": "CC Switch 每次改写客户端配置后，模型选择器里选中的 Stack 模型需要重新选择",
     "stackPartial": "已部分写入，将在下次操作或重启 CC Switch 时补完",
     "stackFailed": "Stack 模型保存失败：{{error}}",

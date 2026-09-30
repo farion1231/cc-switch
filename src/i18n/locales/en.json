@@ -107,6 +107,7 @@
     "stackBadgeHint": "Pick in {{client}}'s model picker: {{models}}",
     "stackBadgeNoModels": "This provider has no models configured, so nothing shows up in the model picker",
     "stackSaved": "Saved. Restart {{client}} to apply",
+    "stackModelsChanged": "Stack models changed. Restart {{client}} to apply",
     "stackReselectHint": "Whenever CC Switch rewrites the client config, pick the stacked model again in the model picker",
     "stackPartial": "Partly written; it will be finished on the next change or when CC Switch restarts",
     "stackFailed": "Failed to save stacked models: {{error}}",

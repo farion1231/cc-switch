@@ -107,6 +107,7 @@
     "stackBadgeHint": "{{client}} のモデル選択で選べます：{{models}}",
     "stackBadgeNoModels": "モデルが設定されていないため、モデル選択には表示されません",
     "stackSaved": "保存しました。{{client}} を再起動すると反映されます",
+    "stackModelsChanged": "Stack モデルが変わりました。{{client}} を再起動すると反映されます",
     "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で Stack モデルを選び直してください",
     "stackPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
     "stackFailed": "Stack モデルの保存に失敗しました：{{error}}",
