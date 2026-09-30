@@ -4,9 +4,11 @@ import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
@@ -62,6 +64,9 @@ const configSchema = z
   })
   .passthrough();
 type McodeConfig = z.infer<typeof configSchema>;
+const KEY_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const normalizeKey = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9-]/g, "");
 
 export function McodeProviderForm({
   providerId,
@@ -95,6 +100,19 @@ export function McodeProviderForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The key becomes `custom_provider.<key>` and MCode's default-model
+  // references embed it, so it is fixed once the provider exists.
+  const isEdit = Boolean(initialData);
+  const [providerKey, setProviderKey] = useState(providerId ?? "");
+  const { data: existing } = useProvidersQuery("mcode");
+  const keyTaken =
+    !isEdit &&
+    Object.prototype.hasOwnProperty.call(
+      existing?.providers ?? {},
+      providerKey,
+    );
+  const keyInvalid =
+    !isEdit && providerKey !== "" && !KEY_PATTERN.test(providerKey);
   const form = useForm<ProviderFormData>({
     defaultValues: {
       name: initialData?.name ?? "",
@@ -109,6 +127,7 @@ export function McodeProviderForm({
   const ready = Boolean(
     jsonValid &&
       name.trim() &&
+      (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
       config.options?.baseURL?.trim() &&
       config.options?.apiKey?.trim() &&
       Object.keys(config.models ?? {}).length,
@@ -136,6 +155,7 @@ export function McodeProviderForm({
     };
     update(next);
     setExtraOptions(toOpencodeExtraOptions(next.options));
+    setProviderKey(selected?.providerKey ?? "");
     form.reset({
       name: selected?.name ?? "",
       notes: "",
@@ -166,7 +186,7 @@ export function McodeProviderForm({
               ...identity,
               name: identity.name.trim(),
               meta: initialData?.meta,
-              providerKey: providerId,
+              providerKey: isEdit ? providerId : providerKey,
               presetCategory: category,
               settingsConfig: JSON.stringify({
                 ...config,
@@ -206,7 +226,45 @@ export function McodeProviderForm({
           disabled={busy || !jsonValid}
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
         >
-          <BasicFormFields form={form} />
+          <BasicFormFields
+            form={form}
+            beforeNameSlot={
+              <div className="space-y-2">
+                <Label htmlFor="mcode-provider-key">
+                  {t("opencode.providerKey")}
+                  <span aria-hidden="true" className="text-destructive ml-1">
+                    *
+                  </span>
+                </Label>
+                <Input
+                  id="mcode-provider-key"
+                  value={providerKey}
+                  onChange={(event) =>
+                    setProviderKey(normalizeKey(event.target.value))
+                  }
+                  disabled={isEdit}
+                  placeholder={t("opencode.providerKeyPlaceholder")}
+                  autoComplete="off"
+                  className={keyTaken || keyInvalid ? "border-destructive" : ""}
+                />
+                <p
+                  className={
+                    keyTaken || keyInvalid
+                      ? "text-xs text-destructive"
+                      : "text-xs text-muted-foreground"
+                  }
+                >
+                  {keyTaken
+                    ? t("opencode.providerKeyDuplicate")
+                    : keyInvalid
+                      ? t("opencode.providerKeyInvalid")
+                      : isEdit
+                        ? t("opencode.providerKeyLockedHint")
+                        : t("opencode.providerKeyHint")}
+                </p>
+              </div>
+            }
+          />
           <OpenCodeFormFields
             apiFormats={API_FORMATS}
             npm={config.api ?? "anthropic-messages"}

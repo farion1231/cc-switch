@@ -20,12 +20,16 @@ pub struct FetchedModel {
 
 /// 模型列表响应的兼容格式。
 ///
-/// OpenAI 兼容接口和 Anthropic 接口使用 `data` 字段，智谱 OpenAI Responses
-/// 接口使用 `models` 字段，此结构同时兼容这两种格式。
+/// OpenAI 兼容接口和 Anthropic 接口使用 `data` 字段；Codex 远端模型目录
+/// （`{base}/models`，智谱 /api/v1 即此格式）使用 `models[].slug`。
+///
+/// `models` 收成 `Value` 而非强类型：部分供应商会在 `data` 旁附带任意形状的
+/// `models`，而 serde 反序列化的是整个结构体，强类型字段一旦对不上就会连带
+/// `data` 一起解析失败（#7593）。
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
-    models: Option<Vec<ZhipuModelEntry>>,
+    models: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,9 +38,21 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ZhipuModelEntry {
-    slug: String,
+/// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
+/// 非数组、非对象、非字符串或空串一律跳过，绝不报错。
+fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
+    let Some(serde_json::Value::Array(entries)) = models else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|m| {
+            ["slug", "id"]
+                .iter()
+                .find_map(|k| m.get(k)?.as_str().filter(|s| !s.is_empty()))
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -115,13 +131,9 @@ pub async fn fetch_models(
                     })
                     .collect()
             } else {
-                resp.models
-                    .unwrap_or_default()
+                catalog_model_ids(resp.models)
                     .into_iter()
-                    .map(|m| FetchedModel {
-                        id: m.slug,
-                        owned_by: None,
-                    })
+                    .map(|id| FetchedModel { id, owned_by: None })
                     .collect()
             };
 
@@ -630,5 +642,65 @@ mod tests {
         let json = r#"{"object":"list","data":[]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert!(resp.data.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_response_with_non_zhipu_models_field() {
+        // 回归 #7593：部分供应商的 /models 响应在标准 `data` 之外还附带顶层
+        // `models` 字段（条目为 OpenAI 风格的 {id, ...}，无 slug）。整个响应
+        // 的反序列化不应因此失败。
+        let json = r#"{
+            "data": [
+                {"id": "model-a", "name": "model-a", "max_tokens": 32000, "context_window": 400000},
+                {"id": "model-b", "name": "model-b", "max_tokens": 32000, "context_window": 1000000}
+            ],
+            "models": [
+                {"id": "model-a", "name": "model-a", "max_tokens": 32000, "context_window": 400000},
+                {"id": "model-b", "name": "model-b", "max_tokens": 32000, "context_window": 1000000}
+            ],
+            "success": true
+        }"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].id, "model-a");
+        assert_eq!(data[1].id, "model-b");
+    }
+
+    #[test]
+    fn test_catalog_model_ids_slug_then_id() {
+        // `models` 条目解析：slug 优先，回退 id，两者皆缺时跳过。
+        let json = r#"{"models": [
+            {"slug": "glm-4.7"},
+            {"id": "openai-shaped"},
+            {"name": "neither-slug-nor-id"},
+            {}
+        ]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let ids = catalog_model_ids(resp.models);
+        assert_eq!(
+            ids,
+            vec!["glm-4.7".to_string(), "openai-shaped".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_response_tolerates_any_models_shape() {
+        // #7593：data 合法时，任意形状的 models 都不能让整体解析失败
+        for models in [
+            r#"["a","b"]"#,
+            r#"{"count":1}"#,
+            "2",
+            r#"[{"slug":"glm","id":123}]"#,
+            r#"[{"slug":1}]"#,
+        ] {
+            let json = format!(r#"{{"data":[{{"id":"model-a"}}],"models":{models}}}"#);
+            let resp: ModelsResponse = serde_json::from_str(&json).unwrap();
+            assert_eq!(resp.data.unwrap()[0].id, "model-a");
+        }
+        // 无 data 时：非字符串 id 跳过，slug 照常可用
+        let resp: ModelsResponse =
+            serde_json::from_str(r#"{"models":[{"slug":"glm","id":123}]}"#).unwrap();
+        assert_eq!(catalog_model_ids(resp.models), vec!["glm".to_string()]);
     }
 }

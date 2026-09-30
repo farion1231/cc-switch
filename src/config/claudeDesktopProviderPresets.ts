@@ -157,7 +157,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
@@ -174,7 +175,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
   {
     name: "Kimi Global",
-    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.moonshot.ai/anthropic",
     mode: "proxy",
@@ -1009,7 +1011,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     modelRoutes: brandedRoutes(
       "deepseek-v4-pro",
       "deepseek-v4-pro",
-      "deepseek-v4-flash",
+      "deepseek-flash",
       true,
     ),
     icon: "deepseek",
@@ -1162,7 +1164,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.1", "glm-5.1", "glm-5.1"),
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3"),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1174,7 +1176,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.1", "glm-5.1", "glm-5.1"),
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3"),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1528,9 +1530,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "openai_chat",
     modelRoutes: brandedRoutes(
-      "moonshotai/kimi-k2.5",
-      "moonshotai/kimi-k2.5",
-      "moonshotai/kimi-k2.5",
+      "moonshotai/kimi-k3",
+      "moonshotai/kimi-k3",
+      "moonshotai/kimi-k3",
     ),
     icon: "nvidia",
     iconColor: "#000000",
@@ -1555,9 +1557,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "mimo-v2.5-pro",
-      "mimo-v2.5-pro",
-      "mimo-v2.5-pro",
+      "mimo-v2.6-pro",
+      "mimo-v2.6-pro",
+      "mimo-v2.6-pro",
     ),
     icon: "xiaomimimo",
     iconColor: "#000000",
@@ -1571,9 +1573,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "mimo-v2.5-pro",
-      "mimo-v2.5-pro",
-      "mimo-v2.5-pro",
+      "mimo-v2.6-pro",
+      "mimo-v2.6-pro",
+      "mimo-v2.6-pro",
     ),
     icon: "xiaomimimo",
     iconColor: "#000000",

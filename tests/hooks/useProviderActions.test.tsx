@@ -204,6 +204,25 @@ describe("useProviderActions", () => {
     );
   });
 
+  it("asks for a Gemini CLI restart after switching, since it reads .env only at startup", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ category: "custom" });
+
+    const { result } = renderHook(() => useProviderActions("gemini"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启 Gemini CLI 以生效",
+      { closeButton: true },
+    );
+  });
+
   it("warns but still switches providers that require proxy when proxy is not running", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

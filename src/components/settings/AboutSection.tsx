@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   Download,
   Copy,
@@ -42,6 +48,7 @@ import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
 import { ToolUpgradeConfirmDialog } from "./ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "./ToolInstallRow";
+import { ToolErrorMessage } from "./ToolErrorMessage";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -68,9 +75,17 @@ const TOOL_NAMES = [
   "openclaw",
   "hermes",
   "pi",
+  "mcode",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
+
+interface PendingUpgrade {
+  toolNames: ToolName[];
+  plans: ToolInstallationReport[];
+  fromBatchEntry: boolean;
+  wslShellByTool: Record<string, WslShellPreference>;
+}
 
 type WslShellPreference = {
   wslShell?: string | null;
@@ -126,6 +141,15 @@ const HERMES_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy B
   HERMES_WINDOWS_INSTALL_SCRIPT,
 )}`;
 
+const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
+)}`;
+
+// 与后端 npm_install_command_for("mcode") 保持一致：npm 12 默认拦截依赖的 install
+// 脚本，不放行 better-sqlite3 时 SQLite 不可用。
+const MCODE_NPM_INSTALL_COMMAND =
+  'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
+
 const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthropic-ai/claude-code@latest
 # Codex
@@ -141,7 +165,9 @@ npm i -g openclaw@latest
 # Hermes
 ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
 # Pi
-npm i -g @earendil-works/pi-coding-agent@latest`;
+npm i -g @earendil-works/pi-coding-agent@latest
+# MiniMax Code
+${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
@@ -158,7 +184,9 @@ npm i -g openclaw@latest
 # Hermes
 ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
-npm i -g @earendil-works/pi-coding-agent@latest`;
+npm i -g @earendil-works/pi-coding-agent@latest
+# MiniMax Code
+${MCODE_WINDOWS_INSTALL_COMMAND}`;
 
 const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -173,6 +201,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  mcode: "MiniMax Code",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -190,6 +219,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+  mcode: "mcode",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
@@ -199,7 +229,38 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
 // 手动「刷新」才强制重查。at = 最近一次「全量加载」完成时刻；单工具刷新（切 shell / 升级
 // 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
 const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
-let toolVersionsCache: { data: ToolVersion[]; at: number } | null = null;
+const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
+let toolVersionRequestSequence = 0;
+const latestToolVersionRequests = new Map<string, number>();
+
+interface ToolManagementState {
+  toolVersionsCache: { data: ToolVersion[]; at: number } | null;
+  busyTools: ReadonlyMap<ToolName, ToolLifecycleAction>;
+  pendingUpgrades: readonly PendingUpgrade[];
+  batchAction: ToolLifecycleAction | null;
+}
+
+// 安装/升级不会随设置页卸载而结束。将任务、确认队列与版本结果一起保留在会话中，
+// 让新挂载的页面立即恢复进度，并收到原任务的完成结果。
+let toolManagementState: ToolManagementState = {
+  toolVersionsCache: null,
+  busyTools: new Map(),
+  pendingUpgrades: [],
+  batchAction: null,
+};
+const toolManagementListeners = new Set<() => void>();
+const getToolManagementState = () => toolManagementState;
+function subscribeToolManagement(listener: () => void) {
+  toolManagementListeners.add(listener);
+  return () => {
+    toolManagementListeners.delete(listener);
+  };
+}
+function updateToolManagementState(update: Partial<ToolManagementState>) {
+  toolManagementState = { ...toolManagementState, ...update };
+  toolManagementListeners.forEach((listener) => listener());
+}
+
 // 应用自身版本（getVersion，本地毫秒级、无网络）也缓存一份，纯为重挂时免去 loading 闪烁。
 let appVersionCache: string | null = null;
 
@@ -229,19 +290,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () => appVersionCache === null,
   );
   const [isDownloading, setIsDownloading] = useState(false);
-  const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
-    () => toolVersionsCache?.data ?? [],
-  );
+  const { toolVersionsCache, busyTools, pendingUpgrades, batchAction } =
+    useSyncExternalStore(subscribeToolManagement, getToolManagementState);
+  const toolVersions = toolVersionsCache?.data ?? EMPTY_TOOL_VERSIONS;
+  const pendingUpgrade = pendingUpgrades[0] ?? null;
   // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
   // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
   const [isLoadingTools, setIsLoadingTools] = useState(
     () => toolVersionsCache === null,
-  );
-  const [toolActions, setToolActions] = useState<
-    Partial<Record<ToolName, ToolLifecycleAction>>
-  >({});
-  const [batchAction, setBatchAction] = useState<ToolLifecycleAction | null>(
-    null,
   );
   const [showInstallCommands, setShowInstallCommands] = useState(false);
 
@@ -258,25 +314,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     Partial<Record<ToolName, ToolInstallation[]>>
   >({});
   const [isDiagnosingAll, setIsDiagnosingAll] = useState(false);
-  // 升级前探测到「多处安装需确认」时暂存：toolNames=本次要升级的全部工具，
-  // plans=其中需要确认的（≥2 处）那些。用户确认后对 toolNames 整体执行升级。
-  // fromBatchEntry=是否来自「全部升级」入口：确认后执行期需据此补 batchAction
-  // （executeRun 按数量判 isBatch，「全部升级(1)」会漏掉顶部按钮的 spinner）。
-  const [pendingUpgrade, setPendingUpgrade] = useState<{
-    toolNames: ToolName[];
-    plans: ToolInstallationReport[];
-    fromBatchEntry: boolean;
-  } | null>(null);
-  // 升级 preflight(probe 阶段)的 in-flight 工具集合。
-  // probeToolInstallations 是个 1-3 秒级别的跨进程探测(对每个工具跑 --version + canonicalize),
-  // 在它返回之前 toolActions / batchAction 都还没被置位 → 按钮不会 disabled → 用户快速双击
-  // 会并发开两轮 probe,各自再触发 executeRun(并发的 `npm i -g` / 官方 installer,写冲突)。
-  // 把 probe 期间的工具登记在这里、纳入 isAnyBusy 派生,关掉这个并发窗口。
-  // 用 Set 而非 boolean:单卡片升级 & 批量升级可能在不同工具上独立 preflight,
-  // 精确反映到各自卡片按钮的 disabled。
-  const [preflightTools, setPreflightTools] = useState<Set<ToolName>>(
-    () => new Set(),
-  );
+  // 每个工具独立锁定，覆盖预检、等待确认、执行与版本刷新。
+  // 共享状态同步加锁，避免重复点击或重挂后的页面重复提交同一工具。
+  const releaseTools = useCallback((toolNames: ToolName[]) => {
+    if (toolNames.length === 0) return;
+    const next = new Map(toolManagementState.busyTools);
+    toolNames.forEach((name) => next.delete(name));
+    updateToolManagementState({ busyTools: next });
+  }, []);
 
   const toolVersionByName = useMemo(() => {
     return new Map(toolVersions.map((tool) => [tool.name, tool]));
@@ -286,9 +331,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () =>
       TOOL_NAMES.filter((toolName) => {
         const tool = toolVersionByName.get(toolName);
-        return isUpdateAvailable(tool?.version, tool?.latest_version);
+        return (
+          !busyTools.has(toolName) &&
+          !loadingTools[toolName] &&
+          isUpdateAvailable(tool?.version, tool?.latest_version)
+        );
       }),
-    [toolVersionByName],
+    [toolVersionByName, busyTools, loadingTools],
   );
 
   const refreshToolVersions = useCallback(
@@ -297,6 +346,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       wslOverrides?: Record<string, WslShellPreference>,
     ): Promise<ToolVersion[]> => {
       if (toolNames.length === 0) return [];
+
+      // 请求顺序跨组件挂载保留，旧页面的迟到响应不能覆盖后续刷新或升级结果。
+      const requestId = ++toolVersionRequestSequence;
+      toolNames.forEach((name) =>
+        latestToolVersionRequests.set(name, requestId),
+      );
 
       // 单工具刷新使用统一后端入口（get_tool_versions）并带工具过滤。
       setLoadingTools((prev) => {
@@ -310,26 +365,36 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           toolNames,
           wslOverrides,
         );
+        const current = updated.filter(
+          (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+        );
+        if (current.length === 0) return [];
 
-        setToolVersions((prev) => mergeToolVersions(prev, updated));
         // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
         // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
         // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
         // 数据当成完整结果复用。真实时间戳只由 loadAllToolVersions 的 finally 盖上。
-        toolVersionsCache = {
-          data: mergeToolVersions(toolVersionsCache?.data ?? [], updated),
-          at: toolVersionsCache?.at ?? 0,
-        };
+        const cache = toolManagementState.toolVersionsCache;
+        updateToolManagementState({
+          toolVersionsCache: {
+            data: mergeToolVersions(cache?.data ?? [], current),
+            at: cache?.at ?? 0,
+          },
+        });
 
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
-        return updated;
+        return current;
       } catch (error) {
         console.error("[AboutSection] Failed to refresh tools", error);
         return [];
       } finally {
         setLoadingTools((prev) => {
           const next = { ...prev };
-          for (const name of toolNames) next[name] = false;
+          for (const name of toolNames) {
+            if (latestToolVersionRequests.get(name) === requestId) {
+              next[name] = false;
+            }
+          }
           return next;
         });
       }
@@ -340,14 +405,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const loadAllToolVersions = useCallback(
     async (options?: { force?: boolean }) => {
       const force = options?.force ?? false;
+      const cache = toolManagementState.toolVersionsCache;
       // 命中新鲜缓存：切回「关于」Tab 触发的重挂直接复用上次结果，跳过 6 个 `--version`
       // 子进程 + 6 个 latest 版本网络请求。手动「刷新」传 force 绕过缓存强制重查。
       if (
         !force &&
-        toolVersionsCache &&
-        Date.now() - toolVersionsCache.at < TOOL_VERSIONS_CACHE_TTL_MS
+        cache &&
+        Date.now() - cache.at < TOOL_VERSIONS_CACHE_TTL_MS
       ) {
-        setToolVersions(toolVersionsCache.data);
         setIsLoadingTools(false);
         return;
       }
@@ -358,15 +423,19 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         // 原本对 6 个工具串行 await，总耗时累加；并发后压成「最慢的那一个」）。refreshTool-
         // Versions 已内建按 name 合并 + per-tool loading + try/catch 兜底（单工具失败返回 []
         // 不拖累其余），故 Promise.all 永不 reject。Respect current shell/flag overrides.
+        // 切页后即使缓存已过期，也跳过忙碌工具，由原任务在执行结束后刷新版本。
         await Promise.all(
-          TOOL_NAMES.map((toolName) =>
-            refreshToolVersions([toolName], wslShellByTool),
-          ),
+          TOOL_NAMES.filter(
+            (toolName) => !toolManagementState.busyTools.has(toolName),
+          ).map((toolName) => refreshToolVersions([toolName], wslShellByTool)),
         );
       } finally {
         // 全量探测结束：把缓存时间戳刷新为现在，标记「刚完成一次全量加载」、重置 TTL。
-        if (toolVersionsCache) {
-          toolVersionsCache = { ...toolVersionsCache, at: Date.now() };
+        const latestCache = toolManagementState.toolVersionsCache;
+        if (latestCache) {
+          updateToolManagementState({
+            toolVersionsCache: { ...latestCache, at: Date.now() },
+          });
         }
         setIsLoadingTools(false);
       }
@@ -580,16 +649,16 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, [t]);
 
-  // 实际执行安装/升级的串行循环（已通过任何必要的确认后才调用）。
+  // 已通过必要的确认后，各工具独立提交、刷新和解锁；安装写入由后端串行调度。
   const executeRun = useCallback(
-    async (toolNames: ToolName[], action: ToolLifecycleAction) => {
+    async (
+      toolNames: ToolName[],
+      action: ToolLifecycleAction,
+      wslOverrides: Record<string, WslShellPreference>,
+    ) => {
       const isBatch = toolNames.length > 1;
-      if (isBatch) {
-        setBatchAction(action);
-      }
 
-      // 逐工具串行执行：每个工具独立成败、独立刷新版本，一个失败不会连坐
-      // 后续工具（后端把整批拼成单脚本 + set -e，会在首个失败处中止整批）。
+      // 每个工具独立调用后端，一个失败不会中断其它工具。
       // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/装上却跑不起来），
       // 与命令本身报错（soft=false）区别对待：前者不算硬失败，toast 降级为 warning。
       const failures: {
@@ -600,86 +669,90 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }[] = [];
       let succeeded = 0;
 
-      for (const toolName of toolNames) {
-        setToolActions((prev) => ({ ...prev, [toolName]: action }));
-        try {
-          const previousTool = toolVersionByName.get(toolName);
-          const previousVersion = previousTool?.version ?? null;
-          const previousLatestVersion = previousTool?.latest_version ?? null;
+      await Promise.all(
+        toolNames.map(async (toolName) => {
+          try {
+            const previousTool = toolVersionByName.get(toolName);
+            const previousVersion = previousTool?.version ?? null;
+            const previousLatestVersion = previousTool?.latest_version ?? null;
 
-          await settingsApi.runToolLifecycleAction(
-            [toolName],
-            action,
-            wslShellByTool,
-          );
-          // 静默执行真正结束后刷新该工具版本，卡片立即反映结果。
-          const refreshed = await refreshToolVersions(
-            [toolName],
-            wslShellByTool,
-          );
-          const tool = refreshed.find((t) => t.name === toolName);
-          if (tool?.version) {
-            const latestVersion = tool.latest_version ?? previousLatestVersion;
-            const versionUnchangedAfterUpdate =
-              action === "update" &&
-              Boolean(previousVersion) &&
-              tool.version === previousVersion &&
-              isUpdateAvailable(tool.version, latestVersion);
+            await settingsApi.runToolLifecycleAction(
+              [toolName],
+              action,
+              wslOverrides,
+            );
+            // 静默执行真正结束后刷新该工具版本，卡片立即反映结果。
+            const refreshed = await refreshToolVersions(
+              [toolName],
+              wslOverrides,
+            );
+            const tool = refreshed.find((t) => t.name === toolName);
+            if (tool?.version) {
+              const latestVersion =
+                tool.latest_version ?? previousLatestVersion;
+              const versionUnchangedAfterUpdate =
+                action === "update" &&
+                Boolean(previousVersion) &&
+                tool.version === previousVersion &&
+                isUpdateAvailable(tool.version, latestVersion);
 
-            if (versionUnchangedAfterUpdate) {
-              // 有些上游 updater 会在未实际改动版本时仍返回 0。这里用刷新后的
-              // 当前版本 + latest_version 再确认一次，避免给用户误报升级成功。
+              if (versionUnchangedAfterUpdate) {
+                // 有些上游 updater 会在未实际改动版本时仍返回 0。这里用刷新后的
+                // 当前版本 + latest_version 再确认一次，避免给用户误报升级成功。
+                failures.push({
+                  toolName,
+                  detail: t("settings.toolActionVersionUnchanged", {
+                    version: tool.version,
+                    latest: latestVersion ?? t("common.unknown"),
+                  }),
+                  soft: true,
+                  kind: "versionUnchanged",
+                });
+                void diagnoseToolSilently(toolName);
+              } else {
+                succeeded += 1;
+                // 升级成功后无条件补诊：版本没变多半被另一处遮蔽，版本变了另一处也可能仍在，
+                // 两种都要刷新冲突展示（diagnoseToolSilently 无冲突时会自动清旧）。
+                if (action === "update") {
+                  void diagnoseToolSilently(toolName);
+                }
+              }
+            } else {
+              // 命令退出码为 0、但刷新后仍探不到版本：多半是"装上了却跑不起来"
+              // （如 openclaw 要求更高的 Node 版本）。refreshToolVersions 的 merge 已把
+              // version 置空并写入后端 error，这里只需归类为软失败并展示原因。
+              const detail =
+                tool?.error?.trim() || t("settings.toolNotRunnable");
               failures.push({
                 toolName,
-                detail: t("settings.toolActionVersionUnchanged", {
-                  version: tool.version,
-                  latest: latestVersion ?? t("common.unknown"),
-                }),
+                detail,
                 soft: true,
-                kind: "versionUnchanged",
+                kind: "notRunnable",
               });
+              // 装了却跑不起来同样可能源于多处安装，自动诊断帮用户定位。
               void diagnoseToolSilently(toolName);
-            } else {
-              succeeded += 1;
-              // 升级成功后无条件补诊：版本没变多半被另一处遮蔽，版本变了另一处也可能仍在，
-              // 两种都要刷新冲突展示（diagnoseToolSilently 无冲突时会自动清旧）。
-              if (action === "update") {
-                void diagnoseToolSilently(toolName);
-              }
             }
-          } else {
-            // 命令退出码为 0、但刷新后仍探不到版本：多半是"装上了却跑不起来"
-            // （如 openclaw 要求更高的 Node 版本）。refreshToolVersions 的 merge 已把
-            // version 置空并写入后端 error，这里只需归类为软失败并展示原因。
-            const detail = tool?.error?.trim() || t("settings.toolNotRunnable");
-            failures.push({
-              toolName,
-              detail,
-              soft: true,
-              kind: "notRunnable",
-            });
-            // 装了却跑不起来同样可能源于多处安装，自动诊断帮用户定位。
-            void diagnoseToolSilently(toolName);
+          } catch (error) {
+            const detail = extractErrorMessage(error) || String(error);
+            if (detail === "TOOL_ACTION_IN_PROGRESS") {
+              toast.info(t("settings.toolActionInProgress"), {
+                description: t("settings.toolActionInProgressDetail", {
+                  tool: TOOL_DISPLAY_NAMES[toolName],
+                }),
+                closeButton: true,
+              });
+              return;
+            }
+            console.error(
+              `[AboutSection] Failed to run tool action for ${toolName}`,
+              error,
+            );
+            failures.push({ toolName, detail, soft: false });
+          } finally {
+            releaseTools([toolName]);
           }
-        } catch (error) {
-          console.error(
-            `[AboutSection] Failed to run tool action for ${toolName}`,
-            error,
-          );
-          const detail = extractErrorMessage(error) || String(error);
-          failures.push({ toolName, detail, soft: false });
-        } finally {
-          setToolActions((prev) => {
-            const next = { ...prev };
-            delete next[toolName];
-            return next;
-          });
-        }
-      }
-
-      if (isBatch) {
-        setBatchAction(null);
-      }
+        }),
+      );
 
       const actionLabel =
         action === "install"
@@ -687,13 +760,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           : t("settings.toolUpdate");
 
       if (failures.length === 0) {
-        toast.success(
-          t("settings.toolActionDone", {
-            count: succeeded,
-            action: actionLabel,
-          }),
-          { closeButton: true },
-        );
+        if (succeeded > 0) {
+          toast.success(
+            t("settings.toolActionDone", {
+              count: succeeded,
+              action: actionLabel,
+            }),
+            { closeButton: true },
+          );
+        }
         return;
       }
 
@@ -746,54 +821,48 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     },
     [
       t,
-      wslShellByTool,
       toolVersionByName,
       refreshToolVersions,
       diagnoseToolSilently,
+      releaseTools,
     ],
   );
 
-  // 升级/安装的统一入口锁。所有动作在入口处先登记 preflight、出口处解锁;
-  // 这层锁覆盖三个否则会漏掉的窗口:
-  //   ① update 的 probeToolInstallations 阶段(1-3 秒跨进程,executeRun 之前);
-  //   ② executeRun 内部 setToolActions 落到 React commit 前的几个 microtask;
-  //   ③ install 直接进 executeRun 的同一段 microtask 窗口。
-  // 早退检查避免同一工具在 toolActions / preflight 已登记时被重复入栈——批量场景里
-  // 只要有一个工具被锁,整批不开新一轮,因为后端 set -e 串行的语义假设是「一次性
-  // 单脚本」,跨两次 IPC 并发会破坏它。
+  // 单独升级与全部升级共用按工具加锁的入口，自动跳过已在处理的工具。
   const handleRunToolAction = useCallback(
     async (
-      toolNames: ToolName[],
+      requestedTools: ToolName[],
       action: ToolLifecycleAction,
       options?: { fromBatchEntry?: boolean },
     ) => {
+      const toolNames = requestedTools.filter(
+        (name) => !toolManagementState.busyTools.has(name),
+      );
       if (toolNames.length === 0) return;
-      if (
-        toolNames.some(
-          (name) => preflightTools.has(name) || toolActions[name] !== undefined,
-        )
-      ) {
-        return;
-      }
-      // 入栈 preflight,按钮立刻 disabled。new Set(prev) 是不可变更新(直接 mutate
-      // 原 Set 会让 React 复用引用、跳过 re-render);finally 块负责异常路径解锁。
-      setPreflightTools((prev) => {
-        const next = new Set(prev);
-        toolNames.forEach((name) => next.add(name));
-        return next;
+      // 确认可能发生在重新挂载的页面，执行与结果刷新均使用提交时的参数快照。
+      const wslOverrides = Object.fromEntries(
+        Object.entries(wslShellByTool).map(([name, pref]) => [
+          name,
+          { ...pref },
+        ]),
+      );
+      updateToolManagementState({
+        busyTools: new Map([
+          ...toolManagementState.busyTools,
+          ...toolNames.map((name) => [name, action] as const),
+        ]),
       });
-      // 「全部升级」入口在 probe 阶段就点亮 spinner:batchAction 若只由 executeRun
-      // 置位,预检的数秒(探测超时兜底时更久)里按钮只 disabled 不转圈,观感如
-      // "点了没反应"。按入口来源而非 toolNames.length 判定——「全部升级(1)」
-      // 传入长度 1,按数量判会漏。executeRun 内部会再置位/清除,重复 set 无害;
-      // 弹确认框路径由 finally 清掉,对话框期间不转圈。
+      // 锁移交给 executeRun 或确认队列后，由其负责释放；入口只释放未移交的工具。
+      let toolsToRelease = toolNames;
+      // 全部升级即使只剩一个工具，也在预检和执行期间显示进度。
       const fromBatchEntry = options?.fromBatchEntry ?? false;
       if (fromBatchEntry) {
-        setBatchAction(action);
+        updateToolManagementState({ batchAction: action });
       }
       try {
         if (action === "install") {
-          await executeRun(toolNames, action);
+          toolsToRelease = [];
+          await executeRun(toolNames, action, wslOverrides);
           return;
         }
         let reports: ToolInstallationReport[];
@@ -802,58 +871,104 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         } catch (error) {
           // 探测失败不应阻断升级：退回直接执行（等同旧行为）。
           console.error("[AboutSection] probeToolInstallations failed", error);
-          await executeRun(toolNames, action);
+          toolsToRelease = [];
+          await executeRun(toolNames, action, wslOverrides);
           return;
         }
-        const needConfirm = reports.filter((r) => r.needs_confirmation);
+        // 认不出安装渠道的原生安装（winget / Scoop / 手动下载的二进制等）不执行升级：
+        // 退回 npm 只会另装一份 npm 版（#7650）。跳过并提示用原安装方式升级，其余照常。
+        const unmanaged = reports.filter((r) => r.unmanaged);
+        if (unmanaged.length > 0) {
+          toast.warning(t("settings.toolUpgradeUnmanagedTitle"), {
+            description: unmanaged
+              .map((r) =>
+                t("settings.toolUpgradeUnmanagedDetail", {
+                  tool: toolDisplayName(r.tool),
+                  path:
+                    (r.installs.find((i) => i.is_path_default) ?? r.installs[0])
+                      ?.path ?? "",
+                }),
+              )
+              .join("\n"),
+            closeButton: true,
+          });
+        }
+        const runnableTools = toolNames.filter(
+          (name) => !unmanaged.some((r) => r.tool === name),
+        );
+        if (runnableTools.length === 0) return;
+        toolsToRelease = toolNames.filter(
+          (name) => !runnableTools.includes(name),
+        );
+        const needConfirm = reports.filter(
+          (r) => r.needs_confirmation && !r.unmanaged,
+        );
         if (needConfirm.length === 0) {
-          await executeRun(toolNames, action);
+          await executeRun(runnableTools, action, wslOverrides);
           return;
         }
-        setPendingUpgrade({ toolNames, plans: needConfirm, fromBatchEntry });
+        // 并发探测的确认按到达顺序排队，切页后也能继续确认或取消。
+        updateToolManagementState({
+          pendingUpgrades: [
+            ...toolManagementState.pendingUpgrades,
+            {
+              toolNames: runnableTools,
+              plans: needConfirm,
+              fromBatchEntry,
+              wslShellByTool: wslOverrides,
+            },
+          ],
+        });
       } finally {
         if (fromBatchEntry) {
-          setBatchAction(null);
+          updateToolManagementState({ batchAction: null });
         }
-        setPreflightTools((prev) => {
-          const next = new Set(prev);
-          toolNames.forEach((name) => next.delete(name));
-          return next;
-        });
+        releaseTools(toolsToRelease);
       }
     },
-    [executeRun, preflightTools, toolActions],
+    [executeRun, releaseTools, t, wslShellByTool],
   );
 
   const handleConfirmUpgrade = useCallback(() => {
-    if (pendingUpgrade) {
-      const { toolNames, fromBatchEntry } = pendingUpgrade;
-      // executeRun 按数量判 isBatch，「全部升级(1)」确认后执行期会漏置 batchAction，
-      // 由入口来源在这里补上；对 >1 的场景 executeRun 会重复置位/清除，无害。
-      if (fromBatchEntry) {
-        setBatchAction("update");
-      }
-      void executeRun(toolNames, "update").finally(() => {
-        if (fromBatchEntry) {
-          setBatchAction(null);
-        }
-      });
+    if (
+      !pendingUpgrade ||
+      toolManagementState.pendingUpgrades[0] !== pendingUpgrade
+    )
+      return;
+    updateToolManagementState({
+      pendingUpgrades: toolManagementState.pendingUpgrades.slice(1),
+    });
+    const {
+      toolNames,
+      fromBatchEntry,
+      wslShellByTool: wslOverrides,
+    } = pendingUpgrade;
+    if (fromBatchEntry) {
+      updateToolManagementState({ batchAction: "update" });
     }
-    setPendingUpgrade(null);
+    void executeRun(toolNames, "update", wslOverrides).finally(() => {
+      if (fromBatchEntry) {
+        updateToolManagementState({ batchAction: null });
+      }
+    });
   }, [pendingUpgrade, executeRun]);
 
-  const handleCancelUpgrade = useCallback(() => setPendingUpgrade(null), []);
+  const handleCancelUpgrade = useCallback(() => {
+    if (
+      !pendingUpgrade ||
+      toolManagementState.pendingUpgrades[0] !== pendingUpgrade
+    )
+      return;
+    updateToolManagementState({
+      pendingUpgrades: toolManagementState.pendingUpgrades.slice(1),
+    });
+    releaseTools(pendingUpgrade.toolNames);
+  }, [pendingUpgrade, releaseTools]);
 
   const displayVersion = version ?? t("common.unknown");
 
-  // 任一安装/升级进行中（批量或单工具）即视为忙碌：用于禁用所有操作按钮，
-  // 避免并发触发多个 npm/pip 全局写入造成冲突。
-  // preflightTools 覆盖升级前的 probe 阶段——那段在 executeRun 之前、toolActions
-  // 还没置位,如果不算进 busy 会留出 1-3 秒的并发触发窗口。
-  const isAnyBusy =
-    Boolean(batchAction) ||
-    Object.keys(toolActions).length > 0 ||
-    preflightTools.size > 0;
+  // 全量刷新和诊断仍等待升级结束；各工具的操作只受自身忙碌状态影响。
+  const isAnyBusy = busyTools.size > 0;
 
   return (
     <motion.section
@@ -1055,8 +1170,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 })
               }
               disabled={
-                isLoadingTools || isAnyBusy || updatableToolNames.length === 0
+                isLoadingTools ||
+                Boolean(batchAction) ||
+                updatableToolNames.length === 0
               }
+              aria-busy={Boolean(batchAction)}
             >
               {batchAction === "update" ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1091,16 +1209,17 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // "装了跑不起来"误判成"未安装"而给出无用的安装按钮（重装同一版本解决不了）。
             const installedButBroken = Boolean(tool?.installed_but_broken);
             // loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
+            // 已提交的动作持续显示到版本刷新结束，切页或版本变化都不应提前清掉进度。
+            const isToolBusy = busyTools.has(toolName);
             const action: ToolLifecycleAction | null =
-              isToolVersionLoading || installedButBroken
+              busyTools.get(toolName) ??
+              (isToolVersionLoading || installedButBroken
                 ? null
                 : !tool?.version
                   ? "install"
                   : isOutdated
                     ? "update"
-                    : null;
-            const runningAction = toolActions[toolName];
-            const title = tool?.version || tool?.error || t("common.unknown");
+                    : null);
             const conflicts = toolDiagnostics[toolName];
 
             return (
@@ -1152,7 +1271,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     </span>
                     <span
                       className="min-w-0 truncate font-mono text-foreground"
-                      title={title}
+                      title={tool?.version || undefined}
                     >
                       {isToolVersionLoading
                         ? t("common.loading")
@@ -1174,9 +1293,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     </span>
                   </div>
                   {!isToolVersionLoading && !tool?.version && tool?.error && (
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {tool.error}
-                    </div>
+                    <ToolErrorMessage message={tool.error} />
                   )}
                 </div>
 
@@ -1185,7 +1302,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <Select
                       value={wslShellByTool[toolName]?.wslShell || "auto"}
                       onValueChange={(v) => handleToolShellChange(toolName, v)}
-                      disabled={isToolVersionLoading || isAnyBusy}
+                      disabled={isToolVersionLoading || isToolBusy}
                     >
                       <SelectTrigger className="h-7 w-[82px] text-xs">
                         <SelectValue />
@@ -1204,7 +1321,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       onValueChange={(v) =>
                         handleToolShellFlagChange(toolName, v)
                       }
-                      disabled={isToolVersionLoading || isAnyBusy}
+                      disabled={isToolVersionLoading || isToolBusy}
                     >
                       <SelectTrigger className="h-7 w-[82px] text-xs">
                         <SelectValue />
@@ -1241,11 +1358,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 )}
 
                 <div className="mt-auto flex items-center justify-end">
-                  {isToolVersionLoading ? (
+                  {isToolVersionLoading && !isToolBusy ? (
                     <span className="text-xs text-muted-foreground">
                       {t("common.loading")}
                     </span>
-                  ) : installedButBroken ? (
+                  ) : installedButBroken && !isToolBusy ? (
                     // 已安装但跑不起来：重装无济于事，不给按钮，给一句指向环境的提示。
                     <span className="text-xs text-yellow-600 dark:text-yellow-400">
                       {t("settings.toolCheckEnv")}
@@ -1256,11 +1373,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       variant={action === "install" ? "outline" : "default"}
                       className="h-7 gap-1.5 text-xs"
                       onClick={() => handleRunToolAction([toolName], action)}
-                      disabled={isToolVersionLoading || isAnyBusy}
+                      disabled={isToolVersionLoading || isToolBusy}
+                      aria-busy={isToolBusy}
                     >
-                      {/* preflight（升级前冲突探测）阶段也转圈：此时 toolActions
-                          尚未置位，只 disabled 不转圈会让探测的数秒像"点了没反应"。 */}
-                      {runningAction || preflightTools.has(toolName) ? (
+                      {/* 预检、等待确认与执行期间都显示该工具的进度。 */}
+                      {isToolBusy ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : action === "install" ? (
                         <Download className="h-3.5 w-3.5" />

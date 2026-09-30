@@ -155,6 +155,7 @@ function ModelOptionKeyInput({
 }
 
 interface OpenCodeFormFieldsProps {
+  allowBuiltinDefaults?: boolean;
   apiFormats?: ReadonlyArray<{ value: string; label: string }>;
   // NPM Package
   npm: string;
@@ -187,6 +188,7 @@ interface OpenCodeFormFieldsProps {
 }
 
 export function OpenCodeFormFields({
+  allowBuiltinDefaults = false,
   apiFormats = opencodeNpmPackages,
   npm,
   onNpmChange,
@@ -535,9 +537,13 @@ export function OpenCodeFormFields({
         <Select value={npm} onValueChange={onNpmChange}>
           <SelectTrigger id="opencode-npm">
             <SelectValue
-              placeholder={t("opencode.selectPackage", {
-                defaultValue: "Select a package",
-              })}
+              placeholder={
+                allowBuiltinDefaults
+                  ? t("opencode.builtinDefaults")
+                  : t("opencode.selectPackage", {
+                      defaultValue: "Select a package",
+                    })
+              }
             />
           </SelectTrigger>
           <SelectContent>
