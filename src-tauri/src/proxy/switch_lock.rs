@@ -1,7 +1,7 @@
 //! Per-app switch lock
 //!
-//! 确保同一应用同时只有一个供应商切换操作在执行，
-//! 防止并发切换导致 is_current 与 Live 备份不一致。
+//! 确保同一应用同时只有一个切换、进入 / 退出代理的操作在执行，防止并发操作导致
+//! 指针、代理路由和客户端文件不一致。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,14 +38,5 @@ impl SwitchLockManager {
             }
         };
         lock.lock_owned().await
-    }
-
-    /// 该应用当前是否正有切换 / 接管操作在进行中。
-    pub async fn is_locked_for_app(&self, app_type: &str) -> bool {
-        let locks = self.locks.read().await;
-        match locks.get(app_type) {
-            Some(lock) => lock.try_lock().is_err(),
-            None => false,
-        }
     }
 }

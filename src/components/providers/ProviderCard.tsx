@@ -68,7 +68,8 @@ interface ProviderCardProps {
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
   isProxyRunning: boolean;
-  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
+  isProxyTakeover?: boolean; // 路由模式（切换只改代理路由）
+  isDirectProvider?: boolean; // 路由模式下的直连供应商：退出路由时写回它
   dragHandleProps?: DragHandleProps;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
@@ -186,6 +187,7 @@ export function ProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
+  isDirectProvider = false,
   dragHandleProps,
   isAutoFailoverEnabled = false,
   failoverPriority,
@@ -317,15 +319,24 @@ export function ProviderCard({
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
 
+  // 脚本用量只在「已启用 + 非官方 + 非官方订阅模板」时才查询；展开判定必须复用同一谓词，
+  // 因为禁用的 React Query observer 仍会返回同 key 的旧缓存。
+  const scriptUsageActive =
+    usageEnabled && !isOfficial && !isOfficialSubscriptionUsage;
   const { data: usage } = useUsageQuery(provider.id, appId, {
-    enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
+    enabled: scriptUsageActive,
     autoQueryInterval,
   });
 
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
+  // 官方订阅的额度窗口不能按普通多套餐展开；缓存残留的旧脚本结果同样不认。
   const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
+    scriptUsageActive &&
+    !isTokenPlan &&
+    usage?.success &&
+    usage.data &&
+    usage.data.length > 1;
 
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -471,6 +482,18 @@ export function ProviderCard({
                   tone="info"
                   label={t("provider.needsRouting", {
                     defaultValue: "需要路由",
+                  })}
+                />
+              )}
+
+              {isDirectProvider && (
+                <ProviderStatusBadge
+                  tone="muted"
+                  label={t("provider.directProvider", {
+                    defaultValue: "直连",
+                  })}
+                  title={t("provider.directProviderHint", {
+                    defaultValue: "退出路由后恢复为这个供应商",
                   })}
                 />
               )}

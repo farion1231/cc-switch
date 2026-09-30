@@ -335,14 +335,16 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
 
 /// Vendors whose OFFICIAL Codex integration is a native `/responses` gateway that
 /// rejects Codex's freeform custom tools (`apply_patch` with `type: "custom"`,
-/// #6944). Same vendor set as `CODEX_WEB_SEARCH_REJECT_HOSTS` in `codex_config`
-/// (kept separate: that list also gates aggregators by model brand). Matched on
+/// #6944). This is intentionally separate from `CODEX_WEB_SEARCH_REJECT_HOSTS`:
+/// web-search compatibility alone must not change a stored Chat provider's
+/// protocol or catalog. Matched on
 /// host labels via `codex_url_host_matches_any`, never by substring.
 const CODEX_NATIVE_RESPONSES_HOSTS: &[&str] = &[
     "bigmodel.cn",
     "z.ai",
     "xiaomimimo.com",
     "minimaxi.com",
+    "minimax.cn",
     "minimax.io",
     "longcat.chat",
 ];
@@ -874,14 +876,6 @@ impl CodexAdapter {
         Self
     }
 
-    /// 检测是否为官方 Codex 客户端
-    ///
-    /// 匹配 User-Agent 模式: `^(codex_vscode|codex_cli_rs)/[\d.]+`
-    #[allow(dead_code)]
-    pub fn is_official_client(user_agent: &str) -> bool {
-        CODEX_CLIENT_REGEX.is_match(user_agent)
-    }
-
     /// 从 Provider 配置中提取 API Key
     fn extract_key(&self, provider: &Provider) -> Option<String> {
         // 1. 尝试从 env 中获取
@@ -1246,8 +1240,8 @@ context_window = 500000
 
         let mut unified_session = create_provider(json!({
             "auth": {},
-            "config": crate::codex_config::inject_codex_unified_session_bucket("")
-                .expect("inject unified session route")
+            // 旧版「统一会话历史」注入进 live、又被回填进行里的形态。
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n"
         }));
         unified_session.category = Some("official".to_string());
         assert!(is_codex_official_provider(&unified_session));
@@ -1622,6 +1616,7 @@ wire_api = "anthropic"
             "https://api.xiaomimimo.com/v1",
             "https://token-plan-cn.xiaomimimo.com/v1",
             "https://api.minimaxi.com/v1",
+            "https://api.minimax.cn/v1",
             "https://api.minimax.io/v1",
             "https://api.longcat.chat/openai/v1",
         ] {
@@ -1632,11 +1627,42 @@ wire_api = "anthropic"
             "https://api.z.ai/api/coding/paas/v4",
             "https://open.bigmodel.cn/api/paas/v4",
             "https://api.minimaxi.com/v1/chat/completions",
+            "https://api.minimax.cn/v1/chat/completions",
+            "https://api.minimax.cn.example.com/v1",
             "https://api.xyz.ai/v1",
             "https://api.deepseek.com",
             "",
         ] {
             assert!(!is_codex_native_responses_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn new_native_presets_respect_explicit_format_without_reclassifying_chat() {
+        use crate::codex_config::CodexCatalogToolProfile;
+
+        for base_url in [
+            "https://api.stepfun.com/v1",
+            "https://api.stepfun.ai/v1",
+            "https://api.stepfun.com/step_plan/v1",
+            "https://qianfan.baidubce.com/v2",
+            "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+            "https://tokenhub.tencentmaas.com/plan/v3",
+        ] {
+            for (api_format, expected) in [
+                ("openai_responses", CodexCatalogToolProfile::NativeResponses),
+                ("openai_chat", CodexCatalogToolProfile::ProxyChat),
+            ] {
+                let provider = create_provider(json!({
+                    "apiFormat": api_format,
+                    "baseURL": base_url,
+                }));
+                assert_eq!(
+                    resolve_codex_catalog_tool_profile(&provider),
+                    expected,
+                    "{api_format} @ {base_url}",
+                );
+            }
         }
     }
 
@@ -1734,38 +1760,6 @@ wire_api = "anthropic"
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
-    }
-
-    // 官方客户端检测测试
-    #[test]
-    fn test_is_official_client_vscode() {
-        assert!(CodexAdapter::is_official_client("codex_vscode/1.0.0"));
-        assert!(CodexAdapter::is_official_client("codex_vscode/2.3.4"));
-        assert!(CodexAdapter::is_official_client("codex_vscode/0.1"));
-    }
-
-    #[test]
-    fn test_is_official_client_cli() {
-        assert!(CodexAdapter::is_official_client("codex_cli_rs/1.0.0"));
-        assert!(CodexAdapter::is_official_client("codex_cli_rs/0.5.2"));
-    }
-
-    #[test]
-    fn test_is_not_official_client() {
-        assert!(!CodexAdapter::is_official_client("Mozilla/5.0"));
-        assert!(!CodexAdapter::is_official_client("curl/7.68.0"));
-        assert!(!CodexAdapter::is_official_client("python-requests/2.25.1"));
-        assert!(!CodexAdapter::is_official_client("codex_other/1.0.0"));
-        assert!(!CodexAdapter::is_official_client(""));
-    }
-
-    #[test]
-    fn test_is_official_client_partial_match() {
-        // 必须从开头匹配
-        assert!(!CodexAdapter::is_official_client("some codex_vscode/1.0.0"));
-        assert!(!CodexAdapter::is_official_client(
-            "prefix_codex_cli_rs/1.0.0"
-        ));
     }
 
     #[test]

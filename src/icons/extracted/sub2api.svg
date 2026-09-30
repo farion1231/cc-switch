@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Sub2API</title>
+  <desc id="desc">An interlocking S symbol representing subscription routing into APIs.</desc>
+  <defs>
+    <linearGradient id="s2a-bg" x1="72" y1="44" x2="442" y2="478" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#142B56"/>
+      <stop offset=".52" stop-color="#0A1A39"/>
+      <stop offset="1" stop-color="#061127"/>
+    </linearGradient>
+    <radialGradient id="s2a-ambient" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(168 92) rotate(51) scale(342 382)">
+      <stop stop-color="#3E68B0" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#3E68B0" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="s2a-brand" x1="4" y1="4" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#79F4BD"/>
+      <stop offset=".48" stop-color="#39D9E7"/>
+      <stop offset="1" stop-color="#3875F6"/>
+    </linearGradient>
+    <filter id="s2a-shadow" x="-25%" y="-25%" width="150%" height="165%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy=".55" stdDeviation=".65" flood-color="#020817" flood-opacity=".34"/>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="120" fill="url(#s2a-bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="120" fill="url(#s2a-ambient)"/>
+  <rect x="16.75" y="16.75" width="478.5" height="478.5" rx="119.25" fill="none" stroke="#A5BFFF" stroke-opacity=".16" stroke-width="1.5"/>
+
+  <g transform="translate(52 52) scale(17)" fill="none" stroke="url(#s2a-brand)" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.7" filter="url(#s2a-shadow)">
+    <path d="m19.25 7.65-2.55-3.2a1.33 1.33 0 0 0-1.03-.5H8.58c-.34 0-.67.13-.91.37L4.15 7.65c-.93.88-.6 1.52.65 2.3l9.55 5.97"/>
+    <path d="m4.75 16.35 2.55 3.2c.25.31.63.5 1.03.5h7.09c.34 0 .67-.13.91-.37l3.52-3.33c.93-.88.6-1.52-.65-2.3L9.65 8.08"/>
+  </g>
+</svg>

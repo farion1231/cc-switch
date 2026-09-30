@@ -310,6 +310,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
         "kimi-k3": { name: "Kimi K3" },
+        "kimi-k2.7-code-highspeed": {
+          name: "Kimi K2.7 Code HighSpeed",
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "kimi-k2.6": {
+          name: "Kimi K2.6",
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -321,6 +331,52 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         label: "Base URL",
         placeholder: "https://api.moonshot.cn/v1",
         defaultValue: "https://api.moonshot.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
+  {
+    name: "Kimi Global",
+    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Kimi",
+      options: {
+        baseURL: "https://api.moonshot.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k3": { name: "Kimi K3" },
+        "kimi-k2.7-code-highspeed": {
+          name: "Kimi K2.7 Code HighSpeed",
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "kimi-k2.6": {
+          name: "Kimi K2.6",
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "cn_official",
+    partnerPromotionKey: "kimi",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.moonshot.ai/v1",
+        defaultValue: "https://api.moonshot.ai/v1",
         editorValue: "",
       },
       apiKey: {
@@ -364,6 +420,40 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
+  {
+    name: "Kimi For Coding Global",
+    websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Kimi For Coding",
+      options: {
+        baseURL: "https://api.kimi.ai/coding/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "kimi-for-coding": { name: "Kimi For Coding" },
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.kimi.ai/coding/v1",
+        defaultValue: "https://api.kimi.ai/coding/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
 
   {
     name: "PackyCode",
@@ -380,6 +470,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -436,6 +536,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -525,6 +630,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-5": { name: "Claude Opus 5" },
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -555,6 +670,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "anthropic/claude-opus-5": { name: "Claude Opus 5" },
         "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -613,7 +738,26 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/kimi-k3": {
+          name: "Kimi K3",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "z-ai/glm-5.3": {
+          name: "GLM-5.3",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "z-ai/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -672,12 +816,62 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
+    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
+    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造。
+    // 不开 setCacheKey：与仓库内其余 Token Plan 预设（腾讯/百度）保持一致
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "FluxA Token Plan",
+      options: {
+        baseURL: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+        apiKey: "",
+      },
+      models: {
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash-0731": { name: "DeepSeek V4 Flash 0731" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v3.2": { name: "DeepSeek V3.2" },
+        "glm-5.2": { name: "GLM-5.2" },
+        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5": { name: "GLM-5" },
+        "kimi-k2.6": { name: "Kimi K2.6" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -732,6 +926,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "claude-opus-5": { name: "Claude Opus 5" },
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -760,6 +964,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -850,6 +1059,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-5": { name: "Claude Opus 5" },
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1011,6 +1230,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1038,7 +1262,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+        },
       },
     },
     category: "aggregator",
@@ -1247,6 +1474,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1305,6 +1537,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-luna": {
+          name: "GPT-6 Luna",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1333,6 +1580,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1360,6 +1617,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1389,6 +1651,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1428,6 +1695,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Soshow",
+      options: {
+        baseURL: "https://maas.so-show.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-opus-5": { name: "Claude Opus 5" },
+      },
+    },
+    category: "aggregator",
+    icon: "soshow",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
@@ -1439,8 +1733,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-v4-pro": {
+          name: "DeepSeek V4 Pro",
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "deepseek-flash": {
+          name: "DeepSeek V4.1 Flash",
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1467,7 +1769,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5.3": { name: "GLM-5.3" },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1500,7 +1807,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5.3": { name: "GLM-5.3" },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -2046,6 +2358,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
         "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.7-flash": {
+          name: "Step 3.7 Flash",
+          limit: { context: 256000, output: 256000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "step-5-preview": {
+          name: "Step 5 Preview",
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -2079,6 +2401,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
         "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.7-flash": {
+          name: "Step 3.7 Flash",
+          limit: { context: 256000, output: 256000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "step-5-preview": {
+          name: "Step 5 Preview",
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -2112,6 +2444,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.7-flash": {
+          name: "Step 3.7 Flash",
+          limit: { context: 256000, output: 256000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "step-5-preview": {
+          name: "Step 5 Preview",
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -2237,13 +2579,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "MiniMax",
       options: {
-        baseURL: "https://api.minimaxi.com/v1",
+        baseURL: "https://api.minimax.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -2309,17 +2651,18 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "BaiLing",
       options: {
-        baseURL: "https://api.tbox.cn/v1",
+        baseURL: "https://api.ant-ling.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "Ling-2.5-1T": { name: "Ling 2.5-1T" },
+        "Ling-2.6-1T": { name: "Ling 2.6-1T" },
       },
     },
     category: "cn_official",
@@ -2351,6 +2694,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         },
         "mimo-v2.5": {
           name: "MiMo V2.5",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "mimo-v2.6-pro": {
+          name: "MiMo V2.6 Pro",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "mimo-v2.6-flash": {
+          name: "MiMo V2.6 Flash",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "mimo-v2.6-pro-ultraspeed": {
+          name: "MiMo V2.6 Pro UltraSpeed",
           limit: { context: 1048576, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
@@ -2387,6 +2745,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         },
         "mimo-v2.5": {
           name: "MiMo V2.5",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "mimo-v2.6-pro": {
+          name: "MiMo V2.6 Pro",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "mimo-v2.6-flash": {
+          name: "MiMo V2.6 Flash",
           limit: { context: 1048576, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
@@ -2451,6 +2819,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -2479,6 +2857,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
         "anthropic/claude-opus-5": { name: "Claude Opus 5" },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -2506,6 +2889,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
         "anthropic/claude-opus-5": { name: "Claude Opus 5" },
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -2564,6 +2957,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "zai-org/glm-5.1": { name: "GLM-5.1" },
+        "zai-org/glm-5.3": {
+          name: "GLM-5.3",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "zai-org/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/kimi-k3": {
+          name: "Kimi K3",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -2590,7 +2998,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "moonshotai/kimi-k2.5": { name: "Kimi K2.5" },
+        "moonshotai/kimi-k3": {
+          name: "Kimi K3",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "z-ai/glm-5.3": {
+          name: "GLM-5.3",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "z-ai/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -2648,6 +3070,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         },
         "gpt-5.3-codex": {
           name: "gpt-5.3-codex",
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          limit: { context: 1050000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
     },
@@ -2755,6 +3187,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
           limit: { context: 1000000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -2783,6 +3225,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       models: {
         "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",

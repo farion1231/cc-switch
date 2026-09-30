@@ -639,8 +639,7 @@ async fn log_usage_internal(
     use super::usage::logger::UsageLogger;
 
     let logger = UsageLogger::new(&state.db);
-    let (multiplier, pricing_model_source) =
-        logger.resolve_pricing_config(provider_id, app_type).await;
+    let pricing_model_source = logger.resolve_pricing_model_source(app_type).await;
     let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         outbound_model
     } else {
@@ -667,7 +666,6 @@ async fn log_usage_internal(
         request_model.to_string(),
         pricing_model.to_string(),
         usage,
-        multiplier,
         latency_ms,
         first_token_ms,
         status_code,
@@ -1029,7 +1027,7 @@ mod tests {
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
-            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            failover_manager: Arc::new(FailoverSwitchManager::new()),
         }
     }
 
@@ -1069,14 +1067,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_log_usage_uses_provider_override_config() -> Result<(), AppError> {
+    async fn test_log_usage_ignores_legacy_multiplier_and_provider_overrides(
+    ) -> Result<(), AppError> {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_default_cost_multiplier(app_type, "1.5").await?;
         db.set_pricing_model_source(app_type, "response").await?;
         seed_pricing(&db)?;
+        {
+            // 旧版写下的全局倍率仍留在列里，新版不再读取
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_config SET default_cost_multiplier = '1.5' WHERE app_type = ?1",
+                [app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
+        // 旧版的供应商级覆盖仍在 meta 里（给旧设备往返保留），新版不再读取
         let meta = ProviderMeta {
             cost_multiplier: Some("2".to_string()),
             pricing_model_source: Some("request".to_string()),
@@ -1111,24 +1119,20 @@ mod tests {
         .await;
 
         let conn = crate::database::lock_conn!(db.conn);
-        let (model, request_model, total_cost, cost_multiplier): (String, String, String, String) =
-            conn.query_row(
-                "SELECT model, request_model, total_cost_usd, cost_multiplier
+        let (total_cost, cost_multiplier): (String, String) = conn
+            .query_row(
+                "SELECT total_cost_usd, cost_multiplier
                  FROM proxy_request_logs WHERE provider_id = ?1",
                 ["provider-1"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        assert_eq!(model, "resp-model");
-        assert_eq!(request_model, "req-model");
-        assert_eq!(
-            Decimal::from_str(&cost_multiplier).unwrap(),
-            Decimal::from_str("2").unwrap()
-        );
+        assert_eq!(Decimal::from_str(&cost_multiplier).unwrap(), Decimal::ONE);
+        // 按全局的「返回模型」计价：resp-model $1/M，不乘倍率
         assert_eq!(
             Decimal::from_str(&total_cost).unwrap(),
-            Decimal::from_str("4").unwrap()
+            Decimal::from_str("1").unwrap()
         );
         Ok(())
     }
@@ -1202,82 +1206,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_claude_desktop_inherits_claude_global_defaults() -> Result<(), AppError> {
+    async fn test_claude_desktop_inherits_claude_pricing_source() -> Result<(), AppError> {
         use crate::proxy::usage::logger::UsageLogger;
 
         let db = Arc::new(Database::memory()?);
 
-        // 全局计费配置只有 claude/codex/gemini 三行；claude-desktop 的
-        // 全局默认必须继承 claude，而不是静默落回工厂默认（1 / response）
-        db.set_default_cost_multiplier("claude", "1.5").await?;
+        // proxy_config 没有 claude-desktop 行；它的计费模式必须继承 claude，
+        // 而不是静默落回工厂默认（response）
         db.set_pricing_model_source("claude", "request").await?;
 
         let logger = UsageLogger::new(&db);
-        let (multiplier, source) = logger
-            .resolve_pricing_config("nonexistent-provider", "claude-desktop")
-            .await;
+        let source = logger.resolve_pricing_model_source("claude-desktop").await;
 
-        assert_eq!(multiplier, Decimal::from_str("1.5").unwrap());
         assert_eq!(source, "request");
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_log_usage_falls_back_to_global_defaults() -> Result<(), AppError> {
-        let db = Arc::new(Database::memory()?);
-        let app_type = "claude";
-
-        db.set_default_cost_multiplier(app_type, "1.5").await?;
-        db.set_pricing_model_source(app_type, "response").await?;
-        seed_pricing(&db)?;
-
-        let meta = ProviderMeta::default();
-        insert_provider(&db, "provider-2", app_type, meta)?;
-
-        let state = build_state(db.clone());
-        let usage = TokenUsage {
-            input_tokens: 1_000_000,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            model: None,
-            message_id: None,
-        };
-
-        log_usage_internal(
-            &state,
-            "provider-2",
-            app_type,
-            "resp-model",
-            "req-model",
-            "req-model",
-            usage,
-            10,
-            None,
-            false,
-            200,
-            None,
-        )
-        .await;
-
-        let conn = crate::database::lock_conn!(db.conn);
-        let (total_cost, cost_multiplier): (String, String) = conn
-            .query_row(
-                "SELECT total_cost_usd, cost_multiplier
-                 FROM proxy_request_logs WHERE provider_id = ?1",
-                ["provider-2"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        assert_eq!(
-            Decimal::from_str(&cost_multiplier).unwrap(),
-            Decimal::from_str("1.5").unwrap()
-        );
-        assert_eq!(
-            Decimal::from_str(&total_cost).unwrap(),
-            Decimal::from_str("1.5").unwrap()
-        );
         Ok(())
     }
 }

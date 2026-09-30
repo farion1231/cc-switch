@@ -152,7 +152,7 @@ fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
 
 #[test]
 fn import_default_config_claude_persists_provider() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -205,7 +205,7 @@ fn import_default_config_claude_persists_provider() {
 
 #[test]
 fn import_default_config_grokbuild_seeds_official_alongside_default() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -262,7 +262,7 @@ context_window = 500000
 
 #[test]
 fn import_default_config_grokbuild_official_live_imports_official_as_current() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -309,7 +309,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
 #[test]
 fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -342,7 +342,7 @@ fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
 
 #[test]
 fn import_default_config_grokbuild_broken_custom_live_still_errors() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -386,7 +386,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
 fn import_default_config_without_live_file_returns_error() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -420,7 +420,7 @@ fn import_default_config_without_live_file_returns_error() {
 
 #[test]
 fn import_mcp_from_claude_creates_config_and_enables_servers() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -467,7 +467,7 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
 
 #[test]
 fn import_mcp_from_codex_does_not_rewrite_codex_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -500,7 +500,7 @@ command = "echo"
 
 #[test]
 fn import_mcp_from_claude_does_not_sync_existing_codex_enabled_server() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -575,7 +575,7 @@ command = "echo"
 fn import_mcp_from_claude_invalid_json_preserves_state() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -610,7 +610,7 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
 fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -655,7 +655,7 @@ fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
 
 #[test]
 fn set_mcp_enabled_for_codex_writes_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -728,7 +728,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
 fn enabling_codex_mcp_skips_when_codex_dir_missing() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -779,7 +779,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
 
 #[test]
 fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -860,7 +860,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
 
 #[test]
 fn import_mcp_from_multiple_apps_merges_enabled_flags() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -905,7 +905,7 @@ command = "echo"
 
 #[test]
 fn import_mcp_from_gemini_sse_url_only_is_valid() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -946,7 +946,7 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
 fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -999,7 +999,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
 fn enabling_claude_mcp_skips_when_claude_config_absent() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -1054,7 +1054,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
 
 #[test]
 fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let claude_dir = home.join(".claude");
@@ -1111,7 +1111,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
 
 #[test]
 fn custom_claude_dir_writes_mcp_inside_config_dir() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let custom_dir = home.join("profiles").join(".claude");
@@ -1169,7 +1169,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
 
 #[test]
 fn custom_claude_dir_sync_does_not_copy_default_profile() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let home_mcp_path = home.join(".claude.json");
@@ -1273,7 +1273,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
 
 #[test]
 fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let home_mcp_path = home.join(".claude.json");
@@ -1328,7 +1328,7 @@ fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
 
 #[test]
 fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
