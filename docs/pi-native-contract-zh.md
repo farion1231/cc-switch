@@ -13,6 +13,7 @@
 | 资源                            | CC Switch 行为                                                | 状态来源         |
 | ------------------------------- | ------------------------------------------------------------- | ---------------- |
 | `models.json`                   | 管理 `providers` 中的全部显式供应商节点；精确新增、替换和移除 | 文件中的实际条目 |
+| `<agent dir>/mcp.json`          | 管理 `mcpServers` 中显式启用的条目；读-改-写，只增删目标 id   | 文件中的实际条目 |
 | 全局 `settings.json`            | 只读 `defaultProvider`、`defaultModel`、`sessionDir`          | Pi 原生设置      |
 | `auth.json`                     | 不读、不写、不刷新                                            | Pi `/login`      |
 | `AGENTS.md`                     | 提示库中与文件内容精确匹配的项视为正在使用                    | 文件存在及内容   |
@@ -36,6 +37,18 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 
 用量查询脚本属于 CC Switch 元数据，只更新数据库，不重写 `models.json`。
 
+### MCP
+
+Pi 从 0.99.0 起内置 MCP 支持，读全局 `<agent dir>/mcp.json`。`mcpServers` 中存在该 id 即为「已为 Pi 启用」：条目的存在本身就是开关，不写 `enabled`。
+
+写出时只保留 Pi 识别的字段：stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`、`oauth`，以及两者共享的 `exposure`、`toolExposure`、`timeout`。一律不带 `type`，Pi 根据 `command` 和 `url` 自动推断传输方式，`type: "sse"` 不支持，一条非法条目会让整份配置读取失败。`exposure`、`toolExposure`、`timeout` 不做解释、不注入。
+
+这三个字段可以由 Pi 侧控制（`/mcp` 管理命令），所以 CC Switch 里没有这个键就保留配置文件中的已有值，有就以 CC Switch 为准。其余字段以 CC Switch 为准，按白名单整体重写，不受文件侧影响。
+
+目标文件不可解析时报错，不进行覆盖；Pi 的配置目录不存在时静默无操作，也不创建任何文件或目录。条目里允许出现明文 Key（`headers`/`env`/`oauth`），因此该文件按 private（Unix 0600）权限写入；`auth.json` 不读不写，删除 MCP 服务器也不清理 Pi 的 OAuth 凭据与工具清单缓存。
+
+项目级 `.pi/mcp.json` 不在范围内：MCP 层没有项目上下文，不扫描项目目录、不猜活动会话。
+
 ### 并发与外部修改
 
 供应商标识是成员身份：`models.json.providers` 中存在该标识即为已启用。CC Switch 每次进入列表及应用启动时同步全部显式节点，不按内置 ID、认证字段或模型完整度过滤。原生配置发生修改后，以原生内容更新同 ID 的已保存档案；原生删除只改变启用状态。移除前保存目标节点的最新内容，数据库中的卡片和完整配置继续保留。
@@ -56,5 +69,6 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 - Pi 运行时内置供应商与内置模型目录的复制
 - 完整 `compat`、`modelOverrides` 和费用编辑器；思考档位只提供 Pi 原生 `thinkingLevelMap` 的轻量入口
 - 相对会话目录的全局猜测
+- 项目级 `.pi/mcp.json`，以及 Pi 侧 MCP 修改的双向同步（不读回 Pi 对托管条目的改动、不做冲突检测；唯一例外是上面那条 Pi 专属字段的继承规则，它只决定写出时的默认值，不会把 Pi 侧的值写回 CC Switch）
 
 Pi 发布新版本时，通过正常开发和验收重新运行供应商、提示词、Skills 和 Sessions 契约测试。没有进入产品界面的上游字段不应仅为了“覆盖完整”而扩展后端。

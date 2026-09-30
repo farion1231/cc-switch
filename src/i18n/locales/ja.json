@@ -777,7 +777,7 @@
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
-    "piConfigDirDescription": "Pi の設定ディレクトリ（models.json）を上書きします。",
+    "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -2046,7 +2046,7 @@
       "syncOtherSide": "{{target}} にも反映",
       "syncOtherSideHint": "{{target}} に同じ設定を書き込みます。既存の同一 ID は上書きされます。",
       "willOverwriteWarning": "{{target}} の既存設定を上書きします",
-      "piExposureHint": "Pi は既定で codemode 経由で MCP ツールを公開するため、モデルのツール一覧には直接表示されません。Pi 内の /mcp で必要に応じて設定できます。詳しくは Pi の公式ドキュメントを参照してください。"
+      "piExposureHint": "Pi は既定で codemode 経由で MCP ツールを公開します。Pi 内の /mcp を使うか、JSON に `exposure` を設定することで必要に応じて設定できます。詳しくは Pi の公式ドキュメントを参照してください。"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",

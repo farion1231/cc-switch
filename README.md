@@ -323,7 +323,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | OpenCode | Coexist | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | OpenClaw | Coexist | – | – | – | – | Workspace editor | ✓ | – |
 | Hermes | Coexist | – | – | ✓ | ✓ | Memory | ✓ | – |
-| Pi | Coexist | – | – | – | ✓ | AGENTS.md, SYSTEM.md, prompt templates | ✓ | ✓ |
+| Pi | Coexist | – | – | ✓ | ✓ | AGENTS.md, SYSTEM.md, prompt templates | ✓ | ✓ |
 | MiniMax Code | Coexist | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 
 - **Switch**: only one provider is active at a time; **Coexist**: multiple providers are written into the tool's own config at the same time, and you pick one inside the tool.
