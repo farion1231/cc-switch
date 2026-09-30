@@ -75,6 +75,38 @@ impl Database {
         Ok(())
     }
 
+    // Backfill and activation must commit together with MiniMax Code's live file.
+    pub(crate) fn save_mcode_prompts(
+        &self,
+        prompts: &IndexMap<String, Prompt>,
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for prompt in prompts.values() {
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO prompts (
+                    id, app_type, name, content, description, enabled, created_at, updated_at
+                ) VALUES (?1, 'mcode', ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        prompt.id,
+                        prompt.name,
+                        prompt.content,
+                        prompt.description,
+                        prompt.enabled,
+                        prompt.created_at,
+                        prompt.updated_at
+                    ],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 删除提示词
     pub fn delete_prompt(&self, app_type: &str, id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);

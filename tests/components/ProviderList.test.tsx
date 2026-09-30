@@ -268,6 +268,45 @@ describe("ProviderList Component", () => {
     );
   });
 
+  it("marks the direct provider while the app is in routing mode", async () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+    const providerB = createProvider({ id: "b", name: "B" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA, providerB],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_direct_provider`, () =>
+        HttpResponse.json("a"),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ a: providerA, b: providerB }}
+        currentProviderId="b"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    const lastProps = (id: string) =>
+      providerCardRenderSpy.mock.calls
+        .map((call) => call[0])
+        .filter((props) => props.provider.id === id)
+        .at(-1);
+    await waitFor(() => expect(lastProps("a")?.isDirectProvider).toBe(true));
+    expect(lastProps("b")?.isCurrent).toBe(true);
+    expect(lastProps("b")?.isDirectProvider).toBe(false);
+  });
+
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
@@ -576,5 +615,33 @@ describe("ProviderList Component", () => {
     expect(
       screen.queryByRole("button", { name: "provider.addProvider" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not tell MiniMax Code users to click a missing import button", async () => {
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="mcode"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("mcode.empty.title");
+    expect(screen.getByText("mcode.empty.description")).toBeInTheDocument();
+    expect(
+      screen.queryByText("provider.noProvidersDescription"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.importCurrent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "provider.addProvider" }),
+    ).toBeInTheDocument();
   });
 });

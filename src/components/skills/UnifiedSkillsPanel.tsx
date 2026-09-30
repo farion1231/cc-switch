@@ -222,6 +222,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       openclaw: 0,
       hermes: 0,
       pi: 0,
+      mcode: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
@@ -1049,6 +1050,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
           pi: false,
+          mcode: skill.foundIn.includes("mcode"),
         },
       ]),
     ),
@@ -1077,6 +1079,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           openclaw: false,
           hermes: false,
           pi: false,
+          mcode: false,
         },
       })),
     );
@@ -1101,6 +1104,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                   type="checkbox"
                   checked={selected.has(skill.directory)}
                   onChange={() => toggleSelect(skill.directory)}
+                  aria-label={skill.name}
                   className="mt-1"
                 />
                 <div className="flex-1 min-w-0">

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AreaChart,
@@ -29,6 +30,131 @@ interface UsageTrendChartProps {
   refreshIntervalMs: number;
 }
 
+export interface UsageTrendStatLike {
+  date: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+  totalCost: string | number;
+}
+
+export interface UsageTrendChartPoint {
+  /** Unique category key for Recharts — must not collide across years. */
+  xKey: string;
+  rawDate: string;
+  /** Short tick label shown on the X axis. */
+  label: string;
+  /** Fuller label used by the tooltip. */
+  tooltipLabel: string;
+  hour: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cost: number | null;
+}
+
+/** Build chart rows from backend trend stats. Exported for unit tests. */
+export function buildUsageTrendChartData(
+  trends: UsageTrendStatLike[] | undefined,
+  options: {
+    isHourly: boolean;
+    dateLocale: string;
+    /** Inclusive range endpoints (unix seconds). Used to decide year labels. */
+    startDate: number;
+    endDate: number;
+  },
+): UsageTrendChartPoint[] {
+  const { isHourly, dateLocale, startDate, endDate } = options;
+  const startYear = new Date(startDate * 1000).getFullYear();
+  const endYear = new Date(endDate * 1000).getFullYear();
+  const spansMultipleYears = startYear !== endYear;
+
+  return (
+    trends?.map((stat) => {
+      const pointDate = new Date(stat.date);
+      const cost = parseFiniteNumber(stat.totalCost);
+      // Prefer a stable unique key from the source timestamp / date string.
+      // Falling back to ISO keeps categories unique even if the backend
+      // returns sparse points that share the same local MM/DD across years.
+      const xKey = stat.date;
+      const tooltipLabel = isHourly
+        ? pointDate.toLocaleString(dateLocale, {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : pointDate.toLocaleDateString(dateLocale, {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          });
+      const label = isHourly
+        ? pointDate.toLocaleString(dateLocale, {
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : spansMultipleYears
+          ? pointDate.toLocaleDateString(dateLocale, {
+              year: "2-digit",
+              month: "2-digit",
+              day: "2-digit",
+            })
+          : pointDate.toLocaleDateString(dateLocale, {
+              month: "2-digit",
+              day: "2-digit",
+            });
+
+      return {
+        xKey,
+        rawDate: stat.date,
+        label,
+        tooltipLabel,
+        hour: pointDate.getHours(),
+        inputTokens: stat.totalInputTokens,
+        outputTokens: stat.totalOutputTokens,
+        cacheCreationTokens: stat.totalCacheCreationTokens,
+        cacheReadTokens: stat.totalCacheReadTokens,
+        cost: cost ?? null,
+      };
+    }) || []
+  );
+}
+
+/** Resolve a tick label by the unique category key (not by filtered tick index). */
+export function formatUsageTrendTickLabel(
+  xKey: string,
+  chartData: UsageTrendChartPoint[],
+): string {
+  const point = chartData.find((row) => row.xKey === xKey);
+  return point?.label ?? xKey;
+}
+
+export function createUsageTrendTokenTickFormatter(
+  locale: string,
+): Intl.NumberFormat {
+  return new Intl.NumberFormat(locale, {
+    notation: "compact",
+    compactDisplay: "short",
+    maximumFractionDigits: 1,
+  });
+}
+
+export function formatUsageTrendTokenTickLabel(
+  value: unknown,
+  formatter: Intl.NumberFormat,
+): string {
+  const num = parseFiniteNumber(value);
+  if (num == null) return "--";
+
+  return formatter.format(num);
+}
+
 export function UsageTrendChart({
   range,
   rangeLabel,
@@ -47,6 +173,26 @@ export function UsageTrendChart({
     },
   );
 
+  const durationSeconds = Math.max(endDate - startDate, 0);
+  const isHourly = durationSeconds <= 24 * 60 * 60;
+  const language = i18n.resolvedLanguage || i18n.language || "en";
+  const dateLocale = getLocaleFromLanguage(language);
+  const tokenTickFormatter = useMemo(
+    () => createUsageTrendTokenTickFormatter(dateLocale),
+    [dateLocale],
+  );
+
+  const chartData = useMemo(
+    () =>
+      buildUsageTrendChartData(trends, {
+        isHourly,
+        dateLocale,
+        startDate,
+        endDate,
+      }),
+    [trends, isHourly, dateLocale, startDate, endDate],
+  );
+
   if (isLoading) {
     return (
       <div className="flex h-[350px] items-center justify-center rounded-xl bg-card/40 border border-border/50">
@@ -55,43 +201,13 @@ export function UsageTrendChart({
     );
   }
 
-  const durationSeconds = Math.max(endDate - startDate, 0);
-  const isHourly = durationSeconds <= 24 * 60 * 60;
-  const language = i18n.resolvedLanguage || i18n.language || "en";
-  const dateLocale = getLocaleFromLanguage(language);
-  const chartData =
-    trends?.map((stat) => {
-      const pointDate = new Date(stat.date);
-      const cost = parseFiniteNumber(stat.totalCost);
-      return {
-        rawDate: stat.date,
-        label: isHourly
-          ? pointDate.toLocaleString(dateLocale, {
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : pointDate.toLocaleDateString(dateLocale, {
-              month: "2-digit",
-              day: "2-digit",
-            }),
-        hour: pointDate.getHours(),
-        inputTokens: stat.totalInputTokens,
-        outputTokens: stat.totalOutputTokens,
-        cacheCreationTokens: stat.totalCacheCreationTokens,
-        cacheReadTokens: stat.totalCacheReadTokens,
-        cost: cost ?? null,
-      };
-    }) || [];
-
-  const displayData = chartData;
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
+      const point = payload[0]?.payload as UsageTrendChartPoint | undefined;
+      const heading = point?.tooltipLabel ?? point?.label ?? "";
       return (
         <div className="rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-md">
-          <p className="mb-2 font-medium">{label}</p>
+          <p className="mb-2 font-medium">{heading}</p>
           {payload.map((entry: any, index: number) => (
             <div
               key={index}
@@ -128,7 +244,7 @@ export function UsageTrendChart({
       <div className="h-[350px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
-            data={displayData}
+            data={chartData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
           >
             <defs>
@@ -162,24 +278,34 @@ export function UsageTrendChart({
               opacity={0.4}
             />
             <XAxis
-              dataKey="label"
+              dataKey="xKey"
               axisLine={false}
               tickLine={false}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
               dy={10}
+              tickFormatter={(value) =>
+                formatUsageTrendTickLabel(String(value), chartData)
+              }
+              allowDuplicatedCategory={false}
             />
             <YAxis
               yAxisId="tokens"
+              width={72}
               axisLine={false}
               tickLine={false}
+              tickMargin={8}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
-              tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
+              tickFormatter={(value) =>
+                formatUsageTrendTokenTickLabel(value, tokenTickFormatter)
+              }
             />
             <YAxis
               yAxisId="cost"
               orientation="right"
+              width={56}
               axisLine={false}
               tickLine={false}
+              tickMargin={8}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
               tickFormatter={(value) => `$${value}`}
             />

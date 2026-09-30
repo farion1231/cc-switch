@@ -1,6 +1,3 @@
-// NOTE: Codex 1M 上下文 UI 已暂时隐藏（详见下方 CodexConfigSection 内 JSX 注释）。
-// 如需恢复，请同时：
-//   - 取消下面 `@/utils/providerConfigUtils` import 的注释
 import React, {
   useCallback,
   useEffect,
@@ -10,19 +7,15 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
-import {
-  isCodexGoalModeEnabled,
-  isCodexRemoteCompactionEnabled,
-  setCodexGoalMode,
-  setCodexRemoteCompaction,
-} from "@/utils/providerConfigUtils";
-/*
+import type { ProviderEditorInactiveField } from "@/lib/api/providers";
+import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 import {
   extractCodexTopLevelInt,
-  setCodexTopLevelInt,
+  isCodexRemoteCompactionEnabled,
   removeCodexTopLevelField,
+  setCodexRemoteCompaction,
+  setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
-*/
 
 interface CodexAuthSectionProps {
   value: string;
@@ -108,12 +101,10 @@ interface CodexConfigSectionProps {
   onChange: (value: string) => void;
   providerName?: string;
   showRemoteCompaction?: boolean;
-  useCommonConfig: boolean;
-  onCommonConfigToggle: (checked: boolean) => void;
-  onEditCommonConfig: () => void;
-  commonConfigError?: string;
   configError?: string;
   isProxyTakeover?: boolean;
+  /** 行里保存着、但不随切换生效的全局设置（值是可以照抄的 TOML）。 */
+  inactiveFields?: ProviderEditorInactiveField[];
 }
 
 /**
@@ -124,12 +115,9 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   onChange,
   providerName,
   showRemoteCompaction = true,
-  useCommonConfig,
-  onCommonConfigToggle,
-  onEditCommonConfig,
-  commonConfigError,
   configError,
   isProxyTakeover = false,
+  inactiveFields = [],
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -167,20 +155,9 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     [onChange],
   );
 
-  const goalModeEnabled = useMemo(
-    () => isCodexGoalModeEnabled(localValue),
-    [localValue],
-  );
   const remoteCompactionEnabled = useMemo(
     () => isCodexRemoteCompactionEnabled(localValue),
     [localValue],
-  );
-
-  const handleGoalModeToggle = useCallback(
-    (checked: boolean) => {
-      handleLocalChange(setCodexGoalMode(localValueRef.current || "", checked));
-    },
-    [handleLocalChange],
   );
 
   const handleRemoteCompactionToggle = useCallback(
@@ -196,8 +173,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     [handleLocalChange, providerName],
   );
 
-  // Codex 1M 上下文相关状态/回调暂时禁用——见同文件下方 JSX 注释处的恢复说明。
-  /*
   // Parse toggle states from TOML text
   const toggleStates = useMemo(() => {
     const contextWindow = extractCodexTopLevelInt(
@@ -265,7 +240,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   useEffect(() => {
     return () => clearTimeout(compactTimerRef.current);
   }, []);
-  */
 
   return (
     <div className="space-y-2">
@@ -278,16 +252,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </label>
 
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={goalModeEnabled}
-              onChange={(e) => handleGoalModeToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.enableGoalMode")}
-          </label>
-
           {showRemoteCompaction && (
             <label
               className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
@@ -302,37 +266,16 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
               {t("codexConfig.enableRemoteCompaction")}
             </label>
           )}
-
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={useCommonConfig}
-              onChange={(e) => onCommonConfigToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.writeCommonConfig")}
-          </label>
         </div>
       </div>
 
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onEditCommonConfig}
-          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
-        >
-          {t("codexConfig.editCommonConfig")}
-        </button>
-      </div>
+      <p className="text-xs text-muted-foreground">
+        {t("codexConfig.keyFieldsHint", {
+          defaultValue:
+            "地址、Key、模型、推理档位、上下文窗口和兼容开关随供应商切换；其余是 Codex 全局设置，保存后对所有供应商生效。",
+        })}
+      </p>
 
-      {commonConfigError && (
-        <p className="text-xs text-red-500 dark:text-red-400 text-right">
-          {commonConfigError}
-        </p>
-      )}
-
-      {/* Codex 1M 上下文 UI 已隐藏：模型不再支持该字段。
-          恢复方法：(1) 取消本段 JSX 注释；(2) 取消文件顶部 import 中 useMemo / extractCodexTopLevelInt / setCodexTopLevelInt / removeCodexTopLevelField 的注释；(3) 取消下方 toggleStates / compactTimerRef / handleContextWindowToggle / handleCompactLimitChange / cleanup useEffect 的注释。
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
           <input
@@ -357,7 +300,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
           />
         </label>
       </div>
-      */}
 
       <JsonEditor
         value={localValue}
@@ -367,6 +309,21 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         rows={3}
         showValidation={false}
         language="javascript"
+      />
+
+      <InactiveFieldsPanel
+        fields={inactiveFields}
+        hint={t("codexConfig.inactiveFieldsHint", {
+          count: inactiveFields.length,
+          defaultValue:
+            "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+        })}
+        action={{
+          kind: "copy",
+          copiedText: t("codexConfig.inactiveFieldCopied", {
+            defaultValue: "已复制",
+          }),
+        }}
       />
 
       {configError && (

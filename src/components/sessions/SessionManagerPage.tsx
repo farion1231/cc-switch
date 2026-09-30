@@ -91,7 +91,8 @@ type ProviderFilter =
   | "openclaw"
   | "gemini"
   | "hermes"
-  | "pi";
+  | "pi"
+  | "mcode";
 
 type SessionListViewMode = "flat" | "grouped";
 
@@ -609,7 +610,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   };
 
   const deletableFilteredSessions = useMemo(
-    () => filteredSessions.filter((session) => Boolean(session.sourcePath)),
+    () =>
+      filteredSessions.filter(
+        (session) =>
+          Boolean(session.sourcePath) && session.providerId !== "mcode",
+      ),
     [filteredSessions],
   );
 
@@ -622,7 +627,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
 
   const selectedDeletableSessions = useMemo(
-    () => selectedSessions.filter((session) => Boolean(session.sourcePath)),
+    () =>
+      selectedSessions.filter(
+        (session) =>
+          Boolean(session.sourcePath) && session.providerId !== "mcode",
+      ),
     [selectedSessions],
   );
 
@@ -658,8 +667,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const getGroupSelectionState = (
     groupSessions: SessionMeta[],
   ): GroupSelectionState => {
-    const selectableSessions = groupSessions.filter((session) =>
-      Boolean(session.sourcePath),
+    const selectableSessions = groupSessions.filter(
+      (session) =>
+        Boolean(session.sourcePath) && session.providerId !== "mcode",
     );
     const selectedCount = selectableSessions.filter((session) =>
       selectedSessionKeys.has(getSessionKey(session)),
@@ -678,7 +688,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   };
 
   const toggleSessionChecked = (session: SessionMeta, checked: boolean) => {
-    if (!session.sourcePath) return;
+    if (!session.sourcePath || session.providerId === "mcode") return;
     const key = getSessionKey(session);
     setSelectedSessionKeys((current) => {
       const next = new Set(current);
@@ -695,8 +705,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     groupSessions: SessionMeta[],
     checked: boolean,
   ) => {
-    const selectableSessions = groupSessions.filter((session) =>
-      Boolean(session.sourcePath),
+    const selectableSessions = groupSessions.filter(
+      (session) =>
+        Boolean(session.sourcePath) && session.providerId !== "mcode",
     );
     if (selectableSessions.length === 0) return;
 
@@ -759,7 +770,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         isParent={referencedParentSessionIds.has(
           `${session.providerId}:${session.sessionId}`,
         )}
-        isCheckDisabled={!session.sourcePath}
+        isCheckDisabled={!session.sourcePath || session.providerId === "mcode"}
         onSelect={setSelectedKey}
         onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
       />
@@ -1227,6 +1238,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <span>Gemini CLI</span>
                               </div>
                             </SelectItem>
+                            <SelectItem value="mcode">MiniMax Code</SelectItem>
                             <SelectItem value="pi">
                               <div className="flex items-center gap-2">
                                 <ProviderIcon icon="pi" name="pi" size={14} />
@@ -1672,7 +1684,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 setDeleteTargets([selectedSession])
                               }
                               disabled={
-                                !selectedSession.sourcePath || isDeleting
+                                !selectedSession.sourcePath ||
+                                selectedSession.providerId === "mcode" ||
+                                isDeleting
                               }
                             >
                               <Trash2 className="size-3.5" />

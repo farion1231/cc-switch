@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -7,11 +7,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { universalProvidersApi } from "@/lib/api";
+import { providersApi, universalProvidersApi } from "@/lib/api";
+import type {
+  EditorConflictPolicy,
+  ProviderEditorSave,
+} from "@/lib/api/providers";
+import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
+import { usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
@@ -23,6 +31,7 @@ import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
+import type { ManagedAuthProvider } from "@/lib/api";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -33,8 +42,8 @@ interface AddProviderDialogProps {
       providerKey?: string;
       suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
-      ensureCodexOfficialSeed?: boolean;
       ensureGrokBuildOfficialSeed?: boolean;
+      editorSave?: ProviderEditorSave;
     },
   ) => Promise<void> | void;
 }
@@ -52,6 +61,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
+    appId !== "mcode" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
@@ -61,6 +71,77 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [authSettingsTarget, setAuthSettingsTarget] =
+    useState<ManagedAuthProvider | null>(null);
+
+  useEffect(() => {
+    setAuthSettingsTarget(null);
+  }, [appId, open]);
+
+  // Claude：预设的关键字段套在当前 live 上显示（去掉当前供应商的关键字段），保存时
+  // 其余部分的改动写进 live，这份底也用来三方比较。
+  const [claudeLiveBase, setClaudeLiveBase] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [claudeBaseLoaded, setClaudeBaseLoaded] = useState(false);
+  // Codex、Gemini CLI、Grok Build：表单把预设投影到当前配置文件上显示，投影结果就是保存时
+  // 三方比较的底（投影进行中或失败时为 null，保存只存供应商）。投影成它的草稿一起留着，
+  // 后端按草稿分开预设带的字段和从 live 带进来的字段。
+  const [draftEditorBase, setDraftEditorBase] = useState<{
+    base: Record<string, unknown>;
+    draft?: Record<string, unknown>;
+  } | null>(null);
+  const handleDraftEditorBase = useCallback(
+    (base: Record<string, unknown> | null, draft?: Record<string, unknown>) =>
+      setDraftEditorBase(base ? { base, draft } : null),
+    [],
+  );
+  // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。
+  const projectsDraft = appId !== "claude" && usesEditorView(appId);
+  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
+
+  useEffect(() => {
+    if (!open || appId !== "claude") {
+      setClaudeLiveBase(null);
+      setClaudeBaseLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    providersApi
+      .getEditorView(appId, {})
+      .then((view) => {
+        if (!cancelled) setClaudeLiveBase(view.settings);
+      })
+      .catch((error: unknown) => {
+        // 读不了 settings.json：退回只显示预设。
+        if (!cancelled) {
+          setClaudeLiveBase(null);
+          toastEditorViewFailed(t, error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setClaudeBaseLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, appId, t]);
+
+  const closeDialog = useCallback(() => {
+    setAuthSettingsTarget(null);
+    // 表单每次打开都会重新投影；这里清掉，免得下次打开时先用上一次的底。
+    setDraftEditorBase(null);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handlePanelClose = useCallback(() => {
+    if (authSettingsTarget) {
+      setAuthSettingsTarget(null);
+      return;
+    }
+    closeDialog();
+  }, [authSettingsTarget, closeDialog]);
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open],
@@ -144,7 +225,6 @@ export function AddProviderDialog({
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
         ensureClaudeDesktopOfficialSeed?: boolean;
-        ensureCodexOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
       } = {
         name: values.name.trim(),
@@ -166,14 +246,6 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      if (appId === "codex" && values.presetId) {
-        const presetIndex = parseInt(values.presetId.replace("codex-", ""));
-        const preset = codexProviderPresets[presetIndex];
-        providerData.ensureCodexOfficialSeed =
-          values.presetCategory === "official" &&
-          preset?.category === "official";
-      }
-
       if (appId === "grokbuild" && values.presetId) {
         providerData.ensureGrokBuildOfficialSeed =
           values.presetCategory === "official" &&
@@ -186,7 +258,8 @@ export function AddProviderDialog({
         (appId === "opencode" ||
           appId === "openclaw" ||
           appId === "hermes" ||
-          appId === "pi") &&
+          appId === "pi" ||
+          appId === "mcode") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -338,11 +411,33 @@ export function AddProviderDialog({
         providerData.suggestedDefaults = values.suggestedDefaults;
       }
 
-      await onSubmit(providerData);
-      onOpenChange(false);
+      const editorBase =
+        appId === "claude"
+          ? claudeLiveBase && { base: claudeLiveBase }
+          : projectsDraft
+            ? draftEditorBase
+            : null;
+      const submit = async (onConflict: EditorConflictPolicy) => {
+        await onSubmit({
+          ...providerData,
+          ...(editorBase ? { editorSave: { ...editorBase, onConflict } } : {}),
+        });
+        closeDialog();
+      };
+      await submitWithConflictRetry(submit);
     },
-    [appId, onSubmit, onOpenChange],
+    [
+      appId,
+      onSubmit,
+      closeDialog,
+      claudeLiveBase,
+      projectsDraft,
+      draftEditorBase,
+      submitWithConflictRetry,
+    ],
   );
+
+  const waitingForClaudeBase = appId === "claude" && !claudeBaseLoaded;
 
   const footer =
     !showUniversalTab || activeTab === "app-specific" ? (
@@ -352,7 +447,7 @@ export function AddProviderDialog({
         </span>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -375,7 +470,7 @@ export function AddProviderDialog({
       <>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -394,7 +489,7 @@ export function AddProviderDialog({
     <FullScreenPanel
       isOpen={open}
       title={t("provider.addNewProvider")}
-      onClose={() => onOpenChange(false)}
+      onClose={handlePanelClose}
       footer={footer}
       contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
     >
@@ -413,15 +508,26 @@ export function AddProviderDialog({
           </TabsList>
 
           <TabsContent value="app-specific" className="mt-0">
-            <ProviderForm
-              appId={appId}
-              submitLabel={t("common.add")}
-              onSubmit={handleSubmit}
-              onCancel={() => onOpenChange(false)}
-              onSubmittingChange={setIsFormSubmitting}
-              onSubmitReadyChange={handleSubmitReadyChange}
-              showButtons={false}
-            />
+            {waitingForClaudeBase ? (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                {t("common.loading")}
+              </div>
+            ) : (
+              <ProviderForm
+                appId={appId}
+                submitLabel={t("common.add")}
+                onSubmit={handleSubmit}
+                onCancel={closeDialog}
+                onManageAuthAccounts={setAuthSettingsTarget}
+                onSubmittingChange={setIsFormSubmitting}
+                onSubmitReadyChange={handleSubmitReadyChange}
+                showButtons={false}
+                claudeLiveBase={claudeLiveBase ?? undefined}
+                onEditorBaseChange={
+                  projectsDraft ? handleDraftEditorBase : undefined
+                }
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="universal" className="mt-0">
@@ -434,10 +540,12 @@ export function AddProviderDialog({
           appId={appId}
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
-          onCancel={() => onOpenChange(false)}
+          onCancel={closeDialog}
+          onManageAuthAccounts={setAuthSettingsTarget}
           onSubmittingChange={setIsFormSubmitting}
           onSubmitReadyChange={handleSubmitReadyChange}
           showButtons={false}
+          onEditorBaseChange={projectsDraft ? handleDraftEditorBase : undefined}
         />
       )}
 
@@ -449,6 +557,12 @@ export function AddProviderDialog({
           initialPreset={selectedUniversalPreset}
         />
       )}
+
+      <AuthSettingsPanel
+        target={authSettingsTarget}
+        onClose={() => setAuthSettingsTarget(null)}
+      />
+      {conflictDialog}
     </FullScreenPanel>
   );
 }

@@ -56,6 +56,7 @@ import {
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import type { ManagedAuthProvider } from "@/lib/api";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
 import { isOAuthProviderType } from "@/config/constants";
 
@@ -92,6 +93,7 @@ export interface ClaudeDesktopProviderFormProps {
     iconColor?: string;
   };
   showButtons?: boolean;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
 }
 
 type RouteRow = {
@@ -244,6 +246,7 @@ export function ClaudeDesktopProviderForm({
   onSubmittingChange,
   initialData,
   showButtons = true,
+  onManageAuthAccounts,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
   const initialMode = isOAuthProviderType(initialData?.meta?.providerType)
@@ -376,6 +379,7 @@ export function ClaudeDesktopProviderForm({
     useCopilotAuth();
   const {
     isAuthenticated: isCodexOauthAuthenticated,
+    defaultAccountId: codexOauthDefaultAccountId,
     accounts: codexOauthAccounts,
   } = useCodexOauth();
   const {
@@ -602,12 +606,29 @@ export function ClaudeDesktopProviderForm({
       );
       return;
     }
-    const selectedAccountIsUsable = (
+    const selectedAccountExists = (
       accountId: string | null,
-      accounts: Array<{ id: string; requires_reauth: boolean }>,
+      accounts: Array<{ id: string }>,
     ) =>
       accountId === null ||
-      accounts.some(
+      accounts.some((account) => account.id === accountId);
+    const selectedCodexAccountIsUsable = (accountId: string | null) => {
+      const effectiveAccountId =
+        accountId ??
+        codexOauthDefaultAccountId ??
+        codexOauthAccounts.find((account) => account.is_default)?.id ??
+        codexOauthAccounts[0]?.id;
+      return (
+        !!effectiveAccountId &&
+        codexOauthAccounts.some(
+          (account) =>
+            account.id === effectiveAccountId && !account.reauth_required,
+        )
+      );
+    };
+    const selectedXaiAccountIsUsable = (accountId: string | null) =>
+      accountId === null ||
+      xaiOauthAccounts.some(
         (account) => account.id === accountId && !account.requires_reauth,
       );
     const managedAuthState =
@@ -643,13 +664,18 @@ export function ClaudeDesktopProviderForm({
       toast.error(managedAuthState.loginMessage);
       return;
     }
-    if (
-      managedAuthState &&
-      !selectedAccountIsUsable(
-        managedAuthState.accountId,
-        managedAuthState.accounts,
-      )
-    ) {
+    const selectedManagedAccountIsUsable =
+      activeProviderType === "codex_oauth"
+        ? selectedCodexAccountIsUsable(selectedCodexAccountId)
+        : activeProviderType === "xai_oauth"
+          ? selectedXaiAccountIsUsable(selectedXaiAccountId)
+          : managedAuthState
+            ? selectedAccountExists(
+                managedAuthState.accountId,
+                managedAuthState.accounts,
+              )
+            : true;
+    if (managedAuthState && !selectedManagedAccountIsUsable) {
       toast.error(
         t("managedAuth.selectedAccountUnavailable", {
           defaultValue: "已绑定账号不存在或需要重新登录，请重新选择账号",
@@ -864,13 +890,25 @@ export function ClaudeDesktopProviderForm({
               <div className="rounded-lg border border-border-default bg-muted/20 p-3">
                 {activeProviderType === "github_copilot" ? (
                   <CopilotAuthSection
+                    mode="select"
                     selectedAccountId={selectedGitHubAccountId}
                     onAccountSelect={setSelectedGitHubAccountId}
+                    onManageAccounts={
+                      onManageAuthAccounts
+                        ? () => onManageAuthAccounts("github_copilot")
+                        : undefined
+                    }
                   />
                 ) : activeProviderType === "codex_oauth" ? (
                   <CodexOAuthSection
+                    mode="select"
                     selectedAccountId={selectedCodexAccountId}
                     onAccountSelect={setSelectedCodexAccountId}
+                    onManageAccounts={
+                      onManageAuthAccounts
+                        ? () => onManageAuthAccounts("codex_oauth")
+                        : undefined
+                    }
                     fastModeEnabled={codexFastMode}
                     onFastModeChange={setCodexFastMode}
                   />

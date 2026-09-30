@@ -8,7 +8,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -86,7 +86,12 @@ export function BasicFormFields({
               <div className="flex-shrink-0 py-4 border-b border-border-default bg-muted/40">
                 <div className="px-6 flex items-center gap-4">
                   <DialogClose asChild>
-                    <Button type="button" variant="outline" size="icon">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t("common.back")}
+                    >
                       <ArrowLeft className="h-4 w-4" />
                     </Button>
                   </DialogClose>
@@ -130,7 +135,15 @@ export function BasicFormFields({
             <FormItem>
               <FormLabel>{t("provider.name")}</FormLabel>
               <FormControl>
-                <Input {...field} placeholder={t("provider.namePlaceholder")} />
+                <ImeSafeInput
+                  ref={field.ref}
+                  name={field.name}
+                  value={field.value ?? ""}
+                  onValueChange={field.onChange}
+                  onBlur={field.onBlur}
+                  disabled={field.disabled}
+                  placeholder={t("provider.namePlaceholder")}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -144,8 +157,13 @@ export function BasicFormFields({
             <FormItem>
               <FormLabel>{t("provider.notes")}</FormLabel>
               <FormControl>
-                <Input
-                  {...field}
+                <ImeSafeInput
+                  ref={field.ref}
+                  name={field.name}
+                  value={field.value ?? ""}
+                  onValueChange={field.onChange}
+                  onBlur={field.onBlur}
+                  disabled={field.disabled}
                   placeholder={t("provider.notesPlaceholder")}
                 />
               </FormControl>
@@ -162,8 +180,13 @@ export function BasicFormFields({
           <FormItem>
             <FormLabel>{t("provider.websiteUrl")}</FormLabel>
             <FormControl>
-              <Input
-                {...field}
+              <ImeSafeInput
+                ref={field.ref}
+                name={field.name}
+                value={field.value ?? ""}
+                onValueChange={field.onChange}
+                onBlur={field.onBlur}
+                disabled={field.disabled}
                 placeholder={t("providerForm.websiteUrlPlaceholder")}
               />
             </FormControl>

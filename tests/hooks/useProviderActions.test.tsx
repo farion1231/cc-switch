@@ -204,6 +204,25 @@ describe("useProviderActions", () => {
     );
   });
 
+  it("asks for a Gemini CLI restart after switching, since it reads .env only at startup", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ category: "custom" });
+
+    const { result } = renderHook(() => useProviderActions("gemini"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启 Gemini CLI 以生效",
+      { closeButton: true },
+    );
+  });
+
   it("warns but still switches providers that require proxy when proxy is not running", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
@@ -386,7 +405,7 @@ describe("useProviderActions", () => {
     );
   });
 
-  it("allows the built-in Codex official provider during takeover", async () => {
+  it("allows the native Codex official provider during takeover", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
@@ -427,11 +446,21 @@ describe("useProviderActions", () => {
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not grant routing capability to a UUID Codex official copy", async () => {
+  it("allows a managed Codex Official card during takeover", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
       id: "generated-uuid",
       category: "official",
+      settingsConfig: { auth: {}, config: "" },
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+      },
     });
     const { result } = renderHook(
       () => useProviderActions("codex", true, true),
@@ -442,8 +471,8 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith("generated-uuid");
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {

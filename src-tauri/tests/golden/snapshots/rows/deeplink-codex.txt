@@ -1,0 +1,13 @@
+id: relaycodex-<ts>
+name: Relay Codex
+settings_config: {"auth":{"OPENAI_API_KEY":"sk-relay-codex"},"config":"model_provider = \"custom\"\nmodel = \"gpt-5-codex\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.custom]\nname = \"Relay Codex\"\nbase_url = \"https://api.relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"}
+website_url: https://relay.example
+category: NULL
+sort_index: NULL
+notes: NULL
+icon: openai
+icon_color: NULL
+meta: {"commonConfigEnabled":true}
+is_current: true
+in_failover_queue: false
+

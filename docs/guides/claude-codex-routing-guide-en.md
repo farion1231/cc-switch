@@ -58,7 +58,7 @@ Again on the `Claude Code` tab, click the plus button and pick the **`Codex`** p
 - Click **`Sign in with ChatGPT`**. This is a device-code flow: CC Switch opens the browser automatically and copies the verification code to the clipboard; paste the code on the browser page to complete authorization, while the app shows `Waiting for authorization...`.
 - After a successful sign-in, `Auth status` shows the signed-in account (email). Multiple accounts are supported: you can `Add another account`, `Set as default`, or pin a specific account to this provider; day-to-day management can also go through `Settings` → `OAuth Authentication Center`.
 - **FAST mode**: an optional toggle; when on, requests carry `service_tier="priority"` for lower latency but consume ChatGPT quota at a higher rate. Keep it off by default.
-- The model tiers are pre-filled: `Sonnet`/`Opus` map to `gpt-5.6`, and `Haiku` maps to `gpt-5.6-luna` (used for background sub-tasks — faster and lighter on quota).
+- The model tiers are pre-filled: `Sonnet`/`Opus` map to `gpt-5.6-sol`, and `Haiku` maps to `gpt-5.6-luna` (used for background sub-tasks — faster and lighter on quota).
 
 ![Method 2: ChatGPT login status and account management in the Codex preset](../images/claude-codex-routing/03-codex-oauth-form.png)
 
@@ -81,9 +81,9 @@ Return to the Claude Code provider list and click `Enable` on the target provide
 
 Inside Claude Code you can verify step by step:
 
-- Open a new session and use `/model` to view the model menu: each tier shows the display name from the model mapping (by default, Method 2 shows `gpt-5.6` and `gpt-5.6-luna`). A few spots in the UI may still show Claude-family model names — those are the internal role aliases the routing takeover uses; this is normal, and the `/model` menu and usage dashboard are authoritative.
+- Open a new session and use `/model` to view the model menu: each tier shows the display name from the model mapping (by default, Method 2 shows `gpt-5.6-sol` and `gpt-5.6-luna`). A few spots in the UI may still show Claude-family model names — those are the internal role aliases the routing takeover uses; this is normal, and the `/model` menu and usage dashboard are authoritative.
 - Send a small question and watch the `Current Provider` on the Settings → Routing page change to your provider and `Total Requests` start to climb.
-- In the usage dashboard, these requests show under the upstream's real models: a tier mapped to `gpt-5.6` resolves to the Sol tier and displays as `GPT-5.6 Sol`, while `gpt-5.6-luna` displays as `GPT-5.6 Luna`; you can filter by provider to reconcile token usage.
+- In the usage dashboard, these requests show under the upstream's real models: `gpt-5.6-sol` displays as `GPT-5.6 Sol` (a plain `gpt-5.6` without a suffix, if you enter it manually, also resolves to the Sol tier), while `gpt-5.6-luna` displays as `GPT-5.6 Luna`; you can filter by provider to reconcile token usage.
 - The Method 2 provider card also shows subscription quota: utilization and reset countdowns for the 5-hour and 7-day windows, drawn from the ChatGPT account itself and shared with the official Codex client.
 
 ## Capabilities and known limitations
@@ -93,7 +93,7 @@ Inside Claude Code you can verify step by step:
 - **Tools and multimodal are fully converted**: multi-turn tool calls, image inputs, and PDF inputs are all fully converted.
 - **Context is managed against a 200K window**: Claude Code auto-compacts routed providers against a default 200K window. When the upstream's real window is larger (e.g. gpt-5.6 on ChatGPT's Codex service is 372K), anything beyond 200K currently goes unused — compaction triggers early, which is conservative but safe. The only switch to push past 200K today is the `1M` checkbox in the model mapping (a strict 1M declaration), for use only with Method 1 and only when the upstream truly serves the model at 1M or more; Method 2's upstream ceiling is 372K, short of 1M, so checking it would instead make long conversations error out at the upstream's real ceiling — keep it at the default.
 - **Output ceiling**: for Method 2, the output ceiling is controlled by the ChatGPT server (the `max_tokens` in Claude Code's request is not sent downstream); for Method 1, Claude Code's `max_tokens` is passed through as-is — no configuration needed.
-- **Web search is unavailable**: Claude Code's WebSearch relies on Anthropic's servers to run, which the GPT upstream can't take on, so for tasks involving web search, switch back to a Claude-family provider. Locally executed WebFetch is unaffected.
+- **Built-in web search depends on upstream support**: the router translates Claude Code's hosted WebSearch tool into the Responses API hosted `web_search` tool. It works with Codex OAuth and compatible Responses gateways that implement that tool. `allowed_domains` is preserved. On API-key Responses routes, `max_uses` maps to the upstream `max_tool_calls` hard limit. The Codex OAuth request contract rejects that field, so forced hosted-search requests are capped by the bridge instead: it adds the limit to the model instructions, stops the upstream stream when an extra call starts, and returns `max_uses_exceeded`; non-forced Codex requests with `max_uses` fail closed because their per-tool budget cannot be represented safely. Because Responses has no equivalent deny-list, a request with a non-empty `blocked_domains` also fails explicitly. Locally executed WebFetch is unaffected.
 - **Dashboard dollar amounts are for reference**: token counts are accurate, but the dollar figures are estimates converted at public API prices — Method 2's subscription traffic is estimated at GPT-5.6's public price, and Method 1's third-party gateways bill at their own rates, so both may differ from what you're actually charged and serve only for comparison. For Method 2, treat the window utilization on the provider card as authoritative for quota consumption.
 
 ## FAQ

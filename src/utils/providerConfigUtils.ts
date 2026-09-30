@@ -2,125 +2,12 @@
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import type { CodexApiFormat } from "@/types";
-import { deepClone } from "@/utils/deepClone";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { parse as parseToml } from "smol-toml";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
-
-/**
- * 遍历配置对象时必须跳过的键。
- *
- * `JSON.parse('{"__proto__":{…}}')` 产生的 `__proto__` 是**自有可枚举属性**，
- * 会被 `Object.entries` 取出；而 `isPlainObject(target["__proto__"])` 对
- * `Object.prototype` 返回 true，于是递归直接写进全局原型。通用配置片段
- * (`settings.common_config_*`) 会被 WebDAV/S3 同步的远端覆盖，所以这条路径
- * 不需要 XSS 就可达。
- *
- * 正常流程里片段在入口已经过 `sanitizeSnippet`，下面三个遍历函数
- * (`deepMerge` / `deepRemove` / `isSubset`) 不会再见到这些键；它们各自仍带一层
- * 检查，是为了让每个函数**单独拿出来用也是安全的**，不依赖调用方记得先净化。
- */
-const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-
-/**
- * 递归剥掉禁键，得到"实际会被写进配置的那份片段"。
- *
- * 只给**读取侧**（`hasCommonConfigSnippet` / `hasTomlCommonConfigSnippet`）用，
- * 写入侧不需要——`deepMerge` / `deepRemove` 自身就跳过禁键，净化前后输出相同。
- *
- * 之所以读取侧非做不可：两侧对禁键的处理**语义不同**。写入侧是"跳过这个键、
- * 继续处理其余字段"，而 `isSubset` 出于安全必须"见到禁键就整体否决"。于是
- * `{"env":{"A":"1"},"__proto__":{}}` 会真的写入 `env.A`，却被判定成"未应用"——
- * 片段部分生效，而开关永远显示未启用。
- *
- * 让读取侧先净化，比对的就是写入侧真正会产生的那份内容，两边不再各说各话。
- */
-const sanitizeSnippet = (value: any): any => {
-  if (Array.isArray(value)) return value.map(sanitizeSnippet);
-  if (!isPlainObject(value)) return value;
-
-  const cleaned: Record<string, any> = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_MERGE_KEYS.has(key)) continue;
-    cleaned[key] = sanitizeSnippet(child);
-  }
-  return cleaned;
-};
-
-const deepMerge = (
-  target: Record<string, any>,
-  source: Record<string, any>,
-): Record<string, any> => {
-  Object.entries(source).forEach(([key, value]) => {
-    if (FORBIDDEN_MERGE_KEYS.has(key)) return;
-
-    if (isPlainObject(value)) {
-      if (!isPlainObject(target[key])) {
-        target[key] = {};
-      }
-      deepMerge(target[key], value);
-    } else {
-      // 直接覆盖非对象字段（数组/基础类型）
-      target[key] = value;
-    }
-  });
-  return target;
-};
-
-const deepRemove = (
-  target: Record<string, any>,
-  source: Record<string, any>,
-) => {
-  Object.entries(source).forEach(([key, value]) => {
-    // 同 deepMerge：这里更危险——`"__proto__" in target` 恒为 true（`in` 查
-    // 原型链），不跳过会递归进 `Object.prototype` 并 `delete` 掉它的属性。
-    if (FORBIDDEN_MERGE_KEYS.has(key)) return;
-    if (!(key in target)) return;
-
-    if (isPlainObject(value) && isPlainObject(target[key])) {
-      // 只移除完全匹配的嵌套属性
-      deepRemove(target[key], value);
-      if (Object.keys(target[key]).length === 0) {
-        delete target[key];
-      }
-    } else if (isSubset(target[key], value)) {
-      // 只有当值完全匹配时才删除
-      delete target[key];
-    }
-  });
-};
-
-const isSubset = (target: any, source: any): boolean => {
-  if (isPlainObject(source)) {
-    if (!isPlainObject(target)) return false;
-    return Object.entries(source).every(([key, value]) => {
-      // 兜底（正常流程已被 sanitizeSnippet 剥掉）。这里只读不写，不会污染原型，
-      // 但不拦就会走进 `target["__proto__"]`（索引查原型链），拿
-      // `Object.prototype` 去比对——`{"__proto__":{}}` 会被判成**任何**配置的子集。
-      // 选择否决而不是跳过：万一有调用方绕过净化，"误报未应用"（用户再点一次，
-      // 合并是幂等的）比"误报已应用"安全。
-      if (FORBIDDEN_MERGE_KEYS.has(key)) return false;
-      // 继承来的键不算"配置里有这一项"，必须是自有属性。
-      if (!Object.prototype.hasOwnProperty.call(target, key)) return false;
-      return isSubset(target[key], value);
-    });
-  }
-
-  if (Array.isArray(source)) {
-    if (!Array.isArray(target) || target.length !== source.length) return false;
-    return source.every((item, index) => isSubset(target[index], item));
-  }
-
-  return target === source;
-};
-
-export interface UpdateCommonConfigResult {
-  updatedConfig: string;
-  error?: string;
-}
 
 // 验证JSON配置格式
 export const validateJsonConfig = (
@@ -141,76 +28,6 @@ export const validateJsonConfig = (
   }
 };
 
-// 将通用配置片段写入/移除 settingsConfig
-export const updateCommonConfigSnippet = (
-  jsonString: string,
-  snippetString: string,
-  enabled: boolean,
-): UpdateCommonConfigResult => {
-  let config: Record<string, any>;
-  try {
-    config = jsonString ? JSON.parse(jsonString) : {};
-  } catch (err) {
-    return {
-      updatedConfig: jsonString,
-      error: "配置 JSON 解析失败，无法应用通用配置",
-    };
-  }
-
-  if (!snippetString.trim()) {
-    return {
-      updatedConfig: JSON.stringify(config, null, 2),
-    };
-  }
-
-  // 使用统一的验证函数
-  const snippetError = validateJsonConfig(snippetString, "通用配置片段");
-  if (snippetError) {
-    return {
-      updatedConfig: JSON.stringify(config, null, 2),
-      error: snippetError,
-    };
-  }
-
-  // 这里不必净化：deepMerge / deepRemove 自身就跳过禁键，净化前后输出逐字节相同。
-  // 需要净化的是**读取侧**（hasCommonConfigSnippet），原因见 sanitizeSnippet。
-  const snippet = JSON.parse(snippetString) as Record<string, any>;
-
-  if (enabled) {
-    const merged = deepMerge(deepClone(config), snippet);
-    return {
-      updatedConfig: JSON.stringify(merged, null, 2),
-    };
-  }
-
-  const cloned = deepClone(config);
-  deepRemove(cloned, snippet);
-  return {
-    updatedConfig: JSON.stringify(cloned, null, 2),
-  };
-};
-
-// 检查当前配置是否已包含通用配置片段
-export const hasCommonConfigSnippet = (
-  jsonString: string,
-  snippetString: string,
-): boolean => {
-  try {
-    if (!snippetString.trim()) return false;
-    const config = jsonString ? JSON.parse(jsonString) : {};
-    const parsed = JSON.parse(snippetString);
-    if (!isPlainObject(parsed)) return false;
-    // 与 updateCommonConfigSnippet 用同一份净化结果比对。
-    const snippet = sanitizeSnippet(parsed);
-    // 全是禁键时净化后为空对象——空片段什么也没应用，不能报"已启用"
-    //（`isSubset(config, {})` 对任何配置都是 true）。
-    if (Object.keys(snippet).length === 0) return false;
-    return isSubset(config, snippet);
-  } catch (err) {
-    return false;
-  }
-};
-
 // 读取配置中的 API Key（支持 Claude, Codex, Gemini）
 export const getApiKeyFromConfig = (
   jsonString: string,
@@ -219,7 +36,13 @@ export const getApiKeyFromConfig = (
   try {
     const config = JSON.parse(jsonString);
 
-    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    // Bedrock API Key：Claude Code 读的是 env.AWS_BEARER_TOKEN_BEDROCK
+    const bedrockToken = config?.env?.AWS_BEARER_TOKEN_BEDROCK;
+    if (typeof bedrockToken === "string" && bedrockToken) {
+      return bedrockToken;
+    }
+
+    // 其次顶层 apiKey：旧版 Bedrock API Key 预设写在这里，存量行照常显示
     if (
       typeof config?.apiKey === "string" &&
       config.apiKey &&
@@ -312,12 +135,16 @@ export const hasApiKeyField = (
   try {
     const config = JSON.parse(jsonString);
 
-    // 检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    // 顶层 apiKey：旧版 Bedrock API Key 预设
     if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
       return true;
     }
 
     const env = config?.env ?? {};
+
+    if (Object.prototype.hasOwnProperty.call(env, "AWS_BEARER_TOKEN_BEDROCK")) {
+      return true;
+    }
 
     if (appType === "gemini") {
       return Object.prototype.hasOwnProperty.call(env, "GEMINI_API_KEY");
@@ -350,7 +177,19 @@ export const setApiKeyInConfig = (
   try {
     const config = JSON.parse(jsonString);
 
-    // 优先检查顶层 apiKey 字段（用于 Bedrock API Key 等预设）
+    // Bedrock API Key：写回 env.AWS_BEARER_TOKEN_BEDROCK
+    if (
+      config?.env &&
+      Object.prototype.hasOwnProperty.call(
+        config.env,
+        "AWS_BEARER_TOKEN_BEDROCK",
+      )
+    ) {
+      config.env.AWS_BEARER_TOKEN_BEDROCK = apiKey;
+      return JSON.stringify(config, null, 2);
+    }
+
+    // 顶层 apiKey：旧版 Bedrock API Key 预设的存量行，写回原处
     if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
       config.apiKey = apiKey;
       return JSON.stringify(config, null, 2);
@@ -402,36 +241,6 @@ export const setApiKeyInConfig = (
   }
 };
 
-// ========== TOML Config Utilities ==========
-
-// TOML 片段的合并/剥离必须走后端命令（configApi.updateTomlCommonConfigSnippet，
-// toml_edit 保注释保键序）。禁止在前端用 smol-toml parse→merge→stringify
-// 整文档重序列化：注释全丢、键序重排、还会生成多余的空父表头。
-
-// Check if TOML config already contains the common config snippet (structural subset check)
-export const hasTomlCommonConfigSnippet = (
-  tomlString: string,
-  snippetString: string,
-): boolean => {
-  if (!snippetString.trim()) return false;
-
-  try {
-    const config = parseToml(normalizeTomlText(tomlString || ""));
-    // 与 JSON 侧同样净化：smol-toml 也会把 `["__proto__"]` 这类表头解析成自有键。
-    const snippet = sanitizeSnippet(
-      parseToml(normalizeTomlText(snippetString)),
-    );
-    if (!isPlainObject(snippet) || Object.keys(snippet).length === 0) {
-      return false;
-    }
-    return isSubset(config, snippet);
-  } catch {
-    // Fallback to text-based matching if TOML parsing fails
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    return norm(tomlString).includes(norm(snippetString));
-  }
-};
-
 // ========== Codex base_url utils ==========
 
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
@@ -457,16 +266,14 @@ const TOML_PROVIDER_NAME_PATTERN =
   /^\s*name\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_PROVIDER_NAME_REPLACE_PATTERN =
   /^(\s*name\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
-const TOML_GOALS_FEATURE_PATTERN = /^\s*goals\s*=\s*(true|false)\s*(?:#.*)?$/;
-const TOML_GOALS_FEATURE_REPLACE_PATTERN =
-  /^(\s*goals\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
+// Keep in sync with the backend list in src-tauri/src/codex_config.rs
+// (CODEX_RESERVED_MODEL_PROVIDER_IDS).
 const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "amazon-bedrock",
+  "amazon-bedrock-runtime",
   "openai",
   "ollama",
   "lmstudio",
-  "oss",
-  "ollama-chat",
 ]);
 
 interface TomlSectionRange {
@@ -566,6 +373,39 @@ const getCodexModelProviderName = (configText: string): string | undefined => {
   return providerName || undefined;
 };
 
+const isCodexUnifiedSessionProjection = (configText: string): boolean => {
+  try {
+    const parsed = parseToml(normalizeTomlText(configText)) as Record<
+      string,
+      any
+    >;
+    const custom = parsed.model_providers?.custom;
+    return (
+      parsed.model_provider === "custom" &&
+      isPlainObject(custom) &&
+      Object.keys(custom).length === 4 &&
+      custom.name === "OpenAI" &&
+      custom.requires_openai_auth === true &&
+      custom.supports_websockets === true &&
+      custom.wire_api === "responses"
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const hasExplicitNonOpenAiCodexModelProvider = (
+  configText: string | undefined | null,
+): boolean => {
+  if (typeof configText !== "string") return false;
+  if (isCodexUnifiedSessionProjection(configText)) return false;
+  const providerName = getCodexModelProviderName(configText);
+  // Exact match, mirroring the backend: Codex's built-in lookup is
+  // case-sensitive, so `OpenAI` routes to a custom table — a third-party
+  // upstream, not the official provider.
+  return Boolean(providerName && providerName.trim() !== "openai");
+};
+
 const getCodexProviderSectionName = (
   configText: string,
 ): string | undefined => {
@@ -574,7 +414,10 @@ const getCodexProviderSectionName = (
 };
 
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
-  const id = providerName.trim().toLowerCase();
+  // Exact match, mirroring upstream Codex and the backend predicate: the
+  // built-in provider lookup is case-sensitive, so "OpenAI" etc. are
+  // legitimate custom ids whose tables carry the bearer token.
+  const id = providerName.trim();
   return Boolean(id) && !CODEX_RESERVED_MODEL_PROVIDER_IDS.has(id);
 };
 
@@ -713,14 +556,6 @@ const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
 
   return -1;
 };
-
-const hasTomlSectionBodyContent = (
-  lines: string[],
-  sectionRange: TomlSectionRange,
-): boolean =>
-  lines
-    .slice(sectionRange.bodyStartIndex, sectionRange.bodyEndIndex)
-    .some((line) => line.trim() !== "");
 
 const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
   '"': '\\"',
@@ -926,103 +761,6 @@ export const setCodexWireApi = (
   }
 
   lines.splice(topLevelEndIndex, 0, replacementLine);
-  return finalizeTomlText(lines);
-};
-
-export const isCodexGoalModeEnabled = (
-  configText: string | undefined | null,
-): boolean => {
-  try {
-    const raw = typeof configText === "string" ? configText : "";
-    const text = normalizeTomlText(raw);
-    if (!text) return false;
-
-    try {
-      const parsed = parseToml(text) as Record<string, any>;
-      return parsed.features?.goals === true;
-    } catch {
-      // Fall back to line scanning while the user is editing invalid TOML.
-    }
-
-    const lines = text.split("\n");
-    const featureRange = getTomlSectionRange(lines, "features");
-    if (!featureRange) return false;
-
-    const index = findTomlLineInRange(
-      lines,
-      TOML_GOALS_FEATURE_PATTERN,
-      featureRange.bodyStartIndex,
-      featureRange.bodyEndIndex,
-    );
-    if (index === -1) return false;
-
-    return lines[index].match(TOML_GOALS_FEATURE_PATTERN)?.[1] === "true";
-  } catch {
-    return false;
-  }
-};
-
-export const setCodexGoalMode = (
-  configText: string,
-  enabled: boolean,
-): string => {
-  const normalizedText = normalizeTomlText(configText);
-  const lines = normalizedText ? normalizedText.split("\n") : [];
-  let featureRange = getTomlSectionRange(lines, "features");
-
-  if (featureRange) {
-    const goalLineIndex = findTomlLineInRange(
-      lines,
-      TOML_GOALS_FEATURE_REPLACE_PATTERN,
-      featureRange.bodyStartIndex,
-      featureRange.bodyEndIndex,
-    );
-
-    if (enabled) {
-      if (goalLineIndex !== -1) {
-        lines[goalLineIndex] = lines[goalLineIndex].replace(
-          TOML_GOALS_FEATURE_REPLACE_PATTERN,
-          "$1true$3",
-        );
-      } else {
-        lines.splice(
-          getTomlSectionInsertIndex(lines, featureRange),
-          0,
-          "goals = true",
-        );
-      }
-      return finalizeTomlText(lines);
-    }
-
-    if (goalLineIndex !== -1) {
-      lines.splice(goalLineIndex, 1);
-      featureRange = getTomlSectionRange(lines, "features");
-      if (featureRange && !hasTomlSectionBodyContent(lines, featureRange)) {
-        lines.splice(
-          featureRange.headerLineIndex,
-          featureRange.bodyEndIndex - featureRange.headerLineIndex,
-        );
-      }
-    }
-    return finalizeTomlText(lines);
-  }
-
-  if (!enabled) return normalizedText;
-
-  const topLevelEndIndex = getTopLevelEndIndex(lines);
-  const sectionLines: string[] = [];
-  if (topLevelEndIndex > 0 && lines[topLevelEndIndex - 1].trim() !== "") {
-    sectionLines.push("");
-  }
-  sectionLines.push("[features]", "goals = true");
-  if (
-    topLevelEndIndex < lines.length &&
-    lines[topLevelEndIndex]?.trim() !== ""
-  ) {
-    sectionLines.push("");
-  }
-
-  lines.splice(topLevelEndIndex, 0, ...sectionLines);
   return finalizeTomlText(lines);
 };
 

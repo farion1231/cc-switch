@@ -352,6 +352,45 @@ describe("SessionManagerPage", () => {
     });
   });
 
+  it("keeps MiniMax Code sessions disabled for batch deletion", async () => {
+    setSessionFixtures(
+      [
+        {
+          providerId: "mcode",
+          sessionId: "minimax-session",
+          title: "MiniMax Session",
+          sourcePath:
+            "sqlite:/mock/minimax/runtime-state.sqlite:minimax-session",
+          lastActiveAt: 30,
+        },
+        {
+          providerId: "claude",
+          sessionId: "deletable-session",
+          title: "Deletable Session",
+          sourcePath: "/mock/claude/deletable-session.jsonl",
+          lastActiveAt: 10,
+        },
+      ],
+      {},
+    );
+    renderPage("all");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "MiniMax Session" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /批量管理/i }));
+
+    const [minimaxCheckbox, claudeCheckbox] = screen.getAllByRole("checkbox");
+    expect(minimaxCheckbox).toBeDisabled();
+    expect(claudeCheckbox).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /全选当前/i }));
+    expect(minimaxCheckbox).not.toBeChecked();
+    expect(claudeCheckbox).toBeChecked();
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+  });
+
   it("deletes the selected session and selects the next visible session", async () => {
     renderPage();
 

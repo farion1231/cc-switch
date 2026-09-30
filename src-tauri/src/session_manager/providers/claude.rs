@@ -276,7 +276,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
 fn is_agent_session(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.starts_with("agent-"))
+        .map(|name| name.starts_with("agent-") || name == "journal.jsonl")
         .unwrap_or(false)
 }
 
@@ -490,6 +490,54 @@ mod tests {
     }
 
     #[test]
+    fn parse_session_finds_fork_parent_after_other_metadata_is_complete() {
+        for parent_in_head in [true, false] {
+            let temp = tempdir().expect("tempdir");
+            let path = temp.path().join("session-fork.jsonl");
+            let mut lines = vec![
+                serde_json::json!({
+                    "sessionId": "session-fork",
+                    "cwd": "/tmp/project",
+                    "timestamp": "2026-03-06T10:00:00Z",
+                    "forkedFrom": { "sessionId": "   " }
+                }),
+                serde_json::json!({
+                    "message": { "role": "user", "content": "Continue this work" }
+                }),
+            ];
+            let parent = serde_json::json!({
+                "forkedFrom": { "sessionId": " session-parent " }
+            });
+            if parent_in_head {
+                lines.push(parent.clone());
+            }
+            // Keep the head and tail samples separate so each fallback is exercised.
+            lines.extend((0..40).map(|_| serde_json::json!({ "type": "progress" })));
+            if !parent_in_head {
+                lines.push(parent);
+            }
+            lines.push(serde_json::json!({
+                "type": "custom-title", "customTitle": "Custom fork title"
+            }));
+            lines.push(serde_json::json!({
+                "timestamp": "2026-03-06T10:02:00Z",
+                "message": { "role": "assistant", "content": "Latest summary" }
+            }));
+            let content = lines
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            std::fs::write(&path, format!("{content}\n")).expect("write");
+
+            let meta = parse_session(&path).expect("parse fork session");
+            assert_eq!(meta.parent_session_id.as_deref(), Some("session-parent"));
+            assert_eq!(meta.title.as_deref(), Some("Custom fork title"));
+            assert_eq!(meta.summary.as_deref(), Some("Latest summary"));
+        }
+    }
+
+    #[test]
     fn parse_session_falls_back_to_dir_basename() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session-ghi.jsonl");
@@ -563,5 +611,42 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
+    }
+
+    #[test]
+    fn workflow_journal_log_is_excluded_from_sessions() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("journal.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"started\",\"key\":\"k\",\"agentId\":\"a\"}\n",
+        )
+        .expect("write");
+
+        assert!(is_agent_session(&path));
+    }
+
+    #[test]
+    fn agent_session_files_are_still_excluded() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("agent-abc123.jsonl");
+        std::fs::write(&path, "{\"type\":\"user\",\"isSidechain\":true}\n").expect("write");
+
+        assert!(is_agent_session(&path));
+    }
+
+    #[test]
+    fn real_session_file_is_not_excluded() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp
+            .path()
+            .join("8f8e7c8e-0000-0000-0000-000000000000.jsonl");
+        std::fs::write(
+            &path,
+            "{\"sessionId\":\"8f8e7c8e-0000-0000-0000-000000000000\"}\n",
+        )
+        .expect("write");
+
+        assert!(!is_agent_session(&path));
     }
 }
