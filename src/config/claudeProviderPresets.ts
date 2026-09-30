@@ -1958,7 +1958,6 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash-0731",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash-0731",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash-0731",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "true",
       },
     },
     category: "aggregator",
