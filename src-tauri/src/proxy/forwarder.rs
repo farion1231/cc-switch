@@ -33,11 +33,62 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// Whether the upstream belongs to the OpenCode gateway (`opencode.ai`).
+///
+/// That gateway (<https://opencode.ai/docs/go/>) expects clients to identify
+/// themselves with a `User-Agent` and to carry a **stable per-conversation**
+/// session id in `x-opencode-session`; a request without the session header is
+/// rejected with `400 MissingSessionID`. Claude Code and Codex already send
+/// headers the gateway recognises, Claude Desktop does not - the proxy fills
+/// the gap (see the injection site in `forward`).
+fn is_opencode_upstream(upstream_host: Option<&str>) -> bool {
+    upstream_host
+        .map(|host| {
+            let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
+            host.trim_matches(['[', ']']).to_ascii_lowercase()
+        })
+        .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
+}
+
+/// Derive a session id that stays **stable within one conversation**: a digest
+/// of the system prompt plus the first user message.
+///
+/// The gateway uses the session id for upstream routing and prompt caching, so
+/// it must not change between the turns of a conversation. Claude Desktop hands
+/// CC Switch a fresh id on every request, which defeats that; hashing the
+/// conversation prefix keeps the id stable while still separating conversations.
+fn conversation_fingerprint(body: &Value) -> Option<String> {
+    let mut hasher = Sha256::new();
+    let mut fed = false;
+    if let Some(system) = body.get("system") {
+        hasher.update(system.to_string().as_bytes());
+        fed = true;
+    }
+    if let Some(first_user) = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+        })
+    {
+        hasher.update(first_user.to_string().as_bytes());
+        fed = true;
+    }
+    if !fed {
+        return None;
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    Some(format!("ccsw-{}", &digest[..32]))
+}
 
 fn codex_bearer_access_token(headers: &http::HeaderMap) -> Option<&str> {
     let authorization = headers
@@ -1257,6 +1308,30 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
+        // The OpenCode gateway wants a stable per-conversation session id (see the
+        // injection site below). It has to be derived here: `mapped_body` is moved
+        // by the format conversion further down.
+        //
+        // Only that upstream consumes it, and only when the client neither sent
+        // `x-opencode-session` nor supplied a session id, so guard the work: the
+        // digest serialises the system prompt plus the first user message, which
+        // routinely carry files and images and can reach megabytes. The host check
+        // uses `base_url` - none of the URL-construction branches below rewrites the
+        // authority (the only one that replaces the host wholesale is Copilot's
+        // dynamic endpoint, which points at GitHub, never opencode.ai).
+        let base_url_host = base_url
+            .parse::<http::Uri>()
+            .ok()
+            .and_then(|u| u.authority().map(|a| a.to_string()));
+        let opencode_conversation_fingerprint = if !self.session_client_provided
+            && !headers.contains_key("x-opencode-session")
+            && is_opencode_upstream(base_url_host.as_deref())
+        {
+            conversation_fingerprint(&mapped_body)
+        } else {
+            None
+        };
+
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
         // the optional Responses -> Chat/Anthropic bridge.
@@ -1986,6 +2061,44 @@ impl RequestForwarder {
             .parse::<http::Uri>()
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
+
+        // OpenCode Go places two hard requirements on clients
+        // (<https://opencode.ai/docs/go/>); satisfy both, only for its upstream.
+        //
+        // 1) User-Agent: the gateway sits behind Cloudflare and rejects clients
+        //    that do not identify themselves (403 Access denied; a UA clears it).
+        //    An explicitly configured custom UA still wins.
+        let custom_user_agent =
+            if custom_user_agent.is_none() && is_opencode_upstream(upstream_host.as_deref()) {
+                Some(http::HeaderValue::from_static(concat!(
+                    "cc-switch/",
+                    env!("CARGO_PKG_VERSION")
+                )))
+            } else {
+                custom_user_agent
+            };
+
+        // 2) Session header: without `x-opencode-session` the gateway answers
+        //    400 MissingSessionID. Pass it through when the client already sends
+        //    one, otherwise prefer a client-provided session id (stable per
+        //    conversation) and fall back to the conversation fingerprint -
+        //    Claude Desktop mints a new id on every request.
+        if is_opencode_upstream(upstream_host.as_deref())
+            && !headers.contains_key("x-opencode-session")
+        {
+            let session = if self.session_client_provided {
+                Some(self.session_id.trim().to_string())
+            } else {
+                opencode_conversation_fingerprint
+                    .clone()
+                    .or_else(|| Some(self.session_id.trim().to_string()))
+            };
+            if let Some(session) = session.filter(|s| !s.is_empty()) {
+                if let Ok(value) = http::HeaderValue::from_str(&session) {
+                    auth_headers.push((http::HeaderName::from_static("x-opencode-session"), value));
+                }
+            }
+        }
 
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
@@ -3848,6 +3961,67 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
     use std::time::Duration;
+
+    #[test]
+    fn opencode_upstream_host_matching() {
+        // With or without a port, and subdomains, count as OpenCode; other
+        // upstreams must not (they would otherwise gain a stray header).
+        for host in ["opencode.ai", "opencode.ai:443", "zen.opencode.ai"] {
+            assert!(
+                is_opencode_upstream(Some(host)),
+                "{host} should be recognised as OpenCode"
+            );
+        }
+        for host in [
+            "api.anthropic.com",
+            "notopencode.ai",
+            "example.com",
+            "127.0.0.1:15721",
+        ] {
+            assert!(
+                !is_opencode_upstream(Some(host)),
+                "{host} must not be recognised as OpenCode"
+            );
+        }
+        assert!(!is_opencode_upstream(None));
+    }
+
+    #[test]
+    fn conversation_fingerprint_is_stable_per_conversation() {
+        let turn1 = json!({
+            "system": "You are an assistant.",
+            "messages": [{"role": "user", "content": "first question"}]
+        });
+        // Later turns of the same conversation append messages; system and the
+        // first user message stay put.
+        let turn2 = json!({
+            "system": "You are an assistant.",
+            "messages": [
+                {"role": "user", "content": "first question"},
+                {"role": "assistant", "content": "answer"},
+                {"role": "user", "content": "follow-up"}
+            ]
+        });
+        let other = json!({
+            "system": "You are an assistant.",
+            "messages": [{"role": "user", "content": "another conversation"}]
+        });
+
+        let a = conversation_fingerprint(&turn1).expect("fingerprint");
+        let b = conversation_fingerprint(&turn2).expect("fingerprint");
+        let c = conversation_fingerprint(&other).expect("fingerprint");
+        assert_eq!(a, b, "one conversation must keep a single session id");
+        assert_ne!(a, c, "different conversations must not share a session id");
+        assert!(
+            a.starts_with("ccsw-"),
+            "prefix keeps the origin recognisable: {a}"
+        );
+    }
+
+    #[test]
+    fn conversation_fingerprint_requires_conversation_content() {
+        assert!(conversation_fingerprint(&json!({"model": "x"})).is_none());
+    }
 
     fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
         Provider {
