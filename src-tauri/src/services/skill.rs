@@ -1258,6 +1258,50 @@ impl SkillService {
         }
     }
 
+    /// 判定是否把 Skill 列入更新列表（#7772）。纯本地判定，单独成函数便于测试。
+    ///
+    /// `local_hash` 是 `local_hash_for_update_check` 的结果：登记哈希或本轮
+    /// 现场补记的目录哈希；目录缺失时为 None。
+    fn should_report_skill_update(
+        ssot_dir: &Path,
+        directory: &str,
+        registered_hash: Option<&str>,
+        local_hash: Option<&str>,
+        freshly_computed: bool,
+        remote_hash: &str,
+    ) -> bool {
+        // 本轮哈希是现场补记的：没有「安装时」基线，无法区分「本地改过」和
+        // 「上游真变了」，不得作为「有更新」的依据；哈希已回填，下一轮起
+        // 按登记哈希正常比较。目录缺失走不到这里（None 且 freshly_computed
+        // 必为 false），保持缺失重建语义：进更新列表，点更新即重建。
+        if freshly_computed {
+            return false;
+        }
+        // 登记哈希存在且本地目录在：现算目录内容哈希识别本地改动。改过的
+        // Skill 一律不进更新列表——报了就会诱导「全部更新」把用户改动整
+        // 目录覆盖，只剩备份区快照。需要放弃改动时卸载重装即可强制刷新。
+        if let Some(baseline) = registered_hash {
+            if local_hash.is_some() && Self::local_dir_differs_from(ssot_dir, directory, baseline) {
+                return false;
+            }
+        }
+        local_hash != Some(remote_hash)
+    }
+
+    /// 现算 SSOT 目录内容哈希并与基线比较，识别本地改动。
+    /// 目录非法或现算失败时不认定改动（回退到登记哈希比较的旧路径）。
+    fn local_dir_differs_from(ssot_dir: &Path, raw_directory: &str, baseline: &str) -> bool {
+        match Self::require_valid_directory(raw_directory) {
+            Ok(directory) => {
+                let local_dir = ssot_dir.join(directory);
+                Self::compute_dir_hash(&local_dir)
+                    .map(|current| current != baseline)
+                    .unwrap_or(false)
+            }
+            Err(_) => false,
+        }
+    }
+
     /// 检查所有已安装 Skill 的更新
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
@@ -1342,6 +1386,7 @@ impl SkillService {
                     }
                 };
 
+                let mut freshly_backfilled = false;
                 let local_hash = match Self::local_hash_for_update_check(
                     &ssot_dir,
                     &skill.directory,
@@ -1349,6 +1394,7 @@ impl SkillService {
                 ) {
                     Some((h, freshly_computed)) => {
                         if freshly_computed {
+                            freshly_backfilled = true;
                             let _ = db.update_skill_hash(&skill.id, &h, 0);
                         }
                         Some(h)
@@ -1356,7 +1402,16 @@ impl SkillService {
                     None => None,
                 };
 
-                if local_hash.as_deref() != Some(&remote_hash) {
+                // 补记轮与本地已改动两种状态不得报「有更新」（#7772）：
+                // 报了就会诱导「全部更新」把用户改动整目录覆盖。
+                if Self::should_report_skill_update(
+                    &ssot_dir,
+                    &skill.directory,
+                    skill.content_hash.as_deref(),
+                    local_hash.as_deref(),
+                    freshly_backfilled,
+                    &remote_hash,
+                ) {
                     updates.push(SkillUpdateInfo {
                         id: skill.id.clone(),
                         name: skill.name.clone(),
@@ -6189,6 +6244,104 @@ mod tests {
     }
 
     #[test]
+    fn should_report_skill_update_reports_pristine_local_when_remote_changed() {
+        // 基线路径防回归：本地未改、上游变了，必须照常报更新。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        let baseline = SkillService::compute_dir_hash(&dir).expect("hash");
+
+        assert!(SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&baseline),
+            Some(&baseline),
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_rebuilds_when_dir_missing() {
+        // 目录缺失保持缺失重建语义（967daa1a）：进更新列表，点更新即重建。
+        let ssot = tempdir().expect("tempdir");
+        assert!(SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some("cached"),
+            None,
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_skips_freshly_backfilled() {
+        // #7772 建议 1：本轮哈希是现场补记的，缺「安装时」基线，
+        // 无法区分本地改过与上游真变了，不得作为「有更新」依据。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "content").expect("write skill");
+        let current = SkillService::compute_dir_hash(&dir).expect("hash");
+
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            None,
+            Some(&current),
+            true,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_skips_locally_modified() {
+        // #7772 建议 2：现算目录哈希 ≠ 登记基线 = 本地已修改，
+        // 无论上游变没变都不报，防「全部更新」整目录覆盖。
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
+        let baseline = SkillService::compute_dir_hash(&dir).expect("hash");
+        fs::write(dir.join("SKILL.md"), "locally edited").expect("edit skill");
+
+        // 上游未变也不报（此时报更新毫无收益，纯覆盖风险）。
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&baseline),
+            Some(&baseline),
+            false,
+            &baseline
+        ));
+        // 上游变了同样不报（防诱导覆盖）。
+        assert!(!SkillService::should_report_skill_update(
+            ssot.path(),
+            "my-skill",
+            Some(&baseline),
+            Some(&baseline),
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
+    fn should_report_skill_update_falls_back_for_invalid_directory() {
+        // 目录非法识别不了本地改动：不认定改动，沿用登记哈希比较的旧路径。
+        let ssot = tempdir().expect("tempdir");
+        assert!(SkillService::should_report_skill_update(
+            ssot.path(),
+            "../evil",
+            Some("cached"),
+            Some("cached"),
+            false,
+            "remote-hash"
+        ));
+    }
+
+    #[test]
     #[serial_test::serial]
     fn restore_from_backup_rejects_traversal_directory_in_metadata() {
         let temp = tempdir().expect("tempdir");
@@ -6820,6 +6973,93 @@ mod tests {
                 assert!(service.check_updates(&db).await.unwrap().is_empty());
             }
         }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_skips_freshly_backfilled_hash_cycle() {
+        // #7772 主现场：登记哈希为空（老版本安装、或本地导入后关联仓库），
+        // 本地目录被用户改过，上游未变。旧逻辑现场补记哈希后直接与远端比较，
+        // 必然误报「有更新」；点更新会把本地改动整目录覆盖，只剩备份。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        // Keep Windows' legacy-HOME fallback out of this destructive test.
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        db.save_skill(&installed).expect("seed installed skill");
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        // 用户改动了本地文件；上游保持安装时的内容不变。
+        fs::write(local.join("NOTES.md"), "user edits").expect("edit local skill");
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+
+        let updates = service.check_updates(&db).await.expect("check updates");
+        assert!(
+            updates.is_empty(),
+            "补记轮不得作为「有更新」依据: {updates:?}"
+        );
+        // 哈希照常回填，下一轮起按登记哈希正常比较。
+        let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(
+            saved.content_hash.as_deref(),
+            Some(SkillService::compute_dir_hash(&local).unwrap().as_str())
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_skips_locally_modified_skill_even_when_remote_changed() {
+        // #7772 建议 2：登记哈希（安装/更新时记录）在、本地目录被改过时，
+        // 即使上游有新提交也不进更新列表——报了就会诱导「全部更新」把用户
+        // 改动整目录覆盖。需要放弃改动时卸载重装即可强制刷新。
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+
+        let mut installed = poisoned_skill("owner/repo:skill", "my-skill");
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+
+        let local = SkillService::get_ssot_dir().unwrap().join("my-skill");
+        write_skill(&local, "my-skill");
+        let baseline = SkillService::compute_dir_hash(&local).expect("hash");
+        // 安装时登记过基线哈希，随后用户改动了本地文件；上游此后有新提交。
+        installed.content_hash = Some(baseline);
+        db.save_skill(&installed).expect("seed installed skill");
+
+        fs::write(local.join("NOTES.md"), "user edits").expect("edit local skill");
+        write_skill(&remote.path().join("my-skill"), "my-skill");
+        fs::write(
+            remote.path().join("my-skill").join("CHANGELOG.md"),
+            "upstream v2",
+        )
+        .expect("upstream moves on");
+
+        let updates = service.check_updates(&db).await.expect("check updates");
+        assert!(
+            updates.is_empty(),
+            "本地已改动的 Skill 不得进更新列表: {updates:?}"
+        );
     }
 
     #[test]
