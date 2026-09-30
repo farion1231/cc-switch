@@ -23,13 +23,30 @@ const bulkToggleSkillAppMock = vi.fn();
 const checkUpdatesMock = vi.fn();
 const updateSkillMock = vi.fn();
 const refetchSkillBackupsMock = vi.fn();
-const { toastErrorMock, toastSuccessMock, toastWarningMock } = vi.hoisted(
-  () => ({
+const { toastErrorMock, toastSuccessMock, toastWarningMock, visibleAppsMock } =
+  vi.hoisted(() => ({
     toastErrorMock: vi.fn(),
     toastSuccessMock: vi.fn(),
     toastWarningMock: vi.fn(),
+    visibleAppsMock: {
+      claude: true,
+      "claude-desktop": true,
+      codex: true,
+      gemini: true,
+      grokbuild: true,
+      opencode: true,
+      openclaw: true,
+      hermes: true,
+      pi: false,
+      mcode: true,
+    },
+  }));
+
+vi.mock("@/lib/query", () => ({
+  useSettingsQuery: () => ({
+    data: { visibleApps: visibleAppsMock },
   }),
-);
+}));
 let installedSkillsMock: InstalledSkill[] = [];
 let skillBackupsMock: SkillBackupEntry[] = [];
 let skillUpdatesMock: SkillUpdateInfo[] = [];
@@ -151,6 +168,16 @@ const renderPanel = () =>
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    visibleAppsMock.claude = true;
+    visibleAppsMock["claude-desktop"] = true;
+    visibleAppsMock.codex = true;
+    visibleAppsMock.gemini = true;
+    visibleAppsMock.grokbuild = true;
+    visibleAppsMock.opencode = true;
+    visibleAppsMock.openclaw = true;
+    visibleAppsMock.hermes = true;
+    visibleAppsMock.pi = false;
+    visibleAppsMock.mcode = true;
     installedSkillsMock = [];
     skillBackupsMock = [];
     skillUpdatesMock = [];
@@ -799,6 +826,7 @@ describe("UnifiedSkillsPanel", () => {
   });
 
   it("renders and toggles the Pi app state like the other apps", async () => {
+    visibleAppsMock.pi = true;
     installedSkillsMock = [
       makeInstalledSkill({
         id: "skill-1",
@@ -825,6 +853,7 @@ describe("UnifiedSkillsPanel", () => {
   });
 
   it("renders an inactive Pi state like the other apps", () => {
+    visibleAppsMock.pi = true;
     installedSkillsMock = [
       makeInstalledSkill({
         id: "skill-1",
@@ -858,5 +887,45 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByRole("button", { name: "Pi" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
+  });
+
+  it("uses enabled-app visibility for Skill and import toggles", async () => {
+    visibleAppsMock.pi = true;
+    visibleAppsMock.mcode = false;
+    installedSkillsMock = [
+      makeInstalledSkill({
+        name: "Claude Skill",
+        apps: { claude: true, pi: true },
+      }),
+    ];
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Pi" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "MiniMax Code" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("skills.import")).toBeInTheDocument();
+    });
+    const importDialog = screen.getByText("skills.import").parentElement!;
+    expect(
+      within(importDialog).getByRole("button", { name: "Pi" }),
+    ).toBeInTheDocument();
+    expect(
+      within(importDialog).queryByRole("button", { name: "MiniMax Code" }),
+    ).not.toBeInTheDocument();
   });
 });

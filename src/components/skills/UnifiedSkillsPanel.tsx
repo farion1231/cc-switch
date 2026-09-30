@@ -34,12 +34,13 @@ import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { DEFAULT_VISIBLE_APPS, SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useSettingsQuery } from "@/lib/query";
 import {
   Dialog,
   DialogContent,
@@ -48,8 +49,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -107,6 +106,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   const checkUpdatesLockRef = React.useRef(false);
 
   const { data: skills, isLoading } = useInstalledSkills();
+  const { data: settingsData } = useSettingsQuery();
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,
@@ -129,8 +129,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
-  const visibleSkillAppIds =
-    currentApp === "pi" ? SKILLS_APP_IDS : IMPORT_SKILLS_APP_IDS;
+  const visibleSkillAppIds = React.useMemo(() => {
+    const visibleApps = {
+      ...DEFAULT_VISIBLE_APPS,
+      ...settingsData?.visibleApps,
+    };
+    return SKILLS_APP_IDS.filter((app) => visibleApps[app]);
+  }, [settingsData?.visibleApps]);
 
   const mutationPending =
     deleteBackupMutation.isPending ||
@@ -740,6 +745,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           isImporting={importMutation.isPending}
           onImport={handleImport}
           onClose={() => setImportDialogOpen(false)}
+          appIds={visibleSkillAppIds}
         />
       )}
 
@@ -896,6 +902,7 @@ interface ImportSkillsDialogProps {
   isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
+  appIds: AppId[];
 }
 
 interface RestoreSkillsDialogProps {
@@ -1030,6 +1037,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   isImporting,
   onImport,
   onClose,
+  appIds,
 }) => {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(
@@ -1049,7 +1057,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
-          pi: false,
+          pi: skill.foundIn.includes("pi"),
           mcode: skill.foundIn.includes("mcode"),
         },
       ]),
@@ -1144,7 +1152,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           },
                         }));
                       }}
-                      appIds={IMPORT_SKILLS_APP_IDS}
+                      appIds={appIds}
                     />
                   </div>
                   <div
