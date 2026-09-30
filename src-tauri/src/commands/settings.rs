@@ -647,6 +647,41 @@ pub async fn set_rectifier_config(
     Ok(true)
 }
 
+/// 获取出站可逆脱敏配置
+#[tauri::command]
+pub async fn get_outbound_mask_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::OutboundMaskConfig, String> {
+    state
+        .db
+        .get_outbound_mask_config()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置出站可逆脱敏配置
+///
+/// 保存前先编译一次自定义规则，非法正则直接报错退回，避免用户以为规则生效了
+/// 而实际请求在裸奔。
+#[tauri::command]
+pub async fn set_outbound_mask_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::OutboundMaskConfig,
+) -> Result<bool, String> {
+    crate::proxy::outbound_mask::validate_config(&config)?;
+    state
+        .db
+        .set_outbound_mask_config(&config)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 列出内置脱敏规则（供前端渲染开关列表）
+#[tauri::command]
+pub async fn list_builtin_mask_rules(
+) -> Result<Vec<crate::proxy::outbound_mask::BuiltinRuleInfo>, String> {
+    Ok(crate::proxy::outbound_mask::builtin_rule_infos())
+}
+
 /// 获取优化器配置
 #[tauri::command]
 pub async fn get_optimizer_config(

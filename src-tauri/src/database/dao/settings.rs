@@ -259,6 +259,31 @@ impl Database {
         self.set_setting("rectifier_config", &json)
     }
 
+    // --- 出站脱敏配置 ---
+
+    /// 获取出站可逆脱敏配置
+    ///
+    /// 返回脱敏配置，不存在则返回默认值（关闭）
+    pub fn get_outbound_mask_config(
+        &self,
+    ) -> Result<crate::proxy::types::OutboundMaskConfig, AppError> {
+        match self.get_setting("outbound_mask_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析出站脱敏配置失败: {e}"))),
+            None => Ok(crate::proxy::types::OutboundMaskConfig::default()),
+        }
+    }
+
+    /// 更新出站可逆脱敏配置
+    pub fn set_outbound_mask_config(
+        &self,
+        config: &crate::proxy::types::OutboundMaskConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化出站脱敏配置失败: {e}")))?;
+        self.set_setting("outbound_mask_config", &json)
+    }
+
     // --- 优化器配置 ---
 
     /// 获取优化器配置
