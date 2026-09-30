@@ -339,13 +339,14 @@ fn import_from_codex_adds_servers_from_mcp_servers_table() {
     fs::write(
         &path,
         r#"[mcp_servers.echo_server]
-type = "stdio"
 command = "echo"
 args = ["hello"]
 
 [mcp_servers.http_server]
-type = "http"
 url = "https://example.com"
+
+[mcp_servers.http_server.http_headers]
+Authorization = "Bearer test-token"
 "#,
     )
     .expect("write codex config");
@@ -381,6 +382,11 @@ url = "https://example.com"
         "Codex app should be enabled for http_server"
     );
     let http_spec = http.server.as_object().expect("http spec");
+    assert_eq!(http_spec.get("type").and_then(|v| v.as_str()), Some("http"));
+    assert_eq!(
+        http_spec["headers"]["Authorization"].as_str(),
+        Some("Bearer test-token")
+    );
     assert_eq!(
         http_spec.get("url").and_then(|v| v.as_str()).unwrap_or(""),
         "https://example.com"

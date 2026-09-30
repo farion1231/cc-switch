@@ -71,11 +71,14 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
-            let typ = entry_tbl
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+            // Codex 根据 command/url 推断传输类型，仍兼容旧的显式 type。
+            let typ = entry_tbl.get("type").and_then(|v| v.as_str()).unwrap_or(
+                if entry_tbl.contains_key("url") {
+                    "http"
+                } else {
+                    "stdio"
+                },
+            );
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
