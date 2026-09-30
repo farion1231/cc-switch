@@ -60,6 +60,21 @@ fn sqlite_table_exists(conn: &Connection, table: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// Read the V1→V2 migration marker timestamp (`migration.v1-v2`) from the `kv` table.
+fn get_v2_migration_marker_ts(conn: &Connection) -> Option<i64> {
+    if !sqlite_table_exists(conn, "kv") {
+        return None;
+    }
+    conn.query_row(
+        "SELECT max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
+         FROM kv WHERE key = 'migration.v1-v2'",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+    .filter(|&ts| ts > 0)
+}
+
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
 /// merging results with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
@@ -135,68 +150,105 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     };
 
     let schema = detect_schema(&conn);
+    let db_display = db_path.display().to_string();
 
-    let sql = match schema {
-        OpenCodeSchema::V1 => {
-            "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
-             FROM session ORDER BY time_updated DESC"
-        }
-        OpenCodeSchema::V2 => {
-            "SELECT s.id, \
-                    COALESCE(s.title, ''), \
-                    s.directory, \
-                    s.time_created, \
-                    MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS last_active_at \
-             FROM session_v2 s \
-             LEFT JOIN session_message m ON m.session_id = s.id \
-             GROUP BY s.id \
-             ORDER BY last_active_at DESC"
-        }
+    match schema {
+        OpenCodeSchema::V1 => scan_sessions_sqlite_v1(&conn, &db_display),
+        OpenCodeSchema::V2 => scan_sessions_sqlite_v2(&conn, &db_display),
+    }
+}
+
+fn parse_sqlite_session_row(
+    row: &rusqlite::Row<'_>,
+    db_display: &str,
+) -> rusqlite::Result<SessionMeta> {
+    let session_id: String = row.get(0)?;
+    let title: String = row.get(1)?;
+    let directory: String = row.get(2)?;
+    let created: i64 = row.get(3)?;
+    let updated: i64 = row.get(4)?;
+
+    let display_title = if title.trim().is_empty() {
+        path_basename(&directory)
+    } else {
+        Some(title)
     };
+    Ok(SessionMeta {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: session_id.clone(),
+        title: display_title.clone(),
+        summary: display_title,
+        project_dir: if directory.is_empty() {
+            None
+        } else {
+            Some(directory)
+        },
+        created_at: Some(created),
+        last_active_at: Some(updated),
+        source_path: Some(format!("sqlite:{db_display}:{session_id}")),
+        resume_command: Some(format!("opencode -s {session_id}")),
+    })
+}
+
+fn scan_sessions_sqlite_v1(conn: &Connection, db_display: &str) -> Vec<SessionMeta> {
+    let sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
+               FROM session ORDER BY time_updated DESC";
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
 
-    let db_display = db_path.display().to_string();
-
-    let iter = match stmt.query_map([], |row| {
-        let session_id: String = row.get(0)?;
-        let title: String = row.get(1)?;
-        let directory: String = row.get(2)?;
-        let created: i64 = row.get(3)?;
-        let updated: i64 = row.get(4)?;
-        Ok((session_id, title, directory, created, updated))
-    }) {
+    let iter = match stmt.query_map([], |row| parse_sqlite_session_row(row, db_display)) {
         Ok(rows) => rows,
         Err(_) => return Vec::new(),
     };
 
-    let mut sessions = Vec::new();
-    for row in iter.flatten() {
-        let (session_id, title, directory, created, updated) = row;
-        let display_title = if title.trim().is_empty() {
-            path_basename(&directory)
-        } else {
-            Some(title)
-        };
-        sessions.push(SessionMeta {
-            provider_id: PROVIDER_ID.to_string(),
-            session_id: session_id.clone(),
-            title: display_title.clone(),
-            summary: display_title,
-            project_dir: if directory.is_empty() {
-                None
-            } else {
-                Some(directory)
-            },
-            created_at: Some(created),
-            last_active_at: Some(updated),
-            source_path: Some(format!("sqlite:{db_display}:{session_id}")),
-            resume_command: Some(format!("opencode -s {session_id}")),
-        });
+    iter.flatten().collect()
+}
+
+fn scan_sessions_sqlite_v2(conn: &Connection, db_display: &str) -> Vec<SessionMeta> {
+    let sql = "SELECT s.id, \
+                      COALESCE(s.title, ''), \
+                      s.directory, \
+                      s.time_created, \
+                      MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS last_active_at \
+               FROM session_v2 s \
+               LEFT JOIN session_message m ON m.session_id = s.id \
+               GROUP BY s.id \
+               ORDER BY last_active_at DESC";
+
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let iter = match stmt.query_map([], |row| parse_sqlite_session_row(row, db_display)) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut sessions: Vec<SessionMeta> = iter.flatten().collect();
+
+    // Include V1 sessions for mixed V1/V2 databases (e.g. user tested 2.x beta then continued on 1.x)
+    if sqlite_table_exists(conn, "session") {
+        if let Some(marker_ts) = get_v2_migration_marker_ts(conn) {
+            let v1_sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
+                          FROM session \
+                          WHERE NOT EXISTS (SELECT 1 FROM session_v2 WHERE session_v2.id = session.id) \
+                            AND time_updated > ?1 \
+                          ORDER BY time_updated DESC";
+            if let Ok(mut v1_stmt) = conn.prepare(v1_sql) {
+                if let Ok(rows) =
+                    v1_stmt.query_map([marker_ts], |row| parse_sqlite_session_row(row, db_display))
+                {
+                    sessions.extend(rows.flatten());
+                    sessions.sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
+                }
+            }
+        }
     }
+
     sessions
 }
 
@@ -286,7 +338,24 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
 
     match schema {
         OpenCodeSchema::V1 => load_messages_sqlite_v1(&conn, &session_id),
-        OpenCodeSchema::V2 => load_messages_sqlite_v2(&conn, &session_id),
+        OpenCodeSchema::V2 => {
+            // In a mixed V1/V2 database, load messages from whichever table the session actually lives in.
+            let in_session_v2 = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM session_v2 WHERE id = ?1)",
+                    [&session_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+
+            if in_session_v2 {
+                load_messages_sqlite_v2(&conn, &session_id)
+            } else if sqlite_table_exists(&conn, "message") {
+                load_messages_sqlite_v1(&conn, &session_id)
+            } else {
+                load_messages_sqlite_v2(&conn, &session_id)
+            }
+        }
     }
 }
 
@@ -380,7 +449,7 @@ fn load_messages_sqlite_v2(
             "SELECT type, time_created, data \
              FROM session_message \
              WHERE session_id = ?1 \
-             ORDER BY time_created ASC, rowid ASC",
+             ORDER BY seq ASC, rowid ASC",
         )
         .map_err(|e| format!("Failed to prepare V2 message query: {e}"))?;
 
@@ -574,9 +643,14 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
 
     let deleted = match schema {
         OpenCodeSchema::V2 => {
-            // Delete related rows from all potential child tables in V2
+            tx.execute(
+                "DELETE FROM session_message WHERE session_id = ?1",
+                [session_id],
+            )
+            .map_err(|e| format!("Failed to delete OpenCode V2 messages: {e}"))?;
+
+            // Best-effort cleanup of auxiliary V2 tables whose schema may evolve
             for child in [
-                "session_message",
                 "session_pending",
                 "session_inbox",
                 "instruction_entry",
@@ -595,24 +669,27 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
                     [session_id],
                 );
             }
-            let v2_deleted = tx
+            let mut deleted_count = tx
                 .execute("DELETE FROM session_v2 WHERE id = ?1", [session_id])
                 .map_err(|e| format!("Failed to delete OpenCode V2 session: {e}"))?;
-            if v2_deleted > 0 {
-                v2_deleted
-            } else if sqlite_table_exists(&tx, "session") {
-                // Fallback for V1 rows in a migrated database
+
+            // Also clean up legacy V1 tables if present (for mixed databases or migrated sessions)
+            if sqlite_table_exists(&tx, "session") {
                 if sqlite_table_exists(&tx, "part") {
-                    let _ = tx.execute("DELETE FROM part WHERE session_id = ?1", [session_id]);
+                    tx.execute("DELETE FROM part WHERE session_id = ?1", [session_id])
+                        .map_err(|e| format!("Failed to delete OpenCode parts: {e}"))?;
                 }
                 if sqlite_table_exists(&tx, "message") {
-                    let _ = tx.execute("DELETE FROM message WHERE session_id = ?1", [session_id]);
+                    tx.execute("DELETE FROM message WHERE session_id = ?1", [session_id])
+                        .map_err(|e| format!("Failed to delete OpenCode messages: {e}"))?;
                 }
-                tx.execute("DELETE FROM session WHERE id = ?1", [session_id])
-                    .map_err(|e| format!("Failed to delete OpenCode legacy session: {e}"))?
-            } else {
-                0
+                let v1_deleted = tx
+                    .execute("DELETE FROM session WHERE id = ?1", [session_id])
+                    .map_err(|e| format!("Failed to delete OpenCode legacy session: {e}"))?;
+                deleted_count += v1_deleted;
             }
+
+            deleted_count
         }
         OpenCodeSchema::V1 => {
             if sqlite_table_exists(&tx, "part") {
@@ -1388,6 +1465,179 @@ mod tests {
 
         assert_eq!(remaining_sessions, 0);
         assert_eq!(remaining_messages, 0);
+
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    fn load_messages_sqlite_v2_orders_by_seq_instead_of_time_created() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema_v2(&conn);
+
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_v2_seq", "Seq Order Test", "/tmp/project-a", 1000_i64, 5000_i64),
+        )
+        .expect("insert session_v2");
+
+        // seq 1: initial user prompt at t=1000
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_1", "ses_v2_seq", "user", 1_i64, r#"{"text":"First question"}"#, 1000_i64, 1000_i64),
+        )
+        .expect("insert msg_1");
+
+        // seq 2: assistant reply that was retried later, so time_created was rewritten to 5000
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_2", "ses_v2_seq", "assistant", 2_i64, r#"{"content":[{"type":"text","text":"Retried first answer"}]}"#, 5000_i64, 5000_i64),
+        )
+        .expect("insert msg_2");
+
+        // seq 3: second user prompt at t=3000 (earlier than msg_2's rewritten time_created)
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_3", "ses_v2_seq", "user", 3_i64, r#"{"text":"Follow-up question"}"#, 3000_i64, 3000_i64),
+        )
+        .expect("insert msg_3");
+        drop(conn);
+
+        let source = format!("sqlite:{}:ses_v2_seq", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load v2 sqlite messages");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "First question");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "Retried first answer");
+        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].content, "Follow-up question");
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn mixed_v1_v2_database_scans_loads_and_deletes_post_migration_v1_sessions() {
+        let _guard = opencode_env_lock().lock().expect("lock");
+        let temp = tempdir().expect("tempdir");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        let db_path = base_dir.join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema(&conn);
+        create_sqlite_schema_v2(&conn);
+
+        conn.execute_batch(
+            "CREATE TABLE kv (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );",
+        )
+        .expect("create kv table");
+
+        // Migration marker at t = 2000
+        conn.execute(
+            "INSERT INTO kv (key, value, time_created, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            (
+                "migration.v1-v2",
+                r#"{"phase":"completed"}"#,
+                1900_i64,
+                2000_i64,
+            ),
+        )
+        .expect("insert migration marker");
+
+        // 1. Pre-migration V1 session not in session_v2 (e.g. deleted in 2.x) -> should NOT be listed
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_v1_deleted_in_v2", "Old Deleted", "/tmp/old", 1000_i64, 1500_i64),
+        )
+        .expect("insert old v1 session");
+
+        // 2. Migrated session present in both V1 and V2 -> should appear once (from V2)
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_migrated", "Migrated Session", "/tmp/migrated", 1200_i64, 1800_i64),
+        )
+        .expect("insert migrated v1 row");
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_migrated", "Migrated Session", "/tmp/migrated", 1200_i64, 2500_i64),
+        )
+        .expect("insert migrated v2 row");
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_v2_mig", "ses_migrated", "user", 1_i64, r#"{"text":"From V2 table"}"#, 1200_i64, 2500_i64),
+        )
+        .expect("insert v2 message");
+
+        // 3. Post-migration V1 session (created when user switched back to 1.x after trying 2.x) -> SHOULD be listed
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_v1_post", "Post Migration 1.x", "/tmp/v1-post", 2800_i64, 3000_i64),
+        )
+        .expect("insert post-migration v1 session");
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            ("msg_v1_post", "ses_v1_post", 2800_i64, r#"{"role":"user"}"#),
+        )
+        .expect("insert v1 message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, message_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("prt_v1_post", "ses_v1_post", "msg_v1_post", 2800_i64, r#"{"type":"text","text":"Hello from 1.x after migration"}"#),
+        )
+        .expect("insert v1 part");
+        drop(conn);
+
+        let sessions = scan_sessions_sqlite();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].session_id, "ses_v1_post");
+        assert_eq!(sessions[0].title.as_deref(), Some("Post Migration 1.x"));
+        assert_eq!(sessions[0].last_active_at, Some(3000));
+        assert_eq!(sessions[1].session_id, "ses_migrated");
+        assert_eq!(sessions[1].last_active_at, Some(2500));
+
+        // Load messages for the post-migration V1 session (should read from V1 message/part tables)
+        let v1_source = format!("sqlite:{}:ses_v1_post", db_path.display());
+        let v1_msgs = load_messages_sqlite(&v1_source).expect("load post-migration v1 messages");
+        assert_eq!(v1_msgs.len(), 1);
+        assert_eq!(v1_msgs[0].role, "user");
+        assert_eq!(v1_msgs[0].content, "Hello from 1.x after migration");
+
+        // Load messages for the V2 session (should read from V2 session_message table)
+        let v2_source = format!("sqlite:{}:ses_migrated", db_path.display());
+        let v2_msgs = load_messages_sqlite(&v2_source).expect("load v2 messages");
+        assert_eq!(v2_msgs.len(), 1);
+        assert_eq!(v2_msgs[0].content, "From V2 table");
+
+        // Delete the post-migration V1 session
+        assert!(delete_session_sqlite("ses_v1_post", &v1_source).expect("delete v1_post"));
+        // Delete the migrated session (should clean up both session_v2 and legacy session)
+        assert!(delete_session_sqlite("ses_migrated", &v2_source).expect("delete migrated"));
+
+        let conn = Connection::open(&db_path).expect("re-open sqlite db");
+        let remaining_v2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_v2", [], |row| row.get(0))
+            .expect("count v2");
+        let remaining_v1_active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session WHERE id IN ('ses_v1_post', 'ses_migrated')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count v1");
+        assert_eq!(remaining_v2, 0);
+        assert_eq!(remaining_v1_active, 0);
 
         if let Some(value) = original_xdg {
             std::env::set_var("XDG_DATA_HOME", value);
