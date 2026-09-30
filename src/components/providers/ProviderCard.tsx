@@ -378,23 +378,32 @@ export function ProviderCard({
           ? activeProviderId === provider.id
           : isCurrent;
 
-  const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
+  // Stack 模式和累加式应用一样：已添加的常亮，用紫色（同顶栏的 Stack 图标）和路由 / 故障转移的
+  // 绿色区分；默认那家靠「当前默认」按钮区分。
+  const shouldUseViolet =
+    isStackMode && (isActiveProvider || stackMember !== undefined);
+  const shouldUseGreen =
+    !isAnyOmo && !isStackMode && isProxyTakeover && isActiveProvider;
   const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
   const shouldUseBlue =
     (isAnyOmo && isActiveProvider) ||
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
-  const hasStateHighlight = shouldUseGreen || shouldUseBlue;
+  const hasStateHighlight = shouldUseViolet || shouldUseGreen || shouldUseBlue;
 
   return (
     <div
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
-        isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
+        isStackMode
+          ? "hover:border-violet-500/50"
+          : isAutoFailoverEnabled || isProxyTakeover
+            ? "hover:border-emerald-500/50"
+            : "hover:border-border-active",
+        shouldUseViolet &&
+          "border-violet-500/60 shadow-sm shadow-violet-500/10",
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
@@ -406,6 +415,7 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
+          shouldUseViolet && "from-violet-500/10",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
           !hasStateHighlight && "from-primary/10",
@@ -512,7 +522,7 @@ export function ProviderCard({
               {stackMember &&
                 (!stackMember.route || stackMember.modelIds.length > 0) && (
                   <ProviderStatusBadge
-                    tone={stackNotice ? "warning" : "success"}
+                    tone={stackNotice ? "warning" : "stack"}
                     label={t("provider.stackBadge")}
                     title={[
                       stackMember.modelIds.length > 0
