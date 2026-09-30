@@ -579,6 +579,15 @@ fn merge_top_level_detail(part: &Value, image_url: &mut Map<String, Value>) {
             image_url.insert("detail".to_string(), detail.clone());
         }
     }
+
+    // OpenAI-compatible Chat gateways only accept `auto` / `low` / `high`
+    // here. Codex emits `original` (full-resolution) for models whose catalog
+    // advertises `supports_image_detail_original`, and strict gateways reject
+    // the entire request with `400 invalid_request_error`, param
+    // `messages.N.content`. Downgrade instead of forwarding it verbatim.
+    if image_url.get("detail").and_then(Value::as_str) == Some("original") {
+        image_url.insert("detail".to_string(), Value::String("auto".to_string()));
+    }
 }
 
 fn source_media_type_is_image(source: &Map<String, Value>) -> bool {
@@ -640,6 +649,19 @@ mod tests {
         assert_eq!(mapped["type"], "image_url");
         assert_eq!(mapped["image_url"]["url"], "https://example.com/image.png");
         assert_eq!(mapped["image_url"]["detail"], "high");
+    }
+
+    #[test]
+    fn downgrades_original_image_detail_for_chat_upstreams() {
+        let part = json!({
+            "type": "input_image",
+            "image_url": "https://example.com/image.png",
+            "detail": "original"
+        });
+
+        let mapped = chat_media_part_from_tool_part(&part, ToolMediaScope::AllSupported).unwrap();
+
+        assert_eq!(mapped["image_url"]["detail"], "auto");
     }
 
     #[test]

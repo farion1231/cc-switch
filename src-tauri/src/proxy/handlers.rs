@@ -987,6 +987,19 @@ pub async fn handle_images_generations(
     handle_codex_standalone_passthrough(state, request, "/images/generations").await
 }
 
+/// Handle Codex's legacy Images API edit endpoint for built-in ImageGen.
+///
+/// Codex switches from `/images/generations` to `/images/edits` whenever the
+/// ImageGen tool references existing images (explicit file paths or the last N
+/// generated images). The body is plain JSON with data-URL images, so it takes
+/// the same standalone passthrough as generations; only the upstream path differs.
+pub async fn handle_images_edits(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_codex_standalone_passthrough(state, request, "/images/edits").await
+}
+
 async fn handle_codex_standalone_passthrough(
     state: ProxyState,
     request: axum::extract::Request,
@@ -2833,8 +2846,7 @@ async fn log_usage(
 
     let logger = UsageLogger::new(&state.db);
 
-    let (multiplier, pricing_model_source) =
-        logger.resolve_pricing_config(provider_id, app_type).await;
+    let pricing_model_source = logger.resolve_pricing_model_source(app_type).await;
     let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         outbound_model
     } else {
@@ -2852,7 +2864,6 @@ async fn log_usage(
         request_model.to_string(),
         pricing_model.to_string(),
         usage,
-        multiplier,
         latency_ms,
         first_token_ms,
         status_code,

@@ -48,6 +48,8 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
+    #[serde(default = "default_true")]
+    pub mcode: bool,
 }
 
 impl Default for VisibleApps {
@@ -62,6 +64,7 @@ impl Default for VisibleApps {
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
+            mcode: true,
         }
     }
 }
@@ -79,6 +82,7 @@ impl VisibleApps {
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
+            AppType::Mcode => self.mcode,
         }
     }
 }
@@ -1009,7 +1013,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
-        AppType::Pi => None,
+        AppType::Pi | AppType::Mcode => None,
     }
 }
 
@@ -1028,7 +1032,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
-        AppType::Pi => {}
+        AppType::Pi | AppType::Mcode => {}
     })
 }
 
@@ -1048,8 +1052,10 @@ pub fn get_effective_current_provider(
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
-        let providers = db.get_all_providers(app_type.as_str())?;
-        if providers.contains_key(&local_id) {
+        if db
+            .get_provider_by_id(&local_id, app_type.as_str())?
+            .is_some()
+        {
             // 存在，直接返回
             return Ok(Some(local_id));
         }

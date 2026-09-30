@@ -1,37 +1,46 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { http, HttpResponse } from "msw";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   ProviderForm,
+  type ProviderFormProps,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import type { CodexCopilotApiFormat, ProviderMeta } from "@/types";
+import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: () => null,
+  CopilotAuthSection: ({
+    onAccountSelect,
+  }: {
+    onAccountSelect?: (accountId: string | null) => void;
+  }) => (
+    <button type="button" onClick={() => onAccountSelect?.("copilot-account")}>
+      select-copilot-account
+    </button>
+  ),
 }));
-vi.mock("@/components/providers/forms/CodexConfigEditor", () => ({
-  default: () => null,
-}));
-vi.mock("@/components/providers/forms/ProviderAdvancedConfig", () => ({
-  ProviderAdvancedConfig: () => null,
+vi.mock("@/components/JsonEditor", () => ({
+  default: ({
+    value,
+    onChange,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+  }) => (
+    <textarea
+      data-testid="json-editor"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }));
 vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
-  const commonConfig = () => ({
-    useCommonConfig: false,
-    commonConfigSnippet: "",
-    commonConfigError: null,
-    isLoading: false,
-    isExtracting: false,
-    handleCommonConfigToggle: vi.fn(),
-    handleCommonConfigSnippetChange: vi.fn(),
-    handleExtract: vi.fn(),
-    clearCommonConfigError: vi.fn(),
-  });
   return {
     ...actual,
     useCopilotAuth: () => ({
@@ -49,27 +58,52 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     }),
     useCodexOauth: () => ({ isAuthenticated: false, accounts: [] }),
     useXaiOauth: () => ({ isAuthenticated: false, accounts: [] }),
-    useCommonConfigSnippet: commonConfig,
-    useCodexCommonConfig: commonConfig,
-    useGeminiCommonConfig: commonConfig,
-  };
-});
-vi.mock("@/lib/query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/query")>();
-  return {
-    ...actual,
-    useSettingsQuery: () => ({
-      data: { commonConfigConfirmed: true },
-    }),
   };
 });
 
-function renderForm(meta?: ProviderMeta) {
-  const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
+function getCopilotPreset() {
   const preset = codexProviderPresets.find(
     (item) => item.providerType === "github_copilot",
   );
   if (!preset) throw new Error("Missing Codex Copilot preset");
+  return preset;
+}
+
+interface DraftProjectionRequest {
+  app: string;
+  settingsConfig: { auth: Record<string, unknown>; config: string };
+  category?: string;
+  providerId?: string;
+  meta?: ProviderMeta;
+}
+
+function captureDraftProjections(liveToml = "") {
+  const requests: DraftProjectionRequest[] = [];
+  server.use(
+    http.post(
+      "http://tauri.local/get_provider_editor_view",
+      async ({ request }) => {
+        const body = (await request.json()) as DraftProjectionRequest;
+        requests.push(body);
+        return HttpResponse.json({
+          settings: {
+            ...body.settingsConfig,
+            config: `${body.settingsConfig.config}${liveToml}`,
+          },
+          inactive: [],
+        });
+      },
+    ),
+  );
+  return requests;
+}
+
+function renderForm(
+  meta?: ProviderMeta,
+  onEditorBaseChange?: ProviderFormProps["onEditorBaseChange"],
+) {
+  const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
+  const preset = getCopilotPreset();
   render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
@@ -77,6 +111,7 @@ function renderForm(meta?: ProviderMeta) {
         submitLabel="save"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
+        onEditorBaseChange={onEditorBaseChange}
         initialData={
           meta
             ? {
@@ -170,8 +205,132 @@ describe("Codex Copilot provider form", () => {
       expect(JSON.parse(saved.settingsConfig).config).toContain(
         'wire_api = "responses"',
       );
+      expect(JSON.parse(saved.settingsConfig).modelCatalog.models).toEqual(
+        getCopilotPreset().modelCatalog,
+      );
     },
   );
+
+  it("preserves account, protocol and model edits when saving a live-projected Copilot draft", async () => {
+    const liveToml = '\n[ui]\ntheme = "dark"\n';
+    const requests = captureDraftProjections(liveToml);
+    const onEditorBaseChange = vi.fn();
+    const onSubmit = renderForm(undefined, onEditorBaseChange);
+    const preset = getCopilotPreset();
+    const draft = { auth: preset.auth, config: preset.config };
+    const base = { ...draft, config: `${preset.config}${liveToml}` };
+    await waitFor(() =>
+      expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft),
+    );
+    expect(requests.at(-1)).toEqual({
+      app: "codex",
+      settingsConfig: draft,
+      category: preset.category,
+      meta: { providerType: "github_copilot", apiFormat: "openai_chat" },
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByTestId("json-editor")
+          .map((node) => (node as HTMLTextAreaElement).value),
+      ).toContain(base.config),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "select-copilot-account" }),
+    );
+    await selectFormat("openai_responses");
+    fireEvent.change(screen.getByLabelText("默认模型"), {
+      target: { value: "gpt-5.6-luna" },
+    });
+    fireEvent.change(screen.getByDisplayValue("gpt-5.6-sol"), {
+      target: { value: "custom-copilot-model" },
+    });
+    fireEvent.change(screen.getAllByDisplayValue("1048576")[0], {
+      target: { value: "524288" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const saved = onSubmit.mock.calls[0][0];
+    expect(saved.meta).toEqual(
+      expect.objectContaining({
+        providerType: "github_copilot",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "github_copilot",
+          accountId: "copilot-account",
+        },
+        githubAccountId: "copilot-account",
+        apiFormat: "openai_responses",
+        codexCopilotApiFormat: "openai_responses",
+      }),
+    );
+    const settings = JSON.parse(saved.settingsConfig);
+    expect(settings.auth).toEqual({});
+    expect(settings.config).toContain(liveToml);
+    expect(settings.config).toContain('model = "gpt-5.6-luna"');
+    expect(settings.config).toContain('wire_api = "responses"');
+    expect(settings.modelCatalog.models).toEqual(
+      preset.modelCatalog?.map((model) =>
+        model.model === "gpt-6-astra"
+          ? { ...model, contextWindow: 524288 }
+          : model.model === "gpt-5.6-sol"
+            ? { ...model, model: "custom-copilot-model" }
+            : model,
+      ),
+    );
+    expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft);
+    expect(screen.queryByText("仍要保存")).not.toBeInTheDocument();
+  });
+
+  it("projects each preset with its own identity instead of stale Copilot metadata", async () => {
+    const requests = captureDraftProjections();
+    const onEditorBaseChange = vi.fn();
+    renderForm(undefined, onEditorBaseChange);
+    const copilot = getCopilotPreset();
+    const otherPreset = codexProviderPresets.find(
+      (preset) => preset.name === "DeepSeek",
+    );
+    if (!otherPreset) throw new Error("Missing DeepSeek preset");
+
+    const waitForPreset = async (preset: typeof copilot) => {
+      const draft = { auth: preset.auth, config: preset.config };
+      await waitFor(() =>
+        expect(onEditorBaseChange).toHaveBeenLastCalledWith(draft, draft),
+      );
+    };
+    await waitForPreset(copilot);
+    expect(requests.at(-1)?.meta).toEqual({
+      providerType: "github_copilot",
+      apiFormat: "openai_chat",
+    });
+    await selectFormat("openai_responses");
+
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek/ }));
+    await waitForPreset(otherPreset);
+    expect(requests.at(-1)).not.toHaveProperty("meta");
+    expect(requests.at(-1)).not.toHaveProperty("providerId");
+
+    fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
+    await waitForPreset(copilot);
+    expect(formatControl()).toHaveTextContent(formatLabels.auto);
+    expect(requests.at(-1)?.meta).toEqual({
+      providerType: "github_copilot",
+      apiFormat: "openai_chat",
+    });
+
+    const previousRequests = requests.length;
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    await waitFor(() => {
+      expect(requests.length).toBeGreaterThan(previousRequests);
+      expect(onEditorBaseChange.mock.lastCall?.[0]).not.toBeNull();
+    });
+    expect(requests.at(-1)).not.toHaveProperty("meta");
+    expect(requests.at(-1)).not.toHaveProperty("providerId");
+  });
 
   it("keeps legacy cards automatic and shows mapping even with an empty catalog", () => {
     renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });

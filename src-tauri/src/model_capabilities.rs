@@ -73,8 +73,13 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "ark-code-latest",
         "deepseek-chat",
         "deepseek-reasoner",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
+        // `deepseek-v4-flash` is intentionally absent: it is a legacy alias the
+        // vendor still accepts and routes to the vision-capable `deepseek-flash`
+        // (api-docs.deepseek.com/guides/vision), so it must fail open.
+        // `deepseek-v4-pro` likewise stays out of this global registry: the
+        // official API continues serving V4 Pro after September 14, 2026
+        // (api-docs.deepseek.com), but hosted aliases can differ. First-party
+        // presets declare text-only explicitly; unknown gateways fail open.
         "glm-5.1",
         // Exact rather than prefix matching: GLM visual models use a `v`
         // suffix (for example glm-5.2v), which must remain image-capable.
@@ -87,6 +92,9 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "kat-coder-pro-v1",
         "kat-coder-pro-v2",
         "ling-2.5-1t",
+        // Ant Ling ships vision as separate `-VL` models (Ling-3.0-flash-VL);
+        // Ling-2.6-1T is text-only (developer.ant-ling.com model docs).
+        "ling-2.6-1t",
         "longcat-2.0",
         "longcat-flash-chat",
         "minimax-m2.7",
@@ -216,7 +224,11 @@ mod tests {
 
     #[test]
     fn confirmed_text_only_registry_normalizes_namespaces_and_context_markers() {
-        assert!(is_confirmed_text_only_model("deepseek/deepseek-v4-pro"));
+        assert!(is_confirmed_text_only_model("deepseek/deepseek-chat"));
+        // v4-flash 是旧别名，路由到识图的 deepseek-flash；2026-09-14 起 v4-pro 也路由到
+        // 识图的 V4.1 Flash。两者均已移出名单，必须 fail-open。
+        assert!(!is_confirmed_text_only_model("deepseek/deepseek-v4-flash"));
+        assert!(!is_confirmed_text_only_model("deepseek/deepseek-v4-pro"));
         assert!(is_confirmed_text_only_model("GLM-5.2[1M]"));
         assert!(is_confirmed_text_only_model("GLM-5.3[1M]"));
         assert!(is_confirmed_text_only_model("qwen/qwen3-coder-plus"));
@@ -247,7 +259,7 @@ mod tests {
     #[test]
     fn explicit_capability_overrides_the_registry() {
         assert_eq!(
-            resolve_image_input_capability("deepseek-v4-pro", Some(true), true),
+            resolve_image_input_capability("qwen3-coder-plus", Some(true), true),
             ImageInputCapability::Supported
         );
         assert_eq!(

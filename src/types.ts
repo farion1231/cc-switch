@@ -189,10 +189,6 @@ export interface ProviderMeta {
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
-  // 供应商成本倍率
-  costMultiplier?: string;
-  // 供应商计费模式来源
-  pricingModelSource?: string;
   // API 格式（Claude / Codex 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
@@ -302,6 +298,7 @@ export interface VisibleApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  mcode: boolean;
 }
 
 // WebDAV 同步状态
@@ -509,6 +506,7 @@ export interface McpServerSpec {
 
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
+  mcode?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;

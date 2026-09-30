@@ -2,44 +2,15 @@
 //!
 //! 处理代理配置、Provider健康状态和使用统计的数据库操作
 
-use std::str::FromStr;
-
 use crate::error::AppError;
 use crate::proxy::types::*;
-use rust_decimal::Decimal;
 
 use super::super::{lock_conn, Database};
 
 pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
 pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
 
-pub(crate) fn validate_cost_multiplier(value: &str) -> Result<Decimal, AppError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::localized(
-            "error.multiplierEmpty",
-            "倍率不能为空",
-            "Multiplier cannot be empty",
-        ));
-    }
-    let parsed = Decimal::from_str(trimmed).map_err(|e| {
-        AppError::localized(
-            "error.invalidMultiplier",
-            format!("无效倍率: {value} - {e}"),
-            format!("Invalid multiplier: {value} - {e}"),
-        )
-    })?;
-    if parsed < Decimal::ZERO {
-        return Err(AppError::localized(
-            "error.invalidMultiplier",
-            format!("无效倍率: {value} - 倍率不能为负数"),
-            format!("Invalid multiplier: {value} - multiplier cannot be negative"),
-        ));
-    }
-    Ok(parsed)
-}
-
-pub(crate) fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
+fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
     let trimmed = value.trim();
     if trimmed == PRICING_SOURCE_RESPONSE || trimmed == PRICING_SOURCE_REQUEST {
         Ok(trimmed)
@@ -114,52 +85,6 @@ impl Database {
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
             ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        Ok(())
-    }
-
-    /// 获取默认成本倍率
-    pub async fn get_default_cost_multiplier(&self, app_type: &str) -> Result<String, AppError> {
-        let result = {
-            let conn = lock_conn!(self.conn);
-            conn.query_row(
-                "SELECT default_cost_multiplier FROM proxy_config WHERE app_type = ?1",
-                [app_type],
-                |row| row.get(0),
-            )
-        };
-
-        match result {
-            Ok(value) => Ok(value),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                self.init_proxy_config_rows().await?;
-                Ok("1".to_string())
-            }
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
-
-    /// 设置默认成本倍率
-    pub async fn set_default_cost_multiplier(
-        &self,
-        app_type: &str,
-        value: &str,
-    ) -> Result<(), AppError> {
-        validate_cost_multiplier(value)?;
-        let trimmed = value.trim();
-
-        // 确保行存在
-        self.ensure_proxy_config_row_exists(app_type)?;
-
-        let conn = lock_conn!(self.conn);
-        conn.execute(
-            "UPDATE proxy_config SET
-                default_cost_multiplier = ?2,
-                updated_at = datetime('now')
-             WHERE app_type = ?1",
-            rusqlite::params![app_type, trimmed],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -860,6 +785,24 @@ impl Database {
     ///
     /// 用于托盘菜单构建等同步场景
     /// 返回 (enabled, auto_failover_enabled)
+    /// 同步读代理的监听地址和端口（读不到时用默认值）。给直连切换生成 Codex 休眠表的
+    /// 本地地址用，不需要代理在运行。
+    pub fn get_proxy_listen_sync(&self) -> (String, u16) {
+        let fallback = || {
+            let defaults = crate::proxy::types::ProxyConfig::default();
+            (defaults.listen_address, defaults.listen_port)
+        };
+        let Ok(conn) = self.conn.lock() else {
+            return fallback();
+        };
+        conn.query_row(
+            "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? as u16)),
+        )
+        .unwrap_or_else(|_| fallback())
+    }
+
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
         let conn = match self.conn.lock() {
             Ok(c) => c,
@@ -908,40 +851,6 @@ mod tests {
     use crate::error::AppError;
 
     #[tokio::test]
-    async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {
-        let db = Database::memory()?;
-
-        let default = db.get_default_cost_multiplier("claude").await?;
-        assert_eq!(default, "1");
-
-        db.set_default_cost_multiplier("claude", "1.5").await?;
-        let updated = db.get_default_cost_multiplier("claude").await?;
-        assert_eq!(updated, "1.5");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_default_cost_multiplier_validation() -> Result<(), AppError> {
-        let db = Database::memory()?;
-
-        let err = db
-            .set_default_cost_multiplier("claude", "not-a-number")
-            .await
-            .unwrap_err();
-        // AppError::localized returns AppError::Localized variant
-        assert!(matches!(
-            err,
-            AppError::Localized {
-                key: "error.invalidMultiplier",
-                ..
-            }
-        ));
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -961,18 +870,6 @@ mod tests {
             err,
             AppError::Localized {
                 key: "error.invalidPricingMode",
-                ..
-            }
-        ));
-
-        let err = db
-            .set_default_cost_multiplier("claude", "-0.5")
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            AppError::Localized {
-                key: "error.invalidMultiplier",
                 ..
             }
         ));

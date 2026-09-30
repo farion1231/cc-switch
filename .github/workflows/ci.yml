@@ -99,6 +99,9 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
+      - name: Build frontend
+        run: pnpm build:renderer
+
   backend:
     name: Backend Checks
     runs-on: ${{ matrix.os }}

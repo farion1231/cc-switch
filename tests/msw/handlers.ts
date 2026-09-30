@@ -106,6 +106,18 @@ export const handlers = [
     return success(true);
   }),
 
+  // 编辑器显示：测试里没有真实的 live 文件，关键字段直接取这一行（等于切到它之后的
+  // 样子），不列出不生效的字段。
+  http.post(
+    `${TAURI_ENDPOINT}/get_provider_editor_view`,
+    async ({ request }) => {
+      const { settingsConfig = {} } = await withJson<{
+        settingsConfig?: Record<string, unknown>;
+      }>(request);
+      return success({ settings: settingsConfig, inactive: [] });
+    },
+  ),
+
   http.post(`${TAURI_ENDPOINT}/update_provider`, async ({ request }) => {
     const { provider, app } = await withJson<{
       provider: Provider;
@@ -345,6 +357,8 @@ export const handlers = [
       active_targets: [],
     }),
   ),
+
+  http.post(`${TAURI_ENDPOINT}/get_direct_provider`, () => success(null)),
 
   http.post(`${TAURI_ENDPOINT}/get_proxy_takeover_status`, () =>
     success({
