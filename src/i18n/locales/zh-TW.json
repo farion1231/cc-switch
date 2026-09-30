@@ -771,7 +771,7 @@
     "grokConfigDir": "Grok Build 設定目錄",
     "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
     "opencodeConfigDir": "OpenCode 設定目錄",
-    "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json)。",
+    "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json / opencode.jsonc)。",
     "openclawConfigDir": "OpenClaw 設定目錄",
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",

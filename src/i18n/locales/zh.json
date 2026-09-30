@@ -771,7 +771,7 @@
     "grokConfigDir": "Grok Build 配置目录",
     "grokConfigDirDescription": "覆盖 Grok Build 配置目录 (config.toml)。",
     "opencodeConfigDir": "OpenCode 配置目录",
-    "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json)。",
+    "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json / opencode.jsonc)。",
     "openclawConfigDir": "OpenClaw 配置目录",
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
     "hermesConfigDir": "Hermes 配置目录",
