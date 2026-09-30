@@ -5119,6 +5119,10 @@ impl ProviderService {
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
         let mut provider = provider;
+        // 活动路由判定只认真实 live：已经补完 pending、持着切换锁，这里读到的
+        // config.toml 和模式状态就是这次写入要改的那份；编辑器预览里的选择器不算数。
+        let mode = crate::mode::current::mode_state(&app_type);
+        let live_routes = codex_editor::CodexLiveRouteContext::read(&mode)?;
         let plan = codex_editor::plan_save(
             existing.as_ref().map(|row| &row.settings_config),
             &provider.settings_config,
@@ -5131,6 +5135,10 @@ impl ProviderService {
             codex_direct::is_official(&provider),
             provider.uses_proxy_injected_oauth(),
             editor.on_conflict,
+            codex_editor::LegacyRouteSave {
+                snapshot: editor.codex.as_ref(),
+                live: &live_routes,
+            },
         )?;
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
@@ -5139,7 +5147,6 @@ impl ProviderService {
             keep_common_config_for_old_versions(&mut provider);
         }
 
-        let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let is_route = mode.routes_to(&provider.id);
 

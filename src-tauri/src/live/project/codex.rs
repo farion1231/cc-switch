@@ -870,6 +870,12 @@ fn put_table(providers: &mut dyn TableLike, id: &str, table: Table, container_in
     }
 }
 
+/// `[profiles.*]` 里有没有人用 `model_provider` 引用 `id` 这张表。编辑器的删除保护用它，
+/// 和投影的保留规则同一套解析。
+pub fn profile_references(root: &Table, id: &str) -> bool {
+    profile_selectors(root).iter().any(|name| name == id)
+}
+
 /// `[profiles.*]` 里 `model_provider` 引用的表 id。
 fn profile_selectors(root: &Table) -> Vec<String> {
     root.get("profiles")

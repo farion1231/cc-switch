@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
-import { providersApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  type AppId,
+  type CodexEditorSnapshot,
+} from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 /** 编辑器投影读不了客户端配置文件（比如手改坏了）：编辑器退回显示保存的内容。 */
@@ -18,11 +22,13 @@ export function toastEditorViewFailed(t: TFunction, error: unknown) {
 
 /**
  * 投影出的底，和投影成它的那份草稿（预设或模板）。投影进行中或失败时底为 `null`。保存时
- * 两者一起交给后端：草稿里没有、底里有的字段是从 live 带进来的，不归新供应商。
+ * 两者一起交给后端：草稿里没有、底里有的字段是从 live 带进来的，不归新供应商。Codex 的
+ * 打开快照（旧官方代理路由状态）一起原样带回。
  */
 export type EditorBaseChange = (
   base: Record<string, unknown> | null,
   draft?: Record<string, unknown>,
+  codex?: CodexEditorSnapshot,
 ) => void;
 
 /**
@@ -59,7 +65,7 @@ export function useDraftEditorProjection(
         .then((view) => {
           if (current !== sequence.current) return;
           apply(view.settings);
-          onEditorBaseChange(view.settings, settings);
+          onEditorBaseChange(view.settings, settings, view.codex);
         })
         .catch((error: unknown) => {
           if (current !== sequence.current) return;

@@ -20,8 +20,7 @@ import type {
   EditorConflictPolicy,
   ProviderEditorSave,
   ProviderEditorView,
-} from "@/lib/api/providers";
-import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+} from "@/lib/api/providers";import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
 import { usesEditorView } from "@/config/appConfig";
 
@@ -288,7 +287,13 @@ export function EditProviderDialog({
           provider: updatedProvider,
           originalId: provider.id,
           ...(editorView
-            ? { editorSave: { base: editorView.settings, onConflict } }
+            ? {
+                editorSave: {
+                  base: editorView.settings,
+                  ...(editorView.codex ? { codex: editorView.codex } : {}),
+                  onConflict,
+                },
+              }
             : {}),
         });
         closeDialog();

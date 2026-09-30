@@ -1758,6 +1758,7 @@ mod mode_tests {
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         );
@@ -2899,6 +2900,7 @@ model_provider = "c"
                 Some(crate::services::provider::EditorSave {
                     base,
                     draft: None,
+                    codex: None,
                     on_conflict: Default::default(),
                 }),
             )
@@ -3011,6 +3013,7 @@ model_provider = "c"
                 Some(crate::services::provider::EditorSave {
                     base,
                     draft: None,
+                    codex: None,
                     on_conflict: Default::default(),
                 }),
             )
@@ -3105,6 +3108,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3138,6 +3142,188 @@ model_provider = "c"
             view.settings,
         )
         .expect("add with the profile active");
+    }
+
+    /// 统一历史开、代理契约用共享槽：编辑器删掉休眠的旧官方代理路由按打开时的快照比，
+    /// 用户打开前的改名、追加键、过期地址不制造假冲突，删除真的落到盘上。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_deletes_the_dormant_legacy_route_with_the_open_snapshot() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = format!(
+            "{}\n[model_providers.cc-switch-official]\nname = \"OpenAI-legacy\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nuser_added_key = \"kept-before\"\n",
+            CODEX_USER_LIVE
+        );
+        seed_codex(&live, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        // 代理契约在盘上，但选的是共享槽（统一历史开）：旧表是休眠表。
+        state::update(&DeviceStore::for_device(), |live| {
+            live.apps
+                .entry(AppType::Codex.as_str().to_string())
+                .or_default()
+                .set_mode_state(ModeState {
+                    mode: Some(Mode::Proxy),
+                    attached: true,
+                    proxy_route: Some(codex_official().id),
+                    contract: Some(Contract {
+                        version: contract::CONTRACT_VERSION,
+                        key: "contract".into(),
+                        exclusive: Default::default(),
+                    }),
+                });
+        })
+        .unwrap();
+
+        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &b_row.settings_config, None)
+                .expect("view b");
+        let shown = view.settings["config"].as_str().unwrap();
+        // 预览把旧表规范化成镜像（名字复原、用户键清掉、地址刷新），和盘上不一样。
+        assert!(
+            shown.contains("[model_providers.cc-switch-official]")
+                && !shown.contains("OpenAI-legacy")
+                && !shown.contains("user_added_key"),
+            "{shown}"
+        );
+        let snapshot = view.codex.clone().expect("codex snapshot");
+        assert!(snapshot.legacy_route && snapshot.legacy_fingerprint.is_some());
+        assert_eq!(snapshot.selector.as_deref(), Some("custom"));
+
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(
+            shown
+                .split_once("[model_providers.cc-switch-official]")
+                .expect("preview keeps the dormant table")
+                .0
+        );
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("b"),
+            {
+                let mut row = b_row.clone();
+                row.settings_config = edited;
+                row
+            },
+            Some(crate::services::provider::EditorSave {
+                base: view.settings.clone(),
+                draft: None,
+                codex: view.codex.clone(),
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("delete the dormant route");
+
+        let doc = codex_doc();
+        assert!(
+            doc["model_providers"]
+                .as_table()
+                .unwrap()
+                .get("cc-switch-official")
+                .is_none(),
+            "{}",
+            codex_text()
+        );
+        // 用户自己的表照旧，模式状态没被这次保存动过。
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"]["ollama_local"].is_table());
+        assert!(state::mode_state(&DeviceStore::for_device(), "codex")
+            .unwrap()
+            .contract
+            .is_some());
+    }
+
+    /// 顶层选择器（或代理契约）还占着旧表：删除被拒绝，文件、数据库和 pending 都不动，
+    /// KeepMine 也盖不过活动路由保护。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_refuses_to_delete_the_active_legacy_route() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = format!(
+            "{}\n[model_providers.cc-switch-official]\nname = \"OpenAI-legacy\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+            CODEX_USER_LIVE
+        )
+        .replace(
+            "model_provider = \"custom\"",
+            "model_provider = \"cc-switch-official\"",
+        );
+        seed_codex(&live, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        state::update(&DeviceStore::for_device(), |live| {
+            live.apps
+                .entry(AppType::Codex.as_str().to_string())
+                .or_default()
+                .set_mode_state(ModeState {
+                    mode: Some(Mode::Proxy),
+                    attached: true,
+                    proxy_route: Some(codex_official().id),
+                    contract: Some(Contract {
+                        version: contract::CONTRACT_VERSION,
+                        key: "contract".into(),
+                        exclusive: Default::default(),
+                    }),
+                });
+        })
+        .unwrap();
+
+        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &b_row.settings_config, None)
+                .expect("view b");
+        let snapshot = view.codex.clone().expect("codex snapshot");
+        // 打开时选择器就指着它：快照不作删除基准。
+        assert!(snapshot.legacy_route);
+        assert_eq!(snapshot.selector.as_deref(), Some("cc-switch-official"));
+
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(
+            view.settings["config"]
+                .as_str()
+                .unwrap()
+                .split_once("[model_providers.cc-switch-official]")
+                .expect("preview keeps the table")
+                .0
+        );
+        // 像前端一样把快照和冲突策略装进保存请求（顺带覆盖 camelCase 的传输形状）。
+        let save = |on_conflict: &str| -> Result<bool, AppError> {
+            let editor: crate::services::provider::EditorSave = serde_json::from_value(json!({
+                "base": view.settings,
+                "codex": snapshot,
+                "onConflict": on_conflict,
+            }))
+            .expect("editor save payload");
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                Some("b"),
+                {
+                    let mut row = b_row.clone();
+                    row.settings_config = edited.clone();
+                    row
+                },
+                Some(editor),
+            )
+        };
+        for on_conflict in ["refuse", "keepMine"] {
+            let refused = save(on_conflict).expect_err("active route is protected");
+            assert!(
+                matches!(
+                    refused,
+                    AppError::Localized {
+                        key: "provider.codex.editor.official_route_in_use",
+                        ..
+                    }
+                ),
+                "{refused}"
+            );
+        }
+        assert_eq!(codex_text(), live, "nothing was written");
+        assert!(!operation::has_pending("codex"));
+        let stored = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        assert_eq!(stored.settings_config, b_row.settings_config);
     }
 
     /// 新增对话框打开之后，客户端改了一个从 live 带进来的独有字段：草稿里没有它，保存时不
@@ -3216,6 +3402,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3262,6 +3449,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3541,6 +3729,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings.clone(),
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3583,6 +3772,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3869,6 +4059,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3923,6 +4114,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: Some(draft),
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
