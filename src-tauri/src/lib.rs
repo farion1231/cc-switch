@@ -1163,6 +1163,7 @@ pub fn run() {
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
+            app.manage(services::vps::ssh::VpsSshState::default());
 
             // 初始化 CopilotAuthManager
             {
@@ -1560,6 +1561,10 @@ pub fn run() {
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
+            // VPS connection probes (explicit user action only)
+            commands::test_vps_connection,
+            commands::cancel_vps_connection_test,
+            commands::confirm_vps_host_key,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

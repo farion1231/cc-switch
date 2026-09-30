@@ -230,6 +230,25 @@ fn missing_data_is_empty_and_reading_does_not_create_files() {
 }
 
 #[test]
+fn shared_ssh_config_uses_the_same_confirmed_host_alias_and_private_trust_file() {
+    let (_home, service) = service();
+    let mut host = server(&[AppType::Claude]);
+    host.port = 2222;
+    service.save_server(host.clone()).unwrap();
+    let config = fs::read_to_string(service.root.join("ssh_config")).unwrap();
+    let known_hosts = ssh_identity_path(&service.root.join("known_hosts")).unwrap();
+    assert!(config.contains(&format!("UserKnownHostsFile \"{known_hosts}\"")));
+    assert!(config.contains("GlobalKnownHostsFile none"));
+    assert!(config.contains("UpdateHostKeys no"));
+    assert!(config.contains(&format!("HostKeyAlias {}", host.ssh_alias())));
+    assert!(config.contains("Port 2222"));
+    assert!(
+        !service.root.join("known_hosts").exists(),
+        "generation must not imply trust confirmation"
+    );
+}
+
+#[test]
 fn saves_local_data_and_only_catalogs_for_bound_clients() {
     let (home, service) = service();
     let ssh_config = home.path().join(".ssh/config");

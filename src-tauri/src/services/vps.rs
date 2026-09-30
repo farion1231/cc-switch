@@ -222,9 +222,10 @@ pub fn render_ssh_config(servers: &[VpsServer]) -> Result<String> {
     );
     for server in servers {
         config.push_str(&format!(
-            "\nHost {}\n    HostName {}\n    User {}\n    Port {}\n",
+            "\nHost {}\n    HostName {}\n    HostKeyAlias {}\n    User {}\n    Port {}\n",
             server.ssh_alias(),
             server.host,
+            server.ssh_alias(),
             server.user,
             server.port,
         ));
@@ -306,10 +307,11 @@ struct ClientServer<'a> {
 }
 
 fn generated_files(root: &Path, servers: &[VpsServer]) -> Result<BTreeMap<String, Vec<u8>>> {
-    let mut files = BTreeMap::from([(
-        "ssh_config".into(),
-        render_ssh_config(servers)?.into_bytes(),
-    )]);
+    let ssh_config = format!(
+        "UserKnownHostsFile \"{}\"\nGlobalKnownHostsFile none\nUpdateHostKeys no\nCheckHostIP no\n{}",
+        ssh_identity_path(&root.join("known_hosts"))?, render_ssh_config(servers)?,
+    );
+    let mut files = BTreeMap::from([("ssh_config".into(), ssh_config.into_bytes())]);
     for app in AppType::all() {
         let selected = servers_for_app(servers, &app);
         if selected.is_empty() {
@@ -587,6 +589,7 @@ impl VpsService {
 }
 
 mod managed;
+pub mod ssh;
 
 #[cfg(test)]
 #[path = "vps/tests.rs"]

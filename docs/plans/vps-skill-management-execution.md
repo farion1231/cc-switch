@@ -2,7 +2,7 @@
 
 日期：2026-09-29。关联 [Issue #7739](https://github.com/farion1231/cc-switch/issues/7739)。
 
-**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A–D 已实现并验证定向用例；E/F 的整合仍在推进，整体仍有既有符号链接权限测试失败。最新主线程记录见第 12 节，尚未完成真实 SSH 与桌面验收。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
+**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A–E 已实现并验证定向用例；F 的最终接线和 G 的整体复验仍在推进，整体仍有既有符号链接权限测试失败。最新主线程记录见第 13 节，尚未完成真实 SSH 与桌面验收。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
 
 ## 0. 开发启动条件与边界
 
@@ -350,3 +350,19 @@ C 已提交为 `5a63c500`。D 补齐本机生成来源边界：
 实际验证：首批新增 8 项先全部失败，实现后通过；补充完整快照往返、另一临时设备恢复、文件回滚和触发器保护后，**VPS 相关 52 项全部通过（含 D 新增 11 项）**。备份模块首次回归 38 通过/2 原有忽略，新增触发器用例另在 VPS 定向集中通过；归档回归 2 通过；Skill 服务 80 通过/1 原有忽略；同步协议 23 通过；Clippy `-D warnings` 通过。未增加 skip、未修改原有断言或超时。
 
 日志：`vps-stage-d-red.log`、`vps-stage-d-green.log`、`vps-stage-d-final.log`、`vps-stage-d-backup-regression.log`、`vps-stage-d-archive-regression.log`、`vps-stage-d-skill-regression.log`、`vps-stage-d-sync-regression.log`、`vps-stage-d-clippy-final.log`。测试均使用显式隔离的本机路径，未访问真实 VPS；完整库/集成复验留到 E/F 接线后统一执行，原有 1314 限制不能据此标为已解决。
+
+## 13. 阶段 E：系统 SSH 测试（2026-09-30）
+
+D 已提交为 `f1ab3a92`。E 由独立 worktree 子 agent 编写，主线程审阅并整合；未进行真实 SSH 连接或操作 VPS。首次整合发现 Tauri 异步 State 命令必须返回 `Result`，已按既有命令模式修正，前端接收的 JSON 契约不变。
+
+- 使用系统 `ssh` / `ssh-keyscan` 参数数组；探测固定执行 `true`，只接受密钥路径或 agent，不读取私钥内容、不传递密码，不启动用户配置中的代理命令、转发或复用连接。
+- 首次扫描只取得未验证公钥，必须由用户独立核对指纹后显式确认。服务端确认 token 绑定目标与公钥，五分钟有效、一次性使用；取消会撤销待确认 token，指纹变化不自动覆盖。
+- 专用 `vps/ssh-trust.json` / `vps/known_hosts` 保存受控本机信任，并检查归属与中断写入恢复。共享配置和临时探测配置均使用稳定 `HostKeyAlias`；非默认端口不改变 known_hosts 中的 alias 键。
+- 单次测试总期限 20 秒，支持取消、进程回收和有界输出。原生 runner 在 blocking worker 中运行，不阻塞 UI；区分缺少工具、认证失败、密钥变化、超时和取消。成功只表示本次固定探测成功。
+- 注册三个 SSH 命令和 `VpsSshState`；主机 CRUD 与前端接线将在 F 中完成，不增加远端服务或后台 Agent。
+
+验证：**VPS 相关 72 项全部通过**（此前 52 + Windows 可运行的 SSH 19 + 共享信任配置契约 1）。其中包括三个 Windows 本地 `cmd.exe` 替身进程的退出状态、超时与取消/回收测试；其余网络流程使用注入替身，没有连接公网。Clippy `-D warnings` 通过。Unix symlink 分支与真实 OpenSSH/客户端端到端尚未验证。
+
+日志：`vps-stage-e-tests.log`（保留首次编译错误）、`vps-stage-e-recheck.log`、`vps-stage-e-clippy.log`。
+
+另以本机 OpenSSH 9.9p2 执行了 `-G -F <临时配置>` 的离线解析 smoke check：人工构造的等价配置覆盖空格/Unicode 配置及密钥引用路径、端口 2222、稳定 alias 和专用信任文件，验证通过；没有建立连接或读取真实私钥。该检查不等于真实 VPS/客户端端到端验收。
