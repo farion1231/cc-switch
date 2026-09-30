@@ -10,6 +10,7 @@
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
+//! - `pi` - Pi MCP 同步和导入
 
 mod claude;
 mod codex;
@@ -40,3 +41,4 @@ pub use opencode::{
 };
 
 pub(crate) mod mcode;
+pub(crate) mod pi;

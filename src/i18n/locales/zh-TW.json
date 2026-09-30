@@ -777,7 +777,7 @@
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
-    "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
+    "piConfigDirDescription": "覆寫 Pi 設定目錄 (models.json)。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -1999,6 +1999,7 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
+        "pi": "Pi",
         "mcode": "MiniMax Code"
       }
     },
@@ -2045,7 +2046,8 @@
       "useWizard": "設定精靈",
       "syncOtherSide": "同步至 {{target}}",
       "syncOtherSideHint": "勾選後會把目前設定同時寫入 {{target}}，若存在同名設定將被覆寫",
-      "willOverwriteWarning": "將覆寫 {{target}} 中的同名設定"
+      "willOverwriteWarning": "將覆寫 {{target}} 中的同名設定",
+      "piExposureHint": "Pi 預設透過 codemode 暴露 MCP 工具，工具不會直接出現在模型的工具清單裡。在 Pi 裡用 /mcp 即可按需配置。詳情請查閱 Pi 官方文件。"
     },
     "wizard": {
       "title": "MCP 設定精靈",

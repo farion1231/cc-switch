@@ -866,6 +866,11 @@ fn test_parse_mcp_apps() {
     assert!(apps.opencode);
     assert!(apps.hermes);
 
+    let apps = parse_mcp_apps("mcode,pi").unwrap();
+    assert!(apps.mcode);
+    assert!(apps.pi);
+    assert!(!apps.claude);
+
     let err = parse_mcp_apps("invalid").unwrap_err();
     assert!(err.to_string().contains("Invalid app"));
 }

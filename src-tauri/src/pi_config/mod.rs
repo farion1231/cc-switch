@@ -80,6 +80,11 @@ pub(crate) fn get_pi_settings_path() -> Result<PathBuf, AppError> {
     Ok(get_pi_agent_dir()?.join("settings.json"))
 }
 
+/// Pi's global MCP config file (`<agent dir>/mcp.json`).
+pub(crate) fn get_pi_mcp_path() -> Result<PathBuf, AppError> {
+    Ok(get_pi_agent_dir()?.join("mcp.json"))
+}
+
 pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
     let path = get_pi_settings_path()?;
     if !path.exists() {

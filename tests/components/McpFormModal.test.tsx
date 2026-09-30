@@ -394,6 +394,7 @@ type = "stdio"
       gemini: false,
       grokbuild: false,
       mcode: false,
+      pi: false,
     });
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith();
@@ -447,6 +448,7 @@ type = "stdio"
       openclaw: false,
       hermes: false,
       mcode: false,
+      pi: false,
     });
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -506,5 +508,37 @@ type = "stdio"
 
     resolveUpsert?.();
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+  });
+
+  it("Pi 复选框存在、带 codemode 提示，且勾选后进入提交载荷", async () => {
+    renderForm();
+
+    const piCheckbox = screen.getByLabelText(
+      "mcp.unifiedPanel.apps.pi",
+    ) as HTMLInputElement;
+    expect(piCheckbox.checked).toBe(false);
+
+    const hintTrigger = screen.getByLabelText("mcp.form.piExposureHint");
+    act(() => {
+      hintTrigger.focus();
+    });
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "mcp.form.piExposureHint",
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText("mcp.form.titlePlaceholder"),
+      { target: { value: "pi-server" } },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("mcp.form.jsonPlaceholder"),
+      { target: { value: '{"type":"stdio","command":"run"}' } },
+    );
+    fireEvent.click(piCheckbox);
+    fireEvent.click(screen.getByText("common.add"));
+
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+    const [entry] = upsertMock.mock.calls.at(-1) ?? [];
+    expect(entry.apps.pi).toBe(true);
   });
 });

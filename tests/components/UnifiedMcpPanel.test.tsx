@@ -77,6 +77,7 @@ function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
       opencode: false,
       openclaw: false,
       hermes: false,
+      pi: false,
       ...apps,
     },
   } as McpServer;
@@ -267,5 +268,18 @@ describe("UnifiedMcpPanel", () => {
     await waitFor(() =>
       expect(onInteractionBlockedChange).toHaveBeenCalledWith(true),
     );
+  });
+
+  it("顶部计数栏包含 Pi，并反映它的启用数量", () => {
+    mocks.serversMap = {
+      "pi-server": makeServer("pi-server", { apps: { pi: true } }),
+    };
+
+    renderPanel();
+
+    const piCount = screen.getByText("Pi:").closest("button");
+    expect(piCount).not.toBeNull();
+    expect(piCount).toHaveTextContent("Pi:1");
+    expect(piCount).toHaveAttribute("data-selection-state", "all");
   });
 });

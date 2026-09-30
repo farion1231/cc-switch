@@ -1,9 +1,22 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Save, Plus, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  Save,
+  Plus,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Info,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import JsonEditor from "@/components/JsonEditor";
 import type { AppId } from "@/lib/api/types";
@@ -70,12 +83,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     openclaw: boolean;
     hermes: boolean;
     mcode: boolean;
+    pi: boolean;
   }>(() => {
     if (initialData?.apps) {
       return {
         ...initialData.apps,
         grokbuild: initialData.apps.grokbuild ?? false,
         mcode: initialData.apps.mcode ?? false,
+        pi: initialData.apps.pi ?? false,
       };
     }
     return {
@@ -87,6 +102,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
       mcode: defaultEnabledApps.includes("mcode"),
+      pi: defaultEnabledApps.includes("pi"),
     };
   });
 
@@ -643,6 +659,38 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     {t("mcp.unifiedPanel.apps.mcode")}
                   </label>
                 </div>
+                <TooltipProvider delayDuration={300}>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="enable-pi"
+                      checked={enabledApps.pi}
+                      onCheckedChange={(checked: boolean) =>
+                        setEnabledApps({ ...enabledApps, pi: checked })
+                      }
+                    />
+                    <label
+                      htmlFor="enable-pi"
+                      className="text-sm text-foreground cursor-pointer select-none"
+                    >
+                      {t("mcp.unifiedPanel.apps.pi")}
+                    </label>
+                    {/* Pi exposes MCP tools through codemode by default, so they stay out of the model's tool list. */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={t("mcp.form.piExposureHint")}
+                          className="inline-flex items-center text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Info size={14} aria-hidden />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        {t("mcp.form.piExposureHint")}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                </TooltipProvider>
               </div>
             </div>
 

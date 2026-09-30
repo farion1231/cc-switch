@@ -777,7 +777,7 @@
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
-    "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "piConfigDirDescription": "Override the Pi configuration directory (models.json).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -1998,6 +1998,7 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
+        "pi": "Pi",
         "mcode": "MiniMax Code"
       }
     },
@@ -2044,7 +2045,8 @@
       "useWizard": "Config Wizard",
       "syncOtherSide": "Mirror to {{target}}",
       "syncOtherSideHint": "Apply the same settings to {{target}}; existing entries with the same id will be overwritten.",
-      "willOverwriteWarning": "Will overwrite existing config in {{target}}"
+      "willOverwriteWarning": "Will overwrite existing config in {{target}}",
+      "piExposureHint": "Pi exposes MCP tools through codemode by default, so they do not appear directly in the model's tool list. Use /mcp inside Pi to configure this as needed. See Pi's official documentation for details."
     },
     "wizard": {
       "title": "MCP Configuration Wizard",
