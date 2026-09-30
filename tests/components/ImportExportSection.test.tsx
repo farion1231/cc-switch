@@ -15,7 +15,6 @@ describe("ImportExportSection Component", () => {
     errorMessage: null,
     backupId: null,
     isImporting: false,
-    onSelectFile: vi.fn(),
     onImport: vi.fn(),
     onExport: vi.fn(),
     onClear: vi.fn(),
@@ -23,28 +22,25 @@ describe("ImportExportSection Component", () => {
 
   beforeEach(() => {
     tMock.mockImplementation((key: string) => key);
-    baseProps.onSelectFile.mockReset();
     baseProps.onImport.mockReset();
     baseProps.onExport.mockReset();
     baseProps.onClear.mockReset();
   });
 
-  it("should disable import button and show placeholder when no file selected", () => {
+  it("should start import from the primary button when no file is selected", () => {
     render(<ImportExportSection {...baseProps} />);
 
-    // When no file selected, button shows "selectConfigFile" and clicking it opens file dialog
-    expect(
-      screen.getByRole("button", { name: /settings\.selectConfigFile/ }),
-    ).toBeInTheDocument();
+    const importButton = screen.getByRole("button", {
+      name: "settings.import",
+    });
+    expect(importButton).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "settings.exportConfig" }),
     );
     expect(baseProps.onExport).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /settings\.selectConfigFile/ }),
-    );
-    expect(baseProps.onSelectFile).toHaveBeenCalledTimes(1);
+    fireEvent.click(importButton);
+    expect(baseProps.onImport).toHaveBeenCalledTimes(1);
   });
 
   it("should show filename and enable import/clear when file is selected", () => {

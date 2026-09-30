@@ -97,7 +97,6 @@ vi.mock("@/components/settings/ImportExportSection", () => ({
     selectedFile,
     errorMessage,
     isImporting,
-    onSelectFile,
     onImport,
     onExport,
     onClear,
@@ -105,8 +104,7 @@ vi.mock("@/components/settings/ImportExportSection", () => ({
     <div>
       <div data-testid="import-status">{status}</div>
       <div data-testid="selected-file">{selectedFile || "none"}</div>
-      <button onClick={onSelectFile}>settings.selectConfigFile</button>
-      <button onClick={onImport} disabled={!selectedFile || isImporting}>
+      <button onClick={onImport} disabled={isImporting}>
         {isImporting ? "settings.importing" : "settings.import"}
       </button>
       <button onClick={onExport}>settings.exportConfig</button>
@@ -168,12 +166,6 @@ describe("SettingsPage integration", () => {
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
-    fireEvent.click(screen.getByText("settings.selectConfigFile"));
-    await waitFor(() =>
-      expect(screen.getByTestId("selected-file").textContent).toContain(
-        "/mock/import-settings.json",
-      ),
-    );
 
     fireEvent.click(screen.getByText("settings.import"));
     await waitFor(() => expect(toastSuccessMock).toHaveBeenCalled());
