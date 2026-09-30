@@ -12,12 +12,20 @@ const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
 // 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
 const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
-// JS prelude that repairs Date local-time reading on top of the host-provided
-// offset. Needed because the QuickJS build vendored by rquickjs-sys 0.8.1
-// computes the Windows offset in the wrong unit: TIME_ZONE_INFORMATION.Bias is
-// already in minutes, but quickjs divides it by 60, so getTimezoneOffset()
-// returns hours (e.g. -8 for UTC+8 instead of -480) and every local-time getter
-// shifts the timestamp by minutes instead of hours. See issue #7751.
+// JS prelude that repairs Date local-time reading AND writing on top of the
+// host-provided offset. Needed because the QuickJS build vendored by
+// rquickjs-sys 0.8.1 computes the Windows offset in the wrong unit:
+// TIME_ZONE_INFORMATION.Bias is already in minutes, but quickjs divides it by
+// 60, so getTimezoneOffset() returns hours (e.g. -8 for UTC+8 instead of
+// -480) and every local-time getter and setter shifts the timestamp by
+// minutes instead of hours. See issue #7751.
+//
+// Reads and writes must share the same conversion, otherwise previously
+// self-consistent combinations (e.g. d.setDate(d.getDate() + 1)) would break
+// once only the getters were corrected. The prelude therefore rewrites
+// getTimezoneOffset(), the local getters, the local setters, the multi-arg
+// constructor and spec-local ISO parsing on top of one host callback, then
+// hides the callback from user scripts.
 const TIMEZONE_SHIM_PRELUDE: &str = r#"
 (() => {
   const hostOffsetMinutes = globalThis.__hostUtcOffsetMinutes;
@@ -26,6 +34,18 @@ const TIMEZONE_SHIM_PRELUDE: &str = r#"
   const proto = Date.prototype;
   // Local wall-clock epoch value: local = UTC + offsetMinutes * 60000.
   const localEpochMs = function (utcMs) { return utcMs + hostOffsetMinutes(utcMs) * 60000; };
+  // Inverse map: the UTC instant whose local wall clock equals localMs.
+  // Iterated to a fixed point of t = localMs - offset(t): exact for fixed
+  // offsets, deterministic for DST-ambiguous local times.
+  const utcEpochMs = function (localMs) {
+    let t = localMs - hostOffsetMinutes(localMs) * 60000;
+    for (let i = 0; i < 2; i++) {
+      const next = localMs - hostOffsetMinutes(t) * 60000;
+      if (next === t) break;
+      t = next;
+    }
+    return t;
+  };
   // Spec: getTimezoneOffset() = UTC - local, in minutes.
   proto.getTimezoneOffset = function () {
     const utcMs = this.getTime();
@@ -47,6 +67,125 @@ const TIMEZONE_SHIM_PRELUDE: &str = r#"
       return new Date(localEpochMs(this.getTime()))[utcName]();
     };
   }
+  // Annex B: getYear() = getFullYear() - 1900.
+  proto.getYear = function () {
+    const y = this.getFullYear();
+    return isNaN(y) ? NaN : y - 1900;
+  };
+  // Unique sentinel marking "argument absent, keep the current local field";
+  // an explicitly passed undefined is applied and poisons the result like
+  // ToNumber(undefined) would in a spec engine.
+  const KEEP = {};
+  // Local-field writes. Fields are ordered [year, month, date, hours,
+  // minutes, seconds, milliseconds]; KEEP entries keep the current local
+  // value, while explicitly passed arguments (even undefined or NaN) are
+  // applied, poisoning the result exactly like a spec engine.
+  const setLocalFields = function (self, fields) {
+    const t = self.getTime();
+    if (!isFinite(t)) { self.setTime(NaN); return NaN; }
+    const local = new Date(localEpochMs(t));
+    const parts = [
+      local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(),
+      local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds(),
+      local.getUTCMilliseconds(),
+    ];
+    for (let i = 0; i < 7; i++) {
+      if (fields[i] !== KEEP) parts[i] = fields[i];
+    }
+    // UTC setters normalize overflow (day 0, month 13, hour 25 ...) without
+    // the 0-99 year remapping that Date.UTC would apply.
+    const scratch = new Date(0);
+    scratch.setUTCFullYear(parts[0], parts[1], parts[2]);
+    scratch.setUTCHours(parts[3], parts[4], parts[5], parts[6]);
+    return self.setTime(utcEpochMs(scratch.getTime()));
+  };
+  proto.setDate = function (v) {
+    return setLocalFields(this, [KEEP, KEEP, v, KEEP, KEEP, KEEP, KEEP]);
+  };
+  proto.setFullYear = function (y, m, d) {
+    const fields = [y, KEEP, KEEP, KEEP, KEEP, KEEP, KEEP];
+    if (arguments.length > 1) fields[1] = m;
+    if (arguments.length > 2) fields[2] = d;
+    return setLocalFields(this, fields);
+  };
+  proto.setHours = function (h, m, s, ms) {
+    const fields = [KEEP, KEEP, KEEP, h, KEEP, KEEP, KEEP];
+    if (arguments.length > 1) fields[4] = m;
+    if (arguments.length > 2) fields[5] = s;
+    if (arguments.length > 3) fields[6] = ms;
+    return setLocalFields(this, fields);
+  };
+  proto.setMilliseconds = function (ms) {
+    return setLocalFields(this, [KEEP, KEEP, KEEP, KEEP, KEEP, KEEP, ms]);
+  };
+  proto.setMinutes = function (m, s, ms) {
+    const fields = [KEEP, KEEP, KEEP, KEEP, m, KEEP, KEEP];
+    if (arguments.length > 1) fields[5] = s;
+    if (arguments.length > 2) fields[6] = ms;
+    return setLocalFields(this, fields);
+  };
+  proto.setMonth = function (m, d) {
+    const fields = [KEEP, m, KEEP, KEEP, KEEP, KEEP, KEEP];
+    if (arguments.length > 1) fields[2] = d;
+    return setLocalFields(this, fields);
+  };
+  proto.setSeconds = function (s, ms) {
+    const fields = [KEEP, KEEP, KEEP, KEEP, KEEP, s, KEEP];
+    if (arguments.length > 1) fields[6] = ms;
+    return setLocalFields(this, fields);
+  };
+  // Annex B: setYear remaps 0-99 to 1900 + y, unlike setFullYear.
+  proto.setYear = function (y) {
+    let yr = y;
+    if (!isNaN(yr) && yr >= 0 && yr <= 99) yr += 1900;
+    return this.setFullYear(yr);
+  };
+  // Replace the global constructor so multi-argument calls and spec-local
+  // ISO strings share the same conversion as getters and setters.
+  const NativeDate = Date;
+  // Spec date-time strings without an offset are interpreted as local time;
+  // date-only forms and explicit offsets are UTC and stay native.
+  const isoLocalRe = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{1,2})(?:\.(\d+))?)?$/;
+  const parseIsoLocal = function (s) {
+    const m = isoLocalRe.exec(s);
+    if (!m) return undefined;
+    const month = +m[2], day = +m[3], hour = +m[4], minute = +m[5];
+    const second = m[6] === undefined ? 0 : +m[6];
+    if (month < 1 || month > 12 || day < 1 || day > 31) return NaN;
+    if (hour > 23 || minute > 59 || second > 59) return NaN;
+    let ms = 0;
+    if (m[7] !== undefined) ms = +(m[7] + "000").slice(0, 3);
+    return utcEpochMs(Date.UTC(+m[1], month - 1, day, hour, minute, second, ms));
+  };
+  const ShimDate = function (a, b, c, d, e, f, g) {
+    if (new.target) {
+      const n = arguments.length;
+      if (n === 0) return new NativeDate();
+      if (n === 1) {
+        if (typeof a === "string") {
+          const local = parseIsoLocal(a);
+          if (local !== undefined) return new NativeDate(local);
+        }
+        return new NativeDate(a);
+      }
+      // Two or more arguments are local fields; Date.UTC supplies the 0-99
+      // year remap and overflow normalization, and apply() keeps absent
+      // trailing fields absent so Date.UTC applies its own defaults.
+      return new NativeDate(utcEpochMs(Date.UTC.apply(null, arguments)));
+    }
+    return NativeDate();
+  };
+  ShimDate.prototype = NativeDate.prototype;
+  Object.setPrototypeOf(ShimDate, NativeDate);
+  ShimDate.parse = function (s) {
+    if (typeof s === "string") {
+      const local = parseIsoLocal(s);
+      if (local !== undefined) return local;
+    }
+    return NativeDate.parse(s);
+  };
+  NativeDate.prototype.constructor = ShimDate;
+  globalThis.Date = ShimDate;
 })();
 "#;
 
@@ -100,6 +239,15 @@ fn create_script_runtime() -> Result<Runtime, AppError> {
 /// Create the script context and install the Date timezone shim so that user
 /// scripts observe spec-correct local time on every platform.
 fn create_script_context(runtime: &Runtime) -> Result<Context, AppError> {
+    create_script_context_with_offset(runtime, local_utc_offset_minutes)
+}
+
+/// Same as [`create_script_context`] but with an injectable offset callback,
+/// used by tests to pin a fixed offset instead of the machine time zone.
+fn create_script_context_with_offset(
+    runtime: &Runtime,
+    utc_offset_minutes: fn(f64) -> f64,
+) -> Result<Context, AppError> {
     let context = Context::full(runtime).map_err(|e| {
         AppError::localized(
             "usage_script.context_create_failed",
@@ -110,10 +258,7 @@ fn create_script_context(runtime: &Runtime) -> Result<Context, AppError> {
 
     context.with(|ctx| -> Result<(), AppError> {
         ctx.globals()
-            .set(
-                "__hostUtcOffsetMinutes",
-                Func::from(local_utc_offset_minutes),
-            )
+            .set("__hostUtcOffsetMinutes", Func::from(utc_offset_minutes))
             .map_err(|e| {
                 AppError::localized(
                     "usage_script.timezone_shim_failed",
@@ -825,6 +970,117 @@ mod tests {
             probe["hours"],
             serde_json::json!(expected_hours),
             "getHours() must return the local hour"
+        );
+    }
+
+    // Fixed-offset host callback (+480 min, i.e. UTC+8) so the sandboxed Date
+    // is fully deterministic and independent of the machine time zone.
+    fn fixed_offset_480(_timestamp_ms: f64) -> f64 {
+        480.0
+    }
+
+    #[test]
+    fn local_read_write_apis_share_the_correct_offset() {
+        // Differential battery: with the host offset pinned to +480 minutes,
+        // the sandboxed Date must behave exactly like a spec-compliant Date in
+        // a UTC+8 zone. Reference values come from pure UTC arithmetic (shift
+        // by the offset, mutate UTC fields, shift back), which is exact for
+        // fixed-offset zones, so this test never depends on the machine TZ.
+        let script = r#"
+            (function () {
+                var OFF = 480 * 60000;
+                var out = [];
+                function ok(name, cond) { out.push(name + "=" + (cond ? "1" : "0")); }
+                function ref(t0, mutate) {
+                    var r = new Date(t0 + OFF);
+                    mutate(r);
+                    return r.getTime() - OFF;
+                }
+                var instants = [
+                    Date.UTC(2026, 8, 29, 20, 22, 47, 498),
+                    Date.UTC(2026, 0, 1, 0, 0, 0, 0),
+                    Date.UTC(2026, 11, 31, 23, 59, 59, 999),
+                    Date.UTC(2024, 1, 28, 12, 0, 0, 0),
+                    Date.UTC(2000, 5, 15, 6, 30, 0, 250),
+                    Date.UTC(2026, 8, 30, 15, 59, 59, 1),
+                ];
+                for (var i = 0; i < instants.length; i++) {
+                    var t0 = instants[i];
+                    var d = new Date(t0);
+                    ok("get_date_" + i, d.getDate() === new Date(t0 + OFF).getUTCDate());
+                    var rb = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
+                    ok("roundtrip_" + i, rb.getTime() === t0);
+                    var d2 = new Date(t0); d2.setHours(d2.getHours());
+                    ok("set_hours_id_" + i, d2.getTime() === t0);
+                    var d3 = new Date(t0);
+                    d3.setDate(d3.getDate() + 1);
+                    ok("next_day_" + i, d3.getTime() === ref(t0, function (r) { r.setUTCDate(r.getUTCDate() + 1); }));
+                    var d4 = new Date(t0); d4.setDate(d4.getDate());
+                    ok("set_date_id_" + i, d4.getTime() === t0);
+                    var d5 = new Date(t0); d5.setMonth(d5.getMonth());
+                    ok("set_month_id_" + i, d5.getTime() === t0);
+                    var d6 = new Date(t0); d6.setFullYear(d6.getFullYear());
+                    ok("set_full_year_id_" + i, d6.getTime() === t0);
+                    var d7 = new Date(t0); d7.setMinutes(7, 8, 9);
+                    ok("set_minutes_" + i, d7.getTime() === ref(t0, function (r) { r.setUTCMinutes(7, 8, 9); }));
+                    var d8 = new Date(t0); d8.setSeconds(3, 4);
+                    ok("set_seconds_" + i, d8.getTime() === ref(t0, function (r) { r.setUTCSeconds(3, 4); }));
+                    var d9 = new Date(t0); d9.setMilliseconds(42);
+                    ok("set_ms_" + i, d9.getTime() === ref(t0, function (r) { r.setUTCMilliseconds(42); }));
+                    var d10 = new Date(t0); d10.setHours(1, 2, 3, 4);
+                    ok("set_hours_multi_" + i, d10.getTime() === ref(t0, function (r) { r.setUTCHours(1, 2, 3, 4); }));
+                    var d11 = new Date(t0); d11.setMonth(0, 13);
+                    ok("set_month_day_overflow_" + i, d11.getTime() === ref(t0, function (r) { r.setUTCMonth(0, 13); }));
+                    var d12 = new Date(t0); d12.setDate(0);
+                    ok("set_date_zero_" + i, d12.getTime() === ref(t0, function (r) { r.setUTCDate(0); }));
+                    var d14 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+                    ok("ctor_ymd_midnight_" + i, d14.getTime() === ref(t0, function (r) { r.setUTCHours(0, 0, 0, 0); }));
+                }
+                ok("ctor_two_args", new Date(2026, 8).getTime() === Date.UTC(2026, 8, 1) - OFF);
+                ok("ctor_year_map", new Date(49, 8, 30).getTime() === Date.UTC(1949, 8, 30) - OFF);
+                var d17 = new Date(Date.UTC(2026, 8, 29, 20, 22, 47, 498));
+                d17.setFullYear(26);
+                ok("set_full_year_no_remap", d17.getFullYear() === 26);
+                var d18 = new Date(Date.UTC(2026, 8, 29, 20, 22, 47, 498));
+                d18.setYear(49);
+                ok("set_year_remap", d18.getFullYear() === 1949);
+                ok("get_year_annex_b", new Date(Date.UTC(2026, 8, 29)).getYear() === 126);
+                var d19 = new Date(NaN);
+                ok("invalid_set_date", isNaN(d19.setDate(1)) && isNaN(d19.getTime()));
+                var d20 = new Date(Date.UTC(2026, 8, 29, 20, 22, 47, 498));
+                d20.setDate(undefined);
+                ok("undefined_arg_poisons", isNaN(d20.getTime()));
+                var d21 = new Date(Date.UTC(2026, 8, 29, 20, 22, 47, 498));
+                d21.setHours(4, undefined);
+                ok("present_undefined_poisons", isNaN(d21.getTime()));
+                ok("iso_local_full", new Date("2026-09-30T04:22:47").getTime() === Date.UTC(2026, 8, 30, 4, 22, 47) - OFF);
+                ok("iso_local_no_seconds", new Date("2026-09-30T04:22").getTime() === Date.UTC(2026, 8, 30, 4, 22) - OFF);
+                ok("iso_local_millis", new Date("2026-09-30T04:22:47.5").getTime() === Date.UTC(2026, 8, 30, 4, 22, 47, 500) - OFF);
+                ok("parse_iso_local", Date.parse("2026-09-30T04:22:47") === Date.UTC(2026, 8, 30, 4, 22, 47) - OFF);
+                ok("iso_date_only_utc", new Date("2026-09-30").getTime() === Date.UTC(2026, 8, 30));
+                ok("iso_z_utc", new Date("2026-09-30T04:22:47Z").getTime() === Date.UTC(2026, 8, 30, 4, 22, 47));
+                ok("iso_explicit_offset", new Date("2026-09-30T04:22:47+08:00").getTime() === Date.UTC(2026, 8, 29, 20, 22, 47));
+                ok("garbage_string_nan", isNaN(new Date("not a date").getTime()));
+                ok("instanceof_kept", new Date(0) instanceof Date);
+                ok("statics_kept", typeof Date.now === "function" && typeof Date.UTC === "function" && typeof Date.parse === "function");
+                ok("call_as_function_string", typeof Date(0) === "string");
+                ok("ctor_length_kept", Date.length === 7);
+                ok("set_time_utc_kept", (function () { var d = new Date(123456); d.setTime(654321); return d.getTime() === 654321; })());
+                ok("utc_setters_kept", (function () { var d = new Date(0); d.setUTCFullYear(2026, 8, 30); d.setUTCHours(4, 0, 0, 0); return d.getTime() === Date.UTC(2026, 8, 30, 4); })());
+                return out.join("|");
+            })()
+        "#;
+
+        let runtime = create_script_runtime().expect("runtime");
+        let context =
+            create_script_context_with_offset(&runtime, fixed_offset_480).expect("context");
+        let joined: String = context
+            .with(|ctx| -> Result<String, rquickjs::Error> { ctx.eval(script) })
+            .expect("eval failed");
+        let failures: Vec<&str> = joined.split('|').filter(|s| s.ends_with("=0")).collect();
+        assert!(
+            failures.is_empty(),
+            "read/write consistency broken under fixed +480 offset: {failures:?}"
         );
     }
 
