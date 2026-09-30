@@ -121,8 +121,9 @@ fn parse_round_trip(source: &str) -> Result<RtJSONText, AppError> {
     let mut tokens = tokenize_rt_str(source)
         .map_err(|e| AppError::Config(format!("Failed to tokenize JSONC config: {e}")))?;
     // json-five 0.3.1 consumes the closing slash of a block comment but leaves
-    // its exclusive end offset on that slash. Repair only this token boundary;
-    // strings and line comments containing comment markers are untouched.
+    // its exclusive end offset on that slash. Line comments ending at EOF or
+    // U+2028/U+2029 can also end inside the last UTF-8 character. Repair only
+    // these token boundaries; leave the source and already valid spans intact.
     for (start, kind, end) in &mut tokens.tok_spans {
         if *kind == TokType::BlockComment
             && source.as_bytes().get(*end) == Some(&b'/')
@@ -131,6 +132,11 @@ fn parse_round_trip(source: &str) -> Result<RtJSONText, AppError> {
                 .is_some_and(|text| text.ends_with('*'))
         {
             *end += 1;
+        }
+        if *kind == TokType::LineComment {
+            while *end < source.len() && !source.is_char_boundary(*end) {
+                *end += 1;
+            }
         }
     }
     json_five::rt::parser::from_tokens(&tokens).map_err(|e| {
@@ -609,6 +615,54 @@ mod tests {
             let mut doc = JsoncDocument::parse(source).unwrap();
             doc.apply(&json!({"keep":1,"edit":2})).unwrap();
             assert_eq!(doc.validated_source().unwrap(), source.replace(":0", ":2"));
+        }
+    }
+
+    #[test]
+    fn unicode_line_comments_preserve_bytes_before_and_after_editing() {
+        for suffix in [
+            "// 中文",
+            "// 😀",
+            "/* 中文 */ // 尾",
+            "// ab\u{2028}",
+            "// 中文\u{2028}",
+            "// ab\u{2029}",
+            "// 中文\u{2029}",
+            "// 😀\u{2028}",
+            "// 😀\u{2029}",
+            "// 中文\n",
+            "// 中文\r\n",
+            "// ASCII",
+        ] {
+            let source = format!(r#"{{"provider":{{"demo":{{"name":"old"}}}}}} {suffix}"#);
+            let mut doc = JsoncDocument::parse(&source).unwrap();
+            assert!(!doc.apply(&doc.value().clone()).unwrap());
+            assert_eq!(
+                doc.validated_source().unwrap().as_bytes(),
+                source.as_bytes()
+            );
+
+            let desired = json!({"provider": {"demo": {"name": "new"}}});
+            assert!(doc.apply(&desired).unwrap());
+            let output = doc.validated_source().unwrap();
+            assert_eq!(output.as_bytes(), source.replace("old", "new").as_bytes());
+            assert_eq!(json5::from_str::<Value>(&output).unwrap(), desired);
+        }
+    }
+
+    #[test]
+    fn unicode_line_separators_keep_the_following_field_outside_the_comment() {
+        for separator in ['\u{2028}', '\u{2029}'] {
+            for comment in ["ASCII", "中文", "😀"] {
+                let source = format!("{{\"keep\":true,// {comment}{separator}\"edit\":0}}");
+                let mut doc = JsoncDocument::parse(&source).unwrap();
+                assert_eq!(doc.validated_source().unwrap(), source);
+                let desired = json!({"keep":true,"edit":1});
+                doc.apply(&desired).unwrap();
+                let output = doc.validated_source().unwrap();
+                assert_eq!(output, source.replace(":0", ":1"));
+                assert_eq!(json5::from_str::<Value>(&output).unwrap(), desired);
+            }
         }
     }
 

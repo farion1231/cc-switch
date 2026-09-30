@@ -366,6 +366,57 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn unicode_line_comments_do_not_panic_or_poison_later_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        std::fs::create_dir_all(get_opencode_dir()).unwrap();
+        let path = get_opencode_dir().join("opencode.jsonc");
+
+        for suffix in [
+            "// 中文",
+            "// 😀",
+            "/* 中文 */ // 尾",
+            "// ab\u{2028}",
+            "// 中文\u{2028}",
+            "// ab\u{2029}",
+            "// 中文\u{2029}",
+        ] {
+            let source = format!("{{\"provider\":{{}}}} {suffix}");
+            std::fs::write(&path, &source).unwrap();
+
+            // Startup import uses this read path without holding the write lock.
+            let read = std::panic::catch_unwind(read_opencode_config)
+                .expect("valid Unicode line comments must not panic during reads")
+                .unwrap();
+            assert_eq!(read, json!({"provider":{}}));
+            assert_eq!(std::fs::read(&path).unwrap(), source.as_bytes());
+
+            // These inputs used to unwind while holding opencode_config_lock.
+            std::panic::catch_unwind(|| set_provider("first", json!({"name":"First"})))
+                .expect("valid Unicode line comments must not panic during edits")
+                .unwrap();
+            assert!(!opencode_config_lock().is_poisoned());
+            assert!(std::fs::read_to_string(&path).unwrap().ends_with(suffix));
+
+            // Repeat the reported recovery scenario: replace the config with plain
+            // JSON and verify all three writers still work in the same process.
+            std::fs::write(&path, "{}").unwrap();
+            set_provider("next", json!({"name":"Next"})).unwrap();
+            set_mcp_server("tool", json!({"type":"local","command":["echo"]})).unwrap();
+            add_plugin("oh-my-openagent@latest").unwrap();
+            assert_eq!(
+                read_opencode_config().unwrap(),
+                json!({
+                    "provider":{"next":{"name":"Next"}},
+                    "mcp":{"tool":{"type":"local","command":["echo"]}},
+                    "plugin":["oh-my-openagent@latest"]
+                })
+            );
+        }
+    }
+
+    #[test]
     fn remove_missing_plugin_does_not_create_config_file() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("opencode.json");
