@@ -669,10 +669,10 @@ export function CodexFormFields({
     return suggestions;
   }, [catalogRows, fetchedModels, t]);
 
-  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
+  // 即使映射为空，也提示默认模型不会出现在 Codex 的模型菜单中。
   const trimmedDefaultModel = codexModel.trim();
   const isDefaultModelOutsideCatalog =
-    catalogRows.length > 0 &&
+    canEditCatalog &&
     !!trimmedDefaultModel &&
     !catalogRows.some((row) => row.model.trim() === trimmedDefaultModel);
 
