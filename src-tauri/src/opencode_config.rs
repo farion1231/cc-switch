@@ -187,6 +187,9 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     edit_config(get_opencode_config_path, |full_config| {
         if !full_config.get("provider").is_some_and(Value::is_object) {
+            if full_config.get("provider").is_some() {
+                log::warn!("OpenCode 的供应商配置格式有误，将清空原有供应商配置，再保存当前供应商");
+            }
             full_config["provider"] = json!({});
         }
         full_config["provider"][id] = config;
@@ -215,6 +218,11 @@ pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
 pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
     edit_config(get_opencode_config_path, |full_config| {
         if !full_config.get("mcp").is_some_and(Value::is_object) {
+            if full_config.get("mcp").is_some() {
+                log::warn!(
+                    "OpenCode 的 MCP 服务配置格式有误，将清空原有 MCP 服务配置，再保存当前服务"
+                );
+            }
             full_config["mcp"] = json!({});
         }
         full_config["mcp"][id] = config;
