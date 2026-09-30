@@ -16,6 +16,7 @@ use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
 use crate::mode::operation::{self, FileChange};
 use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::settings::{get_settings, ClaudeDesktopDisplaySettings};
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -944,7 +945,7 @@ fn apply_provider_to_paths(
     }
 
     validate_provider(provider)?;
-    let profile = match provider_mode(provider) {
+    let mut profile = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
             let credentials = direct_gateway_credentials(provider)?;
             let model_specs = direct_inference_model_specs(provider)?;
@@ -971,6 +972,8 @@ fn apply_provider_to_paths(
     };
 
     let deployment = deployment_mode_patch("3p");
+    inject_display_settings(&mut profile, get_settings().claude_desktop_display.as_ref());
+
     let profile = gateway_profile_patch(profile);
     let meta = MetaPatch { applied: true };
     write_desktop_files(
@@ -1181,6 +1184,24 @@ impl LivePatch for MetaPatch {
     }
 }
 
+/// Write the configured Claude Desktop display keys into the gateway profile.
+///
+/// Nothing is written when the feature is off, and an empty name means the whole
+/// group is left alone (an empty subtitle only skips that one key) - so the
+/// values already set in the Claude Desktop panel survive.
+fn inject_display_settings(profile: &mut Value, display: Option<&ClaudeDesktopDisplaySettings>) {
+    if let Some(display) = display {
+        if display.name.is_empty() {
+            return;
+        }
+        profile["deploymentDisplayName"] = Value::String(display.name.clone());
+        if !display.subtitle.is_empty() {
+            profile["deploymentDisplaySubtitle"] = Value::String(display.subtitle.clone());
+        }
+        profile["endUserAttribution"] = Value::Bool(display.attribution);
+    }
+}
+
 fn build_gateway_profile(
     base_url: &str,
     api_key: &str,
@@ -1385,9 +1406,70 @@ mod tests {
     use crate::config::write_json_file;
     use crate::database::Database;
     use crate::provider::{ClaudeDesktopModelRoute, ProviderMeta};
+    use crate::settings::ClaudeDesktopDisplaySettings;
     use serde_json::json;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn inject_display_settings_writes_keys_when_configured() {
+        let mut profile = json!({ "inferenceProvider": "gateway" });
+        let display = ClaudeDesktopDisplaySettings {
+            name: "Chris".into(),
+            subtitle: "Gateway".into(),
+            attribution: false,
+        };
+        inject_display_settings(&mut profile, Some(&display));
+        assert_eq!(profile["deploymentDisplayName"], json!("Chris"));
+        assert_eq!(profile["deploymentDisplaySubtitle"], json!("Gateway"));
+        assert_eq!(profile["endUserAttribution"], json!(false));
+    }
+
+    #[test]
+    fn inject_display_settings_omits_keys_when_none() {
+        let mut profile = json!({ "inferenceProvider": "gateway" });
+        inject_display_settings(&mut profile, None);
+        assert!(profile.get("deploymentDisplayName").is_none());
+        assert!(profile.get("deploymentDisplaySubtitle").is_none());
+        assert!(profile.get("endUserAttribution").is_none());
+    }
+
+    #[test]
+    fn inject_display_settings_omits_keys_when_name_empty() {
+        let mut profile = json!({ "inferenceProvider": "gateway" });
+        let display = ClaudeDesktopDisplaySettings {
+            name: "".into(),
+            subtitle: "Gateway".into(),
+            attribution: false,
+        };
+        inject_display_settings(&mut profile, Some(&display));
+        assert!(profile.get("deploymentDisplayName").is_none());
+        assert!(profile.get("deploymentDisplaySubtitle").is_none());
+        assert!(profile.get("endUserAttribution").is_none());
+    }
+
+    #[test]
+    fn inject_display_settings_omits_subtitle_when_empty() {
+        let mut profile = json!({ "inferenceProvider": "gateway" });
+        let display = ClaudeDesktopDisplaySettings {
+            name: "Chris".into(),
+            subtitle: "".into(),
+            attribution: false,
+        };
+        inject_display_settings(&mut profile, Some(&display));
+        assert_eq!(profile["deploymentDisplayName"], json!("Chris"));
+        assert!(profile.get("deploymentDisplaySubtitle").is_none());
+        assert_eq!(profile["endUserAttribution"], json!(false));
+    }
+
+    #[test]
+    fn claude_desktop_display_deserializes_partial_object() {
+        let v: ClaudeDesktopDisplaySettings =
+            serde_json::from_value(json!({ "name": "Chris" })).expect("partial object");
+        assert_eq!(v.name, "Chris");
+        assert_eq!(v.subtitle, "");
+        assert!(!v.attribution);
+    }
 
     fn test_paths(home: &Path) -> ClaudeDesktopPaths {
         let mut paths = paths_from_dirs(
