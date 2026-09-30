@@ -3,7 +3,8 @@
 use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
+        extract_reasoning_field_text, split_leading_think_block, strip_all_think_tags,
+        strip_all_think_tags_with_pending, strip_leading_think_open_tag,
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
@@ -49,6 +50,10 @@ enum InlineThinkMode {
 struct InlineThinkState {
     mode: InlineThinkMode,
     buffer: String,
+    /// Trailing partial close-tag fragment (e.g. `</t`) buffered from the
+    /// previous delta so a close tag split across SSE chunks is reassembled
+    /// instead of being dropped or leaked into output_text.
+    pending_close_tag: String,
 }
 
 #[derive(Debug, Default)]
@@ -145,14 +150,41 @@ impl ChatToResponsesState {
         };
 
         if let Some(delta) = choice.get("delta") {
-            if let Some(reasoning) = chat_delta_reasoning_text(delta) {
-                events.extend(self.push_reasoning_delta(&reasoning));
-                self.append_reasoning_to_active_tools(&reasoning);
+            let reasoning_extracted = chat_delta_reasoning_text(delta);
+
+            if let Some(reasoning) = &reasoning_extracted {
+                events.extend(self.push_reasoning_delta(reasoning));
+                self.append_reasoning_to_active_tools(reasoning);
             }
 
             if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
                 if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
+                    // Same-frame dedup: reasoning_content in this delta.
+                    let content = if let Some(ref reasoning) = reasoning_extracted {
+                        let stripped = strip_all_think_tags(content);
+                        let stripped_trimmed = stripped.trim();
+                        if stripped_trimmed.is_empty() || stripped_trimmed == reasoning.trim() {
+                            String::new()
+                        } else {
+                            stripped
+                        }
+                    } else if !self.reasoning.text.trim().is_empty() {
+                        // Cross-frame dedup: content mirrors reasoning emitted
+                        // in earlier deltas. push_content_delta handles inline
+                        // tags; only skip when accumulated content is a substring
+                        // of the accumulated reasoning (verbatim repetition).
+                        let accumulated = format!("{}{}", self.text.text, content);
+                        if self.reasoning.text.starts_with(accumulated.trim()) {
+                            String::new()
+                        } else {
+                            content.to_string()
+                        }
+                    } else {
+                        content.to_string()
+                    };
+                    if !content.is_empty() {
+                        events.extend(self.push_content_delta(&content));
+                    }
                 }
             }
 
@@ -179,7 +211,18 @@ impl ChatToResponsesState {
         match self.inline_think.mode {
             InlineThinkMode::Text => {
                 let mut events = self.finalize_reasoning();
-                events.extend(self.push_text_delta(delta));
+                // Prepend any buffered partial close-tag fragment from the
+                // previous delta so a close tag split across SSE chunks is
+                // reassembled before stripping.
+                let combined = format!("{}{}", self.inline_think.pending_close_tag, delta);
+                self.inline_think.pending_close_tag.clear();
+                let (cleaned, pending) = strip_all_think_tags_with_pending(&combined);
+                if !pending.is_empty() {
+                    self.inline_think.pending_close_tag = pending;
+                }
+                if !cleaned.is_empty() {
+                    events.extend(self.push_text_delta(&cleaned));
+                }
                 events
             }
             InlineThinkMode::Detecting => {
@@ -193,9 +236,9 @@ impl ChatToResponsesState {
                     ThinkPrefixDecision::Text => {
                         self.inline_think.mode = InlineThinkMode::Text;
                         let text = std::mem::take(&mut self.inline_think.buffer);
-                        let mut events = self.finalize_reasoning();
-                        events.extend(self.push_text_delta(&text));
-                        events
+                        // Route through push_content_delta (now Text mode)
+                        // so close-tag stripping/buffering applies.
+                        self.push_content_delta(&text)
                     }
                 }
             }
@@ -228,15 +271,32 @@ impl ChatToResponsesState {
 
     fn flush_inline_think_at_boundary(&mut self) -> Vec<Bytes> {
         match self.inline_think.mode {
-            InlineThinkMode::Text => Vec::new(),
+            InlineThinkMode::Text => {
+                // Flush any buffered partial close-tag fragment as normal
+                // text — it turned out not to be part of a close tag.
+                let pending = std::mem::take(&mut self.inline_think.pending_close_tag);
+                if pending.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut events = self.finalize_reasoning();
+                    events.extend(self.push_text_delta(&pending));
+                    events
+                }
+            }
             InlineThinkMode::Detecting => {
                 self.inline_think.mode = InlineThinkMode::Text;
                 let text = std::mem::take(&mut self.inline_think.buffer);
                 if text.is_empty() {
                     Vec::new()
                 } else {
-                    let mut events = self.finalize_reasoning();
-                    events.extend(self.push_text_delta(&text));
+                    // Route through push_content_delta (now Text mode)
+                    // so close-tag stripping/buffering applies, then
+                    // flush any remaining pending close-tag fragment.
+                    let mut events = self.push_content_delta(&text);
+                    let pending = std::mem::take(&mut self.inline_think.pending_close_tag);
+                    if !pending.is_empty() {
+                        events.extend(self.push_text_delta(&pending));
+                    }
                     events
                 }
             }
@@ -1489,5 +1549,155 @@ mod tests {
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
+    }
+    #[tokio::test]
+    async fn dedup_content_when_reasoning_content_mirrors_in_same_delta() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_dup\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"让我分析。\",\"content\":\"让我分析。\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_dup\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"答案是42。\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("让我分析"),
+                "reasoning text leaked into output_text: {delta_line}"
+            );
+        }
+        assert!(output.contains("答案是42"));
+    }
+
+    #[tokio::test]
+    async fn strips_leaked_close_tag_in_text_mode() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_leak\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"答案\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_leak\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"</think>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_leak\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"完整。\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("think"),
+                "close tag leaked into output_text: {delta_line}"
+            );
+        }
+        assert!(output.contains("答案"));
+        assert!(output.contains("完整"));
+    }
+
+    /// GLM-5.2 sends reasoning_content in delta N, then mirrors the same
+    /// text as plain content in delta N+1 (no reasoning_content in that
+    /// delta). The same-frame dedup misses this; the cross-frame path
+    /// must catch it by checking accumulated content vs accumulated
+    /// reasoning text.
+    #[tokio::test]
+    async fn dedup_content_when_reasoning_mirrors_across_frames() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_xfd\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Let me analyze.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xfd\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"Let me analyze.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xfd\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"Answer is 42.\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("Let me analyze"),
+                "reasoning text leaked into output_text via cross-frame echo: {delta_line}"
+            );
+        }
+        assert!(output.contains("Answer is 42"));
+    }
+
+    /// GLM sometimes wraps the mirrored reasoning in think tags in the
+    /// content field across frames. The cross-frame dedup should still
+    /// prevent the text from reaching output_text.
+    #[tokio::test]
+    async fn dedup_content_when_reasoning_mirrors_across_frames_with_think_tags() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_xft\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Done thinking.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xft\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"<think>Done thinking.</think>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xft\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"Final answer.\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("Done thinking"),
+                "tagged reasoning text leaked into output_text: {delta_line}"
+            );
+            assert!(
+                !delta_line.contains("think"),
+                "think tag leaked into output_text: {delta_line}"
+            );
+        }
+        assert!(output.contains("Final answer"));
+    }
+
+    /// Reviewer concern: substring dedup should not erase a legitimate
+    /// answer that happens to be a substring of the reasoning text.
+    /// reasoning = "I should answer 42", content = "42" -> "42" must survive.
+    #[tokio::test]
+    async fn does_not_erase_answer_that_is_substring_of_reasoning() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_sub\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"I should answer 42\",\"content\":\"42\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_sub\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(
+            output.contains("42"),
+            "legitimate answer erased by substring dedup: {output}"
+        );
+    }
+
+    /// Reviewer concern: a close tag split across SSE chunks must not
+    /// leak. Delta 1 ends with a partial close-tag prefix,
+    /// delta 2 completes it. The combined close tag should be stripped.
+    #[tokio::test]
+    async fn buffers_close_tag_prefix_across_sse_chunks() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_xch\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"answer</t\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xch\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"hink>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xch\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\" real output\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("think"),
+                "close tag fragment leaked across chunks: {delta_line}"
+            );
+            assert!(
+                !delta_line.contains("hink>"),
+                "trailing close tag body leaked: {delta_line}"
+            );
+        }
     }
 }
