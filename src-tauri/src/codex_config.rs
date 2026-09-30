@@ -2074,6 +2074,7 @@ fn load_codex_model_catalog_template() -> Result<Value, AppError> {
     load_codex_model_catalog_template_uncached()
 }
 
+#[cfg(test)]
 fn codex_model_catalog_from_specs(
     specs: &[CodexCatalogModelSpec],
     template: &Value,
@@ -2101,6 +2102,124 @@ fn codex_model_catalog_from_settings(
         return Ok(None);
     }
     codex_catalog_from_specs_for_row(&specs, config_text, profile).map(Some)
+}
+
+/// Codex 自带的 OpenAI 官方模型列表（`codex debug models --bundled`），给第三方的 GPT
+/// 行按模型名找官方条目用。只缓存成功读到的列表：Codex 升级后要重启 CC Switch 才换新。
+#[cfg(not(test))]
+static CODEX_OPENAI_OFFICIAL_MODELS_CACHE: OnceCell<Vec<Value>> = OnceCell::new();
+
+#[cfg(test)]
+thread_local! {
+    /// 测试里的官方列表（`None` 时只有编译期内置的 gpt-5.5），不跑本机的 `codex`。
+    static CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE: std::cell::RefCell<Option<Vec<Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 编译期内置的 gpt-5.5：本机没有可用的 `codex` 时唯一的官方条目。
+fn codex_static_official_models() -> Vec<Value> {
+    load_codex_model_template_static()
+        .and_then(|template| normalize_codex_native_rows(vec![template]))
+        .unwrap_or_default()
+}
+
+/// 和账号无关的 OpenAI 官方模型列表。不用 `models_cache.json`：它是哪个账号、哪个版本
+/// 写的证明不了（见 `codex_official_models`）。
+#[cfg(not(test))]
+fn codex_openai_official_models() -> Vec<Value> {
+    CODEX_OPENAI_OFFICIAL_MODELS_CACHE
+        .get_or_try_init(|| {
+            load_codex_bundled_models()
+                .and_then(normalize_codex_native_rows)
+                .ok_or(())
+        })
+        .cloned()
+        .unwrap_or_else(|_| codex_static_official_models())
+}
+
+#[cfg(test)]
+fn codex_openai_official_models() -> Vec<Value> {
+    CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE
+        .with(|rows| rows.borrow().clone())
+        .unwrap_or_else(codex_static_official_models)
+}
+
+/// 按 Codex 自己查模型信息的规则找官方条目（codex-rs `models-manager/src/manager.rs` 的
+/// `construct_model_info_from_candidates`）：先按最长前缀，没有再去掉一层命名空间
+/// （`openai/gpt-5.5`）重试；区分大小写。结果就是没有 CC Switch 的目录时 Codex 会用的那条。
+fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option<&'a Value> {
+    fn longest_prefix<'a>(model: &str, candidates: &'a [Value]) -> Option<&'a Value> {
+        candidates
+            .iter()
+            .filter_map(|candidate| {
+                let slug = candidate.get("slug").and_then(Value::as_str)?;
+                (!slug.is_empty() && model.starts_with(slug)).then_some((slug.len(), candidate))
+            })
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, candidate)| candidate)
+    }
+
+    longest_prefix(model, candidates).or_else(|| {
+        let (namespace, suffix) = model.split_once('/')?;
+        let simple_namespace = !namespace.is_empty()
+            && namespace
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if suffix.contains('/') || !simple_namespace {
+            return None;
+        }
+        longest_prefix(suffix, candidates)
+    })
+}
+
+/// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位、窗口都以官方
+/// 为准，不接受行里的覆盖值；窗口不同时在 `config.toml` 里设 `model_context_window`），
+/// 只改掉属于官方账号或官方后端的字段。
+fn codex_official_model_entry(
+    official: &Value,
+    model: &str,
+    priority: usize,
+    profile: CodexCatalogToolProfile,
+) -> Value {
+    let mut entry = official.clone();
+    let Some(obj) = entry.as_object_mut() else {
+        return json!({});
+    };
+    // 前缀、命名空间命中的别名（`gpt-5.5-high`）不冒用官方的显示名。
+    if obj.get("slug").and_then(Value::as_str) != Some(model) {
+        obj.insert("display_name".to_string(), json!(model));
+    }
+    obj.insert("slug".to_string(), json!(model));
+    obj.insert("priority".to_string(), json!(1000 + priority));
+    // 官方隐藏的条目用户明确写了，也要出现在选择器里。
+    obj.insert("visibility".to_string(), json!("list"));
+    // 速度档、升级提示归官方账号。
+    obj.insert("service_tiers".to_string(), json!([]));
+    obj.insert("additional_speed_tiers".to_string(), json!([]));
+    obj.insert("availability_nux".to_string(), Value::Null);
+    obj.insert("upgrade".to_string(), Value::Null);
+    // 第三方不支持 Responses Lite 协议。
+    obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+    if profile == CodexCatalogToolProfile::ProxyChat {
+        // 同 `codex_catalog_model_entry`：严格的 Chat 网关拒收 `original` 精度的图片。
+        obj.insert("supports_image_detail_original".to_string(), json!(false));
+    }
+    entry
+}
+
+/// 目录里的一行是不是按 `official` 原样镜像出来的：反向解析会保留的几项（显示名、窗口、
+/// 模态、并行工具调用）都和重新镜像的结果相同，只还原模型名才不丢东西。
+fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
+    let expected =
+        codex_official_model_entry(official, model, 0, CodexCatalogToolProfile::NativeResponses);
+    [
+        "display_name",
+        "context_window",
+        "input_modalities",
+        "supports_parallel_tool_calls",
+    ]
+    .iter()
+    .all(|key| entry.get(*key) == expected.get(*key))
 }
 
 /// The catalog for one provider's models: its official vendor catalog when the
@@ -2136,12 +2255,32 @@ fn codex_catalog_from_specs_for_row(
         }
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
-    Ok(codex_model_catalog_from_specs(
-        specs,
-        &template,
-        profile,
-        default_context_window,
-    ))
+    // 命中 OpenAI 官方条目的行照搬官方（写了目录之后 Codex 只认文件里的条目，通用模板
+    // 会顶掉 GPT 自己的提示词），其余行照旧按模板生成。Responses→Anthropic 的转换会丢掉
+    // 官方条目里的 custom 工具，这条路不照搬。
+    let official = match profile {
+        CodexCatalogToolProfile::Anthropic => Vec::new(),
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
+            codex_openai_official_models()
+        }
+    };
+    let entries: Vec<Value> = specs
+        .iter()
+        .enumerate()
+        .map(
+            |(index, spec)| match find_codex_official_model(&spec.model, &official) {
+                Some(found) => codex_official_model_entry(found, &spec.model, index, profile),
+                None => codex_catalog_model_entry(
+                    &template,
+                    spec,
+                    index,
+                    profile,
+                    default_context_window,
+                ),
+            },
+        )
+        .collect();
+    Ok(json!({ "models": entries }))
 }
 
 /// 一个供应商的模型目录：没有配置模型时为 `None`，不生成、也不指向目录文件。
@@ -2537,6 +2676,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
+    let mut official: Option<Vec<Value>> = None;
     let mut entries = Vec::with_capacity(models.len());
     for entry in models {
         let Some(model) = entry
@@ -2553,6 +2693,22 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             crate::mode::stack::Decoded::Plain
         ) {
             continue;
+        }
+        // 照搬官方的行只还原模型名，不能把官方值当成用户填的存回库里。通用模板没有
+        // `model_messages`（走 Anthropic 的行不照搬）；旧版 ProxyChat 克隆的 gpt-5.5 模板
+        // 有，但带着用户填的显示名、窗口，下面逐项比对不上，照旧还原。
+        if entry
+            .get("model_messages")
+            .and_then(|messages| messages.get("instructions_template"))
+            .is_some()
+        {
+            let official = official.get_or_insert_with(codex_openai_official_models);
+            if find_codex_official_model(model, official)
+                .is_some_and(|found| is_codex_official_mirror(entry, model, found))
+            {
+                entries.push(json!({ "model": model }));
+                continue;
+            }
         }
 
         let mut obj = serde_json::Map::new();
@@ -4498,6 +4654,289 @@ wire_api = "responses"
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
         );
+    }
+
+    /// 在官方列表换成 `rows` 的情况下跑 `f`（本线程）。
+    fn with_official_models<T>(rows: Vec<Value>, f: impl FnOnce() -> T) -> T {
+        CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(rows));
+        let out = f();
+        CODEX_OPENAI_OFFICIAL_MODELS_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+        out
+    }
+
+    /// 官方 GPT 条目的形状：提示词在 `model_messages`，带 freeform 工具、Lite 协议、速度档。
+    fn official_gpt_row(slug: &str, prompt: &str) -> Value {
+        native_row(
+            slug,
+            json!({
+                "display_name": slug.to_uppercase(),
+                "model_messages": { "instructions_template": prompt },
+                "apply_patch_tool_type": "freeform",
+                "web_search_tool_type": "text_and_image",
+                "tool_mode": "code_mode_only",
+                "use_responses_lite": true,
+                "visibility": "hide",
+                "service_tiers": [{ "id": "priority", "name": "Fast" }],
+                "additional_speed_tiers": ["fast"],
+                "upgrade": { "model": "gpt-next" },
+                "context_window": 272_000,
+                "max_context_window": 872_000,
+                "supports_image_detail_original": true,
+                "supported_reasoning_levels": [
+                    { "effort": "low", "description": "l" },
+                    { "effort": "xhigh", "description": "x" }
+                ],
+                "default_reasoning_level": "low",
+            }),
+        )
+    }
+
+    fn official_gpt_rows() -> Vec<Value> {
+        normalize_codex_native_rows(vec![
+            official_gpt_row("gpt-6", "GPT-6 base prompt"),
+            official_gpt_row("gpt-6-sol", "GPT-6 Sol prompt"),
+            official_gpt_row("gpt-5.5", "GPT-5.5 prompt"),
+        ])
+        .unwrap()
+    }
+
+    fn catalog_for(models: Value, config: &str, profile: CodexCatalogToolProfile) -> Vec<Value> {
+        let settings = json!({ "modelCatalog": { "models": models } });
+        codex_model_catalog_from_settings(&settings, config, profile)
+            .unwrap()
+            .unwrap()["models"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn official_models_match_like_codex() {
+        let rows = official_gpt_rows();
+        let found = |model: &str| {
+            find_codex_official_model(model, &rows)
+                .and_then(|row| row["slug"].as_str())
+                .map(str::to_string)
+        };
+        // 最长前缀。
+        assert_eq!(found("gpt-6-sol").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(found("gpt-6-sol-high").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(found("gpt-6-luna").as_deref(), Some("gpt-6"));
+        // 去掉一层简单的命名空间。
+        assert_eq!(found("openai/gpt-5.5").as_deref(), Some("gpt-5.5"));
+        assert_eq!(found("my_relay-1/gpt-6-sol").as_deref(), Some("gpt-6-sol"));
+        assert_eq!(found("a/b/gpt-5.5"), None);
+        assert_eq!(found("bad ns/gpt-5.5"), None);
+        assert_eq!(found("/gpt-5.5"), None);
+        // 区分大小写，和 Codex 一样。
+        assert_eq!(found("GPT-5.5"), None);
+        assert_eq!(found("gpt-5"), None);
+        assert_eq!(found("glm-5"), None);
+    }
+
+    #[test]
+    fn native_gpt_rows_mirror_the_official_entry() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([
+                    // 行里的覆盖值对官方行不生效。
+                    { "model": "gpt-6-sol", "contextWindow": 128_000, "reasoningLevels": ["none"] },
+                    { "model": "glm-5" }
+                ]),
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            )
+        });
+
+        let gpt = &models[0];
+        assert_eq!(gpt["slug"], "gpt-6-sol");
+        assert_eq!(gpt["display_name"], "GPT-6-SOL");
+        assert_eq!(
+            gpt["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+        assert_eq!(gpt["apply_patch_tool_type"], "freeform");
+        assert_eq!(gpt["web_search_tool_type"], "text_and_image");
+        assert_eq!(gpt["tool_mode"], "code_mode_only");
+        assert_eq!(gpt["context_window"], 272_000);
+        assert_eq!(gpt["max_context_window"], 872_000);
+        assert_eq!(gpt["default_reasoning_level"], "low");
+        assert_eq!(gpt["supported_reasoning_levels"][1]["effort"], "xhigh");
+        assert_eq!(gpt["supports_image_detail_original"], true);
+        // 官方账号、官方后端的字段改掉。
+        assert_eq!(gpt["use_responses_lite"], false);
+        assert_eq!(gpt["visibility"], "list");
+        assert_eq!(gpt["service_tiers"], json!([]));
+        assert_eq!(gpt["additional_speed_tiers"], json!([]));
+        assert_eq!(gpt["upgrade"], Value::Null);
+        assert_eq!(gpt["priority"], 1000);
+
+        // 没命中的行照旧：通用模板、去掉 custom 工具。
+        let glm = &models[1];
+        assert_eq!(glm["slug"], "glm-5");
+        assert_eq!(glm["priority"], 1001);
+        assert!(glm.get("model_messages").is_none());
+        assert!(glm.get("apply_patch_tool_type").is_none());
+        assert_eq!(glm["shell_type"], "shell_command");
+    }
+
+    #[test]
+    fn aliases_keep_their_own_name() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([{ "model": "openai/gpt-5.5" }, { "model": "gpt-6-sol-high" }]),
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            )
+        });
+        assert_eq!(models[0]["slug"], "openai/gpt-5.5");
+        assert_eq!(models[0]["display_name"], "openai/gpt-5.5");
+        assert_eq!(
+            models[0]["model_messages"]["instructions_template"],
+            "GPT-5.5 prompt"
+        );
+        assert_eq!(models[1]["slug"], "gpt-6-sol-high");
+        assert_eq!(models[1]["display_name"], "gpt-6-sol-high");
+        assert_eq!(
+            models[1]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+    }
+
+    #[test]
+    fn proxy_chat_gpt_rows_mirror_but_never_send_original_image_detail() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([{ "model": "gpt-6-sol" }]),
+                "",
+                CodexCatalogToolProfile::ProxyChat,
+            )
+        });
+        assert_eq!(
+            models[0]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+        assert_eq!(models[0]["apply_patch_tool_type"], "freeform");
+        assert_eq!(models[0]["use_responses_lite"], false);
+        assert_eq!(models[0]["supports_image_detail_original"], false);
+    }
+
+    #[test]
+    fn anthropic_and_deepseek_rows_do_not_mirror_openai() {
+        let (anthropic, deepseek) = with_official_models(official_gpt_rows(), || {
+            (
+                catalog_for(
+                    json!([{ "model": "gpt-6-sol" }]),
+                    "",
+                    CodexCatalogToolProfile::Anthropic,
+                ),
+                catalog_for(
+                    json!([{ "model": "gpt-6-sol" }]),
+                    DEEPSEEK_NATIVE_CONFIG,
+                    CodexCatalogToolProfile::NativeResponses,
+                ),
+            )
+        });
+        // Responses→Anthropic 的转换会丢掉 custom 工具：照旧用通用模板。
+        assert!(anthropic[0].get("model_messages").is_none());
+        assert!(anthropic[0].get("apply_patch_tool_type").is_none());
+        // DeepSeek 官方网关按它自己的目录。
+        assert_ne!(
+            deepseek[0]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+    }
+
+    #[test]
+    fn stacked_gpt_rows_mirror_under_their_prefixed_id() {
+        let models = with_official_models(official_gpt_rows(), || {
+            let route = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            let member = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &route,
+                    config_text: "",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Relay",
+                    row: CodexCatalogRow {
+                        settings: &member,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::ProxyChat,
+                    },
+                }],
+            )
+            .unwrap()["models"]
+                .as_array()
+                .unwrap()
+                .clone()
+        });
+        // 两家都有 GPT-6 Sol：各一条，内容都是官方的。
+        assert_eq!(models[0]["slug"], "gpt-6-sol");
+        assert_eq!(models[1]["slug"], "ccs-relay/gpt-6-sol");
+        for model in &models {
+            assert_eq!(
+                model["model_messages"]["instructions_template"],
+                "GPT-6 Sol prompt"
+            );
+            assert_eq!(model["use_responses_lite"], false);
+        }
+        // 各家按自己的链路：走 Chat 的那家不发 original 精度的图片。
+        assert_eq!(models[0]["supports_image_detail_original"], true);
+        assert_eq!(models[1]["supports_image_detail_original"], false);
+    }
+
+    #[test]
+    fn mirrored_rows_round_trip_as_bare_models() {
+        let (catalog, simplified) = with_official_models(official_gpt_rows(), || {
+            let catalog = json!({
+                "models": catalog_for(
+                    json!([
+                        { "model": "gpt-6-sol" },
+                        { "model": "glm-5", "displayName": "GLM 5", "contextWindow": 200_000 }
+                    ]),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+            });
+            let simplified = build_simplified_catalog_from_texts("", &catalog.to_string());
+            (catalog, simplified)
+        });
+        // 官方的显示名、窗口、档位不能被当成用户填的存回去。
+        assert_eq!(catalog["models"][0]["display_name"], "GPT-6-SOL");
+        let rows = simplified.unwrap()["models"].as_array().unwrap().clone();
+        assert_eq!(rows[0], json!({ "model": "gpt-6-sol" }));
+        assert_eq!(rows[1]["model"], "glm-5");
+        assert_eq!(rows[1]["displayName"], "GLM 5");
+        assert_eq!(rows[1]["contextWindow"], 200_000);
+    }
+
+    #[test]
+    fn old_proxy_chat_clones_keep_their_user_values_on_round_trip() {
+        // 旧版 ProxyChat 克隆 gpt-5.5 模板（带 model_messages），再叠用户填的值。
+        let rows = official_gpt_rows();
+        let settings = json!({ "modelCatalog": { "models": [
+            { "model": "gpt-5.5", "displayName": "My GPT", "contextWindow": 200_000 },
+            { "model": "gpt-6-sol" }
+        ] } });
+        let old = codex_model_catalog_from_specs(
+            &codex_catalog_model_specs(&settings),
+            &rows[2],
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+        let simplified = with_official_models(rows, || {
+            build_simplified_catalog_from_texts("", &old.to_string())
+        })
+        .unwrap();
+        let models = simplified["models"].as_array().unwrap();
+        assert_eq!(models[0]["displayName"], "My GPT");
+        assert_eq!(models[0]["contextWindow"], 200_000);
+        // 克隆 gpt-5.5 的 gpt-6-sol 行：显示名、窗口都不是官方的，照旧还原，不当成镜像。
+        assert_eq!(models[1]["model"], "gpt-6-sol");
+        assert_ne!(models[1], json!({ "model": "gpt-6-sol" }));
     }
 
     fn native_row(slug: &str, extra: Value) -> Value {
