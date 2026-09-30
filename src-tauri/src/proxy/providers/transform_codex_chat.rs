@@ -4495,7 +4495,7 @@ mod tests {
             .get("image_url")
             .and_then(|value| value.get("url"))
             .and_then(Value::as_str)
-            .is_some_and(|url| url == &data_url)));
+            .is_some_and(|url| url == data_url)));
         assert_eq!(messages[3]["content"], "Viewing the image now.");
         assert_eq!(messages[3]["tool_calls"][0]["id"], "call_next");
         assert_eq!(messages[4]["tool_call_id"], "call_next");
