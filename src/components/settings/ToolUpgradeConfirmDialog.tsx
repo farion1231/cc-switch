@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,12 @@ export function ToolUpgradeConfirmDialog({
   onCancel,
 }: ToolUpgradeConfirmDialogProps) {
   const { t } = useTranslation();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  // 队首切换后移开操作按钮的焦点，按住 Enter/Space 不能继续处理下一项。
+  useEffect(() => {
+    if (isOpen) titleRef.current?.focus();
+  }, [isOpen, plans]);
 
   return (
     <Dialog
@@ -41,9 +48,20 @@ export function ToolUpgradeConfirmDialog({
         if (!open) onCancel();
       }}
     >
-      <DialogContent className="max-w-md" zIndex="alert">
+      <DialogContent
+        className="max-w-md"
+        zIndex="alert"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          titleRef.current?.focus();
+        }}
+      >
         <DialogHeader className="space-y-2 border-b-0 bg-transparent pb-0">
-          <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+          <DialogTitle
+            ref={titleRef}
+            tabIndex={-1}
+            className="flex items-center gap-2 text-base font-semibold"
+          >
             <AlertTriangle className="h-5 w-5 text-yellow-500" />
             {t("settings.toolUpgradeConfirmTitle")}
           </DialogTitle>
@@ -89,10 +107,20 @@ export function ToolUpgradeConfirmDialog({
         </div>
 
         <DialogFooter className="flex gap-2 border-t-0 bg-transparent pt-2 sm:justify-end">
-          <Button variant="outline" onClick={onCancel}>
+          <Button
+            variant="outline"
+            onClick={(event) => {
+              if (event.detail <= 1) onCancel();
+            }}
+          >
             {t("common.cancel")}
           </Button>
-          <Button onClick={onConfirm}>
+          <Button
+            onClick={(event) => {
+              // 第二次 click 可能已经面对下一项计划，不能把双击视作两次授权。
+              if (event.detail <= 1) onConfirm();
+            }}
+          >
             {t("settings.toolUpgradeConfirmBtn")}
           </Button>
         </DialogFooter>
