@@ -11,8 +11,8 @@
 //!   操作里提交（`controller::set_stack_member`）；默认那家也在名单里，不能移除；
 //! - key 一经分配永久归这家（[`allocate_key`]）：客户端会一直带着选中过的 id，key 改了
 //!   指向，旧 id 就会被悄悄发到另一家；
-//! - 带保留前缀的 id 解不出来（成员已移除、供应商已删除、key 没登记）一律报错，不回落到
-//!   默认路由（[`resolve`]）：回落会用别家的钱、别家的模型回答，用户看不出来；
+//! - 带保留前缀的 id 解不出来（不在 Stack 模式、成员已移除、供应商已删除、key 没登记）一律
+//!   报错，不回落到默认路由（[`resolve`]）：回落会用别家的钱、别家的模型回答，用户看不出来；
 //! - Stack 请求不读也不写任何路由状态（熔断器、故障转移、「正在使用」、代理统计），见
 //!   `proxy::forwarder` 的 `routing_state_enabled`。
 
@@ -489,6 +489,8 @@ pub struct StackTarget {
 /// 带保留前缀的 id 为什么解不出来。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StackMiss {
+    /// 这个应用不在 Stack 模式（路由模式下名单留着，但不发布、也不转发）。
+    StackOff,
     /// key 没登记，或 id 切不出 key 和模型。
     Unknown,
     /// 这家已经从 Stack 名单移除。
@@ -501,6 +503,9 @@ impl StackMiss {
     /// 返回给客户端的错误文案。
     pub fn message(&self, model: &str) -> String {
         match self {
+            Self::StackOff => format!(
+                "叠加的模型 {model} 只能在叠加模式下使用，当前没有开启叠加模式，请在模型列表里重新选择 (Stacked model {model} only works in Stack mode, which is off; pick a model from the model list again)"
+            ),
             Self::Unknown => format!(
                 "叠加的模型 {model} 在 CC Switch 里不存在，请在模型列表里重新选择 (Stacked model {model} is unknown to CC Switch; pick a model from the model list again)"
             ),
@@ -523,7 +528,8 @@ pub enum Resolved {
     Miss(StackMiss),
 }
 
-/// 解析请求里的模型 id。不带保留前缀时不读任何状态，路由请求的路径不变。
+/// 解析请求里的模型 id。不带保留前缀时不读任何状态，路由请求的路径不变。带前缀的只在
+/// Stack 模式下解析：路由模式下名单留着，客户端手里旧的 Stack id 也不能转给名单里的那家。
 pub fn resolve(
     db: &Database,
     store: &DeviceStore,
@@ -535,6 +541,9 @@ pub fn resolve(
         Decoded::Malformed => return Ok(Resolved::Miss(StackMiss::Unknown)),
         Decoded::Stack { key, model, one_m } => (key, model, one_m),
     };
+    if !state::stack_mode(store, app.as_str())? {
+        return Ok(Resolved::Miss(StackMiss::StackOff));
+    }
     let stack = state::stack(store, app.as_str())?;
     let Some(provider_id) = stack.keys.get(key) else {
         return Ok(Resolved::Miss(StackMiss::Unknown));
@@ -882,7 +891,8 @@ mod tests {
         db: Database,
     }
 
-    /// kimi、zhipu 在名单里；gone 登记过但已移除；deleted 在名单里但行已经删了。
+    /// Claude Code、Codex 都在 Stack 模式。Claude 的 kimi、zhipu 在名单里；gone 登记过但已
+    /// 移除；deleted 在名单里但行已经删了。Codex 名单为空。
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = DeviceStore::at(dir.path());
@@ -905,12 +915,17 @@ mod tests {
             db.save_provider("claude", &row).unwrap();
         }
         state::update(&store, |live| {
-            let stack = &mut live.apps.entry("claude".to_string()).or_default().stack;
+            let claude = live.apps.entry("claude".to_string()).or_default();
+            claude.mode = Some(state::Mode::Proxy);
+            let stack = &mut claude.stack;
             stack.enabled = true;
             stack.members = ["kimi", "zhipu", "deleted"].map(str::to_string).to_vec();
             for id in ["kimi", "zhipu", "gone", "deleted"] {
                 stack.keys.insert(id.to_string(), id.to_string());
             }
+            let codex = live.apps.entry("codex".to_string()).or_default();
+            codex.mode = Some(state::Mode::Proxy);
+            codex.stack.enabled = true;
         })
         .unwrap();
         Fixture {
@@ -1052,6 +1067,40 @@ mod tests {
         );
         let message = StackMiss::Removed.message("ccs-claude-gone--g-1");
         assert!(message.contains("ccs-claude-gone--g-1"), "{message}");
+    }
+
+    #[test]
+    fn stacked_ids_are_rejected_outside_stack_mode() {
+        let fx = fixture();
+        let id = "ccs-claude-kimi--kimi-k3";
+        assert!(matches!(
+            resolve_in(&fx, AppType::Claude, id),
+            Resolved::Hit(_)
+        ));
+
+        // 路由模式：名单和 key 都留着，客户端手里的旧 id 也不能转给名单里的那家。
+        state::update(&fx.store, |live| {
+            live.apps.get_mut("claude").unwrap().stack.enabled = false;
+        })
+        .unwrap();
+        assert_eq!(
+            miss(resolve_in(&fx, AppType::Claude, id)),
+            StackMiss::StackOff
+        );
+
+        // 退回直连后附加位不动，同样不解析。
+        state::update(&fx.store, |live| {
+            let claude = live.apps.get_mut("claude").unwrap();
+            claude.stack.enabled = true;
+            claude.mode = Some(state::Mode::Direct);
+        })
+        .unwrap();
+        assert_eq!(
+            miss(resolve_in(&fx, AppType::Claude, id)),
+            StackMiss::StackOff
+        );
+        let message = StackMiss::StackOff.message(id);
+        assert!(message.contains(id), "{message}");
     }
 
     #[test]
