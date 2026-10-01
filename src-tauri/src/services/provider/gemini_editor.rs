@@ -83,6 +83,7 @@ pub fn view(
     Ok(EditorView {
         inactive: inactive_fields(settings_config, &env, &config),
         settings: Value::Object(shown),
+        codex: None,
     })
 }
 

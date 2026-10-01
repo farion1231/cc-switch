@@ -76,6 +76,7 @@ pub fn view(
         return Ok(EditorView {
             settings: settings_config.clone(),
             inactive: Vec::new(),
+            codex: None,
         });
     };
 
@@ -102,6 +103,7 @@ pub fn view(
             projection.table_name(),
         ),
         settings: Value::Object(settings),
+        codex: None,
     })
 }
 

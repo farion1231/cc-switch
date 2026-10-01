@@ -68,7 +68,7 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的选路（关键字段），
 /// 使开关即时生效，无需等下一次切换。当前供应商非官方（或不存在）时为 no-op：开关只
-/// 影响官方直连的选路。代理模式下 live 是代理契约，不受这个开关影响。
+/// 影响官方直连和代理的会话选路，代理模式仍保持官方认证契约。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
     let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &AppType::Codex)?;
     let current_id = ProviderService::current(state, AppType::Codex)?;
@@ -5181,6 +5181,10 @@ impl ProviderService {
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
         let mut provider = provider;
+        // 活动路由判定只认真实 live：已经补完 pending、持着切换锁，这里读到的
+        // config.toml 和模式状态就是这次写入要改的那份；编辑器预览里的选择器不算数。
+        let mode = crate::mode::current::mode_state(&app_type);
+        let live_routes = codex_editor::CodexLiveRouteContext::read(&mode)?;
         let plan = codex_editor::plan_save(
             existing.as_ref().map(|row| &row.settings_config),
             &provider.settings_config,
@@ -5193,6 +5197,10 @@ impl ProviderService {
             codex_direct::is_official(&provider),
             provider.uses_proxy_injected_oauth(),
             editor.on_conflict,
+            codex_editor::LegacyRouteSave {
+                snapshot: editor.codex.as_ref(),
+                live: &live_routes,
+            },
         )?;
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
@@ -5201,7 +5209,6 @@ impl ProviderService {
             keep_common_config_for_old_versions(&mut provider);
         }
 
-        let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let is_route = mode.routes_to(&provider.id);
 

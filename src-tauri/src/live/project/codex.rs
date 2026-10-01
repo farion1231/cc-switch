@@ -440,7 +440,7 @@ pub enum RouteWrite {
     Official { dormant_base_url: String },
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
     OfficialMirror,
-    /// 第三方（直连或代理契约）：选路写 custom。
+    /// 共享槽（第三方，或统一历史的官方代理）：选路写 custom，认证由调用方决定。
     Custom(Table),
     /// Codex 内置的其他 provider。
     BuiltIn { id: String, table: Option<Table> },
@@ -512,6 +512,11 @@ pub struct CodexConfigPatch {
     pub catalog: bool,
     /// 旧版按别的 id 写进去的表，能证明是 CC Switch 写的就删掉（里面可能有真实 Key）。
     pub retired: Vec<KnownTable>,
+    /// 统一历史启用后，保留已存在的旧官方代理路由定义（`cc-switch-official`），供旧桶
+    /// 会话恢复：Some(当前代理基址) = 该 id 的既有表保留并规范化为该地址的休眠镜像；
+    /// None = 维持「按 id 清除」的旧行为。生产路径目前恒为 Some（所有投影都要维护地址），
+    /// None 留给迁移切片完成后的清理开关和测试对照。
+    pub maintain_official_proxy_route: Option<String>,
 }
 
 impl TomlDocPatch for CodexConfigPatch {
@@ -695,15 +700,19 @@ impl CodexConfigPatch {
             providers.insert(&renamed, item);
         }
 
+        let maintain = self.maintain_official_proxy_route.is_some();
         // 旧版按别的 id 写进去的表、残留的代理占位表。被 profile 引用的不动。
+        // 统一历史维护旧官方代理路由时（maintain=Some），`cc-switch-official` 免于清扫：
+        // 旧桶会话还引用它，本投影会在下面把它规范化成休眠镜像，而不是删掉。
         let doomed: Vec<String> = providers
             .iter()
             .filter(|(id, item)| {
                 *id != ROUTE_ID
                     && !referenced.iter().any(|name| name == id)
-                    && (*id == OFFICIAL_PROXY_ROUTE_ID
-                        || holds_placeholder(item)
-                        || self.is_retired(id, item))
+                    && (!(maintain && *id == OFFICIAL_PROXY_ROUTE_ID)
+                        && (*id == OFFICIAL_PROXY_ROUTE_ID
+                            || holds_placeholder(item)
+                            || self.is_retired(id, item)))
             })
             .map(|(id, _)| id.to_string())
             .collect();
@@ -756,6 +765,28 @@ impl CodexConfigPatch {
                     providers,
                     OFFICIAL_PROXY_ROUTE_ID,
                     table.clone(),
+                    container_inline,
+                );
+            }
+        }
+
+        // 统一历史的旧路由维护：活跃的官方代理写（OfficialProxy）已经写过这张表，跳过
+        // 避免等值双写；表不存在就不创建——保留只服务已存在的旧定义，绝不无中生有；
+        // 被 profile 引用时也不动——profile 钉死的表归用户管，`check_effective_route`
+        // 本就会拒绝 selector 不符的写入（被钉住的地址也长期不随投影刷新，是既有
+        // profile 语义的自然结果）。规范化用标准休眠镜像整体替换槽内容：保留官方
+        // 认证要求，但不含任何凭据字段（没有占位符 token，不会误触启动接管检测）。
+        if let Some(base_url) = &self.maintain_official_proxy_route {
+            if !matches!(&self.route, RouteWrite::OfficialProxy(_))
+                && providers.contains_key(OFFICIAL_PROXY_ROUTE_ID)
+                && !referenced
+                    .iter()
+                    .any(|name| name == OFFICIAL_PROXY_ROUTE_ID)
+            {
+                put_table(
+                    providers,
+                    OFFICIAL_PROXY_ROUTE_ID,
+                    official_mirror_table(Some(base_url), false),
                     container_inline,
                 );
             }
@@ -837,6 +868,12 @@ fn put_table(providers: &mut dyn TableLike, id: &str, table: Table, container_in
             providers.insert(id, Item::Table(table));
         }
     }
+}
+
+/// `[profiles.*]` 里有没有人用 `model_provider` 引用 `id` 这张表。编辑器的删除保护用它，
+/// 和投影的保留规则同一套解析。
+pub fn profile_references(root: &Table, id: &str) -> bool {
+    profile_selectors(root).iter().any(|name| name == id)
 }
 
 /// `[profiles.*]` 里 `model_provider` 引用的表 id。
@@ -1038,5 +1075,175 @@ mod tests {
                 Route::Default
             ));
         }
+    }
+
+    fn patch(route: RouteWrite, maintain: Option<&str>) -> CodexConfigPatch {
+        CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route,
+            catalog: false,
+            retired: Vec::new(),
+            maintain_official_proxy_route: maintain.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn unified_route_write_normalizes_existing_legacy_official_proxy_table() {
+        let mut doc: DocumentMut = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "OpenAI"
+requires_openai_auth = true
+supports_websockets = false
+wire_api = "responses"
+base_url = "http://127.0.0.1:old/v1"
+
+[model_providers.cc-switch-official]
+name = "renamed by user"
+wire_api = "chat"
+experimental_bearer_token = "should-be-removed"
+extra = true
+"#
+        .parse()
+        .unwrap();
+        let config = patch(
+            RouteWrite::Custom(official_mirror_table(
+                Some("http://127.0.0.1:15721/v1"),
+                false,
+            )),
+            Some("http://127.0.0.1:15721/v1"),
+        );
+
+        config.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+
+        let legacy = doc["model_providers"][OFFICIAL_PROXY_ROUTE_ID]
+            .as_table()
+            .unwrap();
+        assert_eq!(legacy["name"].as_str(), Some("OpenAI"));
+        assert_eq!(
+            legacy["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert_eq!(legacy["wire_api"].as_str(), Some("responses"));
+        assert_eq!(legacy["requires_openai_auth"].as_bool(), Some(true));
+        assert_eq!(legacy["supports_websockets"].as_bool(), Some(false));
+        assert!(!legacy.contains_key("experimental_bearer_token"));
+        assert!(!legacy.contains_key("extra"));
+    }
+
+    #[test]
+    fn unified_route_write_normalizes_inline_legacy_official_proxy_table() {
+        // 升级前的旧配置也可能是内联容器（`model_providers = { … }`）：规范化要跟随容器形态。
+        let mut doc: DocumentMut = r#"model_provider = "custom"
+model_providers = { custom = { name = "OpenAI", wire_api = "responses" }, "cc-switch-official" = { name = "renamed by user", wire_api = "chat", experimental_bearer_token = "should-be-removed", extra = true } }
+"#
+        .parse()
+        .unwrap();
+        let config = patch(
+            RouteWrite::Custom(official_mirror_table(
+                Some("http://127.0.0.1:15721/v1"),
+                false,
+            )),
+            Some("http://127.0.0.1:15721/v1"),
+        );
+
+        config.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+
+        let legacy = &doc["model_providers"][OFFICIAL_PROXY_ROUTE_ID];
+        assert_eq!(legacy.get("name").and_then(Item::as_str), Some("OpenAI"));
+        assert_eq!(
+            legacy.get("base_url").and_then(Item::as_str),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert_eq!(
+            legacy.get("requires_openai_auth").and_then(Item::as_bool),
+            Some(true)
+        );
+        assert!(legacy.get("experimental_bearer_token").is_none());
+        assert!(legacy.get("extra").is_none());
+    }
+
+    #[test]
+    fn unified_route_write_does_not_create_missing_legacy_official_proxy_table() {
+        for text in [
+            "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\n",
+            "model_provider = \"custom\"\n",
+        ] {
+            let mut doc: DocumentMut = text.parse().unwrap();
+            let config = patch(
+                RouteWrite::Custom(official_mirror_table(
+                    Some("http://127.0.0.1:15721/v1"),
+                    false,
+                )),
+                Some("http://127.0.0.1:15721/v1"),
+            );
+
+            config.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+
+            assert!(doc
+                .get("model_providers")
+                .and_then(Item::as_table_like)
+                .is_none_or(|providers| !providers.contains_key(OFFICIAL_PROXY_ROUTE_ID)));
+        }
+    }
+
+    #[test]
+    fn profile_referenced_legacy_official_proxy_table_is_not_overwritten() {
+        let mut doc: DocumentMut = r#"[profiles.legacy]
+model_provider = "cc-switch-official"
+
+[model_providers.cc-switch-official]
+name = "user-owned"
+wire_api = "chat"
+"#
+        .parse()
+        .unwrap();
+        let config = patch(
+            RouteWrite::Custom(official_mirror_table(
+                Some("http://127.0.0.1:15721/v1"),
+                false,
+            )),
+            Some("http://127.0.0.1:15721/v1"),
+        );
+
+        config.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+
+        let legacy = doc["model_providers"][OFFICIAL_PROXY_ROUTE_ID]
+            .as_table()
+            .unwrap();
+        assert_eq!(legacy["name"].as_str(), Some("user-owned"));
+        assert_eq!(legacy["wire_api"].as_str(), Some("chat"));
+    }
+
+    #[test]
+    fn legacy_retention_is_disabled_when_no_maintenance_url_is_given() {
+        let mut doc: DocumentMut = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "OpenAI"
+
+[model_providers.cc-switch-official]
+name = "legacy"
+"#
+        .parse()
+        .unwrap();
+        let config = patch(
+            RouteWrite::Custom(official_mirror_table(
+                Some("http://127.0.0.1:15721/v1"),
+                false,
+            )),
+            None,
+        );
+
+        config.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+
+        assert!(doc["model_providers"]
+            .as_table()
+            .unwrap()
+            .get(OFFICIAL_PROXY_ROUTE_ID)
+            .is_none());
     }
 }

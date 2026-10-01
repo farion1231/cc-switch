@@ -257,6 +257,64 @@ impl ProxyService {
         }
     }
 
+    /// Import and automatic snippet extraction must not persist a proxy projection as user config.
+    /// A matching shape is not ownership evidence for startup recovery or stored provider rows.
+    pub(crate) fn live_has_proxy_import_risk(&self, app_type: &AppType) -> bool {
+        if !matches!(app_type, AppType::Codex) {
+            return self.live_has_proxy_placeholder(app_type);
+        }
+        self.read_codex_live().is_ok_and(|config| {
+            Self::is_codex_live_taken_over(&config) || Self::codex_has_mirror_proxy_shape(&config)
+        })
+    }
+
+    // Keep the exact shape in sync with official_mirror_table and its generated-fixture tests.
+    // Remote hand-written configurations can match too: reject import, never claim ownership.
+    fn codex_has_mirror_proxy_shape(config: &Value) -> bool {
+        let Some(doc) = config
+            .get("config")
+            .and_then(Value::as_str)
+            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
+        else {
+            return false;
+        };
+        if doc.get("model_provider").and_then(toml_edit::Item::as_str) != Some("custom") {
+            return false;
+        }
+        let Some(table) = doc
+            .get("model_providers")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|providers| providers.get("custom"))
+            .and_then(toml_edit::Item::as_table_like)
+        else {
+            return false;
+        };
+        table.len() == 5
+            && table.get("name").and_then(toml_edit::Item::as_str) == Some("OpenAI")
+            && table.get("wire_api").and_then(toml_edit::Item::as_str) == Some("responses")
+            && table
+                .get("requires_openai_auth")
+                .and_then(toml_edit::Item::as_bool)
+                == Some(true)
+            && table
+                .get("supports_websockets")
+                .and_then(toml_edit::Item::as_bool)
+                == Some(false)
+            && table
+                .get("base_url")
+                .and_then(toml_edit::Item::as_str)
+                .and_then(|value| url::Url::parse(value).ok())
+                .is_some_and(|url| {
+                    url.scheme() == "http"
+                        && url.host_str().is_some()
+                        && url.path() == "/v1"
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.query().is_none()
+                        && url.fragment().is_none()
+                })
+    }
+
     /// 一份配置（客户端文件或供应商行）里有没有接管占位符：行里带着它的是旧版接管期间
     /// 被导入的残留，不能照写回 live，否则客户端会一直指着已经不在的本地代理。
     pub(crate) fn config_has_proxy_placeholder(app_type: &AppType, config: &Value) -> bool {
@@ -539,6 +597,68 @@ impl ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_unified_proxy_guard_excludes_native_and_customized_tables() {
+        use crate::live::project::codex::official_mirror_table;
+        use toml_edit::{value, DocumentMut, Item, Table};
+
+        let config = |table: Table| {
+            let mut doc = DocumentMut::new();
+            doc.insert("model_provider", value("custom"));
+            let mut providers = Table::new();
+            providers.insert("custom", Item::Table(table));
+            doc.insert("model_providers", Item::Table(providers));
+            json!({"config": doc.to_string()})
+        };
+        let mirror = official_mirror_table(Some("http://localhost:12345/v1"), false);
+        assert!(ProxyService::codex_has_mirror_proxy_shape(&config(
+            mirror.clone()
+        )));
+        assert!(!ProxyService::config_has_proxy_placeholder(
+            &AppType::Codex,
+            &config(mirror.clone())
+        ));
+        assert!(!ProxyService::codex_has_mirror_proxy_shape(&config(
+            official_mirror_table(None, true)
+        )));
+        for (field, replacement) in [
+            ("name", value("Personal")),
+            ("requires_openai_auth", value(false)),
+            ("supports_websockets", value(true)),
+            ("wire_api", value("chat")),
+            ("env_key", value("PERSONAL_KEY")),
+            ("requires_openai_auth", value("true")),
+        ] {
+            let mut table = mirror.clone();
+            table.insert(field, replacement);
+            assert!(
+                !ProxyService::codex_has_mirror_proxy_shape(&config(table)),
+                "{field}"
+            );
+        }
+        for url in [
+            "https://example.com/v1",
+            "http://example.com/v2",
+            "http://user@example.com/v1",
+            "http://example.com/v1?x=1",
+            "http://example.com/v1#fragment",
+            "not a URL",
+        ] {
+            assert!(
+                !ProxyService::codex_has_mirror_proxy_shape(&config(official_mirror_table(
+                    Some(url),
+                    false
+                ))),
+                "{url}"
+            );
+        }
+        for text in ["", "not = [valid", "model_provider = 'openai'"] {
+            assert!(!ProxyService::codex_has_mirror_proxy_shape(
+                &json!({"config":text})
+            ));
+        }
+    }
     async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
         let mut configs = Vec::new();
         for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {

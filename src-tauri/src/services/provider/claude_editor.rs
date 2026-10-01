@@ -27,6 +27,7 @@ use crate::provider::Provider;
 use crate::store::AppState;
 
 use super::claude_direct;
+use super::codex_editor::CodexEditorSnapshot;
 
 /// 旧版存在 settings 里的内部字段：从不写进 live，也不算「不随切换生效的字段」。
 const INTERNAL_TOP: &[&str] = &[
@@ -43,6 +44,10 @@ pub struct EditorView {
     pub settings: Value,
     /// 行里保存着、但不随切换生效的字段（值和显示的不同才列出）。
     pub inactive: Vec<InactiveField>,
+    /// Codex：打开时的旧官方代理路由状态，保存时原样带回（见
+    /// [`CodexEditorSnapshot`]）。其他应用没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<CodexEditorSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -105,6 +110,9 @@ pub struct EditorSave {
     /// 显示里有、草稿里没有的独有字段是从 live 带进来的，不归新供应商。
     #[serde(default)]
     pub draft: Option<Value>,
+    /// Codex：打开时 [`EditorView::codex`] 原样带回的快照；旧调用方没有。
+    #[serde(default)]
+    pub codex: Option<CodexEditorSnapshot>,
     #[serde(default)]
     pub on_conflict: ConflictPolicy,
 }
@@ -124,6 +132,7 @@ pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, App
     Ok(EditorView {
         inactive: inactive_fields(settings_config, &settings),
         settings,
+        codex: None,
     })
 }
 

@@ -117,5 +117,6 @@ panic = "unwind"
 strip = "symbols"
 
 [dev-dependencies]
+tauri = { version = "2.8.2", features = ["test"] }
 serial_test = "3"
 tempfile = "3"

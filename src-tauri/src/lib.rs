@@ -1916,6 +1916,8 @@ fn initialize_common_config_snippets(state: &store::AppState) {
     // This must run before proxy mode is re-attached on startup, otherwise we'd read
     // proxy-placeholder configs instead of the user's actual live settings. A client
     // still attached from an update restart (no detach on the way out) is skipped too.
+    // Official proxy mirrors have no placeholder: skip the entire automatic extraction,
+    // including safe non-route fields, without changing any already stored snippet.
     for app_type in crate::app_config::AppType::all() {
         if !state
             .db
@@ -1924,7 +1926,7 @@ fn initialize_common_config_snippets(state: &store::AppState) {
         {
             continue;
         }
-        if state.proxy_service.live_has_proxy_placeholder(&app_type) {
+        if state.proxy_service.live_has_proxy_import_risk(&app_type) {
             continue;
         }
 

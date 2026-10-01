@@ -1758,6 +1758,7 @@ mod mode_tests {
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         );
@@ -2899,6 +2900,7 @@ model_provider = "c"
                 Some(crate::services::provider::EditorSave {
                     base,
                     draft: None,
+                    codex: None,
                     on_conflict: Default::default(),
                 }),
             )
@@ -3011,6 +3013,7 @@ model_provider = "c"
                 Some(crate::services::provider::EditorSave {
                     base,
                     draft: None,
+                    codex: None,
                     on_conflict: Default::default(),
                 }),
             )
@@ -3105,6 +3108,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3138,6 +3142,188 @@ model_provider = "c"
             view.settings,
         )
         .expect("add with the profile active");
+    }
+
+    /// 统一历史开、代理契约用共享槽：编辑器删掉休眠的旧官方代理路由按打开时的快照比，
+    /// 用户打开前的改名、追加键、过期地址不制造假冲突，删除真的落到盘上。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_deletes_the_dormant_legacy_route_with_the_open_snapshot() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = format!(
+            "{}\n[model_providers.cc-switch-official]\nname = \"OpenAI-legacy\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nuser_added_key = \"kept-before\"\n",
+            CODEX_USER_LIVE
+        );
+        seed_codex(&live, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        // 代理契约在盘上，但选的是共享槽（统一历史开）：旧表是休眠表。
+        state::update(&DeviceStore::for_device(), |live| {
+            live.apps
+                .entry(AppType::Codex.as_str().to_string())
+                .or_default()
+                .set_mode_state(ModeState {
+                    mode: Some(Mode::Proxy),
+                    attached: true,
+                    proxy_route: Some(codex_official().id),
+                    contract: Some(Contract {
+                        version: contract::CONTRACT_VERSION,
+                        key: "contract".into(),
+                        exclusive: Default::default(),
+                    }),
+                });
+        })
+        .unwrap();
+
+        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &b_row.settings_config, None)
+                .expect("view b");
+        let shown = view.settings["config"].as_str().unwrap();
+        // 预览把旧表规范化成镜像（名字复原、用户键清掉、地址刷新），和盘上不一样。
+        assert!(
+            shown.contains("[model_providers.cc-switch-official]")
+                && !shown.contains("OpenAI-legacy")
+                && !shown.contains("user_added_key"),
+            "{shown}"
+        );
+        let snapshot = view.codex.clone().expect("codex snapshot");
+        assert!(snapshot.legacy_route && snapshot.legacy_fingerprint.is_some());
+        assert_eq!(snapshot.selector.as_deref(), Some("custom"));
+
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(
+            shown
+                .split_once("[model_providers.cc-switch-official]")
+                .expect("preview keeps the dormant table")
+                .0
+        );
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Codex,
+            Some("b"),
+            {
+                let mut row = b_row.clone();
+                row.settings_config = edited;
+                row
+            },
+            Some(crate::services::provider::EditorSave {
+                base: view.settings.clone(),
+                draft: None,
+                codex: view.codex.clone(),
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("delete the dormant route");
+
+        let doc = codex_doc();
+        assert!(
+            doc["model_providers"]
+                .as_table()
+                .unwrap()
+                .get("cc-switch-official")
+                .is_none(),
+            "{}",
+            codex_text()
+        );
+        // 用户自己的表照旧，模式状态没被这次保存动过。
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"]["ollama_local"].is_table());
+        assert!(state::mode_state(&DeviceStore::for_device(), "codex")
+            .unwrap()
+            .contract
+            .is_some());
+    }
+
+    /// 顶层选择器（或代理契约）还占着旧表：删除被拒绝，文件、数据库和 pending 都不动，
+    /// KeepMine 也盖不过活动路由保护。
+    #[tokio::test]
+    #[serial]
+    async fn codex_editor_refuses_to_delete_the_active_legacy_route() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = format!(
+            "{}\n[model_providers.cc-switch-official]\nname = \"OpenAI-legacy\"\nbase_url = \"http://127.0.0.1:9999/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+            CODEX_USER_LIVE
+        )
+        .replace(
+            "model_provider = \"custom\"",
+            "model_provider = \"cc-switch-official\"",
+        );
+        seed_codex(&live, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        state::update(&DeviceStore::for_device(), |live| {
+            live.apps
+                .entry(AppType::Codex.as_str().to_string())
+                .or_default()
+                .set_mode_state(ModeState {
+                    mode: Some(Mode::Proxy),
+                    attached: true,
+                    proxy_route: Some(codex_official().id),
+                    contract: Some(Contract {
+                        version: contract::CONTRACT_VERSION,
+                        key: "contract".into(),
+                        exclusive: Default::default(),
+                    }),
+                });
+        })
+        .unwrap();
+
+        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let view =
+            ProviderService::editor_view(&state, AppType::Codex, &b_row.settings_config, None)
+                .expect("view b");
+        let snapshot = view.codex.clone().expect("codex snapshot");
+        // 打开时选择器就指着它：快照不作删除基准。
+        assert!(snapshot.legacy_route);
+        assert_eq!(snapshot.selector.as_deref(), Some("cc-switch-official"));
+
+        let mut edited = view.settings.clone();
+        edited["config"] = json!(
+            view.settings["config"]
+                .as_str()
+                .unwrap()
+                .split_once("[model_providers.cc-switch-official]")
+                .expect("preview keeps the table")
+                .0
+        );
+        // 像前端一样把快照和冲突策略装进保存请求（顺带覆盖 camelCase 的传输形状）。
+        let save = |on_conflict: &str| -> Result<bool, AppError> {
+            let editor: crate::services::provider::EditorSave = serde_json::from_value(json!({
+                "base": view.settings,
+                "codex": snapshot,
+                "onConflict": on_conflict,
+            }))
+            .expect("editor save payload");
+            ProviderService::update_from_editor(
+                &state,
+                AppType::Codex,
+                Some("b"),
+                {
+                    let mut row = b_row.clone();
+                    row.settings_config = edited.clone();
+                    row
+                },
+                Some(editor),
+            )
+        };
+        for on_conflict in ["refuse", "keepMine"] {
+            let refused = save(on_conflict).expect_err("active route is protected");
+            assert!(
+                matches!(
+                    refused,
+                    AppError::Localized {
+                        key: "provider.codex.editor.official_route_in_use",
+                        ..
+                    }
+                ),
+                "{refused}"
+            );
+        }
+        assert_eq!(codex_text(), live, "nothing was written");
+        assert!(!operation::has_pending("codex"));
+        let stored = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        assert_eq!(stored.settings_config, b_row.settings_config);
     }
 
     /// 新增对话框打开之后，客户端改了一个从 live 带进来的独有字段：草稿里没有它，保存时不
@@ -3216,6 +3402,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3262,6 +3449,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3541,6 +3729,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings.clone(),
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3583,6 +3772,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3869,6 +4059,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base: view.settings,
                 draft: None,
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -3923,6 +4114,7 @@ model_provider = "c"
             Some(crate::services::provider::EditorSave {
                 base,
                 draft: Some(draft),
+                codex: None,
                 on_conflict: Default::default(),
             }),
         )
@@ -4108,5 +4300,433 @@ model_provider = "c"
         add_from_editor(&state, AppType::GrokBuild, draft, edited, view.settings).expect("add b");
         assert_eq!(grok_doc()["models"]["default"].as_str(), Some("grok-4.5"));
         assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
+    }
+
+    fn codex_unified_proxy_mirror() -> &'static str {
+        "model_provider = 'custom'\n[model_providers.custom]\nname = 'OpenAI'\nrequires_openai_auth = true\nsupports_websockets = false\nwire_api = 'responses'\nbase_url = 'http://127.0.0.1:15721/v1'\n"
+    }
+    fn codex_unified_proxy_toggle(value: bool) {
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = value;
+        crate::settings::update_settings(settings).unwrap();
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_manual_shape_does_not_authorize_startup_write() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        commit_state(
+            &s,
+            &AppType::Codex,
+            &PendingTarget::mode(ModeState {
+                mode: Some(Mode::Direct),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        seed_codex(codex_unified_proxy_mirror(), Some(&json!({})));
+        startup_app(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(codex_text(), codex_unified_proxy_mirror());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_dormant_twin_does_not_wake_startup_writes() {
+        // live 是直连镜像（共享槽）、休眠旧表只是躺在旁边：启动看到直连不许重写，
+        // 孪生的存在本身不是接管的证据（规范化只发生在合法投影里）。
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        commit_state(
+            &s,
+            &AppType::Codex,
+            &PendingTarget::mode(ModeState {
+                mode: Some(Mode::Direct),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        let live = format!(
+            "{}\n[model_providers.cc-switch-official]\nname = \"renamed by user\"\nwire_api = \"chat\"\n",
+            codex_unified_proxy_mirror()
+        );
+        seed_codex(&live, Some(&json!({})));
+        startup_app(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(codex_text(), live);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_unified_proxy_manual_row_is_not_polluted() {
+        let mut row = codex_official();
+        row.settings_config["config"] = json!(codex_unified_proxy_mirror());
+        assert!(usable_direct(&AppType::Codex, Some(&row)).is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_real_resync_keeps_native_auth_and_switches_bucket() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        let auth = json!({"auth_mode":"chatgpt", "tokens":{"id_token":"proof-id", "access_token":"proof-access", "refresh_token":"proof-refresh", "account_id":"proof-account"}});
+        seed_codex("model = 'gpt-5.4'\n", Some(&auth));
+        codex_unified_proxy_toggle(false);
+        enter(&s, &AppType::Codex).await.unwrap();
+        let old_key = mode(&AppType::Codex).contract.unwrap().key;
+        codex_unified_proxy_toggle(true);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        let text = codex_text();
+        let d: toml::Table = toml::from_str(&text).unwrap();
+        let bucket = d["model_provider"].as_str().unwrap().to_string();
+        let retained = &d["model_providers"]["cc-switch-official"];
+        assert_eq!(retained["name"].as_str(), Some("OpenAI"));
+        assert_eq!(retained["wire_api"].as_str(), Some("responses"));
+        assert_eq!(retained["requires_openai_auth"].as_bool(), Some(true));
+        assert_eq!(retained["supports_websockets"].as_bool(), Some(false));
+        assert!(retained.get("experimental_bearer_token").is_none());
+        let new_key = mode(&AppType::Codex).contract.unwrap().key;
+        let auth_after: Value =
+            serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
+        let marked = format!("# external comment proves unchanged contract skips writes\n{text}");
+        fs::write(codex_config_path(), &marked).unwrap();
+        failpoint::crash_at(Some("staged"));
+        let no_write = resync_route(&s, &AppType::Codex).await;
+        failpoint::crash_at(None);
+        no_write.unwrap();
+        let unchanged = codex_text() == marked;
+        codex_unified_proxy_toggle(false);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        let back: toml::Table = toml::from_str(&codex_text()).unwrap();
+        // Release the real local listener before assertions can panic.
+        exit(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(bucket, "custom");
+        assert_ne!(old_key, new_key);
+        assert_eq!(auth_after, auth);
+        assert!(unchanged);
+        assert_eq!(back["model_provider"].as_str(), Some("cc-switch-official"));
+        assert_eq!(
+            back["model_providers"]["cc-switch-official"]["name"].as_str(),
+            Some("OpenAI")
+        );
+        assert_eq!(
+            back["model_providers"]["cc-switch-official"]["base_url"].as_str(),
+            d["model_providers"]["cc-switch-official"]["base_url"].as_str()
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_managed_account_auth_and_marker_survive_projection_change() {
+        let _home = Home::new();
+        let mut row = codex_official();
+        row.meta = Some(crate::provider::ProviderMeta {
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".into()),
+                account_id: Some("proof-managed".into()),
+            }),
+            ..Default::default()
+        });
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        s.codex_oauth_manager
+            .add_test_account_with_user_identity(
+                "proof-managed",
+                "synthetic-access",
+                "synthetic-user",
+            )
+            .await
+            .unwrap();
+        seed_codex("", Some(&json!({})));
+        codex_unified_proxy_toggle(false);
+        enter(&s, &AppType::Codex).await.unwrap();
+        let before_auth = fs::read(codex_auth_path()).unwrap();
+        let marker = crate::codex_config::get_codex_managed_oauth_live_auth_marker_path();
+        let before_marker = fs::read(&marker).unwrap();
+        codex_unified_proxy_toggle(true);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        let after_auth = fs::read(codex_auth_path()).unwrap();
+        let after_marker = fs::read(&marker).unwrap();
+        let doc: toml::Table = toml::from_str(&codex_text()).unwrap();
+        exit(&s, &AppType::Codex).await.unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(before_auth, after_auth);
+        assert_eq!(before_marker, after_marker);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_generated_shapes_import_and_copy_are_explicit() {
+        use crate::live::project::codex::official_mirror_table;
+        for url in [
+            "http://127.0.0.1:15721/v1",
+            "http://[::1]:23456/v1",
+            "http://192.168.1.23:23456/v1",
+            "http://remote.example/v1",
+        ] {
+            for inline in [false, true] {
+                let _home = Home::new();
+                let s = AppState::new(Arc::new(Database::memory().unwrap()));
+                let table = official_mirror_table(Some(url), false);
+                let mut providers = toml_edit::Table::new();
+                providers.insert(
+                    "custom",
+                    if inline {
+                        toml_edit::Item::Value(toml_edit::Value::InlineTable(
+                            table.into_inline_table(),
+                        ))
+                    } else {
+                        toml_edit::Item::Table(table)
+                    },
+                );
+                let mut doc = toml_edit::DocumentMut::new();
+                doc.insert("model_provider", toml_edit::value("custom"));
+                doc.insert("model_providers", toml_edit::Item::Table(providers));
+                let text = doc.to_string();
+                seed_codex(&text, Some(&json!({})));
+                let error = ProviderService::import_default_config(&s, AppType::Codex).unwrap_err();
+                match error {
+                    AppError::Localized { key, zh, en } => {
+                        assert_eq!(key, "provider.import.live_taken_over");
+                        assert!(zh.contains("或与代理投影形态相同"));
+                        assert!(en.contains("or matches a proxy projection"));
+                    }
+                    other => panic!("unexpected error: {other}"),
+                }
+                assert_eq!(codex_text(), text);
+                assert!(s.db.get_all_providers("codex").unwrap().is_empty());
+            }
+        }
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_disabling_unify_restores_complete_dormant_table() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        let prepared = codex_direct::Prepared::default();
+        codex_unified_proxy_toggle(true);
+        let target = codex_direct::Target::Proxy {
+            route: &row,
+            base_url: "http://127.0.0.1:23456/v1",
+        };
+        let before = codex_direct::plan(&s.db, &Owner::None, &target, &prepared).unwrap();
+        let path = codex_config_path();
+        let mut doc = toml_edit::DocumentMut::new();
+        before.config().apply_to(&path, &mut doc).unwrap();
+        codex_unified_proxy_toggle(false);
+        let after = codex_direct::plan(&s.db, &Owner::None, &target, &prepared).unwrap();
+        after.config().apply_to(&path, &mut doc).unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("cc-switch-official"));
+        let t = doc["model_providers"]["custom"].as_table().unwrap();
+        assert_eq!(t.len(), 4);
+        assert_eq!(t["name"].as_str(), Some("custom"));
+        assert_eq!(t["base_url"].as_str(), Some("http://127.0.0.1:23456/v1"));
+        assert_eq!(t["wire_api"].as_str(), Some("responses"));
+        assert_eq!(
+            t["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(!t.contains_key("requires_openai_auth"));
+        assert!(!t.contains_key("supports_websockets"));
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_real_address_change_rewrites_endpoint_and_preserves_auth() {
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        codex_unified_proxy_toggle(true);
+        seed_codex(
+            "[model_providers.cc-switch-official]\nname = 'OpenAI'\nrequires_openai_auth = true\nsupports_websockets = false\nwire_api = 'responses'\nbase_url = 'http://127.0.0.1:15721/v1'\n",
+            Some(&json!({})),
+        );
+        enter(&s, &AppType::Codex).await.unwrap();
+        let before = codex_text();
+        let auth_before = fs::read(codex_auth_path()).unwrap();
+        let key_before = mode(&AppType::Codex).contract.unwrap().key;
+        let mut config = s.proxy_service.get_config().await.unwrap();
+        // Real service restart, port 0 requests a fresh isolated listener; all-interface bind is
+        // not needed. IPv6 loopback alone makes the emitted endpoint observably different and is
+        // bindable everywhere (bracketed, as the listener's SocketAddr parse requires) — macOS's
+        // lo0 only owns 127.0.0.1, so 127.0.0.2 fails there with EADDRNOTAVAIL.
+        config.listen_address = "[::1]".into();
+        config.listen_port = 0;
+        assert!(s.proxy_service.update_config(&config).await.unwrap());
+        resync_route(&s, &AppType::Codex).await.unwrap();
+        let after = codex_text();
+        let expected = s.proxy_service.build_proxy_urls().await.unwrap().1;
+        let key_after = mode(&AppType::Codex).contract.unwrap().key;
+        let auth_after = fs::read(codex_auth_path()).unwrap();
+        exit(&s, &AppType::Codex).await.unwrap();
+        assert_ne!(before, after);
+        assert_ne!(key_before, key_after);
+        let doc: toml::Table = toml::from_str(&after).unwrap();
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            doc["model_providers"]["cc-switch-official"]["base_url"].as_str(),
+            Some(expected.as_str())
+        );
+        assert_eq!(auth_before, auth_after);
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_clean_live_attach_does_not_invent_the_legacy_route() {
+        // 全新设备（live 里从没有过旧表）+ 统一开 + 进官方代理：只写共享槽，
+        // 绝不无中生有旧 `cc-switch-official` 定义——集成层锁定这个最常走的路径。
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        codex_unified_proxy_toggle(true);
+        seed_codex("", Some(&json!({})));
+        enter(&s, &AppType::Codex).await.unwrap();
+        let text = codex_text();
+        // Release the real local listener before assertions can panic.
+        exit(&s, &AppType::Codex).await.unwrap();
+        let doc: toml::Table = toml::from_str(&text).unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"].get("cc-switch-official").is_none());
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_official_third_party_roundtrip() {
+        let _home = Home::new();
+        let official = codex_official();
+        let relay = codex_row("proof-relay", "https://relay.example/v1", "");
+        let s = state_with(
+            AppType::Codex,
+            &[official.clone(), relay.clone()],
+            &official.id,
+        )
+        .await;
+        codex_unified_proxy_toggle(false);
+        let auth = json!({"auth_mode":"chatgpt", "tokens":{"id_token":"proof-id", "access_token":"proof-access", "refresh_token":"proof-refresh", "account_id":"proof-account"}});
+        seed_codex("", Some(&auth));
+        enter(&s, &AppType::Codex).await.unwrap();
+        codex_unified_proxy_toggle(true);
+        crate::services::provider::reapply_current_codex_official_live(&s).unwrap();
+        ProviderService::switch(&s, AppType::Codex, &relay.id).unwrap();
+        let relay_text = codex_text();
+        let relay_auth: Value =
+            serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
+        ProviderService::switch(&s, AppType::Codex, &official.id).unwrap();
+        let official_text = codex_text();
+        let official_auth: Value =
+            serde_json::from_slice(&fs::read(codex_auth_path()).unwrap()).unwrap();
+        exit(&s, &AppType::Codex).await.unwrap();
+        let r: toml::Table = toml::from_str(&relay_text).unwrap();
+        let o: toml::Table = toml::from_str(&official_text).unwrap();
+        assert_eq!(r["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            r["model_providers"]["cc-switch-official"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(r["model_providers"]["cc-switch-official"]
+            .get("experimental_bearer_token")
+            .is_none());
+        assert_eq!(
+            r["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert_eq!(o["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            o["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert!(o["model_providers"]["custom"]
+            .get("experimental_bearer_token")
+            .is_none());
+        assert_eq!(
+            o["model_providers"]["cc-switch-official"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(relay_auth, auth);
+        assert_eq!(official_auth, auth);
+        assert_eq!(
+            s.db.get_provider_by_id(&relay.id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config,
+            relay.settings_config
+        );
+        assert_eq!(
+            s.db.get_provider_by_id(&official.id, "codex")
+                .unwrap()
+                .unwrap()
+                .settings_config,
+            official.settings_config
+        );
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_safe_snippet_fields_remain_in_extractor_but_startup_skips() {
+        let _home = Home::new();
+        let s = AppState::new(Arc::new(Database::memory().unwrap()));
+        let text = format!(
+            "sandbox_mode = 'read-only'\n{}",
+            codex_unified_proxy_mirror()
+        );
+        let extracted = ProviderService::extract_common_config_snippet_from_settings(
+            AppType::Codex,
+            &json!({"config":text}),
+        )
+        .unwrap();
+        let d: toml::Table = toml::from_str(&extracted).unwrap();
+        assert_eq!(d["sandbox_mode"].as_str(), Some("read-only"));
+        seed_codex(&text, Some(&json!({})));
+        crate::initialize_common_config_snippets(&s);
+        assert!(s.db.get_config_snippet("codex").unwrap().is_none());
+    }
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_proxy_actual_save_rollback_then_full_mode_startup() {
+        use tauri::Manager;
+        let _home = Home::new();
+        let row = codex_official();
+        let s = state_with(AppType::Codex, std::slice::from_ref(&row), &row.id).await;
+        codex_unified_proxy_toggle(false);
+        seed_codex("", Some(&json!({})));
+        enter(&s, &AppType::Codex).await.unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(s)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let mut requested = crate::settings::get_settings();
+        requested.unify_codex_session_history = true;
+        requested.unify_codex_migrate_existing = Some(false);
+        failpoint::crash_at(Some("published:0"));
+        let result = crate::commands::save_settings(app.state(), requested).await;
+        failpoint::crash_at(None);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("injected crash at published:0"));
+        assert!(!crate::settings::unify_codex_session_history());
+        assert!(operation::has_pending("codex"));
+        let d: toml::Table = toml::from_str(&codex_text()).unwrap();
+        assert_eq!(d["model_provider"].as_str(), Some("custom"));
+        // Saving the already-rolled-back value does not re-enter the changed-toggle branch.
+        crate::commands::save_settings(app.state(), crate::settings::get_settings())
+            .await
+            .unwrap();
+        assert!(operation::has_pending("codex"));
+        let s = app.state::<AppState>();
+        operation::settle(&s.db, "codex").unwrap();
+        assert!(!operation::has_pending("codex"));
+        let still_new: toml::Table = toml::from_str(&codex_text()).unwrap();
+        assert_eq!(still_new["model_provider"].as_str(), Some("custom"));
+        // Exercise the actual startup sequence, including forced attach, not just settle.
+        startup(s.inner()).await;
+        let repaired: toml::Table = toml::from_str(&codex_text()).unwrap();
+        exit(s.inner(), &AppType::Codex).await.unwrap();
+        assert_eq!(
+            repaired["model_provider"].as_str(),
+            Some("cc-switch-official")
+        );
+        assert!(!crate::settings::unify_codex_session_history());
     }
 }
