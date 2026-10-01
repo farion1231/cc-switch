@@ -114,6 +114,7 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
+  hasNativeOpencodeDefinition,
   isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
@@ -1166,16 +1167,21 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      // Native V2 declarations have no npm field and may omit models. For V1,
-      // only an unchanged ID already in the live config may inherit defaults.
-      if (
-        !isNativeOpencode &&
-        !canKeepExistingOpencodeOverride &&
-        (!opencodeForm.opencodeNpm.trim() ||
-          Object.keys(opencodeForm.opencodeModels).length === 0)
-      ) {
-        toast.error(t("opencode.customProviderRequired"));
-        return;
+      // Only an unchanged ID already in the live config may inherit defaults.
+      // Native V2 declarations name their package in `package`, not `npm`.
+      if (!canKeepExistingOpencodeOverride) {
+        if (isNativeOpencode) {
+          if (!hasNativeOpencodeDefinition(form.getValues("settingsConfig"))) {
+            toast.error(t("opencode.nativeCustomProviderRequired"));
+            return;
+          }
+        } else if (
+          !opencodeForm.opencodeNpm.trim() ||
+          Object.keys(opencodeForm.opencodeModels).length === 0
+        ) {
+          toast.error(t("opencode.customProviderRequired"));
+          return;
+        }
       }
     }
 

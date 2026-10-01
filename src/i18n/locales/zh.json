@@ -1583,6 +1583,7 @@
     "customProviderRequired": "新的供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
     "duplicateRequiresDefinition": "此供应商缺少 npm 包或模型定义，无法直接复制。请先补全 npm 包和至少一个模型，再复制为自定义供应商。",
     "duplicateRequiresNativeDefinition": "此 V2 原生供应商缺少 package 或模型定义，无法直接复制。请先补全 package 和至少一个模型，再以新的标识复制。",
+    "nativeCustomProviderRequired": "新的供应商标识需要填写 package 和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
     "baseUrl": "Base URL",
     "baseUrlHint": "自定义 API 端点地址",
     "models": "模型配置",

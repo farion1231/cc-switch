@@ -7,6 +7,9 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 import { server } from "../msw/server";
 import { setSettings } from "../msw/state";
 
+const toastError = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn() } }));
+
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
     value,
@@ -27,9 +30,14 @@ function renderNativeForm(
   config: Record<string, unknown>,
   native = true,
   providerId = "anthropic",
+  liveProviderIds = [providerId],
 ) {
+  server.use(
+    http.post("http://tauri.local/get_opencode_live_provider_ids", () =>
+      HttpResponse.json(liveProviderIds),
+    ),
+  );
   const client = createTestQueryClient();
-  client.setQueryData(["opencodeLiveProviderIds"], [providerId]);
   const onSubmit = vi.fn();
   const view = render(
     <QueryClientProvider client={client}>
@@ -52,6 +60,7 @@ function renderNativeForm(
 
 describe("native OpenCode provider form", () => {
   beforeEach(() => {
+    toastError.mockReset();
     setSettings({ commonConfigConfirmed: true });
     server.use(
       http.post("http://tauri.local/auth_get_status", () =>
@@ -130,4 +139,23 @@ describe("native OpenCode provider form", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].providerKey).toBe("custom_provider");
   });
+  it.each([{}, { package: "aisdk:@ai-sdk/anthropic", models: {} }])(
+    "requires a package and models for an ID outside the live config: %j",
+    async (config) => {
+      const { client, onSubmit } = renderNativeForm(
+        config,
+        true,
+        "anthropic",
+        [],
+      );
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith(
+          "opencode.nativeCustomProviderRequired",
+        ),
+      );
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
 });

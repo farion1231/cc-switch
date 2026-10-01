@@ -94,6 +94,26 @@ export function isNativeOpencodeConfig(
   }
 }
 
+/** A native declaration that does not rely on a built-in definition: it names a
+ * package and at least one model.
+ */
+export function hasNativeOpencodeDefinition(json: string): boolean {
+  try {
+    const value = JSON.parse(json);
+    const { package: pkg, models } = value ?? {};
+    return (
+      typeof pkg === "string" &&
+      pkg.trim() !== "" &&
+      !!models &&
+      typeof models === "object" &&
+      !Array.isArray(models) &&
+      Object.keys(models).length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isKnownOpencodeOptionKey(key: string): boolean {
   return OPENCODE_KNOWN_OPTION_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_OPTION_KEYS)[number],
