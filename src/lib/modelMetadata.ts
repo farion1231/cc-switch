@@ -253,15 +253,19 @@ function findByProvider(
 }
 
 /**
- * 原厂兜底：同名条目指向的原厂条目，或者原厂自己名下的同名条目。
- * 指向不止一家原厂时说不清是哪个模型，放弃。
+ * 原厂兜底：同名条目指向的原厂条目；没有条目指向时，才用原厂自己名下的同名
+ * 条目。指向不止一家原厂时说不清是哪个模型，放弃。
+ *
+ * 「原厂名下」只是退路：原厂也会托管别家的模型（NVIDIA 名下有
+ * `minimaxai/minimax-m2.7`），和指向结果并列就会被当成第二家原厂。
  */
 function findByVendor(
   index: ModelsDevIndex,
   modelId: string,
 ): ModelsDevModel | undefined {
   const normalized = normalizeModelsDevModelId(modelId);
-  const found = new Map<string, ModelsDevModel>();
+  const pointed = new Map<string, ModelsDevModel>();
+  const owned = new Map<string, ModelsDevModel>();
   for (const { providerId, model } of index.byNormalizedId.get(normalized) ??
     []) {
     const canonical = model.canonical_model_id;
@@ -271,14 +275,15 @@ function findByVendor(
         .get(vendorId)
         ?.models.get(canonical.slice(vendorId.length + 1));
       if (vendorModel) {
-        found.set(canonical, vendorModel);
+        pointed.set(canonical, vendorModel);
         continue;
       }
     }
     if (index.vendors.has(providerId)) {
-      found.set(`${providerId}/${model.id ?? normalized}`, model);
+      owned.set(`${providerId}/${model.id ?? normalized}`, model);
     }
   }
+  const found = pointed.size > 0 ? pointed : owned;
   return found.size === 1 ? found.values().next().value : undefined;
 }
 

@@ -68,6 +68,31 @@ const modelsDev: ModelsDevResponse = {
         limit: { context: 65536 },
         canonical_model_id: "moonshotai/kimi-k9",
       },
+      "minimax/minimax-m9": {
+        id: "minimax/minimax-m9",
+        canonical_model_id: "minimax/MiniMax-M9",
+      },
+      "nvidia/nemotron-9": {
+        id: "nvidia/nemotron-9",
+        canonical_model_id: "nvidia/nemotron-9",
+      },
+    },
+  },
+  minimax: {
+    id: "minimax",
+    models: {
+      "MiniMax-M9": { id: "MiniMax-M9", limit: { context: 204800 } },
+    },
+  },
+  // 本身是原厂（有条目指向它），也托管别家的模型，且这些条目不指向原厂。
+  nvidia: {
+    id: "nvidia",
+    models: {
+      "nemotron-9": { id: "nemotron-9" },
+      "minimaxai/minimax-m9": {
+        id: "minimaxai/minimax-m9",
+        limit: { context: 196608 },
+      },
     },
   },
   moonshotai: {
@@ -167,6 +192,15 @@ describe("resolveModelMetadata", () => {
       cost: { input: 1, output: 3.2 },
       reasoningEfforts: ["high"],
     });
+  });
+
+  it("ignores a vendor hosting another vendor's model", () => {
+    expect(
+      resolveModelMetadata("MiniMax-M9", {
+        baseUrl: "https://relay.example.com/v1",
+        modelsDev,
+      })?.contextWindow,
+    ).toBe(204800);
   });
 
   it("gives up when the same name points at different vendors", () => {
