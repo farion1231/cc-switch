@@ -2,12 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import {
-  fetchModelsDev,
-  MODELS_DEV_QUERY_KEY,
-  MODELS_DEV_STALE_TIME_MS,
-  type ModelsDevResponse,
-} from "@/lib/modelsDev";
+import { modelsDevQueryOptions, type ModelsDevResponse } from "@/lib/modelsDev";
 import {
   resolveModelMetadata,
   type ModelMetadataSource,
@@ -17,13 +12,6 @@ import {
 import { useLatestRef } from "./useLatestRef";
 
 const FILLED_TOAST_ID = "model-metadata-filled";
-const MODELS_DEV_QUERY = {
-  queryKey: MODELS_DEV_QUERY_KEY,
-  queryFn: fetchModelsDev,
-  staleTime: MODELS_DEV_STALE_TIME_MS,
-  // 表单只预取不订阅，没有订阅者时缓存按 gcTime 回收（默认 5 分钟），这里与 staleTime 对齐。
-  gcTime: MODELS_DEV_STALE_TIME_MS,
-};
 
 /**
  * 表单从拉取列表里选中模型后，调 `fill(modelId, apply)` 补这一行空着的参数。
@@ -50,7 +38,7 @@ export function useModelMetadataFill({
   const queryClient = useQueryClient();
   // 只下载不订阅：表单不读这份数据，数据到了也不必重渲染。
   useEffect(() => {
-    if (prefetch) void queryClient.prefetchQuery(MODELS_DEV_QUERY);
+    if (prefetch) void queryClient.prefetchQuery(modelsDevQueryOptions);
   }, [prefetch, queryClient]);
 
   const baseUrlRef = useLatestRef(baseUrl);
@@ -123,12 +111,11 @@ export function useModelMetadataFill({
         if (metadata && apply(metadata)) notify(modelId, metadata.sources);
       };
 
-      const cached =
-        queryClient.getQueryData<ModelsDevResponse>(MODELS_DEV_QUERY_KEY);
+      const cached = queryClient.getQueryData(modelsDevQueryOptions.queryKey);
       run(resolve(cached));
       if (cached) return;
       queryClient
-        .fetchQuery(MODELS_DEV_QUERY)
+        .fetchQuery(modelsDevQueryOptions)
         .then((data) => run(resolve(data)))
         .catch(() => {
           // 离线或 models.dev 不可用：保持预设值补过的样子。

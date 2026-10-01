@@ -29,7 +29,7 @@ import {
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { FetchedModelPicker } from "./FetchedModelPicker";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
-import { useLatestRef } from "@/hooks/useLatestRef";
+import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import type { PresetModelSource } from "@/lib/modelMetadata";
 import { opencodePresetModelSources } from "@/config/presetModelMetadata";
@@ -292,13 +292,8 @@ export function OpenCodeFormFields({
   };
 
   // 选中拉取到的模型时补上它已知的 limit 和模态（只补空着的）。
-  // 补全可能晚到，要用最新的列表和回调：父组件的回调闭包里有其余字段的旧值。
-  const modelsRef = useLatestRef(models);
-  const onModelsChangeRef = useLatestRef(onModelsChange);
-  const commitModels = (next: Record<string, OpenCodeModel>) => {
-    modelsRef.current = next;
-    onModelsChangeRef.current(next);
-  };
+  // 补全可能晚到，要用最新的列表和回调提交。
+  const [modelsRef, commitModels] = useCommittableRef(models, onModelsChange);
   const fillModelMetadata = useModelMetadataFill({
     baseUrl,
     presets: presetModelSources,

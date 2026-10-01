@@ -26,7 +26,7 @@ import {
   type HermesModel,
 } from "@/config/hermesProviderPresets";
 import type { ProviderCategory } from "@/types";
-import { useLatestRef } from "@/hooks/useLatestRef";
+import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { hermesPresetModelSources } from "@/config/presetModelMetadata";
 import { fillHermesModel, metadataFilledAnything } from "./modelMetadataFill";
@@ -190,13 +190,8 @@ export function HermesFormFields({
   };
 
   // 选中拉取到的模型：改 ID，再补上它已知的上下文长度。
-  // 补全可能晚到，要用最新的列表和回调：父组件的回调闭包里有其余字段的旧值。
-  const modelsRef = useLatestRef(models);
-  const onModelsChangeRef = useLatestRef(onModelsChange);
-  const commitModels = (next: HermesModel[]) => {
-    modelsRef.current = next;
-    onModelsChangeRef.current(next);
-  };
+  // 补全可能晚到，要用最新的列表和回调提交。
+  const [modelsRef, commitModels] = useCommittableRef(models, onModelsChange);
   const fillModelMetadata = useModelMetadataFill({
     baseUrl,
     presets: hermesPresetModelSources,

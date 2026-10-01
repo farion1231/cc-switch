@@ -1,9 +1,10 @@
 // models.dev 公共数据（https://models.dev/api.json）的拉取与原始结构。
 // 用量统计的价格导入和供应商表单的模型参数补全共用这一份数据和查询缓存。
 
+import { queryOptions } from "@tanstack/react-query";
+
 export const MODELS_DEV_API_URL = "https://models.dev/api.json";
-export const MODELS_DEV_QUERY_KEY = ["models-dev"] as const;
-export const MODELS_DEV_STALE_TIME_MS = 60 * 60 * 1000;
+const MODELS_DEV_STALE_TIME_MS = 60 * 60 * 1000;
 const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
 
 export interface ModelsDevCost {
@@ -71,6 +72,18 @@ export async function fetchModelsDev(): Promise<ModelsDevResponse> {
     window.clearTimeout(timeout);
   }
 }
+
+/**
+ * models.dev 的查询参数，所有用到它的地方共用一份缓存，1 小时内不重新请求。
+ * 表单只预取不订阅，没有订阅者时缓存按 gcTime 回收（默认 5 分钟），这里与
+ * staleTime 对齐。
+ */
+export const modelsDevQueryOptions = queryOptions({
+  queryKey: ["models-dev"],
+  queryFn: fetchModelsDev,
+  staleTime: MODELS_DEV_STALE_TIME_MS,
+  gcTime: MODELS_DEV_STALE_TIME_MS,
+});
 
 /**
  * 去掉命名空间前缀（`vendor/`）、`:变体` 后缀和 `[1m]` 标记后小写，

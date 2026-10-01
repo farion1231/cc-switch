@@ -22,11 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useUpdateModelPricing } from "@/lib/query/usage";
-import {
-  fetchModelsDev,
-  MODELS_DEV_QUERY_KEY,
-  MODELS_DEV_STALE_TIME_MS,
-} from "@/lib/modelsDev";
+import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import {
   flattenModels,
   formatPrice,
@@ -69,10 +65,8 @@ export function ModelsDevPickerDialog({
   }, [open]);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: MODELS_DEV_QUERY_KEY,
-    queryFn: fetchModelsDev,
+    ...modelsDevQueryOptions,
     enabled: open,
-    staleTime: MODELS_DEV_STALE_TIME_MS,
     retry: 1,
   });
 

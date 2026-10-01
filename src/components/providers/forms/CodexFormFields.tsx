@@ -53,7 +53,7 @@ import {
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
-import { useLatestRef } from "@/hooks/useLatestRef";
+import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { codexPresetModelSources } from "@/config/presetModelMetadata";
 import {
@@ -641,13 +641,9 @@ export function CodexFormFields({
     prefetch: fetchedModels.length > 0,
   });
   // 补全要在「改模型名」提交后立刻读到那一行，所以这两处经 ref 同步提交。
-  const catalogRowsRef = useLatestRef(catalogRows);
-  const commitCatalogRows = useCallback(
-    (next: CodexCatalogRow[]) => {
-      catalogRowsRef.current = next;
-      setCatalogRows(next);
-    },
-    [catalogRowsRef],
+  const [catalogRowsRef, commitCatalogRows] = useCommittableRef(
+    catalogRows,
+    setCatalogRows,
   );
 
   // 按模型名补上这一行已知的窗口、档位和模态（只补空着的）。

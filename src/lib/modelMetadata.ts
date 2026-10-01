@@ -121,7 +121,6 @@ function findModelInMap<T>(
 }
 
 interface IndexedProvider {
-  id: string;
   endpoint: string | null;
   models: Map<string, ModelsDevModel>;
 }
@@ -167,7 +166,6 @@ function indexModelsDev(data: ModelsDevResponse): ModelsDevIndex {
       }
     }
     const indexed: IndexedProvider = {
-      id: providerId,
       endpoint:
         typeof provider.api === "string" ? endpointKey(provider.api) : null,
       models,

@@ -36,11 +36,7 @@ import {
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
   syncModelsDevPricing,
 } from "@/lib/modelsDevAutoSync";
-import {
-  fetchModelsDev,
-  MODELS_DEV_QUERY_KEY,
-  MODELS_DEV_STALE_TIME_MS,
-} from "@/lib/modelsDev";
+import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import {
   flattenModels,
   formatPrice,
@@ -76,9 +72,7 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
   const [isSaving, setIsSaving] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: MODELS_DEV_QUERY_KEY,
-    queryFn: fetchModelsDev,
-    staleTime: MODELS_DEV_STALE_TIME_MS,
+    ...modelsDevQueryOptions,
     retry: 1,
   });
   const entries = useMemo(() => (data ? flattenModels(data) : []), [data]);
