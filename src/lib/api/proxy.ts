@@ -45,6 +45,11 @@ export const proxyApi = {
     return invoke("set_proxy_takeover_for_app", { appType, enabled });
   },
 
+  // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
+  async getDirectProvider(appType: string): Promise<string | null> {
+    return invoke("get_direct_provider", { appType });
+  },
+
   // ========== v3+ 全局/应用级配置 API ==========
 
   // 获取全局代理配置
@@ -68,19 +73,6 @@ export const proxyApi = {
   },
 
   // ========== 计费默认配置 API ==========
-
-  // 获取默认成本倍率
-  async getDefaultCostMultiplier(appType: string): Promise<string> {
-    return invoke("get_default_cost_multiplier", { appType });
-  },
-
-  // 设置默认成本倍率
-  async setDefaultCostMultiplier(
-    appType: string,
-    value: string,
-  ): Promise<void> {
-    return invoke("set_default_cost_multiplier", { appType, value });
-  },
 
   // 获取计费模式来源
   async getPricingModelSource(appType: string): Promise<string> {

@@ -37,6 +37,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+  mcode: "minimax",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -49,7 +50,12 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  mcode: "MiniMax Code",
 };
+
+// 单色图标经 currentColor 继承按钮的 muted 文字色，未选中时自然变灰；
+// 其余为固定品牌色，需要显式去色才能和选中态区分
+const CURRENT_COLOR_APPS = new Set<AppId>(["codex", "grokbuild", "pi"]);
 
 /** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */
 function AppGlyph({ app, isActive }: { app: AppId; isActive: boolean }) {
@@ -61,6 +67,12 @@ function AppGlyph({ app, isActive }: { app: AppId; isActive: boolean }) {
         icon={APP_ICON_NAME[app]}
         name={APP_DISPLAY_NAME[app]}
         size={20}
+        className={cn(
+          "transition-[filter,opacity] duration-200",
+          !isActive &&
+            !CURRENT_COLOR_APPS.has(app) &&
+            "grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100",
+        )}
       />
       {BadgeIcon && (
         <span

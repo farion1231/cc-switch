@@ -8,6 +8,15 @@ use crate::gemini_config::get_gemini_dir;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::opencode_config::get_opencode_dir;
 
+pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
+    if matches!(app, AppType::Mcode) && content.len() > 32 * 1024 {
+        return Err(AppError::InvalidInput(
+            "MCode global instructions must not exceed 32 KiB".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     if matches!(app, AppType::ClaudeDesktop) {
@@ -27,6 +36,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        AppType::Mcode => crate::mcode_config::data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -36,7 +46,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi => "AGENTS.md",
+        AppType::Pi | AppType::Mcode => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -63,6 +73,14 @@ fn get_base_dir_with_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcode_instructions_limit_counts_utf8_bytes() {
+        assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32768)).is_ok());
+        assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32769)).is_err());
+        assert!(validate_prompt_content(&AppType::Mcode, &"中".repeat(10923)).is_err());
+        assert!(validate_prompt_content(&AppType::OpenCode, &"中".repeat(10923)).is_ok());
+    }
 
     #[test]
     fn hermes_prompt_file_uses_soul_md() {

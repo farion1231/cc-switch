@@ -87,12 +87,14 @@ export function useProxyStatus() {
     onSuccess: () => {
       toast.success(
         t("proxy.stoppedWithRestore", {
-          defaultValue: "代理服务已关闭，已恢复所有接管配置",
+          defaultValue: "路由服务已关闭，所有应用已退回直连",
         }),
         { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
+      // 退回直连后「当前」显示回直连供应商。
+      queryClient.invalidateQueries({ queryKey: ["providers"] });
       // 彻底删除所有供应商健康状态缓存（后端已清空数据库记录）
       queryClient.removeQueries({ queryKey: ["providerHealth"] });
       // 彻底删除所有熔断器统计缓存（代理停止后熔断器状态已重置）
@@ -133,6 +135,10 @@ export function useProxyStatus() {
       );
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
+      // 路由模式下「当前」是路由到的那家，进出路由都要刷新。
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
     },
     onError: (error: Error) => {
       const detail =

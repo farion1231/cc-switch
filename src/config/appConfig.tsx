@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "mcode",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -38,6 +39,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  mcode: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -49,6 +51,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
   "pi",
+  "mcode",
 ];
 
 export type ProxyAppId = Extract<
@@ -70,10 +73,11 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
+  "mcode",
   "opencode",
   "openclaw",
   "hermes",
@@ -82,6 +86,21 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
+}
+
+/**
+ * 切换只替换关键字段的应用：供应商编辑器显示「切到这个供应商之后配置文件的样子」，由后端
+ * `ProviderService::editor_view` 投影。
+ */
+export const EDITOR_VIEW_APP_IDS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+];
+
+export function usesEditorView(appId: AppId): boolean {
+  return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
 /** Pi has no native MCP registry; do not manufacture a disabled mirror. */
@@ -93,6 +112,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "mcode",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -184,6 +204,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
+  },
+  mcode: {
+    label: "MiniMax Code",
+    icon: <ProviderIcon icon="minimax" name="MiniMax Code" size={14} />,
+    activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    badgeClass:
+      "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
   },
   pi: {
     label: "Pi",

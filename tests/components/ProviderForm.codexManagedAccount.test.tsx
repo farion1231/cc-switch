@@ -113,36 +113,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       isAuthenticated: false,
       accounts: [],
     }),
-    useCommonConfigSnippet: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      isLoading: false,
-      isExtracting: false,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      handleExtract: vi.fn(),
-    }),
-    useCodexCommonConfig: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      isExtracting: false,
-      handleExtract: vi.fn(),
-      clearCommonConfigError: vi.fn(),
-    }),
-    useGeminiCommonConfig: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      isExtracting: false,
-      handleExtract: vi.fn(),
-      clearCommonConfigError: vi.fn(),
-    }),
   };
 });
 
@@ -324,41 +294,49 @@ describe("ProviderForm Codex Official managed account", () => {
     );
   });
 
-  it("does not silently strip a legacy binding from the fixed card", async () => {
-    const queryClient = createTestQueryClient();
-    const onSubmit = vi.fn();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ProviderForm
-          appId="codex"
-          providerId="codex-official"
-          submitLabel="save-provider"
-          onSubmit={onSubmit}
-          onCancel={vi.fn()}
-          initialData={{
-            name: "OpenAI Official",
-            settingsConfig: { auth: {}, config: "" },
-            meta: {
-              providerType: "codex_oauth",
-              authBinding: {
-                source: "managed_account",
-                authProvider: "codex_oauth",
-                accountId: "acct-managed",
+  it.each(["acct-managed", "deleted-account"])(
+    "saves the selected account when the fixed card was bound to %s",
+    async (previousAccountId) => {
+      const queryClient = createTestQueryClient();
+      const onSubmit = vi.fn();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ProviderForm
+            appId="codex"
+            providerId="codex-official"
+            submitLabel="save-provider"
+            onSubmit={onSubmit}
+            onCancel={vi.fn()}
+            initialData={{
+              name: "OpenAI Official",
+              settingsConfig: { auth: {}, config: "" },
+              meta: {
+                providerType: "codex_oauth",
+                authBinding: {
+                  source: "managed_account",
+                  authProvider: "codex_oauth",
+                  accountId: previousAccountId,
+                },
               },
-            },
-          }}
-        />
-      </QueryClientProvider>,
-    );
+            }}
+          />
+        </QueryClientProvider>,
+      );
 
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta?.authBinding).toEqual({
-      source: "managed_account",
-      authProvider: "codex_oauth",
-      accountId: "acct-managed",
-    });
-  });
+      if (previousAccountId === "deleted-account") {
+        fireEvent.click(
+          screen.getByRole("button", { name: "select-managed-account" }),
+        );
+      }
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0].meta?.authBinding).toEqual({
+        source: "managed_account",
+        authProvider: "codex_oauth",
+        accountId: "acct-managed",
+      });
+    },
+  );
 
   it("keeps a category-less managed card Official when it is unbound", async () => {
     const queryClient = createTestQueryClient();
