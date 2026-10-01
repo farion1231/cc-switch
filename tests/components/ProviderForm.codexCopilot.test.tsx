@@ -471,7 +471,9 @@ describe("Codex Copilot provider form", () => {
     );
   });
 
-  it("rejects a missing bound account rather than saving with the default account", async () => {
+  // The mocked section retains the ID so this exercises only the form's guard,
+  // not the real account selector's cleanup when an account disappears.
+  it("blocks submission while the form still holds an unavailable account ID", async () => {
     const onSubmit = renderForm({
       providerType: "github_copilot",
       authBinding: {
