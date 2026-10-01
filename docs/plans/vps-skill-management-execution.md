@@ -520,3 +520,26 @@ D 已提交为 `f1ab3a92`。E 由独立 worktree 子 agent 编写，主线程审
 上述认证与 ASKPASS 验证只用内存凭据库、固定过程替身或 loopback，不访问真实 VPS 密码/私钥或连接服务器。中间认证回归曾因测试在切换到非密码方式时仍提供密码而失败，已改为合法测试输入，未放宽生产验证或期望状态。最终 VPS 后端定向 **99 项通过**（含新增目标绑定/显示字段兼容和 ASKPASS 分片回归），CI 的 Clippy 命令、Rust 格式、前端 TypeScript/格式均通过。合并上游后的最终全量结果和 PR 材料准备状态将在本节继续更新。
 
 本机证据：`windows-1314-{codex,grok,skill}-before.log`、`windows-1314-{codex,grok,helper,skill}-after.log`、`windows-1314-clippy-all-targets.log`、`vps-pr-reconciliation-{red,green}.log`、`vps-pr-credential-target-red.log`、`vps-pr-askpass-fragment-red.log`、`vps-pr-review-rust-{green,final}.log`、`vps-pr-review-clippy.log`。后端统一用本机 `run-isolated-rust.sh` 设置独立临时 home、TEMP 和各客户端/AppData 路径，不改变 Cargo/rustup 的 HOME。
+
+### 上游合并与最终门禁
+
+- 当前功能分支新增独立本地提交：`f77e3794`（Windows 目录链接夹具）、`b5908616`（主机 IPC/本机认证）、`3105c2c7`（全局 VPS 页面及前端一致性）。原有五个阶段提交保留，没有 rebase 或改写历史。
+- 合并前再次 fetch 发现上游新增 `9be1ef7e` 定价数据提交，实际合入 12 个上游提交。自动合并无文本冲突；逐字节确认已审阅的 VPS 核心代码与四语言 VPS 文案没有被覆盖。完整验证后创建合并提交 **`4d2e51c9`**。本地 `main` 未重置，未推送任何分支。
+- 第一次合并后完整 Rust 为 3056 通过 / 5 失败 / 10 原有忽略；所有集成目标通过。5 项 OpenCode 会话失败来自本机启动脚本固定 `OPENCODE_DB` 覆盖测试自身的临时 XDG 库，首项 canonicalize 失败后导致后续锁中毒。仅在被忽略的启动脚本中移除这一覆盖，保留临时 `XDG_DATA_HOME`；未改上游代码、断言或忽略项。OpenCode 组重跑 13 项全通过，再次执行完整套件。
+
+| 合并后检查 | 最终结果 |
+| --- | --- |
+| Rust 库 | **3061 通过、0 失败、10 原有忽略** |
+| Rust 全部集成目标 | **177 通过、0 失败**；15 个目标全部执行（含空 support） |
+| 完整前端 | **153 文件、1751 通过**；单 worker |
+| TypeScript / 前端格式 / Rust 格式 | 通过 |
+| CI 标准 Clippy `-D warnings` | 通过 |
+| renderer 构建 | 通过，既有包体/动态导入警告保留 |
+
+完整前端仅改写了一个快照的换行格式；与 index 规范化内容逐字节比较相同后恢复 checkout 格式，不更新快照内容。前后端大套件串行运行，未提高超时、放宽断言或改系统权限。目录链接原生 Windows tag、macOS/Linux 原生认证和真实客户端执行等未测边界仍按前述记录保留，不以 Windows 本地全绿倒推跨平台验收完成。
+
+PR 文案及脱敏截图说明已准备在被忽略的 `.cc-switch/contribution-prep/pr-draft.md`，标题为 `feat(vps): 新增 VPS 管理模块，支持客户端接入`，关联 #7739。已确认验收主机数据、本机工具和截图未进入 Git；截图是组件/内存数据预览，不宣称原生 SSH 证据。**尚未 push、创建 PR 或新增 Issue 评论，发布动作等待单独明确授权。**
+
+最终额外 `cargo clippy --all-targets -- -D warnings` 也已复核：仅余上游既有 `transform_codex_chat.rs:4498` 的一项 `op_ref`，没有增加 allow 或修改该无关测试。该增强检查仍失败，不能与通过的项目 CI 标准 Clippy 命令混为一谈；证据为 `vps-pr-merged-clippy-all-targets.log`。
+
+最终日志：`vps-pr-merged-opencode-recheck.log`、`vps-pr-merged-rust-final.log`、`vps-pr-merged-clippy-final.log`、`vps-pr-merged-typecheck.log`、`vps-pr-merged-format.log`、`vps-pr-merged-frontend-final.log`、`vps-pr-merged-renderer-final.log`。失败的首轮完整 Rust 输出保留为 `vps-pr-merged-rust-full.log`，不覆盖或隐去。
