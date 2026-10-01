@@ -3,6 +3,89 @@
     "title": "CC Switch",
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
   },
+  "vps": {
+    "title": "VPS",
+    "add": "Add host",
+    "edit": "Edit host",
+    "editServer": "Edit {{name}}",
+    "deleteServer": "Delete {{name}}",
+    "deleteConfirm": "Delete {{name}} and remove its client bindings? Other hosts and existing SSH sessions are not affected.",
+    "search": "Search hosts",
+    "noResults": "No matching hosts",
+    "retry": "Retry",
+    "clientsFor": "Clients for {{name}}",
+    "testConnection": "Test connection",
+    "cancelTest": "Cancel test",
+    "cancelFailed": "Could not cancel the connection test",
+    "loadFailed": "Could not load or recover the VPS configuration",
+    "saveFailed": "VPS configuration is incomplete",
+    "deleteFailed": "Host deletion or client cleanup is incomplete",
+    "formDescription": "Choose which clients can discover this host. Saving automatically configures the catalog and VPS Skill; no separate Skill switch is needed.",
+    "sections": {
+      "host": "Host details",
+      "authentication": "SSH authentication"
+    },
+    "fields": {
+      "name": "Name",
+      "host": "Host",
+      "hostPlaceholder": "IP address or DNS hostname",
+      "port": "Port",
+      "user": "SSH username",
+      "identityFile": "Private-key file path",
+      "identityPlaceholder": "Absolute path to the private-key file",
+      "identityHelp": "Only the private-key file path is referenced. Its contents are not imported.",
+      "purpose": "Purpose (optional)",
+      "clients": "Clients"
+    },
+    "auth": {
+      "method": "Authentication",
+      "password": "Password",
+      "privateKey": "Private-key file",
+      "certificate": "SSH user certificate",
+      "legacy": "Keep existing authentication",
+      "passwordPlaceholder": "Enter the SSH login password",
+      "keepPassword": "Leave blank to keep the saved password",
+      "passwordHelp": "Saved in the system credential store for CC Switch tests, not in configuration files or Skills. OS credential roaming follows system policy. Clients still need terminal password entry; never send passwords to a model.",
+      "certificateFile": "SSH certificate file path",
+      "certificatePlaceholder": "Absolute certificate path, usually ending in -cert.pub",
+      "certificateHelp": "Use an OpenSSH user certificate and its matching private key, not a website's TLS/SSL certificate."
+    },
+    "empty": {
+      "title": "No VPS hosts yet",
+      "description": "Add a host to manage its connection details and client access here."
+    },
+    "discard": {
+      "title": "Discard unsaved changes?",
+      "message": "Close this editor and discard the draft? Configuration already written by a previous save will not be undone.",
+      "confirm": "Discard changes"
+    },
+    "connection": {
+      "success": "Connection test succeeded",
+      "hostKeyChanged": "The host fingerprint changed. Connection blocked; verify the server identity before continuing.",
+      "targetChanged": "Connection details differ from the saved host or confirmed target. Connection blocked. Reopen the host and check its address, port, username and authentication method; add a separate host to connect to a different server.",
+      "authenticationFailed": "SSH authentication failed. Check the password, private key or certificate.",
+      "credentialsUnavailable": "The local credential store is unavailable. Check the system credential service and retry.",
+      "passwordRequired": "No saved password is available. Edit the host, enter a password and retry.",
+      "sshNotFound": "Required OpenSSH tools were not found",
+      "timeout": "Connection test timed out",
+      "cancelled": "Connection test cancelled",
+      "failed": "Connection test failed"
+    },
+    "hostKey": {
+      "title": "Confirm host fingerprint",
+      "description": "Compare this fingerprint for {{name}} with a trusted source before accepting. Retrieving a host key does not prove the server's identity.",
+      "confirm": "Trust this fingerprint",
+      "confirmFailed": "Could not confirm the host fingerprint",
+      "retryHint": "The confirmation may have expired, or the local trust files could not be written. Test the connection again; if a fingerprint is shown, verify it again before confirming."
+    },
+    "help": {
+      "title": "About VPS client access",
+      "access": "Choosing a client automatically configures a local host catalog and one VPS-managed Skill. This automatic Skill is hidden from the ordinary Skills page.",
+      "scope": "Client selection controls discovery, not a security sandbox. Other programs under the same OS account may still use available SSH credentials.",
+      "sessions": "Removing a binding does not stop SSH sessions that are already running. A successful test only describes that one probe.",
+      "cloud": "If a client uses a cloud model, remote command output may be sent to that model provider."
+    }
+  },
   "common": {
     "add": "Add",
     "edit": "Edit",

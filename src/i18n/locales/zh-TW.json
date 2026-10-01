@@ -3,6 +3,89 @@
     "title": "CC Switch",
     "description": "Claude Code / Codex / Gemini CLI 全方位輔助工具"
   },
+  "vps": {
+    "title": "VPS",
+    "add": "新增主機",
+    "edit": "編輯主機",
+    "editServer": "編輯 {{name}}",
+    "deleteServer": "刪除 {{name}}",
+    "deleteConfirm": "刪除 {{name}} 並移除其用戶端綁定？其他主機及已執行的 SSH 工作階段不受影響。",
+    "search": "搜尋主機",
+    "noResults": "沒有符合的主機",
+    "retry": "重試",
+    "clientsFor": "{{name}} 的用戶端",
+    "testConnection": "測試連線",
+    "cancelTest": "取消測試",
+    "cancelFailed": "無法取消連線測試",
+    "loadFailed": "VPS 設定載入或復原失敗",
+    "saveFailed": "VPS 設定尚未完成",
+    "deleteFailed": "主機刪除或用戶端清理尚未完成",
+    "formDescription": "選擇需要探索此主機的用戶端。儲存後自動設定主機目錄和 VPS Skill，無須另行啟用 Skill。",
+    "sections": {
+      "host": "主機資訊",
+      "authentication": "SSH 驗證"
+    },
+    "fields": {
+      "name": "名稱",
+      "host": "主機位址",
+      "hostPlaceholder": "IP 位址或 DNS 主機名稱",
+      "port": "連接埠",
+      "user": "SSH 使用者名稱",
+      "identityFile": "私密金鑰檔案路徑",
+      "identityPlaceholder": "私密金鑰檔案的絕對路徑",
+      "identityHelp": "僅引用私密金鑰檔案路徑，不匯入檔案內容。",
+      "purpose": "用途（選填）",
+      "clients": "用戶端"
+    },
+    "auth": {
+      "method": "驗證方式",
+      "password": "密碼",
+      "privateKey": "私密金鑰檔案",
+      "certificate": "SSH 使用者憑證",
+      "legacy": "保留原有驗證方式",
+      "passwordPlaceholder": "輸入 SSH 登入密碼",
+      "keepPassword": "留空以保留已儲存的密碼",
+      "passwordHelp": "儲存到系統認證資料庫，供 CC Switch 測試使用，不寫入設定或 Skill；系統漫遊依作業系統政策執行。用戶端仍須在終端輸入密碼，請勿傳送給模型。",
+      "certificateFile": "SSH 憑證檔案路徑",
+      "certificatePlaceholder": "憑證檔案的絕對路徑，通常以 -cert.pub 結尾",
+      "certificateHelp": "使用 OpenSSH 使用者憑證及其對應私密金鑰，而非網站的 TLS/SSL 憑證。"
+    },
+    "empty": {
+      "title": "尚未新增 VPS 主機",
+      "description": "新增主機後，可在這裡管理連線資訊及用戶端接入。"
+    },
+    "discard": {
+      "title": "捨棄未儲存的變更？",
+      "message": "關閉編輯器並捨棄目前草稿？先前儲存操作已寫入的設定不會被復原。",
+      "confirm": "捨棄變更"
+    },
+    "connection": {
+      "success": "連線測試成功",
+      "hostKeyChanged": "主機指紋已變更，連線已阻擋。請先核實伺服器身分。",
+      "targetChanged": "連線資訊與已儲存的主機或已確認的目標不一致，連線已阻擋。請重新開啟主機，核對位址、連接埠、使用者名稱和驗證方式；若要更換伺服器，請新增主機記錄。",
+      "authenticationFailed": "SSH 驗證失敗，請檢查密碼、私密金鑰或憑證。",
+      "credentialsUnavailable": "無法存取本機認證資料庫，請檢查系統認證服務後重試。",
+      "passwordRequired": "沒有可用的已儲存密碼，請編輯主機並輸入密碼後重試。",
+      "sshNotFound": "找不到所需的 OpenSSH 工具",
+      "timeout": "連線測試逾時",
+      "cancelled": "連線測試已取消",
+      "failed": "連線測試失敗"
+    },
+    "hostKey": {
+      "title": "確認主機指紋",
+      "description": "接受前，請透過可信管道核對 {{name}} 的此指紋。取得主機公開金鑰不等於已證明伺服器身分。",
+      "confirm": "信任此指紋",
+      "confirmFailed": "主機指紋確認失敗",
+      "retryHint": "確認可能已過期，或本機信任檔案無法寫入。請重新測試連線；若再次顯示指紋，請重新核對後確認。"
+    },
+    "help": {
+      "title": "關於 VPS 用戶端接入",
+      "access": "選擇用戶端後，會自動設定本機主機目錄及一個由 VPS 託管的 Skill。這個自動 Skill 不會顯示於一般 Skills 頁面。",
+      "scope": "用戶端選擇控制探索範圍，並非安全沙箱。同一系統帳戶下的其他程式仍可能使用可存取的 SSH 憑證。",
+      "sessions": "取消綁定不會終止已執行的 SSH 工作階段。測試成功只代表這一次探測。",
+      "cloud": "若用戶端使用雲端模型，遠端命令輸出可能會傳送給模型服務供應商。"
+    }
+  },
   "common": {
     "add": "新增",
     "edit": "編輯",

@@ -3,6 +3,89 @@
     "title": "CC Switch",
     "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"
   },
+  "vps": {
+    "title": "VPS",
+    "add": "添加主机",
+    "edit": "编辑主机",
+    "editServer": "编辑 {{name}}",
+    "deleteServer": "删除 {{name}}",
+    "deleteConfirm": "删除 {{name}} 并移除其客户端绑定？其他主机及已运行的 SSH 会话不受影响。",
+    "search": "搜索主机",
+    "noResults": "没有匹配的主机",
+    "retry": "重试",
+    "clientsFor": "{{name}} 的客户端",
+    "testConnection": "测试连接",
+    "cancelTest": "取消测试",
+    "cancelFailed": "无法取消连接测试",
+    "loadFailed": "VPS 配置加载或恢复失败",
+    "saveFailed": "VPS 配置尚未完成",
+    "deleteFailed": "主机删除或客户端清理尚未完成",
+    "formDescription": "选择需要发现此主机的客户端。保存后自动配置主机目录和 VPS Skill，无需另行启用 Skill。",
+    "sections": {
+      "host": "主机信息",
+      "authentication": "SSH 认证"
+    },
+    "fields": {
+      "name": "名称",
+      "host": "主机地址",
+      "hostPlaceholder": "IP 地址或 DNS 主机名",
+      "port": "端口",
+      "user": "SSH 用户名",
+      "identityFile": "私钥文件路径",
+      "identityPlaceholder": "私钥文件的绝对路径",
+      "identityHelp": "仅引用私钥文件路径，不导入私钥文件内容。",
+      "purpose": "用途（可选）",
+      "clients": "客户端"
+    },
+    "auth": {
+      "method": "认证方式",
+      "password": "密码",
+      "privateKey": "私钥文件",
+      "certificate": "SSH 用户证书",
+      "legacy": "保持原有认证方式",
+      "passwordPlaceholder": "输入 SSH 登录密码",
+      "keepPassword": "留空保留已保存的密码",
+      "passwordHelp": "保存到系统凭据库，供 CC Switch 测试使用，不写入配置或 Skill；系统漫游遵循操作系统策略。客户端仍需在终端输入密码，请勿发给模型。",
+      "certificateFile": "SSH 证书文件路径",
+      "certificatePlaceholder": "证书文件的绝对路径，通常以 -cert.pub 结尾",
+      "certificateHelp": "使用 OpenSSH 用户证书及其对应私钥，不是网站的 TLS/SSL 证书。"
+    },
+    "empty": {
+      "title": "尚未添加 VPS 主机",
+      "description": "添加主机后，可在这里管理连接信息及客户端接入。"
+    },
+    "discard": {
+      "title": "放弃未保存的更改？",
+      "message": "关闭编辑器并放弃当前草稿？此前保存操作已写入的配置不会被撤销。",
+      "confirm": "放弃更改"
+    },
+    "connection": {
+      "success": "连接测试成功",
+      "hostKeyChanged": "主机指纹已变化，连接已阻止。请先核实服务器身份。",
+      "targetChanged": "连接信息与已保存的主机或已确认的目标不一致，连接已阻止。请重新打开主机，核对地址、端口、用户名和认证方式；若要更换服务器，请新建主机记录。",
+      "authenticationFailed": "SSH 认证失败，请检查密码、私钥或证书。",
+      "credentialsUnavailable": "无法访问本机凭据库，请检查系统凭据服务后重试。",
+      "passwordRequired": "没有可用的已保存密码，请编辑主机并输入密码后重试。",
+      "sshNotFound": "未找到所需的 OpenSSH 工具",
+      "timeout": "连接测试超时",
+      "cancelled": "连接测试已取消",
+      "failed": "连接测试失败"
+    },
+    "hostKey": {
+      "title": "确认主机指纹",
+      "description": "接受前，请通过可信渠道核对 {{name}} 的此指纹。获取到主机公钥不等于已证明服务器身份。",
+      "confirm": "信任此指纹",
+      "confirmFailed": "主机指纹确认失败",
+      "retryHint": "确认可能已过期，或本机信任文件无法写入。请重新测试连接；若再次显示指纹，请重新核对后确认。"
+    },
+    "help": {
+      "title": "关于 VPS 客户端接入",
+      "access": "选择客户端后，会自动配置本机主机目录和一个由 VPS 托管的 Skill。这个自动 Skill 不出现在普通 Skills 页面中。",
+      "scope": "客户端选择控制发现范围，并非安全沙箱。同一系统账户下的其他程序仍可能使用可访问的 SSH 凭据。",
+      "sessions": "取消绑定不会终止已运行的 SSH 会话。测试成功只代表这一次探测。",
+      "cloud": "若客户端使用云端模型，远端命令输出可能被发送给模型服务商。"
+    }
+  },
   "common": {
     "add": "添加",
     "edit": "编辑",

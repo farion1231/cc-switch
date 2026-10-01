@@ -2,7 +2,7 @@
 
 日期：2026-09-29。关联 [Issue #7739](https://github.com/farion1231/cc-switch/issues/7739)。
 
-**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A–E 已实现并验证定向用例；F 的最终接线和 G 的整体复验仍在推进，整体仍有既有符号链接权限测试失败。最新主线程记录见第 13 节，尚未完成真实 SSH 与桌面验收。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
+**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A–F 已实现，G 的自动化复验已推进至完整 Rust 库/集成目标；三个既有 Windows 1314 测试已通过夹具修复并定向验证，上游合并后的全量复验与 PR 准备见第 19 节。用户已反馈页面和真实服务器 SSH 测试通过，客户端端到端及其余认证/平台验收未完成。认证扩展见第 15 节，帮助退出/表单分组修复见第 16 节，最新用户实测反馈与下一步见第 17 节。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
 
 ## 0. 开发启动条件与边界
 
@@ -366,3 +366,157 @@ D 已提交为 `f1ab3a92`。E 由独立 worktree 子 agent 编写，主线程审
 日志：`vps-stage-e-tests.log`（保留首次编译错误）、`vps-stage-e-recheck.log`、`vps-stage-e-clippy.log`。
 
 另以本机 OpenSSH 9.9p2 执行了 `-G -F <临时配置>` 的离线解析 smoke check：人工构造的等价配置覆盖空格/Unicode 配置及密钥引用路径、端口 2222、稳定 alias 和专用信任文件，验证通过；没有建立连接或读取真实私钥。该检查不等于真实 VPS/客户端端到端验收。
+
+## 14. 阶段 F 接线与 G 自动化复验（2026-09-30，会话恢复后）
+
+从会话 `f29127ac-aa35-4fc6-9ebb-5b41e74c9c7d` 的本地记录恢复；开始时 HEAD 为 E 的 `59a83da1`，F 的前端/IPC 及尚未接入的 SSH shutdown 留在工作区。保留原有改动，本轮未新增 commit、push、评论或 PR。
+
+### F 的实现与收尾
+
+- `App.tsx` 将 VPS 放在原功能按钮组末尾，跨 Hermes/OpenClaw 等分支共用入口；补齐视图恢复、标题、返回、新增、滚动以及 busy/对话框导航保护。全局页不以当前供应商应用自动授予客户端绑定。
+- `VpsPanel` / `VpsServerForm`、`useVps`、`lib/api/vps.ts` 与三个主机 IPC 接通。列表、增删改、SSH 测试、显式指纹确认、取消和既有 Skill 客户端选择形成同一流程；保存等待目录及托管部署收敛，不把单独保存主数据当作成功。
+- 新增失败保留 UUID 与草稿，绑定失败不乐观勾选；未保存草稿有丢弃确认。没有新增第二个 Skill 开关或常驻 Skill 状态行。
+- SSH shutdown 接入普通退出清理、Tauri 重启和直接进程重启；取消本进程活动探测、撤销待确认 token、阻止排队探测在退出时启动，并有界等待回收。同步重启路径不调用窗口 API，不清理外部客户端 SSH 会话。新增两个状态级测试均通过；没有执行真实桌面退出/重启验收。
+- 只读核对发现并用六个失败用例复现：SSH 固定英文 `message` 绕过四语言，以及确认失败后复用失效 token。已修正为本地化状态提示；确认失败时撤销旧请求、保留草稿、提示用户显式重新测试，不自动发起连接。过期与临时信任写入失败均重新进入测试/核验流程，无新增后台恢复器或 IPC 类型。
+
+### 实际测试结果
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| 首次完整前端 | 151 文件、1694 通过 |
+| 新增文案/确认恢复回归 | 实现前 6 失败；修复后 VPS 组件/API/hook/语言定向 4 文件、29 通过 |
+| 最终完整前端 | **151 文件、1700 通过**；低并发，未提高超时或更新快照 |
+| VPS Rust 定向 | **74 通过**（之前 72 + shutdown 2） |
+| Rust 全库 | **2977 通过、2 失败、10 原有忽略** |
+| 全部 Rust 集成目标 | **174 通过、1 失败**；15 个目标均执行（含 0 测试的 support），使用 `--test '*' --no-fail-fast` |
+| TypeScript / 前端格式 / renderer 构建 | 最终复核通过；保留既有包体/浏览器数据时效警告 |
+| Rust 格式 / 单 job Clippy `-D warnings` | 最终复核通过 |
+
+剩余三项均为已记录的 Windows `1314`：库测试 `codex_config::tests::resolve_catalog_rejects_symlink_escaping_config_dir`、`services::session_usage_grokbuild::tests::symlink_cycle_does_not_cause_stack_overflow`，及集成 `skill_sync::sync_to_app_removes_disabled_and_orphaned_ssot_symlinks`。没有增加 ignore、放宽断言或更改系统权限。首次执行的其余集成目标全部通过；不能因此把整体标为全绿。
+
+日志位于 `.cc-switch/contribution-prep/`：`vps-stage-f-resumed-{renderer,frontend-full,rust-focused,clippy,rust-lib}.log`、`vps-stage-f-resumed-ui-{red,green}.log`、`vps-stage-f-final-{frontend,renderer,clippy}.log`、`vps-stage-g-rust-integrations.log`、`vps-stage-g-rust-lib-final.log`。
+
+### 测试隔离范围与后续命令
+
+本轮后端命令使用临时 `CC_SWITCH_TEST_HOME` 及进程级 Hermes/MiniMax/Mavis/AppData 覆盖，不改变启动 Cargo 的 shell 的 HOME。集成 support 自身固定使用 `temp_dir()/cc-switch-test-home`，会删除重建该目录并在测试子进程内改 HOME；因此此次全部集成目标另外使用新建的私有 `TEMP/TMP/TMPDIR`，并将 MiniMax/Mavis 覆盖对齐该 fixture 的 `.minimax`。清除 `CC_SWITCH_UPDATE_GOLDEN`，不更新 golden 源文件。
+
+只读核查还发现：既有工具路径搜索单测会枚举真实 home/Known Folder 下的工具安装目录，环境覆盖并不能阻止这些目录元数据访问。Codex 模型目录在缺缓存时存在调用本机 CLI 的路径，未证明先前库测试实际进入该分支或读取了真实配置；后续命令补临时 `CODEX_HOME` 并清除 `CODEX_SQLITE_HOME`，同时隔离 XDG 路径。不以隔离变量或测试通过声称“完全没有访问任何真实 home 路径”；没有读取/清理真实用户配置来做事后核查。
+
+### 尚未执行及下一步
+
+1. Windows Tauri 真实窗口、退出/重启、主机页与 Skill 部署联动：需隔离数据与客户端目录后进行，未启动开发版接管日常配置。
+2. 真实 VPS/VM 的 SSH、指纹确认/变化、取消与凭据访问：未连接，需要测试资源及明确授权；不要在对话中传私钥内容。
+3. 声明支持的客户端发现/重载/执行行为与 macOS：未做端到端测试；客户端能力列表只表示配置目标，不代表实测兼容。
+4. 在具备符号链接权限的环境复验三个失败；不擅自开启 Developer Mode 或提权。
+5. 外部发布仍需单独授权；阶段 F 当前保持未提交，不能凭自动化通过宣称 PR 已准备就绪。
+
+## 15. 桌面反馈修复与本机认证扩展（2026-09-30 至 2026-10-01）
+
+用户已确认日常版恢复正常；数据库恢复与授权详情见本机 `vps-daily-db-recovery-20260930.md`。本轮只修改代码、使用前端模拟数据和隔离测试，不启动 Tauri，不读取日常数据库或真实凭据库。
+
+### 新确认的范围
+
+用户要求客户端选择与 MCP/供应商页一致，补密码及 SSH 用户证书，修复添加主机页顶部遮挡和返回失效；随后明确“密码保存在本地就行，SSH agent 可以不做”。采用本机系统凭据库，不使用普通 JSON 明文保存，不新增 SSH agent 独立选项；旧记录缺省认证保持兼容。原方案中“不保存密码”的范围已由本轮要求更新，见 proposal 第 8 节。
+
+### 已完成的前端修复
+
+- 原表单使用 z-40 的居中 Dialog，而主页面页头为 z-50，主页面返回又因 editor 状态被禁用。改为 MCP 使用的 `FullScreenPanel`，独立页头返回、可滚动内容及固定底部操作；未保存草稿仍须确认放弃。
+- 表单客户端改为带名称的复选框，仍遍历 `SKILLS_APP_IDS`；列表保留与 MCP 相同的 `AppToggleGroup`。指纹/丢弃确认框高于全屏表单，帮助框高于主页面页头。
+- 认证表单提供密码、私钥文件、SSH 用户证书；证书需要对应私钥。密码单独保存在编辑器临时状态，通过独立 IPC 参数传递，不混入主机元数据；留空保留已有密码，切换认证方式清空草稿密码。保存后清理 mutation 状态，不进入主机查询缓存。
+- 新增凭据不可用、缺少密码与目标变化的四语言提示；界面明确本机密码库用于 CC Switch 测试，客户端 SSH 仍需用户终端交互，不把密码交给模型。
+
+### 当前验证证据
+
+- UI 返回/布局/客户端选择：先 3 项失败，修复后相关 24 项通过。
+- 认证前端：先 4 项失败；修复后有 1 项测试环境缺失 `scrollIntoView`，按既有测试模式补可恢复 polyfill，不修改组件业务逻辑或放宽断言；随后 5 文件、37 项全部通过。
+- 完整前端：151 文件、1707 项通过。之后补充目标变化提示与系统凭据漫游文案，最终 TypeScript、格式、4 文件/36 项定向测试及 renderer 构建再次通过。
+- 浏览器纯前端模拟页（无 Tauri/SSH）：实际验证空白表单返回、脏表单取消/确认放弃、客户端勾选；1000×650 浅色和 900×600 日语深色下无横向溢出，顶部无遮挡、底部按钮可见。截图在本机 `vps-form-fixed-light.png` / `vps-form-fixed-dark-ja.png`。浏览器连接 Vite HMR WebSocket 超时，HTTP 加载及上述交互正常；不把模拟页当作原生或真实 SSH 验收。临时 Vite 子进程已按 PID/命令/创建时间精确回收，没有结束用户进程。
+
+### 已整合的认证后端
+
+- `VpsServer` 可选 `authMethod` / `certificateFile`，旧记录缺省保持原行为。新密码通过 `save_vps_server` / `test_vps_connection` 的独立参数传递，不加入主机 JSON。证书与私钥仅做路径/注入校验，实际配对由 OpenSSH 判断。
+- 系统凭据库按规范化 VPS 数据目录、主机 UUID 和不可变 revision UUID 区分。`servers.json` 只保存活动 revision 指针及待清理回执。新密码先写独立凭据项，再原子切换指针；主数据提交前失败不覆盖旧密码，生成/部署失败后保留已提交的新密码，清理失败可重试且拒绝删除活动 revision。没有再升级 SQLite schema。
+- 固定探测通过一次性 loopback/ASKPASS 通道向 OpenSSH 提供密码。辅助进程在 `main()` 最早分流，不初始化应用、数据库或日志；密码不经命令参数、环境变量或临时文件传递。首次确认前不读取密码；host/port 与已确认目标不同时返回 `targetChanged`，不沿用密码或静默换 pin。
+- 异步取消/超时可结束 UI 请求；不可强杀的 OS 凭据读取仍占原活动名额，迟到返回后不能启动 SSH。主线程额外复现了“取消后 OS 读取仍持有全局 VPS 锁”问题（两个测试红灯），利用不可变 revision 在读取 OS 凭据前释放状态锁，修复后通过。退出/重启的 shutdown 字段、方法及生产入口 gate 已与新实现三方合并保留。
+- 引入 `keyring = 3.6.3` 与 `zeroize`，锁文件仅增加相关依赖，不升级既有包版本。Windows keyring 使用 `CRED_PERSIST_ENTERPRISE`，因此只能保证 CC Switch 不写明文、不自行同步；OS 漫游由系统策略控制，已在四语言文案和方案中说明。
+
+最终后端验证：**VPS 96 项通过（新增 22 项）；既有 Skill 服务 80 通过、1 项原有忽略；完整目标编译检查、Rust 格式、Clippy `-D warnings` 通过。** 新凭据测试使用注入的内存 store，原生凭据入口在单元测试构建中明确拒绝访问。所有后端测试使用新临时 home 和客户端路径覆盖。本轮未重跑完整 Rust 库和全部集成目标，前三项 Windows 1314 基线未解决，不沿用旧统计冒充本轮全量结果。
+
+### 验收边界及日志
+
+- 代码已可重新进行隔离桌面验收，但必须完全退出旧开发进程，再使用本机 `vps-desktop-acceptance.sh` 重新构建启动；不要只热更新前端或直接运行 `pnpm dev` 访问日常库。
+- 未执行真实系统凭据库读写、真实密码 SSH、证书登录或新版原生辅助进程联动。实际 OS/SSH 和 macOS/Linux 行为不能由 mock 测试替代；加密私钥的口令交互、多因素登录没有实现。
+- 本机密码库仅用于 CC Switch 的固定连接测试，独立客户端仍通过系统 SSH 交互输入密码；模板已禁止模型读取已存密码或要求用户在聊天中发送密码。
+- 本轮没有新增 commit、push、PR、修改系统权限、再次打开日常数据库，或访问真实凭据库。
+
+本机日志：`vps-ui-feedback-{red,green}.log`、`vps-auth-ui-{red,green,green-recheck}.log`、`vps-feedback-frontend-{full,final-focused}.log`、`vps-feedback-renderer-final.log`、`vps-auth-integrated-check.log`、`vps-auth-rust-focused.log`、`vps-auth-vault-lock-red.log`、`vps-feedback-rust-final.log`、`vps-feedback-skill-regression.log`、`vps-feedback-clippy-final.log`。
+
+## 16. 会话恢复：帮助退出与连接表单分组（2026-10-01）
+
+从会话 `cc7a4323-18d3-4a00-af3d-ea06c49d9fcc` 恢复。该会话第 15 节之后又收到三项反馈：其他页面/Skills 图标是否被修改、VPS 客户端接入说明无法退出、连接表单参考 Termius。上轮仅完成定位和参考资料读取，尚未实现这次反馈，不能将第 15 节当作全部收尾。
+
+### 本轮修改范围
+
+- 核实 `846de29c`（上游基线 `Fix/skills new icon (#7727)`）将两个 Skills 导航图标从 Wrench 改为自定义 SkillsIcon。本轮不回退该图标，不修改其他页面或共享组件；此前 VPS 功能已有的 App/后端/Skill 接线仍保留。
+- `VpsPanel` 帮助框缺少显式关闭控件，而共享 Dialog 默认禁止点击遮罩关闭，背景导航又被 overlay 状态禁用。新增底部“关闭”按钮、关闭后的触发按钮焦点恢复和可滚动正文；保留 Esc 行为，不改变其他弹窗的全局规则。
+- `VpsServerForm` 参考 [Termius 连接文档](https://docs.termius.com/organize-and-connect-to-hosts/connecting-to-a-server) 的主机/凭据分组，整理为主机信息、SSH 认证、客户端三个具名 fieldset。名称/用途、用户名/认证方式在宽窗口并排，地址/端口相邻，按认证方式显示相关字段。保持既有认证、保存、草稿保护、客户端能力集合与密码隔离契约；不新增终端、密钥导入或认证后端。
+- 四语言仅更新 VPS 命名空间的分组标题和客户端说明。新增三项组件回归，未放宽旧断言或改共享测试环境。
+
+### 验证结果与边界
+
+- 新回归先得到 **3 项失败**：缺少关闭按钮、Esc 关闭后焦点未恢复、表单缺少分组；修复后 VPS 组件/API/hook/语言 **4 文件、39 项通过**。
+- 完整前端 **151 文件、1710 项通过**。随后根据截图去除分组标题重复间距，最终 TypeScript、前端格式、39 项定向测试和 renderer 构建再次通过。
+- Playwright 使用真实 VPS 组件/CSS 与既有内存 API 替身，拦截入口，验证未加载生产 `App`：四语言帮助按钮/Esc/焦点/导航恢复、空表单返回、脏草稿取消放弃、客户端勾选与模拟保存、900×600 日语深色证书表单滚动和底部操作均通过。无页面脚本错误或横向溢出；原生桌面和 SSH 不在本次验收范围。
+- 首次浏览器失败来自被忽略预览壳的 `pt-20` 不在 Tailwind 扫描范围，固定页头挡住了帮助入口；仅将本机预览壳改为显式 padding，未改产品布局。快速重新打开后立即发送 Esc 的自动化曾出现时序失败；最终脚本等待现有弹窗入场动画结束后再发键，没有增加固定 sleep 或修改共享 Dialog。
+- 临时 Vite 以直接子进程启动并按自有进程句柄回收，结束后确认 3000 端口空闲。未启动 Tauri、访问日常数据库/系统凭据库、连接 VPS、修改系统权限或新增 commit/push/PR。本轮没有改 Rust，也未重跑 Rust；既有三项 Windows 1314 及真实认证/客户端/macOS 验收仍待处理。
+
+本机日志：`vps-help-form-resumed-{red,green,frontend-full}.log`、`vps-help-form-final-{focused,build}.log`、`vps-help-form-browser-verified.log`；中间失败保留在 `vps-help-form-browser{,-recheck,-final}.log`。截图：`vps-help-fixed-{zh,ja}.png`、`vps-form-grouped-light.png`、`vps-form-grouped-dark-ja.png`、`vps-form-grouped-clients-dark-ja.png`。浏览器脚本 `vps-help-form-browser.py` 与预览入口均留在被忽略的 `.cc-switch/contribution-prep/`，不加入应用包。
+
+## 17. 用户实测反馈与下一步（2026-10-01）
+
+用户反馈：“页面没问题了，我也使用了真机服务器，ssh测试同样没问题”。据此记录 **页面交互验收通过、用户执行的真实服务器 SSH 测试通过**。这是用户报告，不是本轮 Agent 重新执行；未提供具体认证方式、凭据保存后重启、主机指纹变化等测试细节，不泛化为全部认证方式或平台已验证，也不记录服务器地址或凭据。
+
+下一步优先验证一个常用客户端的完整接入：VPS 选择客户端后自动部署一次、普通 Skill 页保持隐藏、客户端新会话读取正确目录、经用户授权对明确目标执行最小只读 SSH 命令。随后验证修改目录、共享主机引用、最后解绑清理及重启恢复。客户端必须读取与隔离 CC Switch 相同的测试目录；当前桌面验收脚本将各客户端目录指向私有 acceptance home，日常启动的客户端不会自动采用这些覆盖。不要为方便验证而改回日常目录。
+
+本机保存的密码仍只供 CC Switch 连接测试，独立客户端需终端交互输入；不向模型提供密码。用户随后询问过通过本机启动入口复用已保存密码的可行性，并明确选择 **暂时搁置客户端密码自动复用**；不要将这一讨论当作新增实现授权。付费模型调用、真实服务器执行、系统权限变更及外部发布仍需各自明确授权。客户端端到端通过后，再做代码审阅、最终自动化复验及提交材料；既有三项 Windows 1314、未测认证方式及 macOS 等仍须分别完成或如实列为未测。本次仅更新执行记录，未运行客户端、连接服务器或创建提交。
+
+### 同日：用户配置后的 Skill 产物只读核验
+
+按用户请求检查本机隔离验收目录 `.cc-switch/contribution-prep/vps-desktop-data`，未接触日常配置。当前共 2 条主机记录，其中 1 条启用 Claude，其他客户端未启用。Claude 投影 `home/.cc-switch/vps/skill-projections/claude/SKILL.md` 和部署 `home/.claude/skills/cc-switch-vps/SKILL.md` 均存在，内容逐字节一致；专属目录 `home/.cc-switch/vps/clients/claude.json` 仅包含该绑定主机，ID 一致。隔离数据库以 SQLite 只读模式查询，确认 `internal:vps`、`managed_by=vps` 及 Claude-only 启用状态。检查范围内无缺失或多余客户端部署，路径均位于隔离 home 内。
+
+结论：**用户选择客户端后的 Skill 生成、部署和目录引用核验通过**。仅比对投影与部署文件内容，没有解释数据库/恢复状态的内部哈希算法；未验证真实客户端加载或执行。普通客户端启动不会自动使用隔离验收目录。本次没有启动应用/客户端/SSH、运行测试、读取密码或私钥内容、访问系统凭据库，也没有更改验收数据；仓库仅补充此记录。
+
+用户随后取消全部客户端选择，再次只读核验同一隔离验收目录：2 条主机记录仍保留，启用客户端绑定为空；此前 Claude 的 `cc-switch-vps` 部署目录及 `SKILL.md`、Claude 投影目录及 `SKILL.md`、`clients/claude.json` 均不存在；`skill-projections/` 与 `clients/` 为空，`skill-state.json` 的 `deployments` 为 0，隔离数据库中 `internal:vps` / `managed_by=vps` 的 Skill 记录为 0。**本次最后解绑后的部署、目录与托管登记清理核验通过**。未手动删除任何文件，未连接 SSH 或访问凭据库。
+
+## 18. 功能验收收口与 PR 准备（2026-10-01）
+
+用户确认本轮功能验收可以通过，转入 PR 准备；不再扩展客户端密码复用。该确认覆盖前述页面、用户真实 SSH 测试、Skill 产物和最后解绑清理，不追溯补齐没有执行的客户端命令、认证组合或其他平台验证。PR 必须如实区分这些边界与既有 Windows 1314 失败。
+
+- 已执行 `git fetch origin main` 和 `git fetch upstream main`。`origin/main` 与 `upstream/main` 均为 `7c0d0fc6`，从功能起点 `846de29c` 新增 11 个上游提交；功能 HEAD 仍为 `59a83da1`、已有 5 个阶段提交。本地 `main` 仍为旧的 `1ee2fdc3`，fetch 不等于已合并功能分支。
+- 上游与功能的改动交集为 `src/App.tsx`、`src-tauri/src/lib.rs`、四语言文件和 `tests/integration/App.test.tsx`。没有竞争性的 CC Switch schema 迁移；上游仍为 v19，新增的 OpenCode V2 SQLite 兼容是客户端会话数据库，不是本应用数据库。此为路径/历史分析，尚未执行合并或证明无冲突。
+- 建议先审阅并保存当前未提交的 VPS 界面/认证/测试工作，再将最新 `upstream/main` 合并入功能分支，保留已有历史；之后在合并结果上重新检查、回归并整理 PR。当前尚未 merge/rebase、新增 commit、push 或创建 PR。
+- 用户授权配置 GitHub CLI。官方便携版 `2.102.0` 已校验发布页 SHA-256，安装于被忽略的 `.cc-switch/contribution-prep/tools/gh/bin/gh.exe`，不改系统 PATH。现有环境认证识别账号为 `Furina-he`；只读确认上游 #7739 为该账号创建、无评论，该功能分支尚无 PR。
+- 用户选定新 Issue 标题为 **“新增 VPS 管理模块，支持客户端接入”**。首次使用环境令牌修改时，GitHub 返回 `Resource not accessible by personal access token (updateIssue)`，当时线上标题未变。随后用户通过官方 CLI 浏览器流程完成 `Furina-he` 登录；主线程在单次命令中移除 `GH_TOKEN` / `GITHUB_TOKEN` 的优先级覆盖，重新核验账号后成功修改，并再次读取确认 [#7739](https://github.com/farion1231/cc-switch/issues/7739) 标题为用户选定文本。**标题更新已完成，正文及 Issue 开关状态未修改。** 后续 GitHub 写操作应使用此次已授权登录，不让原受限环境令牌覆盖；不在聊天或日志中输出令牌。发布 PR 与推送仍需其各自明确授权。
+
+## 19. Windows 1314 修复与提交前审阅（2026-10-01）
+
+用户要求修复三项 Windows 1314 后准备 PR。先在新的隔离测试 home 逐项复现，三项均在 fixture 创建目录符号链接处失败，尚未进入被测逻辑。只读检查确认 Developer Mode 关闭、当前进程未提权。
+
+### 目录链接夹具修复
+
+三项测试均使用已存在目录的绝对目标，分别验证 canonicalize 后越界、循环链接跳过和 SSOT 链接清理。Rust 1.95 对 Windows junction 的 `is_symlink`、`read_link`、`remove_dir` 语义已通过独立临时目录探针确认。因此新增仅在测试构建中使用的共享 helper：优先原生目录 symlink，仅错误 1314 时回退真实 junction，仍断言链接类型和真实目标。保留所有原有业务断言；不适用于文件、悬空或相对 symlink，也不声称本机已覆盖 Windows 原生 symlink tag。
+
+- Codex、Grok 两项原失败分别通过；共享夹具的特殊路径/删除保留目标及不覆盖已有路径两项通过；完整 `skill_sync` 集成目标 9 项通过（含该 helper 的两项测试）。
+- 不改业务代码、不增加 skip 或 ignore、不改系统权限；目录路径经子进程环境变量传入 `cmd.exe /D /V:OFF`，避免空格、Unicode、`&`、`%` 和 `!` 的命令展开问题，已有对应真实文件系统测试。
+- 已单独提交 **`f77e3794` — `test(windows): support unprivileged directory link fixtures`**；该提交不包含之前未提交的 VPS 页面/认证扩展。
+
+### 提交前审阅发现及修复
+
+- 部分保存/删除在主数据已提交后失败时，旧前端缓存可能再次整体回写。新增 3 项先红灯回归，再让失败 mutation 等待 VPS query 重新 reconcile；若重读仍失败，现有 query 错误状态阻断旧列表操作。成功保存仍按原规则刷新缓存，草稿和原有断言不变。前端定向 4 文件、42 项通过。
+- 已保存密码的读取原先只绑定主机 UUID，可能把当前 revision 用于旧草稿的目标。新增失败回归后，将 host/port/user/authMethod 与持久化记录一起在锁内校验并保留不可变 revision 快照，然后仍在锁外读凭据库；地址、端口、用户或认证方式变化拒绝自动取密码，名称/用途/客户端变化不受影响。补齐四语言提示。
+- 原生 loopback 探针确认 Windows `accept()` 后的 socket 继承 nonblocking：设置 read timeout 后仍立即 WouldBlock。ASKPASS 分片 token 回归先以连接中止失败，修复为接受后显式恢复 blocking，再使用原有超时；没有加长超时或更换 SSH 协议。
+- 增强的 `cargo clippy --all-targets -D warnings` 首次发现本分支 VPS 测试 3 项不必要 clone 及上游既有 `transform_codex_chat.rs:4498` 的 `op_ref`。VPS 三项已改用 `std::slice::from_ref`；上游那项在 `upstream/main` 原样存在，未改无关断言，也未添加 lint allow。项目 CI 实际采用不带 `--all-targets` 的 Clippy 命令，已通过；额外全目标检查不能冒充全绿。
+
+上述认证与 ASKPASS 验证只用内存凭据库、固定过程替身或 loopback，不访问真实 VPS 密码/私钥或连接服务器。中间认证回归曾因测试在切换到非密码方式时仍提供密码而失败，已改为合法测试输入，未放宽生产验证或期望状态。最终 VPS 后端定向 **99 项通过**（含新增目标绑定/显示字段兼容和 ASKPASS 分片回归），CI 的 Clippy 命令、Rust 格式、前端 TypeScript/格式均通过。合并上游后的最终全量结果和 PR 材料准备状态将在本节继续更新。
+
+本机证据：`windows-1314-{codex,grok,skill}-before.log`、`windows-1314-{codex,grok,helper,skill}-after.log`、`windows-1314-clippy-all-targets.log`、`vps-pr-reconciliation-{red,green}.log`、`vps-pr-credential-target-red.log`、`vps-pr-askpass-fragment-red.log`、`vps-pr-review-rust-{green,final}.log`、`vps-pr-review-clippy.log`。后端统一用本机 `run-isolated-rust.sh` 设置独立临时 home、TEMP 和各客户端/AppData 路径，不改变 Cargo/rustup 的 HOME。

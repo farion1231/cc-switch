@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   Loader2,
   RefreshCw,
+  Server,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -96,6 +97,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon, SkillsIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
+import VpsPanel, { type VpsPanelHandle } from "@/components/vps/VpsPanel";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
@@ -127,7 +129,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "vps";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -163,6 +166,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "vps",
 ];
 
 const getInitialView = (): View => {
@@ -191,6 +195,8 @@ function App() {
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptManagementBusy, setPromptManagementBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
+  const [vpsManagementBusy, setVpsManagementBusy] = useState(false);
+  const [vpsNavigationBusy, setVpsNavigationBusy] = useState(false);
   const [skillsCheckUpdatesState, setSkillsCheckUpdatesState] =
     useState<SkillsCheckUpdatesState>({
       isChecking: false,
@@ -276,7 +282,15 @@ function App() {
     }
   }, [activeApp, currentView]);
 
+  useLayoutEffect(() => {
+    if (currentView === "vps" && mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = 0;
+      mainScrollRef.current.scrollLeft = 0;
+    }
+  }, [currentView]);
+
   const promptPanelRef = useRef<PromptPanelHandle>(null);
+  const vpsPanelRef = useRef<VpsPanelHandle>(null);
   const [promptPrimaryAction, setPromptPrimaryAction] =
     useState<PromptPrimaryAction>("prompt");
   const mcpPanelRef = useRef<any>(null);
@@ -665,7 +679,10 @@ function App() {
 
   const currentViewRef = useRef(currentView);
   const managementBusy =
-    mcpManagementBusy || skillsNavigationBusy || promptNavigationBusy;
+    mcpManagementBusy ||
+    skillsNavigationBusy ||
+    promptNavigationBusy ||
+    vpsNavigationBusy;
   const managementBusyRef = useRef(false);
   managementBusyRef.current = managementBusy;
 
@@ -1062,6 +1079,14 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "vps":
+          return (
+            <VpsPanel
+              ref={vpsPanelRef}
+              onInteractionBlockedChange={setVpsManagementBusy}
+              onNavigationBlockedChange={setVpsNavigationBusy}
+            />
+          );
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1355,6 +1380,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "vps" && t("vps.title")}
                 </h1>
               </div>
             ) : (
@@ -1452,6 +1478,18 @@ function App() {
                 className="flex shrink-0 items-center gap-1.5"
                 style={{ WebkitAppRegion: "no-drag" } as any}
               >
+                {currentView === "vps" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={vpsManagementBusy}
+                    onClick={() => vpsPanelRef.current?.openAdd()}
+                    className="hover:bg-black/5 disabled:opacity-100 dark:hover:bg-white/5"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("vps.add")}
+                  </Button>
+                )}
                 {currentView === "prompts" && promptPrimaryAction && (
                   <Button
                     variant="ghost"
@@ -1763,6 +1801,16 @@ function App() {
                           )}
                         </motion.div>
                       </AnimatePresence>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCurrentView("vps")}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                        aria-label={t("vps.title")}
+                        title={t("vps.title")}
+                      >
+                        <Server className="w-4 h-4" aria-hidden="true" />
+                      </Button>
                     </div>
 
                     <Button
