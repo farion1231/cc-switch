@@ -77,6 +77,14 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           }
         />
 
+        <ToggleRow
+          icon={<AppWindow className="h-4 w-4 text-emerald-500" />}
+          title={t("settings.enableFloatingUsage")}
+          description={t("settings.enableFloatingUsageDescription")}
+          checked={!!settings.enableFloatingUsage}
+          onCheckedChange={(value) => onChange({ enableFloatingUsage: value })}
+        />
+
         {isLinux() && (
           <ToggleRow
             icon={<AppWindow className="h-4 w-4 text-amber-500" />}

@@ -141,6 +141,12 @@ body {
   color: hsl(var(--foreground));
 }
 
+/* 用量悬浮窗专用：透明无边框窗口禁用滚动，避免内容溢出产生滚动区域干扰尺寸测量。
+   通过 main.tsx 悬浮窗分支添加的 body class 限定，不影响主窗口。 */
+body.floating-usage-window {
+  overflow: hidden;
+}
+
 html.dark {
   color-scheme: dark;
 }
