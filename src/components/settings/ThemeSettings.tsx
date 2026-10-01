@@ -18,6 +18,13 @@ export function ThemeSettings() {
       </header>
       <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
         <ThemeButton
+          active={theme === "system"}
+          onClick={() => setTheme("system")}
+          icon={Monitor}
+        >
+          {t("settings.themeSystem")}
+        </ThemeButton>
+        <ThemeButton
           active={theme === "light"}
           onClick={() => setTheme("light")}
           icon={Sun}
@@ -30,13 +37,6 @@ export function ThemeSettings() {
           icon={Moon}
         >
           {t("settings.themeDark")}
-        </ThemeButton>
-        <ThemeButton
-          active={theme === "system"}
-          onClick={() => setTheme("system")}
-          icon={Monitor}
-        >
-          {t("settings.themeSystem")}
         </ThemeButton>
       </div>
     </section>
