@@ -64,7 +64,6 @@ import {
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   codexApiFormatFromWireApi,
-  codexCopilotCompatibilityApiFormat,
   extractCodexWireApi,
   setCodexWireApi,
   extractCodexModelName,
@@ -655,7 +654,9 @@ function ProviderFormFull({
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(
       initialData?.meta?.providerType === "github_copilot"
-        ? codexCopilotCompatibilityApiFormat(initialCodexCopilotApiFormat)
+        ? initialCodexCopilotApiFormat === "auto"
+          ? "openai_chat"
+          : initialCodexCopilotApiFormat
         : initialCodexApiFormat,
     );
   const [codexCopilotApiFormat, setCodexCopilotApiFormat] =
@@ -710,7 +711,7 @@ function ProviderFormFull({
   const handleCodexCopilotApiFormatChange = useCallback(
     (format: CodexCopilotApiFormat) => {
       setCodexCopilotApiFormat(format);
-      handleCodexApiFormatChange(codexCopilotCompatibilityApiFormat(format));
+      handleCodexApiFormatChange(format === "auto" ? "openai_chat" : format);
     },
     [handleCodexApiFormatChange],
   );
@@ -822,7 +823,9 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "github_copilot" ||
       initialProviderType === "github_copilot" ||
-      (appId === "claude" && baseUrl.includes("githubcopilot.com")));
+      baseUrl.includes("githubcopilot.com") ||
+      codexBaseUrl.includes("githubcopilot.com") ||
+      codexBaseUrl.includes("copilot-api."));
   const isClaudeCodexOauthProvider =
     appId === "claude" &&
     (presetProviderType === "codex_oauth" ||
@@ -1770,7 +1773,9 @@ function ProviderFormFull({
             : localApiFormat
           : appId === "codex" && category !== "official"
             ? isCopilotProvider
-              ? codexCopilotCompatibilityApiFormat(codexCopilotApiFormat)
+              ? codexCopilotApiFormat === "auto"
+                ? "openai_chat"
+                : codexCopilotApiFormat
               : isXaiOauthProvider
                 ? "openai_responses"
                 : localCodexApiFormat
@@ -1812,7 +1817,7 @@ function ProviderFormFull({
       isFullUrl:
         supportsFullUrl &&
         category !== "official" &&
-        !(appId === "codex" && isCopilotProvider) &&
+        !isCopilotProvider &&
         !isXaiOauthProvider &&
         localIsFullUrl
           ? true

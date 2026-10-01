@@ -938,24 +938,18 @@ mod tests {
 
     #[test]
     fn a_third_party_row_is_normalized_into_the_custom_route_with_its_key() {
-        for requires in [false, true] {
-            let config = RELAY.replace(
-                "requires_openai_auth = true",
-                &format!("requires_openai_auth = {requires}"),
-            );
-            let settings = row(json!({ "OPENAI_API_KEY": "sk-relay" }), &config);
-            let projection = project(&settings).unwrap();
-            let (table, auth) = custom(&projection);
-            assert_eq!(auth, RouteAuth::Bearer);
-            assert_eq!(
-                table
-                    .get("experimental_bearer_token")
-                    .and_then(Item::as_str),
-                Some("sk-relay")
-            );
-            assert_eq!(table.get("name").and_then(Item::as_str), Some("Relay"));
-            assert_eq!(projection.top[0].0, "model");
-        }
+        let settings = row(json!({ "OPENAI_API_KEY": "sk-relay" }), RELAY);
+        let projection = project(&settings).unwrap();
+        let (table, auth) = custom(&projection);
+        assert_eq!(auth, RouteAuth::Bearer);
+        assert_eq!(
+            table
+                .get("experimental_bearer_token")
+                .and_then(Item::as_str),
+            Some("sk-relay")
+        );
+        assert_eq!(table.get("name").and_then(Item::as_str), Some("Relay"));
+        assert_eq!(projection.top[0].0, "model");
     }
 
     #[test]

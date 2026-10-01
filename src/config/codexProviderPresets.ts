@@ -67,13 +67,14 @@ export function generateThirdPartyConfig(
   baseUrl: string,
   modelName = "gpt-5.6-sol",
   options?: {
-    // 新建草稿尚未填写 Key，默认不能回退到 auth.json 的官方登录。
-    // 写入层会根据实际凭据和登录状态计算 live 配置中的此值。
+    // 托管 OAuth 预设（requiresOAuth 卡）必须传 false：这类卡无静态 key，
+    // requires_openai_auth = true 会被后端 keyless 安全闸拒绝切换
+    // （provider.codex.config.official_auth_fallback）。
     requiresOpenAiAuth?: boolean;
   },
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
-  const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? false;
+  const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? true;
 
   return `model_provider = "custom"
 model = ${tomlString(modelName)}
@@ -447,7 +448,7 @@ disable_response_storage = true
 name = "APINebula"
 base_url = "https://apinebula.ai/v1"
 wire_api = "responses"
-requires_openai_auth = false`,
+requires_openai_auth = true`,
     endpointCandidates: ["https://apinebula.ai/v1"],
     apiFormat: "openai_responses",
     isPartner: true,
@@ -705,7 +706,7 @@ disable_response_storage = true
 name = "APIKEY.FUN"
 base_url = "https://api.apikey.fan/v1"
 wire_api = "responses"
-requires_openai_auth = false`,
+requires_openai_auth = true`,
     endpointCandidates: [
       "https://api.apikey.fan/v1",
       "https://api.apikey.fun/v1",
@@ -1259,7 +1260,7 @@ disable_response_storage = true
 name = "SudoCode"
 base_url = "https://api.sudocode.chat/v1"
 wire_api = "responses"
-requires_openai_auth = false`,
+requires_openai_auth = true`,
     endpointCandidates: [
       "https://api.sudocode.chat/v1",
       "https://api.sudorelay.com/v1",
@@ -1286,7 +1287,7 @@ model_verbosity = "high"
 name = "sudocode"
 base_url = "https://sudocode.us/v1"
 wire_api = "responses"
-requires_openai_auth = false`,
+requires_openai_auth = true`,
     endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
     apiFormat: "openai_responses",
     isPartner: true,
@@ -1340,7 +1341,7 @@ disable_response_storage = true
 name = "AtlasCloud"
 base_url = "https://api.atlascloud.ai/v1"
 wire_api = "responses"
-requires_openai_auth = false`,
+requires_openai_auth = true`,
     endpointCandidates: ["https://api.atlascloud.ai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
@@ -1398,7 +1399,7 @@ base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
 env_key = "OPENAI_API_KEY"
 query_params = { "api-version" = "2025-04-01-preview" }
 wire_api = "responses"
-requires_openai_auth = false`,
+requires_openai_auth = true`,
     endpointCandidates: ["https://YOUR_RESOURCE_NAME.openai.azure.com/openai"],
     theme: {
       icon: "codex",
@@ -3313,7 +3314,7 @@ disable_response_storage = true
 name = "E-FlowCode"
 base_url = "https://e-flowcode.cc/v1"
 wire_api = "responses"
-requires_openai_auth = false
+requires_openai_auth = true
 model_context_window = 1000000
 model_auto_compact_token_limit = 9000000`,
     category: "third_party",
@@ -3336,7 +3337,7 @@ disable_response_storage = true
 [model_providers.custom]
 name = "PIPELLM"
 wire_api = "responses"
-requires_openai_auth = false
+requires_openai_auth = true
 base_url = "https://cc-api.pipellm.ai/v1"`,
     category: "aggregator",
     endpointCandidates: ["https://cc-api.pipellm.ai/v1"],

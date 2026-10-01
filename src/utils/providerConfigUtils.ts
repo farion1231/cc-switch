@@ -1,7 +1,7 @@
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
-import type { CodexApiFormat, CodexCopilotApiFormat } from "@/types";
+import type { CodexApiFormat } from "@/types";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { parse as parseToml } from "smol-toml";
 
@@ -637,12 +637,6 @@ export const codexApiFormatFromWireApi = (
       return undefined;
   }
 };
-
-// 仅用于表单和旧元数据的兼容格式，不决定实际请求协议。
-export const codexCopilotCompatibilityApiFormat = (
-  format: CodexCopilotApiFormat,
-): Exclude<CodexApiFormat, "anthropic"> =>
-  format === "auto" ? "openai_chat" : format;
 
 // 从 Codex 的 TOML 配置文本中提取 wire_api（支持单/双引号）
 export const extractCodexWireApi = (

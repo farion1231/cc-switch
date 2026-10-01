@@ -1090,7 +1090,14 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
-        let is_full_url = provider_uses_full_url(app_type, provider);
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false)
+            && !provider.is_codex_oauth()
+            && !provider.is_xai_oauth()
+            && !provider.is_github_copilot();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
@@ -3228,20 +3235,6 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     };
 
     (rewritten, passthrough_query)
-}
-
-// Codex Copilot 的端点由托管账号决定；Claude 保留已有的完整 URL 覆盖。
-fn provider_uses_full_url(app_type: &AppType, provider: &Provider) -> bool {
-    if matches!(app_type, AppType::Codex) && provider.is_github_copilot() {
-        return false;
-    }
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.is_full_url)
-        .unwrap_or(false)
-        && !provider.is_codex_oauth()
-        && !provider.is_xai_oauth()
 }
 
 fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError) -> ProxyError {

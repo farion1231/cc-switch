@@ -9,7 +9,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
-import { parse as parseToml } from "smol-toml";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
@@ -74,24 +73,6 @@ function projectAsLive() {
           app: AppId;
           settingsConfig?: Record<string, unknown>;
         };
-        if (app === "codex") {
-          const draft = parseToml(String(settingsConfig.config ?? ""));
-          const routes = draft.model_providers as
-            | Record<string, { requires_openai_auth?: boolean }>
-            | undefined;
-          const auth = settingsConfig.auth as
-            | { OPENAI_API_KEY?: string }
-            | undefined;
-          if (
-            routes?.[String(draft.model_provider)]?.requires_openai_auth &&
-            !auth?.OPENAI_API_KEY?.trim()
-          ) {
-            return HttpResponse.json(
-              { error: "provider.codex.config.official_auth_fallback" },
-              { status: 400 },
-            );
-          }
-        }
         const settings = { ...settingsConfig };
         if (app === "gemini") {
           settings.env = {

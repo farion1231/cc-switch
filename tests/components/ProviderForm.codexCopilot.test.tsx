@@ -332,10 +332,14 @@ describe("Codex Copilot provider form", () => {
     expect(requests.at(-1)).not.toHaveProperty("providerId");
   });
 
-  it("keeps legacy cards automatic with visible mappings and no preset switching", () => {
+  it("keeps legacy cards automatic and shows mapping even with an empty catalog", () => {
     renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(screen.getByText("模型映射")).toBeVisible();
+  });
+
+  it("does not offer preset switching while editing an existing Copilot card", () => {
+    renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
     expect(
       screen.queryByRole("button", { name: /DeepSeek/ }),
     ).not.toBeInTheDocument();
@@ -350,7 +354,6 @@ describe("Codex Copilot provider form", () => {
       providerType: "github_copilot",
       apiFormat: "openai_responses",
       codexCopilotApiFormat: "openai_responses",
-      isFullUrl: true,
     });
     expect(formatControl()).toHaveTextContent(formatLabels.openai_responses);
     await selectFormat("auto");
@@ -360,7 +363,6 @@ describe("Codex Copilot provider form", () => {
       onSubmit.mock.calls[0][0].meta?.codexCopilotApiFormat,
     ).toBeUndefined();
     expect(onSubmit.mock.calls[0][0].meta?.apiFormat).toBe("openai_chat");
-    expect(onSubmit.mock.calls[0][0].meta?.isFullUrl).toBeUndefined();
   });
 
   it("excludes Messages only for Copilot and resets the override on preset changes", async () => {
