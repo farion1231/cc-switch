@@ -187,7 +187,8 @@ export function ClaudeStackModelsField({
       {rows.length === 0 ? (
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t("providerForm.stackModelsEmpty", {
-            defaultValue: "未配置模型：这家加进 Stack 后不会出现在模型选择器里",
+            defaultValue:
+              "未配置模型：叠加这家后，模型选择器里不会多出它的模型",
           })}
         </p>
       ) : (

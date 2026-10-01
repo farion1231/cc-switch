@@ -223,7 +223,7 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.queryByText("模型列表")).toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "返回 Stack 简化表单" }),
+      screen.getByRole("button", { name: "返回叠加模式的简化表单" }),
     );
     const inputs = screen.getAllByPlaceholderText("例如 deepseek-v4-pro");
     expect(inputs.map((input) => (input as HTMLInputElement).value)).toEqual([
@@ -264,7 +264,7 @@ describe("ProviderForm Stack layout (Codex)", () => {
     expect(screen.getByText("模型列表")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "未配置模型：Stack 模式下只发布这家的默认模型（config.toml 的 model）。",
+        "未配置模型：叠加模式下只发布这家的默认模型（config.toml 的 model）。",
       ),
     ).toBeInTheDocument();
     expect(document.getElementById("codexDefaultModel")).toBeNull();

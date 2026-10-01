@@ -1463,7 +1463,7 @@ export function CodexFormFields({
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {t("codexConfig.modelListEmpty", {
                   defaultValue:
-                    "未配置模型：Stack 模式下只发布这家的默认模型（config.toml 的 model）。",
+                    "未配置模型：叠加模式下只发布这家的默认模型（config.toml 的 model）。",
                 })}
               </p>
             )}
