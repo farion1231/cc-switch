@@ -129,6 +129,28 @@ describe("ClaudeFormFields", () => {
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([]);
   });
 
+  it("keeps both header and body editors for Claude Code", () => {
+    const onHeadersChange = vi.fn();
+    const onBodyChange = vi.fn();
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "third_party",
+      localProxyHeadersOverride: '{"x-provider":"test"}',
+      localProxyBodyOverride: '{"temperature":0.2}',
+      onLocalProxyHeadersOverrideChange: onHeadersChange,
+      onLocalProxyBodyOverrideChange: onBodyChange,
+    });
+    fireEvent.change(screen.getByPlaceholderText(/X-Provider/), {
+      target: { value: '{"x-provider":"updated"}' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/temperature/), {
+      target: { value: '{"temperature":0.3}' },
+    });
+    expect(onHeadersChange).toHaveBeenCalledWith('{"x-provider":"updated"}');
+    expect(onBodyChange).toHaveBeenCalledWith('{"temperature":0.3}');
+  });
+
   it("不会在 Copilot 表单打开时自动获取模型列表", () => {
     renderCopilotForm();
 

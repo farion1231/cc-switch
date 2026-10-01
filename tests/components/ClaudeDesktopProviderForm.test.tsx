@@ -84,9 +84,154 @@ function renderForm(
   return { ...view, onSubmit };
 }
 
+const headerProvider: NonNullable<
+  ComponentProps<typeof ClaudeDesktopProviderForm>["initialData"]
+> = {
+  name: "Local header fixture",
+  settingsConfig: {
+    env: {
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:18080",
+      ANTHROPIC_API_KEY: "fixture-key",
+    },
+  },
+  meta: {
+    claudeDesktopMode: "proxy",
+    claudeDesktopModelRoutes: {
+      "claude-sonnet-5": { model: "fixture-model" },
+    },
+  },
+};
+
 describe("ClaudeDesktopProviderForm", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it("saves custom upstream headers for model mapping", async () => {
+    const { onSubmit, unmount } = renderForm(headerProvider);
+
+    fireEvent.change(screen.getByPlaceholderText(/X-Provider/), {
+      target: { value: '{"X-Test-Provider":"test"}' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides).toEqual({
+      headers: { "x-test-provider": "test" },
+    });
+    expect(
+      screen.queryByPlaceholderText(/temperature/),
+    ).not.toBeInTheDocument();
+
+    const meta = onSubmit.mock.calls[0][0].meta;
+    unmount();
+    renderForm({ ...headerProvider, meta });
+    expect(screen.getByPlaceholderText(/X-Provider/)).toHaveValue(
+      JSON.stringify({ "x-test-provider": "test" }, null, 2),
+    );
+  });
+
+  it.each([undefined, { temperature: 0.2 }])(
+    "can remove headers without deleting existing body overrides (%j)",
+    async (body) => {
+      const { onSubmit } = renderForm({
+        ...headerProvider,
+        meta: {
+          ...headerProvider.meta,
+          localProxyRequestOverrides: {
+            headers: { "x-test-provider": "old" },
+            ...(body ? { body } : {}),
+          },
+        },
+      });
+      fireEvent.change(screen.getByPlaceholderText(/X-Provider/), {
+        target: { value: "" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+      expect(onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides).toEqual(
+        body ? { body } : undefined,
+      );
+    },
+  );
+
+  it.each([
+    "{",
+    '{"Authorization":"override"}',
+    '{"x-api-key":"override"}',
+    '{"X-Test":"one\\r\\ntwo"}',
+  ])("rejects invalid or protected headers: %s", async (value) => {
+    const { onSubmit } = renderForm(headerProvider);
+    const input = screen.getByPlaceholderText(/X-Provider/);
+    fireEvent.change(input, { target: { value } });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalledOnce());
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { claudeDesktopMode: "direct" as const },
+    { providerType: "github_copilot" },
+  ])("hides unsupported header controls (%j)", (meta) => {
+    renderForm({
+      ...headerProvider,
+      meta: { ...headerProvider.meta, ...meta },
+    });
+    expect(screen.queryByPlaceholderText(/X-Provider/)).not.toBeInTheDocument();
+  });
+
+  it("does not expose proxy headers for official providers", () => {
+    renderForm({ ...headerProvider, category: "official" });
+    expect(screen.queryByPlaceholderText(/X-Provider/)).not.toBeInTheDocument();
+  });
+
+  it("clears custom headers when choosing a different provider preset", async () => {
+    const user = userEvent.setup();
+    renderForm(undefined);
+    await user.click(screen.getByRole("button", { name: /Kimi$/ }));
+    fireEvent.change(screen.getByPlaceholderText(/X-Provider/), {
+      target: { value: '{"X-Test-Provider":"previous-provider"}' },
+    });
+    await user.click(screen.getByRole("button", { name: /DeepSeek$/ }));
+    expect(screen.getByPlaceholderText(/X-Provider/)).toHaveValue("");
+  });
+
+  it("preserves header drafts when toggling mapping and existing metadata in direct mode", async () => {
+    const user = userEvent.setup();
+    const overrides = { headers: { "x-test-provider": "saved" } };
+    const { onSubmit } = renderForm({
+      ...headerProvider,
+      meta: { ...headerProvider.meta, localProxyRequestOverrides: overrides },
+    });
+    const changeMode = async (name: string) => {
+      await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+      await user.click(await screen.findByRole("option", { name }));
+    };
+
+    fireEvent.change(screen.getByPlaceholderText(/X-Provider/), {
+      target: { value: '{"X-Test-Provider":"draft"}' },
+    });
+    await changeMode("直连");
+    expect(screen.queryByPlaceholderText(/X-Provider/)).not.toBeInTheDocument();
+    await changeMode("模型映射");
+    expect(screen.getByPlaceholderText(/X-Provider/)).toHaveValue(
+      '{"X-Test-Provider":"draft"}',
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/X-Provider/), {
+      target: { value: "invalid hidden draft" },
+    });
+    await changeMode("直连");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides).toEqual(
+      overrides,
+    );
   });
 
   it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
@@ -156,10 +301,6 @@ describe("ClaudeDesktopProviderForm", () => {
   });
 
   it("直连与模型映射分别保留自己的模型列表", async () => {
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(),
-    });
     const user = userEvent.setup();
     renderForm({
       name: "Proxy Provider",

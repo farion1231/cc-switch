@@ -27,6 +27,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
@@ -56,6 +57,10 @@ import {
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  formatRequestOverrideObject,
+  parseHeaderOverrideJson,
+} from "@/lib/requestOverrides";
 import type { ManagedAuthProvider } from "@/lib/api";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
 import { isOAuthProviderType } from "@/config/constants";
@@ -268,6 +273,11 @@ export function ClaudeDesktopProviderForm({
       ? "ANTHROPIC_API_KEY"
       : "ANTHROPIC_AUTH_TOKEN",
   );
+  const [headersJson, setHeadersJson] = useState(() =>
+    formatRequestOverrideObject(
+      initialData?.meta?.localProxyRequestOverrides?.headers,
+    ),
+  );
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "github_copilot"));
@@ -394,6 +404,8 @@ export function ClaudeDesktopProviderForm({
     isOAuthProviderType(activeProviderType);
   const effectiveMode: "direct" | "proxy" = usesManagedOAuth ? "proxy" : mode;
   const needsModelMapping = effectiveMode === "proxy";
+  const supportsHeaderOverrides =
+    !isOfficial && needsModelMapping && activeProviderType !== "github_copilot";
   const routes = needsModelMapping ? proxyRoutes : directRoutes;
   const setRoutes = needsModelMapping ? setProxyRoutes : setDirectRoutes;
 
@@ -463,6 +475,7 @@ export function ClaudeDesktopProviderForm({
 
   const handlePresetChange = (value: string) => {
     setSelectedPresetId(value);
+    setHeadersJson("");
 
     if (value === "custom") {
       setActivePreset(null);
@@ -692,6 +705,19 @@ export function ClaudeDesktopProviderForm({
       return;
     }
 
+    const headerOverrides = supportsHeaderOverrides
+      ? parseHeaderOverrideJson(headersJson)
+      : {};
+    if (headerOverrides.error) {
+      toast.error(
+        t("providerForm.localProxyHeaderOverridesInvalidDetail", {
+          error: headerOverrides.error,
+          defaultValue: "Header 覆盖格式错误：{{error}}",
+        }),
+      );
+      return;
+    }
+
     const routeEntries = routes
       .map((route) => ({
         ...route,
@@ -783,6 +809,20 @@ export function ClaudeDesktopProviderForm({
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
+    if (supportsHeaderOverrides) {
+      const overrides = { ...meta.localProxyRequestOverrides };
+      if (
+        headerOverrides.headers &&
+        Object.keys(headerOverrides.headers).length
+      ) {
+        overrides.headers = headerOverrides.headers;
+      } else {
+        delete overrides.headers;
+      }
+      meta.localProxyRequestOverrides = Object.keys(overrides).length
+        ? overrides
+        : undefined;
+    }
     meta.providerType = activeProviderType;
     meta.authBinding =
       activeProviderType === "github_copilot"
@@ -1199,6 +1239,13 @@ export function ClaudeDesktopProviderForm({
                     })}
                   </div>
                 </div>
+              )}
+
+              {supportsHeaderOverrides && (
+                <LocalProxyRequestOverridesField
+                  headersJson={headersJson}
+                  onHeadersJsonChange={setHeadersJson}
+                />
               )}
 
               {!needsModelMapping && (

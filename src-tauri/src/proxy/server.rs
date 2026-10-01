@@ -454,6 +454,132 @@ mod tests {
         body: Value,
     }
 
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn claude_desktop_custom_headers_reach_upstream() {
+        struct RestoreHome(Option<std::ffi::OsString>);
+        impl Drop for RestoreHome {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(home) => std::env::set_var("CC_SWITCH_TEST_HOME", home),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+                let _ = crate::settings::reload_settings();
+            }
+        }
+        let home = tempfile::tempdir().expect("isolated home");
+        let _restore = RestoreHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().expect("isolated settings");
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post({
+                let captured = captured.clone();
+                move |headers: HeaderMap, axum::Json(body): axum::Json<Value>| {
+                    let captured = captured.clone();
+                    async move {
+                        let accepted = headers.get("x-test-provider")
+                            .is_some_and(|value| value == "test");
+                        captured.lock().await.push((headers, body));
+                        let status = if accepted { StatusCode::OK } else { StatusCode::UNAUTHORIZED };
+                        (status, axum::Json(json!({
+                            "id": "fixture-message", "type": "message", "role": "assistant",
+                            "model": "fixture-model", "content": [{"type": "text", "text": "ok"}],
+                            "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}
+                        })))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let mock_handle =
+            tokio::spawn(async move { axum::serve(listener, mock_app).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let mut provider = Provider::with_id(
+            "desktop-headers-fixture".into(),
+            "Desktop Headers Fixture".into(),
+            json!({"env": {
+                "ANTHROPIC_BASE_URL": format!("http://{address}"),
+                "ANTHROPIC_API_KEY": "fixture-upstream-key"
+            }}),
+            None,
+        );
+        provider.meta = Some(
+            serde_json::from_value(json!({
+                "claudeDesktopMode": "proxy", "apiFormat": "anthropic",
+                "claudeDesktopModelRoutes": {"claude-sonnet-5": {"model": "fixture-model"}}
+            }))
+            .unwrap(),
+        );
+        let gateway_token = crate::claude_desktop_config::get_or_create_gateway_token(&db).unwrap();
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let info = proxy.start().await.unwrap();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        for enabled in [false, true, false] {
+            provider
+                .meta
+                .as_mut()
+                .unwrap()
+                .local_proxy_request_overrides = enabled.then(|| {
+                serde_json::from_value(json!({"headers": {
+                    "x-test-provider": "test",
+                    "authorization": "must-not-replace-auth",
+                    "x-api-key": "must-not-replace-key"
+                }}))
+                .unwrap()
+            });
+            db.save_provider("claude-desktop", &provider).unwrap();
+            db.set_current_provider("claude-desktop", &provider.id)
+                .unwrap();
+            let response = client
+                .post(format!(
+                    "http://127.0.0.1:{}/claude-desktop/v1/messages",
+                    info.port
+                ))
+                .bearer_auth(&gateway_token)
+                .json(&json!({"model": "claude-sonnet-5", "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "fixture"}], "stream": false}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if enabled {
+                    StatusCode::OK
+                } else {
+                    StatusCode::UNAUTHORIZED
+                }
+            );
+            let (headers, body) = captured.lock().await.pop().expect("upstream request");
+            assert_eq!(headers.get("x-api-key").unwrap(), "fixture-upstream-key");
+            assert!(!headers.contains_key(header::AUTHORIZATION));
+            assert_eq!(headers.get("x-test-provider").is_some(), enabled);
+            assert_eq!(body["model"], "fixture-model");
+            assert_eq!(body["stream"], false);
+        }
+        proxy.stop().await.unwrap();
+        mock_handle.abort();
+        let _ = mock_handle.await;
+    }
+
     /// A base URL pasted as a complete endpoint with the full-URL switch left off
     /// must derive the sibling standalone endpoint instead of having the
     /// standalone path appended to it.
