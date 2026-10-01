@@ -4429,10 +4429,8 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let escaped_file = outside_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
         fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
 
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+        crate::test_fs_links::symlink_dir(&outside_dir, &base_dir.join("link"))
+            .expect("directory link");
 
         let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
 "#;

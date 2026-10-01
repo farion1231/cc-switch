@@ -4,6 +4,9 @@ use cc_switch_lib::{
     migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillService,
 };
 
+#[path = "support/fs_links.rs"]
+mod fs_links;
+
 #[path = "support.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
@@ -17,14 +20,8 @@ fn write_skill(dir: &std::path::Path, name: &str) {
     .expect("write SKILL.md");
 }
 
-#[cfg(unix)]
 fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::unix::fs::symlink(src, dest).expect("create symlink");
-}
-
-#[cfg(windows)]
-fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::windows::fs::symlink_dir(src, dest).expect("create symlink");
+    fs_links::symlink_dir(src, dest).expect("create directory link");
 }
 
 #[test]

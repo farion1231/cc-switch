@@ -38,6 +38,10 @@ mod session_manager;
 mod settings;
 mod store;
 
+#[cfg(test)]
+#[path = "../tests/support/fs_links.rs"]
+mod test_fs_links;
+
 mod tray;
 mod usage_events;
 mod usage_script;
