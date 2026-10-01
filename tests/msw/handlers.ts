@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDevPricing";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import type { McpServer, Provider, Settings } from "@/types";
 import {
   addProvider,

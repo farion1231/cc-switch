@@ -37,12 +37,14 @@ import {
   syncModelsDevPricing,
 } from "@/lib/modelsDevAutoSync";
 import {
-  fetchModelsDevPricing,
+  fetchModelsDev,
+  MODELS_DEV_QUERY_KEY,
+  MODELS_DEV_STALE_TIME_MS,
+} from "@/lib/modelsDev";
+import {
   flattenModels,
   formatPrice,
   getCommonModelKeys,
-  MODELS_DEV_QUERY_KEY,
-  MODELS_DEV_STALE_TIME_MS,
   type ModelsDevEntry,
 } from "@/lib/modelsDevPricing";
 import { usageKeys } from "@/lib/query/usage";
@@ -75,7 +77,7 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: MODELS_DEV_QUERY_KEY,
-    queryFn: fetchModelsDevPricing,
+    queryFn: fetchModelsDev,
     staleTime: MODELS_DEV_STALE_TIME_MS,
     retry: 1,
   });
