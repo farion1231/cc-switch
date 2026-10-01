@@ -118,7 +118,7 @@
     "routeOwnsCatalog": "ルーティング先のプロバイダーが独自のモデルカタログファイル（model_catalog_json）を使っているため、Stack モデルは Codex に表示されません",
     "configOwnsCatalog": "config.toml の model_catalog_json が別のモデルカタログファイルを指しているため、Stack モデルは Codex に表示されません",
     "noRoutingSupport": "ルーティング非対応",
-    "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
+    "blockedByProxyHint": "ルーティングモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
@@ -246,7 +246,7 @@
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
         "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
       },
-      "stopBlockedByTakeover": "別のアプリがプロキシテイクオーバーを使用しています。設定で該当アプリのテイクオーバーを無効にしてから、ローカルルーティングを停止してください。"
+      "stopBlockedByTakeover": "ルーティングモードのアプリが他にもあります。それらを直接接続に戻してから、ルーティングサービスを停止してください。"
     }
   },
   "notifications": {
@@ -350,7 +350,7 @@
     "tabProxy": "ルーティング",
     "authCenter": {
       "title": "OAuth 認証センター",
-      "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
+      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーにはルーティングモードが必要です（Codex の公式ログインを除く）。各サービスの利用規約にご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
@@ -1292,11 +1292,11 @@
     "apiFormat": "上流フォーマット",
     "apiFormatHint": "プロバイダーがネイティブ Anthropic Messages API なら Anthropic Messages を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat、Responses API なら Responses、Gemini generateContent プロトコルなら Gemini Native を選択。Chat、Responses、Gemini Native は Anthropic Messages への変換にルーティング引き継ぎの有効化が必要です。",
     "customUserAgent": "カスタム User-Agent",
-    "customUserAgentHint": "ローカルルーティング/プロキシ引き継ぎが有効な場合にのみ適用され、プロバイダー API へ転送するリクエストの User-Agent を置き換えます。",
+    "customUserAgentHint": "ルーティングモードでのみ有効で、プロバイダー API へ転送するリクエストの User-Agent を置き換えます。",
     "customUserAgentInvalid": "User-Agent に制御文字（改行など）を含めることはできません。含まれている場合は無視されます。",
     "customUserAgentPresets": "プリセット",
     "localProxyRequestOverrides": "ローカルプロキシのリクエスト上書き",
-    "localProxyRequestOverridesHint": "ローカルルーティング/プロキシ引き継ぎ後にのみ有効で、変換後の上流リクエストへ適用されます。",
+    "localProxyRequestOverridesHint": "ルーティングモードでのみ有効で、形式変換後の上流リクエストへ適用されます。",
     "localProxyRequestOverridesInvalid": "ローカルプロキシのリクエスト上書き形式エラー: {{error}}",
     "localProxyHeaderOverrides": "Header 上書き",
     "localProxyHeaderOverridesInvalidDetail": "Header 上書きの形式エラー: {{error}}",
@@ -1523,11 +1523,11 @@
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex の auth.json 設定内容",
-    "authJsonStorageHint": "プロキシ引き継ぎ中は保存済みの auth を表示しており、実際の auth.json ではありません。",
+    "authJsonStorageHint": "ルーティングモード中は保存済みの auth を表示しており、実際の auth.json ではありません。",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex の config.toml 設定内容",
-    "configTomlStorageHint": "プロキシ引き継ぎ中は保存済みの config を表示しており、実際の config.toml ではありません。",
-    "proxyTakeoverStorageNotice": "💡 このアプリはプロキシ引き継ぎ中です。ここで編集しているのは保存済みのプロバイダー設定で、実際の live 設定はすでにプロキシが一時的に引き継いでいます。",
+    "configTomlStorageHint": "ルーティングモード中は保存済みの config を表示しており、実際の config.toml ではありません。",
+    "proxyTakeoverStorageNotice": "💡 このアプリはルーティングモードです。ここで編集しているのは保存済みのプロバイダー設定で、実際の live 設定は一時的にルーティングサービスが管理しています。",
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
     "apiUrlLabel": "API リクエスト URL",
@@ -2774,9 +2774,6 @@
     "skillsSuccess": "スキルを {{count}} 件、自動的に統合管理へインポートしました",
     "skillsFailed": "スキルの自動インポートに失敗しました",
     "skillsFailedDescription": "Skills 画面で「既存をインポート」をクリックして手動でインポートしてください（または再起動して再試行）。"
-  },
-  "agents": {
-    "title": "エージェント"
   },
   "health": {
     "operational": "正常",

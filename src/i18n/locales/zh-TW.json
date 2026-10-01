@@ -118,7 +118,7 @@
     "routeOwnsCatalog": "疊加的模型不會出現在 Codex 中：路由供應商使用自己的模型目錄檔案（model_catalog_json）",
     "configOwnsCatalog": "疊加的模型不會出現在 Codex 中：config.toml 的 model_catalog_json 指向了別的模型目錄檔案",
     "noRoutingSupport": "不支援路由",
-    "blockedByProxyHint": "代理接管模式下無法切換至官方供應商",
+    "blockedByProxyHint": "路由模式下無法切換至官方供應商",
     "editProvider": "編輯供應商",
     "editProviderHint": "更新設定後將立即套用至目前供應商。",
     "deleteProvider": "刪除供應商",
@@ -246,7 +246,7 @@
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
         "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
       },
-      "stopBlockedByTakeover": "其他應用正在使用代理接管。請先在設定中關閉對應應用接管，再停止本機路由。"
+      "stopBlockedByTakeover": "還有其他應用處於路由模式。請先讓這些應用回到直連，再停止路由服務。"
     }
   },
   "notifications": {
@@ -350,7 +350,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "title": "OAuth 驗證中心",
-      "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
+      "description": "用 GitHub Copilot、ChatGPT、xAI 訂閱作為供應商。憑證由路由服務注入，用到它們的供應商需要路由模式（Codex 官方登入除外）。請注意各服務的使用條款。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號",
@@ -1293,11 +1293,11 @@
     "apiFormat": "上游格式",
     "apiFormatHint": "供應商原生為 Anthropic Messages API 就選 Anthropic Messages（直連，不轉換格式）；使用 Chat Completions 協定就選 Chat；使用 Responses API 就選 Responses；使用 Gemini generateContent 協定就選 Gemini Native。Chat、Responses 與 Gemini Native 均需開啟路由接管才能轉換為 Anthropic Messages。",
     "customUserAgent": "自訂 User-Agent",
-    "customUserAgentHint": "僅在開啟本地路由/代理接管後生效，會取代轉發至供應商 API 請求中的 User-Agent。",
+    "customUserAgentHint": "僅在路由模式下生效，會取代轉發至供應商 API 請求中的 User-Agent。",
     "customUserAgentInvalid": "User-Agent 不能包含控制字元（如換行字元），否則將被忽略。",
     "customUserAgentPresets": "預設",
     "localProxyRequestOverrides": "本地代理請求覆蓋",
-    "localProxyRequestOverridesHint": "僅在本地路由/代理接管後生效，套用於協定轉換後的上游請求。",
+    "localProxyRequestOverridesHint": "僅在路由模式下生效，套用於格式轉換後的上游請求。",
     "localProxyRequestOverridesInvalid": "本地代理請求覆蓋格式錯誤：{{error}}",
     "localProxyHeaderOverrides": "Header 覆蓋",
     "localProxyHeaderOverridesInvalidDetail": "Header 覆蓋格式錯誤：{{error}}",
@@ -1524,11 +1524,11 @@
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n    \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex auth.json 設定內容",
-    "authJsonStorageHint": "代理接管中顯示的是儲存的 auth 配置，不是即時 auth.json",
+    "authJsonStorageHint": "路由模式下顯示的是儲存的 auth 配置，不是即時的 auth.json",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml 設定內容",
-    "configTomlStorageHint": "代理接管中顯示的是儲存的 config 配置，不是即時 config.toml",
-    "proxyTakeoverStorageNotice": "💡 目前應用處於代理接管狀態。這裡編輯的是儲存的供應商配置，真實 live 配置已由代理暫時接管",
+    "configTomlStorageHint": "路由模式下顯示的是儲存的 config 配置，不是即時的 config.toml",
+    "proxyTakeoverStorageNotice": "💡 目前應用處於路由模式。這裡編輯的是儲存的供應商配置，實際的 live 配置暫由路由服務接管",
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
     "apiUrlLabel": "API 請求位址",
@@ -2775,9 +2775,6 @@
     "skillsSuccess": "已自動匯入 {{count}} 個技能至統一管理",
     "skillsFailed": "自動匯入技能失敗",
     "skillsFailedDescription": "請開啟 Skills 頁面點擊「匯入現有」手動匯入（或重新啟動後再試）。"
-  },
-  "agents": {
-    "title": "Agent"
   },
   "health": {
     "operational": "正常",

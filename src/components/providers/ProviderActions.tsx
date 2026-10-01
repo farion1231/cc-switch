@@ -33,6 +33,8 @@ interface OpenClawDefaultModelOption {
 
 interface ProviderActionsProps {
   appId?: AppId;
+  /** 编辑、复制、检测等次要图标按钮的额外样式（卡片用它做悬停才出现；主按钮常显） */
+  secondaryActionsClassName?: string;
   isCurrent: boolean;
   isInConfig?: boolean;
   isTesting?: boolean;
@@ -80,6 +82,7 @@ interface MainButtonState {
 
 export function ProviderActions({
   appId,
+  secondaryActionsClassName,
   isCurrent,
   isInConfig = false,
   isTesting,
@@ -452,7 +455,7 @@ export function ProviderActions({
         </Button>
       </span>
 
-      <div className="flex items-center gap-1">
+      <div className={cn("flex items-center gap-1", secondaryActionsClassName)}>
         <Button
           size="icon"
           variant="ghost"

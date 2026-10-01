@@ -118,7 +118,7 @@
     "routeOwnsCatalog": "Stacked models won't show up in Codex: the routed provider uses its own model catalog file (model_catalog_json)",
     "configOwnsCatalog": "Stacked models won't show up in Codex: model_catalog_json in config.toml points to a different model catalog file",
     "noRoutingSupport": "No Routing Support",
-    "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
+    "blockedByProxyHint": "Can't switch to an official provider in Routing mode",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
@@ -246,7 +246,7 @@
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
         "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
       },
-      "stopBlockedByTakeover": "Another app is using proxy takeover. Please disable that app's takeover in settings before stopping local routing."
+      "stopBlockedByTakeover": "Other apps are still in Routing mode. Switch them back to Direct before stopping the routing service."
     }
   },
   "notifications": {
@@ -350,7 +350,7 @@
     "tabProxy": "Routing",
     "authCenter": {
       "title": "OAuth Authentication Center",
-      "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
+      "description": "Use GitHub Copilot, ChatGPT or xAI subscriptions as providers. Credentials are injected by the routing service, so these providers need Routing mode (except Codex's official login). Mind each service's terms.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
@@ -1292,11 +1292,11 @@
     "apiFormat": "Upstream Format",
     "apiFormatHint": "Pick Anthropic Messages when your provider is natively an Anthropic Messages API (direct, no format conversion); pick Chat when it uses Chat Completions; pick Responses when it uses the Responses API; pick Gemini Native when it uses Gemini generateContent. Chat, Responses, and Gemini Native require routing takeover to convert to Anthropic Messages.",
     "customUserAgent": "Custom User-Agent",
-    "customUserAgentHint": "Only takes effect when local routing/proxy takeover is enabled; replaces the User-Agent in requests forwarded to the provider API.",
+    "customUserAgentHint": "Only applies in Routing mode; replaces the User-Agent in requests forwarded to the provider API.",
     "customUserAgentInvalid": "User-Agent must not contain control characters (e.g. line breaks); otherwise it will be ignored.",
     "customUserAgentPresets": "Presets",
     "localProxyRequestOverrides": "Local proxy request overrides",
-    "localProxyRequestOverridesHint": "Only takes effect after local routing/proxy takeover; applied to the transformed upstream request.",
+    "localProxyRequestOverridesHint": "Only applies in Routing mode; applied to the upstream request after format conversion.",
     "localProxyRequestOverridesInvalid": "Local proxy request overrides format error: {{error}}",
     "localProxyHeaderOverrides": "Header overrides",
     "localProxyHeaderOverridesInvalidDetail": "Header overrides format error: {{error}}",
@@ -1523,11 +1523,11 @@
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex auth.json configuration content",
-    "authJsonStorageHint": "Proxy takeover is showing the stored auth, not the live auth.json.",
+    "authJsonStorageHint": "In Routing mode this shows the stored auth, not the live auth.json.",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml configuration content",
-    "configTomlStorageHint": "Proxy takeover is showing the stored config, not the live config.toml.",
-    "proxyTakeoverStorageNotice": "💡 This app is under proxy takeover. You are editing the stored provider config; the live config is already temporarily managed by the proxy.",
+    "configTomlStorageHint": "In Routing mode this shows the stored config, not the live config.toml.",
+    "proxyTakeoverStorageNotice": "💡 This app is in Routing mode. You are editing the stored provider config; the live config is temporarily managed by the routing service.",
     "enableRemoteCompaction": "Enable remote compaction",
     "remoteCompactionHint": "When enabled, the active model_providers entry name is written as OpenAI so Codex can try remote compaction.",
     "apiUrlLabel": "API Request URL",
@@ -2774,9 +2774,6 @@
     "skillsSuccess": "Automatically imported {{count}} skill(s) into unified management",
     "skillsFailed": "Failed to auto import skills",
     "skillsFailedDescription": "Open the Skills page and click \"Import Existing\" to import manually (or restart and try again)."
-  },
-  "agents": {
-    "title": "Agents"
   },
   "health": {
     "operational": "Operational",
