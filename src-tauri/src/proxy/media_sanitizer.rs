@@ -22,11 +22,14 @@ struct ImageBudget {
 }
 
 impl ImageBudget {
-    /// 无上限（能力降级等既有路径用）。
-    fn unlimited() -> Self {
-        Self {
-            remaining: usize::MAX,
-        }
+    /// 「全部替换」预算（能力降级等既有路径用）。
+    ///
+    /// `remaining` 数的是**还允许保留几张**，因此"一张都不保留"是 `0` 而不是
+    /// `usize::MAX`——写成 MAX 会让既有路径变成完全 no-op（所有图片都保留），
+    /// 这是本改动第一版踩过的坑，`replace_all_budget_replaces_every_image_like_before`
+    /// 用例专门守住这一点。
+    fn replace_all() -> Self {
+        Self { remaining: 0 }
     }
 
     /// 消耗一次额度：仍有余量返回 true（保留该图片），否则 false（应替换）。
@@ -175,7 +178,7 @@ fn content_has_image_blocks(content: &Value) -> bool {
 }
 
 fn replace_images_in_body(body: &mut Value) -> usize {
-    replace_images_in_body_with_budget(body, &mut ImageBudget::unlimited())
+    replace_images_in_body_with_budget(body, &mut ImageBudget::replace_all())
 }
 
 fn replace_images_in_body_with_budget(body: &mut Value, budget: &mut ImageBudget) -> usize {
@@ -648,8 +651,9 @@ mod tests {
     }
 
     #[test]
-    fn unlimited_budget_replaces_every_image_like_before() {
+    fn replace_all_budget_replaces_every_image_like_before() {
         // 既有路径（能力降级）必须保持原语义：全部替换。
+        // remaining 若被误设为"无上限"，这里会返回 0 而不是 3。
         let mut body = json!({
             "model": "step-3",
             "messages": [{
