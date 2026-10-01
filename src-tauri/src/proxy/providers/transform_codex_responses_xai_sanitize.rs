@@ -986,6 +986,8 @@ fn whole_float_to_json_int(number: &Number) -> Option<Number> {
 pub(crate) fn create_xai_native_responses_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     restore_map: HashMap<String, NamespacedName>,
+    xai_native: bool,
+    add_output_text_annotations: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
@@ -1004,7 +1006,7 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        yield Ok(rewrite_xai_native_sse_block(&block, &restore_map));
+                        yield Ok(rewrite_xai_native_sse_block(&block, &restore_map, xai_native, add_output_text_annotations));
                     }
                 }
                 Err(e) => {
@@ -1019,7 +1021,7 @@ where
         }
         let tail = std::mem::take(&mut buffer);
         if !tail.trim().is_empty() {
-            yield Ok(rewrite_xai_native_sse_block(&tail, &restore_map));
+            yield Ok(rewrite_xai_native_sse_block(&tail, &restore_map, xai_native, add_output_text_annotations));
         }
     }
 }
@@ -1027,6 +1029,8 @@ where
 fn rewrite_xai_native_sse_block(
     block: &str,
     restore_map: &HashMap<String, NamespacedName>,
+    xai_native: bool,
+    add_output_text_annotations: bool,
 ) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
@@ -1053,8 +1057,14 @@ fn rewrite_xai_native_sse_block(
         Err(_) => return Bytes::from(format!("{block}\n\n")),
     };
 
-    let mut changed = restore_sse_event_namespaces(&mut event, restore_map);
-    changed |= normalize_xai_function_call_integer_arguments(&mut event);
+    let mut changed = false;
+    if xai_native {
+        changed |= restore_sse_event_namespaces(&mut event, restore_map);
+        changed |= normalize_xai_function_call_integer_arguments(&mut event);
+    }
+    if add_output_text_annotations {
+        changed |= super::transform_native_responses::ensure_output_text_annotations(&mut event);
+    }
     if !changed {
         return Bytes::from(format!("{block}\n\n"));
     }
@@ -1514,7 +1524,7 @@ mod tests {
             "event: response.function_call_arguments.done\n",
             r#"data: {"type":"response.function_call_arguments.done","arguments":"{\"session_id\":92116.0,\"yield_time_ms\":120000.0}"}"#,
         );
-        let rewritten = rewrite_xai_native_sse_block(done, &HashMap::new());
+        let rewritten = rewrite_xai_native_sse_block(done, &HashMap::new(), true, false);
         let rewritten = String::from_utf8(rewritten.to_vec()).unwrap();
         let data = rewritten
             .lines()
@@ -1531,7 +1541,33 @@ mod tests {
             "event: response.function_call_arguments.delta\n",
             r#"data: {"type":"response.function_call_arguments.delta","delta":"{\"session_id\":92116.0"}"#,
         );
-        let passed = rewrite_xai_native_sse_block(delta, &HashMap::new());
+        let passed = rewrite_xai_native_sse_block(delta, &HashMap::new(), true, false);
+        assert_eq!(
+            String::from_utf8(passed.to_vec()).unwrap(),
+            format!("{delta}\n\n")
+        );
+    }
+
+    #[test]
+    fn sse_content_part_adds_missing_annotations_for_grokbuild() {
+        let added = concat!(
+            "event: response.content_part.added\n",
+            r#"data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}"#,
+        );
+        let rewritten = rewrite_xai_native_sse_block(added, &HashMap::new(), false, true);
+        let rewritten = String::from_utf8(rewritten.to_vec()).unwrap();
+        let data = rewritten
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        let event: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(event["part"]["annotations"], json!([]));
+
+        let delta = concat!(
+            "event: response.output_text.delta\n",
+            r#"data: {"type":"response.output_text.delta","delta":"hi"}"#,
+        );
+        let passed = rewrite_xai_native_sse_block(delta, &HashMap::new(), false, true);
         assert_eq!(
             String::from_utf8(passed.to_vec()).unwrap(),
             format!("{delta}\n\n")

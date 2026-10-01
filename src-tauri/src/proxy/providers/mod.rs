@@ -38,6 +38,7 @@ pub mod transform_codex_chat_moonshot_schema;
 pub mod transform_codex_responses_namespace;
 pub mod transform_codex_responses_xai_sanitize;
 pub mod transform_gemini;
+pub mod transform_native_responses;
 pub mod transform_responses;
 pub mod xai_oauth_auth;
 
