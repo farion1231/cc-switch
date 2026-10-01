@@ -12,7 +12,7 @@ name: WSL2 Nightly
 # The schedule will be restored once the suite is sharded or parallelized,
 # or once a deliberately higher timeout is adopted. `workflow_dispatch` is
 # kept available so the nightly workflow can still be triggered manually
-# for diagnostics. See PR #TBD and comment #5924357426 for context.
+# for diagnostics. See #6233 for context.
 on:
   # schedule:
   #   - cron: "23 18 * * *" # 02:23 Beijing time (paused — see header)
