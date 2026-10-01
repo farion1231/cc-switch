@@ -110,10 +110,12 @@ export function useModelMetadataFill({
     (
       modelId: string,
       apply: (metadata: ResolvedModelMetadata) => boolean,
+      /** 这一行实际请求的地址（模型级覆盖时传入），默认用表单的地址。 */
+      baseUrl?: string,
     ): void => {
       const resolve = (modelsDev?: ModelsDevResponse) =>
         resolveModelMetadata(modelId, {
-          baseUrl: baseUrlRef.current,
+          baseUrl: baseUrl || baseUrlRef.current,
           presets: presetsRef.current(),
           modelsDev,
         });

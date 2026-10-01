@@ -7,6 +7,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
+import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -1317,6 +1318,12 @@ describe("PiProviderForm", () => {
             models: {
               "gpt-5.6-sol": {
                 reasoning: true,
+                reasoning_options: [
+                  {
+                    type: "effort",
+                    values: ["low", "medium", "high", "xhigh"],
+                  },
+                ],
                 modalities: { input: ["text", "image"], output: ["text"] },
                 limit: { context: 400000, output: 128000 },
               },
@@ -1379,13 +1386,72 @@ describe("PiProviderForm", () => {
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);
     expect(screen.getByLabelText("pi.form.reasoning")).toBeChecked();
     expect(screen.getByLabelText("pi.form.imageInput")).toBeChecked();
-    // 思考档位映射是 Pi 自己的语义，外部目录给不出，不自动生成。
+    // Chat Completions 会把档位原样作为 reasoning_effort 发出，按 Pi 官方规则生成映射。
     const configEditor = screen.getByLabelText(
       "provider.configJson",
     ) as HTMLTextAreaElement;
-    expect(
-      JSON.parse(configEditor.value).models[0].thinkingLevelMap,
-    ).toBeUndefined();
+    expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
+    });
+  });
+
+  it("adds the compat a preset thinking map depends on", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([{ id: "kimi-k3", ownedBy: "moonshot" }]),
+      ),
+      http.get(MODELS_DEV_API_URL, () => HttpResponse.error()),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "my-moonshot" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      { target: { value: "https://api.moonshot.cn/v1" } },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    await user.click(
+      within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+    );
+    await user.click(await screen.findByRole("option", { name: "kimi-k3" }));
+
+    // Moonshot 的地址在 Pi 里默认不发 reasoning_effort，映射要靠预设的 compat 才生效。
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+        thinkingLevelMap: piThinkingProfiles.kimi3.map,
+        compat: { supportsReasoningEffort: true, thinkingFormat: "openai" },
+      }),
+    );
   });
 
   it("keeps a preset thinking map when the user changes the API", async () => {

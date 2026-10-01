@@ -16,7 +16,10 @@ const modelsDev: ModelsDevResponse = {
         id: "glm-5",
         limit: { context: 204800, output: 131072 },
         reasoning: true,
-        reasoning_options: [{ type: "toggle" }],
+        reasoning_options: [
+          { type: "toggle" },
+          { type: "effort", values: ["high"] },
+        ],
         modalities: { input: ["text"], output: ["text"] },
         cost: { input: 1, output: 3.2 },
       },
@@ -148,10 +151,10 @@ describe("resolveModelMetadata", () => {
       contextWindow: 204800,
       reasoning: true,
       inputModalities: ["text"],
+      reasoningEfforts: ["high"],
       sources: ["models-dev"],
     });
     expect(metadata?.cost).toBeUndefined();
-    expect(metadata?.reasoningEfforts).toBeUndefined();
   });
 
   it("keeps the price when the provider itself is recognized", () => {
@@ -159,8 +162,11 @@ describe("resolveModelMetadata", () => {
       resolveModelMetadata("glm-5", {
         baseUrl: "https://open.bigmodel.cn/api/paas/v4",
         modelsDev,
-      })?.cost,
-    ).toEqual({ input: 1, output: 3.2 });
+      }),
+    ).toMatchObject({
+      cost: { input: 1, output: 3.2 },
+      reasoningEfforts: ["high"],
+    });
   });
 
   it("gives up when the same name points at different vendors", () => {

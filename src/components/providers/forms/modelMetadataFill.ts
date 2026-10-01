@@ -4,6 +4,10 @@
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
 import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
+import {
+  PI_THINKING_LEVELS,
+  type PiThinkingLevelMap,
+} from "@/config/piThinkingProfiles";
 
 /** 补全前后是否不同：没补上任何字段时不提示用户。 */
 export const metadataFilledAnything = (before: unknown, after: unknown) =>
@@ -103,4 +107,136 @@ export function fillOpenCodeModel(
     };
   }
   return next;
+}
+
+const PI_EFFORT_LEVELS = PI_THINKING_LEVELS.filter((level) => level !== "off");
+
+/**
+ * 把 effort 档位转成 Pi 的 thinkingLevelMap，规则照搬 Pi 官方从 models.dev 生成
+ * 内置模型目录的 `getEffortThinkingLevelMap`：列出的档位发同名值，没列出的写
+ * `null` 隐藏；`off` 在列出 `none` 时发 `"none"`，否则同样隐藏。一个 Pi 档位都
+ * 对不上时不生成。
+ */
+export function piThinkingLevelMapFromEfforts(
+  efforts: readonly string[] | undefined,
+): PiThinkingLevelMap | undefined {
+  const supported = new Set(efforts);
+  if (
+    !PI_EFFORT_LEVELS.some((level) => supported.has(level)) &&
+    !supported.has("none")
+  ) {
+    return undefined;
+  }
+  const map: PiThinkingLevelMap = {
+    off: supported.has("none") ? "none" : null,
+  };
+  for (const level of PI_EFFORT_LEVELS) {
+    map[level] = supported.has(level) ? level : null;
+  }
+  return map;
+}
+
+export interface PiProviderProtocol {
+  api: string;
+  baseUrl: string;
+  providerId: string;
+  compat: Record<string, unknown>;
+}
+
+/**
+ * Pi 运行时对 Chat Completions 的思考行为探测（`detectCompat`）：按供应商 ID 和
+ * 地址认出思考格式、是否发送 `reasoning_effort`，compat 里写明的值优先。
+ */
+function piCompletionsThinking({
+  baseUrl,
+  providerId,
+  compat,
+}: Omit<PiProviderProtocol, "api">): { format: string; effort: boolean } {
+  const url = baseUrl.toLowerCase();
+  const is = (ids: string[], hosts: string[]) =>
+    ids.includes(providerId) || hosts.some((host) => url.includes(host));
+  const isDeepSeek = is(["deepseek"], ["deepseek.com"]);
+  const isZai = is(["zai", "zai-coding-cn"], ["api.z.ai", "open.bigmodel.cn"]);
+  const isTogether = is(["together"], ["api.together.ai", "api.together.xyz"]);
+  const isAntLing = is(["ant-ling"], ["api.ant-ling.com"]);
+  const isOpenRouter = is(["openrouter"], ["openrouter.ai"]);
+  const detectedFormat = isDeepSeek
+    ? "deepseek"
+    : isZai
+      ? "zai"
+      : isTogether
+        ? "together"
+        : isAntLing
+          ? "ant-ling"
+          : isOpenRouter
+            ? "openrouter"
+            : "openai";
+  const detectedEffort =
+    !is(["xai"], ["api.x.ai"]) &&
+    !isZai &&
+    !is(["moonshotai", "moonshotai-cn"], ["api.moonshot."]) &&
+    !isTogether &&
+    !is(["cloudflare-ai-gateway"], ["gateway.ai.cloudflare.com"]) &&
+    !is(["nvidia"], ["integrate.api.nvidia.com"]) &&
+    !isAntLing;
+  return {
+    format:
+      typeof compat.thinkingFormat === "string"
+        ? compat.thinkingFormat
+        : detectedFormat,
+    effort:
+      typeof compat.supportsReasoningEffort === "boolean"
+        ? compat.supportsReasoningEffort
+        : detectedEffort,
+  };
+}
+
+/**
+ * Pi 会不会把档位原样作为 `reasoning_effort` 发给上游。Pi 官方只在这种协议下用
+ * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 总是；Chat
+ * Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
+ * 不生成。
+ */
+export function piSendsReasoningEffort(protocol: PiProviderProtocol): boolean {
+  if (protocol.api === "openai-responses") return true;
+  if (protocol.api !== "openai-completions") return false;
+  const { format, effort } = piCompletionsThinking(protocol);
+  return format === "openai" && effort;
+}
+
+/**
+ * 预设映射能否用在这一行：协议必须相同，预设显式写的 compat 不能与用户已写的值
+ * 冲突；Chat Completions 还要求补上缺的 compat 之后，Pi 探测出的思考格式和是否
+ * 发送 `reasoning_effort` 与预设一致（预设可能依赖 Pi 按地址探测的默认值）。
+ * 能用时返回映射和需要补进模型的 compat。
+ */
+export function piPresetThinkingFor(
+  piThinking: KnownModelMetadata["piThinking"],
+  effective: PiProviderProtocol,
+): { map: PiThinkingLevelMap; missingCompat: Record<string, unknown> } | null {
+  if (!piThinking || piThinking.api !== effective.api) {
+    return null;
+  }
+  const missingCompat: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(piThinking.compat ?? {})) {
+    if (effective.compat[key] === undefined) missingCompat[key] = value;
+    else if (JSON.stringify(effective.compat[key]) !== JSON.stringify(value)) {
+      return null;
+    }
+  }
+  if (piThinking.api === "openai-completions") {
+    const preset = piCompletionsThinking({
+      baseUrl: piThinking.baseUrl,
+      providerId: "",
+      compat: piThinking.compat ?? {},
+    });
+    const actual = piCompletionsThinking({
+      ...effective,
+      compat: { ...effective.compat, ...missingCompat },
+    });
+    if (preset.format !== actual.format || preset.effort !== actual.effort) {
+      return null;
+    }
+  }
+  return { map: { ...piThinking.thinkingLevelMap }, missingCompat };
 }

@@ -12,6 +12,22 @@ import { resolveModelMetadata } from "@/lib/modelMetadata";
 import type { ModelsDevResponse } from "@/lib/modelsDev";
 
 describe("preset model metadata sources", () => {
+  it("carries a reviewed Pi thinking map with the protocol it depends on", () => {
+    const [source, id, metadata] = piPresetModelSources()
+      .flatMap((source) =>
+        [...source.models].map(
+          ([id, metadata]) => [source, id, metadata] as const,
+        ),
+      )
+      .find(([, , metadata]) => metadata.piThinking?.compat !== undefined)!;
+    expect(
+      resolveModelMetadata(id, {
+        baseUrl: source.baseUrl,
+        presets: piPresetModelSources(),
+      })?.piThinking,
+    ).toEqual(metadata.piThinking);
+  });
+
   it.each([
     ["codex", codexPresetModelSources],
     ["openclaw", openclawPresetModelSources],

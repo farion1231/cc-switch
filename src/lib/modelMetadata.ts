@@ -15,6 +15,16 @@ export interface KnownModelMetadata {
   reasoning?: boolean;
   /** 模型接受的思考档位（models.dev `reasoning_options` 里 effort 类的取值）。 */
   reasoningEfforts?: string[];
+  /**
+   * 同地址 Pi 预设里人工核对过的思考档位映射。映射只在预设的协议和 compat 下
+   * 成立（例如 Moonshot 要靠 compat 打开 `reasoning_effort`），三者一起带出。
+   */
+  piThinking?: {
+    thinkingLevelMap: Readonly<Record<string, string | null>>;
+    api: string;
+    baseUrl: string;
+    compat?: Readonly<Record<string, unknown>>;
+  };
   inputModalities?: string[];
   outputModalities?: string[];
   /** 美元 / 百万 token。只取自同一家供应商，原厂兜底不带价格。 */
@@ -299,7 +309,8 @@ function fieldCount(metadata: KnownModelMetadata): number {
  * 1. 同地址预设里手工核实过的那一行（同一个模型各家部署的窗口差很多，
  *    比如 glm-5.2 从 200K 到 1M 都有，预设写的就是这一家的真实值）；
  * 2. models.dev 里按地址认出的同一家供应商；
- * 3. models.dev 里的原厂条目（不带价格：转售价不等于原厂价），
+ * 3. models.dev 里的原厂条目（不带价格：转售价不等于原厂价；思考档位照用，
+ *    中转站绝大多数与原厂一致），
  *    认出了供应商也照样用它补供应商条目里没写的字段。
  * 都查不到返回 null。
  */

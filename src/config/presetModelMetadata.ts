@@ -136,6 +136,12 @@ export const piPresetModelSources = lazy(() =>
         maxOutputTokens: positiveInteger(model.maxTokens),
         reasoning: model.reasoning,
         inputModalities: stringList(model.input),
+        piThinking: model.thinkingLevelMap && {
+          thinkingLevelMap: model.thinkingLevelMap,
+          api: preset.settingsConfig.api,
+          baseUrl: preset.settingsConfig.baseUrl,
+          compat: model.compat,
+        },
       }),
     ),
   ),

@@ -72,6 +72,15 @@ describe("useModelMetadataFill", () => {
     );
   });
 
+  it("looks a row up by its own address when it overrides the form's", () => {
+    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    const { result } = renderFill();
+    const apply = vi.fn(() => true);
+
+    result.current("model-x", apply, "https://other.example.com/v1");
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it("keeps preset values and stays quiet when models.dev is unreachable", async () => {
     server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
     const { result } = renderFill();
