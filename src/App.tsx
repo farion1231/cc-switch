@@ -341,7 +341,6 @@ function App() {
     setAsDefaultModel,
   } = useProviderActions(
     activeApp,
-    currentAppUsesProxy && isProxyRunning,
     isProxyRunning && isCurrentAppTakeoverActive,
   );
   const handleEnablePiProvider = async (provider: Provider) => {

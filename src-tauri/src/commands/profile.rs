@@ -1,8 +1,9 @@
 //! 项目 Profile 管理命令
 
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
+use crate::app_config::AppType;
 use crate::database::Profile;
 use crate::services::profile::{ProfilePayload, ProfileScope, ProfileService};
 use crate::store::AppState;
@@ -95,6 +96,14 @@ pub fn emit_profile_apply_events(
         log::error!("发射 profile-applied 事件失败: {e}");
     }
     crate::tray::refresh_tray_menu(app);
+    if scope.apps().contains(&AppType::ClaudeDesktop) {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(state) = app.try_state::<AppState>() {
+                crate::mode::controller::ensure_desktop_mapping_service(state.inner()).await;
+            }
+        });
+    }
 }
 
 #[tauri::command]
