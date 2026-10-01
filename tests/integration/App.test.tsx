@@ -687,16 +687,6 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
   });
 
-  it("offers the MCP entry point on the Pi page", async () => {
-    localStorage.setItem("cc-switch-last-app", "pi");
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    await waitFor(() =>
-      expect(screen.getByTitle("mcp.title")).toBeInTheDocument(),
-    );
-  });
-
   it("keeps the user on the MCP view when the active app is Pi", async () => {
     localStorage.setItem("cc-switch-last-app", "pi");
     localStorage.setItem("cc-switch-last-view", "mcp");

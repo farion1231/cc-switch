@@ -526,14 +526,12 @@ type = "stdio"
       "mcp.form.piExposureHint",
     );
 
-    fireEvent.change(
-      screen.getByPlaceholderText("mcp.form.titlePlaceholder"),
-      { target: { value: "pi-server" } },
-    );
-    fireEvent.change(
-      screen.getByPlaceholderText("mcp.form.jsonPlaceholder"),
-      { target: { value: '{"type":"stdio","command":"run"}' } },
-    );
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "pi-server" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: { value: '{"type":"stdio","command":"run"}' },
+    });
     fireEvent.click(piCheckbox);
     fireEvent.click(screen.getByText("common.add"));
 
