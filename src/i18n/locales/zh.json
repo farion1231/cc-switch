@@ -118,7 +118,7 @@
     "routeOwnsCatalog": "叠加的模型不会出现在 Codex 里：路由供应商使用自己的模型目录文件（model_catalog_json）",
     "configOwnsCatalog": "叠加的模型不会出现在 Codex 里：config.toml 的 model_catalog_json 指向了别的模型目录文件",
     "noRoutingSupport": "不支持路由",
-    "blockedByProxyHint": "代理接管模式下不可切换到官方供应商",
+    "blockedByProxyHint": "路由模式下不能切换到官方供应商",
     "editProvider": "编辑供应商",
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
@@ -246,7 +246,7 @@
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
         "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
       },
-      "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
+      "stopBlockedByTakeover": "还有其他应用在路由模式。请先让这些应用回到直连，再停止路由服务。"
     }
   },
   "notifications": {
@@ -350,7 +350,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "title": "OAuth 认证中心",
-      "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
+      "description": "用 GitHub Copilot、ChatGPT、xAI 订阅作为供应商。凭据由路由服务注入，用到它们的供应商需要路由模式（Codex 官方登录除外）。请注意各服务的使用条款。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号",
@@ -1292,11 +1292,11 @@
     "apiFormat": "上游格式",
     "apiFormatHint": "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
     "customUserAgent": "自定义 User-Agent",
-    "customUserAgentHint": "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
+    "customUserAgentHint": "只在路由模式下生效，会替换转发到供应商 API 的请求里的 User-Agent。",
     "customUserAgentInvalid": "User-Agent 不能包含控制字符（如换行符），否则将被忽略。",
     "customUserAgentPresets": "预设",
     "localProxyRequestOverrides": "本地代理请求覆盖",
-    "localProxyRequestOverridesHint": "仅在本地路由/代理接管后生效，应用于协议转换后的上游请求。",
+    "localProxyRequestOverridesHint": "只在路由模式下生效，作用于格式转换后的上游请求。",
     "localProxyRequestOverridesInvalid": "本地代理请求覆盖格式错误：{{error}}",
     "localProxyHeaderOverrides": "Header 覆盖",
     "localProxyHeaderOverridesInvalidDetail": "Header 覆盖格式错误：{{error}}",
@@ -1523,11 +1523,11 @@
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex auth.json 配置内容",
-    "authJsonStorageHint": "代理接管中显示的是存储的 auth 配置，不是实时 auth.json",
+    "authJsonStorageHint": "路由模式下显示的是存储的 auth 配置，不是实时的 auth.json",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml 配置内容",
-    "configTomlStorageHint": "代理接管中显示的是存储的 config 配置，不是实时 config.toml",
-    "proxyTakeoverStorageNotice": "💡 当前应用处于代理接管状态。这里编辑的是存储的供应商配置，真实 live 配置已由代理临时接管",
+    "configTomlStorageHint": "路由模式下显示的是存储的 config 配置，不是实时的 config.toml",
+    "proxyTakeoverStorageNotice": "💡 当前应用处于路由模式。这里编辑的是存储的供应商配置，实际的 live 配置暂由路由服务接管",
     "enableRemoteCompaction": "启用远程压缩",
     "remoteCompactionHint": "开启后会将当前 model_providers 条目的 name 写为 OpenAI，使 Codex 尝试使用远程压缩。",
     "apiUrlLabel": "API 请求地址",
@@ -2774,9 +2774,6 @@
     "skillsSuccess": "已自动导入 {{count}} 个技能到统一管理",
     "skillsFailed": "自动导入技能失败",
     "skillsFailedDescription": "请打开 Skills 页面点击“导入已有”手动导入（或重启后再试）。"
-  },
-  "agents": {
-    "title": "智能体"
   },
   "health": {
     "operational": "正常",

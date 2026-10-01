@@ -319,8 +319,7 @@ export function ProviderCard({
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
   // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
-  const codexNeedsRouting =
-    appId === "codex" && providerNeedsRouting(appId, provider);
+  const needsRouting = providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -477,26 +476,8 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "claude-desktop" &&
-                providerNeedsRouting(appId, provider) && (
-                  <ProviderStatusBadge
-                    tone="info"
-                    label={t("provider.needsRouting", {
-                      defaultValue: "需要路由",
-                    })}
-                  />
-                )}
-
-              {appId === "claude" && providerNeedsRouting(appId, provider) && (
-                <ProviderStatusBadge
-                  tone="info"
-                  label={t("provider.needsRouting", {
-                    defaultValue: "需要路由",
-                  })}
-                />
-              )}
-
-              {codexNeedsRouting && (
+              {/* providerNeedsRouting 自己按应用收口（Desktop / Claude / Codex / Grok Build） */}
+              {needsRouting && (
                 <ProviderStatusBadge
                   tone="info"
                   label={t("provider.needsRouting", {
@@ -750,8 +731,9 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <ProviderActions
+              secondaryActionsClassName="opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200"
               appId={appId}
               isCurrent={isCurrent}
               isInConfig={isInConfig}

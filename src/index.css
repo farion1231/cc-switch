@@ -124,8 +124,6 @@
 
 * {
   box-sizing: border-box;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
 
 html {
@@ -217,8 +215,27 @@ html[data-window-active="false"] .status-heartbeat {
   }
 }
 
+/* 细滚动条常显：不设 scrollbar-width / scrollbar-color，
+   否则 Chromium（WebView2）会忽略下面的 ::-webkit-scrollbar 样式 */
 ::-webkit-scrollbar {
-  display: none;
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  background-color: hsl(var(--muted-foreground) / 0.35);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.6);
 }
 
 *:focus-visible {
@@ -226,6 +243,14 @@ html[data-window-active="false"] .status-heartbeat {
 }
 
 @layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
   .scroll-overlay {
     scrollbar-gutter: stable both-edges;
     padding-right: 0.5rem;

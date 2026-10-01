@@ -91,8 +91,6 @@ import UnifiedSkillsPanel, {
 } from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
-import { AgentsPanel } from "@/components/agents/AgentsPanel";
-import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon, SkillsIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
@@ -121,8 +119,6 @@ type View =
   | "skills"
   | "skillsDiscovery"
   | "mcp"
-  | "agents"
-  | "universal"
   | "sessions"
   | "workspace"
   | "openclawEnv"
@@ -156,8 +152,6 @@ const VALID_VIEWS: View[] = [
   "skills",
   "skillsDiscovery",
   "mcp",
-  "agents",
-  "universal",
   "sessions",
   "workspace",
   "openclawEnv",
@@ -682,6 +676,7 @@ function App() {
           return;
         }
         event.preventDefault();
+        setSettingsDefaultTab("general");
         setCurrentView("settings");
         return;
       }
@@ -1113,17 +1108,6 @@ function App() {
               onInteractionBlockedChange={setMcpManagementBusy}
             />
           );
-        case "agents":
-          return (
-            <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
-          );
-        case "universal":
-          return (
-            <div className="px-6 pt-4">
-              <UniversalProviderPanel />
-            </div>
-          );
-
         case "sessions":
           return (
             <SessionManagerPage
@@ -1363,11 +1347,6 @@ function App() {
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
-                  {currentView === "agents" && t("agents.title")}
-                  {currentView === "universal" &&
-                    t("universalProvider.title", {
-                      defaultValue: "统一供应商",
-                    })}
                   {currentView === "sessions" && t("sessionManager.title")}
                   {currentView === "workspace" && t("workspace.title")}
                   {currentView === "openclawEnv" && t("openclaw.env.title")}
@@ -1404,22 +1383,32 @@ function App() {
                     setCurrentView("settings");
                   }}
                 />
-                {isCurrentAppTakeoverActive && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      setSettingsDefaultTab("usage");
-                      setCurrentView("settings");
-                    }}
-                    title={t("usage.title", {
-                      defaultValue: "使用统计",
-                    })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <BarChart2 className="w-4 h-4" />
-                  </Button>
-                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setSettingsDefaultTab("usage");
+                    setCurrentView("settings");
+                  }}
+                  title={t("usage.title", {
+                    defaultValue: "使用统计",
+                  })}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <BarChart2 className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setSettingsDefaultTab("auth");
+                    setCurrentView("settings");
+                  }}
+                  title={t("settings.authCenter.title")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <KeyRound className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>
