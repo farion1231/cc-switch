@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use super::{required_apps, state_lock, validate_id, VpsDocument, VpsServer, VpsService};
+use super::{
+    required_apps, state_lock, validate_id, SecretString, VpsDocument, VpsServer, VpsService,
+};
 use crate::database::Database;
 use crate::services::skill::{skill_state_write_guard, SkillService};
 use anyhow::{anyhow, Context, Result};
@@ -16,18 +18,20 @@ impl VpsService {
         db: &Arc<Database>,
         server: VpsServer,
     ) -> Result<Vec<VpsServer>> {
+        self.save_server_with_skills_and_password(db, server, None)
+    }
+
+    pub fn save_server_with_skills_and_password(
+        &self,
+        db: &Arc<Database>,
+        server: VpsServer,
+        password: Option<String>,
+    ) -> Result<Vec<VpsServer>> {
+        let password = SecretString::provided(password);
         server.validate()?;
         let _guard = skill_state_write_guard();
-        self.mutate_with_skills_unlocked(db, |document| {
-            if let Some(existing) = document
-                .servers
-                .iter_mut()
-                .find(|item| item.id == server.id)
-            {
-                *existing = server;
-            } else {
-                document.servers.push(server);
-            }
+        self.mutate_with_skills_unlocked(db, Some((&server, password.as_ref())), |document| {
+            Self::upsert(document, server.clone());
         })
     }
 
@@ -38,19 +42,18 @@ impl VpsService {
     ) -> Result<Vec<VpsServer>> {
         validate_id(id)?;
         let _guard = skill_state_write_guard();
-        self.mutate_with_skills_unlocked(db, |document| {
-            document.servers.retain(|server| server.id != id)
-        })
+        self.mutate_with_skills_unlocked(db, None, |document| Self::remove(document, id))
     }
 
     /// Lock order: global sync operation -> Skill state -> VPS document -> database.
     pub(crate) fn reconcile_skills_unlocked(&self, db: &Arc<Database>) -> Result<Vec<VpsServer>> {
-        self.mutate_with_skills_unlocked(db, |_| {})
+        self.mutate_with_skills_unlocked(db, None, |_| {})
     }
 
     fn mutate_with_skills_unlocked(
         &self,
         db: &Arc<Database>,
+        authentication: Option<(&VpsServer, Option<&SecretString>)>,
         mutate: impl FnOnce(&mut VpsDocument),
     ) -> Result<Vec<VpsServer>> {
         let _guard = state_lock()
@@ -69,7 +72,7 @@ impl VpsService {
         }
         let plan =
             SkillService::prepare_vps_skill(db, &self.root, &required_apps(&document.servers))?;
-        self.apply(document, bytes)?;
+        self.apply_authenticated(document, bytes, authentication)?;
         SkillService::apply_vps_skill(db, plan).context(
             "VPS host data is saved, but Skill deployment is incomplete; retry before reporting client access",
         )?;
@@ -79,4 +82,4 @@ impl VpsService {
 
 #[cfg(test)]
 #[path = "managed_tests.rs"]
-mod tests;
+pub(super) mod tests;

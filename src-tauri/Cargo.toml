@@ -78,6 +78,9 @@ indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
+zeroize = "1"
+# Pin the reviewed 3.x API; no plaintext or mock backend fallback in production.
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust", "vendored"] }
 hmac = "0.12"
 json5 = "0.4"
 json-five = "0.3.1"

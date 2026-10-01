@@ -439,8 +439,7 @@ fn interrupted_known_hosts_write_recovers_only_recognized_content() {
     assert!(document.previous_known_hosts_hash.is_none());
 }
 
-#[test]
-fn active_cancellation_reaches_the_runner_and_releases_the_request() {
+fn with_waiting_probe(cancel: impl FnOnce(&VpsSshState, &str)) {
     struct WaitingRunner(Arc<(Mutex<bool>, std::sync::Condvar)>);
     impl ProcessRunner for WaitingRunner {
         fn run(
@@ -479,7 +478,7 @@ fn active_cancellation_reaches_the_runner_and_releases_the_request() {
         .unwrap();
     assert!(*started, "mock process was not reached");
     drop(started);
-    state.cancel_test(&id).unwrap();
+    cancel(&state, &id);
     assert_eq!(
         worker.join().unwrap().status,
         VpsConnectionStatus::Cancelled
@@ -487,11 +486,43 @@ fn active_cancellation_reaches_the_runner_and_releases_the_request() {
     assert!(state.inner.requests.lock().unwrap().active.is_empty());
 }
 
+#[test]
+fn active_cancellation_reaches_the_runner_and_releases_the_request() {
+    with_waiting_probe(|state, id| state.cancel_test(id).unwrap());
+}
+
+#[test]
+fn shutdown_cancels_and_waits_for_active_probes() {
+    with_waiting_probe(|state, _| {
+        state.shutdown();
+        assert!(state.inner.requests.lock().unwrap().active.is_empty());
+    });
+}
+
+#[test]
+fn shutdown_revokes_confirmations_and_rejects_queued_probes() {
+    let (_home, state, runner) = setup();
+    let token = first_confirmation(&state, &runner, &server(), &public_key(14));
+    let calls_before_shutdown = runner.calls.lock().unwrap().len();
+
+    state.shutdown();
+    state.shutdown();
+
+    assert!(state.confirm_host_key(&token).is_err());
+    assert!(!state.root().join("known_hosts").exists());
+    assert_eq!(
+        state.test_blocking(server(), request()).status,
+        VpsConnectionStatus::Cancelled
+    );
+    assert_eq!(runner.calls.lock().unwrap().len(), calls_before_shutdown);
+}
+
 fn fixture_command(spin: bool) -> CommandSpec {
     #[cfg(windows)]
     {
         CommandSpec {
             program: "cmd.exe",
+            password: None,
             args: vec![
                 "/D".into(),
                 "/C".into(),
@@ -507,6 +538,7 @@ fn fixture_command(spin: bool) -> CommandSpec {
     {
         CommandSpec {
             program: "sh",
+            password: None,
             args: vec![
                 "-c".into(),
                 if spin {
@@ -572,6 +604,410 @@ fn process_output_capture_rejects_oversized_data() {
         read_process_output(&mut file),
         Err(ProcessFailure::OutputLimit)
     ));
+}
+
+#[test]
+#[serial_test::serial]
+fn password_probe_only_receives_secret_after_explicit_host_confirmation() {
+    super::super::managed::tests::with_home(|_, service| {
+        let runner = Arc::new(MockRunner::default());
+        let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+        let credentials = Arc::new(credentials::tests::MemoryCredentialStore::default());
+        Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+        let mut server = server();
+        server.auth_method = Some(VpsAuthMethod::Password);
+        let password = "  password test only  ";
+        let token = first_confirmation(&state, &runner, &server, &public_key(1));
+        assert_eq!(credentials.get_calls.load(Ordering::SeqCst), 0);
+        assert!(runner
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|call| call.password.is_none()));
+        state.confirm_host_key(&token).unwrap();
+        runner.push(success(Vec::new()));
+        runner.push(success(Vec::new()));
+        let result = state.test_blocking_with_password(
+            server.clone(),
+            request(),
+            Some(SecretString::new(password.into())),
+        );
+        assert_eq!(result.status, VpsConnectionStatus::Success);
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(
+            calls.last().unwrap().password.as_ref().unwrap().expose(),
+            password
+        );
+        assert!(!format!("{calls:?}").contains(password));
+        assert!(!serde_json::to_string(&result).unwrap().contains(password));
+        assert_eq!(
+            credentials.get_calls.load(Ordering::SeqCst),
+            0,
+            "one-off tests must not read or save vault credentials"
+        );
+        assert!(runner
+            .configs
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|config| !config.contains(password)));
+        assert!(runner.configs.lock().unwrap()[0].contains("PreferredAuthentications password"));
+        assert!(
+            !service.root().join("servers.json").exists(),
+            "testing does not save a host"
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn password_probe_reads_saved_secret_and_has_distinct_missing_and_unavailable_statuses() {
+    super::super::managed::tests::with_home(|_, service| {
+        let runner = Arc::new(MockRunner::default());
+        let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+        let credentials = Arc::new(credentials::tests::MemoryCredentialStore::default());
+        Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+        let mut server = server();
+        server.auth_method = Some(VpsAuthMethod::Password);
+        let token = first_confirmation(&state, &runner, &server, &public_key(1));
+        state.confirm_host_key(&token).unwrap();
+        runner.push(success(Vec::new()));
+        assert_eq!(
+            state.test_blocking(server.clone(), request()).status,
+            VpsConnectionStatus::PasswordRequired
+        );
+        service
+            .clone()
+            .with_credential_store(credentials.clone())
+            .save_server_with_password(server.clone(), Some("saved test password".into()))
+            .unwrap();
+        credentials.fail_get.store(true, Ordering::SeqCst);
+        runner.push(success(Vec::new()));
+        assert_eq!(
+            state.test_blocking(server.clone(), request()).status,
+            VpsConnectionStatus::CredentialsUnavailable
+        );
+        credentials.fail_get.store(false, Ordering::SeqCst);
+        runner.push(success(Vec::new()));
+        runner.push(success(Vec::new()));
+        assert_eq!(
+            state.test_blocking(server, request()).status,
+            VpsConnectionStatus::Success
+        );
+        assert_eq!(
+            runner
+                .calls
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .password
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "saved test password"
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn cancellation_prevents_password_lookup_or_authenticated_process_start() {
+    super::super::managed::tests::with_home(|_, service| {
+        let runner = Arc::new(MockRunner::default());
+        let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+        let credentials = Arc::new(credentials::tests::MemoryCredentialStore::default());
+        Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+        let mut server = server();
+        server.auth_method = Some(VpsAuthMethod::Password);
+        let id = request();
+        state.cancel_test(&id).unwrap();
+        assert_eq!(
+            state.test_blocking(server, id).status,
+            VpsConnectionStatus::Cancelled
+        );
+        assert_eq!(credentials.get_calls.load(Ordering::SeqCst), 0);
+        assert!(runner.calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn stale_draft_cannot_use_password_for_a_different_saved_target() {
+    for field in ["host", "port", "user", "auth"] {
+        super::super::managed::tests::with_home(|_, service| {
+            let runner = Arc::new(MockRunner::default());
+            let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+            let credentials = Arc::new(credentials::tests::MemoryCredentialStore::default());
+            Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+            let service = service.clone().with_credential_store(credentials.clone());
+            let mut original = server();
+            original.auth_method = Some(VpsAuthMethod::Password);
+            service
+                .save_server_with_password(original.clone(), Some("original test password".into()))
+                .unwrap();
+            let token = first_confirmation(&state, &runner, &original, &public_key(1));
+            state.confirm_host_key(&token).unwrap();
+
+            let mut updated = original.clone();
+            match field {
+                "host" => updated.host = "192.0.2.20".into(),
+                "port" => updated.port += 1,
+                "user" => updated.user = "other-account".into(),
+                "auth" => updated.auth_method = None,
+                _ => unreachable!(),
+            }
+            let replacement = (field != "auth").then(|| "replacement test password".into());
+            service
+                .save_server_with_password(updated, replacement)
+                .unwrap();
+            let reads = credentials.get_calls.load(Ordering::SeqCst);
+            runner.push(success(Vec::new()));
+            runner.push(success(Vec::new()));
+            let result = state.test_blocking(original, request());
+            assert_eq!(
+                result.status,
+                VpsConnectionStatus::TargetChanged,
+                "changed {field}"
+            );
+            assert_eq!(credentials.get_calls.load(Ordering::SeqCst), reads);
+            assert!(runner
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|call| call.password.is_none()));
+        });
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn display_and_client_draft_changes_preserve_saved_password_lookup() {
+    super::super::managed::tests::with_home(|_, service| {
+        let runner = Arc::new(MockRunner::default());
+        let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+        let credentials = Arc::new(credentials::tests::MemoryCredentialStore::default());
+        Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+        let mut saved = server();
+        saved.auth_method = Some(VpsAuthMethod::Password);
+        service
+            .clone()
+            .with_credential_store(credentials.clone())
+            .save_server_with_password(saved.clone(), Some("saved test password".into()))
+            .unwrap();
+        let token = first_confirmation(&state, &runner, &saved, &public_key(1));
+        state.confirm_host_key(&token).unwrap();
+        saved.name = "New label".into();
+        saved.purpose = "New purpose".into();
+        saved.apps.claude = true;
+        runner.push(success(Vec::new()));
+        runner.push(success(Vec::new()));
+        assert_eq!(
+            state.test_blocking(saved, request()).status,
+            VpsConnectionStatus::Success
+        );
+        assert_eq!(
+            runner
+                .calls
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .password
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "saved test password"
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn changed_target_is_blocked_before_vault_or_process_access_even_with_same_host_key() {
+    super::super::managed::tests::with_home(|_, service| {
+        let runner = Arc::new(MockRunner::default());
+        let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+        let credentials = Arc::new(credentials::tests::MemoryCredentialStore::default());
+        Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+        let mut original = server();
+        original.auth_method = Some(VpsAuthMethod::Password);
+        let token = first_confirmation(&state, &runner, &original, &public_key(1));
+        state.confirm_host_key(&token).unwrap();
+        service
+            .clone()
+            .with_credential_store(credentials.clone())
+            .save_server_with_password(original.clone(), Some("saved password".into()))
+            .unwrap();
+        for change_port in [false, true] {
+            let mut edited = original.clone();
+            if change_port {
+                edited.port += 1;
+            } else {
+                edited.host = "192.0.2.20".into();
+            }
+            assert_eq!(
+                state.test_blocking(edited, request()).status,
+                VpsConnectionStatus::TargetChanged
+            );
+        }
+        assert_eq!(credentials.get_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            runner.calls.lock().unwrap().len(),
+            2,
+            "only the original version/key scan ran"
+        );
+    });
+}
+
+#[derive(Default)]
+struct BlockingCredentialStore {
+    started: AtomicBool,
+    released: Mutex<bool>,
+    wake: std::sync::Condvar,
+}
+
+impl CredentialStore for BlockingCredentialStore {
+    fn get(&self, _: &str, _: &str) -> Result<Option<SecretString>> {
+        self.started.store(true, Ordering::SeqCst);
+        let mut released = self.released.lock().unwrap();
+        while !*released {
+            released = self.wake.wait(released).unwrap();
+        }
+        Ok(Some(SecretString::new("late secret".into())))
+    }
+    fn set(&self, _: &str, _: &str, _: &SecretString) -> Result<()> {
+        panic!("unexpected vault write")
+    }
+    fn delete(&self, _: &str, _: &str) -> Result<()> {
+        panic!("unexpected vault deletion")
+    }
+}
+
+fn blocking_password_read_returns_without_releasing_active_slot(cancel: bool) {
+    super::super::managed::tests::with_home(|_, service| {
+        let runner = Arc::new(MockRunner::default());
+        let mut state = VpsSshState::for_test(service.root().to_path_buf(), runner.clone());
+        let credentials = Arc::new(BlockingCredentialStore::default());
+        Arc::get_mut(&mut state.inner).unwrap().credentials = credentials.clone();
+        let mut server = server();
+        server.auth_method = Some(VpsAuthMethod::Password);
+        service
+            .clone()
+            .with_credential_store(Arc::new(
+                credentials::tests::MemoryCredentialStore::default(),
+            ))
+            .save_server_with_password(server.clone(), Some("test stored password".into()))
+            .unwrap();
+        TrustStore {
+            root: service.root().to_path_buf(),
+        }
+        .add(
+            &server.id,
+            &TrustedHost::from_server(&server, public_key(1)),
+        )
+        .unwrap();
+        runner.push(success(Vec::new()));
+        struct Release(Arc<BlockingCredentialStore>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.released.lock().unwrap() = true;
+                self.0.wake.notify_all();
+            }
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            // Drop before runtime shutdown even on panic, so the mock cannot strand a worker.
+            let release = Release(credentials.clone());
+            let id = request();
+            let worker_id = id.clone();
+            let worker_state = state.clone();
+            let task = tokio::spawn(async move {
+                worker_state
+                    .test_connection_with_timeout(
+                        server,
+                        worker_id,
+                        None,
+                        Duration::from_millis(500),
+                    )
+                    .await
+            });
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !credentials.started.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("credential worker was not reached");
+            if cancel {
+                state.cancel_test(&id).unwrap();
+            }
+            let result = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                result.status,
+                if cancel {
+                    VpsConnectionStatus::Cancelled
+                } else {
+                    VpsConnectionStatus::Timeout
+                }
+            );
+            assert!(
+                state
+                    .inner
+                    .requests
+                    .lock()
+                    .unwrap()
+                    .active
+                    .contains_key(&id),
+                "blocked worker must retain its concurrency slot"
+            );
+            assert_eq!(runner.calls.lock().unwrap().len(), 1);
+            assert!(
+                super::super::state_lock().try_lock().is_ok(),
+                "a stalled credential store must not block host management after cancellation"
+            );
+            drop(release);
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while state
+                    .inner
+                    .requests
+                    .lock()
+                    .unwrap()
+                    .active
+                    .contains_key(&id)
+                {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                runner.calls.lock().unwrap().len(),
+                1,
+                "late passwords cannot start an SSH probe"
+            );
+        });
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn cancelling_blocked_vault_read_returns_promptly_and_keeps_worker_bounded() {
+    blocking_password_read_returns_without_releasing_active_slot(true);
+}
+
+#[test]
+#[serial_test::serial]
+fn timeout_of_blocked_vault_read_returns_promptly_and_discards_late_password() {
+    blocking_password_read_returns_without_releasing_active_slot(false);
 }
 
 #[cfg(unix)]

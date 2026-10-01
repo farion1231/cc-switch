@@ -10,10 +10,11 @@ use tauri::State;
 pub async fn test_vps_connection(
     server: VpsServer,
     request_id: String,
+    password: Option<String>,
     state: State<'_, VpsSshState>,
 ) -> Result<VpsConnectionTestResult, String> {
     let state = state.inner().clone();
-    Ok(state.test_connection(server, request_id).await)
+    Ok(state.test_connection(server, request_id, password).await)
 }
 
 #[tauri::command]

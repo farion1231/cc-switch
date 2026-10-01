@@ -3,7 +3,7 @@ use crate::app_config::{AppType, SkillApps};
 use crate::services::skill::{SkillService, SkillStorageLocation, SyncMethod};
 use std::fs;
 
-fn with_home(test: impl FnOnce(&Arc<Database>, &VpsService)) {
+pub(in crate::services::vps) fn with_home(test: impl FnOnce(&Arc<Database>, &VpsService)) {
     struct Guard {
         env: Vec<(&'static str, Option<std::ffi::OsString>)>,
         settings: crate::settings::AppSettings,
@@ -44,6 +44,14 @@ fn with_home(test: impl FnOnce(&Arc<Database>, &VpsService)) {
     crate::settings::update_settings(crate::settings::AppSettings {
         skill_sync_method: SyncMethod::Copy,
         skill_storage_location: SkillStorageLocation::CcSwitch,
+        claude_config_dir: Some(home.path().join(".claude").to_string_lossy().into_owned()),
+        codex_config_dir: Some(home.path().join(".codex").to_string_lossy().into_owned()),
+        gemini_config_dir: Some(home.path().join(".gemini").to_string_lossy().into_owned()),
+        grok_config_dir: Some(home.path().join(".grok").to_string_lossy().into_owned()),
+        opencode_config_dir: Some(home.path().join(".opencode").to_string_lossy().into_owned()),
+        openclaw_config_dir: Some(home.path().join(".openclaw").to_string_lossy().into_owned()),
+        hermes_config_dir: Some(home.path().join(".hermes").to_string_lossy().into_owned()),
+        pi_config_dir: Some(home.path().join(".pi/agent").to_string_lossy().into_owned()),
         ..Default::default()
     })
     .unwrap();

@@ -1,9 +1,12 @@
 //! Explicit, cancellable OpenSSH probes with locally confirmed host-key pins.
 //! User SSH configuration is never loaded and remote output is never executed.
 
+use super::credentials::{self, CredentialStore, OsCredentialStore, SecretString};
 use super::{
-    check_directory, read_regular_file, render_ssh_config, ssh_identity_path, VpsServer, VpsService,
+    check_directory, read_regular_file, render_ssh_config, ssh_identity_path, VpsAuthMethod,
+    VpsServer, VpsService,
 };
+pub mod askpass;
 use crate::config::{atomic_write_private, sorted_json_bytes};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{
@@ -39,7 +42,10 @@ pub enum VpsConnectionStatus {
     Success,
     HostKeyConfirmationRequired,
     HostKeyChanged,
+    TargetChanged,
     AuthenticationFailed,
+    CredentialsUnavailable,
+    PasswordRequired,
     SshNotFound,
     Timeout,
     Cancelled,
@@ -73,6 +79,7 @@ impl VpsConnectionTestResult {
 struct CommandSpec {
     program: &'static str,
     args: Vec<OsString>,
+    password: Option<Arc<SecretString>>,
 }
 
 #[derive(Debug)]
@@ -144,6 +151,18 @@ impl ProcessRunner for OpenSshRunner {
             .env("SSH_ASKPASS_REQUIRE", "never")
             .env_remove("SSH_ASKPASS")
             .env_remove("DISPLAY");
+        askpass::clear_environment(&mut command);
+        let mut broker = spec
+            .password
+            .as_ref()
+            .map(|password| askpass::Broker::new(password.clone()))
+            .transpose()
+            .map_err(|_| ProcessFailure::Io)?;
+        if let Some(broker) = &broker {
+            broker
+                .configure(&mut command)
+                .map_err(|_| ProcessFailure::Io)?;
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -163,6 +182,11 @@ impl ProcessRunner for OpenSshRunner {
             }
             if Instant::now() >= deadline {
                 return Err(ProcessFailure::Timeout);
+            }
+            if let Some(broker) = &mut broker {
+                broker
+                    .poll(cancelled, deadline)
+                    .map_err(|_| ProcessFailure::Io)?;
             }
             if stdout.metadata().map_err(|_| ProcessFailure::Io)?.len() > MAX_OUTPUT
                 || stderr.metadata().map_err(|_| ProcessFailure::Io)?.len() > MAX_OUTPUT
@@ -197,6 +221,7 @@ fn read_process_output(file: &mut fs::File) -> Result<Vec<u8>, ProcessFailure> {
 fn version_command() -> CommandSpec {
     CommandSpec {
         program: "ssh",
+        password: None,
         args: vec!["-V".into()],
     }
 }
@@ -204,6 +229,7 @@ fn version_command() -> CommandSpec {
 fn scan_command(server: &VpsServer) -> CommandSpec {
     CommandSpec {
         program: "ssh-keyscan",
+        password: None,
         args: vec![
             "-T".into(),
             "5".into(),
@@ -219,7 +245,7 @@ fn scan_command(server: &VpsServer) -> CommandSpec {
 fn probe_config(server: &VpsServer, key: &PublicHostKey, known_hosts: &Path) -> Result<String> {
     let mut config = render_ssh_config(std::slice::from_ref(server))?;
     config.push_str(&format!(
-        "\nHost *\n    UserKnownHostsFile \"{}\"\n    GlobalKnownHostsFile none\n    HostKeyAlias {}\n    HostKeyAlgorithms {}\n    KnownHostsCommand none\n    ProxyCommand none\n    ProxyJump none\n    PermitLocalCommand no\n    ControlMaster no\n    ControlPath none\n    UpdateHostKeys no\n    VerifyHostKeyDNS no\n    CheckHostIP no\n    ConnectionAttempts 1\n    ConnectTimeout 10\n    ServerAliveInterval 5\n    ServerAliveCountMax 1\n    PreferredAuthentications publickey\n    NumberOfPasswordPrompts 0\n    ForwardAgent no\n    ForwardX11 no\n    ClearAllForwardings yes\n    RequestTTY no\n    LogLevel ERROR\n",
+        "\nHost *\n    UserKnownHostsFile \"{}\"\n    GlobalKnownHostsFile none\n    HostKeyAlias {}\n    HostKeyAlgorithms {}\n    KnownHostsCommand none\n    ProxyCommand none\n    ProxyJump none\n    PermitLocalCommand no\n    ControlMaster no\n    ControlPath none\n    UpdateHostKeys no\n    VerifyHostKeyDNS no\n    CheckHostIP no\n    ConnectionAttempts 1\n    ConnectTimeout 10\n    ServerAliveInterval 5\n    ServerAliveCountMax 1\n    ForwardAgent no\n    ForwardX11 no\n    ClearAllForwardings yes\n    RequestTTY no\n    LogLevel ERROR\n",
         ssh_identity_path(known_hosts)?, server.ssh_alias(), key.host_key_algorithms(),
     ));
     Ok(config)
@@ -228,6 +254,7 @@ fn probe_config(server: &VpsServer, key: &PublicHostKey, known_hosts: &Path) -> 
 fn probe_command(config: &Path, server: &VpsServer) -> CommandSpec {
     CommandSpec {
         program: "ssh",
+        password: None,
         args: vec![
             "-F".into(),
             config.as_os_str().into(),
@@ -591,6 +618,7 @@ struct Confirmation {
 
 #[derive(Default)]
 struct Requests {
+    shutting_down: bool,
     active: HashMap<String, Arc<AtomicBool>>,
     cancelled: HashMap<String, Instant>,
     confirmations: HashMap<String, Confirmation>,
@@ -608,6 +636,7 @@ impl Requests {
 struct Inner {
     requests: Mutex<Requests>,
     runner: Arc<dyn ProcessRunner>,
+    credentials: Arc<dyn CredentialStore>,
     root_override: Option<PathBuf>,
 }
 
@@ -623,6 +652,7 @@ impl Default for VpsSshState {
             inner: Arc::new(Inner {
                 requests: Mutex::new(Requests::default()),
                 runner: Arc::new(OpenSshRunner),
+                credentials: Arc::new(OsCredentialStore),
                 root_override: None,
             }),
         }
@@ -663,6 +693,7 @@ impl VpsSshState {
             inner: Arc::new(Inner {
                 requests: Mutex::new(Requests::default()),
                 runner,
+                credentials: Arc::new(credentials::tests::MemoryCredentialStore::default()),
                 root_override: Some(root),
             }),
         }
@@ -672,24 +703,86 @@ impl VpsSshState {
         &self,
         server: VpsServer,
         request_id: String,
+        password: Option<String>,
+    ) -> VpsConnectionTestResult {
+        self.test_connection_with_timeout(server, request_id, password, TEST_TIMEOUT)
+            .await
+    }
+
+    async fn test_connection_with_timeout(
+        &self,
+        server: VpsServer,
+        request_id: String,
+        password: Option<String>,
+        timeout: Duration,
     ) -> VpsConnectionTestResult {
         let state = self.clone();
-        match tokio::task::spawn_blocking(move || state.test_blocking(server, request_id)).await {
-            Ok(result) => result,
-            Err(_) => {
-                VpsConnectionTestResult::new(VpsConnectionStatus::Failed, "SSH test worker failed.")
+        let password = SecretString::provided(password);
+        let worker_id = request_id.clone();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let worker_cancellation = cancellation.clone();
+        let mut worker = tokio::task::spawn_blocking(move || {
+            state.test_blocking_with_flag(server, worker_id, password, worker_cancellation)
+        });
+        let deadline = Instant::now() + timeout;
+        let mut poll = tokio::time::interval(Duration::from_millis(20));
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut worker => return result.unwrap_or_else(|_| {
+                    VpsConnectionTestResult::new(VpsConnectionStatus::Failed, "SSH test worker failed.")
+                }),
+                _ = poll.tick() => {
+                    let cancelled = self.inner.requests.lock().is_ok_and(|requests| {
+                        requests.cancelled.contains_key(&request_id)
+                            || requests.active.get(&request_id).is_some_and(|flag| flag.load(Ordering::SeqCst))
+                    });
+                    if cancelled || Instant::now() >= deadline {
+                        // OS credential calls cannot be forcibly interrupted. Return promptly, but
+                        // keep the worker's active slot until it ends; its flag prevents any SSH
+                        // spawn after a delayed credential result and bounds concurrent workers.
+                        cancellation.store(true, Ordering::SeqCst);
+                        let _ = self.cancel_test(&request_id);
+                        return process_failure(if cancelled { ProcessFailure::Cancelled } else { ProcessFailure::Timeout });
+                    }
+                }
             }
         }
     }
 
+    #[cfg(test)]
     fn test_blocking(&self, server: VpsServer, request_id: String) -> VpsConnectionTestResult {
+        self.test_blocking_with_password(server, request_id, None)
+    }
+
+    #[cfg(test)]
+    fn test_blocking_with_password(
+        &self,
+        server: VpsServer,
+        request_id: String,
+        password: Option<SecretString>,
+    ) -> VpsConnectionTestResult {
+        self.test_blocking_with_flag(
+            server,
+            request_id,
+            password,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    fn test_blocking_with_flag(
+        &self,
+        server: VpsServer,
+        request_id: String,
+        password: Option<SecretString>,
+        cancelled: Arc<AtomicBool>,
+    ) -> VpsConnectionTestResult {
         if server.validate().is_err() || validate_request_id(&request_id).is_err() {
             return VpsConnectionTestResult::new(
                 VpsConnectionStatus::Failed,
                 "Invalid SSH test parameters.",
             );
         }
-        let cancelled = Arc::new(AtomicBool::new(false));
         {
             let Ok(mut requests) = self.inner.requests.lock() else {
                 return VpsConnectionTestResult::new(
@@ -698,7 +791,10 @@ impl VpsSshState {
                 );
             };
             requests.prune();
-            if requests.cancelled.remove(&request_id).is_some() {
+            if requests.shutting_down
+                || cancelled.load(Ordering::SeqCst)
+                || requests.cancelled.remove(&request_id).is_some()
+            {
                 return VpsConnectionTestResult::new(
                     VpsConnectionStatus::Cancelled,
                     "SSH test cancelled.",
@@ -719,7 +815,7 @@ impl VpsSshState {
             id: request_id,
             cancelled,
         };
-        let result = self.perform_test(&server, &active);
+        let result = self.perform_test(&server, &active, password);
         if active.cancelled.load(Ordering::SeqCst) {
             VpsConnectionTestResult::new(VpsConnectionStatus::Cancelled, "SSH test cancelled.")
         } else {
@@ -727,7 +823,12 @@ impl VpsSshState {
         }
     }
 
-    fn perform_test(&self, server: &VpsServer, active: &ActiveRequest) -> VpsConnectionTestResult {
+    fn perform_test(
+        &self,
+        server: &VpsServer,
+        active: &ActiveRequest,
+        supplied: Option<SecretString>,
+    ) -> VpsConnectionTestResult {
         let store = TrustStore { root: self.root() };
         let trust = match store.load() {
             Ok(trust) => trust,
@@ -736,6 +837,13 @@ impl VpsSshState {
                 "SSH trust files are invalid, modified or inaccessible; they were not replaced.",
             ),
         };
+        if trust
+            .hosts
+            .get(&server.id)
+            .is_some_and(|pin| pin.host != server.host || pin.port != server.port)
+        {
+            return VpsConnectionTestResult::new(VpsConnectionStatus::TargetChanged, "The host or port differs from the confirmed target. Restore it or create a separate host and confirm its fingerprint.");
+        }
         let deadline = Instant::now() + TEST_TIMEOUT;
         let run = |spec: &CommandSpec| self.inner.runner.run(spec, &active.cancelled, deadline);
         match run(&version_command()) {
@@ -814,6 +922,58 @@ impl VpsSshState {
                 };
             }
         };
+        if active.cancelled.load(Ordering::SeqCst) {
+            return process_failure(ProcessFailure::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return process_failure(ProcessFailure::Timeout);
+        }
+        // Only a confirmed host-key pin reaches credential lookup. OpenSSH verifies that pin
+        // again before requesting a password; key scanning never receives a secret.
+        let password = if server.auth_method == Some(VpsAuthMethod::Password) {
+            let password = match supplied {
+                Some(password) => Some(password),
+                None => match credentials::read_password(
+                    &store.root,
+                    server,
+                    self.inner.credentials.as_ref(),
+                    &active.cancelled,
+                ) {
+                    Ok(password) => password,
+                    Err(error) if error.is::<credentials::PasswordTargetChanged>() => {
+                        return VpsConnectionTestResult::new(
+                            VpsConnectionStatus::TargetChanged,
+                            "The connection details do not match the saved password's target. Reload the host before retrying.",
+                        );
+                    }
+                    Err(_) => return VpsConnectionTestResult::new(
+                        VpsConnectionStatus::CredentialsUnavailable,
+                        "The OS credential store is unavailable; no plaintext fallback is used.",
+                    ),
+                },
+            };
+            let Some(password) = password.filter(|password| !password.expose().is_empty()) else {
+                return VpsConnectionTestResult::new(
+                    VpsConnectionStatus::PasswordRequired,
+                    "Supply a password or save one in the OS credential store first.",
+                );
+            };
+            if password.validate().is_err() {
+                return VpsConnectionTestResult::new(
+                    VpsConnectionStatus::Failed,
+                    "The password cannot be used by OpenSSH askpass.",
+                );
+            }
+            Some(Arc::new(password))
+        } else {
+            None
+        };
+        if active.cancelled.load(Ordering::SeqCst) {
+            return process_failure(ProcessFailure::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return process_failure(ProcessFailure::Timeout);
+        }
         let prepared = (|| -> Result<(tempfile::TempDir, CommandSpec)> {
             store.check_root()?;
             let temp = tempfile::Builder::new()
@@ -829,7 +989,8 @@ impl VpsSshState {
                 &config,
                 probe_config(server, &key, &known_hosts)?.as_bytes(),
             )?;
-            let command = probe_command(&config, server);
+            let mut command = probe_command(&config, server);
+            command.password = password;
             Ok((temp, command))
         })();
         let (_temp, command) = match prepared {
@@ -844,6 +1005,41 @@ impl VpsSshState {
         match run(&command) {
             Ok(output) => classify_probe(output),
             Err(error) => process_failure(error),
+        }
+    }
+
+    /// Stop only probes owned by this state before the application exits or restarts.
+    /// No window APIs are used, so restart cleanup can run on the event-loop thread.
+    pub fn shutdown(&self) {
+        {
+            let mut requests = self
+                .inner
+                .requests
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            requests.shutting_down = true;
+            requests.confirmations.clear();
+            for flag in requests.active.values() {
+                flag.store(true, Ordering::SeqCst);
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if self
+                .inner
+                .requests
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .active
+                .is_empty()
+            {
+                return;
+            }
+            if Instant::now() >= deadline {
+                log::warn!("VPS probe shutdown did not finish within the cleanup deadline");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -952,7 +1148,7 @@ fn classify_probe(output: ProcessOutput) -> VpsConnectionTestResult {
     {
         VpsConnectionTestResult::new(
             VpsConnectionStatus::AuthenticationFailed,
-            "Public-key authentication failed. Check the key reference or SSH agent.",
+            "SSH authentication failed. Check the selected password, private key or SSH user certificate.",
         )
     } else if stderr.contains("connection timed out") || stderr.contains("operation timed out") {
         VpsConnectionTestResult::new(VpsConnectionStatus::Timeout, "SSH test timed out.")

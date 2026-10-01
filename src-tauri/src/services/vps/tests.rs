@@ -7,6 +7,7 @@ fn service() -> (TempDir, VpsService) {
     let home = tempfile::tempdir().unwrap();
     let service = VpsService {
         root: home.path().join("vps"),
+        credentials: Arc::new(credentials::tests::MemoryCredentialStore::default()),
         fail_write: None,
     };
     (home, service)
@@ -187,7 +188,7 @@ fn client_plan_covers_shared_references_last_unbind_and_noop() {
     let one = server(&[AppType::Claude, AppType::Codex]);
     let two = server(&[AppType::Claude]);
     assert_eq!(
-        plan_client_changes(&[], &[one.clone()]),
+        plan_client_changes(&[], std::slice::from_ref(&one)),
         vec![
             VpsClientChange {
                 app: AppType::Claude,
@@ -200,7 +201,7 @@ fn client_plan_covers_shared_references_last_unbind_and_noop() {
         ]
     );
     assert_eq!(
-        plan_client_changes(&[one.clone(), two.clone()], &[two.clone()]),
+        plan_client_changes(&[one.clone(), two.clone()], std::slice::from_ref(&two)),
         vec![
             VpsClientChange {
                 app: AppType::Claude,
@@ -213,7 +214,7 @@ fn client_plan_covers_shared_references_last_unbind_and_noop() {
         ]
     );
     assert_eq!(
-        plan_client_changes(&[two.clone()], &[]),
+        plan_client_changes(std::slice::from_ref(&two), &[]),
         vec![VpsClientChange {
             app: AppType::Claude,
             action: VpsClientAction::Remove
