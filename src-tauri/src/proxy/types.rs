@@ -218,17 +218,6 @@ pub struct RectifierConfig {
     /// 仍保留「显式声明」与「上游兜底」，且不改变 Codex 模型目录声明。
     #[serde(default = "default_true")]
     pub request_media_heuristic: bool,
-    /// 请求整流：图片数量上限（默认 0 = 关闭）
-    ///
-    /// 部分上游（如阶跃星辰）对单次请求的图片张数有硬上限，超限直接 400，
-    /// 而长会话里累积的截图很容易越过上限。设为 n > 0 时，按文档顺序
-    /// **保留前 n 张**，把第 n+1 张及之后的图片替换为
-    /// [`crate::proxy::media_sanitizer::UNSUPPORTED_IMAGE_MARKER`]。
-    ///
-    /// 与 request_media_fallback 正交：那一条按「模型是否支持图片」决定替换，
-    /// 这一条按「数量」决定，两条可同时生效。
-    #[serde(default)]
-    pub request_media_max_images: usize,
 }
 
 fn default_true() -> bool {
@@ -247,7 +236,6 @@ impl Default for RectifierConfig {
             request_thinking_budget: true,
             request_media_fallback: true,
             request_media_heuristic: true,
-            request_media_max_images: 0,
         }
     }
 }

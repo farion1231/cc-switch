@@ -395,9 +395,7 @@
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Text-Only Model Preflight",
-        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged",
-        "mediaMaxImages": "Image Count Cap",
-        "mediaMaxImagesDescription": "Some upstreams (such as StepFun) cap the number of images per request and error out when the cap is exceeded, which long sessions of screenshots easily hit. Set n to keep the first n images in document order and replace the rest with an [Unsupported Image] marker. 0 means no cap. This is independent of Unsupported Image Fallback above and can be enabled separately"
+        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
@@ -1329,6 +1327,9 @@
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "Default fallback model",
     "fallbackModelHint": "A fallback for requests that don't clearly map to Sonnet, Opus, Fable, or Haiku. Recommended for third-party/relay endpoints—otherwise such requests (including Haiku background subtasks) are forwarded under their original Claude model name and may fail if the upstream doesn't host it. Safe to leave blank for official endpoints.",
+    "mediaMaxImagesLabel": "Image count cap",
+    "mediaMaxImagesPlaceholder": "Blank = no cap",
+    "mediaMaxImagesHint": "Keeps the first N images in document order and replaces the rest with an [Unsupported Image] marker. 0 or blank means no cap. For upstreams that limit the number of images per request (StepFun caps at 70) — long sessions accumulate screenshots that easily exceed the cap and fail the whole request.",
     "quickSetModels": "Quick Set",
     "quickSetSuccess": "Model name applied to all roles",
     "advancedOptionsToggle": "Advanced Options",

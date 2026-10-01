@@ -3,16 +3,11 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import {
   settingsApi,
   type RectifierConfig,
   type OptimizerConfig,
 } from "@/lib/api/settings";
-
-/** 图片上限快捷档位。0 = 关闭（不设上限）。 */
-const MEDIA_MAX_IMAGES_PRESETS = [0, 10, 20, 50, 70] as const;
 
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
@@ -22,7 +17,6 @@ export function RectifierConfigPanel() {
     requestThinkingBudget: true,
     requestMediaFallback: true,
     requestMediaHeuristic: true,
-    requestMediaMaxImages: 0,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
     enabled: false,
@@ -147,53 +141,6 @@ export function RectifierConfigPanel() {
               handleChange({ requestMediaHeuristic: checked })
             }
           />
-        </div>
-        <div className="space-y-2 pl-8">
-          <Label htmlFor="rectifier-media-max-images">
-            {t("settings.advanced.rectifier.mediaMaxImages")}
-          </Label>
-          <div className="flex items-center gap-3">
-            <Input
-              id="rectifier-media-max-images"
-              type="number"
-              min={0}
-              step={1}
-              className="h-9 w-32"
-              disabled={!config.enabled}
-              value={String(config.requestMediaMaxImages)}
-              onChange={(event) => {
-                const parsed = Number.parseInt(event.target.value, 10);
-                handleChange({
-                  requestMediaMaxImages:
-                    Number.isFinite(parsed) && parsed > 0 ? parsed : 0,
-                });
-              }}
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              {MEDIA_MAX_IMAGES_PRESETS.map((preset) => (
-                <Button
-                  key={preset}
-                  type="button"
-                  variant={
-                    config.requestMediaMaxImages === preset
-                      ? "default"
-                      : "outline"
-                  }
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  disabled={!config.enabled}
-                  onClick={() =>
-                    handleChange({ requestMediaMaxImages: preset })
-                  }
-                >
-                  {preset}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {t("settings.advanced.rectifier.mediaMaxImagesDescription")}
-          </p>
         </div>
       </div>
 

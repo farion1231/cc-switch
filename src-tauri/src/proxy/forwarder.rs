@@ -222,18 +222,29 @@ impl RequestForwarder {
     /// 与 [`Self::apply_media_prevention`] 正交——那一条按「模型是否支持图片」
     /// 只对 Codex/GrokBuild 路径生效；这一条按「数量」处理，**对所有 app 生效**，
     /// 且不受 `request_media_fallback` 管辖（关闭图片降级时仍可单独启用）。
-    /// 受 `enabled && request_media_max_images > 0` 管辖，返回剥离张数。
+    /// 上游上限差异很大（阶跃星辰 70 张），只有接到该上游的 provider 才需要限制，
+    /// 所以放在 provider meta 而不是全局整流器配置里。
+    /// 受 `enabled && Some(n>0)` 管辖，返回剥离张数。
     fn apply_media_image_cap(&self, body: &mut Value, provider: &Provider) -> usize {
-        let cap = self.rectifier_config.request_media_max_images;
-        if !self.rectifier_config.enabled || cap == 0 {
+        let cap = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.media_max_images)
+            .filter(|cap| *cap > 0)
+            .map(|cap| cap as usize);
+
+        if !self.rectifier_config.enabled {
             return 0;
         }
+        let Some(cap) = cap else {
+            return 0;
+        };
 
         let stripped = super::media_sanitizer::strip_images_beyond_first(body, cap);
         if stripped > 0 {
             let model = body.get("model").and_then(Value::as_str).unwrap_or("");
             log::info!(
-                "[Media] Stripped {stripped} image block(s) beyond the first {cap} (rectifier image cap) for provider={}, model={}",
+                "[Media] Stripped {stripped} image block(s) beyond the first {cap} (provider image cap) for provider={}, model={}",
                 provider.id,
                 model
             );
@@ -5139,6 +5150,19 @@ mod tests {
         })
     }
 
+    /// 带 `count` 张图片的请求体（图片数量上限测试用）。
+    fn body_with_many_images(model: &str, count: usize) -> Value {
+        json!({
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": (0..count)
+                    .map(|i| json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": format!("a{i}") } }))
+                    .collect::<Vec<_>>()
+            }]
+        })
+    }
+
     fn body_with_codex_input_image(model: &str) -> Value {
         json!({
             "model": model,
@@ -5226,8 +5250,53 @@ mod tests {
     }
 
     #[test]
-    fn prevention_skipped_when_media_fallback_off() {
-        // 关闭 request_media_fallback：即使名单命中也不预替换。
+    fn image_cap_reads_the_limit_from_provider_meta() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        // 上限是 per-provider：1 个 provider 配 1，另一个不配。
+        let mut capped = provider_with_settings(json!({}));
+        capped.meta = Some(crate::provider::ProviderMeta {
+            media_max_images: Some(1),
+            ..Default::default()
+        });
+        let mut uncapped = provider_with_settings(json!({}));
+        uncapped.meta = Some(crate::provider::ProviderMeta::default());
+
+        let mut body = body_with_many_images("qwen3-coder-plus", 3);
+        assert_eq!(fwd.apply_media_image_cap(&mut body, &capped), 2);
+        assert_eq!(body["messages"][0]["content"][0]["type"], "image");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][2]["type"], "text");
+
+        let mut body = body_with_many_images("qwen3-coder-plus", 3);
+        assert_eq!(
+            fwd.apply_media_image_cap(&mut body, &uncapped),
+            0,
+            "未配置 media_max_images 时不得剥离任何图片"
+        );
+        assert_eq!(body["messages"][0]["content"][0]["type"], "image");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "image");
+        assert_eq!(body["messages"][0]["content"][2]["type"], "image");
+    }
+
+    #[test]
+    fn image_cap_respects_the_rectifier_master_switch() {
+        // 整流器总开关关闭时，即使 provider 配了上限也不剥离。
+        let fwd = forwarder_with_rectifier(RectifierConfig {
+            enabled: false,
+            ..RectifierConfig::default()
+        });
+        let mut provider = provider_with_settings(json!({}));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            media_max_images: Some(1),
+            ..Default::default()
+        });
+
+        let mut body = body_with_many_images("qwen3-coder-plus", 3);
+        assert_eq!(fwd.apply_media_image_cap(&mut body, &provider), 0);
+    }
+
+    #[test]
+    fn prevention_skipped_when_media_fallback_off() {        // 关闭 request_media_fallback：即使名单命中也不预替换。
         let fwd = forwarder_with_rectifier(RectifierConfig {
             request_media_fallback: false,
             ..RectifierConfig::default()

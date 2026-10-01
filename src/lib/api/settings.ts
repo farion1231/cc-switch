@@ -329,8 +329,6 @@ export interface RectifierConfig {
   requestThinkingBudget: boolean;
   requestMediaFallback: boolean;
   requestMediaHeuristic: boolean;
-  /** 图片数量上限：>0 时保留前 N 张，剥离其余；0 = 关闭 */
-  requestMediaMaxImages: number;
 }
 
 export interface OptimizerConfig {

@@ -395,9 +395,7 @@
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
         "mediaHeuristic": "纯文本模型预判",
-        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明",
-        "mediaMaxImages": "图片数量上限",
-        "mediaMaxImagesDescription": "部分上游（如阶跃星辰）限制单次请求的图片张数，超限直接返回错误；长会话累积的截图很容易越过上限。设为 n 时按文档顺序保留前 n 张图片，把第 n+1 张及之后的图片替换为 [Unsupported Image] 标记。0 表示不限制。与上方「不支持图片降级」正交，可分别开启"
+        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",
@@ -1329,6 +1327,9 @@
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "默认兜底模型",
     "fallbackModelHint": "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
+    "mediaMaxImagesLabel": "图片数量上限",
+    "mediaMaxImagesPlaceholder": "留空 = 不限制",
+    "mediaMaxImagesHint": "按文档顺序保留前 N 张图片，第 N+1 张及之后替换为 [Unsupported Image] 标记。0 或留空表示不限制。用于上游限制图片张数的场景（如阶跃星辰上限 70 张）——长会话累积的截图很容易越过上限，导致整个请求失败。",
     "quickSetModels": "一键设置",
     "quickSetSuccess": "已将模型名称应用到所有角色",
     "advancedOptionsToggle": "高级选项",

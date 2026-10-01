@@ -545,6 +545,12 @@ pub struct ProviderMeta {
     /// Custom User-Agent for local proxy routing.
     #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
     pub custom_user_agent: Option<String>,
+    /// 该供应商的图片数量上限（整流器「图片数量上限」，per-provider）。
+    ///
+    /// `Some(0)` 与 `None` 等价 = 不限制。per-provider 而非全局：不同上游的
+    /// 上限不同（阶跃星辰 70 张），且只有接到该上游的 provider 才需要这个限制。
+    #[serde(rename = "mediaMaxImages", skip_serializing_if = "Option::is_none")]
+    pub media_max_images: Option<u32>,
     /// Local proxy request overrides applied to the transformed upstream request.
     #[serde(
         rename = "localProxyRequestOverrides",

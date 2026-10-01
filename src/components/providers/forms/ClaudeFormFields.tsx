@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -155,6 +156,9 @@ interface ClaudeFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  /** 图片数量上限（per-provider 整流器）。空串 = 不限制。 */
+  mediaMaxImages: string;
+  onMediaMaxImagesChange: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -220,6 +224,8 @@ export function ClaudeFormFields({
   isFullUrl,
   onFullUrlChange,
   customUserAgent,
+  mediaMaxImages,
+  onMediaMaxImagesChange,
   onCustomUserAgentChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
@@ -1100,6 +1106,31 @@ export function ClaudeFormFields({
               value={customUserAgent}
               onChange={onCustomUserAgentChange}
             />
+
+            <div className="space-y-2">
+              <Label htmlFor="claude-media-max-images">
+                {t("providerForm.mediaMaxImagesLabel", {
+                  defaultValue: "图片数量上限",
+                })}
+              </Label>
+              <Input
+                id="claude-media-max-images"
+                type="number"
+                min={0}
+                step={1}
+                placeholder={t("providerForm.mediaMaxImagesPlaceholder", {
+                  defaultValue: "留空 = 不限制",
+                })}
+                value={mediaMaxImages}
+                onChange={(event) => onMediaMaxImagesChange(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.mediaMaxImagesHint", {
+                  defaultValue:
+                    "按文档顺序保留前 N 张图片，第 N+1 张及之后替换为 [Unsupported Image] 标记。0 或留空表示不限制。用于上游限制图片张数的场景（如阶跃星辰上限 70 张），否则长会话累积的截图会让整个请求失败。",
+                })}
+              </p>
+            </div>
 
             <div className="border-t border-border-default pt-3">
               <LocalProxyRequestOverridesField
