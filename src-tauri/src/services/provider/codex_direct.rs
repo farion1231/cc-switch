@@ -300,6 +300,8 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
 #[derive(Debug, Clone)]
 enum AuthGoal {
     ThirdParty,
+    /// 只重投影历史路由：不写 auth.json，也不移动设备上的登录暂存。
+    HistoryOnly,
     /// 代理的第三方路由，或者没有直连供应商：不动原生登录，只清托管账号的登录。
     KeepNative,
     Official(Value),
@@ -331,6 +333,15 @@ pub(crate) struct Planned {
 }
 
 impl Planned {
+    pub(crate) fn preserve_native_auth_for_history(&mut self, provider: &Provider) {
+        if crate::settings::preserve_codex_official_auth_on_switch()
+            && is_official(provider)
+            && managed_account(provider).is_none()
+        {
+            self.auth = AuthGoal::HistoryOnly;
+        }
+    }
+
     /// `config.toml` 的补丁（编辑器显示用：在内存里对 live 做一次切换投影）。
     pub(crate) fn config(&self) -> &CodexConfigPatch {
         &self.config
@@ -398,11 +409,20 @@ pub(crate) fn plan(
                     Some(login) => AuthGoal::Managed(login.clone()),
                     None => AuthGoal::Official(row_auth(route)),
                 };
-                (
-                    RouteWrite::OfficialProxy(official_mirror_table(Some(base_url), false)),
-                    None,
-                    auth,
-                )
+                let table = official_mirror_table(Some(base_url), false);
+                let route = if crate::settings::unify_codex_session_history() {
+                    crate::codex_config::validate_codex_unified_official_proxy_config(
+                        route
+                            .settings_config
+                            .get("config")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )?;
+                    RouteWrite::OfficialProxyUnified(table)
+                } else {
+                    RouteWrite::OfficialProxy(table)
+                };
+                (route, None, auth)
             } else {
                 (
                     RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
@@ -486,7 +506,9 @@ fn contract_of(
         Target::Direct(_) => "",
     };
     let (selector, table) = match &config.route {
-        RouteWrite::Custom(table) => (ROUTE_ID, table_text(table)),
+        RouteWrite::Custom(table) | RouteWrite::OfficialProxyUnified(table) => {
+            (ROUTE_ID, table_text(table))
+        }
         RouteWrite::OfficialProxy(table) => (
             crate::live::project::codex::OFFICIAL_PROXY_ROUTE_ID,
             table_text(table),
@@ -655,18 +677,28 @@ pub(crate) fn run_with_edits(
     let preserve = crate::settings::preserve_codex_official_auth_on_switch();
     let target = match &planned.auth {
         AuthGoal::ThirdParty => AuthTarget::ThirdParty { preserve },
-        AuthGoal::KeepNative => AuthTarget::ProxyThirdParty,
+        AuthGoal::KeepNative | AuthGoal::HistoryOnly => AuthTarget::ProxyThirdParty,
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
         AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
     };
-    let auth_plan = codex_login::plan(AuthInput {
-        live: live_auth.as_ref(),
-        live_is_managed,
-        third_party_keys: &planned.retired_keys,
-        leaving_official: planned.leaving_official.as_ref(),
-        target,
-        stash,
-    });
+    let auth_plan = if matches!(planned.auth, AuthGoal::HistoryOnly) {
+        codex_login::AuthPlan {
+            auth: None,
+            stash: None,
+            login_on_disk: live_auth
+                .as_ref()
+                .is_some_and(crate::codex_config::codex_auth_has_login_material),
+        }
+    } else {
+        codex_login::plan(AuthInput {
+            live: live_auth.as_ref(),
+            live_is_managed,
+            third_party_keys: &planned.retired_keys,
+            leaving_official: planned.leaving_official.as_ref(),
+            target,
+            stash,
+        })
+    };
     // 暂存坏了只当它是空的读；要往里存登录（`auth.json` 里的登录要被删掉或换掉）时照写
     // 会覆盖掉里面原有的登录，停下。
     if let (Some(err), Some(_)) = (&stash_unreadable, &auth_plan.stash) {
@@ -803,6 +835,27 @@ pub(crate) fn write_direct(
     let prepared = prepare(manager, &owner, &target)?;
     let planned = plan(db, &owner, &target, &prepared)?;
     run(db, op, planned, &prepared, pending)
+}
+
+/// 官方直连的历史开关重投影，不应把 Codex CLI 后来登录的账号换回行里的旧账号。
+pub(crate) fn reapply_history(
+    db: &Database,
+    manager: &Arc<CodexOAuthManager>,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let owner = Owner::Provider(provider);
+    let target = Target::Direct(Some(provider));
+    let prepared = prepare(manager, &owner, &target)?;
+    let mut planned = plan(db, &owner, &target, &prepared)?;
+    planned.preserve_native_auth_for_history(provider);
+    run(
+        db,
+        crate::mode::state::op::APPLY,
+        planned,
+        &prepared,
+        PendingTarget::default(),
+    )?;
+    Ok(())
 }
 
 /// 只校验，不写：切换前用它挡住会被拒绝的目标（行有问题时指针不能先动）。

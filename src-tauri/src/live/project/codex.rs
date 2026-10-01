@@ -448,13 +448,15 @@ pub enum RouteWrite {
     Default,
     /// 代理的官方路由：选路写 `cc-switch-official`，客户端带自己的登录。
     OfficialProxy(Table),
+    /// 官方代理与第三方共用 `custom` 历史桶；保留独立表作为旧版清理的所有权标记。
+    OfficialProxyUnified(Table),
 }
 
 impl RouteWrite {
     fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::OfficialMirror | Self::Custom(_) | Self::OfficialProxyUnified(_) => Some(ROUTE_ID),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy(_) => Some(OFFICIAL_PROXY_ROUTE_ID),
         }
@@ -670,6 +672,9 @@ impl CodexConfigPatch {
                 let mut providers = Table::new();
                 providers.set_implicit(true);
                 providers.insert(id, Item::Table(table));
+                if let RouteWrite::OfficialProxyUnified(table) = &self.route {
+                    providers.insert(OFFICIAL_PROXY_ROUTE_ID, Item::Table(table.clone()));
+                }
                 root.insert("model_providers", Item::Table(providers));
             }
             return Ok(());
@@ -744,6 +749,15 @@ impl CodexConfigPatch {
             RouteWrite::Custom(table) => {
                 put_table(providers, ROUTE_ID, table.clone(), container_inline);
             }
+            RouteWrite::OfficialProxyUnified(table) => {
+                put_table(providers, ROUTE_ID, table.clone(), container_inline);
+                put_table(
+                    providers,
+                    OFFICIAL_PROXY_ROUTE_ID,
+                    table.clone(),
+                    container_inline,
+                );
+            }
             RouteWrite::OfficialProxy(table) => {
                 // 之前第三方路由留下的 custom 表改成休眠形态（同样指向本地代理）。
                 if providers.contains_key(ROUTE_ID) {
@@ -773,6 +787,7 @@ impl CodexConfigPatch {
             RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
             RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
             RouteWrite::OfficialProxy(table) => Some((OFFICIAL_PROXY_ROUTE_ID, table.clone())),
+            RouteWrite::OfficialProxyUnified(table) => Some((ROUTE_ID, table.clone())),
             RouteWrite::BuiltIn {
                 id,
                 table: Some(table),
@@ -915,6 +930,89 @@ mod tests {
     }
 
     const RELAY: &str = "model_provider = \"relay\"\nmodel = \"gpt-5\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n";
+
+    fn route_patch(route: RouteWrite) -> CodexConfigPatch {
+        CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route,
+            catalog: false,
+            retired: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unified_official_proxy_keeps_shared_history_and_can_toggle_back() {
+        let url = "http://127.0.0.1:15721/v1";
+        let table = official_mirror_table(Some(url), false);
+        for input in [
+            "",
+            "[model_providers.relay]\nbase_url = \"https://keep.example/v1\"\n",
+            "model_providers = { relay = { base_url = \"https://keep.example/v1\" } }\n",
+        ] {
+            let mut doc = input.parse::<DocumentMut>().unwrap();
+            let unified = route_patch(RouteWrite::OfficialProxyUnified(table.clone()));
+            unified.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+            assert_eq!(doc["model_provider"].as_str(), Some(ROUTE_ID));
+            for id in [ROUTE_ID, OFFICIAL_PROXY_ROUTE_ID] {
+                assert_eq!(doc["model_providers"][id]["base_url"].as_str(), Some(url));
+                assert_eq!(
+                    doc["model_providers"][id]["supports_websockets"].as_bool(),
+                    Some(false)
+                );
+                assert_eq!(
+                    doc["model_providers"][id]["requires_openai_auth"].as_bool(),
+                    Some(true)
+                );
+            }
+            assert!(crate::codex_config::codex_config_has_official_proxy_route(
+                &doc.to_string()
+            ));
+            let once = doc.to_string();
+            unified.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+            assert_eq!(doc.to_string(), once);
+
+            route_patch(RouteWrite::OfficialProxy(table.clone()))
+                .apply_to(Path::new("config.toml"), &mut doc)
+                .unwrap();
+            assert_eq!(doc["model_provider"].as_str(), Some(OFFICIAL_PROXY_ROUTE_ID));
+            assert!(doc["model_providers"][ROUTE_ID]
+                .as_table_like()
+                .unwrap()
+                .get("requires_openai_auth")
+                .is_none());
+            unified.apply_to(Path::new("config.toml"), &mut doc).unwrap();
+            route_patch(RouteWrite::OfficialMirror)
+                .apply_to(Path::new("config.toml"), &mut doc)
+                .unwrap();
+            assert_eq!(doc["model_provider"].as_str(), Some(ROUTE_ID));
+            assert!(doc["model_providers"]
+                .as_table_like()
+                .unwrap()
+                .get(OFFICIAL_PROXY_ROUTE_ID)
+                .is_none());
+            assert!(doc["model_providers"][ROUTE_ID]
+                .as_table_like()
+                .unwrap()
+                .get("base_url")
+                .is_none());
+            assert_eq!(
+                doc["model_providers"][ROUTE_ID]["supports_websockets"].as_bool(),
+                Some(true)
+            );
+            assert!(!crate::codex_config::codex_config_has_official_proxy_route(
+                &doc.to_string()
+            ));
+            if !input.is_empty() {
+                assert_eq!(
+                    doc["model_providers"]["relay"]["base_url"].as_str(),
+                    Some("https://keep.example/v1")
+                );
+            }
+        }
+    }
 
     #[test]
     fn requires_openai_auth_follows_the_login_only_for_own_credentials() {

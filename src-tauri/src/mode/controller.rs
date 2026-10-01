@@ -188,6 +188,7 @@ async fn write_proxy(
     route: &Provider,
     live_now: &LiveNow,
     mut target: ModeState,
+    history_only: bool,
 ) -> Result<(), String> {
     let (proxy_url, codex_base_url) = state.proxy_service.build_proxy_urls().await?;
     let force = op_name == op::ATTACH;
@@ -230,7 +231,10 @@ async fn write_proxy(
             };
             let prepared =
                 codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec).map_err(err)?;
-            let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
+            let mut planned = codex_direct::plan(&state.db, &owner, &spec, &prepared).map_err(err)?;
+            if history_only {
+                planned.preserve_native_auth_for_history(route);
+            }
             let unchanged = !force && live_now.has_contract(&planned.contract.key);
             target.contract = Some(planned.contract.clone());
             let pending = PendingTarget::mode(target);
@@ -481,6 +485,7 @@ async fn enter_locked(state: &AppState, app: &AppType, op_name: &str) -> Result<
             proxy_route: Some(route.id.clone()),
             contract: None,
         },
+        false,
     )
     .await?;
     state.proxy_service.set_active_target(app, &route).await;
@@ -620,7 +625,7 @@ pub async fn switch_route_locked(
         commit_state(state, app, &PendingTarget::mode(new_state))?;
     } else {
         let live_now = LiveNow::of(state, app, &mode)?;
-        write_proxy(state, app, op::ROUTE, target, &live_now, new_state).await?;
+        write_proxy(state, app, op::ROUTE, target, &live_now, new_state, false).await?;
     }
     state.proxy_service.set_active_target(app, target).await;
     Ok(())
@@ -651,6 +656,20 @@ pub fn reject_unsupported_official(app: &AppType, provider: &Provider) -> Result
         );
     }
     Ok(())
+}
+
+/// 历史开关重投影不等于切换账号；调用方已持有 Codex 切换锁。
+pub(crate) async fn resync_codex_history_locked(state: &AppState) -> Result<(), String> {
+    let app = &AppType::Codex;
+    let mode = current::mode_state(app);
+    if !mode.is_proxy() || !mode.attached {
+        return Ok(());
+    }
+    let Some(route) = route_provider(state, app, &mode)? else {
+        return Ok(());
+    };
+    let live_now = LiveNow::of(state, app, &mode)?;
+    write_proxy(state, app, op::ROUTE, &route, &live_now, mode, true).await
 }
 
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
@@ -2117,6 +2136,231 @@ mod mode_tests {
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_history_toggle_reprojects_the_official_proxy_route_not_the_direct_pointer() {
+        let _home = Home::new();
+        set_preservation(true);
+        let account_a = chatgpt_login("acct-a");
+        seed_codex(CODEX_USER_LIVE, Some(&account_a));
+        let mut official = codex_official();
+        official.settings_config["auth"] = account_a.clone();
+        let relay = codex_row("relay", "https://relay.example/v1", "");
+        let state = state_with(AppType::Codex, &[official.clone(), relay.clone()], "relay").await;
+        ProviderService::switch(&state, AppType::Codex, "relay").expect("direct relay");
+        enter(&state, &AppType::Codex).await.expect("enter");
+        switch_route(&state, &AppType::Codex, &official.id)
+            .await
+            .expect("route to official");
+        let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().1;
+        let dedicated_contract = mode(&AppType::Codex).contract.unwrap().key;
+        assert_eq!(
+            codex_doc()["model_provider"].as_str(),
+            Some("cc-switch-official")
+        );
+
+        // The user signs in as B in Codex while the official row and stash still
+        // contain A. A history-only toggle must not act like an account switch.
+        // chatgpt_login's non-JWT id_token has no sub, so stash identity falls
+        // back to tokens.account_id rather than a sub:<user> key.
+        assert!(crate::codex_config::extract_codex_auth_user_identity(&account_a).is_none());
+        let stash_path = DeviceStore::for_device().file("codex-login-stash.json");
+        let stash_bytes = serde_json::to_vec_pretty(&json!({
+            "logins": { "account:acct-a": account_a },
+            "last": "account:acct-a"
+        }))
+        .unwrap();
+        fs::write(&stash_path, &stash_bytes).unwrap();
+        let account_b = chatgpt_login("acct-b");
+        let auth_bytes = serde_json::to_vec_pretty(&account_b).unwrap();
+        fs::write(codex_auth_path(), &auth_bytes).unwrap();
+
+        for unified in [true, false, true] {
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = unified;
+            crate::settings::update_settings(settings).unwrap();
+            assert!(
+                crate::services::provider::reapply_current_codex_official_live_async(&state)
+                    .await
+                    .expect("reproject active official route")
+            );
+            let live = codex_text();
+            let doc = codex_doc();
+            let route_id = if unified {
+                "custom"
+            } else {
+                "cc-switch-official"
+            };
+            assert_eq!(doc["model_provider"].as_str(), Some(route_id), "{live}");
+            let route = &doc["model_providers"][route_id];
+            assert_eq!(route["base_url"].as_str(), Some(proxy_url.as_str()));
+            assert_eq!(route["requires_openai_auth"].as_bool(), Some(true));
+            assert!(route.get("experimental_bearer_token").is_none());
+            assert!(crate::codex_config::codex_config_has_official_proxy_route(
+                &live
+            ));
+            assert_eq!(
+                fs::read(codex_auth_path()).unwrap(),
+                auth_bytes,
+                "history reprojection must not replace the user's current account B with A"
+            );
+            assert_eq!(
+                fs::read(&stash_path).unwrap(),
+                stash_bytes,
+                "history reprojection must not consume A or stash B"
+            );
+            assert_eq!(direct(&state, &AppType::Codex).as_deref(), Some("relay"));
+            assert_eq!(
+                in_use(&state, &AppType::Codex).as_deref(),
+                Some(official.id.as_str())
+            );
+            assert_eq!(codex_user_parts(&live).len(), 6, "{live}");
+            let contract = mode(&AppType::Codex).contract.unwrap().key;
+            if unified {
+                assert_ne!(
+                    contract, dedicated_contract,
+                    "the selector changes the contract"
+                );
+            } else {
+                assert_eq!(contract, dedicated_contract);
+            }
+            for row in [&official, &relay] {
+                assert_eq!(
+                    state
+                        .db
+                        .get_provider_by_id(&row.id, "codex")
+                        .unwrap()
+                        .unwrap()
+                        .settings_config,
+                    row.settings_config,
+                    "history routing must not be stored in provider rows"
+                );
+            }
+        }
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        let restored = codex_text();
+        let doc = codex_doc();
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://relay.example/v1")
+        );
+        assert!(!crate::codex_config::codex_config_has_official_proxy_route(
+            &restored
+        ));
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+        assert_eq!(fs::read(&stash_path).unwrap(), stash_bytes);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_unified_history_survives_official_and_third_party_proxy_round_trips() {
+        let _home = Home::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            unify_codex_session_history: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let native = chatgpt_login("acct");
+        seed_codex("", Some(&native));
+        let official = codex_official();
+        let relay = codex_row("relay", "https://relay.example/v1", "");
+        let state = state_with(AppType::Codex, &[official.clone(), relay], &official.id).await;
+        ProviderService::switch(&state, AppType::Codex, &official.id).expect("direct official");
+        let auth_bytes = fs::read(codex_auth_path()).unwrap();
+
+        enter(&state, &AppType::Codex)
+            .await
+            .expect("enter official route");
+        let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().1;
+        for id in [official.id.as_str(), "relay", official.id.as_str()] {
+            switch_route(&state, &AppType::Codex, id)
+                .await
+                .expect("switch route");
+            let live = codex_text();
+            let doc = codex_doc();
+            assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{live}");
+            let route = &doc["model_providers"]["custom"];
+            assert_eq!(route["base_url"].as_str(), Some(proxy_url.as_str()));
+            let is_official = id == official.id;
+            assert_eq!(
+                crate::codex_config::codex_config_has_official_proxy_route(&live),
+                is_official,
+                "the shared history bucket must still distinguish native OAuth from proxy auth"
+            );
+            assert_eq!(
+                route
+                    .get("experimental_bearer_token")
+                    .and_then(toml::Value::as_str),
+                (!is_official).then_some(PROXY_TOKEN_PLACEHOLDER)
+            );
+            assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+        }
+
+        exit(&state, &AppType::Codex)
+            .await
+            .expect("exit to official direct");
+        let live = codex_text();
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{live}");
+        assert!(!crate::codex_config::codex_config_has_official_proxy_route(
+            &live
+        ));
+        assert!(!state
+            .proxy_service
+            .live_has_proxy_placeholder(&AppType::Codex));
+        assert!(
+            !live.contains(&proxy_url),
+            "the direct mirror must not point at the proxy"
+        );
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_failed_history_reprojection_keeps_rotated_oauth_and_can_retry() {
+        let _home = Home::new();
+        set_preservation(true);
+        let original = chatgpt_login("acct");
+        seed_codex("", Some(&original));
+        let mut official = codex_official();
+        official.settings_config["auth"] = original;
+        let state = state_with(AppType::Codex, &[official.clone()], &official.id).await;
+        enter(&state, &AppType::Codex)
+            .await
+            .expect("enter official route");
+        let config_before = codex_text();
+        let mode_before = mode(&AppType::Codex);
+
+        let mut rotated = chatgpt_login("acct");
+        rotated["tokens"]["refresh_token"] = json!("refresh-rotated");
+        rotated["last_refresh"] = json!("2026-09-01T01:00:00Z");
+        let auth_bytes = serde_json::to_vec_pretty(&rotated).unwrap();
+        fs::write(codex_auth_path(), &auth_bytes).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+
+        failpoint::crash_at(Some("mark"));
+        let result = crate::services::provider::reapply_current_codex_official_live_async(&state).await;
+        failpoint::crash_at(None);
+        assert!(result.is_err(), "injected failure must reach the caller");
+        assert_eq!(codex_text(), config_before, "no config was published");
+        assert_eq!(mode(&AppType::Codex), mode_before);
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+
+        assert!(
+            crate::services::provider::reapply_current_codex_official_live_async(&state)
+                .await
+                .expect("retry history reprojection")
+        );
+        assert_eq!(codex_doc()["model_provider"].as_str(), Some("custom"));
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_bytes);
     }
 
     // ---------- Codex：只替换关键字段 ----------

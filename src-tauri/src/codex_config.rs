@@ -2383,16 +2383,96 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
     if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return false;
     }
-    config_text
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(active_provider_id) = doc.get("model_provider").and_then(|item| item.as_str()) else {
+        return false;
+    };
+    let Some(providers) = doc.get("model_providers").and_then(|item| item.as_table_like()) else {
+        return false;
+    };
+    let marker = providers
+        .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+        .and_then(|item| item.as_table_like());
+
+    if active_provider_id == CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID {
+        return true;
+    }
+    if active_provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
+        return false;
+    }
+
+    let custom = providers
+        .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        .and_then(|item| item.as_table_like());
+    match (custom, marker) {
+        (Some(custom), Some(marker)) => tables_match_codex_official_proxy_provider(custom, marker),
+        _ => false,
+    }
+}
+
+/// Validate the official provider's stored template before assigning the shared
+/// history bucket. The live writer owns its `custom` route, but an unrelated
+/// user-defined table in the source template must not be silently claimed.
+pub(crate) fn validate_codex_unified_official_proxy_config(config_text: &str) -> Result<(), AppError> {
+    let doc = config_text
         .parse::<DocumentMut>()
-        .ok()
-        .and_then(|doc| {
-            doc.get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(str::to_string)
-        })
-        .as_deref()
-        == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(item) = doc.get("model_providers") else {
+        return Ok(());
+    };
+    let providers = item.as_table_like().ok_or_else(|| {
+        AppError::Message("Invalid Codex config.toml: model_providers must be a table".to_string())
+    })?;
+    let Some(custom) = providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) else {
+        return Ok(());
+    };
+    let marker = providers
+        .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+        .and_then(|item| item.as_table_like());
+    if custom.as_table_like().is_some_and(|custom| {
+        table_matches_codex_official_provider(custom, true)
+            || marker.is_some_and(|marker| tables_match_codex_official_proxy_provider(custom, marker))
+    }) {
+        return Ok(());
+    }
+    Err(AppError::Message(
+        "Cannot enable the shared Codex history bucket during official proxy takeover: model_providers.custom is user-managed"
+            .to_string(),
+    ))
+}
+
+fn table_matches_codex_official_provider(table: &dyn toml_edit::TableLike, direct: bool) -> bool {
+    let expected_len = if !direct && table.contains_key("base_url") {
+        5
+    } else {
+        4
+    };
+    table.len() == expected_len
+        && table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
+        && table
+            .get("requires_openai_auth")
+            .and_then(|item| item.as_bool())
+            == Some(true)
+        && table
+            .get("supports_websockets")
+            .and_then(|item| item.as_bool())
+            == Some(direct)
+        && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
+        && table
+            .get("base_url")
+            .is_none_or(|item| !direct && item.as_str().is_some())
+}
+
+fn tables_match_codex_official_proxy_provider(
+    active: &dyn toml_edit::TableLike,
+    marker: &dyn toml_edit::TableLike,
+) -> bool {
+    table_matches_codex_official_provider(active, false)
+        && table_matches_codex_official_provider(marker, false)
+        && active.get("base_url").and_then(|item| item.as_str())
+            == marker.get("base_url").and_then(|item| item.as_str())
 }
 
 fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
@@ -2477,6 +2557,38 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::ffi::OsString;
+
+    #[test]
+    fn unified_official_proxy_template_rejects_user_managed_custom_tables() {
+        for config in [
+            "[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nsupports_websockets = false\n",
+            "model_providers = { custom = { name = \"OpenAI\", base_url = \"https://relay.example/v1\", wire_api = \"responses\", requires_openai_auth = true, supports_websockets = false } }\n",
+            "model_providers = { custom = 3 }\n",
+            "model_providers = 3\n",
+        ] {
+            assert!(validate_codex_unified_official_proxy_config(config).is_err());
+            assert!(!codex_config_has_official_proxy_route(config));
+        }
+        assert!(validate_codex_unified_official_proxy_config("").is_ok());
+        let mirror = "[model_providers.custom]\nname = \"OpenAI\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nsupports_websockets = true\n";
+        assert!(validate_codex_unified_official_proxy_config(mirror).is_ok());
+    }
+
+    #[test]
+    fn unified_official_proxy_detection_requires_matching_owned_marker() {
+        let table = "{ name = \"OpenAI\", base_url = \"http://127.0.0.1:15721/v1\", wire_api = \"responses\", requires_openai_auth = true, supports_websockets = false }";
+        let matching = format!(
+            "model_provider = \"custom\"\nmodel_providers = {{ custom = {table}, cc-switch-official = {table} }}\n"
+        );
+        assert!(codex_config_has_official_proxy_route(&matching));
+        assert!(validate_codex_unified_official_proxy_config(&matching).is_ok());
+        let mismatched = matching.replacen("127.0.0.1:15721", "relay.example", 1);
+        assert!(!codex_config_has_official_proxy_route(&mismatched));
+        assert!(validate_codex_unified_official_proxy_config(&mismatched).is_err());
+        let extra = matching.replacen("name =", "env_key = \"USER_KEY\", name =", 1);
+        assert!(!codex_config_has_official_proxy_route(&extra));
+        assert!(validate_codex_unified_official_proxy_config(&extra).is_err());
+    }
 
     #[test]
     fn codex_id_token_user_identity_requires_a_nonempty_subject() {
