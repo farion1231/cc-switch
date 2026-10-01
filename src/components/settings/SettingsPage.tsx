@@ -257,7 +257,9 @@ export function SettingsPage({
                     />
                     <ClaudeDesktopDisplaySettings
                       value={settings.claudeDesktopDisplay ?? null}
-                      onChange={(v) => handleAutoSave({ claudeDesktopDisplay: v })}
+                      onChange={(v) =>
+                        handleAutoSave({ claudeDesktopDisplay: v })
+                      }
                     />
                     <ThemeSettings />
                     <AppVisibilitySettings
