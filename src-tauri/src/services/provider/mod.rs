@@ -7225,13 +7225,10 @@ impl ProviderService {
                     let (fragment, format) = crate::opencode_config::provider_fragment(
                         &provider.id,
                         &provider.settings_config,
-                        provider
-                            .meta
-                            .as_ref()
-                            .and_then(|meta| meta.opencode_config_format),
+                        provider.opencode_config_format(),
                     )?;
                     if format == crate::provider::OpenCodeConfigFormat::V2 {
-                        crate::opencode_config::validate_native_provider(&provider.id, &fragment)?;
+                        crate::opencode_config::validate_native_provider(&provider.id, fragment)?;
                     }
                 }
             }

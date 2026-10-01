@@ -956,22 +956,27 @@ function ProviderFormFull({
     );
   const isExistingNativeOpencodeKey =
     isNativeOpencode && providerId === opencodeForm.opencodeProviderKey;
+  // Existing native IDs are kept exactly as OpenCode accepted them.
+  const isOpencodeProviderKeyInvalid =
+    opencodeForm.opencodeProviderKey.trim() !== "" &&
+    !isExistingNativeOpencodeKey &&
+    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeForm.opencodeProviderKey);
 
-  const canKeepExistingOpencodeOverride =
+  const keepsOpencodeProviderId =
     isEditMode &&
     !!providerId &&
-    opencodeForm.opencodeProviderKey === providerId &&
+    opencodeForm.opencodeProviderKey === providerId;
+  const canKeepExistingOpencodeOverride =
+    keepsOpencodeProviderId &&
     isOpencodeLiveProviderIdsSuccess &&
-    opencodeLiveProviderIds.includes(providerId);
+    opencodeLiveProviderIds.includes(opencodeForm.opencodeProviderKey);
   // Unlike V1, no older version copied native rows without their definition
   // (copies now require one), so a stored native row keeping its ID may stay
   // package-less after removal from the live config.
-  const canKeepStoredNativeOverride =
-    isNativeOpencode &&
-    isEditMode &&
-    !!providerId &&
-    opencodeForm.opencodeProviderKey === providerId &&
-    initialData?.meta?.opencodeConfigFormat === "v2";
+  const canInheritOpencodeDefinition =
+    canKeepExistingOpencodeOverride ||
+    (keepsOpencodeProviderId &&
+      initialData?.meta?.opencodeConfigFormat === "v2");
 
   const initialOmoSettings =
     appId === "opencode" &&
@@ -1154,10 +1159,7 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyRequired"));
         return;
       }
-      if (
-        !keyPattern.test(opencodeForm.opencodeProviderKey) &&
-        !isExistingNativeOpencodeKey
-      ) {
+      if (isOpencodeProviderKeyInvalid) {
         toast.error(t("opencode.providerKeyInvalid"));
         return;
       }
@@ -1176,25 +1178,24 @@ function ProviderFormFull({
         toast.error(t("opencode.providerKeyDuplicate"));
         return;
       }
-      // Only an unchanged ID already in the live config may inherit defaults.
+      // Only an existing override keeping its ID may inherit defaults.
       // Native V2 declarations name their package in `package`, not `npm`.
-      if (!canKeepExistingOpencodeOverride) {
-        if (isNativeOpencode) {
-          if (
-            !canKeepStoredNativeOverride &&
-            !hasNativeOpencodeDefinition(
+      if (!canInheritOpencodeDefinition) {
+        const hasDefinition = isNativeOpencode
+          ? hasNativeOpencodeDefinition(
               form.getValues("settingsConfig"),
               opencodeForm.opencodeProviderKey,
             )
-          ) {
-            toast.error(t("opencode.nativeCustomProviderRequired"));
-            return;
-          }
-        } else if (
-          !opencodeForm.opencodeNpm.trim() ||
-          Object.keys(opencodeForm.opencodeModels).length === 0
-        ) {
-          toast.error(t("opencode.customProviderRequired"));
+          : !!opencodeForm.opencodeNpm.trim() &&
+            Object.keys(opencodeForm.opencodeModels).length > 0;
+        if (!hasDefinition) {
+          toast.error(
+            t(
+              isNativeOpencode
+                ? "opencode.nativeCustomProviderRequired"
+                : "opencode.customProviderRequired",
+            ),
+          );
           return;
         }
       }
@@ -2180,11 +2181,7 @@ function ProviderFormFull({
                         opencodeForm.opencodeProviderKey,
                       ) &&
                         !isProviderKeyLocked) ||
-                      (opencodeForm.opencodeProviderKey.trim() !== "" &&
-                        !isExistingNativeOpencodeKey &&
-                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                          opencodeForm.opencodeProviderKey,
-                        ))
+                      isOpencodeProviderKeyInvalid
                         ? "border-destructive"
                         : ""
                     }
@@ -2197,25 +2194,17 @@ function ProviderFormFull({
                         {t("opencode.providerKeyDuplicate")}
                       </p>
                     )}
-                  {opencodeForm.opencodeProviderKey.trim() !== "" &&
-                    !isExistingNativeOpencodeKey &&
-                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                      opencodeForm.opencodeProviderKey,
-                    ) && (
-                      <p className="text-xs text-destructive">
-                        {t("opencode.providerKeyInvalid")}
-                      </p>
-                    )}
+                  {isOpencodeProviderKeyInvalid && (
+                    <p className="text-xs text-destructive">
+                      {t("opencode.providerKeyInvalid")}
+                    </p>
+                  )}
                   {!(
                     additiveExistingProviderKeys.includes(
                       opencodeForm.opencodeProviderKey,
                     ) && !isProviderKeyLocked
                   ) &&
-                    (opencodeForm.opencodeProviderKey.trim() === "" ||
-                      isExistingNativeOpencodeKey ||
-                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                        opencodeForm.opencodeProviderKey,
-                      )) && (
+                    !isOpencodeProviderKeyInvalid && (
                       <p className="text-xs text-muted-foreground">
                         {isProviderKeyLocked
                           ? t("opencode.providerKeyLockedHint", {

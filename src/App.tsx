@@ -66,7 +66,10 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
-import { isNativeOpencodeConfig } from "@/components/providers/forms/helpers/opencodeFormUtils";
+import {
+  hasOpencodeDefinition,
+  isNativeOpencodeConfig,
+} from "@/components/providers/forms/helpers/opencodeFormUtils";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
@@ -830,17 +833,11 @@ function App() {
         JSON.stringify(provider.settingsConfig),
         provider.meta?.opencodeConfigFormat,
       );
-      const { models } = provider.settingsConfig;
-      const definition = isNative
-        ? provider.settingsConfig.package
-        : provider.settingsConfig.npm;
       if (
-        typeof definition !== "string" ||
-        !definition.trim() ||
-        !models ||
-        typeof models !== "object" ||
-        Array.isArray(models) ||
-        Object.keys(models).length === 0
+        !hasOpencodeDefinition(
+          provider.settingsConfig,
+          isNative ? "package" : "npm",
+        )
       ) {
         toast.error(
           t(

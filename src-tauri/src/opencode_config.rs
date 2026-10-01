@@ -199,26 +199,26 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
 /// built-in overrides. Do not recursively mix legacy and native entries.
 pub fn get_providers_with_format(
 ) -> Result<IndexMap<String, (Value, OpenCodeConfigFormat)>, AppError> {
-    let config = read_opencode_config()?;
-    let mut providers: IndexMap<_, _> = config
-        .get("provider")
-        .and_then(|v| v.as_object())
+    let mut config = read_opencode_config()?;
+    let mut take = |key| match config.get_mut(key).map(Value::take) {
+        Some(Value::Object(providers)) => providers,
+        _ => Map::new(),
+    };
+    let (legacy, native) = (take("provider"), take("providers"));
+    let mut providers: IndexMap<_, _> = legacy
         .into_iter()
-        .flatten()
-        .map(|(id, value)| (id.clone(), (value.clone(), OpenCodeConfigFormat::V1)))
+        .map(|(id, value)| (id, (value, OpenCodeConfigFormat::V1)))
         .collect();
-    if let Some(native) = config.get("providers").and_then(Value::as_object) {
-        for (id, value) in native {
-            match native_provider_problem(value) {
-                None => {
-                    providers.insert(id.clone(), (value.clone(), OpenCodeConfigFormat::V2));
-                }
-                Some(path) => {
-                    let field = if path.is_empty() { "<root>" } else { &path };
-                    log::warn!(
-                        "Invalid native OpenCode provider '{id}' at {field}, leaving its source untouched"
-                    );
-                }
+    for (id, value) in native {
+        match native_provider_problem(&value) {
+            None => {
+                providers.insert(id, (value, OpenCodeConfigFormat::V2));
+            }
+            Some(path) => {
+                let field = if path.is_empty() { "<root>" } else { &path };
+                log::warn!(
+                    "Invalid native OpenCode provider '{id}' at {field}, leaving its source untouched"
+                );
             }
         }
     }
@@ -434,42 +434,41 @@ fn native_cost(value: &Value) -> bool {
         )
 }
 
+// Keys only a V1 declaration has, and keys only a native one has. Mirrored by
+// isNativeOpencodeConfig in src/components/providers/forms/helpers/opencodeFormUtils.ts.
+const LEGACY_ONLY_KEYS: [&str; 3] = ["npm", "options", "api"];
+const NATIVE_ONLY_KEYS: [&str; 5] = ["package", "settings", "headers", "body", "canonical"];
+
 /// Infer the format of a declaration whose source is unknown. Unlike validation,
 /// V1-only keys decide here: a native declaration would not normally carry them.
 pub fn provider_format(
     value: &Value,
     source: Option<OpenCodeConfigFormat>,
 ) -> OpenCodeConfigFormat {
-    if let Some(format) = source {
-        return format;
-    }
-    if value.get("npm").is_some() || value.get("options").is_some() || value.get("api").is_some() {
-        return OpenCodeConfigFormat::V1;
-    }
-    if ["package", "settings", "headers", "body", "canonical"]
-        .iter()
-        .any(|key| value.get(*key).is_some())
-    {
-        OpenCodeConfigFormat::V2
-    } else {
-        OpenCodeConfigFormat::V1
-    }
+    source.unwrap_or_else(|| {
+        let has_any = |keys: &[&str]| keys.iter().any(|key| value.get(*key).is_some());
+        if !has_any(&LEGACY_ONLY_KEYS) && has_any(&NATIVE_ONLY_KEYS) {
+            OpenCodeConfigFormat::V2
+        } else {
+            OpenCodeConfigFormat::V1
+        }
+    })
 }
 
 /// The declaration to write for a stored provider, and its format. Settings are
 /// normally the declaration itself but may hold a full config (older copies or a
 /// pasted file); pick from it as the reader does, preferring a valid native entry.
-pub fn provider_fragment(
+pub fn provider_fragment<'a>(
     id: &str,
-    settings: &Value,
+    settings: &'a Value,
     source: Option<OpenCodeConfigFormat>,
-) -> Result<(Value, OpenCodeConfigFormat), AppError> {
+) -> Result<(&'a Value, OpenCodeConfigFormat), AppError> {
     let Some(obj) = settings.as_object().filter(|obj| {
         ["$schema", "provider", "providers"]
             .iter()
             .any(|key| obj.contains_key(*key))
     }) else {
-        return Ok((settings.clone(), provider_format(settings, source)));
+        return Ok((settings, provider_format(settings, source)));
     };
     log::warn!(
         "OpenCode provider '{id}' has full config structure in settings_config, attempting to extract fragment"
@@ -478,9 +477,9 @@ pub fn provider_fragment(
     let legacy = obj.get("provider").and_then(|providers| providers.get(id));
     match (native, legacy) {
         (Some(native), legacy) if legacy.is_none() || is_native_provider(native) => {
-            Ok((native.clone(), OpenCodeConfigFormat::V2))
+            Ok((native, OpenCodeConfigFormat::V2))
         }
-        (_, Some(legacy)) => Ok((legacy.clone(), OpenCodeConfigFormat::V1)),
+        (_, Some(legacy)) => Ok((legacy, OpenCodeConfigFormat::V1)),
         _ if obj.contains_key("provider") || obj.contains_key("providers") => {
             Err(AppError::localized(
                 "provider.opencode.fragment_missing",
@@ -488,7 +487,7 @@ pub fn provider_fragment(
                 format!("OpenCode config does not contain provider '{id}'"),
             ))
         }
-        _ => Ok((settings.clone(), provider_format(settings, source))),
+        _ => Ok((settings, provider_format(settings, source))),
     }
 }
 
@@ -509,6 +508,8 @@ pub fn validate_native_provider(id: &str, value: &Value) -> Result<(), AppError>
     }
 }
 
+/// Test convenience: writes with the format inferred from the content alone.
+#[cfg(test)]
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     let format = provider_format(&config, None);
     set_provider_with_format(id, config, format)
@@ -520,22 +521,23 @@ pub fn set_provider_with_format(
     format: OpenCodeConfigFormat,
 ) -> Result<(), AppError> {
     try_edit_config(get_opencode_config_path, |full_config| {
-        if format == OpenCodeConfigFormat::V1
-            && full_config
-                .get("providers")
-                .and_then(|providers| providers.get(id))
-                .is_some_and(is_native_provider)
-        {
-            return Err(AppError::localized(
-                "provider.opencode.native_shadows_legacy",
-                format!("OpenCode 配置中已有原生 V2 格式的供应商「{id}」，请重新导入供应商后再编辑"),
-                format!(
-                    "OpenCode provider '{id}' has a native V2 declaration. Reload providers before editing it."
-                ),
-            ));
-        }
         let key = match format {
-            OpenCodeConfigFormat::V1 => "provider",
+            OpenCodeConfigFormat::V1 => {
+                if full_config
+                    .get("providers")
+                    .and_then(|providers| providers.get(id))
+                    .is_some_and(is_native_provider)
+                {
+                    return Err(AppError::localized(
+                        "provider.opencode.native_shadows_legacy",
+                        format!("OpenCode 配置中已有原生 V2 格式的供应商「{id}」，请重新导入供应商后再编辑"),
+                        format!(
+                            "OpenCode provider '{id}' has a native V2 declaration. Reload providers before editing it."
+                        ),
+                    ));
+                }
+                "provider"
+            }
             OpenCodeConfigFormat::V2 => {
                 validate_native_provider(id, &config)?;
                 "providers"
@@ -545,18 +547,20 @@ pub fn set_provider_with_format(
         // 判空要连「存在但不是对象」一起算：否则写入会静默失效——界面显示添加成功而
         // 文件里没有。provider 段是 cc-switch 的投影区，归一化不会碰用户自有的
         // model / theme 等顶层配置；providers 是原生声明，格式有误时拒绝而不是清空。
-        if !full_config.get(key).is_some_and(Value::is_object) {
-            if key == "providers" && full_config.get(key).is_some() {
+        match full_config.get(key) {
+            Some(Value::Object(_)) => {}
+            Some(_) if format == OpenCodeConfigFormat::V2 => {
                 return Err(AppError::localized(
                     "provider.opencode.providers_not_object",
                     "OpenCode 配置中的 providers 必须是 JSON 对象",
                     "OpenCode providers must be a JSON object",
                 ));
             }
-            if full_config.get(key).is_some() {
+            Some(_) => {
                 log::warn!("OpenCode 的供应商配置格式有误，将清空原有供应商配置，再保存当前供应商");
+                full_config[key] = json!({});
             }
-            full_config[key] = json!({});
+            None => full_config[key] = json!({}),
         }
         full_config[key][id] = config;
         Ok(())
@@ -1043,11 +1047,11 @@ mod tests {
         let full = |native: Value| json!({"provider": {"shared": legacy}, "providers": {"shared": native}});
         assert_eq!(
             provider_fragment("shared", &full(json!({"package": false})), None).unwrap(),
-            (legacy.clone(), OpenCodeConfigFormat::V1)
+            (&legacy, OpenCodeConfigFormat::V1)
         );
         assert_eq!(
             provider_fragment("shared", &full(json!({})), None).unwrap(),
-            (json!({}), OpenCodeConfigFormat::V2)
+            (&json!({}), OpenCodeConfigFormat::V2)
         );
         // Without a legacy entry an invalid native one is still chosen, so that
         // validation reports its field instead of an unrelated fallback.
@@ -1064,7 +1068,7 @@ mod tests {
         assert!(provider_fragment("other", &full(json!({})), None).is_err());
         assert_eq!(
             provider_fragment("shared", &json!({}), Some(OpenCodeConfigFormat::V2)).unwrap(),
-            (json!({}), OpenCodeConfigFormat::V2)
+            (&json!({}), OpenCodeConfigFormat::V2)
         );
     }
 

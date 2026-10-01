@@ -112,6 +112,11 @@ impl Provider {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
+    /// The stored OpenCode source format; only native declarations record one.
+    pub fn opencode_config_format(&self) -> Option<OpenCodeConfigFormat> {
+        self.meta.as_ref().and_then(|m| m.opencode_config_format)
+    }
+
     fn claude_base_url_contains(&self, needle: &str) -> bool {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
@@ -928,10 +933,9 @@ requires_openai_auth = true"#
 // OpenCode 供应商配置结构
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenCodeConfigFormat {
-    #[default]
     V1,
     V2,
 }

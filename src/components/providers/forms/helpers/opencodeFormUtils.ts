@@ -1,4 +1,5 @@
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
+import { isPlainObject } from "@/lib/requestOverrides";
 
 // ── Default configs ──────────────────────────────────────────────────
 
@@ -68,55 +69,73 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
 
 // ── Pure functions ───────────────────────────────────────────────────
 
+// Keys only a V1 declaration has, and keys only a native one has. Mirrors
+// provider_format in src-tauri/src/opencode_config.rs.
+const OPENCODE_LEGACY_ONLY_KEYS = ["npm", "options", "api"];
+const OPENCODE_NATIVE_ONLY_KEYS = [
+  "package",
+  "settings",
+  "headers",
+  "body",
+  "canonical",
+];
+
+function parseJson(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Keep native declarations out of the V1 structured editor. Source metadata
  * disambiguates built-in overrides containing only models (or an empty object).
+ * A pasted full config holding `providers` counts as native too.
  */
 export function isNativeOpencodeConfig(
   json: string,
   source?: "v1" | "v2",
 ): boolean {
   if (source) return source === "v2";
-  try {
-    const value = JSON.parse(json);
-    if (!value || typeof value !== "object" || Array.isArray(value))
-      return false;
-    if ("npm" in value || "options" in value || "api" in value) return false;
-    return [
-      "package",
-      "settings",
-      "headers",
-      "body",
-      "canonical",
-      "providers",
-    ].some((key) => key in value);
-  } catch {
-    return false;
-  }
+  const value = parseJson(json);
+  if (!isPlainObject(value)) return false;
+  if (OPENCODE_LEGACY_ONLY_KEYS.some((key) => key in value)) return false;
+  return [...OPENCODE_NATIVE_ONLY_KEYS, "providers"].some(
+    (key) => key in value,
+  );
 }
 
-/** A native declaration that does not rely on a built-in definition: it names a
- * package and at least one model. A pasted full config holds the declaration
- * under `providers.<id>`, where the backend also takes it from.
+/** A declaration that does not rely on a built-in definition: it names a
+ * package (`npm` for V1, `package` for native) and at least one model.
+ */
+export function hasOpencodeDefinition(
+  declaration: unknown,
+  packageKey: "npm" | "package",
+): boolean {
+  if (!isPlainObject(declaration)) return false;
+  const pkg = declaration[packageKey];
+  const { models } = declaration;
+  return (
+    typeof pkg === "string" &&
+    pkg.trim() !== "" &&
+    isPlainObject(models) &&
+    Object.keys(models).length > 0
+  );
+}
+
+/** The native form's check: a pasted full config holds the declaration under
+ * `providers.<id>`, where the backend also takes it from.
  */
 export function hasNativeOpencodeDefinition(
   json: string,
   providerId: string,
 ): boolean {
-  try {
-    const value = JSON.parse(json);
-    const declaration = value?.providers?.[providerId] ?? value;
-    const { package: pkg, models } = declaration ?? {};
-    return (
-      typeof pkg === "string" &&
-      pkg.trim() !== "" &&
-      !!models &&
-      typeof models === "object" &&
-      !Array.isArray(models) &&
-      Object.keys(models).length > 0
-    );
-  } catch {
-    return false;
-  }
+  const value = parseJson(json);
+  const providers = isPlainObject(value) ? value.providers : undefined;
+  const declaration = isPlainObject(providers)
+    ? (providers[providerId] ?? value)
+    : value;
+  return hasOpencodeDefinition(declaration, "package");
 }
 
 export function isKnownOpencodeOptionKey(key: string): boolean {

@@ -5,7 +5,7 @@ import { http, HttpResponse } from "msw";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
 import { server } from "../msw/server";
-import { setSettings } from "../msw/state";
+import { setLiveProviderIds, setSettings } from "../msw/state";
 
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn() } }));
@@ -32,11 +32,7 @@ function renderNativeForm(
   providerId = "anthropic",
   liveProviderIds = [providerId],
 ) {
-  server.use(
-    http.post("http://tauri.local/get_opencode_live_provider_ids", () =>
-      HttpResponse.json(liveProviderIds),
-    ),
-  );
+  setLiveProviderIds("opencode", liveProviderIds);
   const client = createTestQueryClient();
   const onSubmit = vi.fn();
   const view = render(
@@ -203,11 +199,7 @@ describe("native OpenCode provider form", () => {
   ])(
     "reads the definition of a pasted full config under providers.%s",
     async (providerKey, accepted) => {
-      server.use(
-        http.post("http://tauri.local/get_opencode_live_provider_ids", () =>
-          HttpResponse.json([]),
-        ),
-      );
+      setLiveProviderIds("opencode", []);
       const client = createTestQueryClient();
       const onSubmit = vi.fn();
       render(
