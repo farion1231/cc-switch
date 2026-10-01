@@ -694,15 +694,30 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
     )
 }
 
-/// 没有应用在代理模式了就停掉代理服务（Claude Desktop 的模型映射另外自己启停）。
+/// 没有应用在代理模式、Claude Desktop 也没在用模型映射时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::proxy_flags(PROXY_APPS).contains(&true) {
+    if current::proxy_flags(PROXY_APPS).contains(&true)
+        || crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+    {
         return;
     }
     if state.proxy_service.is_running().await {
         if let Err(error) = state.proxy_service.stop().await {
             log::warn!("停止代理服务失败: {error}");
         }
+    }
+}
+
+/// Claude Desktop 的当前供应商是模型映射卡、代理服务却没在跑时把它拉起来：启动、切到映射卡、
+/// 应用项目之后各调一次。拉不起来只记日志，Desktop 页的状态横幅会提示服务没在运行。
+pub async fn ensure_desktop_mapping_service(state: &AppState) {
+    if !crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
+        || state.proxy_service.is_running().await
+    {
+        return;
+    }
+    if let Err(error) = state.proxy_service.start().await {
+        log::error!("Claude Desktop 正在用模型映射，启动代理服务失败: {error}");
     }
 }
 
@@ -1253,6 +1268,7 @@ pub async fn startup(state: &AppState) {
     }
     // 接上失败退回直连的应用可能已经把代理拉起来了。
     stop_server_if_unused(state).await;
+    ensure_desktop_mapping_service(state).await;
     // 记一次新启动的 Codex 会读到的目录：兜住启动时补完的操作和 CC Switch 没开时的外部修改。
     codex_client_catalog::observe(&DeviceStore::for_device());
 }
@@ -5003,6 +5019,54 @@ model_provider = "c"
         assert!(!current::is_proxy(&AppType::Claude));
         assert_back_to_user_settings();
         assert_eq!(stack_state().members, vec!["kimi", "a"], "the list stays");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_model_mapping_keeps_the_server_running() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let mut mapping = Provider::with_id(
+            "map".to_string(),
+            "Map".to_string(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://map.example" } }),
+            None,
+        );
+        mapping.meta = Some(crate::provider::ProviderMeta {
+            claude_desktop_mode: Some(crate::provider::ClaudeDesktopMode::Proxy),
+            ..Default::default()
+        });
+        let desktop = AppType::ClaudeDesktop;
+        state
+            .db
+            .save_provider(desktop.as_str(), &mapping)
+            .expect("save mapping provider");
+        crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
+
+        // Claude Code 退出路由时，Desktop 还在用模型映射，服务不能跟着停。
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert!(state.proxy_service.is_running().await);
+
+        // 服务被手动停掉后，下一次检查（启动、切换、应用项目）会把它拉起来。
+        state.proxy_service.stop().await.expect("stop");
+        ensure_desktop_mapping_service(&state).await;
+        assert!(state.proxy_service.is_running().await);
+
+        // 换成直连卡后不再算在用。
+        crate::settings::set_current_provider(&desktop, None).expect("clear desktop current");
+        state
+            .db
+            .delete_provider(desktop.as_str(), "map")
+            .expect("drop mapping");
+        stop_server_if_unused(&state).await;
+        assert!(!state.proxy_service.is_running().await);
     }
 
     #[tokio::test]
