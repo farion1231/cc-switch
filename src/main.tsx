@@ -8,6 +8,7 @@ import "./index.css";
 import i18n from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
+import { MotionConfig } from "framer-motion";
 import { queryClient } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
 import { listen } from "@tauri-apps/api/event";
@@ -123,7 +124,10 @@ async function bootstrap() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <UpdateProvider>
-              <App />
+              {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
+              <MotionConfig reducedMotion="user">
+                <App />
+              </MotionConfig>
               <Toaster />
             </UpdateProvider>
           </ThemeProvider>
