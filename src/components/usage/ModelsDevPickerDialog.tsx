@@ -22,21 +22,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useUpdateModelPricing } from "@/lib/query/usage";
+import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import {
-  fetchModelsDevPricing,
   flattenModels,
   formatPrice,
-  MODELS_DEV_QUERY_KEY,
-  MODELS_DEV_STALE_TIME_MS,
   type ModelsDevEntry,
 } from "@/lib/modelsDevPricing";
 import { isTextEditableTarget } from "@/utils/domUtils";
 
-export {
-  flattenModels,
-  formatPrice,
-  normalizeModelIdForPricing,
-} from "@/lib/modelsDevPricing";
+export { flattenModels, formatPrice } from "@/lib/modelsDevPricing";
 
 // 全量约 5000 条：默认只展示最新发布的一批，搜索时才做全量匹配
 const DEFAULT_VISIBLE_ROWS = 50;
@@ -71,10 +65,8 @@ export function ModelsDevPickerDialog({
   }, [open]);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: MODELS_DEV_QUERY_KEY,
-    queryFn: fetchModelsDevPricing,
+    ...modelsDevQueryOptions,
     enabled: open,
-    staleTime: MODELS_DEV_STALE_TIME_MS,
     retry: 1,
   });
 

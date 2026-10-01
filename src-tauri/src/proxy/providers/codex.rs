@@ -516,6 +516,60 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
+/// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
+/// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
+pub fn codex_stack_upstream_rejects_web_search(
+    provider: &Provider,
+    request_model: Option<&str>,
+) -> bool {
+    let projected =
+        crate::live::project::codex::CodexProjection::of(&crate::live::project::codex::RowInput {
+            settings: &provider.settings_config,
+            official: false,
+            proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
+        })
+        .map(|projection| projection.catalog_input_text());
+    let config_text = match &projected {
+        Ok(text) => text.as_str(),
+        Err(_) => provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+    };
+    crate::codex_config::codex_native_gateway_rejects_web_search(config_text)
+        || request_model.is_some_and(crate::codex_config::codex_model_rejects_web_search)
+}
+
+/// 去掉 Responses 请求里托管的 `web_search` 工具：`tools` 去完为空时整个键删掉；指向它
+/// 的 `tool_choice` 一并删掉，`tools` 整个没了时 `tool_choice` 也删（上游对没有工具的
+/// `tool_choice` 报 400）。其余字段不动。返回是否改了请求。
+pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let is_web_search =
+        |tool: &JsonValue| tool.get("type").and_then(|value| value.as_str()) == Some("web_search");
+    let mut changed = false;
+    let mut tools_gone = false;
+    if let Some(JsonValue::Array(tools)) = obj.get_mut("tools") {
+        let before = tools.len();
+        tools.retain(|tool| !is_web_search(tool));
+        changed = tools.len() != before;
+        tools_gone = changed && tools.is_empty();
+    }
+    if tools_gone {
+        obj.remove("tools");
+    }
+    let choice_is_web_search = obj.get("tool_choice").is_some_and(is_web_search);
+    if choice_is_web_search || (tools_gone && obj.contains_key("tool_choice")) {
+        obj.remove("tool_choice");
+        changed = true;
+    }
+    changed
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,

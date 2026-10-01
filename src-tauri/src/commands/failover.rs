@@ -258,9 +258,14 @@ pub async fn set_auto_failover_enabled(
 
     // 开启前先切到 P1。只有切换成功后才写入 auto_failover_enabled=true，
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
+    // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
     if enabled {
-        if let Err(e) =
-            crate::mode::controller::switch_route(state.inner(), &app_enum, &p1_provider_id).await
+        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+            state.inner(),
+            &app_enum,
+            &p1_provider_id,
+        )
+        .await
         {
             if let Some(provider_id) = auto_added_provider_id {
                 let _ = state.db.remove_from_failover_queue(&app_type, &provider_id);
