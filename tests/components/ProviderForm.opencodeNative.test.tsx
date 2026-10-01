@@ -139,8 +139,25 @@ describe("native OpenCode provider form", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].providerKey).toBe("custom_provider");
   });
+  it("keeps a stored native override editable after removal from live", async () => {
+    const config = { settings: { apiKey: "edited" } };
+    const { client, onSubmit } = renderNativeForm(
+      config,
+      true,
+      "anthropic",
+      [],
+    );
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual(
+      config,
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
   it.each([{}, { package: "aisdk:@ai-sdk/anthropic", models: {} }])(
-    "requires a package and models for an ID outside the live config: %j",
+    "requires a package and models for a renamed native ID: %j",
     async (config) => {
       const { client, onSubmit } = renderNativeForm(
         config,
@@ -149,6 +166,9 @@ describe("native OpenCode provider form", () => {
         [],
       );
       await waitFor(() => expect(client.isFetching()).toBe(0));
+      fireEvent.change(document.getElementById("opencode-key")!, {
+        target: { value: "anthropic-copy" },
+      });
       fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
       await waitFor(() =>
         expect(toastError).toHaveBeenCalledWith(
@@ -156,6 +176,83 @@ describe("native OpenCode provider form", () => {
         ),
       );
       expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not exempt a row that only looks native", async () => {
+    // Without stored V2 metadata this may be an old copy missing its definition.
+    const { client, onSubmit } = renderNativeForm(
+      { settings: { apiKey: "test" } },
+      false,
+      "opencode-go-copy",
+      [],
+    );
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "opencode.nativeCustomProviderRequired",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["custom", true],
+    ["other", false],
+  ])(
+    "reads the definition of a pasted full config under providers.%s",
+    async (providerKey, accepted) => {
+      server.use(
+        http.post("http://tauri.local/get_opencode_live_provider_ids", () =>
+          HttpResponse.json([]),
+        ),
+      );
+      const client = createTestQueryClient();
+      const onSubmit = vi.fn();
+      render(
+        <QueryClientProvider client={client}>
+          <ProviderForm
+            appId="opencode"
+            submitLabel="save-provider"
+            onSubmit={onSubmit}
+            onCancel={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+      const full = {
+        providers: {
+          custom: {
+            package: "aisdk:@ai-sdk/openai",
+            models: { "gpt-5": {} },
+          },
+        },
+      };
+      fireEvent.change(screen.getByRole("textbox", { name: "raw-config" }), {
+        target: { value: JSON.stringify(full) },
+      });
+      fireEvent.change(document.getElementById("opencode-key")!, {
+        target: { value: providerKey },
+      });
+      fireEvent.change(document.querySelector('input[name="name"]')!, {
+        target: { value: "Custom" },
+      });
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      if (accepted) {
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+        expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual(
+          full,
+        );
+        expect(toastError).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() =>
+          expect(toastError).toHaveBeenCalledWith(
+            "opencode.nativeCustomProviderRequired",
+          ),
+        );
+        expect(onSubmit).not.toHaveBeenCalled();
+      }
     },
   );
 });

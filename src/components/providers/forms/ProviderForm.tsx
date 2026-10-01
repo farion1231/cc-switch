@@ -963,6 +963,15 @@ function ProviderFormFull({
     opencodeForm.opencodeProviderKey === providerId &&
     isOpencodeLiveProviderIdsSuccess &&
     opencodeLiveProviderIds.includes(providerId);
+  // Unlike V1, no older version copied native rows without their definition
+  // (copies now require one), so a stored native row keeping its ID may stay
+  // package-less after removal from the live config.
+  const canKeepStoredNativeOverride =
+    isNativeOpencode &&
+    isEditMode &&
+    !!providerId &&
+    opencodeForm.opencodeProviderKey === providerId &&
+    initialData?.meta?.opencodeConfigFormat === "v2";
 
   const initialOmoSettings =
     appId === "opencode" &&
@@ -1171,7 +1180,13 @@ function ProviderFormFull({
       // Native V2 declarations name their package in `package`, not `npm`.
       if (!canKeepExistingOpencodeOverride) {
         if (isNativeOpencode) {
-          if (!hasNativeOpencodeDefinition(form.getValues("settingsConfig"))) {
+          if (
+            !canKeepStoredNativeOverride &&
+            !hasNativeOpencodeDefinition(
+              form.getValues("settingsConfig"),
+              opencodeForm.opencodeProviderKey,
+            )
+          ) {
             toast.error(t("opencode.nativeCustomProviderRequired"));
             return;
           }

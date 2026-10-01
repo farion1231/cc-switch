@@ -95,12 +95,17 @@ export function isNativeOpencodeConfig(
 }
 
 /** A native declaration that does not rely on a built-in definition: it names a
- * package and at least one model.
+ * package and at least one model. A pasted full config holds the declaration
+ * under `providers.<id>`, where the backend also takes it from.
  */
-export function hasNativeOpencodeDefinition(json: string): boolean {
+export function hasNativeOpencodeDefinition(
+  json: string,
+  providerId: string,
+): boolean {
   try {
     const value = JSON.parse(json);
-    const { package: pkg, models } = value ?? {};
+    const declaration = value?.providers?.[providerId] ?? value;
+    const { package: pkg, models } = declaration ?? {};
     return (
       typeof pkg === "string" &&
       pkg.trim() !== "" &&
