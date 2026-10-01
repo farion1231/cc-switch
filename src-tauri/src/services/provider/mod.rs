@@ -3749,6 +3749,71 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn invalid_native_opencode_edit_is_rejected_before_saving() {
+        use crate::provider::OpenCodeConfigFormat;
+        with_test_home(|state, _| {
+            let native = json!({"settings": {"baseURL": "https://a.example"}});
+            crate::opencode_config::set_provider_with_format(
+                "native",
+                native.clone(),
+                OpenCodeConfigFormat::V2,
+            )
+            .unwrap();
+            import_opencode_providers_from_live(state).unwrap();
+            let mut edited = state
+                .db
+                .get_provider_by_id("native", "opencode")
+                .unwrap()
+                .unwrap();
+            // OpenCode requires tools, input and output together.
+            edited.settings_config = json!({"settings": {"baseURL": "https://b.example"}, "models": {"m": {"capabilities": {"tools": true}}}});
+
+            let err = ProviderService::update(state, AppType::OpenCode, None, edited.clone())
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("models.m.capabilities"), "{err}");
+            edited.id = "added".into();
+            assert!(ProviderService::add(state, AppType::OpenCode, edited, true).is_err());
+
+            let saved = state
+                .db
+                .get_provider_by_id("native", "opencode")
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.settings_config, native);
+            assert!(state
+                .db
+                .get_provider_by_id("added", "opencode")
+                .unwrap()
+                .is_none());
+            assert_eq!(
+                crate::opencode_config::read_opencode_config().unwrap()["providers"]["native"],
+                native
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn full_opencode_config_writes_legacy_entry_behind_invalid_native() {
+        with_test_home(|_, _| {
+            let legacy =
+                json!({"npm": "@ai-sdk/openai", "options": {"apiKey": "v1"}, "models": {"m": {}}});
+            let full = Provider::with_id(
+                "shared".into(),
+                "Full config".into(),
+                json!({"provider": {"shared": legacy}, "providers": {"shared": {"package": false}}}),
+                None,
+            );
+            live::write_live_snapshot(&AppType::OpenCode, &full).unwrap();
+            let config = crate::opencode_config::read_opencode_config().unwrap();
+            assert_eq!(config["provider"]["shared"], legacy);
+            assert!(config.get("providers").is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
     fn opencode_provider_roundtrip_preserves_fields_on_import_and_update() {
         with_test_home(|state, _| {
             let mut provider = opencode_provider("roundtrip-opencode");
@@ -7153,6 +7218,21 @@ impl ProviderService {
                         "OpenCode 配置必须是 JSON 对象",
                         "OpenCode configuration must be a JSON object",
                     ));
+                }
+                // The row is saved before the live write, which would refuse an invalid
+                // native declaration only after the database already holds it.
+                if !matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim")) {
+                    let (fragment, format) = crate::opencode_config::provider_fragment(
+                        &provider.id,
+                        &provider.settings_config,
+                        provider
+                            .meta
+                            .as_ref()
+                            .and_then(|meta| meta.opencode_config_format),
+                    )?;
+                    if format == crate::provider::OpenCodeConfigFormat::V2 {
+                        crate::opencode_config::validate_native_provider(&provider.id, &fragment)?;
+                    }
                 }
             }
             AppType::OpenClaw => {

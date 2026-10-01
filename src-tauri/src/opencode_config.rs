@@ -209,10 +209,16 @@ pub fn get_providers_with_format(
         .collect();
     if let Some(native) = config.get("providers").and_then(Value::as_object) {
         for (id, value) in native {
-            if is_native_provider(value) {
-                providers.insert(id.clone(), (value.clone(), OpenCodeConfigFormat::V2));
-            } else {
-                log::warn!("Invalid native OpenCode provider '{id}', leaving its source untouched");
+            match native_provider_problem(value) {
+                None => {
+                    providers.insert(id.clone(), (value.clone(), OpenCodeConfigFormat::V2));
+                }
+                Some(path) => {
+                    let field = if path.is_empty() { "<root>" } else { &path };
+                    log::warn!(
+                        "Invalid native OpenCode provider '{id}' at {field}, leaving its source untouched"
+                    );
+                }
             }
         }
     }
@@ -224,41 +230,60 @@ pub fn get_providers_with_format(
 /// a partial type. Constraints follow OpenCode v2.0.12, commit 2670273ff17d:
 /// packages/schema/src/config/provider.ts, model.ts and provider.ts.
 pub fn is_native_provider(value: &Value) -> bool {
+    native_provider_problem(value).is_none()
+}
+
+/// The dotted path of the first known field that does not match the native
+/// schema; an empty path means the declaration is not an object. Like OpenCode,
+/// which decodes with `onExcessProperty: "ignore"`, treat V1-only keys such as
+/// `npm` and `options` as unknown extensions rather than as a format mismatch.
+pub fn native_provider_problem(value: &Value) -> Option<String> {
     let Some(obj) = value.as_object() else {
-        return false;
+        return Some(String::new());
     };
-    if ["npm", "options", "api"]
-        .iter()
-        .any(|key| obj.contains_key(*key))
-    {
-        return false;
-    }
-    native_fields_valid(
-        value,
+    if let Some(key) = first_invalid_field(
+        obj,
         &[
             ("name", Value::is_string),
             ("package", Value::is_string),
             ("canonical", Value::is_string),
             ("env", native_string_array),
             ("settings", native_provider_settings),
-            ("models", |models| {
-                models
-                    .as_object()
-                    .is_some_and(|models| models.values().all(native_model))
-            }),
+            ("headers", native_headers),
+            ("body", Value::is_object),
         ],
-    ) && native_request_overlays(value)
+    ) {
+        return Some(key.to_string());
+    }
+    match obj.get("models") {
+        None => None,
+        Some(Value::Object(models)) => models.iter().find_map(|(id, model)| {
+            native_model_problem(model).map(|key| match key {
+                "" => format!("models.{id}"),
+                key => format!("models.{id}.{key}"),
+            })
+        }),
+        Some(_) => Some("models".to_string()),
+    }
 }
 
 type NativeFieldCheck<'a> = (&'a str, fn(&Value) -> bool);
 
 /// Optional means absent, not null. Unknown keys remain untouched at every level.
+fn first_invalid_field<'a>(
+    obj: &Map<String, Value>,
+    fields: &[NativeFieldCheck<'a>],
+) -> Option<&'a str> {
+    fields
+        .iter()
+        .find(|(key, check)| obj.get(*key).is_some_and(|value| !check(value)))
+        .map(|(key, _)| *key)
+}
+
 fn native_fields_valid(value: &Value, fields: &[NativeFieldCheck<'_>]) -> bool {
-    value.as_object().is_some_and(|obj| {
-        fields
-            .iter()
-            .all(|(key, check)| obj.get(*key).is_none_or(check))
-    })
+    value
+        .as_object()
+        .is_some_and(|obj| first_invalid_field(obj, fields).is_none())
 }
 
 fn native_string_array(value: &Value) -> bool {
@@ -301,75 +326,77 @@ fn native_provider_settings(value: &Value) -> bool {
     )
 }
 
-fn native_request_overlays(value: &Value) -> bool {
+fn native_headers(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|headers| headers.values().all(Value::is_string))
+}
+
+// Model/variant settings only constrain compaction; timeout and transport here
+// are package-specific extensions, unlike provider settings.
+fn native_model_settings(value: &Value) -> bool {
+    native_fields_valid(value, &[("compaction", native_compaction)])
+}
+
+fn native_model_overlays(value: &Value) -> bool {
     native_fields_valid(
         value,
         &[
-            ("headers", |v| {
-                v.as_object()
-                    .is_some_and(|headers| headers.values().all(Value::is_string))
-            }),
+            ("settings", native_model_settings),
+            ("headers", native_headers),
             ("body", Value::is_object),
         ],
     )
 }
 
-fn native_model_overlays(value: &Value) -> bool {
-    native_request_overlays(value)
-        && native_fields_valid(
-            value,
-            &[
-                // Model/variant settings only constrain compaction; timeout and transport
-                // here are package-specific extensions, unlike provider settings.
-                ("settings", |v| {
-                    native_fields_valid(v, &[("compaction", native_compaction)])
-                }),
-            ],
-        )
-}
-
-fn native_model(value: &Value) -> bool {
-    native_model_overlays(value)
-        && native_fields_valid(
-            value,
-            &[
-                ("modelID", Value::is_string),
-                ("family", Value::is_string),
-                ("name", Value::is_string),
-                ("package", Value::is_string),
-                ("disabled", Value::is_boolean),
-                ("compatibility", native_compatibility),
-                ("capabilities", |v| {
-                    v.as_object().is_some_and(|obj| {
-                        obj.get("tools").is_some_and(Value::is_boolean)
-                            && obj.get("input").is_some_and(native_string_array)
-                            && obj.get("output").is_some_and(native_string_array)
+/// The first invalid field of a model; an empty name means it is not an object.
+fn native_model_problem(value: &Value) -> Option<&'static str> {
+    let Some(obj) = value.as_object() else {
+        return Some("");
+    };
+    first_invalid_field(
+        obj,
+        &[
+            ("modelID", Value::is_string),
+            ("family", Value::is_string),
+            ("name", Value::is_string),
+            ("package", Value::is_string),
+            ("disabled", Value::is_boolean),
+            ("settings", native_model_settings),
+            ("headers", native_headers),
+            ("body", Value::is_object),
+            ("compatibility", native_compatibility),
+            ("capabilities", |v| {
+                v.as_object().is_some_and(|obj| {
+                    obj.get("tools").is_some_and(Value::is_boolean)
+                        && obj.get("input").is_some_and(native_string_array)
+                        && obj.get("output").is_some_and(native_string_array)
+                })
+            }),
+            ("variants", |v| {
+                v.as_array().is_some_and(|variants| {
+                    variants.iter().all(|variant| {
+                        variant.get("id").is_some_and(Value::is_string)
+                            && native_model_overlays(variant)
                     })
-                }),
-                ("variants", |v| {
-                    v.as_array().is_some_and(|variants| {
-                        variants.iter().all(|variant| {
-                            variant.get("id").is_some_and(Value::is_string)
-                                && native_model_overlays(variant)
-                        })
-                    })
-                }),
-                ("cost", |v| match v.as_array() {
-                    Some(costs) => costs.iter().all(native_cost),
-                    None => native_cost(v),
-                }),
-                ("limit", |v| {
-                    native_fields_valid(
-                        v,
-                        &[
-                            ("context", native_integer),
-                            ("input", native_integer),
-                            ("output", native_integer),
-                        ],
-                    )
-                }),
-            ],
-        )
+                })
+            }),
+            ("cost", |v| match v.as_array() {
+                Some(costs) => costs.iter().all(native_cost),
+                None => native_cost(v),
+            }),
+            ("limit", |v| {
+                native_fields_valid(
+                    v,
+                    &[
+                        ("context", native_integer),
+                        ("input", native_integer),
+                        ("output", native_integer),
+                    ],
+                )
+            }),
+        ],
+    )
 }
 
 fn native_compatibility(value: &Value) -> bool {
@@ -407,6 +434,8 @@ fn native_cost(value: &Value) -> bool {
         )
 }
 
+/// Infer the format of a declaration whose source is unknown. Unlike validation,
+/// V1-only keys decide here: a native declaration would not normally carry them.
 pub fn provider_format(
     value: &Value,
     source: Option<OpenCodeConfigFormat>,
@@ -427,6 +456,59 @@ pub fn provider_format(
     }
 }
 
+/// The declaration to write for a stored provider, and its format. Settings are
+/// normally the declaration itself but may hold a full config (older copies or a
+/// pasted file); pick from it as the reader does, preferring a valid native entry.
+pub fn provider_fragment(
+    id: &str,
+    settings: &Value,
+    source: Option<OpenCodeConfigFormat>,
+) -> Result<(Value, OpenCodeConfigFormat), AppError> {
+    let Some(obj) = settings.as_object().filter(|obj| {
+        ["$schema", "provider", "providers"]
+            .iter()
+            .any(|key| obj.contains_key(*key))
+    }) else {
+        return Ok((settings.clone(), provider_format(settings, source)));
+    };
+    log::warn!(
+        "OpenCode provider '{id}' has full config structure in settings_config, attempting to extract fragment"
+    );
+    let native = obj.get("providers").and_then(|providers| providers.get(id));
+    let legacy = obj.get("provider").and_then(|providers| providers.get(id));
+    match (native, legacy) {
+        (Some(native), legacy) if legacy.is_none() || is_native_provider(native) => {
+            Ok((native.clone(), OpenCodeConfigFormat::V2))
+        }
+        (_, Some(legacy)) => Ok((legacy.clone(), OpenCodeConfigFormat::V1)),
+        _ if obj.contains_key("provider") || obj.contains_key("providers") => {
+            Err(AppError::localized(
+                "provider.opencode.fragment_missing",
+                format!("OpenCode 配置中没有供应商「{id}」"),
+                format!("OpenCode config does not contain provider '{id}'"),
+            ))
+        }
+        _ => Ok((settings.clone(), provider_format(settings, source))),
+    }
+}
+
+/// Reject a native declaration OpenCode would skip, naming the offending field.
+pub fn validate_native_provider(id: &str, value: &Value) -> Result<(), AppError> {
+    match native_provider_problem(value) {
+        None => Ok(()),
+        Some(path) if path.is_empty() => Err(AppError::localized(
+            "provider.opencode.native_not_object",
+            format!("OpenCode 原生供应商「{id}」必须是 JSON 对象"),
+            format!("Native OpenCode provider '{id}' must be a JSON object"),
+        )),
+        Some(path) => Err(AppError::localized(
+            "provider.opencode.native_invalid_field",
+            format!("OpenCode 原生供应商「{id}」的字段 {path} 不符合 OpenCode V2 配置格式"),
+            format!("Native OpenCode provider '{id}' has an invalid field: {path}"),
+        )),
+    }
+}
+
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     let format = provider_format(&config, None);
     set_provider_with_format(id, config, format)
@@ -444,18 +526,18 @@ pub fn set_provider_with_format(
                 .and_then(|providers| providers.get(id))
                 .is_some_and(is_native_provider)
         {
-            return Err(AppError::Config(format!(
-                "OpenCode provider '{id}' has a native V2 declaration. Reload providers before editing it."
-            )));
+            return Err(AppError::localized(
+                "provider.opencode.native_shadows_legacy",
+                format!("OpenCode 配置中已有原生 V2 格式的供应商「{id}」，请重新导入供应商后再编辑"),
+                format!(
+                    "OpenCode provider '{id}' has a native V2 declaration. Reload providers before editing it."
+                ),
+            ));
         }
         let key = match format {
             OpenCodeConfigFormat::V1 => "provider",
             OpenCodeConfigFormat::V2 => {
-                if !is_native_provider(&config) {
-                    return Err(AppError::Config(format!(
-                        "Invalid native OpenCode provider '{id}'"
-                    )));
-                }
+                validate_native_provider(id, &config)?;
                 "providers"
             }
         };
@@ -465,9 +547,11 @@ pub fn set_provider_with_format(
         // model / theme 等顶层配置；providers 是原生声明，格式有误时拒绝而不是清空。
         if !full_config.get(key).is_some_and(Value::is_object) {
             if key == "providers" && full_config.get(key).is_some() {
-                return Err(AppError::Config(format!(
-                    "OpenCode {key} must be an object"
-                )));
+                return Err(AppError::localized(
+                    "provider.opencode.providers_not_object",
+                    "OpenCode 配置中的 providers 必须是 JSON 对象",
+                    "OpenCode providers must be a JSON object",
+                ));
             }
             if full_config.get(key).is_some() {
                 log::warn!("OpenCode 的供应商配置格式有误，将清空原有供应商配置，再保存当前供应商");
@@ -482,8 +566,14 @@ pub fn set_provider_with_format(
 
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
     edit_config(get_opencode_config_path, |config| {
-        for key in ["provider", "providers"] {
-            if let Some(providers) = config.get_mut(key).and_then(Value::as_object_mut) {
+        let removed_legacy = config
+            .get_mut("provider")
+            .and_then(Value::as_object_mut)
+            .is_some_and(|providers| providers.remove(id).is_some());
+        // A valid native declaration shadowed the legacy one; remove both so the
+        // older one cannot resurface. An invalid one never took effect: leave it.
+        if let Some(providers) = config.get_mut("providers").and_then(Value::as_object_mut) {
+            if !removed_legacy || providers.get(id).is_some_and(is_native_provider) {
                 providers.remove(id);
             }
         }
@@ -858,6 +948,124 @@ mod tests {
             .is_err());
             assert_eq!(read_opencode_config().unwrap(), expected);
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn native_provider_with_v1_only_keys_still_takes_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        // OpenCode ignores keys the native schema does not know, V1-only ones included.
+        let native = json!({"settings": {"apiKey": "native"}, "options": {}});
+        let renamed = json!({"npm": "@ai-sdk/openai", "options": {"apiKey": "k"}, "models": {"m": {"name": "M"}}});
+        let source = json!({
+            "provider": {"shared": {"npm": "@ai-sdk/openai", "options": {"apiKey": "legacy"}}},
+            "providers": {"shared": native, "renamed": renamed}
+        })
+        .to_string();
+        write_config(temp.path(), &source);
+
+        let providers = get_providers_with_format().unwrap();
+        assert_eq!(
+            providers["shared"],
+            (native.clone(), OpenCodeConfigFormat::V2)
+        );
+        assert_eq!(providers["renamed"], (renamed, OpenCodeConfigFormat::V2));
+        assert!(set_provider_with_format(
+            "shared",
+            json!({"npm": "@ai-sdk/openai", "options": {"apiKey": "edited"}}),
+            OpenCodeConfigFormat::V1
+        )
+        .is_err());
+        assert_eq!(
+            std::fs::read_to_string(get_opencode_config_path().unwrap()).unwrap(),
+            source
+        );
+        // Format inference still treats V1-only keys as legacy when the source is unknown.
+        assert_eq!(provider_format(&native, None), OpenCodeConfigFormat::V1);
+        set_provider_with_format("shared", native.clone(), OpenCodeConfigFormat::V2).unwrap();
+        assert_eq!(
+            read_opencode_config().unwrap()["providers"]["shared"],
+            native
+        );
+    }
+
+    #[test]
+    fn native_provider_problem_names_the_invalid_field() {
+        for (value, path) in [
+            (json!(5), Some("")),
+            (json!({}), None),
+            (json!({"settings": {"timeout": "1"}}), Some("settings")),
+            (json!({"headers": {"X": 1}}), Some("headers")),
+            (json!({"models": []}), Some("models")),
+            (json!({"models": {"m": null}}), Some("models.m")),
+            (
+                json!({"models": {"m": {"limit": {"input": "1"}}}}),
+                Some("models.m.limit"),
+            ),
+            (
+                json!({"models": {"m": {"variants": {}}}}),
+                Some("models.m.variants"),
+            ),
+            (
+                json!({"models": {"m": {"settings": {"compaction": {}}}}}),
+                Some("models.m.settings"),
+            ),
+        ] {
+            assert_eq!(native_provider_problem(&value).as_deref(), path, "{value}");
+        }
+        let err = validate_native_provider("p", &json!({"models": {"m": {"cost": {}}}}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("models.m.cost"), "{err}");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn removing_a_legacy_provider_leaves_an_invalid_native_declaration() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        write_config(
+            temp.path(),
+            r#"{"provider":{"shared":{"npm":"@ai-sdk/openai"}},"providers":{"shared":{"package":false},"orphan":{"package":false}}}"#,
+        );
+        remove_provider("shared").unwrap();
+        remove_provider("orphan").unwrap();
+        assert_eq!(
+            read_opencode_config().unwrap(),
+            json!({"provider": {}, "providers": {"shared": {"package": false}}})
+        );
+    }
+
+    #[test]
+    fn provider_fragment_picks_from_a_full_config_like_the_reader() {
+        let legacy = json!({"npm": "@ai-sdk/openai"});
+        let full = |native: Value| json!({"provider": {"shared": legacy}, "providers": {"shared": native}});
+        assert_eq!(
+            provider_fragment("shared", &full(json!({"package": false})), None).unwrap(),
+            (legacy.clone(), OpenCodeConfigFormat::V1)
+        );
+        assert_eq!(
+            provider_fragment("shared", &full(json!({})), None).unwrap(),
+            (json!({}), OpenCodeConfigFormat::V2)
+        );
+        // Without a legacy entry an invalid native one is still chosen, so that
+        // validation reports its field instead of an unrelated fallback.
+        assert_eq!(
+            provider_fragment(
+                "shared",
+                &json!({"providers": {"shared": {"package": false}}}),
+                None
+            )
+            .unwrap()
+            .1,
+            OpenCodeConfigFormat::V2
+        );
+        assert!(provider_fragment("other", &full(json!({})), None).is_err());
+        assert_eq!(
+            provider_fragment("shared", &json!({}), Some(OpenCodeConfigFormat::V2)).unwrap(),
+            (json!({}), OpenCodeConfigFormat::V2)
+        );
     }
 
     #[test]

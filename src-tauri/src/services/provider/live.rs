@@ -564,46 +564,17 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             use crate::opencode_config;
             use crate::provider::{OpenCodeConfigFormat, OpenCodeProviderConfig};
 
-            let mut source_format = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.opencode_config_format);
-
-            // Defensive check: if settings_config is a full config structure, extract provider fragment
-            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
-                // Detect full config structure (has $schema or top-level provider field)
-                if obj.contains_key("$schema")
-                    || obj.contains_key("provider")
-                    || obj.contains_key("providers")
-                {
-                    log::warn!(
-                        "OpenCode provider '{}' has full config structure in settings_config, attempting to extract fragment",
-                        provider.id
-                    );
-                    if let Some(config) = obj.get("providers").and_then(|p| p.get(&provider.id)) {
-                        source_format = Some(OpenCodeConfigFormat::V2);
-                        config.clone()
-                    } else if let Some(config) =
-                        obj.get("provider").and_then(|p| p.get(&provider.id))
-                    {
-                        source_format = Some(OpenCodeConfigFormat::V1);
-                        config.clone()
-                    } else if obj.contains_key("provider") || obj.contains_key("providers") {
-                        return Err(AppError::Config(format!(
-                            "OpenCode config does not contain provider '{}'",
-                            provider.id
-                        )));
-                    } else {
-                        provider.settings_config.clone()
-                    }
-                } else {
-                    provider.settings_config.clone()
-                }
-            } else {
-                provider.settings_config.clone()
-            };
-
-            let format = opencode_config::provider_format(&config_to_write, source_format);
+            // Native declarations may rely on a built-in definition without a package:
+            // a stored override must stay re-addable after removal from live. The UI
+            // still requires a definition for a new or renamed ID, as it does for V1.
+            let (config_to_write, format) = opencode_config::provider_fragment(
+                &provider.id,
+                &provider.settings_config,
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.opencode_config_format),
+            )?;
             if format == OpenCodeConfigFormat::V2 {
                 return opencode_config::set_provider_with_format(
                     &provider.id,
