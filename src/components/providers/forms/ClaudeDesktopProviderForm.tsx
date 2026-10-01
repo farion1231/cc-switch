@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -31,14 +32,19 @@ import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { AggregateProviderFields } from "./AggregateProviderFields";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
+  AggregateRoutes,
   ClaudeApiFormat,
   ClaudeDesktopModelRoute,
+  Provider,
   ProviderCategory,
   ProviderMeta,
 } from "@/types";
+import { useProvidersQuery } from "@/lib/query/queries";
+import { assignSlotIds, isAggregateProvider } from "@/utils/aggregateRoutes";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import {
   CLAUDE_DESKTOP_ROLE_ROUTE_IDS,
@@ -82,6 +88,8 @@ export interface ClaudeDesktopProviderFormProps {
   onSubmit: (values: ClaudeDesktopProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
+  /** Id of the provider being edited (absent when creating); used to exclude the provider itself from aggregate routing targets */
+  providerId?: string;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -244,6 +252,7 @@ export function ClaudeDesktopProviderForm({
   onSubmit,
   onCancel,
   onSubmittingChange,
+  providerId,
   initialData,
   showButtons = true,
   onManageAuthAccounts,
@@ -279,6 +288,21 @@ export function ClaudeDesktopProviderForm({
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
+  );
+  // The aggregate routing table: only exists while the "aggregate provider"
+  // toggle is on. Turning it off resets to undefined, and the submit path then
+  // removes meta.aggregateRoutes (an ordinary provider's JSON is unchanged).
+  const [aggregateRoutes, setAggregateRoutes] = useState<
+    AggregateRoutes | undefined
+  >(() =>
+    // Migrate slot ids on load: the earlier scheme slugged the provider name
+    // into the id (claude-fable-deepseek…), which Claude Desktop rejects as
+    // "not an Anthropic model", dropping the whole list. Migration is pure
+    // renumbering (slot order and target references are unchanged) and does not
+    // reach disk unless the user saves.
+    initialData?.meta?.aggregateRoutes
+      ? assignSlotIds(initialData.meta.aggregateRoutes)
+      : undefined,
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
@@ -321,6 +345,22 @@ export function ClaudeDesktopProviderForm({
         envString(initialData?.settingsConfig, "ANTHROPIC_MODEL"),
       ),
     [defaultRoutes, initialData?.settingsConfig],
+  );
+
+  // Targets an aggregate slot may point at: ordinary providers of the same app,
+  // excluding aggregate providers (nesting is forbidden, the backend rejects it
+  // too), the provider being edited (self-reference is forbidden) and official
+  // providers (1P has no gateway credentials, so requests would fail).
+  const { data: desktopProvidersData } = useProvidersQuery("claude-desktop");
+  const aggregateCandidates = useMemo<Provider[]>(
+    () =>
+      Object.values(desktopProvidersData?.providers ?? {}).filter(
+        (provider) =>
+          provider.id !== providerId &&
+          !isAggregateProvider(provider) &&
+          provider.category !== "official",
+      ),
+    [desktopProvidersData?.providers, providerId],
   );
 
   const defaultValues: ProviderFormData = useMemo(
@@ -392,7 +432,14 @@ export function ClaudeDesktopProviderForm({
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     isOAuthProviderType(activeProviderType);
-  const effectiveMode: "direct" | "proxy" = usesManagedOAuth ? "proxy" : mode;
+  // An aggregate provider is pinned to proxy mode on the server (apply forces
+  // the proxy branch), so the form locks it to proxy as well, avoiding a UI
+  // that shows "direct" while the profile on disk is proxy. With the toggle off
+  // isAggregate goes back to false, effectiveMode falls back to mode, and an
+  // ordinary provider behaves exactly as before.
+  const isAggregate = aggregateRoutes !== undefined;
+  const effectiveMode: "direct" | "proxy" =
+    usesManagedOAuth || isAggregate ? "proxy" : mode;
   const needsModelMapping = effectiveMode === "proxy";
   const routes = needsModelMapping ? proxyRoutes : directRoutes;
   const setRoutes = needsModelMapping ? setProxyRoutes : setDirectRoutes;
@@ -498,8 +545,16 @@ export function ClaudeDesktopProviderForm({
     );
   };
 
+  const handleAggregateToggle = (checked: boolean) => {
+    setAggregateRoutes(
+      checked
+        ? { slots: [], defaultTarget: { kind: "providerId", value: "" } }
+        : undefined,
+    );
+  };
+
   const handleModelMappingChange = (checked: boolean) => {
-    if (usesManagedOAuth) return;
+    if (usesManagedOAuth || isAggregate) return;
     setMode(checked ? "proxy" : "direct");
     if (checked) {
       // 切到 proxy：只恢复/初始化映射模式自己的固定四档，不复用直连模型列表。
@@ -565,6 +620,53 @@ export function ClaudeDesktopProviderForm({
     }
   };
 
+  // Aggregate slots fetch the model list per target provider, using that
+  // provider's own credentials. An aggregate provider has no endpoint of its
+  // own, so the form's own "fetch models" button cannot help here — this is the
+  // aggregate-specific entry point. Results are cached by provider id so
+  // several slots pointing at one provider share a single fetch.
+  const [aggregateModelsByProvider, setAggregateModelsByProvider] = useState<
+    Record<string, FetchedModel[]>
+  >({});
+  const [fetchingAggregateProviderId, setFetchingAggregateProviderId] =
+    useState<string | null>(null);
+
+  const handleFetchModelsForProvider = async (provider: Provider) => {
+    const targetBaseUrl = envString(
+      provider.settingsConfig,
+      "ANTHROPIC_BASE_URL",
+    ).trim();
+    const targetApiKey = envString(
+      provider.settingsConfig,
+      "ANTHROPIC_AUTH_TOKEN",
+    ).trim();
+    if (!targetBaseUrl || !targetApiKey) {
+      showFetchModelsError(null, t, {
+        hasBaseUrl: Boolean(targetBaseUrl),
+        hasApiKey: Boolean(targetApiKey),
+      });
+      return;
+    }
+
+    setFetchingAggregateProviderId(provider.id);
+    try {
+      const models = await fetchModelsForConfig(targetBaseUrl, targetApiKey);
+      setAggregateModelsByProvider((current) => ({
+        ...current,
+        [provider.id]: models,
+      }));
+      toast.success(
+        t("providerForm.fetchModelsSuccess", {
+          count: models.length,
+        }),
+      );
+    } catch (error) {
+      showFetchModelsError(error, t, { hasBaseUrl: true, hasApiKey: true });
+    } finally {
+      setFetchingAggregateProviderId(null);
+    }
+  };
+
   const handleSubmit = async (values: ProviderFormData) => {
     if (!values.name.trim()) {
       toast.error(
@@ -586,6 +688,7 @@ export function ClaudeDesktopProviderForm({
       delete meta.apiFormat;
       delete meta.endpointAutoSelect;
       delete meta.isFullUrl;
+      delete meta.aggregateRoutes;
       await onSubmit({
         ...values,
         name: values.name.trim(),
@@ -598,7 +701,7 @@ export function ClaudeDesktopProviderForm({
       });
       return;
     }
-    if (!baseUrl.trim() && !usesManagedOAuth) {
+    if (!baseUrl.trim() && !usesManagedOAuth && !aggregateRoutes) {
       toast.error(
         t("providerForm.fetchModelsNeedEndpoint", {
           defaultValue: "请先填写接口地址",
@@ -683,7 +786,7 @@ export function ClaudeDesktopProviderForm({
       );
       return;
     }
-    if (!usesManagedOAuth && !apiKey.trim()) {
+    if (!usesManagedOAuth && !apiKey.trim() && !aggregateRoutes) {
       toast.error(
         t("providerForm.fetchModelsNeedApiKey", {
           defaultValue: "请先填写 API Key",
@@ -701,7 +804,12 @@ export function ClaudeDesktopProviderForm({
       }))
       .filter((route) => route.route || route.model);
 
-    if (effectiveMode === "proxy") {
+    // An aggregate provider's model specs are derived from its slots (backend
+    // aggregate_model_routes) rather than from its own claudeDesktopModelRoutes,
+    // so no direct/mapping validation or backfill here — otherwise an aggregate
+    // provider would be forced to fill in a meaningless model mapping just to
+    // save.
+    if (effectiveMode === "proxy" && !aggregateRoutes) {
       // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
       // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
       // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
@@ -727,7 +835,7 @@ export function ClaudeDesktopProviderForm({
           }
         }
       }
-    } else {
+    } else if (effectiveMode === "direct") {
       const invalid = routeEntries.find(
         (route) => !route.route || !isClaudeSafeRoute(route.route),
       );
@@ -746,16 +854,20 @@ export function ClaudeDesktopProviderForm({
     const env = clonePlainRecord(settingsConfig.env);
     delete env.ANTHROPIC_AUTH_TOKEN;
     delete env.ANTHROPIC_API_KEY;
-    settingsConfig.env = usesManagedOAuth
-      ? {
-          ...env,
-          ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
-        }
-      : {
-          ...env,
-          ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
-          [apiKeyField]: apiKey.trim(),
-        };
+    settingsConfig.env = aggregateRoutes
+      ? // An aggregate provider has no endpoint and no credentials: write no
+        // base_url / key (forwarding uses the target provider's instead)
+        env
+      : usesManagedOAuth
+        ? {
+            ...env,
+            ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
+          }
+        : {
+            ...env,
+            ANTHROPIC_BASE_URL: baseUrl.trim().replace(/\/+$/, ""),
+            [apiKeyField]: apiKey.trim(),
+          };
 
     const routeMap = routeEntries.reduce<
       Record<string, ClaudeDesktopModelRoute>
@@ -782,7 +894,15 @@ export function ClaudeDesktopProviderForm({
             : "anthropic",
     };
 
-    meta.claudeDesktopModelRoutes = routeMap;
+    // An aggregate provider does not use its own claudeDesktopModelRoutes (the
+    // model specs come from its slots), so leave it out rather than persisting
+    // a four-tier mapping that has nothing to do with aggregate semantics and
+    // would mislead.
+    if (aggregateRoutes) {
+      delete meta.claudeDesktopModelRoutes;
+    } else {
+      meta.claudeDesktopModelRoutes = routeMap;
+    }
     meta.providerType = activeProviderType;
     meta.authBinding =
       activeProviderType === "github_copilot"
@@ -809,6 +929,14 @@ export function ClaudeDesktopProviderForm({
 
     delete meta.endpointAutoSelect;
     delete meta.isFullUrl;
+
+    // Write the routing table when the toggle is on; remove it entirely when
+    // off, so an ordinary provider's meta is unchanged.
+    if (aggregateRoutes) {
+      meta.aggregateRoutes = aggregateRoutes;
+    } else {
+      delete meta.aggregateRoutes;
+    }
 
     await onSubmit({
       ...values,
@@ -886,6 +1014,31 @@ export function ClaudeDesktopProviderForm({
 
         {!isOfficial && (
           <>
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-border-default p-3">
+              <Label
+                htmlFor="claude-desktop-aggregate"
+                className="text-sm font-medium"
+              >
+                {t("aggregate.enable")}
+              </Label>
+              <Switch
+                id="claude-desktop-aggregate"
+                checked={aggregateRoutes !== undefined}
+                onCheckedChange={handleAggregateToggle}
+              />
+            </div>
+
+            {aggregateRoutes && (
+              <AggregateProviderFields
+                value={aggregateRoutes}
+                onChange={setAggregateRoutes}
+                candidates={aggregateCandidates}
+                modelsForProvider={(id) => aggregateModelsByProvider[id] ?? []}
+                fetchingProviderId={fetchingAggregateProviderId}
+                onFetchModels={handleFetchModelsForProvider}
+              />
+            )}
+
             {usesManagedOAuth ? (
               <div className="rounded-lg border border-border-default bg-muted/20 p-3">
                 {activeProviderType === "github_copilot" ? (
@@ -919,7 +1072,7 @@ export function ClaudeDesktopProviderForm({
                   />
                 )}
               </div>
-            ) : (
+            ) : isAggregate ? null : (
               <ApiKeySection
                 value={apiKey}
                 onChange={setApiKey}
@@ -931,23 +1084,25 @@ export function ClaudeDesktopProviderForm({
               />
             )}
 
-            <EndpointField
-              id="baseUrl"
-              label={t("providerForm.apiEndpoint")}
-              value={baseUrl}
-              onChange={(v) => setBaseUrl(v)}
-              placeholder={t("providerForm.apiEndpointPlaceholder")}
-              hint={
-                needsModelMapping && apiFormat === "openai_responses"
-                  ? t("providerForm.apiHintResponses")
-                  : needsModelMapping && apiFormat === "openai_chat"
-                    ? t("providerForm.apiHintOAI")
-                    : needsModelMapping && apiFormat === "gemini_native"
-                      ? t("providerForm.apiHintGeminiNative")
-                      : t("providerForm.apiHint")
-              }
-              showManageButton={false}
-            />
+            {!isAggregate && (
+              <EndpointField
+                id="baseUrl"
+                label={t("providerForm.apiEndpoint")}
+                value={baseUrl}
+                onChange={(v) => setBaseUrl(v)}
+                placeholder={t("providerForm.apiEndpointPlaceholder")}
+                hint={
+                  needsModelMapping && apiFormat === "openai_responses"
+                    ? t("providerForm.apiHintResponses")
+                    : needsModelMapping && apiFormat === "openai_chat"
+                      ? t("providerForm.apiHintOAI")
+                      : needsModelMapping && apiFormat === "gemini_native"
+                        ? t("providerForm.apiHintGeminiNative")
+                        : t("providerForm.apiHint")
+                }
+                showManageButton={false}
+              />
+            )}
 
             <div className="space-y-4 border-l border-border-default pl-3">
               <div className="flex items-stretch justify-between gap-4">
@@ -983,7 +1138,7 @@ export function ClaudeDesktopProviderForm({
                     onValueChange={(value) =>
                       handleModelMappingChange(value === "proxy")
                     }
-                    disabled={usesManagedOAuth}
+                    disabled={usesManagedOAuth || isAggregate}
                   >
                     <SelectTrigger
                       id="claude-desktop-model-mode"
@@ -1010,7 +1165,13 @@ export function ClaudeDesktopProviderForm({
                 </div>
               </div>
 
-              {needsModelMapping && (
+              {isAggregate && (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("aggregate.modeLockedHint")}
+                </p>
+              )}
+
+              {needsModelMapping && !isAggregate && (
                 <div className="space-y-4 border-t border-border-default pt-4">
                   {activeProviderType !== "xai_oauth" && (
                     <div className="space-y-2">
