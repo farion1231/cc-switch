@@ -81,6 +81,29 @@ describe("useSettingsForm Hook", () => {
     expect(changeLanguageSpy).toHaveBeenCalledWith("ja");
   });
 
+  it("should support russian language preference aliases", async () => {
+    useSettingsQueryMock.mockReturnValue({
+      data: {
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        claudeConfigDir: "/Users/demo",
+        codexConfigDir: null,
+        language: "ru-RU",
+      },
+      isLoading: false,
+    });
+
+    const { result } = renderHook(() => useSettingsForm());
+
+    await waitFor(() => {
+      expect(result.current.settings?.language).toBe("ru");
+    });
+
+    expect(result.current.initialLanguage).toBe("ru");
+    expect(changeLanguageSpy).toHaveBeenCalledWith("ru");
+  });
+
   it("should support traditional chinese language preference aliases", async () => {
     useSettingsQueryMock.mockReturnValue({
       data: {

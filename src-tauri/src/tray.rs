@@ -69,7 +69,7 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，英文 → `en`，未知区域回退到 `zh`（与前端默认一致）。
+/// 日文 → `ja`，俄文 → `ru`，英文 → `en`，未知区域回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
     if locale == "zh" {
@@ -84,6 +84,8 @@ fn map_locale_to_tray_language(locale: &str) -> &'static str {
         "zh"
     } else if locale.starts_with("ja") {
         "ja"
+    } else if locale.starts_with("ru") {
+        "ru"
     } else if locale.starts_with("en") {
         "en"
     } else {
@@ -119,6 +121,15 @@ impl TrayTexts {
                 quit: "終了",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
+            },
+            "ru" => Self {
+                show_main: "Открыть главное окно",
+                open_website: "Открыть официальный сайт",
+                no_providers_label: "(нет провайдеров)",
+                lightweight_mode: "Облегчённый режим",
+                quit: "Выйти",
+                projects_label: "Проекты",
+                no_project_label: "Без проекта",
             },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
@@ -1264,6 +1275,14 @@ mod tests {
         assert_eq!(map_locale_to_tray_language("ja"), "ja");
         assert_eq!(map_locale_to_tray_language("en-US"), "en");
         assert_eq!(map_locale_to_tray_language("en"), "en");
+    }
+
+    #[test]
+    fn locale_maps_russian() {
+        use super::map_locale_to_tray_language;
+        assert_eq!(map_locale_to_tray_language("ru"), "ru");
+        assert_eq!(map_locale_to_tray_language("ru-RU"), "ru");
+        assert_eq!(map_locale_to_tray_language("ru_RU"), "ru");
     }
 
     #[test]

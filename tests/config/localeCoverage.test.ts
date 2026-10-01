@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
+import ru from "@/i18n/locales/ru.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import zh from "@/i18n/locales/zh.json";
 
@@ -50,6 +51,7 @@ const locales = [
   ["zh", zh],
   ["ja", ja],
   ["zh-TW", zhTW],
+  ["ru", ru],
 ] as const;
 
 describe("locale coverage", () => {
