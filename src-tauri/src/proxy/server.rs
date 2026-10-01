@@ -1449,16 +1449,12 @@ mod tests {
         {
             let aggregate_logs: i64 = async {
                 let conn = crate::database::lock_conn!(db.conn);
-                Ok::<_, AppError>(
-                    conn.query_row(
-                        "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
-                        ["agg"],
-                        |row| row.get(0),
-                    )
-                    .map_err(|error| {
-                        AppError::Database(format!("query aggregate usage logs: {error}"))
-                    })?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
+                    ["agg"],
+                    |row| row.get(0),
                 )
+                .map_err(|error| AppError::Database(format!("query aggregate usage logs: {error}")))
             }
             .await
             .expect("query aggregate provider usage logs");
