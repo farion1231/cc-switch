@@ -217,6 +217,30 @@ impl RequestForwarder {
         replaced_images
     }
 
+    /// 预防式图片数量整流：保留前 N 张，剥离其余图片块。
+    ///
+    /// 与 [`Self::apply_media_prevention`] 正交——那一条按「模型是否支持图片」
+    /// 只对 Codex/GrokBuild 路径生效；这一条按「数量」处理，**对所有 app 生效**，
+    /// 且不受 `request_media_fallback` 管辖（关闭图片降级时仍可单独启用）。
+    /// 受 `enabled && request_media_max_images > 0` 管辖，返回剥离张数。
+    fn apply_media_image_cap(&self, body: &mut Value, provider: &Provider) -> usize {
+        let cap = self.rectifier_config.request_media_max_images;
+        if !self.rectifier_config.enabled || cap == 0 {
+            return 0;
+        }
+
+        let stripped = super::media_sanitizer::strip_images_beyond_first(body, cap);
+        if stripped > 0 {
+            let model = body.get("model").and_then(Value::as_str).unwrap_or("");
+            log::info!(
+                "[Media] Stripped {stripped} image block(s) beyond the first {cap} (rectifier image cap) for provider={}, model={}",
+                provider.id,
+                model
+            );
+        }
+        stripped
+    }
+
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
     ///
     /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
@@ -1516,6 +1540,11 @@ impl RequestForwarder {
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
+
+        // 图片数量整流：对所有 app 生效（与上面按「模型是否支持图片」的 text-only
+        // 降级正交——这一条按「数量」剥离）。阶跃星辰等上游对单请求图片张数有硬上限，
+        // 长会话累积的截图会越过上限直接 400。
+        self.apply_media_image_cap(&mut request_body, provider);
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段

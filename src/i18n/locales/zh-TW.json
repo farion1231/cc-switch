@@ -395,7 +395,9 @@
         "mediaFallback": "不支援圖片降級",
         "mediaFallbackDescription": "當供應商不支援圖片輸入時（已宣告純文字能力，或上游回傳不支援圖片的錯誤），自動將圖片區塊替換為 [Unsupported Image] 標記，使對話不中斷",
         "mediaHeuristic": "純文字模型預判",
-        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
+        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告",
+        "mediaMaxImages": "圖片數量上限",
+        "mediaMaxImagesDescription": "部分上游（如階躍星辰）限制單次請求的圖片張數，超限直接回傳錯誤；長對話累積的螢幕截圖很容易越過上限。設為 n 時依文件順序保留前 n 張圖片，把第 n+1 張及之後的圖片替換為 [Unsupported Image] 標記。0 表示不限制。與上方「不支援圖片降級」正交，可分別開啟"
       },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",
