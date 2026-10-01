@@ -107,10 +107,10 @@ export function flattenProviderGroups(
  * Call after slots are added, removed or re-tiered; this also serves to
  * **migrate legacy ids** (the earlier scheme embedded the provider name, which
  * Claude Desktop rejects as a group). If the default target references a slot
- * id, its new id is taken from its position **in this table**; when that slot
- * is gone (its old id is not in the table) the value is kept as-is and left
- * for save-time validation to reject, rather than silently retargeting it at
- * some other slot.
+ * id, its new id is taken from its position **in this table**. When that slot
+ * is gone (its old id is not in the incoming table) the value is cleared to an
+ * empty string so save-time validation forces a reselection: keeping the raw
+ * value could silently retarget it at a re-numbered slot that reclaimed the id.
  */
 export function assignSlotIds(routes: AggregateRoutes): AggregateRoutes {
   const ordinalByTier = new Map<AggregateTier, number>();
@@ -130,9 +130,10 @@ export function assignSlotIds(routes: AggregateRoutes): AggregateRoutes {
     const index = routes.slots.findIndex(
       (slot) => slot.routeId === defaultTarget.value,
     );
-    if (index >= 0) {
-      defaultTarget = { kind: "slotId", value: ids[index] };
-    }
+    defaultTarget =
+      index >= 0
+        ? { kind: "slotId", value: ids[index] }
+        : { kind: "slotId", value: "" };
   }
 
   return { ...routes, slots, defaultTarget };

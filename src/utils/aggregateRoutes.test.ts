@@ -238,7 +238,25 @@ describe("assignSlotIds", () => {
     });
   });
 
-  it("keeps the value when the target slot was deleted, never retargeting silently", () => {
+  it("clears the default target when the referenced slot was deleted, even if a sibling reclaims the id", () => {
+    // A = sonnet-1 (deleted), B = sonnet-2 reclaims `claude-sonnet-1` after
+    // re-numbering. Keeping the raw value would silently retarget the default
+    // at B (a different vendor), so it must be cleared to force a reselection.
+    const next = assignSlotIds({
+      defaultTarget: { kind: "slotId", value: "claude-sonnet-1" },
+      slots: [
+        {
+          routeId: "claude-sonnet-2",
+          tier: "sonnet",
+          providerId: "p-ds",
+          upstreamModel: "a",
+        },
+      ],
+    });
+    expect(next.defaultTarget).toEqual({ kind: "slotId", value: "" });
+  });
+
+  it("clears the default target when the referenced slot was deleted and no sibling reclaims the id", () => {
     const next = assignSlotIds({
       defaultTarget: { kind: "slotId", value: "claude-fable-gone" },
       slots: [
@@ -250,10 +268,7 @@ describe("assignSlotIds", () => {
         },
       ],
     });
-    expect(next.defaultTarget).toEqual({
-      kind: "slotId",
-      value: "claude-fable-gone",
-    });
+    expect(next.defaultTarget).toEqual({ kind: "slotId", value: "" });
   });
 });
 

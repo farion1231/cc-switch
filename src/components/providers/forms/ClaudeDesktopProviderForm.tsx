@@ -636,9 +636,9 @@ export function ClaudeDesktopProviderForm({
       provider.settingsConfig,
       "ANTHROPIC_BASE_URL",
     ).trim();
-    const targetApiKey = envString(
-      provider.settingsConfig,
-      "ANTHROPIC_AUTH_TOKEN",
+    const targetApiKey = (
+      envString(provider.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
+      envString(provider.settingsConfig, "ANTHROPIC_API_KEY")
     ).trim();
     if (!targetBaseUrl || !targetApiKey) {
       showFetchModelsError(null, t, {
