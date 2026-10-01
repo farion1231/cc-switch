@@ -584,13 +584,34 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.settings_config.clone()
             };
 
-            // Convert settings_config to OpenCodeProviderConfig
+            // A new ID cannot inherit an existing provider's built-in definition.
+            // Check at the write boundary as well as in the UI, including old copies.
+            let has_npm = config_to_write
+                .get("npm")
+                .and_then(Value::as_str)
+                .is_some_and(|npm| !npm.trim().is_empty());
+            let has_models = config_to_write
+                .get("models")
+                .and_then(Value::as_object)
+                .is_some_and(|models| !models.is_empty());
+            if (!has_npm || !has_models)
+                && !opencode_config::get_providers()?.contains_key(&provider.id)
+            {
+                return Err(AppError::localized(
+                    "provider.opencode.custom_definition_required",
+                    "新的 OpenCode 供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
+                    "A new OpenCode provider ID requires an npm package and at least one model; only an existing ID in the live config may inherit defaults",
+                ));
+            }
+
+            // Validate with the existing type, but persist the original fragment:
+            // the type does not describe every OpenCode provider/model field.
             let opencode_config_result =
                 serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
 
             match opencode_config_result {
-                Ok(config) => {
-                    opencode_config::set_typed_provider(&provider.id, &config)?;
+                Ok(_) => {
+                    opencode_config::set_provider(&provider.id, config_to_write)?;
                     log::info!("OpenCode provider '{}' written to live config", provider.id);
                 }
                 Err(e) => {
@@ -915,10 +936,10 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             }))
         }
         AppType::OpenCode => {
-            use crate::opencode_config::{get_opencode_config_path, read_opencode_config};
+            use crate::opencode_config::{get_opencode_config_path, read_opencode_config_from_path};
 
-            let config_path = get_opencode_config_path();
-            if !config_path.exists() {
+            let config_path = get_opencode_config_path()?;
+            if !config_path.try_exists().map_err(|e| AppError::io(&config_path, e))? {
                 return Err(AppError::localized(
                     "opencode.config.missing",
                     "OpenCode 配置文件不存在",
@@ -926,7 +947,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 ));
             }
 
-            let config = read_opencode_config()?;
+            let config = read_opencode_config_from_path(&config_path)?;
             Ok(config)
         }
         AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),
@@ -1170,8 +1191,9 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
 /// database with is_current set to false.
 pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::opencode_config;
+    use crate::provider::OpenCodeProviderConfig;
 
-    let providers = opencode_config::get_typed_providers()?;
+    let providers = opencode_config::get_providers()?;
     if providers.is_empty() {
         return Ok(0);
     }
@@ -1180,12 +1202,15 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
-    for (id, config) in providers {
-        // Convert to Value for settings_config
-        let settings_config = match serde_json::to_value(&config) {
-            Ok(v) => v,
+    for (id, settings_config) in providers {
+        // Keep validation and display-name extraction separate from persistence.
+        // Serializing this partial type would discard fields such as api, env,
+        // and models.<id>.limit.input before they ever reach the database.
+        let config = match serde_json::from_value::<OpenCodeProviderConfig>(settings_config.clone())
+        {
+            Ok(config) => config,
             Err(e) => {
-                log::warn!("Failed to serialize OpenCode provider '{id}': {e}");
+                log::warn!("Failed to parse provider '{id}': {e}");
                 continue;
             }
         };

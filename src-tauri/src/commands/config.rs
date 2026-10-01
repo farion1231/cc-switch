@@ -109,8 +109,9 @@ pub async fn get_config_status(
             Ok(ConfigStatus { exists, path })
         }
         AppType::OpenCode => {
-            let config_path = crate::opencode_config::get_opencode_config_path();
-            let exists = config_path.exists();
+            let config_path =
+                crate::opencode_config::get_opencode_config_path().map_err(|e| e.to_string())?;
+            let exists = config_path.try_exists().map_err(|e| e.to_string())?;
             let path = crate::opencode_config::get_opencode_dir()
                 .to_string_lossy()
                 .to_string();

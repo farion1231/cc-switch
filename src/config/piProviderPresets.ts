@@ -102,7 +102,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi",
     providerKey: "cc-switch-kimi",
-    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       name: "Kimi",
@@ -138,7 +139,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi Global",
     providerKey: "cc-switch-kimi-global",
-    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
     settingsConfig: {
       name: "Kimi",
