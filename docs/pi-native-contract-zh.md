@@ -41,9 +41,9 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 
 Pi 从 0.99.0 起内置 MCP 支持，读全局 `<agent dir>/mcp.json`。CC Switch 的开关是「条目的存在」：勾选 Pi 即写入条目，取消即移除。Pi 侧另有一个 `enabled` 字段——在 Pi 里用 `/mcp` 关闭服务器就是写 `enabled: false` 并保留条目——CC Switch 不把它当成自己的开关，而是按下面的字段级继承处理，避免把用户在 Pi 里做的关闭动作悄悄翻回来。
 
-写出时做合并：文件里该条目的当前内容是基底，连接字段（stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`）整体替换为 CC Switch 的值，`type` 一律清掉——Pi 根据 `command` 和 `url` 自动推断传输方式，`type: "sse"` 不支持，文件里遗留的 `type` 也会让 Pi 跳过整条。其余键 CC Switch 不主动写，只保留文件里的内容，所以 Pi 0.99.2 新增的 `description`、`auth`，以及以后 Pi 再新增的字段，都不会被投影擦掉。切换传输方式时另一侧的连接字段会被清干净，不会留下 `command` 和 `url` 并存的条目。
+写出时做合并：文件里该条目的当前内容是基底，连接字段（stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`）整体替换为 CC Switch 的值，`type` 一律清掉——Pi 根据 `command` 和 `url` 自动推断传输方式。Pi 没有 legacy SSE 传输，所以 `type: "sse"` 的条目在 Pi 开关被勾选时、写入之前就被拒绝（报错指明改用 streamable HTTP 端点），而不是删掉 `type` 之后当成 HTTP 写出去；共享的 `server_config` 依旧允许 `sse`，因为其他应用支持它。文件里遗留的 `type` 也会让 Pi 跳过整条。其余键 CC Switch 不主动写，只保留文件里的内容，所以 Pi 0.99.2 新增的 `description`、`auth`，以及以后 Pi 再新增的字段，都不会被投影擦掉。切换传输方式时另一侧的连接字段会被清干净，不会留下 `command` 和 `url` 并存的条目。
 
-Pi 也校验服务器名：只接受字母、数字、下划线和连字符（`[A-Za-z0-9_-]+`），所以带点号或空格的 id 会被拒绝写入，而不是写进去等 Pi 跳过。字段不合法（例如 `type: "sse"`、`enabled` 不是布尔值）的条目会被 Pi 跳过并在 `/mcp` 里留下一条 config 错误，其余条目照常加载——坏条目的表现是「列表里少一个服务器」，不是整份配置读不动。
+Pi 也校验服务器名：只接受字母、数字、下划线和连字符（`[A-Za-z0-9_-]+`），所以带点号或空格的 id 会被拒绝写入，而不是写进去等 Pi 跳过。字段不合法（例如 `type: "sse"`、`enabled` 不是布尔值）的条目会被 Pi 跳过并在 `/mcp` 里留下一条 config 错误，其余条目照常加载——坏条目的表现是「列表里少一个服务器」，不是整份配置读不动。「从应用导入」也按同一条规则校验：Pi 自己会跳过的条目（拿不了的名字、legacy SSE）不会带着 Pi 开关进入 SSOT，而是跳过并报出名字，不会造成「面板显示已启用 Pi、Pi 却没有这个条目」。
 
 `exposure`、`toolExposure`、`timeout`、`enabled`、`oauth` 这几个键 Pi 自己的工具也会写（`/mcp` 管理命令，或 `pi mcp add --oauth-client-*`），而 CC Switch 的表单里没有对应控件，所以按覆盖式继承处理：CC Switch 里没有这个键就保留配置文件中的已有值，有就以 CC Switch 为准。`enabled` 的区别是它不会随「从应用导入」进入共享的 `server_config`——其他客户端会透传未知键，Pi 专属的开关不该跟着漏出去。
 

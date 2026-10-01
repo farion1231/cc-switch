@@ -2091,6 +2091,7 @@
       "jsonInvalid": "Invalid JSON format",
       "tomlInvalid": "Invalid TOML format",
       "commandRequired": "Please enter command",
+      "piSseUnsupported": "Pi MCP does not support the SSE transport yet",
       "singleServerObjectRequired": "Please paste a single MCP server object (do not include top-level mcpServers)",
       "saveFailed": "Save failed",
       "deleteFailed": "Delete failed"

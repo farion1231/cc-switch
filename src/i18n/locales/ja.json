@@ -2091,6 +2091,7 @@
       "jsonInvalid": "JSON 形式が無効です",
       "tomlInvalid": "TOML 形式が無効です",
       "commandRequired": "コマンドを入力してください",
+      "piSseUnsupported": "Pi MCP は SSE トランスポートに対応していません",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
       "saveFailed": "保存に失敗しました",
       "deleteFailed": "削除に失敗しました"

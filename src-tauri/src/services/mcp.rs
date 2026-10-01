@@ -277,17 +277,40 @@ impl McpService {
             return Ok(());
         }
 
+        let mut failures: Vec<String> = Vec::new();
         for server in servers.values() {
-            if server.apps.is_enabled_for(app) {
-                Self::sync_server_to_app(state, server, app)?;
+            let result = if server.apps.is_enabled_for(app) {
+                Self::sync_server_to_app(state, server, app)
             } else if !matches!(app, AppType::Mcode) {
-                Self::remove_server_from_app(state, &server.id, app)?;
+                Self::remove_server_from_app(state, &server.id, app)
+            } else {
+                // MCode's false flag also covers pre-existing, unmanaged servers.
+                // Only explicit disable/delete operations may remove those entries.
+                continue;
+            };
+
+            if let Err(error) = result {
+                log::warn!(
+                    "Failed to project MCP server '{}' to {}: {error}",
+                    server.id,
+                    app.as_str()
+                );
+                let failure = format!("'{}': {error}", server.id);
+                if !failures.contains(&failure) {
+                    failures.push(failure);
+                }
             }
-            // MCode's false flag also covers pre-existing, unmanaged servers.
-            // Only explicit disable/delete operations may remove those entries.
         }
 
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(AppError::Message(format!(
+                "{} MCP 投影失败: {}",
+                app.as_str(),
+                failures.join("; ")
+            )))
+        }
     }
 
     // ========================================================================

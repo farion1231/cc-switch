@@ -6,6 +6,9 @@
 //! value. Everything else stays as Pi wrote it, which is how a Pi-side `description`, `auth` or
 //! `oauth` block survives a rewrite without this module knowing about it. Pi skips an entry it
 //! cannot validate, logging a config error, so a bad entry drops out of Pi's server list.
+//! Pi loads stdio and streamable HTTP only; the legacy `sse` transport is refused here instead of
+//! written, because a `url` entry Pi is handed is always spoken as streamable HTTP (see
+//! `validate_server`).
 //!
 //! Pi keys `mcpServers` by name and accepts only `[A-Za-z0-9_-]+`; an id outside that set is refused
 //! here instead of written. `enabled` is a field value Pi writes from its own `/mcp` manager, and
@@ -48,6 +51,10 @@ fn stripped_fields() -> impl Iterator<Item = &'static str> {
         .chain(["type"])
 }
 
+/// Transports Pi's `mcp.json` reader accepts. Pi selects one from the entry itself — `command`
+/// means stdio, `url` means streamable HTTP — and refuses `sse` outright.
+const PI_TRANSPORTS: [&str; 2] = ["stdio", "http"];
+
 /// Checks the id used as Pi's `mcpServers` key.
 ///
 /// Pi accepts only `[A-Za-z0-9_-]+` (`SERVER_NAME` in its `core/mcp-servers.js`); anything else
@@ -67,11 +74,41 @@ pub(crate) fn validate_server_id(id: &str) -> Result<(), AppError> {
     }
 }
 
-/// Validates one entry as Pi would read it: the id (Pi's `mcpServers` key) plus the connection
-/// definition, which shares the other clients' validator.
+/// Validates one entry as Pi would read it: the id (Pi's `mcpServers` key), the connection
+/// definition, which shares the other clients' validator, and the transport.
+///
+/// The shared validator accepts `sse` because one spec serves every App and the other Apps do
+/// support the legacy transport. Pi does not: it reads a `url` entry as streamable HTTP, so writing
+/// an SSE spec would hand Pi an address spoken in another protocol, and the `type` it came from is
+/// refused by Pi itself. Rejecting it here, at the App boundary, keeps "enabled for Pi" from ever
+/// meaning "Pi skipped it" without narrowing what the other Apps may store.
 pub(crate) fn validate_server(id: &str, spec: &Value) -> Result<(), AppError> {
     validate_server_id(id)?;
-    super::validation::validate_server_spec(&unified_spec(spec))
+    let unified = unified_spec(spec);
+    super::validation::validate_server_spec(&unified)?;
+    reject_transport_pi_cannot_load(id, &unified)
+}
+
+/// Rejects the transports Pi's `mcp.json` reader does not accept.
+///
+/// Expects a spec already normalized by `unified_spec`, so a missing `type` has been filled in and
+/// `streamable-http` has become `http` — which is what makes `PI_TRANSPORTS` the whole accepted set.
+/// A `type` that is not text is read as the shared validator reads it, as stdio, and is named here
+/// rather than rendered as an empty transport.
+fn reject_transport_pi_cannot_load(id: &str, spec: &Value) -> Result<(), AppError> {
+    let transport = spec
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("non-text");
+    if PI_TRANSPORTS.contains(&transport) {
+        Ok(())
+    } else {
+        Err(AppError::McpValidation(format!(
+            "Pi MCP server '{id}' uses the '{transport}' transport, which Pi does not support; Pi \
+             reaches a remote server over streamable HTTP, so use that endpoint (often '/mcp' \
+             instead of '/sse') and set type to 'http'"
+        )))
+    }
 }
 
 /// False when Pi's agent directory is missing, so nothing is written or created.
@@ -207,7 +244,8 @@ pub fn remove_server_from_pi(id: &str) -> Result<(), AppError> {
 ///
 /// Entries are stored as-is, Pi-only and unknown fields included, except `enabled`: Pi controls that
 /// from `/mcp`, so it stays in the file and is inherited on every write. An id already in CC Switch
-/// only gets its Pi flag set. Invalid entries are skipped and reported.
+/// only gets its Pi flag set. An entry Pi cannot load — a bad key, or the legacy SSE transport — is
+/// skipped and reported instead of being adopted as "enabled for Pi", which Pi would ignore.
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let Some(document) = read(&crate::pi_config::get_pi_mcp_path()?)? else {
         return Ok(0);
@@ -224,10 +262,6 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         // value is inherited on every write.
         if let Some(object) = spec.as_object_mut() {
             object.remove("enabled");
-        }
-        if let Err(error) = super::validation::validate_server_spec(&spec) {
-            skipped.push(format!("'{id}': {error}"));
-            continue;
         }
 
         // A new entry is counted only after it has been persisted: an entry Pi would skip is
@@ -252,6 +286,14 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
                 tags: Vec::new(),
             }
         };
+        // Validated as Pi would read it, not merely as the shared store does: both an id Pi cannot
+        // key and the legacy SSE transport leave the entry out of Pi's own server list, so adopting
+        // one would show "enabled for Pi" with nothing in Pi to load. For an id CC Switch already
+        // stores, the row's own spec is what gets projected, so that is what is validated.
+        if let Err(error) = validate_server(&server.id, &server.server) {
+            skipped.push(format!("'{id}': {error}"));
+            continue;
+        }
         state.db.save_mcp_server(&server)?;
         if created {
             count += 1;
@@ -302,7 +344,7 @@ mod tests {
         );
 
         let http = json!({
-            "type": "sse",
+            "type": "http",
             "url": "https://example.com/mcp",
             "headers": {"Authorization": "Bearer x"},
             "oauth": {"clientId": "id"},
@@ -569,6 +611,45 @@ mod tests {
         }
         // The connection definition is validated alongside the id.
         assert!(validate_server("ok", &json!({"type": "stdio"})).is_err());
+    }
+
+    /// Pi loads stdio and streamable HTTP only. The legacy SSE transport is refused here, while the
+    /// shared validator keeps accepting it for the Apps that do support it.
+    #[test]
+    fn validate_server_refuses_the_legacy_sse_transport() {
+        let url = "https://example.com/mcp";
+        assert!(validate_server("ok", &json!({"type": "http", "url": url})).is_ok());
+        assert!(validate_server("ok", &json!({"type": "streamable-http", "url": url})).is_ok());
+        // `url` alone is streamable HTTP, `command` alone is stdio.
+        assert!(validate_server("ok", &json!({"url": url})).is_ok());
+        assert!(validate_server("ok", &json!({"command": "node"})).is_ok());
+
+        let error = validate_server(
+            "legacy",
+            &json!({"type": "sse", "url": "https://example.com/sse"}),
+        )
+        .expect_err("Pi has no legacy SSE transport")
+        .to_string();
+        assert!(error.contains("legacy") && error.contains("sse"), "{error}");
+
+        assert!(
+            crate::mcp::validation::validate_server_spec(&json!({
+                "type": "sse",
+                "url": "https://example.com/sse"
+            }))
+            .is_ok(),
+            "the shared validator must keep accepting SSE for the Apps that support it"
+        );
+    }
+
+    /// A `type` that is not text passes the shared validator as stdio, so it reaches this check too
+    /// and must be named instead of rendering as an empty transport.
+    #[test]
+    fn validate_server_names_a_transport_that_is_not_text() {
+        let error = validate_server("odd", &json!({"type": 5, "command": "node"}))
+            .expect_err("a non-text type is not a transport Pi can load")
+            .to_string();
+        assert!(error.contains("non-text"), "{error}");
     }
 
     /// Fail-closed: an unparsable file raises an error and stays byte-identical.

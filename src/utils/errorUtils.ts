@@ -60,7 +60,7 @@ export const translatePiProviderMutationError = (
 };
 
 /**
- * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
+ * 将已知的 MCP 相关后端错误（多为中文硬编码，Pi 适配层的校验错误为英文）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。
  * 若无法识别，返回空字符串以便调用方回退到原始 detail 或默认 i18n。
  */
@@ -111,6 +111,14 @@ export const translateMcpBackendError = (
     msg === "URL 不能为空"
   ) {
     return t("mcp.wizard.urlRequired");
+  }
+
+  // App 级传输限制：Pi 只加载 stdio 和 streamable HTTP，legacy SSE 在 Pi 适配层应被拒绝
+  if (
+    msg.includes("Pi MCP server") &&
+    msg.includes("which Pi does not support")
+  ) {
+    return t("mcp.error.piSseUnsupported");
   }
 
   // 文件解析/序列化

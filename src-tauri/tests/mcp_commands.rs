@@ -1501,7 +1501,7 @@ fn pi_toggle_writes_the_connection_fields_and_only_touches_its_own_id() {
         pi_server(
             "managed",
             json!({
-                "type": "sse",
+                "type": "http",
                 "url": "https://example.com/mcp",
                 "headers": {"Authorization": "Bearer secret"},
                 "exposure": "direct",
@@ -2164,4 +2164,144 @@ fn pi_refuses_a_server_id_it_cannot_key() {
         pi_server("my.server", json!({"command": "node"}), true)
     )
     .is_err());
+}
+
+/// Pi has no legacy SSE transport. The shared store keeps accepting an SSE spec so the other Apps
+/// can hold it, but enabling Pi for that spec is refused before anything is persisted or written.
+#[test]
+fn pi_refuses_the_legacy_sse_transport() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    let sse = json!({"type": "sse", "url": "https://example.com/sse"});
+
+    let state = create_test_state().expect("create test state");
+
+    // Another App stores the same spec unchanged: the App boundary is where the rule lives.
+    let mut gemini_only = pi_server("sse-for-gemini", sse.clone(), false);
+    gemini_only.apps.gemini = true;
+    McpService::upsert_server(&state, gemini_only).expect("Gemini keeps the legacy transport");
+    assert_eq!(
+        state.db.get_all_mcp_servers().unwrap()["sse-for-gemini"].server["type"],
+        json!("sse")
+    );
+    assert!(
+        !path.exists(),
+        "enabling another App must not write Pi's file"
+    );
+
+    // The form path: refused before the row is saved, so the DB never holds the bad flag.
+    let error = McpService::upsert_server(&state, pi_server("sse-for-pi", sse.clone(), true))
+        .expect_err("Pi cannot load the legacy SSE transport")
+        .to_string();
+    assert!(error.contains("sse"), "{error}");
+    assert!(!state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key("sse-for-pi"));
+
+    // The list path: refused before the flag is persisted.
+    state
+        .db
+        .save_mcp_server(&pi_server("sse-toggled", sse, false))
+        .expect("seed server");
+    let error = McpService::toggle_app(&state, "sse-toggled", AppType::Pi, true)
+        .expect_err("an SSE spec must not be enabled for Pi")
+        .to_string();
+    assert!(error.contains("sse"), "{error}");
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()["sse-toggled"]
+            .apps
+            .pi
+    );
+    assert!(!path.exists(), "a refused entry must not write anything");
+}
+
+/// A row that holds an SSE spec with the Pi flag on — stored before this rule, or by any path that
+/// bypasses the form — must not be projected: dropping `type` would hand Pi an HTTP entry that
+/// speaks another protocol. The refused entry is reported, and the servers behind it still get
+/// projected, the way Pi itself skips one bad entry and loads the rest.
+#[test]
+fn pi_projection_refuses_a_stored_sse_entry_without_starving_the_rest() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "legacy",
+            json!({"type": "sse", "url": "https://example.com/sse"}),
+            true,
+        ))
+        .expect("seed server");
+    // Sorts after the refused one (rows come back by name), so it is the entry an abort strands.
+    state
+        .db
+        .save_mcp_server(&pi_server(
+            "zz-after-legacy",
+            json!({"type": "http", "url": "https://example.com/mcp"}),
+            true,
+        ))
+        .expect("seed server");
+
+    let error = McpService::sync_enabled_for_app(&state, &AppType::Pi)
+        .expect_err("a stored SSE entry must be reported")
+        .to_string();
+    assert!(error.contains("legacy") && error.contains("sse"), "{error}");
+
+    let written = read_pi_mcp();
+    assert!(
+        written["mcpServers"].get("legacy").is_none(),
+        "the refused entry must not be written"
+    );
+    assert_eq!(
+        written["mcpServers"]["zz-after-legacy"],
+        json!({"url": "https://example.com/mcp"}),
+        "one refused entry must not strand the servers after it"
+    );
+}
+
+/// Pi skips a native entry it cannot load, so importing one would leave "enabled for Pi" with
+/// nothing in Pi to load. It is reported and left in the file for the user to fix.
+#[test]
+fn pi_import_skips_a_native_sse_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+
+    fs::write(
+        pi_mcp_path(),
+        json!({
+            "mcpServers": {
+                "handwritten-sse": {"type": "sse", "url": "https://example.com/sse"},
+                "handwritten-http": {"url": "https://example.com/mcp"}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    let error = McpService::import_from_all_apps(&state)
+        .expect_err("the SSE entry must be reported")
+        .to_string();
+    assert!(error.contains("handwritten-sse"), "{error}");
+
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(
+        !servers.contains_key("handwritten-sse"),
+        "an entry Pi skips must not be adopted as enabled for Pi"
+    );
+    assert!(servers["handwritten-http"].apps.pi);
+    assert_eq!(servers["handwritten-http"].server["type"], json!("http"));
+
+    // Import reads live configs; the entry the user wrote stays where it is.
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["handwritten-sse"]["type"],
+        json!("sse")
+    );
 }
