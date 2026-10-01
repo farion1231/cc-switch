@@ -202,7 +202,7 @@ disable_response_storage = true
 name = "E-FlowCode"
 base_url = "https://e-flowcode.cc/v1"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 model_context_window = 1000000
 model_auto_compact_token_limit = 9000000",
     },
@@ -248,7 +248,7 @@ disable_response_storage = true
 name = "nvidia"
 base_url = "https://integrate.api.nvidia.com/v1"
 wire_api = "responses"
-requires_openai_auth = true",
+requires_openai_auth = false",
       "modelCatalog": {
         "models": [
           {
@@ -325,7 +325,7 @@ disable_response_storage = true
 name = "xai"
 base_url = "https://api.x.ai/v1"
 wire_api = "responses"
-requires_openai_auth = true",
+requires_openai_auth = false",
       "modelCatalog": {
         "models": [
           {

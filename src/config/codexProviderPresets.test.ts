@@ -20,10 +20,17 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
     }
   });
 
-  it("key-based third-party template keeps the fallback flag by default", () => {
+  it("key-based third-party drafts do not fall back to the official login", () => {
     expect(
       generateThirdPartyConfig("acme", "https://api.acme.dev/v1", "m1"),
-    ).toContain("requires_openai_auth = true");
+    ).toContain("requires_openai_auth = false");
+    for (const preset of codexProviderPresets.filter(
+      (item) => item.category !== "official",
+    )) {
+      expect(preset.config, preset.name).not.toMatch(
+        /requires_openai_auth\s*=\s*true/,
+      );
+    }
   });
 
   it("exposes GitHub Copilot as a keyless Codex provider", () => {

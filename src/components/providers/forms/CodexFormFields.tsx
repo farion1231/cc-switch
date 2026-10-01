@@ -59,6 +59,7 @@ import {
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
+import { codexCopilotCompatibilityApiFormat } from "@/utils/providerConfigUtils";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -501,9 +502,7 @@ export function CodexFormFields({
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const effectiveApiFormat = isCopilotPreset
-    ? copilotApiFormat === "auto"
-      ? "openai_chat"
-      : copilotApiFormat
+    ? codexCopilotCompatibilityApiFormat(copilotApiFormat)
     : apiFormat;
   const isChatFormat = effectiveApiFormat === "openai_chat";
   const isAnthropicFormat = effectiveApiFormat === "anthropic";
