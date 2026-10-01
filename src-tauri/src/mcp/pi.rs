@@ -1,19 +1,20 @@
 //! Pi MCP sync (`<agent dir>/mcp.json`)
 //!
-//! Writes are read-modify-write, so only the target id changes. Outbound entries keep only the
-//! fields Pi knows and never carry `type`: Pi infers the transport from `command` vs `url` and
-//! rejects `type: "sse"`. An entry Pi cannot validate is skipped with a config error while the
-//! rest of the file still loads, so a bad entry silently disappears from Pi's server list.
+//! Each write is a read-modify-write of the whole document, so only the target id changes. An entry
+//! already in the file is the base: the connection fields are replaced with what CC Switch holds,
+//! and a key CC Switch also writes from its own tooling is overridden only when the spec carries a
+//! value. Everything else stays as Pi wrote it, which is how a Pi-side `description`, `auth` or
+//! `oauth` block survives a rewrite without this module knowing about it. Pi skips an entry it
+//! cannot validate, logging a config error, so a bad entry drops out of Pi's server list.
 //!
-//! Two Pi-side rules shape this module. Pi keys `mcpServers` by name and accepts only
-//! `[A-Za-z0-9_-]+`, so an id outside that set is refused instead of written. And `enabled` is a
-//! field value Pi writes from its own `/mcp` manager (`enabled: false` keeps the entry), so it is
-//! inherited from the file like `exposure` whenever CC Switch has no value for it.
+//! Pi keys `mcpServers` by name and accepts only `[A-Za-z0-9_-]+`; an id outside that set is refused
+//! here instead of written. `enabled` is a field value Pi writes from its own `/mcp` manager, and
+//! `enabled: false` keeps the entry, so a disable made inside Pi is never turned back on.
 
 use crate::app_config::McpApps;
 use crate::error::AppError;
 use crate::store::AppState;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -21,13 +22,31 @@ use std::sync::Mutex;
 /// Serializes writes in this process; concurrent read-modify-write loses entries.
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-/// Fields Pi accepts for stdio servers.
+/// Connection fields CC Switch owns for a stdio entry.
 const STDIO_FIELDS: [&str; 4] = ["command", "args", "env", "cwd"];
-/// Fields Pi accepts for HTTP servers (`oauth` holds Pi's credentials).
-const HTTP_FIELDS: [&str; 3] = ["url", "headers", "oauth"];
-/// Transport-independent Pi fields. Pi can also set every one of them from `/mcp`, which is why
-/// `inherit_pi_fields` keeps the value already in the file when CC Switch has none.
-const SHARED_FIELDS: [&str; 4] = ["exposure", "toolExposure", "timeout", "enabled"];
+/// Connection fields CC Switch owns for an HTTP entry. `oauth` is not one of them: `pi mcp add
+/// --oauth-client-*` writes it too, so it is only overridden when CC Switch has a value (see
+/// `OVERRIDE_FIELDS`).
+const HTTP_FIELDS: [&str; 2] = ["url", "headers"];
+/// Keys Pi's own tooling writes as well, so CC Switch overrides them only when its spec carries a
+/// value: `oauth` from `pi mcp add --oauth-client-*`, and the settings Pi's `/mcp` manager edits.
+/// Every other key is left as the file holds it, so `description`, `auth`, and any field a later Pi
+/// release adds survive without a change to this list.
+const OVERRIDE_FIELDS: [&str; 5] = ["oauth", "exposure", "toolExposure", "timeout", "enabled"];
+
+/// Fields dropped from the file's entry before the spec's values go on: both transports' connection
+/// fields, plus `type`. Dropping both halves on every write is what keeps a transport switch from
+/// leaving a stale one behind, so an entry turned HTTP does not keep its `command`. `type` is never
+/// written at all: Pi infers the transport from `command` vs `url`, and a `type: "sse"` inherited
+/// from the file would make Pi skip the entry. Derived from the two lists above, so the field sets
+/// cannot drift apart.
+fn stripped_fields() -> impl Iterator<Item = &'static str> {
+    STDIO_FIELDS
+        .iter()
+        .chain(HTTP_FIELDS.iter())
+        .copied()
+        .chain(["type"])
+}
 
 /// Checks the id used as Pi's `mcpServers` key.
 ///
@@ -102,43 +121,34 @@ fn unified_spec(spec: &Value) -> Value {
     spec
 }
 
-/// Builds the entry written to Pi: whitelisted fields only, never `type`.
+/// Builds the entry written to Pi from the file's current entry and CC Switch's spec.
 ///
-/// `type` is dropped because Pi infers the transport itself and rejects `type: "sse"`. An entry
-/// with both `command` and `url` is written as HTTP, without disambiguation.
-fn outbound_spec(spec: &Value) -> Value {
-    let transport_fields: &[&str] = if spec.get("url").is_some() {
-        &HTTP_FIELDS
-    } else {
-        &STDIO_FIELDS
-    };
-    let mut out = Map::new();
+/// The file's entry is the base, so a key CC Switch does not write (Pi's `description`, an `auth`
+/// block, an `oauth` registration from `pi mcp add`, or a field a later Pi release introduces)
+/// survives a rewrite untouched. The connection half is dropped, then the spec's own
+/// values go on top: the transport fields for the transport the spec selects, plus
+/// `OVERRIDE_FIELDS`. An entry carrying both `command` and `url` is written as HTTP.
+fn outbound_entry(spec: &Value, previous: Option<&Value>) -> Value {
+    let mut entry = previous
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for key in stripped_fields() {
+        entry.remove(key);
+    }
     if let Some(object) = spec.as_object() {
-        for key in transport_fields.iter().chain(SHARED_FIELDS.iter()) {
+        let transport_fields: &[&str] = if object.contains_key("url") {
+            &HTTP_FIELDS
+        } else {
+            &STDIO_FIELDS
+        };
+        for key in transport_fields.iter().chain(OVERRIDE_FIELDS.iter()) {
             if let Some(value) = object.get(*key) {
-                out.insert((*key).to_string(), value.clone());
+                entry.insert((*key).to_string(), value.clone());
             }
         }
     }
-    Value::Object(out)
-}
-
-/// Carries the field values Pi can also control (`SHARED_FIELDS`, `enabled` included) over from
-/// the existing entry when CC Switch has no value for them.
-fn inherit_pi_fields(entry: &mut Value, previous: Option<&Value>) {
-    let Some(previous) = previous.and_then(Value::as_object) else {
-        return;
-    };
-    let Some(entry) = entry.as_object_mut() else {
-        return;
-    };
-    for key in SHARED_FIELDS {
-        if !entry.contains_key(key) {
-            if let Some(value) = previous.get(key) {
-                entry.insert(key.to_string(), value.clone());
-            }
-        }
-    }
+    Value::Object(entry)
 }
 
 /// Adds, replaces or removes one entry; callers hold the lock and gate on Pi's presence.
@@ -162,8 +172,7 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
         Some(spec) => {
             // Validate before writing; an invalid id or definition never reaches the user's file.
             validate_server(id, spec)?;
-            let mut entry = outbound_spec(spec);
-            inherit_pi_fields(&mut entry, servers.get(id));
+            let entry = outbound_entry(spec, servers.get(id));
             servers.insert(id.to_string(), entry);
         }
         None => {
@@ -196,9 +205,9 @@ pub fn remove_server_from_pi(id: &str) -> Result<(), AppError> {
 
 /// Imports MCP servers from Pi's global config; returns the number of new ones.
 ///
-/// Entries are stored as-is, Pi-only and unknown fields included, except `enabled` — that is a
-/// field value Pi controls from `/mcp`, so it stays in the file and is inherited on every write.
-/// An id already in CC Switch only gets its Pi flag set. Invalid entries are skipped and reported.
+/// Entries are stored as-is, Pi-only and unknown fields included, except `enabled`: Pi controls that
+/// from `/mcp`, so it stays in the file and is inherited on every write. An id already in CC Switch
+/// only gets its Pi flag set. Invalid entries are skipped and reported.
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let Some(document) = read(&crate::pi_config::get_pi_mcp_path()?)? else {
         return Ok(0);
@@ -210,9 +219,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
 
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
         let mut spec = unified_spec(native);
-        // `enabled` is a field value Pi owns from `/mcp`, not connection data: keep it out of the
-        // shared spec (the clients that pass unknown keys through would otherwise copy it) and let
-        // `inherit_pi_fields` carry the file's current value on every write.
+        // `enabled` is a field value Pi owns from `/mcp` rather than connection data, so keep it out
+        // of the shared spec: clients that pass unknown keys through would copy it. The file's own
+        // value is inherited on every write.
         if let Some(object) = spec.as_object_mut() {
             object.remove("enabled");
         }
@@ -263,9 +272,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
 mod tests {
     use super::*;
 
-    /// Outbound keeps only whitelisted fields; adapter keys and `type` are dropped.
+    /// A fresh entry takes the transport fields and the settings CC Switch holds; keys only the
+    /// spec carries (adapter metadata) and `type` are dropped.
     #[test]
-    fn outbound_spec_keeps_pi_fields_and_drops_foreign_metadata() {
+    fn outbound_entry_writes_the_connection_half_of_a_new_entry() {
         let stdio = json!({
             "type": "stdio",
             "command": "node",
@@ -279,7 +289,7 @@ mod tests {
             "lifecycle": {"start": "auto"}
         });
         assert_eq!(
-            outbound_spec(&stdio),
+            outbound_entry(&stdio, None),
             json!({
                 "command": "node",
                 "args": ["server.js"],
@@ -300,13 +310,88 @@ mod tests {
             "command": "ignored"
         });
         assert_eq!(
-            outbound_spec(&http),
+            outbound_entry(&http, None),
             json!({
                 "url": "https://example.com/mcp",
                 "headers": {"Authorization": "Bearer x"},
                 "oauth": {"clientId": "id"},
                 "toolExposure": {"ping": "direct"}
             })
+        );
+    }
+
+    /// A rewrite keeps every Pi-side key, including fields a later Pi release adds, and swaps only
+    /// the connection half.
+    #[test]
+    fn outbound_entry_keeps_pi_side_keys_and_replaces_the_connection_half() {
+        let previous = json!({
+            "command": "node",
+            "args": ["old.js"],
+            "description": "Search the product documentation",
+            "auth": {"provider": "anthropic"},
+            "oauth": {"clientId": "id", "clientName": "Claude Code"},
+            "toolExposure": {"ping": "direct"},
+            "timeout": 30,
+            "enabled": false,
+            "type": "sse",
+            "directTools": ["ping"]
+        });
+
+        assert_eq!(
+            outbound_entry(
+                &json!({
+                    "type": "http",
+                    "url": "https://example.com/mcp",
+                    "headers": {"Authorization": "Bearer x"},
+                    "exposure": "direct"
+                }),
+                Some(&previous)
+            ),
+            json!({
+                "url": "https://example.com/mcp",
+                "headers": {"Authorization": "Bearer x"},
+                "exposure": "direct",
+                "oauth": {"clientId": "id", "clientName": "Claude Code"},
+                "description": "Search the product documentation",
+                "auth": {"provider": "anthropic"},
+                "toolExposure": {"ping": "direct"},
+                "timeout": 30,
+                "enabled": false,
+                "directTools": ["ping"]
+            }),
+            "the stale stdio half and `type` go, Pi's own keys stay"
+        );
+    }
+
+    /// The spec's own values win over the file's, and the reverse transport switch drops the other
+    /// half the same way.
+    #[test]
+    fn outbound_entry_obeys_spec_values_and_replaces_the_other_transport() {
+        let previous = json!({
+            "url": "https://old.example.com/mcp",
+            "headers": {"Authorization": "Bearer old"},
+            "oauth": {"clientId": "registered-in-pi"},
+            "exposure": "deferred"
+        });
+
+        assert_eq!(
+            outbound_entry(
+                &json!({
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["server.js"],
+                    "oauth": {"clientId": "from-cc-switch"},
+                    "exposure": "direct"
+                }),
+                Some(&previous)
+            ),
+            json!({
+                "command": "node",
+                "args": ["server.js"],
+                "oauth": {"clientId": "from-cc-switch"},
+                "exposure": "direct"
+            }),
+            "the HTTP half goes and the spec's oauth and exposure win"
         );
     }
 
@@ -372,9 +457,10 @@ mod tests {
         assert_eq!(written["autoEnableCodemode"], json!(true));
     }
 
-    /// Pi-side field values inherit from the file unless CC Switch provides them.
+    /// Every key CC Switch does not own inherits from the file: the Pi settings, and any field Pi
+    /// itself added (here `description` and `auth` from Pi 0.99.2, plus an unknown `directTools`).
     #[test]
-    fn rewriting_inherits_pi_only_fields_unless_cc_switch_provides_them() {
+    fn rewriting_keeps_pi_side_keys_unless_cc_switch_provides_them() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
         fs::write(
@@ -386,6 +472,8 @@ mod tests {
                 "toolExposure": {"ping": "direct"},
                 "timeout": 30,
                 "enabled": false,
+                "description": "Search the docs",
+                "auth": {"provider": "anthropic"},
                 "directTools": ["ping"]
             }}})
             .to_string(),
@@ -408,7 +496,10 @@ mod tests {
                 "exposure": "direct",
                 "toolExposure": {"ping": "direct"},
                 "timeout": 30,
-                "enabled": false
+                "enabled": false,
+                "description": "Search the docs",
+                "auth": {"provider": "anthropic"},
+                "directTools": ["ping"]
             })
         );
 

@@ -1479,7 +1479,7 @@ fn pi_server(id: &str, server: serde_json::Value, pi_enabled: bool) -> McpServer
 }
 
 #[test]
-fn pi_toggle_writes_whitelisted_entry_and_only_touches_its_own_id() {
+fn pi_toggle_writes_the_connection_fields_and_only_touches_its_own_id() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     seed_pi_agent_dir();
@@ -1493,8 +1493,9 @@ fn pi_toggle_writes_whitelisted_entry_and_only_touches_its_own_id() {
     fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
     let state = create_test_state().expect("create test state");
-    // Outbound must keep only Pi's fields: adapter keys and `type` are dropped, and the value CC
-    // Switch holds for `enabled` is the one written.
+    // Pi has no entry for this id yet, so there is nothing to merge: the connection fields and the
+    // Pi settings CC Switch carries are written, and adapter metadata in the spec
+    // (`directTools`/`lifecycle`) never reaches Pi.
     McpService::upsert_server(
         &state,
         pi_server(
@@ -1529,7 +1530,7 @@ fn pi_toggle_writes_whitelisted_entry_and_only_touches_its_own_id() {
             "timeout": 5000,
             "enabled": true
         }),
-        "outbound keeps only Pi's fields, without type/directTools/lifecycle"
+        "a new entry carries the connection fields and Pi's settings only"
     );
 
     // The enable flag is persisted in CC Switch.
@@ -1606,6 +1607,147 @@ fn pi_projection_keeps_pi_only_fields_edited_inside_pi() {
     assert_eq!(
         read_pi_mcp()["mcpServers"]["managed"]["exposure"],
         json!("codemode")
+    );
+}
+
+/// Pi 0.99.2 added a per-server `description` and `auth`, and `pi mcp add --oauth-client-*` writes
+/// the `oauth` block. The MCP form has no control for any of them, so a projection that changes the
+/// connection parameters must leave them where Pi put them.
+#[test]
+fn pi_projection_keeps_fields_pi_owns() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    fs::write(
+        pi_mcp_path(),
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {"managed": {
+                "command": "old",
+                "description": "Search the product documentation",
+                "auth": {"provider": "anthropic"},
+                "oauth": {"clientId": "abc", "clientName": "Claude Code"},
+                "timeout": 30,
+                "enabled": false
+            }}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({"command": "node", "args": ["s.js"]}),
+            true,
+        ),
+    )
+    .expect("upsert");
+
+    let expected = json!({
+        "command": "node",
+        "args": ["s.js"],
+        "description": "Search the product documentation",
+        "auth": {"provider": "anthropic"},
+        "oauth": {"clientId": "abc", "clientName": "Claude Code"},
+        "timeout": 30,
+        "enabled": false
+    });
+    assert_eq!(read_pi_mcp()["mcpServers"]["managed"], expected);
+
+    // The full projection (app start, provider switch) keeps them too.
+    McpService::sync_all_enabled(&state).expect("sync all");
+    assert_eq!(read_pi_mcp()["mcpServers"]["managed"], expected);
+
+    // A value CC Switch does carry wins over the file's, and the keys it does not carry stay.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({
+                "command": "node",
+                "args": ["s.js"],
+                "oauth": {"clientId": "from-cc-switch"},
+                "timeout": 9000,
+                "toolExposure": {"ping": "direct"}
+            }),
+            true,
+        ),
+    )
+    .expect("upsert with Pi settings");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"],
+        json!({
+            "command": "node",
+            "args": ["s.js"],
+            "description": "Search the product documentation",
+            "auth": {"provider": "anthropic"},
+            "oauth": {"clientId": "from-cc-switch"},
+            "timeout": 9000,
+            "toolExposure": {"ping": "direct"},
+            "enabled": false
+        })
+    );
+}
+
+/// A managed entry that Pi holds over the other transport, or with a `type` Pi rejects, is repaired
+/// in place instead of keeping a stale half or being skipped by Pi.
+#[test]
+fn pi_projection_repairs_the_transport_and_drops_type() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    // Hand-written in Pi: `type: "sse"` (which Pi rejects) on top of an HTTP entry.
+    fs::write(
+        pi_mcp_path(),
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {"managed": {
+                "type": "sse",
+                "url": "https://old.example.com/mcp",
+                "headers": {"Authorization": "Bearer old"}
+            }}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    // CC Switch holds the same id over stdio.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({"command": "node", "args": ["s.js"]}),
+            true,
+        ),
+    )
+    .expect("upsert stdio");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"],
+        json!({"command": "node", "args": ["s.js"]}),
+        "the HTTP half and the rejected type are gone"
+    );
+
+    // Back to HTTP: the stdio half goes the same way.
+    McpService::upsert_server(
+        &state,
+        pi_server(
+            "managed",
+            json!({
+                "url": "https://example.com/mcp",
+                "headers": {"Authorization": "Bearer new"}
+            }),
+            true,
+        ),
+    )
+    .expect("upsert http");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"],
+        json!({
+            "url": "https://example.com/mcp",
+            "headers": {"Authorization": "Bearer new"}
+        })
     );
 }
 

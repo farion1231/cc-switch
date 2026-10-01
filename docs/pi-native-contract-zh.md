@@ -41,9 +41,13 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 
 Pi 从 0.99.0 起内置 MCP 支持，读全局 `<agent dir>/mcp.json`。CC Switch 的开关是「条目的存在」：勾选 Pi 即写入条目，取消即移除。Pi 侧另有一个 `enabled` 字段——在 Pi 里用 `/mcp` 关闭服务器就是写 `enabled: false` 并保留条目——CC Switch 不把它当成自己的开关，而是按下面的字段级继承处理，避免把用户在 Pi 里做的关闭动作悄悄翻回来。
 
-写出时只保留 Pi 识别的字段：stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`、`oauth`，以及两者共享的 `exposure`、`toolExposure`、`timeout`、`enabled`。一律不带 `type`，Pi 根据 `command` 和 `url` 自动推断传输方式，`type: "sse"` 不支持。Pi 也校验服务器名：只接受字母、数字、下划线和连字符（`[A-Za-z0-9_-]+`），所以带点号或空格的 id 会被拒绝写入，而不是写进去等 Pi 跳过。字段不合法（例如 `type: "sse"`、`enabled` 不是布尔值）的条目会被 Pi 跳过并在 `/mcp` 里留下一条 config 错误，其余条目照常加载——坏条目的表现是「列表里少一个服务器」，不是整份配置读不动。
+写出时做合并：文件里该条目的当前内容是基底，连接字段（stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`）整体替换为 CC Switch 的值，`type` 一律清掉——Pi 根据 `command` 和 `url` 自动推断传输方式，`type: "sse"` 不支持，文件里遗留的 `type` 也会让 Pi 跳过整条。其余键 CC Switch 不主动写，只保留文件里的内容，所以 Pi 0.99.2 新增的 `description`、`auth`，以及以后 Pi 再新增的字段，都不会被投影擦掉。切换传输方式时另一侧的连接字段会被清干净，不会留下 `command` 和 `url` 并存的条目。
 
-这四个键（`exposure`、`toolExposure`、`timeout`、`enabled`）都可以由 Pi 侧控制（`/mcp` 管理命令），所以 CC Switch 里没有这个键就保留配置文件中的已有值，有就以 CC Switch 为准。`enabled` 也走这条规则，区别是它不会随「从应用导入」进入共享的 `server_config`——其他客户端会透传未知键，Pi 专属的开关不该跟着漏出去。其余字段以 CC Switch 为准，按白名单整体重写，不受文件侧影响。
+Pi 也校验服务器名：只接受字母、数字、下划线和连字符（`[A-Za-z0-9_-]+`），所以带点号或空格的 id 会被拒绝写入，而不是写进去等 Pi 跳过。字段不合法（例如 `type: "sse"`、`enabled` 不是布尔值）的条目会被 Pi 跳过并在 `/mcp` 里留下一条 config 错误，其余条目照常加载——坏条目的表现是「列表里少一个服务器」，不是整份配置读不动。
+
+`exposure`、`toolExposure`、`timeout`、`enabled`、`oauth` 这几个键 Pi 自己的工具也会写（`/mcp` 管理命令，或 `pi mcp add --oauth-client-*`），而 CC Switch 的表单里没有对应控件，所以按覆盖式继承处理：CC Switch 里没有这个键就保留配置文件中的已有值，有就以 CC Switch 为准。`enabled` 的区别是它不会随「从应用导入」进入共享的 `server_config`——其他客户端会透传未知键，Pi 专属的开关不该跟着漏出去。
+
+CC Switch 也不会把自己存的服务器描述写进 Pi 的 `description`。那个字段会进模型上下文（system prompt 的 `mcp_servers` 段和 tool search 排序），而 Pi 在没有它时用服务器自己 instructions 的第一句兜底。要设就在 Pi 侧设（`pi mcp add --description` 或直接编辑文件），投影会保留。
 
 目标文件不可解析时报错，不进行覆盖；Pi 的配置目录不存在时静默无操作，也不创建任何文件或目录。条目里允许出现明文 Key（`headers`/`env`/`oauth`），因此该文件按 private（Unix 0600）权限写入；`auth.json`（Pi 模型登录）与 `mcp-auth.json`（MCP 的 OAuth Token）都不读不写，删除 MCP 服务器也不清理 Pi 的 OAuth 凭据与工具清单缓存。
 
@@ -69,6 +73,7 @@ Pi 从 0.99.0 起内置 MCP 支持，读全局 `<agent dir>/mcp.json`。CC Switc
 - Pi 运行时内置供应商与内置模型目录的复制
 - 完整 `compat`、`modelOverrides` 和费用编辑器；思考档位只提供 Pi 原生 `thinkingLevelMap` 的轻量入口
 - 相对会话目录的全局猜测
-- 项目级 `.pi/mcp.json`，以及 Pi 侧 MCP 修改的双向同步（不读回 Pi 对托管条目的改动、不做冲突检测；唯一例外是上面那条 Pi 专属字段的继承规则，它只决定写出时的默认值，不会把 Pi 侧的值写回 CC Switch）
+- 项目级 `.pi/mcp.json`，以及 Pi 侧 MCP 修改的双向同步（不读回 Pi 对托管条目的改动、不做冲突检测；唯一例外是上面那条合并规则，Pi 专属字段在写出时以文件为准，但不会把 Pi 侧的值写回 CC Switch）
+- Pi 0.99.2 起把只在 `-` 和 `_` 上不同的两个服务器名视为同一个（后一个被拒），CC Switch 不做这项前置校验：两条都勾选时面板显示两个已启用，Pi 只加载其中一个
 
 Pi 发布新版本时，通过正常开发和验收重新运行供应商、提示词、Skills 和 Sessions 契约测试。没有进入产品界面的上游字段不应仅为了“覆盖完整”而扩展后端。
