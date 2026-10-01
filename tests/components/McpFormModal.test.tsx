@@ -393,6 +393,7 @@ type = "stdio"
       codex: false,
       gemini: false,
       grokbuild: false,
+      ohmypi: false,
       mcode: false,
     });
     expect(onSave).toHaveBeenCalledTimes(1);
@@ -446,6 +447,7 @@ type = "stdio"
       opencode: false,
       openclaw: false,
       hermes: false,
+      ohmypi: false,
       mcode: false,
     });
     expect(onSave).toHaveBeenCalledTimes(1);

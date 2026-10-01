@@ -12,6 +12,7 @@ export type AppType =
   | "openclaw"
   | "hermes"
   | "pi"
+  | "ohmypi"
   | "mcode";
 
 /** Skill 应用启用状态 */
@@ -25,6 +26,7 @@ export interface SkillApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  ohmypi: boolean;
   mcode?: boolean;
 }
 

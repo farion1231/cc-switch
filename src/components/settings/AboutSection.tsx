@@ -75,6 +75,7 @@ const TOOL_NAMES = [
   "openclaw",
   "hermes",
   "pi",
+  "ohmypi",
   "mcode",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
@@ -166,6 +167,8 @@ npm i -g openclaw@latest
 ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest
 # MiniMax Code
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
 
@@ -185,6 +188,8 @@ npm i -g openclaw@latest
 ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest
 # MiniMax Code
 ${MCODE_WINDOWS_INSTALL_COMMAND}`;
 
@@ -201,6 +206,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  ohmypi: "Oh My Pi",
   mcode: "MiniMax Code",
 };
 
@@ -219,6 +225,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   openclaw: "openclaw",
   hermes: "hermes",
   pi: "pi",
+  ohmypi: "ohmypi",
   mcode: "mcode",
 };
 

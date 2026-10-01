@@ -167,6 +167,7 @@ command = "say"
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                ohmypi: false,
                 mcode: false,
             },
             description: None,
@@ -1475,6 +1476,7 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
             .providers
             .insert("official-provider".to_string(), official);
     }
+
     let state = create_test_state_with_config(&initial_config).expect("create test state");
     ProviderService::switch(&state, AppType::Codex, "official-provider")
         .expect("switch to official provider");
@@ -1576,6 +1578,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                ohmypi: false,
                 mcode: false,
             },
             description: None,
@@ -1638,6 +1641,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 grokbuild: false,
                 opencode: false,
                 hermes: false,
+                ohmypi: false,
                 mcode: false,
             },
             description: None,

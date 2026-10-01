@@ -52,6 +52,8 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+
+import { OhMyPiProviderPreset } from "@/config/ohmypiProviderPresets.ts";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -81,6 +83,7 @@ import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { OhMyPiProviderForm } from "./OhMyPiProviderForm.tsx";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
@@ -129,7 +132,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | OhMyPiProviderPreset;
 };
 
 function getPresetProviderType(
@@ -283,6 +287,9 @@ export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "mcode") return <McodeProviderForm {...props} />;
   if (props.appId === "pi") {
     return <PiProviderForm {...props} />;
+  }
+  if (props.appId === "ohmypi") {
+    return <OhMyPiProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {
     return <ClaudeDesktopProviderForm {...props} />;

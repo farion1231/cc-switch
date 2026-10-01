@@ -48,6 +48,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { useOhMyPiCurrentState } from "@/lib/query/ohmypi";
 import { useDirectProviderId } from "@/lib/query/proxy";
 import { isProxyAppId } from "@/config/appConfig";
 
@@ -229,6 +230,19 @@ export function ProviderList({
       return piCurrentState?.enabledProviderIds.includes(provider.id) ?? false;
     },
     [isPiAuthoritativeStateReady, piCurrentState],
+  );
+  const { data: ohmypiCurrentState, isSuccess: isOhMyPiCurrentStateSuccess } =
+    useOhMyPiCurrentState(appId === "ohmypi");
+  const isOhMyPiAuthoritativeStateReady =
+    appId !== "ohmypi" || isOhMyPiCurrentStateSuccess;
+  const isOhMyPiProviderInConfig = useCallback(
+    (provider: Provider): boolean => {
+      if (!isOhMyPiAuthoritativeStateReady) return false;
+      return (
+        ohmypiCurrentState?.enabledProviderIds.includes(provider.id) ?? false
+      );
+    },
+    [isOhMyPiAuthoritativeStateReady, ohmypiCurrentState],
   );
 
   // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
@@ -475,7 +489,9 @@ export function ProviderList({
                 isInConfig={
                   appId === "pi"
                     ? isPiProviderInConfig(provider)
-                    : isProviderInConfig(provider.id)
+                    : appId === "ohmypi"
+                      ? isOhMyPiProviderInConfig(provider)
+                      : isProviderInConfig(provider.id)
                 }
                 isOmo={isOmo}
                 isOmoSlim={isOmoSlim}
@@ -525,7 +541,8 @@ export function ProviderList({
                         : false
                 }
                 isStateChangeProtected={
-                  appId === "pi" && !isPiAuthoritativeStateReady
+                  (appId === "pi" && !isPiAuthoritativeStateReady) ||
+                  (appId === "ohmypi" && !isOhMyPiAuthoritativeStateReady)
                 }
                 onSetAsDefault={
                   onSetAsDefault
