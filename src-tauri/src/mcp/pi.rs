@@ -32,10 +32,20 @@ const STDIO_FIELDS: [&str; 4] = ["command", "args", "env", "cwd"];
 /// `OVERRIDE_FIELDS`).
 const HTTP_FIELDS: [&str; 2] = ["url", "headers"];
 /// Keys Pi's own tooling writes as well, so CC Switch overrides them only when its spec carries a
-/// value: `oauth` from `pi mcp add --oauth-client-*`, and the settings Pi's `/mcp` manager edits.
-/// Every other key is left as the file holds it, so `description`, `auth`, and any field a later Pi
-/// release adds survive without a change to this list.
-const OVERRIDE_FIELDS: [&str; 5] = ["oauth", "exposure", "toolExposure", "timeout", "enabled"];
+/// value: `oauth` from `pi mcp add --oauth-client-*`, `description` from `pi mcp add --description`,
+/// and the settings Pi's `/mcp` manager edits. Every other key is left as the file holds it, so
+/// `auth` and any field a later Pi release adds survive without a change to this list.
+///
+/// Only the spec counts here. The `description` CC Switch keeps on the row for its own server list
+/// is separate metadata and is never written to any App's config.
+const OVERRIDE_FIELDS: [&str; 6] = [
+    "oauth",
+    "description",
+    "exposure",
+    "toolExposure",
+    "timeout",
+    "enabled",
+];
 
 /// Fields dropped from the file's entry before the spec's values go on: both transports' connection
 /// fields, plus `type`. Dropping both halves on every write is what keeps a transport switch from
@@ -160,11 +170,11 @@ fn unified_spec(spec: &Value) -> Value {
 
 /// Builds the entry written to Pi from the file's current entry and CC Switch's spec.
 ///
-/// The file's entry is the base, so a key CC Switch does not write (Pi's `description`, an `auth`
-/// block, an `oauth` registration from `pi mcp add`, or a field a later Pi release introduces)
-/// survives a rewrite untouched. The connection half is dropped, then the spec's own
-/// values go on top: the transport fields for the transport the spec selects, plus
-/// `OVERRIDE_FIELDS`. An entry carrying both `command` and `url` is written as HTTP.
+/// The file's entry is the base, so a key CC Switch does not write (an `auth` block, an `oauth`
+/// registration from `pi mcp add`, or a field a later Pi release introduces) survives a rewrite
+/// untouched. The connection half is dropped, then the spec's own values go on top: the transport
+/// fields for the transport the spec selects, plus `OVERRIDE_FIELDS`. An entry carrying both
+/// `command` and `url` is written as HTTP.
 fn outbound_entry(spec: &Value, previous: Option<&Value>) -> Value {
     let mut entry = previous
         .and_then(Value::as_object)
@@ -314,8 +324,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
 mod tests {
     use super::*;
 
-    /// A fresh entry takes the transport fields and the settings CC Switch holds; keys only the
-    /// spec carries (adapter metadata) and `type` are dropped.
+    /// A fresh entry takes the transport fields, the settings CC Switch holds, and the Pi fields the
+    /// spec carries. Everything else the spec carries is dropped: `auth` and other keys only Pi
+    /// writes, a field a later Pi release adds, and adapter metadata from another client. `type` is
+    /// dropped with them.
+    ///
+    /// This is what an entry loses when Pi's checkbox goes off and back on: there is no entry in the
+    /// file left to inherit from, so only the keys CC Switch knows how to write come back.
     #[test]
     fn outbound_entry_writes_the_connection_half_of_a_new_entry() {
         let stdio = json!({
@@ -327,6 +342,9 @@ mod tests {
             "exposure": "direct",
             "timeout": 5000,
             "enabled": true,
+            "description": "test",
+            "auth": {"provider": "anthropic"},
+            "futureKey": {"a": 1},
             "directTools": ["ping"],
             "lifecycle": {"start": "auto"}
         });
@@ -337,6 +355,7 @@ mod tests {
                 "args": ["server.js"],
                 "env": {"KEY": "value"},
                 "cwd": "/tmp",
+                "description": "test",
                 "exposure": "direct",
                 "timeout": 5000,
                 "enabled": true
@@ -413,6 +432,7 @@ mod tests {
             "url": "https://old.example.com/mcp",
             "headers": {"Authorization": "Bearer old"},
             "oauth": {"clientId": "registered-in-pi"},
+            "description": "set in Pi",
             "exposure": "deferred"
         });
 
@@ -423,6 +443,7 @@ mod tests {
                     "command": "node",
                     "args": ["server.js"],
                     "oauth": {"clientId": "from-cc-switch"},
+                    "description": "set in CC Switch",
                     "exposure": "direct"
                 }),
                 Some(&previous)
@@ -431,9 +452,10 @@ mod tests {
                 "command": "node",
                 "args": ["server.js"],
                 "oauth": {"clientId": "from-cc-switch"},
+                "description": "set in CC Switch",
                 "exposure": "direct"
             }),
-            "the HTTP half goes and the spec's oauth and exposure win"
+            "the HTTP half goes and the spec's oauth, description and exposure win"
         );
     }
 

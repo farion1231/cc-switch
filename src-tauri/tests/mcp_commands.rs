@@ -1627,7 +1627,8 @@ fn pi_projection_keeps_fields_pi_owns() {
                 "auth": {"provider": "anthropic"},
                 "oauth": {"clientId": "abc", "clientName": "Claude Code"},
                 "timeout": 30,
-                "enabled": false
+                "enabled": false,
+                "futureKey": {"a": 1}
             }}
         }))
         .unwrap(),
@@ -1652,7 +1653,8 @@ fn pi_projection_keeps_fields_pi_owns() {
         "auth": {"provider": "anthropic"},
         "oauth": {"clientId": "abc", "clientName": "Claude Code"},
         "timeout": 30,
-        "enabled": false
+        "enabled": false,
+        "futureKey": {"a": 1}
     });
     assert_eq!(read_pi_mcp()["mcpServers"]["managed"], expected);
 
@@ -1668,6 +1670,7 @@ fn pi_projection_keeps_fields_pi_owns() {
             json!({
                 "command": "node",
                 "args": ["s.js"],
+                "description": "set in CC Switch",
                 "oauth": {"clientId": "from-cc-switch"},
                 "timeout": 9000,
                 "toolExposure": {"ping": "direct"}
@@ -1681,13 +1684,56 @@ fn pi_projection_keeps_fields_pi_owns() {
         json!({
             "command": "node",
             "args": ["s.js"],
-            "description": "Search the product documentation",
+            "description": "set in CC Switch",
             "auth": {"provider": "anthropic"},
             "oauth": {"clientId": "from-cc-switch"},
             "timeout": 9000,
             "toolExposure": {"ping": "direct"},
-            "enabled": false
+            "enabled": false,
+            "futureKey": {"a": 1}
         })
+    );
+}
+
+/// The `description` CC Switch keeps on the row is metadata for its own server list, so it never
+/// reaches Pi. A `description` written into the server's JSON config is a Pi field and is written.
+#[test]
+fn pi_projection_writes_the_spec_description_but_not_the_row_one() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+
+    let state = create_test_state().expect("create test state");
+    let mut server = pi_server(
+        "managed",
+        json!({"command": "node", "args": ["s.js"]}),
+        true,
+    );
+    server.description = Some("Card text for the CC Switch list".to_string());
+    McpService::upsert_server(&state, server).expect("upsert");
+
+    assert!(
+        read_pi_mcp()["mcpServers"]["managed"]
+            .get("description")
+            .is_none(),
+        "row metadata must not reach Pi"
+    );
+
+    let mut server = pi_server(
+        "managed",
+        json!({
+            "command": "node",
+            "args": ["s.js"],
+            "description": "Written into Pi"
+        }),
+        true,
+    );
+    server.description = Some("Card text for the CC Switch list".to_string());
+    McpService::upsert_server(&state, server).expect("upsert with spec description");
+
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["managed"]["description"],
+        json!("Written into Pi")
     );
 }
 
