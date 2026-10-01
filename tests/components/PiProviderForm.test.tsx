@@ -1,16 +1,12 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -1246,7 +1242,7 @@ describe("PiProviderForm", () => {
     expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("");
   });
 
-  it("uses a fetched model ID without inferring its capabilities", async () => {
+  it("leaves a fetched model unknown to presets and models.dev on Pi defaults", async () => {
     const user = userEvent.setup();
     server.use(
       http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
@@ -1306,6 +1302,90 @@ describe("PiProviderForm", () => {
     expect(
       screen.queryByRole("button", { name: "pi.form.restoreModelAutofill" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("fills the capabilities of a fetched model known to models.dev", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([{ id: "gpt-5.6-sol", ownedBy: "proxy" }]),
+      ),
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: {
+              "gpt-5.6-sol": {
+                reasoning: true,
+                modalities: { input: ["text", "image"], output: ["text"] },
+                limit: { context: 400000, output: 128000 },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "autofilled-provider" },
+    });
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: { value: "Autofilled provider" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://api.example.com/v1" },
+      },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    await user.click(
+      within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "gpt-5.6-sol" }),
+    );
+
+    const modelNameInput = screen.getByLabelText("pi.form.modelName");
+    await waitFor(() => expect(modelNameInput).toHaveValue("gpt-5.6-sol"));
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
+        400000,
+      ),
+    );
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);
+    expect(screen.getByLabelText("pi.form.reasoning")).toBeChecked();
+    expect(screen.getByLabelText("pi.form.imageInput")).toBeChecked();
+    // 思考档位映射是 Pi 自己的语义，外部目录给不出，不自动生成。
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(
+      JSON.parse(configEditor.value).models[0].thinkingLevelMap,
+    ).toBeUndefined();
   });
 
   it("keeps a preset thinking map when the user changes the API", async () => {

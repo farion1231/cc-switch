@@ -63,6 +63,11 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useLatestRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import type { KnownModelMetadata } from "@/lib/modelMetadata";
+import { piPresetModelSources } from "@/config/presetModelMetadata";
+import { metadataFilledAnything } from "./modelMetadataFill";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
 import { translatePiProviderMutationError } from "@/utils/errorUtils";
@@ -285,6 +290,37 @@ function modelDraft(
     hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
   };
+}
+
+/**
+ * 选中拉取到的模型后补上已知参数：数字只补空的，推理和图片输入只往「支持」补。
+ * `thinkingLevelMap` 不补：它是 Pi 自己的档位映射，外部目录给不出。
+ */
+function fillPiModelDraft(
+  model: PiModelDraft,
+  metadata: KnownModelMetadata,
+): PiModelDraft {
+  const next = { ...model };
+  if (!model.contextWindow.trim() && metadata.contextWindow) {
+    next.contextWindow = String(metadata.contextWindow);
+    next.hasContextWindow = true;
+  }
+  if (!model.maxTokens.trim() && metadata.maxOutputTokens) {
+    next.maxTokens = String(metadata.maxOutputTokens);
+    next.hasMaxTokens = true;
+  }
+  if (metadata.reasoning === true && !model.reasoning) {
+    next.reasoning = true;
+    next.hasReasoning = true;
+  }
+  if (
+    metadata.inputModalities?.includes("image") &&
+    !supportsImageInput(model.input)
+  ) {
+    next.input = withImageInput(model.input, true);
+    next.hasInput = true;
+  }
+  return next;
 }
 
 function newModel(): PiModelDraft {
@@ -858,6 +894,27 @@ export function PiProviderForm({
           : model,
       ),
     );
+  };
+
+  const commitModelsRef = useLatestRef(commitModels);
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: piPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+
+  // 选中拉取到的模型：改 ID，再补上它已知的窗口、输出上限、推理和图片输入。
+  const selectFetchedModelId = (key: string, id: string) => {
+    changeModelId(key, id);
+    fillModelMetadata(id, (metadata) => {
+      const current = modelsRef.current.find((model) => model.key === key);
+      if (current?.id !== id) return false;
+      const filled = fillPiModelDraft(current, metadata);
+      if (!metadataFilledAnything(current, filled)) return false;
+      return commitModelsRef.current(
+        modelsRef.current.map((model) => (model.key === key ? filled : model)),
+      );
+    });
   };
 
   const updateThinkingLevelMap = (
@@ -1578,7 +1635,9 @@ export function PiProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) => changeModelId(model.key, id)}
+                                onSelect={(id) =>
+                                  selectFetchedModelId(model.key, id)
+                                }
                               />
                             )}
                           </div>

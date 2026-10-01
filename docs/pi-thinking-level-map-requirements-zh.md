@@ -8,9 +8,9 @@
 模型能力分为两条互不混用的路径：
 
 - Pi 供应商预设由 CC Switch 维护完整模型配置，选择后可以直接保存。
-- 自定义供应商和“获取模型列表”只帮助填写模型 ID，不自动推断模型能力。
+- 自定义供应商从“获取模型列表”选中模型时，按 [Pi 前端设计指南 4.5](./pi-frontend-uiux-guidelines-zh.md) 的规则从同地址预设和 models.dev 补全 `reasoning`、`input`、`contextWindow`、`maxTokens`；`thinkingLevelMap` 不自动生成。
 
-当前版本不建设面向自定义供应商的运行时模型数据库，也不从 Pi、models.dev、oh-my-pi 或其他服务下载数据。外部资料只用于开发时人工核对预设。
+预设里的思考映射仍只在开发时人工核对后写入，运行时不从外部服务下载映射。
 
 这项功能不修改数据库 Schema，不参与显式供应商同步，也不管理 Pi 的默认供应商、默认模型、`auth.json`、路由、故障转移或插件。
 
@@ -80,13 +80,13 @@ type PiThinkingLevelMap = Partial<Record<PiThinkingLevel, string | null>>;
 
 - 模型 ID 写入表单。
 - 显示名称在仍为空时同步为模型 ID，用户可以修改。
-- `reasoning`、`input`、`contextWindow`、`maxTokens` 和 `thinkingLevelMap` 不从本地目录或网络自动填写。
-- 上下文长度和最大输出 Token 必须填写正数后才能保存。
-- “支持扩展思考”和“支持图片输入”由用户明确选择；默认分别为关闭和仅文本。
+- 手动输入的模型 ID 不补全任何能力。从上游模型列表选中时，按设计指南 4.5 补全 `reasoning`、`input`、`contextWindow`、`maxTokens`，只补空字段、只往“支持”方向补，并提示用户核对；`thinkingLevelMap` 不自动填写。
+- 上下文长度和最大输出 Token 必须是正数才能保存。
+- “支持扩展思考”和“支持图片输入”默认分别为关闭和仅文本，用户可以随时修改。
 - 开启扩展思考后才显示思考档位编辑器。
 - 未填写 `thinkingLevelMap` 时由 Pi 使用原生默认档位；用户仍可在表单或配置 JSON 中写入字符串、`null`、稀疏映射或 `{}`。
 
-界面不显示“自动值”“已覆盖自动值”或“恢复自动值”，因为自定义模型不存在后台推断值。
+界面不显示“自动值”“已覆盖自动值”或“恢复自动值”：补进来的值与手填值没有区别，不保留来源状态。
 
 ## 5. 配置 JSON 与旧配置
 
@@ -104,7 +104,7 @@ type PiThinkingLevelMap = Partial<Record<PiThinkingLevel, string | null>>;
 - 每个预设模型都有完整的名称、思考能力、输入类型、上下文长度和最大输出 Token。
 - 每个推理预设模型都显式拥有合法 `thinkingLevelMap`。
 - 所有 GPT-5.6 Sol 预设均使用 `272000` 上下文。
-- 选择自定义或拉取到的已知模型 ID 时不会自动注入能力或思考映射。
+- 手动输入模型 ID 不补全能力；从上游列表选中时只补空字段，不生成思考映射，查不到时保持默认值。
 - 自定义模型缺少名称、上下文长度或最大输出 Token 时不能保存，并聚焦错误字段。
 - JSON 往返不丢未知字段或改变思考映射语义。
 
