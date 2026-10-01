@@ -90,6 +90,25 @@ pub(crate) fn output_item_done(output_index: u32, item: &Value) -> Bytes {
     )
 }
 
+/// Emit the minimal remote-compaction v2 stream Codex consumes: exactly one
+/// completed compaction item followed by `response.completed`.
+pub(crate) fn compaction_completed(response: &Value) -> Bytes {
+    let Some(item) = response
+        .get("output")
+        .and_then(Value::as_array)
+        .and_then(|output| output.first())
+    else {
+        return Bytes::new();
+    };
+
+    let item_done = output_item_done(0, item);
+    let completed = response_completed(response);
+    let mut bytes = Vec::with_capacity(item_done.len() + completed.len());
+    bytes.extend_from_slice(&item_done);
+    bytes.extend_from_slice(&completed);
+    Bytes::from(bytes)
+}
+
 // ---------------------------------------------------------------------------
 // Assistant message (text) lifecycle
 // ---------------------------------------------------------------------------
@@ -395,5 +414,29 @@ mod tests {
             .contains("\"type\":\"response.function_call_arguments.delta\""));
         assert!(body(&function_call_arguments_done(1, "fc_x", "{\"a\":1}"))
             .contains("\"arguments\":\"{\\\"a\\\":1}\""));
+    }
+
+    #[test]
+    fn compaction_stream_has_one_item_done_then_completed() {
+        let response = json!({
+            "id": "resp_compact",
+            "status": "completed",
+            "output": [{
+                "type": "compaction",
+                "encrypted_content": "cc-switch-compaction-v1:abc"
+            }]
+        });
+
+        let output = body(&compaction_completed(&response));
+        assert_eq!(
+            output.matches("event: response.output_item.done").count(),
+            1
+        );
+        assert_eq!(output.matches("\"type\":\"compaction\"").count(), 2);
+        assert_eq!(output.matches("event: response.completed").count(), 1);
+        assert!(
+            output.find("response.output_item.done").unwrap()
+                < output.find("response.completed").unwrap()
+        );
     }
 }
