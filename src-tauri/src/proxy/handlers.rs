@@ -85,7 +85,17 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// Only serves the catalog when the live config.toml still references the
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+///
+/// Claude Code 的模型发现（`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`）也打到这里：
+/// 按 [`is_claude_model_discovery`] 认出来，返回 Anthropic 形状的 Stack 模型列表。
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ProxyError> {
+    if is_claude_model_discovery(&uri, &headers) {
+        return Ok(Json(claude_model_discovery(&state)));
+    }
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {
@@ -113,6 +123,113 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         json!({"models": []})
     };
     Ok(Json(catalog))
+}
+
+// ============================================================================
+// Stack 模型
+// ============================================================================
+
+/// Claude Code 的模型发现请求：`GET /v1/models?limit=1000`，经 Anthropic SDK 发出，带
+/// `anthropic-version`。Codex 取目录时两者都没有（它带的是 `client_version`）。
+fn is_claude_model_discovery(uri: &axum::http::Uri, headers: &axum::http::HeaderMap) -> bool {
+    if headers.contains_key("anthropic-version") {
+        return true;
+    }
+    let query = uri.query().unwrap_or_default();
+    let has = |name: &str| {
+        query
+            .split('&')
+            .any(|pair| pair.split('=').next() == Some(name))
+    };
+    has("limit") && !has("client_version")
+}
+
+/// Claude Code 的 Stack 模型列表（Anthropic 形状）。只读数据库和 `live-state.json`，不做网络
+/// 请求：客户端只等 3 秒。不在代理模式、名单为空时返回空列表。
+fn claude_model_discovery(state: &ProxyState) -> Value {
+    let models = crate::mode::stack::claude_published_now(&state.db).unwrap_or_else(|error| {
+        log::warn!("[Claude] 读取 Stack 模型失败，返回空列表: {error}");
+        Vec::new()
+    });
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|model| {
+            json!({
+                "type": "model",
+                "id": model.id,
+                "display_name": model.display_name,
+                "description": model.description,
+            })
+        })
+        .collect();
+    json!({
+        "data": data,
+        "has_more": false,
+    })
+}
+
+/// Stack 模型（`mode::stack`）：请求带保留前缀的模型 id 时，查出 Stack 里的那一家，把请求体的
+/// `model` 换成上游名。解不出来（成员已移除、供应商已删除、key 没登记）就按客户端的协议
+/// 直接返回错误，不回落到默认路由。
+///
+/// 只对 Claude Code 和 Codex 生效：同一个 handler 也服务 Claude Desktop、Grok Build，
+/// 它们的模型名不解码。普通模型名不读任何状态，路由请求的路径不变。
+///
+/// `Err` 是在进入路由之前就拒绝的请求，直接返回给客户端（装箱：`Response` 太大）。
+fn resolve_stack_target(
+    state: &ProxyState,
+    app_type: &AppType,
+    body: &mut Value,
+) -> Result<Option<crate::mode::stack::StackTarget>, Box<axum::response::Response>> {
+    use crate::mode::stack::{self, Decoded, Resolved};
+
+    let Some(model) = body.get("model").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if matches!(stack::decode(app_type, model), Decoded::Plain) {
+        return Ok(None);
+    }
+    let model = model.to_string();
+    let resolved = stack::resolve(
+        &state.db,
+        &crate::live::engine::DeviceStore::for_device(),
+        app_type,
+        &model,
+    )
+    .map_err(|error| Box::new(ProxyError::DatabaseError(error.to_string()).into_response()))?;
+    match resolved {
+        Resolved::Plain => Ok(None),
+        Resolved::Hit(target) => {
+            body["model"] = Value::String(target.upstream_model.clone());
+            Ok(Some(*target))
+        }
+        Resolved::Miss(miss) => {
+            let message = miss.message(&model);
+            log::warn!("[{}] {message}", app_type.as_str());
+            let body = stack_miss_body(app_type, &message);
+            Err(Box::new(
+                (StatusCode::BAD_REQUEST, Json(body)).into_response(),
+            ))
+        }
+    }
+}
+
+/// Stack 模型解不出来时的错误体：Claude 用 Anthropic 的错误信封，Codex 用 OpenAI 的。
+fn stack_miss_body(app_type: &AppType, message: &str) -> Value {
+    match app_type {
+        AppType::Claude => json!({
+            "type": "error",
+            "error": { "type": "invalid_request_error", "message": message },
+        }),
+        _ => json!({
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "param": "model",
+                "code": "model_not_found",
+            }
+        }),
+    }
 }
 
 // ============================================================================
@@ -181,11 +298,23 @@ async fn handle_messages_for_app(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
+        Ok(stack) => stack,
+        Err(rejected) => return Ok(*rejected),
+    };
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        stack,
+    )
+    .await?;
 
     let raw_endpoint = uri
         .path_and_query()
@@ -774,11 +903,23 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    let stack = match resolve_stack_target(&state, &AppType::Codex, &mut body) {
+        Ok(stack) => stack,
+        Err(rejected) => return Ok(*rejected),
+    };
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        stack,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -824,6 +965,22 @@ pub async fn handle_chat_completions(
     .await
 }
 
+/// Responses 的 WebSocket 握手（GET 升级请求）：本地代理只讲 HTTP/SSE，回 426。Codex 内置
+/// 的 openai 默认先连 WebSocket，握手拿到 426 就在本会话里改走 HTTP，其它失败要把重试
+/// 用完才回退。
+pub async fn handle_responses_websocket() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::UPGRADE_REQUIRED,
+        Json(json!({
+            "error": {
+                "type": "invalid_request_error",
+                "code": "websocket_not_supported",
+                "message": "CC Switch local routing does not support Responses over WebSocket; use HTTP",
+            }
+        })),
+    )
+}
+
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,
@@ -864,11 +1021,23 @@ async fn handle_responses_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
+        Ok(stack) => stack,
+        Err(rejected) => return Ok(*rejected),
+    };
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        stack,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
@@ -876,6 +1045,7 @@ async fn handle_responses_for_app(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let compaction_request = codex_tool_context.is_compaction_request();
     // Captured before `body` is moved into the forwarder: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
@@ -933,6 +1103,17 @@ async fn handle_responses_for_app(
         .await;
     }
 
+    // 原生 Responses 第三方的压缩回合：上游只会回普通消息，补上 Codex 要的那个
+    // compaction 条目（请求侧已在 forwarder 改成摘要回合，见 `codex_compaction`）。
+    // 压缩回合不带工具，没有要还原的函数名，所以排在 xAI 改写之前。
+    if compaction_request
+        && matches!(app_type, AppType::Codex)
+        && !super::providers::is_codex_official_provider(&ctx.provider)
+    {
+        return handle_codex_native_compaction_response(response, &ctx, &state, connection_guard)
+            .await;
+    }
+
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
@@ -955,6 +1136,58 @@ async fn handle_responses_for_app(
         connection_guard,
     )
     .await
+}
+
+/// 在上游 SSE 里补发或改写事件的流式响应：响应体和上游的不一样长了，除了逐跳头还要去掉
+/// Content-Length 等实体头，否则客户端读到上游声明的长度就停，补上的事件一个都收不到。
+/// （SSE 路径请求上游时强制 `accept-encoding: identity`，去掉 Content-Encoding 也安全。）
+fn rewritten_sse_response_builder(
+    status: StatusCode,
+    upstream_headers: &axum::http::HeaderMap,
+) -> axum::http::response::Builder {
+    let mut headers = upstream_headers.clone();
+    strip_entity_headers_for_rebuilt_body(&mut headers);
+    strip_hop_by_hop_response_headers(&mut headers);
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in &headers {
+        builder = builder.header(key, value);
+    }
+    builder
+}
+
+async fn handle_codex_native_compaction_response(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    // 错误体和非流式响应照常透传：Codex 的压缩请求总是流式，错误交给它按原样重试。
+    if !status.is_success() || !response.is_sse() {
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    let builder = rewritten_sse_response_builder(status, response.headers());
+
+    let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
+        response.bytes_stream(),
+    );
+    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+    let logged_stream = create_logged_passthrough_stream(
+        compaction_stream,
+        ctx.tag,
+        usage_collector,
+        ctx.streaming_timeout_config(),
+        connection_guard,
+    );
+
+    builder
+        .body(axum::body::Body::from_stream(logged_stream))
+        .map_err(|e| {
+            log::error!("[{}] 构建压缩回合流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}"))
+        })
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -1018,8 +1251,16 @@ async fn handle_codex_standalone_passthrough(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        None,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, canonical_endpoint);
 
     let forwarder = ctx.create_forwarder(&state);
@@ -1091,11 +1332,24 @@ async fn handle_responses_compact_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    // 压缩请求也带着客户端选中的模型：不解码的话，会带着前缀落到默认路由。
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
+        Ok(stack) => stack,
+        Err(rejected) => return Ok(*rejected),
+    };
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        stack,
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
@@ -1203,13 +1457,7 @@ async fn handle_codex_xai_native_responses_rewrite(
     }
 
     if response.is_sse() {
-        let mut response_headers = response.headers().clone();
-        strip_hop_by_hop_response_headers(&mut response_headers);
-
-        let mut builder = axum::response::Response::builder().status(status);
-        for (key, value) in &response_headers {
-            builder = builder.header(key, value);
-        }
+        let builder = rewritten_sse_response_builder(status, response.headers());
 
         let restore_stream =
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
@@ -2099,9 +2347,17 @@ pub async fn handle_gemini(
     };
 
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
-        .await?
-        .with_model_from_uri(&uri);
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Gemini,
+        "Gemini",
+        "gemini",
+        None,
+    )
+    .await?
+    .with_model_from_uri(&uri);
 
     // 提取完整的路径和查询参数
     let endpoint = uri
@@ -2857,8 +3113,8 @@ mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        responses_sse_to_response_value, rewritten_sse_response_builder,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use bytes::Bytes;
@@ -2866,6 +3122,31 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    /// 补发了压缩条目的 SSE 比上游声明的长：留着上游的 Content-Length，客户端读到那个
+    /// 长度就停，补上的 compaction 条目和 response.completed 都收不到。
+    #[test]
+    fn rewritten_sse_responses_drop_stale_entity_headers() {
+        use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+        let mut upstream = HeaderMap::new();
+        for (name, value) in [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CONTENT_LENGTH, "421"),
+            (header::CONNECTION, "keep-alive"),
+        ] {
+            upstream.insert(name, HeaderValue::from_static(value));
+        }
+        upstream.insert("x-request-id", HeaderValue::from_static("req_1"));
+
+        let response = rewritten_sse_response_builder(StatusCode::OK, &upstream)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let headers = response.headers();
+        assert!(headers.get(header::CONTENT_LENGTH).is_none());
+        assert!(headers.get(header::CONNECTION).is_none());
+        assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
+        assert_eq!(headers["x-request-id"], "req_1");
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
@@ -3601,5 +3882,186 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+}
+
+#[cfg(test)]
+mod stack_tests {
+    //! Stack 模型的入口：解不出来的带前缀 id 按客户端协议报错，不回落到默认路由；
+    //! `/v1/models` 按请求方返回各自的形状。
+    use super::*;
+    use crate::database::Database;
+    use std::sync::Arc;
+
+    fn proxy_state() -> ProxyState {
+        ProxyState::for_test(Arc::new(Database::memory().expect("memory db")))
+    }
+
+    fn post(path: &str, model: &str) -> axum::extract::Request {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                json!({ "model": model, "messages": [], "input": [] }).to_string(),
+            ))
+            .unwrap()
+    }
+
+    async fn json_of(response: axum::response::Response) -> (StatusCode, Value) {
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn unresolvable_stacked_ids_are_rejected_in_the_clients_protocol() {
+        // 名单为空、没有任何供应商：回落到默认路由的话会报「没有供应商」，而不是 400。
+        let state = proxy_state();
+
+        let response = handle_messages(
+            State(state.clone()),
+            post("/v1/messages", "ccs-claude-kimi--kimi-k3"),
+        )
+        .await
+        .expect("response");
+        let (status, body) = json_of(response).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["type"], "error");
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("ccs-claude-kimi--kimi-k3"));
+
+        for response in [
+            handle_responses(
+                State(state.clone()),
+                post("/v1/responses", "ccs-kimi/kimi-k3"),
+            )
+            .await
+            .expect("responses"),
+            handle_responses_compact(
+                State(state.clone()),
+                post("/v1/responses/compact", "ccs-kimi/kimi-k3"),
+            )
+            .await
+            .expect("compact"),
+            handle_chat_completions(
+                State(state.clone()),
+                post("/v1/chat/completions", "ccs-kimi/kimi-k3"),
+            )
+            .await
+            .expect("chat"),
+        ] {
+            let (status, body) = json_of(response).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["error"]["type"], "invalid_request_error");
+            assert_eq!(body["error"]["code"], "model_not_found");
+        }
+
+        // 普通模型名照旧走代理路由（这里没有供应商，所以是路由那边的错误）。
+        let routed = handle_messages(
+            State(state.clone()),
+            post("/v1/messages", "claude-sonnet-5"),
+        )
+        .await;
+        assert!(routed.is_err());
+        let routed = handle_grokbuild_responses(
+            State(state),
+            post("/grokbuild/v1/responses", "ccs-kimi/kimi-k3"),
+        )
+        .await;
+        assert!(routed.is_err(), "Grok Build model ids are not decoded");
+    }
+
+    #[tokio::test]
+    async fn stacked_requests_go_to_one_provider_without_failover_timeouts() {
+        let state = proxy_state();
+        // 应用开了故障转移、配了很短的超时，队列里还有别家。
+        let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.max_retries = 3;
+        config.non_streaming_timeout = 1;
+        config.streaming_first_byte_timeout = 1;
+        config.streaming_idle_timeout = 1;
+        state.db.update_proxy_config_for_app(config).await.unwrap();
+        let kimi = crate::provider::Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({ "env": { "ANTHROPIC_MODEL": "kimi-k3" } }),
+            None,
+        );
+        let target = crate::mode::stack::StackTarget {
+            provider: kimi,
+            upstream_model: "kimi-k3".to_string(),
+            original_model: "ccs-claude-kimi--kimi-k3".to_string(),
+        };
+        let body = json!({ "model": "kimi-k3", "messages": [] });
+
+        let ctx = RequestContext::new(
+            &state,
+            &body,
+            &axum::http::HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+            Some(target),
+        )
+        .await
+        .expect("context");
+
+        assert!(ctx.is_stack);
+        assert_eq!(
+            ctx.get_providers()
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["kimi"]
+        );
+        assert_eq!(ctx.request_model, "ccs-claude-kimi--kimi-k3");
+        assert!(!ctx.app_config.auto_failover_enabled);
+        let streaming = ctx.streaming_timeout_config();
+        assert_eq!(
+            (streaming.first_byte_timeout, streaming.idle_timeout),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn claude_model_discovery_is_told_apart_from_the_codex_catalog_probe() {
+        let uri = |text: &str| text.parse::<axum::http::Uri>().unwrap();
+        let mut anthropic = axum::http::HeaderMap::new();
+        anthropic.insert("anthropic-version", "2023-06-01".parse().unwrap());
+        let none = axum::http::HeaderMap::new();
+
+        assert!(is_claude_model_discovery(
+            &uri("/v1/models?limit=1000"),
+            &anthropic
+        ));
+        assert!(is_claude_model_discovery(&uri("/v1/models"), &anthropic));
+        assert!(is_claude_model_discovery(
+            &uri("/v1/models?limit=1000"),
+            &none
+        ));
+        assert!(!is_claude_model_discovery(
+            &uri("/v1/models?client_version=0.158.0"),
+            &none
+        ));
+        assert!(!is_claude_model_discovery(&uri("/v1/models"), &none));
+    }
+
+    #[tokio::test]
+    async fn claude_model_discovery_lists_nothing_outside_proxy_mode() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
+        let Json(body) = handle_models(
+            State(proxy_state()),
+            "/v1/models?limit=1000".parse().unwrap(),
+            headers,
+        )
+        .await
+        .expect("models");
+        assert_eq!(body, json!({ "data": [], "has_more": false }));
     }
 }

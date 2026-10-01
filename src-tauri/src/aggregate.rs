@@ -56,6 +56,158 @@ pub struct AggregateRoutes {
     pub default_target: DefaultTarget,
 }
 
+/// Whether this provider is an aggregate provider.
+pub fn is_aggregate_provider(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.aggregate_routes.as_ref())
+        .is_some()
+}
+
+/// Returns the aggregate provider's route table; profile derivation and runtime
+/// route resolution share this same error.
+fn routes_of(provider: &Provider) -> Result<&AggregateRoutes, AppError> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.aggregate_routes.as_ref())
+        .ok_or_else(|| {
+            AppError::localized(
+                "aggregate.routes_missing",
+                "聚合供应商缺少路由表",
+                "Aggregate provider is missing its route table",
+            )
+        })
+}
+
+/// Derives model specs from the slots (shared by the profile's inferenceModels
+/// and the /models endpoint). Slot IDs are generated and persisted by the
+/// frontend while editing and are used as-is here; sorting by route_id stays
+/// consistent with the existing implementation.
+pub fn aggregate_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    let routes = routes_of(provider)?;
+
+    let mut out = Vec::with_capacity(routes.slots.len());
+    for slot in &routes.slots {
+        let upstream = slot.upstream_model.trim();
+        let route_id = slot.route_id.trim();
+        // route_id is the stable routing key (the route table, DefaultTarget::SlotId
+        // and the UI all reference it), so it is never repaired — a non
+        // claude-safe ID makes Claude Desktop reject the entire inferenceModels
+        // set, so drop the slot outright and keep the remaining valid slots.
+        if upstream.is_empty() || route_id.is_empty() || !is_claude_safe_model_id(route_id) {
+            continue;
+        }
+        out.push(ResolvedModelRoute {
+            route_id: route_id.to_string(),
+            upstream_model: upstream.to_string(),
+            label_override: slot
+                .label
+                .as_deref()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string),
+            supports_1m: slot.supports_1m,
+        });
+    }
+    // Keep the incoming slot order (the UI already flattens by "provider group x
+    // tier strength" on submit) so that models from the same provider stay
+    // together in Claude Desktop's picker, ordered internally
+    // fable->opus->sonnet->haiku. **Do not** re-sort by route_id
+    // lexicographically — that interleaves models from different providers (user
+    // report 2026-09-24). Dedup is still by route_id (a duplicate keeps the
+    // first occurrence).
+    out.dedup_by(|a, b| a.route_id == b.route_id);
+
+    if out.is_empty() {
+        return Err(AppError::localized(
+            "aggregate.routes_empty",
+            "聚合供应商的路由表至少需要一个可用的模型槽位",
+            "Aggregate provider requires at least one usable model route slot",
+        ));
+    }
+
+    Ok(out)
+}
+
+/// Resolves an aggregate route: given the aggregate provider and the requested
+/// model, returns (target provider, upstream model name to rewrite to).
+/// - Slot matched -> return that slot's target and upstream model
+/// - No match -> return the default target; a SlotId default target also
+///   returns that slot's upstream model (the default slot is the default
+///   model), a ProviderId default target leaves the model unrewritten (None)
+/// - Default target also unusable -> return an explicit error (no silent
+///   degradation)
+///
+/// Strips the `[1m]` marker before lookup: once a slot enables `supports1m`,
+/// Claude Desktop appends that suffix to the model name before sending the
+/// request. Without stripping it the whole 1M variant falls through to the
+/// default target and has its model name rewritten by the target provider's own
+/// route table — "picked provider A's 1M variant, actually hit provider B's
+/// model".
+pub fn resolve_target(
+    db: &crate::database::Database,
+    app_type: &str,
+    aggregate: &Provider,
+    request_model: &str,
+) -> Result<(Provider, Option<String>), AppError> {
+    let routes = routes_of(aggregate)?;
+
+    let requested =
+        crate::claude_desktop_config::strip_one_m_suffix_for_route_lookup(request_model);
+
+    // Look up the persisted slot ID directly (the frontend generates the ID
+    // while editing and submits it with the form; it is never regenerated at
+    // runtime)
+    for slot in &routes.slots {
+        if slot.route_id == requested {
+            let target = load_provider(db, app_type, &slot.provider_id)?;
+            return Ok((target, Some(slot.upstream_model.clone())));
+        }
+    }
+
+    // No match -> default target
+    let (fallback_id, fallback_upstream) = match &routes.default_target {
+        DefaultTarget::ProviderId(id) => (id.clone(), None),
+        DefaultTarget::SlotId(slot_id) => {
+            // The slot's upstream model rides along: the default slot is the
+            // default model, and without it the forwarder would re-resolve the
+            // original request model against the target's own route table —
+            // defeating the "default slot = default model" purpose.
+            let slot = routes
+                .slots
+                .iter()
+                .find(|slot| &slot.route_id == slot_id)
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "aggregate.default_target_slot_missing",
+                        "聚合供应商的默认目标指向了不存在的槽位",
+                        "Aggregate default target points to a missing slot",
+                    )
+                })?;
+            (slot.provider_id.clone(), Some(slot.upstream_model.clone()))
+        }
+    };
+    let target = load_provider(db, app_type, &fallback_id)?;
+    Ok((target, fallback_upstream))
+}
+
+fn load_provider(
+    db: &crate::database::Database,
+    app_type: &str,
+    provider_id: &str,
+) -> Result<Provider, AppError> {
+    db.get_provider_by_id(provider_id, app_type)?
+        .ok_or_else(|| {
+            AppError::localized(
+                "aggregate.target_provider_missing",
+                "聚合供应商的目标供应商不存在",
+                "Aggregate target provider does not exist",
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,148 +524,65 @@ mod tests {
             assert_eq!(hit.1.as_deref(), Some("glm-5.3"), "{requested}");
         }
     }
-}
 
-/// Whether this provider is an aggregate provider.
-pub fn is_aggregate_provider(provider: &Provider) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.aggregate_routes.as_ref())
-        .is_some()
-}
+    #[tokio::test]
+    async fn resolve_target_slot_id_default_target_returns_slot_upstream_model() {
+        // "Default slot = default model": an unmatched request must be
+        // rewritten to the default slot's upstream model, not re-resolved
+        // against the target's own route table.
+        let db = crate::database::Database::memory().expect("db");
+        let fallback = crate::provider::Provider::with_id(
+            "p-glm".to_string(),
+            "GLM".to_string(),
+            serde_json::json!({}),
+            None,
+        );
+        db.save_provider("claude-desktop", &fallback)
+            .expect("save fallback");
 
-/// Returns the aggregate provider's route table; profile derivation and runtime
-/// route resolution share this same error.
-fn routes_of(provider: &Provider) -> Result<&AggregateRoutes, AppError> {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.aggregate_routes.as_ref())
-        .ok_or_else(|| {
-            AppError::localized(
-                "aggregate.routes_missing",
-                "聚合供应商缺少路由表",
-                "Aggregate provider is missing its route table",
-            )
-        })
-}
+        let aggregate = aggregate_with(
+            vec![slot_for(
+                "claude-sonnet-1",
+                "p-glm",
+                AggregateTier::Sonnet,
+                "glm-5.3",
+            )],
+            DefaultTarget::SlotId("claude-sonnet-1".into()),
+        );
 
-/// Derives model specs from the slots (shared by the profile's inferenceModels
-/// and the /models endpoint). Slot IDs are generated and persisted by the
-/// frontend while editing and are used as-is here; sorting by route_id stays
-/// consistent with the existing implementation.
-pub fn aggregate_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
-    let routes = routes_of(provider)?;
-
-    let mut out = Vec::with_capacity(routes.slots.len());
-    for slot in &routes.slots {
-        let upstream = slot.upstream_model.trim();
-        let route_id = slot.route_id.trim();
-        // route_id is the stable routing key (the route table, DefaultTarget::SlotId
-        // and the UI all reference it), so it is never repaired — a non
-        // claude-safe ID makes Claude Desktop reject the entire inferenceModels
-        // set, so drop the slot outright and keep the remaining valid slots.
-        if upstream.is_empty() || route_id.is_empty() || !is_claude_safe_model_id(route_id) {
-            continue;
-        }
-        out.push(ResolvedModelRoute {
-            route_id: route_id.to_string(),
-            upstream_model: upstream.to_string(),
-            label_override: slot
-                .label
-                .as_deref()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(str::to_string),
-            supports_1m: slot.supports_1m,
-        });
-    }
-    // Keep the incoming slot order (the UI already flattens by "provider group x
-    // tier strength" on submit) so that models from the same provider stay
-    // together in Claude Desktop's picker, ordered internally
-    // fable->opus->sonnet->haiku. **Do not** re-sort by route_id
-    // lexicographically — that interleaves models from different providers (user
-    // report 2026-09-24). Dedup is still by route_id (a duplicate keeps the
-    // first occurrence).
-    out.dedup_by(|a, b| a.route_id == b.route_id);
-
-    if out.is_empty() {
-        return Err(AppError::localized(
-            "aggregate.routes_empty",
-            "聚合供应商的路由表至少需要一个可用的模型槽位",
-            "Aggregate provider requires at least one usable model route slot",
-        ));
+        let miss = resolve_target(&db, "claude-desktop", &aggregate, "claude-haiku-4-5")
+            .expect("miss falls back to the default slot");
+        assert_eq!(miss.0.id, "p-glm");
+        assert_eq!(miss.1.as_deref(), Some("glm-5.3"));
     }
 
-    Ok(out)
-}
+    #[tokio::test]
+    async fn resolve_target_provider_id_default_target_leaves_model_unrewritten() {
+        // A ProviderId default target names only the provider, so the request
+        // model stays unrewritten (the target's own route table applies).
+        let db = crate::database::Database::memory().expect("db");
+        let fallback = crate::provider::Provider::with_id(
+            "p-glm".to_string(),
+            "GLM".to_string(),
+            serde_json::json!({}),
+            None,
+        );
+        db.save_provider("claude-desktop", &fallback)
+            .expect("save fallback");
 
-/// Resolves an aggregate route: given the aggregate provider and the requested
-/// model, returns (target provider, upstream model name to rewrite to).
-/// - Slot matched -> return that slot's target and upstream model
-/// - No match -> return the default target, model name unrewritten (None)
-/// - Default target also unusable -> return an explicit error (no silent
-///   degradation)
-///
-/// Strips the `[1m]` marker before lookup: once a slot enables `supports1m`,
-/// Claude Desktop appends that suffix to the model name before sending the
-/// request. Without stripping it the whole 1M variant falls through to the
-/// default target and has its model name rewritten by the target provider's own
-/// route table — "picked provider A's 1M variant, actually hit provider B's
-/// model".
-pub fn resolve_target(
-    db: &crate::database::Database,
-    app_type: &str,
-    aggregate: &Provider,
-    request_model: &str,
-) -> Result<(Provider, Option<String>), AppError> {
-    let routes = routes_of(aggregate)?;
+        let aggregate = aggregate_with(
+            vec![slot_for(
+                "claude-sonnet-1",
+                "p-glm",
+                AggregateTier::Sonnet,
+                "glm-5.3",
+            )],
+            DefaultTarget::ProviderId("p-glm".into()),
+        );
 
-    let requested =
-        crate::claude_desktop_config::strip_one_m_suffix_for_route_lookup(request_model);
-
-    // Look up the persisted slot ID directly (the frontend generates the ID
-    // while editing and submits it with the form; it is never regenerated at
-    // runtime)
-    for slot in &routes.slots {
-        if slot.route_id == requested {
-            let target = load_provider(db, app_type, &slot.provider_id)?;
-            return Ok((target, Some(slot.upstream_model.clone())));
-        }
+        let miss = resolve_target(&db, "claude-desktop", &aggregate, "claude-haiku-4-5")
+            .expect("miss falls back to the default provider");
+        assert_eq!(miss.0.id, "p-glm");
+        assert_eq!(miss.1, None);
     }
-
-    // No match -> default target
-    let fallback_id = match &routes.default_target {
-        DefaultTarget::ProviderId(id) => id.clone(),
-        DefaultTarget::SlotId(slot_id) => routes
-            .slots
-            .iter()
-            .find(|slot| &slot.route_id == slot_id)
-            .map(|slot| slot.provider_id.clone())
-            .ok_or_else(|| {
-                AppError::localized(
-                    "aggregate.default_target_slot_missing",
-                    "聚合供应商的默认目标指向了不存在的槽位",
-                    "Aggregate default target points to a missing slot",
-                )
-            })?,
-    };
-    let target = load_provider(db, app_type, &fallback_id)?;
-    Ok((target, None))
-}
-
-fn load_provider(
-    db: &crate::database::Database,
-    app_type: &str,
-    provider_id: &str,
-) -> Result<Provider, AppError> {
-    db.get_provider_by_id(provider_id, app_type)?
-        .ok_or_else(|| {
-            AppError::localized(
-                "aggregate.target_provider_missing",
-                "聚合供应商的目标供应商不存在",
-                "Aggregate target provider does not exist",
-            )
-        })
 }

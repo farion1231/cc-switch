@@ -856,17 +856,9 @@ mod tests {
     use crate::database::Database;
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
-    use crate::proxy::failover_switch::FailoverSwitchManager;
-    use crate::proxy::provider_router::ProviderRouter;
-    use crate::proxy::providers::{
-        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
-    };
-    use crate::proxy::types::{ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
-    use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
 
     #[test]
     fn format_headers_keeps_only_allowlisted_diagnostic_values() {
@@ -1017,18 +1009,7 @@ mod tests {
     }
 
     fn build_state(db: Arc<Database>) -> ProxyState {
-        ProxyState {
-            db: db.clone(),
-            config: Arc::new(RwLock::new(ProxyConfig::default())),
-            status: Arc::new(RwLock::new(ProxyStatus::default())),
-            start_time: Arc::new(RwLock::new(None)),
-            current_providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_router: Arc::new(ProviderRouter::new(db.clone())),
-            gemini_shadow: Arc::new(GeminiShadowStore::default()),
-            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
-            app_handle: None,
-            failover_manager: Arc::new(FailoverSwitchManager::new()),
-        }
+        ProxyState::for_test(db)
     }
 
     fn seed_pricing(db: &Database) -> Result<(), AppError> {

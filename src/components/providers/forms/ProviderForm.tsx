@@ -20,6 +20,7 @@ import type {
   ProviderCategory,
   ProviderMeta,
   ClaudeApiFormat,
+  ClaudeStackModel,
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
@@ -77,6 +78,14 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import {
+  claudeStackModelsFromEnv,
+  createClaudeStackModelRow,
+  normalizeClaudeStackModels,
+  type ClaudeStackModelRow,
+} from "./ClaudeStackModelsField";
+import { setClaudeOneMMarker } from "./hooks/useModelState";
+import { useSettingsQuery } from "@/lib/query";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -232,6 +241,23 @@ const normalizeCodexChatReasoningForSave = (
 
 const normalizeProviderKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+
+/**
+ * 表单里的 Stack 模型列表：行里配了就用它（空列表是用户清空了），没配是 `null`（跟着模型
+ * 映射）。
+ */
+const initialClaudeStackRows = (
+  models: ClaudeStackModel[] | undefined,
+): ClaudeStackModelRow[] | null =>
+  models ? models.map((model) => createClaudeStackModelRow(model)) : null;
+
+/** 列表的第一个模型（默认模型）写进 `ANTHROPIC_MODEL` 的样子：1M 模型带标记。 */
+const claudeStackDefaultModel = (
+  rows: ClaudeStackModel[],
+): string | undefined => {
+  const first = normalizeClaudeStackModels(rows)[0];
+  return first && setClaudeOneMMarker(first.model, first.oneM === true);
+};
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -404,6 +430,7 @@ function ProviderFormFull({
         initialData?.meta?.localProxyRequestOverrides?.body,
       ),
     );
+    setClaudeStackRows(initialClaudeStackRows(initialData?.meta?.stackModels));
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -614,6 +641,40 @@ function ProviderFormFull({
         initialData?.meta?.localProxyRequestOverrides?.body,
       ),
   );
+  // Stack 模式：Claude Code 的模型列表存在 meta.stackModels；Codex 复用模型目录。`null` 表示
+  // 没配列表，显示（后端也按它发布）模型映射里的模型，跟着映射变；动过列表才存。
+  const [claudeStackRows, setClaudeStackRows] = useState<
+    ClaudeStackModelRow[] | null
+  >(() => initialClaudeStackRows(initialData?.meta?.stackModels));
+  // 按行里实际写的映射算（和后端一样），不用 useModelState 回填过的值。
+  const claudeSettingsConfig =
+    appId === "claude" ? form.watch("settingsConfig") : "";
+  const mappedClaudeStackRows = useMemo(() => {
+    let env: Record<string, unknown> | undefined;
+    try {
+      env = asRecord(JSON.parse(claudeSettingsConfig || "{}").env);
+    } catch {
+      env = undefined;
+    }
+    return claudeStackModelsFromEnv(env).map((model) =>
+      createClaudeStackModelRow(model),
+    );
+  }, [claudeSettingsConfig]);
+  const shownClaudeStackRows = claudeStackRows ?? mappedClaudeStackRows;
+  // 列表的第一个就是默认模型：它一变（设为默认、删掉、改名），`ANTHROPIC_MODEL` 当场跟着变，
+  // 两种布局共用这份状态，切到完整表单也看得到；没动第一个就不碰。删光了也不碰。
+  const handleClaudeStackRowsChange = (rows: ClaudeStackModelRow[]) => {
+    setClaudeStackRows(rows);
+    const next = claudeStackDefaultModel(rows);
+    if (next && next !== claudeStackDefaultModel(shownClaudeStackRows)) {
+      handleModelChange("ANTHROPIC_MODEL", next);
+    }
+  };
+
+  // 设置里开了 Stack 模式时，Claude Code / Codex 的第三方供应商默认用简化面板（连接 + 模型
+  // 列表 + 高级）；可以切到完整表单，两种布局共用同一份表单状态。
+  const { data: settingsData } = useSettingsQuery();
+  const [preferFullForm, setPreferFullForm] = useState(false);
 
   const {
     codexAuth,
@@ -814,6 +875,12 @@ function ProviderFormFull({
         selectedPresetEntry?.preset.category === "official"));
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
+  const stackLayoutAvailable =
+    settingsData?.enableStackMode === true &&
+    (appId === "claude" || appId === "codex") &&
+    category !== "official" &&
+    !isCodexOfficialProvider;
+  const useStackLayout = stackLayoutAvailable && !preferFullForm;
   const requiresExplicitCodexOfficialSelection =
     isCodexOfficialProvider && !hasValidCodexOfficialSelection;
   const requiresCodexOauthLogin =
@@ -1416,7 +1483,24 @@ function ProviderFormFull({
             }),
           );
         }
-      } else if (appId === "gemini") {
+      }
+      // Stack 布局：一个模型都没有的供应商加进 Stack 后不会出现在模型选择器里。
+      if (useStackLayout) {
+        const hasNoModels =
+          appId === "claude"
+            ? normalizeClaudeStackModels(shownClaudeStackRows).length === 0
+            : normalizeCodexCatalogModelsForSave(codexCatalogModels).length ===
+                0 && !extractCodexModelName(codexConfig ?? "");
+        if (hasNoModels) {
+          issues.push(
+            t("providerForm.stackLayout.noModels", {
+              defaultValue:
+                "模型列表为空：叠加这家后，模型选择器里不会多出它的模型",
+            }),
+          );
+        }
+      }
+      if (appId === "gemini") {
         if (!geminiBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1483,6 +1567,7 @@ function ProviderFormFull({
         // The default-model field writes the top-level `model` into the TOML
         // as the user types; only when it was left empty fall back to the
         // first catalog row so "fill mapping only" keeps its old behavior.
+        // Stack 布局的 ★ 也是当场写 `model`，这里一样只补空的。
         if (
           normalizedCatalogModels.length > 0 &&
           !extractCodexModelName(normalizedCodexConfig)
@@ -1673,6 +1758,12 @@ function ProviderFormFull({
           ? "xai_oauth"
           : undefined;
 
+    // 动过列表才存；清空了存空列表（什么都不发布），和没配（跟着映射）区分开。
+    const stackModels =
+      appId === "claude" && category !== "official" && claudeStackRows
+        ? normalizeClaudeStackModels(claudeStackRows)
+        : undefined;
+
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
       // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
@@ -1781,6 +1872,7 @@ function ProviderFormFull({
         localIsFullUrl
           ? true
           : undefined,
+      stackModels,
     };
 
     if (!isClaudeCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1896,6 +1988,8 @@ function ProviderFormFull({
 
   const handlePresetChange = (value: string) => {
     setSelectedPresetId(value);
+    // Stack 模型是这家自己的：换预设后回到跟着新预设的模型映射。
+    setClaudeStackRows(null);
     if (value === "custom") {
       setActivePreset(null);
       form.reset(defaultValues);
@@ -2323,6 +2417,26 @@ function ProviderFormFull({
             }
           />
 
+          {stackLayoutAvailable && (
+            <div className="-mt-2 flex justify-end">
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs text-muted-foreground"
+                onClick={() => setPreferFullForm((value) => !value)}
+              >
+                {useStackLayout
+                  ? t("providerForm.stackLayout.fullForm", {
+                      defaultValue: "显示完整表单",
+                    })
+                  : t("providerForm.stackLayout.simpleForm", {
+                      defaultValue: "返回叠加模式的简化表单",
+                    })}
+              </Button>
+            </div>
+          )}
+
           {appId === "claude" && (
             <ClaudeFormFields
               providerId={providerId}
@@ -2399,6 +2513,9 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              variant={useStackLayout ? "stack" : "classic"}
+              stackModelRows={shownClaudeStackRows}
+              onStackModelRowsChange={handleClaudeStackRowsChange}
             />
           )}
 
@@ -2474,6 +2591,7 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              variant={useStackLayout ? "stack" : "classic"}
             />
           )}
 
@@ -2596,7 +2714,9 @@ function ProviderFormFull({
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {appId === "codex" ? (
+          {useStackLayout ? (
+            settingsConfigErrorField
+          ) : appId === "codex" ? (
             <>
               <CodexConfigEditor
                 authValue={codexAuth}

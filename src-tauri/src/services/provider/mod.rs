@@ -4,9 +4,11 @@
 
 pub(crate) mod claude_direct;
 mod claude_editor;
+pub(crate) mod codex_client_catalog;
 pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
+pub(crate) mod codex_official_models;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -2141,6 +2143,203 @@ GEMINI_TIMEOUT_MS=30000
     }
 
     #[test]
+    fn validate_aggregate_rejects_self_as_default_target() {
+        // A default target naming the aggregate itself is a self-reference
+        // just like a slot doing so
+        let provider = aggregate_provider(
+            "agg",
+            crate::aggregate::AggregateRoutes {
+                slots: vec![slot("claude-sonnet-1", "p1")],
+                default_target: crate::aggregate::DefaultTarget::ProviderId("agg".into()),
+            },
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::ClaudeDesktop, &provider)
+            .expect_err("self-referencing default target must be rejected");
+        assert_eq!(localized_key(&err), "aggregate.self_reference");
+    }
+
+    #[test]
+    #[serial]
+    fn default_target_only_reference_blocks_delete() {
+        // A provider referenced ONLY as another aggregate's default target
+        // (by provider id, not by any slot) must still be protected from
+        // deletion — deleting it would fail every unmatched request
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            state
+                .db
+                .save_provider(
+                    AppType::ClaudeDesktop.as_str(),
+                    &Provider::with_id(
+                        "target".into(),
+                        "Target".into(),
+                        claude_desktop_direct_settings(),
+                        None,
+                    ),
+                )
+                .expect("save target");
+            let agg = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-1", "p1")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("target".into()),
+                },
+            );
+            state
+                .db
+                .save_provider(AppType::ClaudeDesktop.as_str(), &agg)
+                .expect("save aggregate");
+
+            let err = ProviderService::delete(&state, AppType::ClaudeDesktop, "target")
+                .expect_err("default-target-only referenced provider must not be deletable");
+            assert_eq!(localized_key(&err), "aggregate.provider_in_use");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn default_target_only_reference_blocks_aggregate_conversion() {
+        // Reverse-nesting hole: an ordinary provider B referenced only as the
+        // default target of aggregate A must not be convertible into an
+        // aggregate (A -> B would then nest aggregates)
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            let target = Provider::with_id(
+                "target".into(),
+                "Target".into(),
+                claude_desktop_direct_settings(),
+                None,
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, target, false)
+                .expect("ordinary provider saves");
+
+            let agg = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-1", "p-glm")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("target".into()),
+                },
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, agg, false)
+                .expect("aggregate referencing an ordinary provider saves");
+
+            let converted = aggregate_provider(
+                "target",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-other", "other")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("other".into()),
+                },
+            );
+            let err =
+                ProviderService::update(&state, AppType::ClaudeDesktop, Some("target"), converted)
+                    .expect_err(
+                        "a default-target-referenced provider must not become an aggregate",
+                    );
+            assert_eq!(
+                localized_key(&err),
+                "aggregate.provider_becomes_aggregate_while_referenced"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_rejects_aggregate_as_default_target() {
+        // A default target pointing at another aggregate nests aggregates just
+        // like a slot doing so (unmatched requests fall back to it)
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            let target_agg = aggregate_provider(
+                "target-agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-1", "p-glm")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId("p-glm".into()),
+                },
+            );
+            state
+                .db
+                .save_provider(AppType::ClaudeDesktop.as_str(), &target_agg)
+                .expect("save target aggregate");
+
+            let agg = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![slot("claude-sonnet-nested", "p-glm")],
+                    default_target: crate::aggregate::DefaultTarget::ProviderId(
+                        "target-agg".into(),
+                    ),
+                },
+            );
+            let err = ProviderService::add(&state, AppType::ClaudeDesktop, agg, false)
+                .expect_err("an aggregate default target must not be another aggregate");
+            assert_eq!(localized_key(&err), "aggregate.nested_aggregate");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_trims_aggregate_route_keys_before_save() {
+        // Validation compares slot.route_id.trim(), so the stored table must
+        // hold the trimmed value too — otherwise aggregate_model_routes
+        // advertises the trimmed id while resolve_target compares the padded
+        // stored one, and requests for the advertised id fall through to the
+        // fallback.
+        with_isolated_test_home(|| {
+            let state = AppState::new(Arc::new(Database::memory().expect("in-memory database")));
+            let target = Provider::with_id(
+                "p-glm".into(),
+                "GLM".into(),
+                claude_desktop_direct_settings(),
+                None,
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, target, false)
+                .expect("ordinary provider saves");
+
+            let mut padded_slot = slot(" claude-sonnet-1 ", "p-glm");
+            padded_slot.upstream_model = " glm-5.3 ".into();
+            let agg = aggregate_provider(
+                "agg",
+                crate::aggregate::AggregateRoutes {
+                    slots: vec![padded_slot],
+                    default_target: crate::aggregate::DefaultTarget::SlotId(
+                        " claude-sonnet-1 ".into(),
+                    ),
+                },
+            );
+            ProviderService::add(&state, AppType::ClaudeDesktop, agg, false)
+                .expect("aggregate with padded keys saves");
+
+            let stored = state
+                .db
+                .get_provider_by_id("agg", AppType::ClaudeDesktop.as_str())
+                .expect("read back aggregate")
+                .expect("aggregate stored");
+            let routes = stored
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.aggregate_routes.as_ref())
+                .expect("route table stored");
+            assert_eq!(routes.slots[0].route_id, "claude-sonnet-1");
+            assert_eq!(routes.slots[0].upstream_model, "glm-5.3");
+            assert_eq!(
+                routes.default_target,
+                crate::aggregate::DefaultTarget::SlotId("claude-sonnet-1".into())
+            );
+
+            // The trimmed stored key is what resolve_target matches on
+            let hit = crate::aggregate::resolve_target(
+                &state.db,
+                AppType::ClaudeDesktop.as_str(),
+                &stored,
+                "claude-sonnet-1",
+            )
+            .expect("trimmed id resolves");
+            assert_eq!(hit.0.id, "p-glm");
+            assert_eq!(hit.1.as_deref(), Some("glm-5.3"));
+        });
+    }
+
+    #[test]
     #[serial]
     fn delete_rejects_provider_referenced_by_aggregate() {
         with_isolated_test_home(|| {
@@ -2403,7 +2602,7 @@ command = "legacy-cmd"
         })
         .await
         .expect("update proxy config");
-        crate::mode::controller::enter(&state, &AppType::Claude)
+        crate::mode::controller::enter(&state, &AppType::Claude, false)
             .await
             .expect("enter routing mode");
         let proxy_url = state
@@ -2495,7 +2694,7 @@ requires_openai_auth = true
         })
         .await
         .expect("update proxy config");
-        crate::mode::controller::enter(&state, &AppType::Codex)
+        crate::mode::controller::enter(&state, &AppType::Codex, false)
             .await
             .expect("enter routing mode");
         assert!(
@@ -3517,7 +3716,11 @@ wire_api = "responses"
                     ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
                     if mode == "proxy" {
                         runtime
-                            .block_on(crate::mode::controller::enter(state, &AppType::Codex))
+                            .block_on(crate::mode::controller::enter(
+                                state,
+                                &AppType::Codex,
+                                false,
+                            ))
                             .unwrap();
                     }
                     runtime
@@ -3558,7 +3761,11 @@ wire_api = "responses"
                     // 绑定已失效：直连下进入路由要报错让用户重新绑定，客户端文件不动。
                     if mode == "direct" {
                         let error = runtime
-                            .block_on(crate::mode::controller::enter(state, &AppType::Codex))
+                            .block_on(crate::mode::controller::enter(
+                                state,
+                                &AppType::Codex,
+                                false,
+                            ))
                             .unwrap_err();
                         assert!(error.contains("选择账号"), "{error}");
                         assert!(!crate::mode::current::is_proxy(&AppType::Codex));
@@ -3608,7 +3815,7 @@ wire_api = "responses"
                     }
                     runtime.block_on(async {
                         if mode == "direct" {
-                            crate::mode::controller::enter(state, &AppType::Codex)
+                            crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
                         }
@@ -3657,7 +3864,7 @@ wire_api = "responses"
             state.db.save_provider("codex", &current).unwrap();
             ProviderService::switch(&state, AppType::Codex, "current").unwrap();
             runtime.block_on(async {
-                crate::mode::controller::enter(&state, &AppType::Codex)
+                crate::mode::controller::enter(&state, &AppType::Codex, false)
                     .await
                     .unwrap();
                 crate::commands::remove_codex_oauth_account_with_switch_lock(
@@ -3761,7 +3968,7 @@ wire_api = "responses"
             let target = managed_codex_provider("current", "new-local-id");
             ProviderService::update(&restarted, AppType::Codex, None, target).unwrap();
             runtime.block_on(async {
-                crate::mode::controller::enter(&restarted, &AppType::Codex)
+                crate::mode::controller::enter(&restarted, &AppType::Codex, false)
                     .await
                     .unwrap();
                 assert!(
@@ -4744,7 +4951,7 @@ wire_api = "responses"
                             let mut config = state.db.get_proxy_config().await.unwrap();
                             config.listen_port = 0;
                             state.db.update_proxy_config(config).await.unwrap();
-                            crate::mode::controller::enter(state, &AppType::Codex)
+                            crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
                         });
@@ -5128,6 +5335,29 @@ impl ProviderService {
         }
     }
 
+    /// Trim the aggregate route keys (slot ids, upstream models and the
+    /// slot-id default target) so the stored table matches what validation
+    /// compared against: `aggregate_model_routes` advertises the trimmed id
+    /// while `resolve_target` compares the stored value — a padded id saved
+    /// verbatim would make requests for the advertised id fall through to
+    /// the fallback.
+    fn normalize_aggregate_route_keys(provider: &mut Provider) {
+        let Some(routes) = provider
+            .meta
+            .as_mut()
+            .and_then(|meta| meta.aggregate_routes.as_mut())
+        else {
+            return;
+        };
+        for slot in &mut routes.slots {
+            slot.route_id = slot.route_id.trim().to_string();
+            slot.upstream_model = slot.upstream_model.trim().to_string();
+        }
+        if let crate::aggregate::DefaultTarget::SlotId(id) = &mut routes.default_target {
+            *id = id.trim().to_string();
+        }
+    }
+
     /// Check whether a provider exists in live config, tolerating parse errors
     /// only for providers that are explicitly marked as DB-only.
     fn check_live_config_exists(
@@ -5320,6 +5550,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::validate_aggregate_not_nested(state, &app_type, &provider)?;
+        Self::normalize_aggregate_route_keys(&mut provider);
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
@@ -5610,7 +5841,6 @@ impl ProviderService {
 
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
-        let is_route = mode.routes_to(&provider.id);
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = if key_fields {
@@ -5631,7 +5861,7 @@ impl ProviderService {
                 &plan.edits,
                 codex_editor::KeyFields::None,
             )
-            .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider))
+            .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider))
         };
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
@@ -5686,7 +5916,6 @@ impl ProviderService {
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let set_pointer = kind == EditorSaveKind::Add;
-        let is_route = mode.routes_to(&provider.id);
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = match &edits {
@@ -5703,7 +5932,7 @@ impl ProviderService {
                 set_pointer,
             ),
         }
-        .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider));
+        .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider));
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
@@ -5736,18 +5965,15 @@ impl ProviderService {
         Err(error)
     }
 
-    /// 代理模式下保存的是路由那家（`is_route`）：按新行重写代理契约，契约没变就不碰客户端
-    /// 文件。调用方持有这个应用的切换锁。
-    fn rewrite_route_if(
-        is_route: bool,
+    /// 代理模式下存好了这一行：它是代理路由或在 Stack 名单里时按新行重写代理契约，契约没变
+    /// 就不碰客户端文件（见 [`crate::mode::controller::resync_saved_row_locked`]）。调用方
+    /// 持有这个应用的切换锁。
+    fn resync_proxy_for_saved_row(
         state: &AppState,
         app_type: &AppType,
         provider: &Provider,
     ) -> Result<(), AppError> {
-        if !is_route {
-            return Ok(());
-        }
-        futures::executor::block_on(crate::mode::controller::switch_route_locked(
+        futures::executor::block_on(crate::mode::controller::resync_saved_row_locked(
             state, app_type, provider,
         ))
         .map_err(AppError::Message)
@@ -5813,9 +6039,9 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         let mode = crate::mode::current::mode_state(&app_type);
-        let is_route = mode.routes_to(&provider.id);
         // 代理模式下 live 的关键字段是代理契约，这里只写全局改动；编辑的是代理路由那家
-        // 时，写完按新行重写契约（契约没变就不动）。直连指针那家在退出代理时写回。
+        // 或 Stack 名单里的一家时，写完按新行重写契约（契约没变就不动）。直连指针那家在
+        // 退出代理时写回。
         let key_fields = EditorSaveKind::Update
             .writes_key_fields(state, &app_type, &mode, &provider.id)?
             .then_some(claude_editor::KeyFieldWrite {
@@ -5827,7 +6053,7 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
-                .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider));
+                .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider));
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
@@ -5856,6 +6082,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::validate_aggregate_not_nested(state, &app_type, &provider)?;
+        Self::normalize_aggregate_route_keys(&mut provider);
         if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
@@ -5999,7 +6226,8 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // For other apps: 是否是直连指针那家，或代理模式下的代理路由那家。
+        // For other apps: 是否是直连指针那家。代理模式下是不是代理路由或 Stack 名单里的一家，
+        // 由同步 live 的那一步判断。
         let mode = crate::mode::current::mode_state(&app_type);
         let is_direct_current = crate::mode::current::provider_for(
             &state.db,
@@ -6008,8 +6236,6 @@ impl ProviderService {
         )?
         .as_deref()
             == Some(provider.id.as_str());
-        let is_route = mode.routes_to(&provider.id);
-        let is_current = is_direct_current || is_route;
 
         if matches!(app_type, AppType::Codex) {
             return Self::update_codex(
@@ -6017,14 +6243,13 @@ impl ProviderService {
                 &provider,
                 existing_provider.as_ref(),
                 is_direct_current,
-                is_route,
             );
         }
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        if is_current {
+        if is_direct_current || mode.is_proxy() {
             let outcome = live::sync_live_for_provider_respecting_mode(
                 state,
                 &app_type,
@@ -6050,23 +6275,18 @@ impl ProviderService {
     ///
     /// - 直连模式下编辑直连那家：先存行，再只替换 live 里的关键字段和独有字段（换托管
     ///   账号时先采纳、再清掉旧账号的登录）；写 live 失败就把行恢复原样。
-    /// - 代理模式下编辑路由那家：按新行重写代理契约（契约没变就不碰客户端文件）。
+    /// - 代理模式下先存行，编辑的是路由那家或 Stack 名单里的一家时按新行重写代理契约（见
+    ///   [`Self::resync_proxy_for_saved_row`]），写失败同样把行恢复原样。
     /// - 其余只存行。
     fn update_codex(
         state: &AppState,
         provider: &Provider,
         existing: Option<&Provider>,
         is_direct_current: bool,
-        is_route: bool,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         let mode = crate::mode::current::mode_state(&app_type);
-        let writes_live = if mode.is_proxy() {
-            is_route
-        } else {
-            is_direct_current
-        };
-        if !writes_live {
+        if !mode.is_proxy() && !is_direct_current {
             state.db.save_provider(app_type.as_str(), provider)?;
             return Ok(true);
         }
@@ -6076,7 +6296,7 @@ impl ProviderService {
 
         state.db.save_provider(app_type.as_str(), provider)?;
         let written = if mode.is_proxy() {
-            Self::rewrite_route_if(true, state, &app_type, provider)
+            Self::resync_proxy_for_saved_row(state, &app_type, provider)
         } else {
             codex_direct::write_direct(
                 state.db.as_ref(),
@@ -6179,6 +6399,15 @@ impl ProviderService {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
+        }
+
+        // Stack 名单里的先移出（和客户端文件同一个操作提交，key 留在登记簿里），成功了再删行。
+        // 删行失败时它已经不在名单里，重新加入即可。
+        if crate::mode::stack::is_member(&app_type, id)? {
+            futures::executor::block_on(crate::mode::controller::set_stack_member(
+                state, &app_type, id, false,
+            ))
+            .map_err(|error| AppError::Message(error.message))?;
         }
 
         state.db.delete_provider(app_type.as_str(), id)
@@ -7496,6 +7725,16 @@ impl ProviderService {
                             "Aggregate provider must specify a default target: unmatched requests fall back to it",
                         ));
                     }
+                    // A default target pointing at the aggregate itself is a
+                    // self-reference just like a slot doing so: unmatched
+                    // requests would loop straight back here.
+                    if id == &provider.id {
+                        return Err(AppError::localized(
+                            "aggregate.self_reference",
+                            "聚合供应商不能把自身作为目标",
+                            "An aggregate provider cannot target itself",
+                        ));
+                    }
                 }
                 crate::aggregate::DefaultTarget::SlotId(id) => {
                     let id = id.trim();
@@ -7535,6 +7774,10 @@ impl ProviderService {
                             .slots
                             .iter()
                             .any(|slot| slot.provider_id == target_id)
+                            || matches!(
+                                &routes.default_target,
+                                crate::aggregate::DefaultTarget::ProviderId(id) if id == target_id
+                            )
                     })
             }))
     }
@@ -7572,6 +7815,21 @@ impl ProviderService {
                     "聚合供应商的槽位不能指向另一个聚合供应商",
                     "An aggregate provider's slot cannot target another aggregate provider",
                 ));
+            }
+        }
+        // The default target must not resolve to another aggregate either —
+        // unmatched requests fall back to it, so it carries the same nesting
+        // hazard as a slot (an aggregate has no endpoint/credentials of its
+        // own to forward with).
+        if let crate::aggregate::DefaultTarget::ProviderId(id) = &routes.default_target {
+            if let Some(target) = state.db.get_provider_by_id(id, app_type.as_str())? {
+                if crate::aggregate::is_aggregate_provider(&target) {
+                    return Err(AppError::localized(
+                        "aggregate.nested_aggregate",
+                        "聚合供应商的默认目标不能指向另一个聚合供应商",
+                        "An aggregate provider's default target cannot point at another aggregate provider",
+                    ));
+                }
             }
         }
         // Reverse check: the provider being saved carries a routing table, so
