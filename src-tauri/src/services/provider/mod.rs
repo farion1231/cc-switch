@@ -3659,11 +3659,13 @@ wire_api = "responses"
                 );
                 live::write_live_snapshot(&AppType::OpenCode, &full).unwrap();
                 let before =
-                    std::fs::read(crate::opencode_config::get_opencode_config_path()).unwrap();
+                    std::fs::read(crate::opencode_config::get_opencode_config_path().unwrap())
+                        .unwrap();
                 full.settings_config = json!({"providers": {"other": {}}});
                 assert!(live::write_live_snapshot(&AppType::OpenCode, &full).is_err());
                 assert_eq!(
-                    std::fs::read(crate::opencode_config::get_opencode_config_path()).unwrap(),
+                    std::fs::read(crate::opencode_config::get_opencode_config_path().unwrap())
+                        .unwrap(),
                     before
                 );
             });
@@ -3693,7 +3695,7 @@ wire_api = "responses"
                         "model": "shared/gpt-4o"
                     });
                     write_json_file(
-                        &crate::opencode_config::get_opencode_config_path(),
+                        &crate::opencode_config::get_opencode_config_path().unwrap(),
                         &expected,
                     )
                     .unwrap();

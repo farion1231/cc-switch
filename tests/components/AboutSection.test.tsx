@@ -8,12 +8,15 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ToolInstallationReport } from "@/lib/api/settings";
+import type { settingsApi, ToolInstallationReport } from "@/lib/api/settings";
+
+type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
 const mocks = vi.hoisted(() => ({
   getToolVersions: vi.fn(),
   probeToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
+  info: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
@@ -68,12 +71,13 @@ function updateButton(name: string) {
 async function renderAbout() {
   // AboutSection caches version results at module scope between mounts.
   const { AboutSection } = await import("@/components/settings/AboutSection");
-  render(<AboutSection isPortable={false} />);
+  const view = render(<AboutSection isPortable={false} />);
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "common.refresh" }),
-    ).toBeEnabled(),
+      within(view.container).getByText("common.refresh"),
+    ).toBeInTheDocument(),
   );
+  return view;
 }
 
 describe("AboutSection concurrent CLI upgrades", () => {
@@ -199,6 +203,370 @@ describe("AboutSection concurrent CLI upgrades", () => {
     expect(card("Codex").getByText("settings.toolReady")).toBeInTheDocument();
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => runs.get("claude")!.resolve());
+  });
+
+  it.each(["install", "update"] as const)(
+    "restores an ongoing %s after remount and receives its completion",
+    async (action) => {
+      if (action === "install") missing.add("claude");
+      const running = deferred<void>();
+      mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+        await running.promise;
+        upgraded.add("claude");
+        missing.delete("claude");
+      });
+      const actionButton = () =>
+        card("Claude Code").getByRole("button", {
+          name:
+            action === "install"
+              ? "settings.toolInstall"
+              : "settings.toolUpdate",
+        });
+      const view = await renderAbout();
+      fireEvent.click(actionButton());
+      await waitFor(() =>
+        expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
+      );
+      view.unmount();
+      await renderAbout();
+      const versionChecks = mocks.getToolVersions.mock.calls.length;
+      expect(actionButton()).toBeDisabled();
+      expect(actionButton()).toHaveAttribute("aria-busy", "true");
+      expect(updateButton("Codex")).toBeEnabled();
+      fireEvent.click(actionButton());
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
+      expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+      expect(mocks.info).not.toHaveBeenCalled();
+      expect(mocks.error).not.toHaveBeenCalled();
+      expect(mocks.warning).not.toHaveBeenCalled();
+      expect(mocks.success).not.toHaveBeenCalled();
+
+      await act(async () => running.resolve());
+      expect(
+        card("Claude Code").getByText("settings.toolReady"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "common.refresh" }),
+      ).toBeEnabled();
+      expect(mocks.success).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["install", "update"] as const)(
+    "shows an informational toast when the backend reports an ongoing %s",
+    async (action) => {
+      if (action === "install") missing.add("claude");
+      mocks.runToolLifecycleAction.mockRejectedValueOnce(
+        "TOOL_ACTION_IN_PROGRESS",
+      );
+      await renderAbout();
+      const versionChecks = mocks.getToolVersions.mock.calls.length;
+      fireEvent.click(
+        card("Claude Code").getByRole("button", {
+          name:
+            action === "install"
+              ? "settings.toolInstall"
+              : "settings.toolUpdate",
+        }),
+      );
+      await waitFor(() =>
+        expect(mocks.info).toHaveBeenCalledWith(
+          "settings.toolActionInProgress",
+          {
+            description: "settings.toolActionInProgressDetail",
+            closeButton: true,
+          },
+        ),
+      );
+      expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+      expect(mocks.error).not.toHaveBeenCalled();
+      expect(mocks.warning).not.toHaveBeenCalled();
+      expect(mocks.success).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores a late probe from the old page after the remounted page upgrades a tool", async () => {
+    const stale = deferred<ToolVersions>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    let firstClaudeProbe = true;
+    let oldResult: ToolVersions = [];
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      if (tools.includes("claude") && firstClaudeProbe) {
+        firstClaudeProbe = false;
+        oldResult = await getVersions(tools);
+        return stale.promise;
+      }
+      return getVersions(tools);
+    });
+    const { AboutSection } = await import("@/components/settings/AboutSection");
+    const view = render(<AboutSection isPortable={false} />);
+    await waitFor(() => expect(mocks.getToolVersions).toHaveBeenCalledTimes(9));
+    view.unmount();
+    const remounted = await renderAbout();
+    fireEvent.click(updateButton("Claude Code"));
+    await waitFor(() =>
+      expect(
+        card("Claude Code").queryByText("settings.toolReady"),
+      ).not.toBeNull(),
+    );
+
+    await act(async () => stale.resolve(oldResult));
+    expect(
+      card("Claude Code").queryByText("settings.toolReady"),
+    ).not.toBeNull();
+    expect(card("Claude Code").queryByText("1.0.0")).not.toBeInTheDocument();
+    remounted.unmount();
+    await renderAbout();
+    expect(
+      card("Claude Code").getByText("settings.toolReady"),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves WSL execution and refresh parameters when confirming a mixed batch after remount", async () => {
+    const preflight = deferred<ToolInstallationReport[]>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((tool) =>
+        tool.name === "claude"
+          ? { ...tool, env_type: "wsl", wsl_distro: "Ubuntu" }
+          : tool,
+      ),
+    );
+    mocks.probeToolInstallations.mockImplementationOnce(
+      () => preflight.promise,
+    );
+    const scrollIntoView = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    try {
+      const user = userEvent.setup();
+      const view = await renderAbout();
+      await user.click(card("Claude Code").getAllByRole("combobox")[0]);
+      await user.click(screen.getByRole("option", { name: "bash" }));
+      await waitFor(() => expect(updateButton("Claude Code")).toBeEnabled());
+      await user.click(card("Claude Code").getAllByRole("combobox")[1]);
+      await user.click(screen.getByRole("option", { name: "-lic" }));
+      await waitFor(() => expect(updateButton("Claude Code")).toBeEnabled());
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.updateAllTools" }),
+      );
+      view.unmount();
+      // WSL tools do not request confirmation themselves; a native tool in
+      // the same batch can hold the whole batch pending confirmation.
+      await act(async () =>
+        preflight.resolve([
+          report("claude"),
+          report("codex", { needs_confirmation: true }),
+          report("gemini"),
+        ]),
+      );
+      await renderAbout();
+      mocks.getToolVersions.mockClear();
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.toolUpgradeConfirmBtn" }),
+      );
+      await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
+      const preferences = {
+        claude: { wslShell: "bash", wslShellFlag: "-lic" },
+      };
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+        ["claude"],
+        "update",
+        preferences,
+      );
+      expect(mocks.getToolVersions).toHaveBeenCalledWith(
+        ["claude"],
+        preferences,
+      );
+    } finally {
+      if (scrollIntoView) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          scrollIntoView,
+        );
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      }
+    }
+  });
+
+  it("preserves batch progress across remounts and updates each completed tool", async () => {
+    const runs = new Map(
+      ["claude", "codex", "gemini"].map((name) => [name, deferred<void>()]),
+    );
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        await runs.get(tool)!.promise;
+        upgraded.add(tool);
+      },
+    );
+    const view = await renderAbout();
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.updateAllTools" }),
+    );
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3),
+    );
+    view.unmount();
+    await act(async () => runs.get("codex")!.resolve());
+    await renderAbout();
+    const updateAll = screen.getByRole("button", {
+      name: "settings.updateAllTools",
+    });
+    expect(updateAll).toBeDisabled();
+    expect(updateAll).toHaveAttribute("aria-busy", "true");
+    expect(card("Codex").getByText("settings.toolReady")).toBeInTheDocument();
+    expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
+    expect(updateButton("Gemini CLI")).toBeDisabled();
+
+    await act(async () => runs.get("gemini")!.resolve());
+    expect(
+      card("Gemini CLI").getByText("settings.toolReady"),
+    ).toBeInTheDocument();
+    expect(updateButton("Claude Code")).toBeDisabled();
+    expect(updateAll).toHaveAttribute("aria-busy", "true");
+    await act(async () => runs.get("claude")!.resolve());
+    expect(
+      card("Claude Code").getByText("settings.toolReady"),
+    ).toBeInTheDocument();
+    expect(updateAll).toHaveAttribute("aria-busy", "false");
+    expect(
+      screen.getByRole("button", { name: "common.refresh" }),
+    ).toBeEnabled();
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3);
+    expect(mocks.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves preflight and its confirmation when navigating away and back", async () => {
+    const preflight = deferred<ToolInstallationReport[]>();
+    mocks.probeToolInstallations.mockImplementationOnce(
+      () => preflight.promise,
+    );
+    const view = await renderAbout();
+    fireEvent.click(updateButton("Claude Code"));
+    view.unmount();
+    const remounted = await renderAbout();
+    expect(updateButton("Claude Code")).toBeDisabled();
+    expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
+    expect(mocks.probeToolInstallations).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      preflight.resolve([report("claude", { needs_confirmation: true })]),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    remounted.unmount();
+    await renderAbout();
+    expect(
+      within(screen.getByRole("dialog")).getByText("Claude Code"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    expect(updateButton("Claude Code")).toBeEnabled();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    fireEvent.click(updateButton("Claude Code"));
+    await waitFor(() =>
+      expect(
+        card("Claude Code").getByText("settings.toolReady"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("unlocks a failed background task after remount so it can be retried", async () => {
+    const running = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementationOnce(() => running.promise);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const view = await renderAbout();
+      fireEvent.click(updateButton("Claude Code"));
+      await waitFor(() =>
+        expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
+      );
+      view.unmount();
+      await renderAbout();
+      expect(updateButton("Claude Code")).toBeDisabled();
+      await act(async () => running.reject(new Error("installer failed")));
+      expect(updateButton("Claude Code")).toBeEnabled();
+      expect(mocks.error).toHaveBeenCalledWith("settings.toolActionFailed", {
+        description: "installer failed",
+        closeButton: true,
+      });
+      fireEvent.click(updateButton("Claude Code"));
+      await waitFor(() =>
+        expect(
+          card("Claude Code").getByText("settings.toolReady"),
+        ).toBeInTheDocument(),
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it("does not report success or failure when all requested tools are already running", async () => {
+    mocks.runToolLifecycleAction.mockRejectedValue("TOOL_ACTION_IN_PROGRESS");
+    await renderAbout();
+    const versionChecks = mocks.getToolVersions.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.updateAllTools" }),
+    );
+    await waitFor(() => expect(mocks.info).toHaveBeenCalledTimes(3));
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+    expect(mocks.success).not.toHaveBeenCalled();
+    expect(mocks.warning).not.toHaveBeenCalled();
+    expect(mocks.error).not.toHaveBeenCalled();
+  });
+
+  it("completes other tools without counting an ongoing task as a failure", async () => {
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        if (tool === "claude") throw "TOOL_ACTION_IN_PROGRESS";
+        upgraded.add(tool);
+      },
+    );
+    await renderAbout();
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.updateAllTools" }),
+    );
+    await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
+    expect(mocks.info).toHaveBeenCalledTimes(1);
+    expect(card("Codex").getByText("settings.toolReady")).toBeInTheDocument();
+    expect(
+      card("Gemini CLI").getByText("settings.toolReady"),
+    ).toBeInTheDocument();
+    expect(mocks.warning).not.toHaveBeenCalled();
+    expect(mocks.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps genuine failures in the batch summary while excluding ongoing tasks", async () => {
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        if (tool === "claude") throw "TOOL_ACTION_IN_PROGRESS";
+        if (tool === "codex") throw new Error("installer failed");
+        upgraded.add(tool);
+      },
+    );
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await renderAbout();
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.updateAllTools" }),
+      );
+      await waitFor(() =>
+        expect(mocks.warning).toHaveBeenCalledWith(
+          "settings.toolActionPartial",
+          { description: "Codex: installer failed", closeButton: true },
+        ),
+      );
+      expect(mocks.info).toHaveBeenCalledTimes(1);
+      expect(mocks.success).not.toHaveBeenCalled();
+      expect(mocks.error).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledTimes(1);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("releases a failed tool for retry without unlocking another running tool", async () => {
@@ -407,10 +775,10 @@ describe("AboutSection concurrent CLI upgrades", () => {
     await act(async () => claudeRun.resolve());
   });
 
-  it("keeps a tool locked until its version refresh finishes", async () => {
+  it("keeps a tool locked through version refresh and remount with an expired cache", async () => {
     const refreshed =
       deferred<Awaited<ReturnType<typeof mocks.getToolVersions>>>();
-    await renderAbout();
+    const view = await renderAbout();
     mocks.getToolVersions.mockImplementationOnce(() => refreshed.promise);
     fireEvent.click(updateButton("Claude Code"));
     await waitFor(() =>
@@ -418,7 +786,24 @@ describe("AboutSection concurrent CLI upgrades", () => {
         card("Claude Code").getAllByText("common.loading").length,
       ).toBeGreaterThan(0),
     );
-    expect(card("Claude Code").queryByRole("button")).not.toBeInTheDocument();
+    view.unmount();
+    const now = vi
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.now() + 11 * 60 * 1000);
+    try {
+      await renderAbout();
+      // Initial probe and the original task's refresh only: remount must not
+      // probe a tool again while its installation/version refresh is pending.
+      expect(
+        mocks.getToolVersions.mock.calls.filter(([tools]) =>
+          tools.includes("claude"),
+        ),
+      ).toHaveLength(2);
+    } finally {
+      now.mockRestore();
+    }
+    expect(updateButton("Claude Code")).toBeDisabled();
+    expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
     expect(updateButton("Codex")).toBeEnabled();
     fireEvent.click(
       screen.getByRole("button", { name: "settings.updateAllTools" }),
