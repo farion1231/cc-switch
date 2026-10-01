@@ -2,11 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
-import {
-  providersApi,
-  type AppId,
-  type CodexEditorSnapshot,
-} from "@/lib/api";
+import { providersApi, type AppId, type CodexEditorSnapshot } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 /** 编辑器投影读不了客户端配置文件（比如手改坏了）：编辑器退回显示保存的内容。 */

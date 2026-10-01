@@ -32,8 +32,14 @@ describe("useDraftEditorProjection", () => {
   });
 
   it("连续切换预设时只认最后一次投影", async () => {
-    const first = deferred<{ settings: Record<string, unknown> }>();
-    const second = deferred<{ settings: Record<string, unknown> }>();
+    const first = deferred<{
+      settings: Record<string, unknown>;
+      codex?: Record<string, unknown>;
+    }>();
+    const second = deferred<{
+      settings: Record<string, unknown>;
+      codex?: Record<string, unknown>;
+    }>();
     getEditorView
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
@@ -53,8 +59,15 @@ describe("useDraftEditorProjection", () => {
       "official",
     );
 
+    // Codex 的打开快照原样随底交出去，保存时后端拿它当删除基准。
+    const snapshot = {
+      selector: "custom",
+      legacyRoute: true,
+      legacyFingerprint: "abc",
+      profileReferenced: false,
+    };
     await act(async () => {
-      second.resolve({ settings: { config: "B" } });
+      second.resolve({ settings: { config: "B" }, codex: snapshot });
       await second.promise;
     });
     await act(async () => {
@@ -65,7 +78,11 @@ describe("useDraftEditorProjection", () => {
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({ config: "B" });
     // 底和投影成它的草稿一起交出去，保存时后端按草稿分开预设带的字段。
-    expect(onBase).toHaveBeenLastCalledWith({ config: "B" }, { config: "b" });
+    expect(onBase).toHaveBeenLastCalledWith(
+      { config: "B" },
+      { config: "b" },
+      snapshot,
+    );
   });
 
   it("投影失败时提示并保持没有底", async () => {

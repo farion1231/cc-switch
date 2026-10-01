@@ -4548,8 +4548,10 @@ model_provider = "c"
         let key_before = mode(&AppType::Codex).contract.unwrap().key;
         let mut config = s.proxy_service.get_config().await.unwrap();
         // Real service restart, port 0 requests a fresh isolated listener; all-interface bind is
-        // not needed. Loopback address change alone makes the emitted endpoint observably different.
-        config.listen_address = "127.0.0.2".into();
+        // not needed. IPv6 loopback alone makes the emitted endpoint observably different and is
+        // bindable everywhere (bracketed, as the listener's SocketAddr parse requires) — macOS's
+        // lo0 only owns 127.0.0.1, so 127.0.0.2 fails there with EADDRNOTAVAIL.
+        config.listen_address = "[::1]".into();
         config.listen_port = 0;
         assert!(s.proxy_service.update_config(&config).await.unwrap());
         resync_route(&s, &AppType::Codex).await.unwrap();

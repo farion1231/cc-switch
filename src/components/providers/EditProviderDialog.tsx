@@ -20,7 +20,8 @@ import type {
   EditorConflictPolicy,
   ProviderEditorSave,
   ProviderEditorView,
-} from "@/lib/api/providers";import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
+} from "@/lib/api/providers";
+import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
 import { usesEditorView } from "@/config/appConfig";
 
