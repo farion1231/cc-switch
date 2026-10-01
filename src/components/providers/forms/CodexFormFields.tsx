@@ -53,6 +53,13 @@ import {
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
+import { useLatestRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import { codexPresetModelSources } from "@/config/presetModelMetadata";
+import {
+  fillCodexCatalogModel,
+  metadataFilledAnything,
+} from "./modelMetadataFill";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -628,6 +635,62 @@ export function CodexFormFields({
     t,
   ]);
 
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl: codexBaseUrl,
+    presets: codexPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  // 补全要在「改模型名」提交后立刻读到那一行，所以这两处经 ref 同步提交。
+  const catalogRowsRef = useLatestRef(catalogRows);
+  const commitCatalogRows = useCallback(
+    (next: CodexCatalogRow[]) => {
+      catalogRowsRef.current = next;
+      setCatalogRows(next);
+    },
+    [catalogRowsRef],
+  );
+
+  // 按模型名补上这一行已知的窗口、档位和模态（只补空着的）。
+  const fillCatalogRowMetadata = useCallback(
+    (rowId: string, modelId: string) =>
+      fillModelMetadata(modelId, (metadata) => {
+        const rows = catalogRowsRef.current;
+        const current = rows.find((row) => row.rowId === rowId);
+        if (current?.model.trim() !== modelId) return false;
+        const filled = fillCodexCatalogModel(
+          current,
+          metadata,
+          CODEX_REASONING_LEVELS,
+        );
+        if (!metadataFilledAnything(current, filled)) return false;
+        commitCatalogRows(
+          rows.map((row) => (row.rowId === rowId ? filled : row)),
+        );
+        return true;
+      }),
+    [catalogRowsRef, commitCatalogRows, fillModelMetadata],
+  );
+
+  const handleSelectFetchedCatalogModel = useCallback(
+    (rowId: string, modelId: string) => {
+      commitCatalogRows(
+        catalogRowsRef.current.map((row) =>
+          row.rowId === rowId
+            ? {
+                ...row,
+                model: modelId,
+                displayName: row.displayName?.trim()
+                  ? row.displayName
+                  : modelId,
+              }
+            : row,
+        ),
+      );
+      fillCatalogRowMetadata(rowId, modelId);
+    },
+    [catalogRowsRef, commitCatalogRows, fillCatalogRowMetadata],
+  );
+
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;
     setCatalogRows((current) => [...current, createCatalogRow()]);
@@ -678,14 +741,19 @@ export function CodexFormFields({
 
   const handleAddDefaultModelToCatalog = useCallback(() => {
     if (!onCatalogModelsChange || !trimmedDefaultModel) return;
-    setCatalogRows((current) => [
-      ...current,
-      createCatalogRow({
-        model: trimmedDefaultModel,
-        displayName: trimmedDefaultModel,
-      }),
-    ]);
-  }, [onCatalogModelsChange, trimmedDefaultModel]);
+    const row = createCatalogRow({
+      model: trimmedDefaultModel,
+      displayName: trimmedDefaultModel,
+    });
+    commitCatalogRows([...catalogRowsRef.current, row]);
+    fillCatalogRowMetadata(row.rowId, trimmedDefaultModel);
+  }, [
+    catalogRowsRef,
+    commitCatalogRows,
+    fillCatalogRowMetadata,
+    onCatalogModelsChange,
+    trimmedDefaultModel,
+  ]);
 
   const renderCatalogActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
@@ -1283,12 +1351,7 @@ export function CodexFormFields({
                             <ModelDropdown
                               models={fetchedModels}
                               onSelect={(id) =>
-                                handleUpdateCatalogRow(index, {
-                                  model: id,
-                                  displayName: row.displayName?.trim()
-                                    ? row.displayName
-                                    : id,
-                                })
+                                handleSelectFetchedCatalogModel(row.rowId, id)
                               }
                             />
                           )}
