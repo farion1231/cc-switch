@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
+import type { ProxyStackMember, ProxyStackNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -31,8 +32,10 @@ import {
   useHermesModelConfig,
 } from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
+import { useStackModelsChangedHint } from "@/hooks/useStackModelsChangedHint";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -48,8 +51,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
-import { useDirectProviderId } from "@/lib/query/proxy";
-import { isProxyAppId } from "@/config/appConfig";
+import {
+  useDirectProviderId,
+  useProxyStack,
+  useSetProxyStackMember,
+} from "@/lib/query/proxy";
+import { isStackAppId, isProxyAppId } from "@/config/appConfig";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -162,10 +170,37 @@ export function ProviderList({
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
 
+  // Stack 模式（设置里和路由模式二选一）：供应商列表是累加式的，添加的各家模型挂进客户端的
+  // 模型选择器，「设为默认」那家承接不带前缀的请求；不做故障转移。
+  const { data: stack, dataUpdatedAt: stackUpdatedAt } = useProxyStack(
+    appId,
+    isStackAppId(appId) && isProxyTakeover === true,
+  );
+  const isStackMode =
+    isStackAppId(appId) && isProxyTakeover === true && stack?.active === true;
+  const skipNextStackModelsHint = useStackModelsChangedHint(
+    appId,
+    isStackMode ? stack : undefined,
+    stackUpdatedAt,
+  );
+  const stackMembers = stack?.members;
+  const stackNotice = isStackMode ? stack?.notice : undefined;
+  const codexStaleClients =
+    isStackMode && appId === "codex" ? stack?.staleClients : undefined;
+  const setStackMember = useSetProxyStackMember();
+  const stackMemberOf = useCallback(
+    (providerId: string): ProxyStackMember | undefined =>
+      isStackMode
+        ? stackMembers?.find((member) => member.providerId === providerId)
+        : undefined,
+    [isStackMode, stackMembers],
+  );
+
   const isFailoverModeActive =
     supportsFailover &&
     isProxyTakeover === true &&
-    isAutoFailoverEnabled === true;
+    isAutoFailoverEnabled === true &&
+    !isStackMode;
 
   // 路由模式下「当前」是路由到的那家；直连供应商另外标出来，退出路由时写回它。
   const { data: directProviderId } = useDirectProviderId(
@@ -466,6 +501,8 @@ export function ProviderList({
                     : appId === "hermes"
                       ? isHermesCurrent
                       : provider.id === currentProviderId;
+            // Stack 模式下官方账号只能设为默认，不能添加。
+            const canStack = isStackMode && !isOfficialAccount(appId, provider);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -503,12 +540,28 @@ export function ProviderList({
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
                 onToggleFailover={
-                  supportsFailover
+                  supportsFailover && !isStackMode
                     ? (enabled) => handleToggleFailover(provider.id, enabled)
                     : undefined
                 }
                 activeProviderId={
                   supportsFailover ? activeProviderId : undefined
+                }
+                isStackMode={isStackMode}
+                stackMember={stackMemberOf(provider.id)}
+                stackNotice={stackNotice}
+                onToggleStack={
+                  canStack
+                    ? (enabled) => {
+                        // 保存成功的提示已经说了要重启，别再提示一次。
+                        skipNextStackModelsHint();
+                        setStackMember.mutate({
+                          appType: appId,
+                          providerId: provider.id,
+                          enabled,
+                        });
+                      }
+                    : undefined
                 }
                 isDefaultModel={
                   appId === "hermes"
@@ -543,6 +596,9 @@ export function ProviderList({
   return (
     <div className="mt-4 space-y-4">
       {piStateErrorNotice}
+      {codexStaleClients && (
+        <CodexStaleClientsNotice staleClients={codexStaleClients} />
+      )}
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
@@ -662,6 +718,10 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover?: (enabled: boolean) => void;
   activeProviderId?: string;
+  isStackMode: boolean;
+  stackMember?: ProxyStackMember;
+  stackNotice?: ProxyStackNotice;
+  onToggleStack?: (enabled: boolean) => void;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -696,6 +756,10 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
+  isStackMode,
+  stackMember,
+  stackNotice,
+  onToggleStack,
   isDefaultModel,
   isRemovalProtected,
   isStateChangeProtected,
@@ -751,6 +815,10 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
+        isStackMode={isStackMode}
+        stackMember={stackMember}
+        stackNotice={stackNotice}
+        onToggleStack={onToggleStack}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         isRemovalProtected={isRemovalProtected}

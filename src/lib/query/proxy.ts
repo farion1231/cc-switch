@@ -5,8 +5,11 @@ import { useTranslation } from "react-i18next";
 import type {
   GlobalProxyConfig,
   AppProxyConfig,
+  ProxyStackWriteError,
   ProxyTakeoverStatus,
 } from "@/types/proxy";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { getAppLabel } from "@/config/appConfig";
 
 export const proxyKeys = {
   status: ["proxyStatus"] as const,
@@ -60,6 +63,114 @@ export function useDirectProviderId(appType: string, enabled: boolean) {
   });
 }
 
+/**
+ * Stack 模型名单。放在 ["providers", appId] 前缀下：编辑、删除供应商时随列表一起失效。
+ */
+export function useProxyStack(appType: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["providers", appType, "stack"] as const,
+    queryFn: () => proxyApi.getProxyStack(appType),
+    enabled,
+  });
+}
+
+function isStackWriteError(error: unknown): error is ProxyStackWriteError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as ProxyStackWriteError).partial === "boolean"
+  );
+}
+
+/**
+ * 把一家加入或移出 Stack 模型。客户端只在启动时读模型列表，成功后提示重启。失败分两种：
+ * 什么都没改（弹后端的错误），已部分写入（下次操作或重启 CC Switch 时补完）。两种都按
+ * 后端的状态重新显示，不在前端假设名单不变。
+ */
+export function useSetProxyStackMember() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      appType,
+      providerId,
+      enabled,
+    }: {
+      appType: string;
+      providerId: string;
+      enabled: boolean;
+    }) => proxyApi.setProxyStackMember(appType, providerId, enabled),
+    onSuccess: (notice, variables) => {
+      toast.success(
+        t("provider.stackSaved", {
+          client: getAppLabel(variables.appType),
+        }),
+        {
+          description: variables.enabled
+            ? t("provider.stackReselectHint")
+            : undefined,
+          closeButton: true,
+        },
+      );
+      if (notice) {
+        toast.warning(t(`provider.${notice}`), { closeButton: true });
+      }
+    },
+    onError: (error: unknown) => {
+      if (isStackWriteError(error) && error.partial) {
+        toast.warning(t("provider.stackPartial"), {
+          description: error.message,
+          closeButton: true,
+        });
+        return;
+      }
+      toast.error(
+        t("provider.stackFailed", { error: extractErrorMessage(error) }),
+      );
+    },
+    onSettled: (_data, _error, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["providers", variables.appType],
+      });
+    },
+  });
+}
+
+/**
+ * 重启 Codex 的托管守护进程，让它重读模型目录。结束后重新查 Stack 名单：重启成功时
+ * 「还在用旧模型列表」的提示随之消失。
+ */
+export function useRestartCodexAppServerDaemon() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: () => proxyApi.restartCodexAppServerDaemon(),
+    onSuccess: (outcome) => {
+      if (outcome === "notRunning") {
+        toast.info(t("proxy.stackMode.codexStale.notRunning"), {
+          closeButton: true,
+        });
+        return;
+      }
+      toast.success(t("proxy.stackMode.codexStale.restarted"), {
+        closeButton: true,
+      });
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        t("proxy.stackMode.codexStale.failed", {
+          error: extractErrorMessage(error),
+        }),
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+    },
+  });
+}
+
 // ========== 代理服务器控制 Hooks ==========
 
 /**
@@ -69,8 +180,15 @@ export function useSetProxyTakeoverForApp() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
-      proxyApi.setProxyTakeoverForApp(appType, enabled),
+    mutationFn: ({
+      appType,
+      enabled,
+      stack = false,
+    }: {
+      appType: string;
+      enabled: boolean;
+      stack?: boolean;
+    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, stack),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
       // 进出路由模式会改「当前」显示的供应商（路由模式下是路由到的那家）。
