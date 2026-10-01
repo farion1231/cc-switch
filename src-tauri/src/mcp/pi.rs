@@ -1,8 +1,14 @@
 //! Pi MCP sync (`<agent dir>/mcp.json`)
 //!
 //! Writes are read-modify-write, so only the target id changes. Outbound entries keep only the
-//! fields Pi knows and never carry `type` (Pi rejects `type: "sse"`, and one invalid entry makes
-//! it fail to read the whole file).
+//! fields Pi knows and never carry `type`: Pi infers the transport from `command` vs `url` and
+//! rejects `type: "sse"`. An entry Pi cannot validate is skipped with a config error while the
+//! rest of the file still loads, so a bad entry silently disappears from Pi's server list.
+//!
+//! Two Pi-side rules shape this module. Pi keys `mcpServers` by name and accepts only
+//! `[A-Za-z0-9_-]+`, so an id outside that set is refused instead of written. And `enabled` is a
+//! field value Pi writes from its own `/mcp` manager (`enabled: false` keeps the entry), so it is
+//! inherited from the file like `exposure` whenever CC Switch has no value for it.
 
 use crate::app_config::McpApps;
 use crate::error::AppError;
@@ -19,8 +25,35 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 const STDIO_FIELDS: [&str; 4] = ["command", "args", "env", "cwd"];
 /// Fields Pi accepts for HTTP servers (`oauth` holds Pi's credentials).
 const HTTP_FIELDS: [&str; 3] = ["url", "headers", "oauth"];
-/// Transport-independent Pi fields.
-const SHARED_FIELDS: [&str; 3] = ["exposure", "toolExposure", "timeout"];
+/// Transport-independent Pi fields. Pi can also set every one of them from `/mcp`, which is why
+/// `inherit_pi_fields` keeps the value already in the file when CC Switch has none.
+const SHARED_FIELDS: [&str; 4] = ["exposure", "toolExposure", "timeout", "enabled"];
+
+/// Checks the id used as Pi's `mcpServers` key.
+///
+/// Pi accepts only `[A-Za-z0-9_-]+` (`SERVER_NAME` in its `core/mcp-servers.js`); anything else
+/// makes Pi skip the entry with a config error, so a name like `my.server` would leave CC Switch
+/// showing "enabled for Pi" while Pi never loads it. Refusing up front keeps the two in sync.
+pub(crate) fn validate_server_id(id: &str) -> Result<(), AppError> {
+    let valid = !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "Pi MCP server id '{id}' must use only letters, digits, '_' and '-'"
+        )))
+    }
+}
+
+/// Validates one entry as Pi would read it: the id (Pi's `mcpServers` key) plus the connection
+/// definition, which shares the other clients' validator.
+pub(crate) fn validate_server(id: &str, spec: &Value) -> Result<(), AppError> {
+    validate_server_id(id)?;
+    super::validation::validate_server_spec(&unified_spec(spec))
+}
 
 /// False when Pi's agent directory is missing, so nothing is written or created.
 fn should_sync() -> Result<bool, AppError> {
@@ -69,10 +102,10 @@ fn unified_spec(spec: &Value) -> Value {
     spec
 }
 
-/// Builds the entry written to Pi: whitelisted fields only, never `type` or `enabled`.
+/// Builds the entry written to Pi: whitelisted fields only, never `type`.
 ///
-/// `type` is dropped because one invalid entry makes Pi fail to read the whole file. An entry with
-/// both `command` and `url` is written as HTTP, without disambiguation.
+/// `type` is dropped because Pi infers the transport itself and rejects `type: "sse"`. An entry
+/// with both `command` and `url` is written as HTTP, without disambiguation.
 fn outbound_spec(spec: &Value) -> Value {
     let transport_fields: &[&str] = if spec.get("url").is_some() {
         &HTTP_FIELDS
@@ -90,7 +123,8 @@ fn outbound_spec(spec: &Value) -> Value {
     Value::Object(out)
 }
 
-/// Carries Pi-only fields over from the existing entry when CC Switch has no value for them.
+/// Carries the field values Pi can also control (`SHARED_FIELDS`, `enabled` included) over from
+/// the existing entry when CC Switch has no value for them.
 fn inherit_pi_fields(entry: &mut Value, previous: Option<&Value>) {
     let Some(previous) = previous.and_then(Value::as_object) else {
         return;
@@ -126,8 +160,8 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
 
     match spec {
         Some(spec) => {
-            // Validate before writing; an invalid definition never reaches the user's file.
-            super::validation::validate_server_spec(&unified_spec(spec))?;
+            // Validate before writing; an invalid id or definition never reaches the user's file.
+            validate_server(id, spec)?;
             let mut entry = outbound_spec(spec);
             inherit_pi_fields(&mut entry, servers.get(id));
             servers.insert(id.to_string(), entry);
@@ -162,8 +196,9 @@ pub fn remove_server_from_pi(id: &str) -> Result<(), AppError> {
 
 /// Imports MCP servers from Pi's global config; returns the number of new ones.
 ///
-/// Entries are stored as-is, Pi-only and unknown fields included. An id already in CC Switch only
-/// gets its Pi flag set. Invalid entries are skipped and reported together.
+/// Entries are stored as-is, Pi-only and unknown fields included, except `enabled` — that is a
+/// field value Pi controls from `/mcp`, so it stays in the file and is inherited on every write.
+/// An id already in CC Switch only gets its Pi flag set. Invalid entries are skipped and reported.
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let Some(document) = read(&crate::pi_config::get_pi_mcp_path()?)? else {
         return Ok(0);
@@ -174,7 +209,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     let mut skipped = Vec::new();
 
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
-        let spec = unified_spec(native);
+        let mut spec = unified_spec(native);
+        // `enabled` is a field value Pi owns from `/mcp`, not connection data: keep it out of the
+        // shared spec (the clients that pass unknown keys through would otherwise copy it) and let
+        // `inherit_pi_fields` carry the file's current value on every write.
+        if let Some(object) = spec.as_object_mut() {
+            object.remove("enabled");
+        }
         if let Err(error) = super::validation::validate_server_spec(&spec) {
             skipped.push(format!("'{id}': {error}"));
             continue;
@@ -222,7 +263,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
 mod tests {
     use super::*;
 
-    /// Outbound keeps only whitelisted fields; adapter keys and `type`/`enabled` are dropped.
+    /// Outbound keeps only whitelisted fields; adapter keys and `type` are dropped.
     #[test]
     fn outbound_spec_keeps_pi_fields_and_drops_foreign_metadata() {
         let stdio = json!({
@@ -245,7 +286,8 @@ mod tests {
                 "env": {"KEY": "value"},
                 "cwd": "/tmp",
                 "exposure": "direct",
-                "timeout": 5000
+                "timeout": 5000,
+                "enabled": true
             })
         );
 
@@ -330,7 +372,7 @@ mod tests {
         assert_eq!(written["autoEnableCodemode"], json!(true));
     }
 
-    /// Pi-only fields inherit from the file unless CC Switch provides them.
+    /// Pi-side field values inherit from the file unless CC Switch provides them.
     #[test]
     fn rewriting_inherits_pi_only_fields_unless_cc_switch_provides_them() {
         let dir = tempfile::tempdir().unwrap();
@@ -350,7 +392,7 @@ mod tests {
         )
         .unwrap();
 
-        // CC Switch has no Pi-only fields: keep the file's values, rewrite the connection params.
+        // CC Switch has no values for these keys: keep the file's, rewrite the connection params.
         sync_file(
             &path,
             "managed",
@@ -365,7 +407,8 @@ mod tests {
                 "args": ["new.js"],
                 "exposure": "direct",
                 "toolExposure": {"ping": "direct"},
-                "timeout": 30
+                "timeout": 30,
+                "enabled": false
             })
         );
 
@@ -385,6 +428,56 @@ mod tests {
             written["mcpServers"]["managed"]["toolExposure"],
             json!({"ping": "direct"})
         );
+
+        // A value CC Switch does hold wins, so the Pi checkbox in the panel stays the SSOT's
+        // answer once the user has expressed one.
+        sync_file(
+            &path,
+            "managed",
+            Some(&json!({"command": "node", "args": ["new.js"], "enabled": true})),
+        )
+        .unwrap();
+        let written = read(&path).unwrap().unwrap();
+        assert_eq!(written["mcpServers"]["managed"]["enabled"], json!(true));
+    }
+
+    /// A disable made inside Pi survives a rewrite: Pi keeps the entry with `enabled: false` and
+    /// only its own `/mcp` manager clears that key, so CC Switch must not turn the server back on.
+    #[test]
+    fn rewriting_keeps_a_server_disabled_inside_pi() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            json!({"mcpServers": {"off": {"command": "node", "enabled": false}}}).to_string(),
+        )
+        .unwrap();
+
+        sync_file(
+            &path,
+            "off",
+            Some(&json!({"command": "node", "args": ["new.js"]})),
+        )
+        .unwrap();
+
+        let written = read(&path).unwrap().unwrap();
+        assert_eq!(written["mcpServers"]["off"]["enabled"], json!(false));
+        assert_eq!(written["mcpServers"]["off"]["args"], json!(["new.js"]));
+    }
+
+    /// Pi skips an entry whose id is not `[A-Za-z0-9_-]+`, so such an id is refused up front
+    /// instead of being written and then quietly ignored by Pi.
+    #[test]
+    fn server_ids_pi_cannot_key_are_refused() {
+        assert!(validate_server_id("mcp-fetch_2").is_ok());
+        for id in ["", "my.server", "my server", "mcp/fetch", "服务器"] {
+            assert!(
+                matches!(validate_server_id(id), Err(AppError::InvalidInput(_))),
+                "'{id}' must be refused"
+            );
+        }
+        // The connection definition is validated alongside the id.
+        assert!(validate_server("ok", &json!({"type": "stdio"})).is_err());
     }
 
     /// Fail-closed: an unparsable file raises an error and stays byte-identical.

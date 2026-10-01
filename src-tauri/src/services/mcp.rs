@@ -25,6 +25,12 @@ impl McpService {
             .map(|s| s.apps.clone())
             .unwrap_or_default();
 
+        // Pi keys MCP servers by name, so an id Pi would skip must be refused before it is
+        // persisted — otherwise the panel would show "enabled for Pi" with nothing in Pi to load.
+        if server.apps.pi {
+            mcp::pi::validate_server(&server.id, &server.server)?;
+        }
+
         if server.apps.mcode || prev_apps.mcode {
             mcp::mcode::sync_and_commit(
                 &server.id,
@@ -99,6 +105,13 @@ impl McpService {
                 })?;
             }
             return Ok(());
+        }
+        // Pi keys MCP servers by name: validate before the flag is persisted, so a toggle fails
+        // loudly instead of leaving a server the panel claims is on and Pi never loads.
+        if enabled && app == AppType::Pi {
+            if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
+                mcp::pi::validate_server(server_id, &server.server)?;
+            }
         }
         if let Some(server) = state
             .db

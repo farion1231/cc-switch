@@ -1493,7 +1493,8 @@ fn pi_toggle_writes_whitelisted_entry_and_only_touches_its_own_id() {
     fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
     let state = create_test_state().expect("create test state");
-    // Outbound must keep only Pi's fields, dropping adapter keys and `type`/`enabled`.
+    // Outbound must keep only Pi's fields: adapter keys and `type` are dropped, and the value CC
+    // Switch holds for `enabled` is the one written.
     McpService::upsert_server(
         &state,
         pi_server(
@@ -1525,9 +1526,10 @@ fn pi_toggle_writes_whitelisted_entry_and_only_touches_its_own_id() {
             "url": "https://example.com/mcp",
             "headers": {"Authorization": "Bearer secret"},
             "exposure": "direct",
-            "timeout": 5000
+            "timeout": 5000,
+            "enabled": true
         }),
-        "outbound keeps only Pi's fields, without type/enabled/directTools/lifecycle"
+        "outbound keeps only Pi's fields, without type/directTools/lifecycle"
     );
 
     // The enable flag is persisted in CC Switch.
@@ -1932,4 +1934,92 @@ fn deeplink_mcp_import_accepts_pi_app() {
         "apps=pi must be stored as enabled for Pi"
     );
     assert!(!servers["pi-shared"].apps.claude);
+}
+
+#[test]
+fn pi_projection_keeps_a_server_disabled_inside_pi() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    fs::write(
+        &path,
+        json!({"mcpServers": {"turned-off": {"command": "handwritten", "enabled": false}}})
+            .to_string(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server("turned-off", json!({"command": "node"}), true))
+        .expect("seed enabled server");
+
+    McpService::sync_enabled_for_app(&state, &AppType::Pi).expect("project pi");
+
+    let written = read_pi_mcp();
+    assert_eq!(
+        written["mcpServers"]["turned-off"]["enabled"],
+        json!(false),
+        "a disable made inside Pi must survive a projection"
+    );
+    assert_eq!(written["mcpServers"]["turned-off"]["command"], "node");
+}
+
+#[test]
+fn pi_import_keeps_enabled_out_of_the_shared_spec() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+    fs::write(
+        &path,
+        json!({"mcpServers": {"turned-off": {"command": "node", "enabled": false}}}).to_string(),
+    )
+    .unwrap();
+
+    let state = create_test_state().expect("create test state");
+    McpService::import_from_all_apps(&state).expect("import from every app");
+
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(servers["turned-off"].apps.pi);
+    assert!(
+        servers["turned-off"].server.get("enabled").is_none(),
+        "enabled is a field value Pi owns, so it must not enter the shared spec"
+    );
+
+    McpService::sync_enabled_for_app(&state, &AppType::Pi).expect("project pi");
+    assert_eq!(
+        read_pi_mcp()["mcpServers"]["turned-off"]["enabled"],
+        json!(false),
+        "the imported entry must stay disabled in Pi"
+    );
+}
+
+#[test]
+fn pi_refuses_a_server_id_it_cannot_key() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    seed_pi_agent_dir();
+    let path = pi_mcp_path();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&pi_server("my.server", json!({"command": "node"}), false))
+        .expect("seed server");
+
+    let error = McpService::toggle_app(&state, "my.server", AppType::Pi, true)
+        .expect_err("an id Pi cannot key must be refused")
+        .to_string();
+    assert!(error.contains("my.server"), "{error}");
+    assert!(!state.db.get_all_mcp_servers().unwrap()["my.server"].apps.pi);
+    assert!(!path.exists(), "a refused id must not write anything");
+
+    // The form path refuses it before the row is saved, so the DB never holds the bad flag.
+    assert!(McpService::upsert_server(
+        &state,
+        pi_server("my.server", json!({"command": "node"}), true)
+    )
+    .is_err());
 }

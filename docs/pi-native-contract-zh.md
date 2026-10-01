@@ -39,13 +39,13 @@ Pi 在全局设置中保存的当前供应商和模型不进入供应商列表�
 
 ### MCP
 
-Pi 从 0.99.0 起内置 MCP 支持，读全局 `<agent dir>/mcp.json`。`mcpServers` 中存在该 id 即为「已为 Pi 启用」：条目的存在本身就是开关，不写 `enabled`。
+Pi 从 0.99.0 起内置 MCP 支持，读全局 `<agent dir>/mcp.json`。CC Switch 的开关是「条目的存在」：勾选 Pi 即写入条目，取消即移除。Pi 侧另有一个 `enabled` 字段——在 Pi 里用 `/mcp` 关闭服务器就是写 `enabled: false` 并保留条目——CC Switch 不把它当成自己的开关，而是按下面的字段级继承处理，避免把用户在 Pi 里做的关闭动作悄悄翻回来。
 
-写出时只保留 Pi 识别的字段：stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`、`oauth`，以及两者共享的 `exposure`、`toolExposure`、`timeout`。一律不带 `type`，Pi 根据 `command` 和 `url` 自动推断传输方式，`type: "sse"` 不支持，一条非法条目会让整份配置读取失败。`exposure`、`toolExposure`、`timeout` 不做解释、不注入。
+写出时只保留 Pi 识别的字段：stdio 的 `command`、`args`、`env`、`cwd`，HTTP 的 `url`、`headers`、`oauth`，以及两者共享的 `exposure`、`toolExposure`、`timeout`、`enabled`。一律不带 `type`，Pi 根据 `command` 和 `url` 自动推断传输方式，`type: "sse"` 不支持。Pi 也校验服务器名：只接受字母、数字、下划线和连字符（`[A-Za-z0-9_-]+`），所以带点号或空格的 id 会被拒绝写入，而不是写进去等 Pi 跳过。字段不合法（例如 `type: "sse"`、`enabled` 不是布尔值）的条目会被 Pi 跳过并在 `/mcp` 里留下一条 config 错误，其余条目照常加载——坏条目的表现是「列表里少一个服务器」，不是整份配置读不动。
 
-这三个字段可以由 Pi 侧控制（`/mcp` 管理命令），所以 CC Switch 里没有这个键就保留配置文件中的已有值，有就以 CC Switch 为准。其余字段以 CC Switch 为准，按白名单整体重写，不受文件侧影响。
+这四个键（`exposure`、`toolExposure`、`timeout`、`enabled`）都可以由 Pi 侧控制（`/mcp` 管理命令），所以 CC Switch 里没有这个键就保留配置文件中的已有值，有就以 CC Switch 为准。`enabled` 也走这条规则，区别是它不会随「从应用导入」进入共享的 `server_config`——其他客户端会透传未知键，Pi 专属的开关不该跟着漏出去。其余字段以 CC Switch 为准，按白名单整体重写，不受文件侧影响。
 
-目标文件不可解析时报错，不进行覆盖；Pi 的配置目录不存在时静默无操作，也不创建任何文件或目录。条目里允许出现明文 Key（`headers`/`env`/`oauth`），因此该文件按 private（Unix 0600）权限写入；`auth.json` 不读不写，删除 MCP 服务器也不清理 Pi 的 OAuth 凭据与工具清单缓存。
+目标文件不可解析时报错，不进行覆盖；Pi 的配置目录不存在时静默无操作，也不创建任何文件或目录。条目里允许出现明文 Key（`headers`/`env`/`oauth`），因此该文件按 private（Unix 0600）权限写入；`auth.json`（Pi 模型登录）与 `mcp-auth.json`（MCP 的 OAuth Token）都不读不写，删除 MCP 服务器也不清理 Pi 的 OAuth 凭据与工具清单缓存。
 
 项目级 `.pi/mcp.json` 不在范围内：MCP 层没有项目上下文，不扫描项目目录、不猜活动会话。
 
