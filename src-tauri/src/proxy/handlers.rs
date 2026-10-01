@@ -1345,9 +1345,26 @@ async fn handle_codex_chat_to_responses_transform(
         return handle_codex_chat_error_response(response, ctx, status).await;
     }
 
+    // Match the request-side check after model mapping, rather than the client alias.
+    let upstream_model = ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model);
+    let is_gemini_upstream = ctx.provider.is_gemini_upstream("", upstream_model);
+    let shadow_ctx = if is_gemini_upstream {
+        Some((
+            state.gemini_shadow.clone(),
+            ctx.provider.id.clone(),
+            ctx.session_id.clone(),
+        ))
+    } else {
+        None
+    };
+
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
+        let sse_stream = create_responses_sse_stream_from_chat_with_context(
+            stream,
+            tool_context.clone(),
+            shadow_ctx,
+        );
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
         let usage_collector = if usage_logging_enabled(state) {
@@ -1474,9 +1491,19 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
+    let shadow_ctx_ref = if is_gemini_upstream {
+        Some((
+            state.gemini_shadow.as_ref(),
+            ctx.provider.id.as_str(),
+            ctx.session_id.as_str(),
+        ))
+    } else {
+        None
+    };
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
+        shadow_ctx_ref,
     )
     .map_err(|e| {
         log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
@@ -2866,6 +2893,148 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    // Exercise both response paths and replay a captured signature after Codex model mapping.
+    async fn check_mapped_chat_signature_roundtrip(
+        request_model: &str,
+        upstream_model: &str,
+        expect_signature: bool,
+    ) {
+        use crate::app_config::AppType;
+        use crate::database::Database;
+        use crate::provider::{Provider, ProviderMeta};
+        use crate::proxy::{
+            failover_switch::FailoverSwitchManager,
+            handler_context::RequestContext,
+            hyper_client::ProxyResponse,
+            provider_router::ProviderRouter,
+            providers::{
+                codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
+            },
+            server::ProxyState,
+            types::ProxyConfig,
+        };
+        use http_body_util::BodyExt;
+        use serde_json::json;
+        use tokio::sync::RwLock;
+
+        for is_stream in [false, true] {
+            let db = Arc::new(Database::memory().unwrap());
+            let mut provider = Provider::with_id(
+                "mapped-chat".into(),
+                "Mapped Chat".into(),
+                json!({"config": format!(
+                    "model_provider = \"gateway\"\nmodel = \"{upstream_model}\"\n[model_providers.gateway]\nbase_url = \"https://gateway.example/v1\"\nwire_api = \"responses\"\n"
+                )}),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                api_format: Some("openai_chat".into()),
+                ..Default::default()
+            });
+            db.save_provider("codex", &provider).unwrap();
+            db.set_current_provider("codex", &provider.id).unwrap();
+            let state = ProxyState {
+                provider_router: Arc::new(ProviderRouter::new(db.clone())),
+                db,
+                config: Arc::new(RwLock::new(ProxyConfig::default())),
+                status: Arc::new(RwLock::new(Default::default())),
+                start_time: Arc::new(RwLock::new(None)),
+                current_providers: Arc::new(RwLock::new(Default::default())),
+                gemini_shadow: Arc::new(GeminiShadowStore::default()),
+                codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+                app_handle: None,
+                failover_manager: Arc::new(FailoverSwitchManager::new()),
+            };
+            let mut request = json!({"model": request_model, "input": "read the file"});
+            let mut ctx = RequestContext::new(
+                &state,
+                &request,
+                &Default::default(),
+                AppType::Codex,
+                "Codex",
+                "codex",
+            )
+            .await
+            .unwrap();
+            ctx.outbound_model =
+                crate::proxy::providers::apply_codex_chat_upstream_model(&provider, &mut request);
+            assert_eq!(ctx.outbound_model.as_deref(), Some(upstream_model));
+            assert_eq!(ctx.request_model, request_model);
+
+            let tool_call = json!({
+                "index": 0, "id": "call_mapped", "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+                "extra_content": {"google": {"thought_signature": "sig-mapped"}}
+            });
+            let message = json!({"role": "assistant", "content": null, "tool_calls": [tool_call]});
+            let chat = json!({
+                "id": "chatcmpl-mapped", "model": upstream_model,
+                "choices": [{
+                    (if is_stream { "delta" } else { "message" }): message,
+                    "index": 0, "finish_reason": "tool_calls"
+                }]
+            });
+            let mut headers = axum::http::HeaderMap::new();
+            let body = if is_stream {
+                headers.insert("content-type", "text/event-stream".parse().unwrap());
+                Bytes::from(format!("data: {chat}\n\ndata: [DONE]\n\n"))
+            } else {
+                Bytes::from(serde_json::to_vec(&chat).unwrap())
+            };
+            let response = super::handle_codex_chat_to_responses_transform(
+                ProxyResponse::buffered(axum::http::StatusCode::OK, headers, body),
+                &ctx,
+                &state,
+                is_stream,
+                None,
+                Default::default(),
+            )
+            .await
+            .unwrap();
+            response.into_body().collect().await.unwrap();
+
+            let snapshot = state
+                .gemini_shadow
+                .get_session(&provider.id, &ctx.session_id);
+            if !expect_signature {
+                assert!(snapshot.is_none());
+                continue;
+            }
+            assert_eq!(
+                snapshot.unwrap().turns[0].tool_calls[0]
+                    .thought_signature
+                    .as_deref(),
+                Some("sig-mapped")
+            );
+            request["input"] = json!([{
+                "type": "function_call", "call_id": "call_mapped",
+                "name": "read_file", "arguments": "{}"
+            }]);
+            let replay = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                request, None,
+                Some((state.gemini_shadow.as_ref(), &provider.id, &ctx.session_id)),
+            ).unwrap();
+            assert_eq!(
+                replay["messages"][0]["tool_calls"][0]["extra_content"]["google"]
+                    ["thought_signature"],
+                "sig-mapped"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn mapped_gemini_chat_responses_capture_and_replay_signatures() {
+        check_mapped_chat_signature_roundtrip("gpt-5.4", "gemini-3.1-pro", true).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn mapped_non_gemini_chat_responses_do_not_capture_signatures() {
+        check_mapped_chat_signature_roundtrip("gemini-client-alias", "deepseek-v4-flash", false)
+            .await;
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

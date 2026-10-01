@@ -43,6 +43,7 @@ export function ApiKeySection({
   };
 
   const finalPlaceholder = placeholder || defaultPlaceholder;
+  const isInputDisabled = disabled ?? category === "official";
 
   return (
     <div className="space-y-1">
@@ -52,11 +53,11 @@ export function ApiKeySection({
         value={value}
         onChange={onChange}
         placeholder={
-          category === "official"
+          isInputDisabled
             ? finalPlaceholder.official
             : finalPlaceholder.thirdParty
         }
-        disabled={disabled ?? category === "official"}
+        disabled={isInputDisabled}
       />
       {/* API Key 获取链接 */}
       {shouldShowLink && websiteUrl && (

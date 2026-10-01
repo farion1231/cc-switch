@@ -62,6 +62,12 @@ fn extract_tool_calls(
                 .and_then(|value| value.as_str())
                 .filter(|s| !s.is_empty())
                 .map(ToString::to_string);
+            let sig = part
+                .get("thoughtSignature")
+                .or_else(|| part.get("thought_signature"))
+                .or_else(|| function_call.get("thoughtSignature"))
+                .or_else(|| function_call.get("thought_signature"))
+                .and_then(|value| value.as_str());
             Some(GeminiToolCallMeta::new(
                 id,
                 function_call
@@ -72,9 +78,7 @@ fn extract_tool_calls(
                     .get("args")
                     .cloned()
                     .unwrap_or_else(|| json!({})),
-                part.get("thoughtSignature")
-                    .or_else(|| part.get("thought_signature"))
-                    .and_then(|value| value.as_str()),
+                sig,
             ))
         })
         .collect()

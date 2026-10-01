@@ -440,6 +440,21 @@ pub fn transform_claude_request_for_api_format(
             // 不在 SSE 末尾吐 usage → 转换出的 Anthropic message_delta 全 0 →
             // 整笔 input/output/cache 漏记（与 Codex Responses→Chat 路径同源）。
             super::transform::inject_openai_stream_include_usage(&mut result);
+
+            let is_gemini = provider.is_gemini_upstream(
+                "",
+                result.get("model").and_then(|v| v.as_str()).unwrap_or(""),
+            );
+
+            if is_gemini {
+                if let Some(store) = shadow_store {
+                    super::transform_codex_chat::inject_gemini_thought_signatures_for_openai_format(
+                        &mut result,
+                        Some((store, provider.id.as_str(), session_id.unwrap_or(""))),
+                    );
+                }
+            }
+
             // GitHub Copilot 的 OpenAI Chat 端点不支持 `stop` 参数，携带该字段会
             // 直接返回 400。Claude Code auto mode 的 classifier 请求会带
             // stop_sequences（转换后即为 stop），导致 classifier 在 Copilot 下
