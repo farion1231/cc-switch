@@ -14,8 +14,9 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
+    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
 };
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -674,9 +675,10 @@ fn sync_single_file(
             msg.message_id
         );
 
-        match insert_session_log_entry_on_conn(&tx, &request_id, msg) {
-            Ok(true) => imported += 1,
-            Ok(false) => skipped += 1,
+        match upsert_session_log_entry_on_conn(&tx, &request_id, msg) {
+            // 补全已有的行也算进 imported：数据变了，界面要跟着刷新
+            Ok(SessionRowOutcome::Inserted | SessionRowOutcome::Updated) => imported += 1,
+            Ok(SessionRowOutcome::Skipped) => skipped += 1,
             Err(e) => {
                 log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
                 skipped += 1;
@@ -810,14 +812,132 @@ pub(crate) fn update_sync_state_on_conn(
     Ok(())
 }
 
-/// 插入单条会话日志到 proxy_request_logs，返回是否成功插入 (true=新插入, false=已存在)。
+/// 一条回复写库的结果。
+#[derive(Debug, PartialEq, Eq)]
+enum SessionRowOutcome {
+    Inserted,
+    /// 这条回复早先按中间块入过库，这次补全了用量；或者补全后发现它和
+    /// 路由服务记的是同一次请求，把先前那一行删了。
+    Updated,
+    Skipped,
+}
+
+/// 已经在库里的那一行里，判断要不要补全用得到的两样。
+struct StoredSessionRow {
+    data_source: String,
+    output_tokens: i64,
+}
+
+fn find_stored_session_row(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+) -> Result<Option<StoredSessionRow>, AppError> {
+    conn.prepare_cached(
+        "SELECT COALESCE(data_source, 'proxy'), output_tokens
+         FROM proxy_request_logs WHERE request_id = ?1",
+    )
+    .and_then(|mut stmt| {
+        stmt.query_row([request_id], |row| {
+            Ok(StoredSessionRow {
+                data_source: row.get(0)?,
+                output_tokens: row.get(1)?,
+            })
+        })
+        .optional()
+    })
+    .map_err(|e| AppError::Database(format!("查询已入库的会话日志失败: {e}")))
+}
+
+/// 一条回复按定价算出来的五项成本：输入、输出、缓存读、缓存写、合计。
+fn session_costs(conn: &rusqlite::Connection, msg: &ParsedAssistantUsage) -> [String; 5] {
+    let usage = TokenUsage {
+        input_tokens: msg.input_tokens,
+        output_tokens: msg.output_tokens,
+        cache_read_tokens: msg.cache_read_tokens,
+        cache_creation_tokens: msg.cache_creation_tokens,
+        model: Some(msg.model.clone()),
+        message_id: None,
+    };
+    match find_model_pricing_for_session(conn, &msg.model) {
+        Some(pricing) => {
+            let cost = CostCalculator::calculate(&usage, &pricing, Decimal::from(1));
+            [
+                cost.input_cost.to_string(),
+                cost.output_cost.to_string(),
+                cost.cache_read_cost.to_string(),
+                cost.cache_creation_cost.to_string(),
+                cost.total_cost.to_string(),
+            ]
+        }
+        None => std::array::from_fn(|_| "0".to_string()),
+    }
+}
+
+/// 补全一条已经入库的回复。
 ///
-/// 调用方持有连接锁（通常在事务内）。
-fn insert_session_log_entry_on_conn(
+/// 子代理的日志是逐块写的，前面的块只带当时的中间用量（输出 token 只有个位数）。
+/// 同步恰好落在一条回复写到一半的时候，就会按中间值入库；最终块到了以后要把
+/// 输出 token 和成本补上，否则这条回复的输出永远少记。输入和缓存 token
+/// 在第一块里就是准的。
+///
+/// 只动会话日志导入的明细行。30 天前的明细已经汇总后删除，但一条回复的各块
+/// 不会隔这么久才写完，所以不存在「补全一条已汇总的回复」的情况。
+fn refresh_session_log_entry_on_conn(
     conn: &rusqlite::Connection,
     request_id: &str,
     msg: &ParsedAssistantUsage,
-) -> Result<bool, AppError> {
+    stored: &StoredSessionRow,
+    dedup_key: &DedupKey,
+) -> Result<SessionRowOutcome, AppError> {
+    if stored.data_source != "session_log" || i64::from(msg.output_tokens) <= stored.output_tokens {
+        return Ok(SessionRowOutcome::Skipped);
+    }
+
+    // 入库时用量还是中间值，对不上路由服务记的那一行；补全后对上了，说明这次
+    // 请求路由服务已经记过，先前入库的这一行是重复的
+    if has_matching_proxy_usage_log(conn, dedup_key)? {
+        conn.execute(
+            "DELETE FROM proxy_request_logs WHERE request_id = ?1",
+            [request_id],
+        )
+        .map_err(|e| AppError::Database(format!("删除重复的会话日志失败: {e}")))?;
+        return Ok(SessionRowOutcome::Updated);
+    }
+
+    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
+        session_costs(conn, msg);
+    conn.execute(
+        "UPDATE proxy_request_logs SET
+            input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
+            cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
+            cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9
+         WHERE request_id = ?10",
+        rusqlite::params![
+            msg.input_tokens,
+            msg.output_tokens,
+            msg.cache_read_tokens,
+            msg.cache_creation_tokens,
+            input_cost,
+            output_cost,
+            cache_read_cost,
+            cache_creation_cost,
+            total_cost,
+            request_id,
+        ],
+    )
+    .map_err(|e| AppError::Database(format!("补全会话日志失败: {e}")))?;
+    Ok(SessionRowOutcome::Updated)
+}
+
+/// 把一条回复写进 proxy_request_logs：没入过库就插入，入过库就按需补全
+/// （见 [`refresh_session_log_entry_on_conn`]）。
+///
+/// 调用方持有连接锁（通常在事务内）。
+fn upsert_session_log_entry_on_conn(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    msg: &ParsedAssistantUsage,
+) -> Result<SessionRowOutcome, AppError> {
     let created_at = msg
         .timestamp
         .as_ref()
@@ -842,42 +962,15 @@ fn insert_session_log_entry_on_conn(
         cache_creation_tokens: msg.cache_creation_tokens,
         created_at,
     };
-    if should_skip_session_insert(conn, request_id, &dedup_key)? {
-        return Ok(false);
+    if let Some(stored) = find_stored_session_row(conn, request_id)? {
+        return refresh_session_log_entry_on_conn(conn, request_id, msg, &stored, &dedup_key);
+    }
+    if has_matching_proxy_usage_log(conn, &dedup_key)? {
+        return Ok(SessionRowOutcome::Skipped);
     }
 
-    // 计算费用
-    let usage = TokenUsage {
-        input_tokens: msg.input_tokens,
-        output_tokens: msg.output_tokens,
-        cache_read_tokens: msg.cache_read_tokens,
-        cache_creation_tokens: msg.cache_creation_tokens,
-        model: Some(msg.model.clone()),
-        message_id: None,
-    };
-
-    let pricing = find_model_pricing_for_session(conn, &msg.model);
-    let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
-    {
-        Some(p) => {
-            let cost = CostCalculator::calculate(&usage, &p, multiplier);
-            (
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            )
-        }
-        None => (
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-        ),
-    };
+    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
+        session_costs(conn, msg);
 
     let inserted_rows = conn
         .execute(
@@ -917,7 +1010,11 @@ fn insert_session_log_entry_on_conn(
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
 
-    Ok(inserted_rows > 0)
+    Ok(if inserted_rows > 0 {
+        SessionRowOutcome::Inserted
+    } else {
+        SessionRowOutcome::Skipped
+    })
 }
 
 /// 从 model_pricing 表查找模型定价（支持模糊匹配）
@@ -1115,11 +1212,11 @@ mod tests {
             session_id: Some("session-1".to_string()),
         };
 
-        let inserted = {
+        let outcome = {
             let conn = lock_conn!(db.conn);
-            insert_session_log_entry_on_conn(&conn, "session:msg_1", &msg)?
+            upsert_session_log_entry_on_conn(&conn, "session:msg_1", &msg)?
         };
-        assert!(!inserted);
+        assert_eq!(outcome, SessionRowOutcome::Skipped);
 
         let conn = lock_conn!(db.conn);
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
@@ -1572,6 +1669,185 @@ mod tests {
             |row| row.get(0),
         )?;
         assert!(!empty_exists, "全 0 token 的 message 应被跳过");
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    fn chain_uuid(n: u8) -> String {
+        format!("00000000-0000-4000-8000-0000000000{n:02x}")
+    }
+
+    /// 一行不带用量的日志（用户消息、工具结果、attachment），只有链信息
+    fn chain_line(kind: &str, uuid: u8, parent: Option<u8>, timestamp: &str) -> String {
+        let parent = parent.map_or("null".to_string(), |p| format!("\"{}\"", chain_uuid(p)));
+        format!(
+            r#"{{"parentUuid":{parent},"type":"{kind}","uuid":"{}","timestamp":"{timestamp}","sessionId":"session-t"}}"#,
+            chain_uuid(uuid)
+        )
+    }
+
+    /// 子代理的写法是逐块写：非末块只带当时的输出 token，也没有 stop_reason
+    fn assistant_block_with(
+        msg_id: &str,
+        uuid: u8,
+        parent: u8,
+        block_index: u32,
+        timestamp: &str,
+        output_tokens: u32,
+        finished: bool,
+    ) -> String {
+        let stop_reason = if finished { "\"tool_use\"" } else { "null" };
+        format!(
+            r#"{{"parentUuid":"{}","type":"assistant","uuid":"{}","apiBlockIndex":{block_index},"message":{{"id":"{msg_id}","model":"claude-opus-4-8","usage":{{"input_tokens":10,"output_tokens":{output_tokens},"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"stop_reason":{stop_reason}}},"timestamp":"{timestamp}","sessionId":"session-t"}}"#,
+            chain_uuid(parent),
+            chain_uuid(uuid)
+        )
+    }
+
+    fn append_lines(file: &Path, lines: &[String]) {
+        let mut content = fs::read(file).unwrap_or_default();
+        content.extend_from_slice((lines.join("\n") + "\n").as_bytes());
+        fs::write(file, &content).unwrap();
+        bump_mtime(file);
+    }
+
+    /// (输出 token, 合计成本, 耗时)
+    fn stored_row(db: &Database, msg_id: &str) -> Option<(i64, String, i64)> {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT output_tokens, total_cost_usd, latency_ms FROM proxy_request_logs
+             WHERE request_id = ?1",
+            [format!("session:{msg_id}")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .unwrap()
+    }
+
+    fn temp_session_file() -> (PathBuf, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("session.jsonl");
+        (tmp, file)
+    }
+
+    #[test]
+    fn test_partial_subagent_reply_is_completed_by_its_final_block() -> Result<(), AppError> {
+        let first_block = [
+            chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+            // 逐块写：第一块落盘时输出 token 还只是开头的几个
+            assistant_block_with("msg_s", 2, 1, 0, "2026-06-07T13:00:02.000Z", 5, false),
+        ];
+        let final_block = [assistant_block_with(
+            "msg_s",
+            3,
+            2,
+            1,
+            "2026-06-07T13:00:30.000Z",
+            4_660,
+            true,
+        )];
+
+        // 同步恰好落在两块之间
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        append_lines(&file, &first_block);
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 1);
+        assert_eq!(
+            stored_row(&db, "msg_s").map(|row| (row.0, row.2)),
+            Some((5, 0))
+        );
+        append_lines(&file, &final_block);
+        let second = sync_with_cursor(&db, &file)?;
+        assert_eq!((second.imported, second.skipped), (1, 0));
+
+        // 对照：整条回复在一轮同步里读到
+        let whole_db = Database::memory()?;
+        let (whole_tmp, whole_file) = temp_session_file();
+        append_lines(&whole_file, &first_block);
+        append_lines(&whole_file, &final_block);
+        sync_with_cursor(&whole_db, &whole_file)?;
+
+        let completed = stored_row(&db, "msg_s");
+        assert_eq!(completed, stored_row(&whole_db, "msg_s"));
+        assert_eq!(completed.map(|row| row.0), Some(4_660));
+
+        // 再同步一轮不会重复补
+        bump_mtime(&file);
+        let third = sync_with_cursor(&db, &file)?;
+        assert_eq!((third.imported, third.skipped), (0, 0));
+
+        fs::remove_dir_all(&tmp).ok();
+        fs::remove_dir_all(&whole_tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_completed_reply_matching_a_proxy_log_is_removed() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        append_lines(
+            &file,
+            &[
+                chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+                assistant_block_with("msg_p", 2, 1, 0, "2026-06-07T13:00:02.000Z", 5, false),
+            ],
+        );
+        // 中间值对不上路由服务记的那一行，先入了库
+        sync_with_cursor(&db, &file)?;
+        assert!(stored_row(&db, "msg_p").is_some());
+
+        // 请求结束后路由服务记下了同一次请求
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "proxy-id",
+                    "p1",
+                    "claude",
+                    "claude-opus-4-8",
+                    "claude-opus-4-8",
+                    10,
+                    4_660,
+                    0,
+                    0,
+                    "0.10",
+                    30_000,
+                    200,
+                    chrono::DateTime::parse_from_rfc3339("2026-06-07T13:00:30Z")
+                        .unwrap()
+                        .timestamp(),
+                    "proxy"
+                ],
+            )?;
+        }
+        append_lines(
+            &file,
+            &[assistant_block_with(
+                "msg_p",
+                3,
+                2,
+                1,
+                "2026-06-07T13:00:30.000Z",
+                4_660,
+                true,
+            )],
+        );
+        sync_with_cursor(&db, &file)?;
+
+        assert_eq!(stored_row(&db, "msg_p"), None);
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 1);
         drop(conn);
 
         fs::remove_dir_all(&tmp).ok();
