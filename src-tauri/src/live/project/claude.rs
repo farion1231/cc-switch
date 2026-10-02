@@ -95,6 +95,14 @@ pub fn direct_patch(prev: Option<&ClaudeProjection>, target: &ClaudeProjection) 
     let residue = residue::CLAUDE_RESIDUE_ENV
         .iter()
         .map(|(key, values)| (env.child(key), residue::residue_values(values)));
+    // 上一家带进来、这一家没有的关键字段写成空串而不是删掉：Claude Code 热加载 env
+    // 相当于 Object.assign，删掉的键留在进程里，切回官方后开着的会话仍走上一家；
+    // 它读到空串等于没设，开着的会话立即生效（#7808）。
+    let blanks = prev
+        .into_iter()
+        .flat_map(|prev| &prev.env)
+        .filter(|(key, _)| !target.env.contains_key(key.as_str()))
+        .map(|(key, _)| (env.child(key), Value::String(String::new())));
 
     JsonPatch {
         clear: vec![
@@ -107,7 +115,7 @@ pub fn direct_patch(prev: Option<&ClaudeProjection>, target: &ClaudeProjection) 
                 is_floor: floor::claude_floor_env,
             },
         ],
-        set: target.set_entries(),
+        set: target.set_entries().into_iter().chain(blanks).collect(),
         remove_if: outgoing.chain(residue).collect(),
         ..JsonPatch::default()
     }
@@ -548,6 +556,54 @@ mod tests {
     }
 
     #[test]
+    fn switching_back_to_official_blanks_prev_env_key_fields() {
+        // Claude Code 热加载 env 相当于 Object.assign：文件里删掉的键留在进程里，
+        // 切回官方后开着的会话仍走上一家（#7808）。上一家带进来、这一家没有的
+        // 关键字段写成空串（Claude Code 读到空串等于没设），开着的会话立即生效。
+        let third_party = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "ANTHROPIC_MODEL": "kimi-k2",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2"
+        }});
+        let live = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "ANTHROPIC_MODEL": "kimi-k2",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2"
+        }});
+        let out = project(&live, Some(&third_party), &json!({ "env": {} }));
+        let env = out["env"].as_object().unwrap();
+        for key in [
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        ] {
+            assert_eq!(env[key], json!(""), "{key} 应写成空串而不是删除");
+        }
+        assert_eq!(env.len(), 4);
+    }
+
+    #[test]
+    fn switching_between_third_parties_blanks_key_fields_the_next_one_lacks() {
+        // 三方互切同理：下一家没有的上一家关键字段写空串，开着的会话不会继续用上一家的值。
+        let kimi_with_model = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "ANTHROPIC_MODEL": "kimi-k2"
+        }});
+        let live = kimi_with_model.clone();
+        let out = project(&live, Some(&kimi_with_model), &qwen());
+        assert_eq!(
+            out["env"]["ANTHROPIC_BASE_URL"],
+            json!("https://qwen.example")
+        );
+        assert_eq!(out["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-qwen"));
+        assert_eq!(out["env"]["ANTHROPIC_MODEL"], json!(""));
+    }
+
+    #[test]
     fn exclusive_fields_leave_only_when_unchanged() {
         let official = json!({ "env": {} });
         let live = json!({ "env": {
@@ -555,16 +611,23 @@ mod tests {
             "CLAUDE_CODE_DISABLE_ARTIFACT": "1",
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144"
         }});
+        // 关键字段切回官方写成空串（热加载中的会话读到空串等于没设，#7808）；
+        // 独有字段照旧按「值没改过」删除。
         assert_eq!(
             project(&live, Some(&kimi()), &official),
-            json!({ "env": {} })
+            json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
         );
 
         // 用户在 live 里把它改成了 0：不是 CC Switch 写的，保留。
+        // live 里被手动删掉的上一家关键字段补回空串：进程里可能还留着旧值（#7808）。
         let edited = json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } });
         assert_eq!(
             project(&edited, Some(&kimi()), &official),
-            json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } })
+            json!({ "env": {
+                "CLAUDE_CODE_DISABLE_ARTIFACT": "0",
+                "ANTHROPIC_BASE_URL": "",
+                "ANTHROPIC_AUTH_TOKEN": ""
+            }})
         );
     }
 
@@ -601,7 +664,9 @@ mod tests {
     #[test]
     fn residue_goes_but_the_targets_own_value_stays_in_place() {
         // 旧版给 Kimi 注入的 262144，上一家行里没有：残留清理兜住。
+        // 上一家自己的 BASE_URL 写成空串（#7808）。
         let live = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
             "CLAUDE_CODE_AUTO_COMPACT_WINDOW": 262144,
             "DEBUG": "1"
@@ -609,7 +674,7 @@ mod tests {
         let bare_kimi = json!({ "env": { "ANTHROPIC_BASE_URL": "https://kimi.example" } });
         assert_eq!(
             project(&live, Some(&bare_kimi), &json!({})),
-            json!({ "env": { "DEBUG": "1" } })
+            json!({ "env": { "DEBUG": "1", "ANTHROPIC_BASE_URL": "" } })
         );
 
         // 切入千问：它自己要写 983616，不能被残留清理删掉，也不挪位置。
