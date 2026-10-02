@@ -198,7 +198,8 @@ export function RequestLogTable({
         className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
         onClick={() => onOpenDetail?.(log.requestId)}
       >
-        <td className={usageTable.td}>
+        {/* 时间、应用两列收紧到内容宽度（w-px），多出来的宽度留给后面的数值列 */}
+        <td className={cn(usageTable.td, "w-px")}>
           <button
             type="button"
             className="rounded-[4px] text-start tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -223,7 +224,7 @@ export function RequestLogTable({
             </span>
           )}
         </td>
-        <td className={usageTable.td}>
+        <td className={cn(usageTable.td, "w-px")}>
           <span
             className="flex max-w-[88px] items-center gap-1.5"
             title={appDisplayName(log.appType)}
@@ -241,13 +242,14 @@ export function RequestLogTable({
             <span className="sr-only">{appDisplayName(log.appType)}</span>
           </span>
         </td>
-        {/* 供应商、模型两列按比例分走剩余宽度（max-w-0 让百分比宽度生效、内容截断） */}
-        <td className={cn(usageTable.td, "w-[30%] max-w-0")}>
+        {/* 供应商、模型两列按比例取宽（max-w-0 让百分比宽度生效、内容截断）；
+            比例合计 40%，再大就会把数值列挤到只剩内容宽度。模型名通常比供应商名长 */}
+        <td className={cn(usageTable.td, "w-[18%] max-w-0")}>
           <span className="block truncate" title={provider}>
             {provider}
           </span>
         </td>
-        <td className={cn(usageTable.td, usageTable.mono, "w-[24%] max-w-0")}>
+        <td className={cn(usageTable.td, usageTable.mono, "w-[22%] max-w-0")}>
           <span className="block truncate" title={modelTitle}>
             {log.model}
           </span>
