@@ -681,6 +681,83 @@ mod tests {
         assert!(parse_hermes_sqlite("sqlite:/x/state.db#").is_none());
     }
 
+    /// 超长注入文本与压缩摘要只下发预览：`full` 必须能取回原文（Claude 与 Codex 解析器）
+    #[test]
+    fn oversized_injected_text_and_summary_refs_resolve_to_original() {
+        use super::super::model::{SessionBlock, SessionMessage};
+        use super::super::providers::{claude, codex};
+        use serde_json::json;
+
+        fn check(source: &ValidatedSource, messages: &[SessionMessage], originals: &[&str]) {
+            let mut resolved = Vec::new();
+            for block in messages.iter().flat_map(|m| &m.blocks) {
+                let (preview, full) = match block {
+                    SessionBlock::Text {
+                        text,
+                        full: Some(full),
+                    } => (text.clone(), full),
+                    SessionBlock::Event {
+                        text: Some(text),
+                        full: Some(full),
+                        ..
+                    } => (text.clone(), full),
+                    _ => continue,
+                };
+                let text = resolve_content_ref(source, full).unwrap();
+                assert!(text.starts_with(preview.trim_end()), "预览应是全文开头");
+                assert!(text.chars().count() > preview.chars().count());
+                resolved.push(text);
+            }
+            let mut expected: Vec<&str> = originals.to_vec();
+            expected.sort_unstable();
+            let mut resolved: Vec<&str> = resolved.iter().map(String::as_str).collect();
+            resolved.sort_unstable();
+            assert_eq!(resolved, expected);
+        }
+
+        let dir = tempdir().unwrap();
+        let notification = format!(
+            "<task-notification>{}</task-notification>",
+            "n".repeat(9000)
+        );
+        let summary = format!("This session is being continued. {}", "s".repeat(800));
+        let lines = [
+            json!({ "type": "user", "uuid": "u1", "message": { "role": "user", "content": notification } }),
+            json!({ "type": "user", "uuid": "u2", "message": { "role": "user", "content": "short question" } }),
+            json!({ "type": "user", "isCompactSummary": true, "uuid": "u3", "message": { "role": "user", "content": summary } }),
+        ];
+        let path = dir.path().join("claude.jsonl");
+        std::fs::write(&path, lines.map(|l| format!("{l}\n")).concat()).unwrap();
+        let messages = claude::load_messages(&path).unwrap();
+        check(
+            &file_source(dir.path(), &path),
+            &messages,
+            &[&notification, &summary],
+        );
+        // 短文本照常完整下发
+        assert!(messages.iter().flat_map(|m| &m.blocks).any(
+            |b| matches!(b, SessionBlock::Text { text, full: None } if text == "short question")
+        ));
+
+        let developer = format!("<permissions instructions>{}", "d".repeat(9000));
+        let agents = format!("# AGENTS.md instructions for /repo\n\n{}", "a".repeat(9000));
+        let compacted = format!("Summary: {}", "c".repeat(800));
+        let ts = "2026-03-06T21:50:12Z";
+        let lines = [
+            json!({ "timestamp": ts, "type": "response_item", "payload": { "type": "message", "role": "developer", "content": [{ "type": "input_text", "text": developer }] } }),
+            json!({ "timestamp": ts, "type": "response_item", "payload": { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": agents }, { "type": "input_text", "text": "real question" }] } }),
+            json!({ "timestamp": ts, "type": "compacted", "payload": { "message": compacted } }),
+        ];
+        let path = dir.path().join("rollout.jsonl");
+        std::fs::write(&path, lines.map(|l| format!("{l}\n")).concat()).unwrap();
+        let messages = codex::load_messages(&path).unwrap();
+        check(
+            &file_source(dir.path(), &path),
+            &messages,
+            &[&developer, &agents, &compacted],
+        );
+    }
+
     #[test]
     fn jsonl_ref_reads_line_and_pointer() {
         let (_dir, source, offset, len) = two_line_session();

@@ -19,10 +19,11 @@ use crate::session_manager::model::{
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::{
-    estimate_base64_size, first_string_field, line_change_counts, normalize_tool, one_line_title,
-    preview, preview_chars, refine_shell_kind, split_mcp_name, title_agent, title_ask, title_mcp,
-    title_other, title_path, title_read, title_search, title_shell, title_todo, title_web,
-    NormalizedTool, ToolSource, INPUT_PREVIEW_CHARS, THINKING_PREVIEW_CHARS,
+    estimate_base64_size, first_string_field, large_text_block, line_change_counts, normalize_tool,
+    one_line_title, preview, preview_chars, refine_shell_kind, split_mcp_name, summary_event_block,
+    title_agent, title_ask, title_mcp, title_other, title_path, title_read, title_search,
+    title_shell, title_todo, title_web, NormalizedTool, ToolSource, INPUT_PREVIEW_CHARS,
+    THINKING_PREVIEW_CHARS,
 };
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
@@ -371,7 +372,7 @@ impl TranscriptBuilder {
         let ts = record.timestamp.as_ref().and_then(parse_timestamp_to_ms);
 
         match record.kind.as_str() {
-            Some("system") => self.push_system(&record, ts),
+            Some("system") => self.push_system(&record, ts, line),
             Some("pr-link") => self.push_pr_link(&record, ts),
             Some("user") | Some("assistant") | None => {
                 let kind = record.kind.as_str().map(str::to_string);
@@ -389,7 +390,7 @@ impl TranscriptBuilder {
                     .or(kind)
                     .unwrap_or_else(|| "unknown".to_string());
                 if compact_summary {
-                    self.push_compact_summary(message.content, ts);
+                    self.push_compact_summary(message.content, ts, line);
                 } else if role == "user" {
                     self.push_user(message.content, tool_use_result, uuid, ts, line);
                 } else {
@@ -431,13 +432,18 @@ impl TranscriptBuilder {
             "system",
             ts,
             None,
-            vec![SessionBlock::Event { kind, text, url }],
+            vec![SessionBlock::Event {
+                kind,
+                text,
+                url,
+                full: None,
+            }],
         );
     }
 
     // ── system / pr-link ──
 
-    fn push_system(&mut self, record: &RawRecord<'_>, ts: Option<i64>) {
+    fn push_system(&mut self, record: &RawRecord<'_>, ts: Option<i64>, line: LineRef) {
         match record.subtype.as_str() {
             Some("stop_hook_summary") => {
                 let errors: Vec<String> = match &record.hook_errors {
@@ -469,7 +475,7 @@ impl TranscriptBuilder {
                 if let Some(content) = record.content.as_str() {
                     let uuid = record.uuid.as_str().map(str::to_string);
                     self.push_user_texts(
-                        vec![Cow::Borrowed(content)],
+                        vec![(Cow::Borrowed(content), line.at("/content".to_string()))],
                         Vec::new(),
                         Vec::new(),
                         uuid,
@@ -498,24 +504,26 @@ impl TranscriptBuilder {
     }
 
     /// `/compact` 之后的摘要记录：并入紧邻的 compact_boundary 事件，没有则单独成一条。
-    fn push_compact_summary(&mut self, content: RawContent<'_>, ts: Option<i64>) {
+    /// 摘要通常有数 KB，只放预览，全文按 `/message/content` 引用取。
+    fn push_compact_summary(&mut self, content: RawContent<'_>, ts: Option<i64>, line: LineRef) {
         let summary = content_text(&content);
-        let summary = summary.trim();
-        if summary.is_empty() {
+        if summary.trim().is_empty() {
             return;
         }
+        let block = summary_event_block(EventKind::Compaction, &summary, || {
+            Some(line.at("/message/content".to_string()))
+        });
         if let Some(last) = self.drafts.last_mut() {
-            if let [SessionBlock::Event {
+            if let [event @ SessionBlock::Event {
                 kind: EventKind::Compaction,
-                text,
                 ..
             }] = last.blocks.as_mut_slice()
             {
-                *text = Some(summary.to_string());
+                *event = block;
                 return;
             }
         }
-        self.push_event(ts, EventKind::Compaction, Some(summary.to_string()), None);
+        self.push_draft("system", ts, None, vec![block]);
     }
 
     // ── assistant ──
@@ -535,9 +543,7 @@ impl TranscriptBuilder {
         match message.content {
             RawContent::Text(text) => {
                 if !text.trim().is_empty() {
-                    blocks.push(SessionBlock::Text {
-                        text: text.into_owned(),
-                    });
+                    blocks.push(SessionBlock::text(text.into_owned()));
                 }
             }
             RawContent::Items(items) => {
@@ -546,9 +552,7 @@ impl TranscriptBuilder {
                     match item.kind.as_str().unwrap_or_default() {
                         "text" => {
                             if let Some(text) = item.text.0.filter(|t| !t.trim().is_empty()) {
-                                blocks.push(SessionBlock::Text {
-                                    text: text.into_owned(),
-                                });
+                                blocks.push(SessionBlock::text(text.into_owned()));
                             }
                         }
                         kind @ ("thinking" | "redacted_thinking") => {
@@ -627,7 +631,7 @@ impl TranscriptBuilder {
         let mut texts = Vec::new();
         let mut images = Vec::new();
         match content {
-            RawContent::Text(text) => texts.push(text),
+            RawContent::Text(text) => texts.push((text, line.at("/message/content".to_string()))),
             RawContent::Items(items) => {
                 let result_count = items
                     .iter()
@@ -651,7 +655,7 @@ impl TranscriptBuilder {
                         )),
                         "text" => {
                             if let Some(text) = item.text.0 {
-                                texts.push(text);
+                                texts.push((text, line.at(format!("/message/content/{i}/text"))));
                             }
                         }
                         "image" => {
@@ -673,9 +677,10 @@ impl TranscriptBuilder {
     }
 
     /// 按 §4.1 给用户文本归类：中断 / 斜杠命令 / `!` 命令 / 注入内容 / 普通提问。
+    /// `texts` 每项带上它在源记录里的引用，超长注入文本只放预览 + 引用。
     fn push_user_texts(
         &mut self,
-        texts: Vec<Cow<'_, str>>,
+        texts: Vec<(Cow<'_, str>, ContentRef)>,
         mut blocks: Vec<SessionBlock>,
         images: Vec<SessionBlock>,
         uuid: Option<String>,
@@ -685,18 +690,26 @@ impl TranscriptBuilder {
         let mut injected = false;
         let mut new_turn = false;
 
-        if let Some(first) = texts.iter().map(|t| t.trim()).find(|t| !t.is_empty()) {
+        let injected_blocks = |texts: &[(Cow<'_, str>, ContentRef)]| -> Vec<SessionBlock> {
+            texts
+                .iter()
+                .map(|(text, full)| large_text_block(text.to_string(), || Some(full.clone())))
+                .collect()
+        };
+        if let Some(first) = texts.iter().map(|(t, _)| t.trim()).find(|t| !t.is_empty()) {
             if first.starts_with("[Request interrupted by user") {
                 blocks.push(SessionBlock::Event {
                     kind: EventKind::Aborted,
                     text: Some(first.to_string()),
                     url: None,
+                    full: None,
                 });
             } else if let Some(command) = slash_command(first) {
                 blocks.push(SessionBlock::Event {
                     kind: EventKind::SlashCommand,
                     text: Some(command),
                     url: None,
+                    full: None,
                 });
                 new_turn = true;
             } else if first.starts_with("<bash-input>") {
@@ -705,25 +718,21 @@ impl TranscriptBuilder {
                 // 与工具结果同记录的注入文本直接丢弃；单独成条时整条标 injected、保留原文
                 if !has_results {
                     injected = true;
-                    blocks.extend(texts.iter().map(|t| SessionBlock::Text {
-                        text: t.to_string(),
-                    }));
+                    blocks.extend(injected_blocks(&texts));
                 }
             } else {
                 let stripped: Vec<String> = texts
                     .iter()
-                    .map(|t| strip_system_reminders(t))
+                    .map(|(t, _)| strip_system_reminders(t))
                     .filter(|t| !t.trim().is_empty())
                     .collect();
                 if !stripped.is_empty() {
-                    blocks.extend(stripped.into_iter().map(|text| SessionBlock::Text { text }));
+                    blocks.extend(stripped.into_iter().map(|text| SessionBlock::text(text)));
                     new_turn = true;
                 } else if !has_results && images.is_empty() {
                     // 全是 <system-reminder>：整条注入，保留原文
                     injected = true;
-                    blocks.extend(texts.iter().map(|t| SessionBlock::Text {
-                        text: t.to_string(),
-                    }));
+                    blocks.extend(injected_blocks(&texts));
                 }
             }
         }
@@ -1962,7 +1971,6 @@ mod tests {
 mod transcript_tests {
     use super::*;
     use serde_json::json;
-    use std::time::Instant;
     use tempfile::tempdir;
 
     /// 把记录写成 JSONL 并解析；返回消息与每行的字节偏移（用来校验 ContentRef）。
@@ -2759,79 +2767,7 @@ mod transcript_tests {
                 assert!(call_ids.contains(call_id.as_str()), "{call_id} 未配对");
             }
         }
-        for m in &messages {
-            assert_eq!(
-                m.content,
-                crate::session_manager::model::project_content(&m.blocks)
-            );
-        }
-    }
-
-    /// 本机大文件基准：
-    /// `SESSION_BENCH_CLAUDE=<jsonl> cargo test --release --lib bench_parse_env_file -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    fn bench_parse_env_file() {
-        let Ok(path) = std::env::var("SESSION_BENCH_CLAUDE") else {
-            eprintln!("SESSION_BENCH_CLAUDE 未设置，跳过");
-            return;
-        };
-        let path = PathBuf::from(path);
-        let file_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-
-        let mut times = Vec::new();
-        let mut messages = Vec::new();
-        for _ in 0..5 {
-            let start = Instant::now();
-            messages = load_messages(&path).expect("load");
-            times.push(start.elapsed().as_secs_f64() * 1000.0);
-        }
-        let mut sorted = times.clone();
-        sorted.sort_by(f64::total_cmp);
-
-        let payload = serde_json::to_vec(&messages).unwrap();
-        if let Ok(dump) = std::env::var("SESSION_BENCH_DUMP") {
-            std::fs::write(dump, &payload).unwrap();
-        }
-        let max_message = messages
-            .iter()
-            .map(|m| serde_json::to_vec(m).unwrap().len())
-            .max()
-            .unwrap_or(0);
-        let mut block_counts: HashMap<String, usize> = HashMap::new();
-        let mut block_bytes: HashMap<String, usize> = HashMap::new();
-        for block in messages.iter().flat_map(|m| &m.blocks) {
-            let value = serde_json::to_value(block).unwrap();
-            let kind = value["type"].as_str().unwrap().to_string();
-            *block_counts.entry(kind.clone()).or_default() += 1;
-            *block_bytes.entry(kind).or_default() += serde_json::to_vec(&value).unwrap().len();
-        }
-        let content_bytes: usize = messages.iter().map(|m| m.content.len()).sum();
-        let turns = messages
-            .iter()
-            .filter_map(|m| m.turn_id.as_deref())
-            .collect::<HashSet<_>>()
-            .len();
-
-        eprintln!("file: {} ({:.1} MB)", path.display(), file_len as f64 / 1e6);
-        eprintln!(
-            "parse ms (5 runs): {times:.1?}; median {:.1}",
-            sorted[sorted.len() / 2]
-        );
-        eprintln!("messages: {}, turns: {turns}", messages.len());
-        eprintln!(
-            "payload: {:.3} MB (content projection {:.3} MB), max message {:.1} KB",
-            payload.len() as f64 / 1e6,
-            content_bytes as f64 / 1e6,
-            max_message as f64 / 1e3
-        );
-        let mut kinds: Vec<_> = block_counts.into_iter().collect();
-        kinds.sort();
-        for (kind, count) in kinds {
-            eprintln!(
-                "  {kind:<12} {count:>6} blocks {:>9.1} KB",
-                block_bytes[&kind] as f64 / 1e3
-            );
-        }
+        // 有 blocks 的消息不下发 content（前端从 blocks 推导）
+        assert!(messages.iter().all(|m| m.content.is_empty()));
     }
 }

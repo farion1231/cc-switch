@@ -15,12 +15,17 @@ use crate::session_manager::model::ToolKind;
 pub const PREVIEW_LINES: usize = 12;
 /// 工具结果预览的最大字符数
 pub const PREVIEW_CHARS: usize = 1200;
-/// 工具参数预览的最大字符数
-pub const INPUT_PREVIEW_CHARS: usize = 1200;
+/// 工具参数预览的最大字符数（标题 / detail 已提炼出要点，参数只需看个开头；
+/// 大会话里 Bash 参数预览曾占 payload 的五分之一）
+pub const INPUT_PREVIEW_CHARS: usize = 400;
 /// 思考正文预览的最大字符数
 pub const THINKING_PREVIEW_CHARS: usize = 400;
 /// 工具标题的最大字符数
 pub const TITLE_CHARS: usize = 200;
+/// Text 块超过该字符数时只下发预览 + 引用（注入的 AGENTS.md / developer / task-notification 等）
+pub const INLINE_TEXT_MAX_CHARS: usize = 8 * 1024;
+/// 压缩摘要等长事件说明的预览字符数
+pub const EVENT_PREVIEW_CHARS: usize = 400;
 
 /// 工具调用来自哪家 Agent；同名工具在不同 Agent 下归类可能不同。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -344,7 +349,7 @@ pub fn first_string_field(input: &Value) -> Option<String> {
 // ─── 由 JSON 参数构造 block（Gemini / OpenCode / Pi / OpenClaw / Hermes / Grok 共用）────
 
 use crate::session_manager::model::{
-    ContentRef, DiffFile, DiffOp, DiffSummary, SessionBlock, SessionMessage, ToolStatus,
+    ContentRef, DiffFile, DiffOp, DiffSummary, EventKind, SessionBlock, SessionMessage, ToolStatus,
 };
 
 /// 参数里第一个存在的非空字符串字段。
@@ -635,6 +640,48 @@ pub fn thinking_block(
         summary,
         duration_ms,
         full: if p.truncated { full() } else { None },
+    }
+}
+
+/// 构造 `Text`：超过 [`INLINE_TEXT_MAX_CHARS`] 且能给出引用时只放预览（12 行 / 1200 字）+ `full`。
+/// 只用于默认折叠的内容（注入文本）；真人提问与最终回复要完整渲染 Markdown，不走这里。
+pub fn large_text_block(
+    text: impl Into<String>,
+    full: impl FnOnce() -> Option<ContentRef>,
+) -> SessionBlock {
+    let text = text.into();
+    if text.chars().nth(INLINE_TEXT_MAX_CHARS).is_none() {
+        return SessionBlock::text(text);
+    }
+    match full() {
+        Some(full) => SessionBlock::Text {
+            text: preview(&text).text,
+            full: Some(full),
+        },
+        None => SessionBlock::text(text),
+    }
+}
+
+/// 构造带长说明的 `Event`（压缩摘要）：超过 [`EVENT_PREVIEW_CHARS`] 且能给出引用时只放预览 + `full`；
+/// 拿不到引用时退回带 `…` 的预览，避免把整段摘要塞进 payload。
+pub fn summary_event_block(
+    kind: EventKind,
+    text: &str,
+    full: impl FnOnce() -> Option<ContentRef>,
+) -> SessionBlock {
+    let text = text.trim();
+    let p = preview_chars(text, EVENT_PREVIEW_CHARS);
+    if !p.truncated {
+        return SessionBlock::event(kind, Some(p.text), None);
+    }
+    match full() {
+        Some(full) => SessionBlock::Event {
+            kind,
+            text: Some(p.text),
+            url: None,
+            full: Some(full),
+        },
+        None => SessionBlock::event(kind, Some(format!("{}…", p.text)), None),
     }
 }
 

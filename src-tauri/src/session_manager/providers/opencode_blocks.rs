@@ -86,9 +86,7 @@ fn push_part_blocks(blocks: &mut Vec<SessionBlock>, locator: &PartLocator, part:
                 .and_then(Value::as_str)
                 .filter(|t| !t.trim().is_empty())
             {
-                blocks.push(SessionBlock::Text {
-                    text: text.to_string(),
-                });
+                blocks.push(SessionBlock::text(text.to_string()));
             }
         }
         Some("reasoning") => {
@@ -119,6 +117,7 @@ fn push_part_blocks(blocks: &mut Vec<SessionBlock>, locator: &PartLocator, part:
                     kind: EventKind::Other,
                     text: Some(format!("@{name}")),
                     url: None,
+                    full: None,
                 });
             }
         }
@@ -332,6 +331,7 @@ fn push_file_block(blocks: &mut Vec<SessionBlock>, locator: &PartLocator, part: 
             kind: EventKind::Other,
             text: Some(text.to_string()),
             url: None,
+            full: None,
         });
     }
 }
@@ -345,6 +345,7 @@ fn message_error_event(info: &Value) -> Option<SessionBlock> {
             kind: EventKind::Aborted,
             text: None,
             url: None,
+            full: None,
         });
     }
     let text = error
@@ -356,6 +357,7 @@ fn message_error_event(info: &Value) -> Option<SessionBlock> {
         kind: EventKind::Error,
         text: (!text.is_empty()).then(|| text.to_string()),
         url: None,
+        full: None,
     })
 }
 

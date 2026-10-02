@@ -48,7 +48,7 @@ export interface BlockTextProps {
   full?: ContentRef;
   /** 折叠时显示的行数 */
   previewLines: number;
-  variant: "output" | "params" | "thinking";
+  variant: "output" | "params" | "thinking" | "plain";
   /** 自定义全文展示（参数 JSON 美化等） */
   format?: (text: string) => string;
   /** 失败输出用正文色，其余次级色 */
@@ -62,6 +62,8 @@ const VARIANT_CLASS = {
   params:
     "whitespace-pre rounded-[8px] bg-subtle px-3 py-2 font-mono text-caption",
   thinking: "whitespace-pre-wrap break-words text-caption italic",
+  /** 注入文本、压缩摘要等长说明 */
+  plain: "whitespace-pre-wrap break-words text-caption",
 } as const;
 
 /**
@@ -107,7 +109,7 @@ export const BlockText = memo(function BlockText({
   return (
     <div className={cn("min-w-0", className)}>
       <pre
-        tabIndex={variant === "thinking" ? undefined : 0}
+        tabIndex={variant === "thinking" || variant === "plain" ? undefined : 0}
         className={cn(
           "m-0 max-h-[480px] overflow-auto outline-none focus-visible:ring-2 focus-visible:ring-ring",
           VARIANT_CLASS[variant],

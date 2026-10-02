@@ -167,7 +167,7 @@ export const effectiveBlocks = (
   messageIndex: number,
 ): SessionBlock[] => {
   if (message.blocks && message.blocks.length > 0) return message.blocks;
-  const content = message.content;
+  const content = message.content ?? "";
   if (!content.trim()) return [];
   if (message.role === "tool") {
     return [
@@ -212,6 +212,17 @@ export const effectiveBlocks = (
   flush();
   return blocks;
 };
+
+/**
+ * 消息的纯文本：有 blocks 时拼接 Text 块（后端不再下发 content 投影），
+ * 旧后端没有 blocks 时用 content。带 full 的 Text 只含预览，全文按需取。
+ */
+export const messageText = (message: SessionMessage): string =>
+  message.blocks && message.blocks.length > 0
+    ? message.blocks
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n\n")
+    : (message.content ?? "");
 
 /** 真人提问：非注入的 user 消息，含非空文本或图片 */
 const isQuestionMessage = (message: SessionMessage, index: number) =>

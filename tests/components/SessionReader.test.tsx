@@ -275,6 +275,30 @@ describe("SessionReader", () => {
     );
   });
 
+  it("压缩摘要只下发预览，展开后按引用取全文", async () => {
+    const getBlockContent = vi
+      .spyOn(sessionsApi, "getBlockContent")
+      .mockResolvedValue({
+        text: "Summary: FULL COMPACTION SUMMARY",
+        totalLen: 31,
+        truncated: false,
+      });
+    renderReader("codex", fixtures.codex);
+    fireEvent.click(screen.getByRole("button", { name: /上下文已压缩/ }));
+    expect(getBlockContent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "显示全部" }));
+
+    expect(
+      await screen.findByText(/FULL COMPACTION SUMMARY/),
+    ).toBeInTheDocument();
+    expect(getBlockContent).toHaveBeenCalledWith(
+      "codex",
+      "/mock/codex.jsonl",
+      expect.objectContaining({ kind: "jsonl", pointer: "/payload/message" }),
+      expect.objectContaining({ offset: 0 }),
+    );
+  });
+
   it("图片进入视口才请求，缩略图可放大", async () => {
     const observers: IntersectionObserverCallback[] = [];
     vi.stubGlobal(

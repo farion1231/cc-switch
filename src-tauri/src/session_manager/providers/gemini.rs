@@ -90,7 +90,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 if text.trim().is_empty() {
                     continue;
                 }
-                SessionMessage::from_blocks("user", ts, vec![SessionBlock::Text { text }])
+                SessionMessage::from_blocks("user", ts, vec![SessionBlock::text(text)])
             }
             Some("gemini") => {
                 let blocks = gemini_blocks(msg, &base, &file_ref);
@@ -115,6 +115,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                         kind: event_kind,
                         text: Some(text),
                         url: None,
+                        full: None,
                     }],
                 );
                 // info（登录、刷新等提示）默认折叠
@@ -219,7 +220,7 @@ fn gemini_blocks(
 
     let text = content_text(msg.get("content"));
     if !text.trim().is_empty() {
-        blocks.push(SessionBlock::Text { text });
+        blocks.push(SessionBlock::text(text));
     }
 
     for (j, call) in msg
@@ -566,7 +567,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(&a.blocks[1], SessionBlock::Text { text } if text == "Done."));
+        assert!(matches!(&a.blocks[1], SessionBlock::Text { text, .. } if text == "Done."));
         match &a.blocks[2] {
             SessionBlock::ToolCall {
                 kind,

@@ -447,7 +447,7 @@ fn load_messages_from_conn(
                     blocks.push(thinking_block(reasoning, None, None, || None));
                 }
                 if !text.trim().is_empty() {
-                    blocks.push(SessionBlock::Text { text });
+                    blocks.push(SessionBlock::text(text));
                 }
                 let calls = row
                     .tool_calls
@@ -457,7 +457,7 @@ fn load_messages_from_conn(
                 blocks
             }
             _ if text.trim().is_empty() => Vec::new(),
-            _ => vec![SessionBlock::Text { text }],
+            _ => vec![SessionBlock::text(text)],
         };
         let mut message = SessionMessage::from_blocks(row.role.clone(), ts, blocks);
         if message.is_empty() {
@@ -751,7 +751,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             "assistant" => {
                 let mut blocks = Vec::new();
                 if !text.trim().is_empty() {
-                    blocks.push(SessionBlock::Text { text });
+                    blocks.push(SessionBlock::text(text));
                 }
                 blocks.extend(openai_tool_calls(msg.get("tool_calls"), |i| {
                     Some(span.content_ref(format!("{base}/tool_calls/{i}/function/arguments")))
@@ -759,7 +759,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 blocks
             }
             _ if text.trim().is_empty() => Vec::new(),
-            _ => vec![SessionBlock::Text { text }],
+            _ => vec![SessionBlock::text(text)],
         };
 
         let ts = ts_val.and_then(parse_timestamp_to_ms);
@@ -1169,7 +1169,7 @@ mod tests {
 
         let a = &msgs[1].blocks;
         assert!(matches!(&a[0], SessionBlock::Thinking { text, .. } if text == "need df"));
-        assert!(matches!(&a[1], SessionBlock::Text { text } if text == "我先看一下。"));
+        assert!(matches!(&a[1], SessionBlock::Text { text, .. } if text == "我先看一下。"));
         match (&a[2], &a[3]) {
             (
                 SessionBlock::ToolCall {

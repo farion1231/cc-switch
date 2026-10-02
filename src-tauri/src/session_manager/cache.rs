@@ -316,7 +316,7 @@ pub fn build_turns(messages: &[SessionMessage]) -> Vec<TurnIndex> {
                         turn.index.error_count += 1;
                     }
                 }
-                SessionBlock::Text { text } if message.role == "assistant" => {
+                SessionBlock::Text { text, .. } if message.role == "assistant" => {
                     if !text.trim().is_empty() {
                         turn.reply_pending = true;
                     }
@@ -352,7 +352,7 @@ fn question_preview(message: &SessionMessage) -> String {
         .blocks
         .iter()
         .filter_map(|block| match block {
-            SessionBlock::Text { text } => Some(text.as_str()),
+            SessionBlock::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -509,13 +509,7 @@ mod tests {
     }
 
     fn text(role: &str, text: &str) -> SessionMessage {
-        SessionMessage::from_blocks(
-            role,
-            None,
-            vec![SessionBlock::Text {
-                text: text.to_string(),
-            }],
-        )
+        SessionMessage::from_blocks(role, None, vec![SessionBlock::text(text.to_string())])
     }
 
     fn tool_call(id: &str) -> SessionBlock {
@@ -569,6 +563,7 @@ mod tests {
                     kind: EventKind::Aborted,
                     text: None,
                     url: None,
+                    full: None,
                 }],
             ),
         ];

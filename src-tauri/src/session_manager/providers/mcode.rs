@@ -112,7 +112,7 @@ fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMes
         let blocks = if text.trim().is_empty() {
             Vec::new()
         } else {
-            vec![SessionBlock::Text { text }]
+            vec![SessionBlock::text(text)]
         };
         Ok(SessionMessage::from_blocks(
             row.get::<_, String>(0)?,
@@ -184,12 +184,7 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].content, "Tests passed");
         assert_eq!(messages[1].ts, Some(200));
-        assert_eq!(
-            messages[1].blocks,
-            vec![SessionBlock::Text {
-                text: "Tests passed".into()
-            }]
-        );
+        assert_eq!(messages[1].blocks, vec![SessionBlock::text("Tests passed")]);
         assert_eq!(messages[1].turn_id.as_deref(), Some("t1"));
 
         let legacy = serde_json::json!([

@@ -20,9 +20,9 @@ use crate::session_manager::model::{
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::{
-    first_string_field, normalize_tool, preview, preview_chars, refine_shell_kind, title_agent,
-    title_ask, title_mcp, title_other, title_path, title_read, title_shell, title_todo, title_web,
-    ToolSource, THINKING_PREVIEW_CHARS,
+    first_string_field, large_text_block, normalize_tool, preview, preview_chars,
+    refine_shell_kind, summary_event_block, title_agent, title_ask, title_mcp, title_other,
+    title_path, title_read, title_shell, title_todo, title_web, ToolSource, THINKING_PREVIEW_CHARS,
 };
 use super::codex_items::{
     command_from_value, diff_kind, diff_summary, diff_title, exec_title, image_from_url,
@@ -656,17 +656,14 @@ impl RolloutParser {
             }
             "compacted" => {
                 if let Some((ts, p)) = parse_line::<CompactedPayload>(line) {
-                    let text = opt_str(&p.message)
+                    let summary = opt_str(&p.message)
                         .filter(|m| !m.trim().is_empty())
                         .map(|m| {
-                            let summary = preview_chars(m.trim(), THINKING_PREVIEW_CHARS);
-                            if summary.truncated {
-                                format!("{}…", summary.text)
-                            } else {
-                                summary.text
-                            }
+                            summary_event_block(EventKind::Compaction, m, || {
+                                Some(span.content_ref("/payload/message"))
+                            })
                         });
-                    self.compaction_event(ts, text);
+                    self.compaction_event(ts, summary);
                 }
             }
             // session_meta / world_state / inter_agent_communication_metadata …：不产生消息
@@ -811,6 +808,7 @@ impl RolloutParser {
                     kind: EventKind::ModelChange,
                     text: Some(model),
                     url: None,
+                    full: None,
                 }],
                 false,
             );
@@ -832,34 +830,26 @@ impl RolloutParser {
                 kind: EventKind::Aborted,
                 text: Some(reason),
                 url: None,
+                full: None,
             }],
             false,
         );
     }
 
-    fn compaction_event(&mut self, ts: Option<i64>, text: Option<String>) {
+    /// `summary` 为带摘要的 Compaction 事件块（`compacted` 记录）；其余来源只标记发生过压缩。
+    fn compaction_event(&mut self, ts: Option<i64>, summary: Option<SessionBlock>) {
         if let Some(idx) = self.last_compaction {
             // 同一次压缩的多种记录：补上缺的摘要即可
-            if let Some(SessionBlock::Event { text: existing, .. }) =
-                self.messages[idx].blocks.first_mut()
-            {
-                if existing.is_none() {
-                    *existing = text;
+            if let (Some(first), Some(summary)) = (self.messages[idx].blocks.first_mut(), summary) {
+                if matches!(first, SessionBlock::Event { text: None, .. }) {
+                    *first = summary;
                 }
             }
             return;
         }
-        let idx = self.push(
-            "system",
-            ts,
-            None,
-            vec![SessionBlock::Event {
-                kind: EventKind::Compaction,
-                text,
-                url: None,
-            }],
-            false,
-        );
+        let block =
+            summary.unwrap_or_else(|| SessionBlock::event(EventKind::Compaction, None, None));
+        let idx = self.push("system", ts, None, vec![block], false);
         self.last_compaction = Some(idx);
     }
 
@@ -929,7 +919,7 @@ impl RolloutParser {
                 if text.trim().is_empty() {
                     return;
                 }
-                let (idx, _) = self.push_assistant(ts, id, vec![SessionBlock::Text { text }]);
+                let (idx, _) = self.push_assistant(ts, id, vec![SessionBlock::text(text)]);
                 if let Some(phase) = owned(&p.phase) {
                     self.messages[idx]
                         .meta
@@ -937,11 +927,14 @@ impl RolloutParser {
                         .stop_reason = Some(phase);
                 }
             }
-            // developer / system：系统注入，默认隐藏
+            // developer / system：系统注入，默认隐藏；超长时只放预览 + 引用
             _ => {
                 let text = contents.joined_text("\n");
                 if !text.trim().is_empty() {
-                    self.push("system", ts, id, vec![SessionBlock::Text { text }], true);
+                    let block = large_text_block(text, || {
+                        Some(span.content_ref(contents.text_pointer("/payload/content")))
+                    });
+                    self.push("system", ts, id, vec![block], true);
                 }
             }
         }
@@ -955,17 +948,16 @@ impl RolloutParser {
         span: LineSpan,
     ) {
         let mut blocks = Vec::new();
-        let mut injected: Vec<String> = Vec::new();
+        // (注入文本, 在行内的 JSON Pointer)
+        let mut injected: Vec<(String, String)> = Vec::new();
         let mut pending_text: Vec<String> = Vec::new();
         let flush_text = |pending: &mut Vec<String>, blocks: &mut Vec<SessionBlock>| {
             if !pending.is_empty() {
-                blocks.push(SessionBlock::Text {
-                    text: pending.join("\n"),
-                });
+                blocks.push(SessionBlock::text(pending.join("\n")));
                 pending.clear();
             }
         };
-        let mut handle_text = |text: &str, pending: &mut Vec<String>| {
+        let mut handle_text = |text: &str, pointer: String, pending: &mut Vec<String>| {
             let trimmed = text.trim();
             if trimmed.is_empty() || is_image_wrapper(trimmed) {
                 return;
@@ -975,18 +967,22 @@ impl RolloutParser {
                 .any(|p| trimmed.starts_with(p))
                 || is_wrapped_in_tag(trimmed)
             {
-                injected.push(text.to_string());
+                injected.push((text.to_string(), pointer));
             } else if trimmed.starts_with(VSCODE_CONTEXT_PREFIX) {
                 match extract_codex_prompt_from_ide_context(trimmed) {
                     Some(prompt) => pending.push(prompt),
-                    None => injected.push(text.to_string()),
+                    None => injected.push((text.to_string(), pointer)),
                 }
             } else {
                 pending.push(text.to_string());
             }
         };
         match contents {
-            Contents::Text(text) => handle_text(text.as_str(), &mut pending_text),
+            Contents::Text(text) => handle_text(
+                text.as_str(),
+                "/payload/content".to_string(),
+                &mut pending_text,
+            ),
             Contents::Items(items) => {
                 for (i, item) in items.iter().enumerate() {
                     if matches!(item.kind(), "input_image" | "image") {
@@ -998,7 +994,11 @@ impl RolloutParser {
                             blocks.push(SessionBlock::Image { image });
                         }
                     } else if let Some(text) = opt_str(&item.text) {
-                        handle_text(text, &mut pending_text);
+                        handle_text(
+                            text,
+                            format!("/payload/content/{i}/text"),
+                            &mut pending_text,
+                        );
                     }
                 }
             }
@@ -1006,14 +1006,12 @@ impl RolloutParser {
         flush_text(&mut pending_text, &mut blocks);
 
         if !injected.is_empty() {
-            let text = injected.join("\n");
-            self.push(
-                "user",
-                ts,
-                id.clone(),
-                vec![SessionBlock::Text { text }],
-                true,
-            );
+            // 每段注入文本单独成块，超长的（AGENTS.md 之类）只放预览 + 引用
+            let injected_blocks = injected
+                .into_iter()
+                .map(|(text, pointer)| large_text_block(text, || Some(span.content_ref(pointer))))
+                .collect();
+            self.push("user", ts, id.clone(), injected_blocks, true);
         }
         if !blocks.is_empty() {
             self.push("user", ts, id, blocks, false);
@@ -1079,11 +1077,10 @@ impl RolloutParser {
             kind: EventKind::SubAgent,
             text: Some(event),
             url: None,
+            full: None,
         }];
         if !rest.trim().is_empty() {
-            blocks.push(SessionBlock::Text {
-                text: rest.trim().to_string(),
-            });
+            blocks.push(SessionBlock::text(rest.trim().to_string()));
         }
         self.push("system", ts, owned(&p.id), blocks, false);
     }
@@ -2961,7 +2958,7 @@ mod tests {
         let question = &msgs[3];
         assert_eq!((question.role.as_str(), question.injected), ("user", false));
         assert!(
-            matches!(&question.blocks[0], SessionBlock::Text { text } if text == "按截图更新 README")
+            matches!(&question.blocks[0], SessionBlock::Text { text, .. } if text == "按截图更新 README")
         );
         let SessionBlock::Image { image } = &question.blocks[1] else {
             panic!("缺图片块: {:?}", question.blocks);
@@ -3016,7 +3013,9 @@ mod tests {
             &sub.blocks[0],
             SessionBlock::Event { kind: EventKind::SubAgent, text: Some(t), .. } if t == "/root/docs: Found 2 broken links"
         ));
-        assert!(matches!(&sub.blocks[1], SessionBlock::Text { text } if text == "docs/a.md:14"));
+        assert!(
+            matches!(&sub.blocks[1], SessionBlock::Text { text, .. } if text == "docs/a.md:14")
+        );
     }
 
     #[test]
@@ -3447,60 +3446,5 @@ mod tests {
             .unwrap()
             .contains("line 40"));
         assert_eq!(msgs[3].content, "ok");
-    }
-
-    /// 大文件基准：`SESSION_BENCH_CODEX=<rollout.jsonl> cargo test --release --lib
-    /// bench_load_messages_env_file -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    fn bench_load_messages_env_file() {
-        let Ok(path) = std::env::var("SESSION_BENCH_CODEX") else {
-            eprintln!("SESSION_BENCH_CODEX 未设置，跳过");
-            return;
-        };
-        let mut runs = Vec::new();
-        let mut msgs = Vec::new();
-        for _ in 0..3 {
-            let start = std::time::Instant::now();
-            msgs = load_messages(Path::new(&path)).expect("load");
-            runs.push(start.elapsed());
-        }
-        runs.sort();
-        let payload = serde_json::to_vec(&msgs).unwrap().len();
-        let max_msg = msgs
-            .iter()
-            .map(|m| serde_json::to_vec(m).unwrap().len())
-            .max()
-            .unwrap_or(0);
-        let blocks: Vec<&SessionBlock> = msgs.iter().flat_map(|m| &m.blocks).collect();
-        let count = |f: fn(&SessionBlock) -> bool| blocks.iter().filter(|b| f(b)).count();
-        println!(
-            "codex bench: parse median {:?} (runs {:?}), messages {}, tool_call {}, tool_result {}, thinking {}, image {}, event {}, payload {} bytes, max message {} bytes",
-            runs[1],
-            runs,
-            msgs.len(),
-            count(|b| matches!(b, SessionBlock::ToolCall { .. })),
-            count(|b| matches!(b, SessionBlock::ToolResult { .. })),
-            count(|b| matches!(b, SessionBlock::Thinking { .. })),
-            count(|b| matches!(b, SessionBlock::Image { .. })),
-            count(|b| matches!(b, SessionBlock::Event { .. })),
-            payload,
-            max_msg,
-        );
-        let images_in_results: usize = blocks
-            .iter()
-            .map(|b| match b {
-                SessionBlock::ToolResult { images, .. } => images.len(),
-                _ => 0,
-            })
-            .sum();
-        let mut by_role: HashMap<String, (usize, usize)> = HashMap::new();
-        for m in &msgs {
-            let key = format!("{}{}", m.role, if m.injected { "(injected)" } else { "" });
-            let entry = by_role.entry(key).or_default();
-            entry.0 += 1;
-            entry.1 += serde_json::to_vec(m).unwrap().len();
-        }
-        println!("codex bench: images in tool results {images_in_results}, by role (count, bytes) {by_role:?}");
     }
 }

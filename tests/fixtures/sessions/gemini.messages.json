@@ -1,7 +1,6 @@
 [
   {
     "role": "system",
-    "content": "Authenticated via \"Login with Google\".",
     "ts": 1791014400000,
     "turnId": "t0",
     "injected": true,
@@ -15,7 +14,6 @@
   },
   {
     "role": "user",
-    "content": "解释一下 src/main.ts 的启动流程，然后把构建跑一下。",
     "ts": 1791014403000,
     "id": "0b6f2c1e-1d4a-4b7e-9a35-6c8d2e0f4a11",
     "turnId": "t1",
@@ -28,7 +26,6 @@
   },
   {
     "role": "assistant",
-    "content": "[Tool: read_file] /Users/yovinchen/Projects/demo-app/src/main.ts\n\nimport { createApp } from \"./app\";\nimport { loadConfig } from \"./config\";\n\nconst config = await loadConfig();\nconst app = createApp(config);\napp.listen(config.port);\n\n[Tool: run_shell_command] npm run build\n\n> demo-app@0.3.1 build\n> tsc -p .\n\nsrc/config.ts(18,7): error TS2322: Type 'string' is not assignable to type 'number'.\n\n`src/main.ts` 先 `await loadConfig()` 读配置，再 `createApp(config)` 创建应用并监听 `config.port`。\n\n构建失败在 `src/config.ts:18`：`port` 从环境变量读出来是字符串，需要 `Number(...)` 转换。",
     "ts": 1791014409000,
     "id": "7c2e9a40-5b13-4f6d-8e21-0a9b3c7d1e22",
     "turnId": "t1",
@@ -90,7 +87,6 @@
   },
   {
     "role": "system",
-    "content": "[API Error: You have exhausted your capacity on this model. Quota will reset after 1m.]",
     "ts": 1791014490000,
     "turnId": "t1",
     "blocks": [
@@ -103,7 +99,6 @@
   },
   {
     "role": "user",
-    "content": "修一下，顺便查查 Node 22 下 top-level await 有没有坑。",
     "ts": 1791014580000,
     "id": "d41f7e0a-2c6b-4a19-b8e3-5f0d1c2a9b33",
     "turnId": "t2",
@@ -116,7 +111,6 @@
   },
   {
     "role": "assistant",
-    "content": "[Tool: replace] /Users/yovinchen/Projects/demo-app/src/config.ts\n\nSuccessfully modified file: /Users/yovinchen/Projects/demo-app/src/config.ts (1 replacements).\n\n[Tool: google_web_search] Node 22 top-level await ESM pitfalls\n\nSearch results for \"Node 22 top-level await ESM pitfalls\" returned.\n\nTop-level await only works in ES modules (\"type\": \"module\" or .mjs).\n\n[Tool: write_todos] 2 项\n\nSuccessfully updated the todo list.\n\n[Tool: run_shell_command] npm run build\n\nCommand was cancelled by the user.",
     "ts": 1791014588000,
     "id": "9a0c3e51-6d24-4b8f-a172-3e5f7b9d0c44",
     "turnId": "t2",

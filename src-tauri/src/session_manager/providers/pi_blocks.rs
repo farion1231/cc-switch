@@ -18,8 +18,8 @@ use crate::session_manager::model::{
 
 use super::blocks::{
     assign_turn_ids, count_diff_lines, estimate_base64_size, input_preview, parse_arguments,
-    preview_chars, single_file_diff, thinking_block, title_shell, tool_call_block,
-    tool_result_block, ToolSource, PREVIEW_CHARS,
+    single_file_diff, summary_event_block, thinking_block, title_shell, tool_call_block,
+    tool_result_block, ToolSource,
 };
 use super::utils::{extract_text, parse_timestamp_to_ms};
 
@@ -121,17 +121,15 @@ impl PiTranscript {
                     .to_string(),
                 entry_ts,
             ),
-            Some("compaction" | "branch_summary") => summary_event(value, entry_ts),
+            Some("compaction" | "branch_summary") => {
+                summary_event(value, entry_ts, span, "/summary")
+            }
             Some("custom_message")
                 if value.get("display").and_then(Value::as_bool) != Some(false) =>
             {
                 let text = value.get("content").map(extract_text).unwrap_or_default();
                 (!text.trim().is_empty()).then(|| {
-                    SessionMessage::from_blocks(
-                        "system",
-                        entry_ts,
-                        vec![SessionBlock::Text { text }],
-                    )
+                    SessionMessage::from_blocks("system", entry_ts, vec![SessionBlock::text(text)])
                 })
             }
             _ => None,
@@ -164,7 +162,9 @@ impl PiTranscript {
             "assistant" => Some(self.assistant_message(msg, span, ts)),
             "toolResult" => Some(self.tool_result_message(msg, span, ts)),
             "bashExecution" => Some(bash_execution_message(msg, span, entry_id, ts)),
-            "branchSummary" | "compactionSummary" => summary_event(msg, ts),
+            "branchSummary" | "compactionSummary" => {
+                summary_event(msg, ts, span, "/message/summary")
+            }
             // system（system prompt sections）等非对话内容跳过
             _ => None,
         }
@@ -180,7 +180,7 @@ impl PiTranscript {
         let mut call_ids = Vec::new();
         match msg.get("content") {
             Some(Value::String(text)) if !text.trim().is_empty() => {
-                blocks.push(SessionBlock::Text { text: text.clone() });
+                blocks.push(SessionBlock::text(text.clone()));
             }
             Some(Value::Array(items)) => {
                 for (i, item) in items.iter().enumerate() {
@@ -198,9 +198,7 @@ impl PiTranscript {
                                 .and_then(Value::as_str)
                                 .filter(|t| !t.trim().is_empty())
                             {
-                                blocks.push(SessionBlock::Text {
-                                    text: text.to_string(),
-                                });
+                                blocks.push(SessionBlock::text(text.to_string()));
                             }
                         }
                         Some("toolCall") => {
@@ -231,11 +229,13 @@ impl PiTranscript {
                 kind: EventKind::Aborted,
                 text: None,
                 url: None,
+                full: None,
             }),
             Some("length") => blocks.push(SessionBlock::Event {
                 kind: EventKind::Other,
                 text: Some("truncated".into()),
                 url: None,
+                full: None,
             }),
             Some("error") => blocks.push(SessionBlock::Event {
                 kind: EventKind::Error,
@@ -245,6 +245,7 @@ impl PiTranscript {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string),
                 url: None,
+                full: None,
             }),
             _ => {}
         }
@@ -378,7 +379,7 @@ fn content_blocks(content: Option<&Value>, span: LineSpan) -> Vec<SessionBlock> 
     let mut blocks = Vec::new();
     match content {
         Some(Value::String(text)) if !text.trim().is_empty() => {
-            blocks.push(SessionBlock::Text { text: text.clone() });
+            blocks.push(SessionBlock::text(text.clone()));
         }
         Some(Value::Array(items)) => {
             for (i, item) in items.iter().enumerate() {
@@ -389,9 +390,7 @@ fn content_blocks(content: Option<&Value>, span: LineSpan) -> Vec<SessionBlock> 
                             .and_then(Value::as_str)
                             .filter(|t| !t.trim().is_empty())
                         {
-                            blocks.push(SessionBlock::Text {
-                                text: text.to_string(),
-                            });
+                            blocks.push(SessionBlock::text(text.to_string()));
                         }
                     }
                     Some("image") => {
@@ -490,19 +489,29 @@ fn event_message(kind: EventKind, text: String, ts: Option<i64>) -> Option<Sessi
                 kind,
                 text: Some(text),
                 url: None,
+                full: None,
             }],
         )
     })
 }
 
-/// compaction / branch_summary：只放摘要预览（Event 没有全文引用）。
-fn summary_event(value: &Value, ts: Option<i64>) -> Option<SessionMessage> {
+/// compaction / branch_summary：只放摘要预览，全文按 `pointer` 引用取。
+fn summary_event(
+    value: &Value,
+    ts: Option<i64>,
+    span: LineSpan,
+    pointer: &str,
+) -> Option<SessionMessage> {
     let summary = value.get("summary").and_then(Value::as_str)?;
-    event_message(
-        EventKind::Compaction,
-        preview_chars(summary.trim(), PREVIEW_CHARS).text,
-        ts,
-    )
+    (!summary.trim().is_empty()).then(|| {
+        SessionMessage::from_blocks(
+            "system",
+            ts,
+            vec![summary_event_block(EventKind::Compaction, summary, || {
+                Some(span.content_ref(pointer))
+            })],
+        )
+    })
 }
 
 /// `model / usage{input, output, cacheRead, cacheWrite, cost.total} / stopReason` → meta（0 视为缺省）。

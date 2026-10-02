@@ -5,17 +5,17 @@
 //! 复制 / 目录逻辑继续使用。前端类型在 `src/types.ts`，两边字段一一对应；
 //! `tests/fixtures/sessions/*.messages.json` 是两边共用的契约样例。
 
-// P1（解析器）/ P2（命令与缓存）接入前，部分类型和构造函数还没有调用方
-#![allow(dead_code)]
+use serde::{Deserialize, Serialize, Serializer};
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// 序列化规则见下方手写的 [`Serialize`] 实现：有 blocks 时不下发 `content`。
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessage {
     /// user | assistant | tool | system（保持旧值，前端已有 roleLabel）
     pub role: String,
-    /// 纯文本投影（规则见 [`project_content`]），旧搜索/复制/TOC 继续用它
+    /// 纯文本投影（规则见 [`project_content`]），后端内部（目录预览等）使用；
+    /// blocks 非空时不序列化，前端从 blocks 推导，旧后端（无 blocks）才靠它兜底
+    #[serde(default)]
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts: Option<i64>,
@@ -35,18 +35,43 @@ pub struct SessionMessage {
     pub meta: Option<MessageMeta>,
 }
 
-impl SessionMessage {
-    /// 旧解析器的构造方式：只有纯文本、没有 blocks。
-    /// P1 各解析器会替换为 [`SessionMessage::from_blocks`]，届时删除。
-    pub fn legacy(role: String, content: String, ts: Option<i64>) -> Self {
-        Self {
-            role,
-            content,
-            ts,
-            ..Self::default()
+/// 有 blocks 时省略 `content`（它只是 blocks 的投影，大会话里约占 payload 的四分之一）。
+impl Serialize for SessionMessage {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Wire<'a> {
+            role: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            content: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            ts: Option<i64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            id: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            turn_id: Option<&'a str>,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            injected: bool,
+            #[serde(skip_serializing_if = "<[SessionBlock]>::is_empty")]
+            blocks: &'a [SessionBlock],
+            #[serde(skip_serializing_if = "Option::is_none")]
+            meta: Option<&'a MessageMeta>,
         }
+        Wire {
+            role: &self.role,
+            content: self.blocks.is_empty().then_some(self.content.as_str()),
+            ts: self.ts,
+            id: self.id.as_deref(),
+            turn_id: self.turn_id.as_deref(),
+            injected: self.injected,
+            blocks: &self.blocks,
+            meta: self.meta.as_ref(),
+        }
+        .serialize(serializer)
     }
+}
 
+impl SessionMessage {
     /// 由 blocks 构造消息，`content` 按 [`project_content`] 派生。
     pub fn from_blocks(
         role: impl Into<String>,
@@ -100,7 +125,10 @@ pub struct MessageMeta {
 )]
 pub enum SessionBlock {
     Text {
+        /// 正文；带 `full` 时只是预览（超大注入文本，见 `blocks::text_block`）
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        full: Option<ContentRef>,
     },
     Thinking {
         /// 可见正文的预览（可能为空：Claude 只有 signature / Codex 只有 encrypted_content）
@@ -170,10 +198,13 @@ pub enum SessionBlock {
     },
     Event {
         kind: EventKind,
+        /// 说明文字；带 `full` 时只是预览（压缩摘要等长文本）
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        full: Option<ContentRef>,
     },
     /// OpenCode step-start / step-finish；其他 Agent 不产生
     Step {
@@ -185,6 +216,26 @@ pub enum SessionBlock {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+}
+
+impl SessionBlock {
+    /// 完整正文的 Text 块
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text {
+            text: text.into(),
+            full: None,
+        }
+    }
+
+    /// 不带引用的 Event 块
+    pub fn event(kind: EventKind, text: Option<String>, url: Option<String>) -> Self {
+        Self::Event {
+            kind,
+            text,
+            url,
+            full: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -383,7 +434,7 @@ pub fn project_content(blocks: &[SessionBlock]) -> String {
     let mut parts: Vec<String> = Vec::new();
     for block in blocks {
         let part = match block {
-            SessionBlock::Text { text } => text.clone(),
+            SessionBlock::Text { text, .. } => text.clone(),
             SessionBlock::ToolCall {
                 raw_name, title, ..
             } => {
@@ -413,7 +464,7 @@ mod tests {
     use serde_json::{json, Value};
 
     fn text(s: &str) -> SessionBlock {
-        SessionBlock::Text { text: s.into() }
+        SessionBlock::text(s)
     }
 
     fn tool_call(raw_name: &str, title: &str) -> SessionBlock {
@@ -468,11 +519,7 @@ mod tests {
                     alt: None,
                 },
             },
-            SessionBlock::Event {
-                kind: EventKind::Aborted,
-                text: None,
-                url: None,
-            },
+            SessionBlock::event(EventKind::Aborted, None, None),
             SessionBlock::Step {
                 phase: StepPhase::Finish,
                 tokens: Some(10),
@@ -512,7 +559,6 @@ mod tests {
             value,
             json!({
                 "role": "assistant",
-                "content": "",
                 "ts": 1,
                 "blocks": [{
                     "type": "tool_result",
@@ -542,19 +588,24 @@ mod tests {
 
     #[test]
     fn legacy_message_serializes_like_before() {
-        let msg = SessionMessage::legacy("user".into(), "hi".into(), None);
+        let legacy = |content: &str| SessionMessage {
+            role: "user".into(),
+            content: content.into(),
+            ..SessionMessage::default()
+        };
+        let msg = legacy("hi");
         assert_eq!(
             serde_json::to_value(&msg).unwrap(),
             json!({ "role": "user", "content": "hi" })
         );
         assert!(!msg.is_empty());
-        assert!(SessionMessage::legacy("user".into(), "  ".into(), None).is_empty());
+        assert!(legacy("  ").is_empty());
     }
 
-    /// 前后端共用的 fixture 必须能被 Rust 类型无损往返，且 `content` 符合投影规则。
+    /// 前后端共用的 fixture 必须能被 Rust 类型无损往返（含「有 blocks 不带 content」的省略规则）。
     /// 注意：f64 字段（costUsd）在 fixture 里不要写成整数，否则往返后变成 `x.0` 导致不相等。
     #[test]
-    fn shared_fixtures_round_trip_and_match_projection() {
+    fn shared_fixtures_round_trip() {
         let fixtures = [
             (
                 "claude",
@@ -588,14 +639,14 @@ mod tests {
             let round_trip = serde_json::to_value(&messages).unwrap();
             assert_eq!(round_trip, original, "{name}: fixture 往返后不一致");
 
-            for (i, msg) in messages.iter().enumerate() {
-                if !msg.blocks.is_empty() {
-                    assert_eq!(
-                        msg.content,
-                        project_content(&msg.blocks),
-                        "{name}[{i}]: content 与 blocks 投影不一致"
-                    );
-                }
+            // 有 blocks 的消息不带 content（前端从 blocks 推导），只有旧格式消息才带
+            for (i, msg) in original.as_array().unwrap().iter().enumerate() {
+                let has_blocks = msg.get("blocks").is_some();
+                assert_eq!(
+                    msg.get("content").is_some(),
+                    !has_blocks,
+                    "{name}[{i}]: 有 blocks 时不应带 content"
+                );
             }
         }
     }

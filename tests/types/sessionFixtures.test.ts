@@ -237,7 +237,11 @@ const diffSummary = object<DiffSummary>({
 });
 
 const sessionBlock = tagged<SessionBlock, "type">("type", {
-  text: object<TextBlock>({ type: req(lit("text")), text: req(str) }),
+  text: object<TextBlock>({
+    type: req(lit("text")),
+    text: req(str),
+    full: opt(contentRef),
+  }),
   thinking: object<ThinkingBlock>({
     type: req(lit("thinking")),
     text: req(str),
@@ -280,6 +284,7 @@ const sessionBlock = tagged<SessionBlock, "type">("type", {
     kind: req(oneOf(EVENT_KINDS)),
     text: opt(str),
     url: opt(str),
+    full: opt(contentRef),
   }),
   step: object<StepBlock>({
     type: req(lit("step")),
@@ -304,7 +309,7 @@ const messageMeta = object<MessageMeta>({
 
 const sessionMessage = object<SessionMessage>({
   role: req(oneOf(["user", "assistant", "tool", "system"])),
-  content: req(str),
+  content: opt(str),
   ts: opt(int),
   id: opt(str),
   turnId: opt(str),
@@ -317,7 +322,7 @@ const sessionMessage = object<SessionMessage>({
 
 const PREVIEW_LINES = 12;
 const PREVIEW_CHARS = 1200;
-const INPUT_PREVIEW_CHARS = 1200;
+const INPUT_PREVIEW_CHARS = 400;
 const THINKING_PREVIEW_CHARS = 400;
 const TITLE_CHARS = 200;
 
@@ -346,6 +351,18 @@ describe("session reader fixtures", () => {
       const errors: string[] = [];
       arrayOf(sessionMessage, { nonEmpty: true })(raw, name, errors);
       expect(errors).toEqual([]);
+    },
+  );
+
+  it.each(Object.entries(fixtures))(
+    "%s 有 blocks 的消息不带 content（前端从 blocks 推导）",
+    (name, raw) => {
+      const offenders = asMessages(raw).flatMap((message, index) =>
+        (message.blocks?.length ?? 0) > 0 && message.content !== undefined
+          ? [`${name}[${index}]`]
+          : [],
+      );
+      expect(offenders).toEqual([]);
     },
   );
 

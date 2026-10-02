@@ -95,7 +95,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             "assistant" => {
                 let mut blocks = Vec::new();
                 if !text.trim().is_empty() {
-                    blocks.push(SessionBlock::Text { text });
+                    blocks.push(SessionBlock::text(text));
                 }
                 for call in value
                     .get("tool_calls")
@@ -125,7 +125,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 blocks
             }
             _ if text.trim().is_empty() => Vec::new(),
-            _ => vec![SessionBlock::Text { text }],
+            _ => vec![SessionBlock::text(text)],
         };
         let ts = value
             .get("timestamp")

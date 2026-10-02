@@ -9,7 +9,9 @@ import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import { GlyphCell } from "./rowStyles";
 import { openSessionLink, SessionPlainText } from "./SessionMarkdown";
+import { BlockText } from "./SessionStepDetails";
 import type { Translate } from "./toolSummary";
+import { messageText } from "./turns";
 
 /** PR 编号：文案里的 `#128` 或链接里的 `/pull/128` */
 const prNumber = (block: EventBlock) =>
@@ -168,11 +170,23 @@ export const SessionEventRow = memo(function SessionEventRow({
         tone,
       )}
     >
-      <SessionPlainText
-        content={display.detail}
-        searchQuery={searchQuery}
-        className="text-caption text-inherit"
-      />
+      {block.full ? (
+        // 长摘要只下发了预览，「显示全部」时按引用取全文
+        <BlockText
+          preview={display.detail}
+          truncated
+          full={block.full}
+          previewLines={Number.MAX_SAFE_INTEGER}
+          variant="plain"
+          className="text-inherit"
+        />
+      ) : (
+        <SessionPlainText
+          content={display.detail}
+          searchQuery={searchQuery}
+          className="text-caption text-inherit"
+        />
+      )}
     </div>
   );
 
@@ -215,7 +229,7 @@ export const SessionEventRow = memo(function SessionEventRow({
 
 /** 注入内容的标签：AGENTS.md / environment_context / system-reminder / developer… */
 export const injectedLabel = (message: SessionMessage) => {
-  const text = message.content.trim();
+  const text = messageText(message).trim();
   const agents = /^#\s*(AGENTS\.md|CLAUDE\.md|GEMINI\.md)\b/.exec(text);
   if (agents) return agents[1];
   const tag = /^<([a-zA-Z][\w-]*)/.exec(text);
@@ -233,6 +247,13 @@ export const SessionInjectedRow = memo(function SessionInjectedRow({
   const rt = useReaderT();
   const { searchQuery } = useReaderContext();
   const [open, setOpen] = useState(false);
+  const texts = (message.blocks ?? []).flatMap((block) =>
+    block.type === "text" ? [block] : [],
+  );
+  const text = messageText(message);
+  // 超长注入文本只下发了预览：字数标「+」，展开后可按引用取全文
+  const partial = texts.some((block) => block.full);
+  const chars = `${text.length.toLocaleString()}${partial ? "+" : ""}`;
   return (
     <div className="min-w-0 px-1.5 py-1">
       <button
@@ -251,17 +272,31 @@ export const SessionInjectedRow = memo(function SessionInjectedRow({
         <span className="truncate">
           {rt("injectedRow", {
             label: injectedLabel(message),
-            chars: message.content.length.toLocaleString(),
+            chars,
           })}
         </span>
       </button>
       {open && (
         <div className="mt-1 max-h-[480px] overflow-auto rounded-[8px] border border-border px-3 py-2">
-          <SessionPlainText
-            content={message.content}
-            searchQuery={searchQuery}
-            className="text-caption text-fg-2"
-          />
+          {partial ? (
+            texts.map((block, index) => (
+              <BlockText
+                key={index}
+                preview={block.text}
+                truncated={Boolean(block.full)}
+                full={block.full}
+                previewLines={Number.MAX_SAFE_INTEGER}
+                variant="plain"
+                className={index > 0 ? "mt-3" : undefined}
+              />
+            ))
+          ) : (
+            <SessionPlainText
+              content={text}
+              searchQuery={searchQuery}
+              className="text-caption text-fg-2"
+            />
+          )}
         </div>
       )}
     </div>

@@ -570,7 +570,9 @@ export interface DiffSummary {
 
 export interface TextBlock {
   type: "text";
+  /** 正文；带 full 时只是预览（超长注入文本） */
   text: string;
+  full?: ContentRef;
 }
 
 export interface ThinkingBlock {
@@ -623,8 +625,10 @@ export interface ImageBlock {
 export interface EventBlock {
   type: "event";
   kind: EventKind;
+  /** 说明；带 full 时只是预览（压缩摘要等长文本） */
   text?: string;
   url?: string;
+  full?: ContentRef;
 }
 
 export interface StepBlock {
@@ -658,8 +662,11 @@ export interface MessageMeta {
 
 export interface SessionMessage {
   role: string;
-  /** 由 blocks 派生的纯文本投影（工具调用为 `[Tool: X] title` 行） */
-  content: string;
+  /**
+   * 旧格式的纯文本内容：只有 blocks 缺失时（旧后端）才下发，
+   * 有 blocks 时前端一律从 blocks 推导（见 reader/turns.ts `messageText`）
+   */
+  content?: string;
   ts?: number;
   id?: string;
   turnId?: string;
