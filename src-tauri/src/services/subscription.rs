@@ -654,8 +654,11 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
 /// 这里）。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CodexKeychainLogin {
+    // 只有 macOS 读得到钥匙串，其他平台的正式构建里只会出现 Unknown。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Found(serde_json::Value),
     /// 确定没有，或者内容不是 JSON（Codex 自己也读不了，auto 模式同样退回 `auth.json`）。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Missing,
     /// 读不出来：不是 macOS（Windows、Linux 的凭据库 CC Switch 读不了），或者 macOS 上
     /// 访问被拒。Codex 看到的可能是另一个登录，不能拿 `auth.json` 顶替。
