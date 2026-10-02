@@ -1,3 +1,4 @@
+import { readLocalCache, writeLocalCache } from "@/lib/localCache";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
@@ -70,12 +71,19 @@ export function usePromptActions(
       reloadGenerationRef.current === requestGeneration &&
       currentAppIdRef.current === requestAppId;
 
-    setLoading(true);
+    // 先显示上次的列表（本地缓存），后台读到最新的再替换；没有缓存才显示「加载中」
+    const cacheKey = `prompts.${requestAppId}.v1`;
+    const cached = readLocalCache<Record<string, Prompt>>(cacheKey);
+    if (cached && promptsAppIdRef.current !== requestAppId) {
+      updatePromptsForApp(requestAppId, () => cached);
+    }
+    setLoading(!cached);
     try {
       const data = await promptsApi.getPrompts(requestAppId);
       if (!isCurrentRequest()) return false;
       latestLoadedRef.current = { appId: requestAppId, prompts: data };
       updatePromptsForApp(requestAppId, () => data);
+      writeLocalCache(cacheKey, data);
 
       try {
         const content = await promptsApi.getCurrentFileContent(requestAppId);

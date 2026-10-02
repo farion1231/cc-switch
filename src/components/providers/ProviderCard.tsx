@@ -63,9 +63,9 @@ interface ProviderCardProps {
 
 /** 当前那张：模式色边框 + 淡底；共存式「已添加」是中性的。 */
 const TONE_CLASS: Record<CardTone, string> = {
-  direct: "border-direct bg-direct-soft",
-  route: "border-route bg-route-soft",
-  stack: "border-stack bg-stack-soft",
+  direct: "border-direct-border bg-direct-soft",
+  route: "border-route-border bg-route-soft",
+  stack: "border-stack-border bg-stack-soft",
   neutral: "border-border-strong bg-subtle",
 };
 

@@ -105,7 +105,7 @@ rquickjs = { version = "0.8", features = ["bindgen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
-objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+objc2-app-kit = { version = "0.2", features = ["NSColor", "NSWindow", "NSButton", "NSControl", "NSView", "NSResponder"] }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]

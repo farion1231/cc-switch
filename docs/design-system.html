@@ -36,9 +36,9 @@
     --control-off: #888890;
 
     /* 模式色：直连 / 路由 / 叠加 */
-    --direct-fill: var(--action-bg); --direct-text: var(--action-bg); --direct-soft: var(--action-soft); --direct-solid: var(--action-bg); --direct-on: var(--action-fg);
-    --route-fill: var(--action-bg); --route-text: var(--action-bg); --route-soft: var(--action-soft); --route-solid: var(--action-bg); --route-on: var(--action-fg);
-    --stack-fill: var(--action-bg); --stack-text: var(--action-bg); --stack-soft: var(--action-soft); --stack-solid: var(--action-bg); --stack-on: var(--action-fg);
+    --direct-fill: #0a84ff; --direct-text: #0063c7; --direct-soft: #eaf3ff; --direct-solid: #0066cc; --direct-on: #ffffff;
+    --route-fill: #0d9488; --route-text: #06726b; --route-soft: #e7f6f4; --route-solid: #0f766e; --route-on: #ffffff;
+    --stack-fill: #7c3aed; --stack-text: #6d28d9; --stack-soft: #f2ecfe; --stack-solid: #6d28d9; --stack-on: #ffffff;
 
     /* 语义色 */
     --success: #16a34a; --success-text: #007634; --success-soft: #e8f7ee;
@@ -64,14 +64,14 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --action-bg: #f97315; --action-hover: #fb8a3c; --action-fg: #1c1c1e; --action-text: #fb923c; --action-soft: #3a1f0c; --ring: #fb8a3c;
+      --action-bg: #ea580c; --action-hover: #f06d1f; --action-fg: #ffffff; --action-text: #fb923c; --action-soft: rgba(249, 115, 21, 0.12); --ring: #d77a3c;
       --bg-app: #1c1c1e; --bg-sidebar: #161618; --bg-subtle: #26262a; --bg-selected: #313136; --bg-card: #2e2e33;
       --border: #3e3e45; --border-strong: #4a4a52;
       --text-1: #f4f4f5; --text-2: #d0d0d8; --text-3: #b5b5bd;
       --inverse-bg: #f4f4f5; --inverse-fg: #18181b; --overlay: rgba(0, 0, 0, .55); --control-off: #6f6f77;
-      --direct-fill: var(--action-bg); --direct-text: var(--action-bg); --direct-soft: var(--action-soft); --direct-solid: var(--action-bg); --direct-on: var(--action-fg);
-      --route-fill: var(--action-bg); --route-text: var(--action-bg); --route-soft: var(--action-soft); --route-solid: var(--action-bg); --route-on: var(--action-fg);
-      --stack-fill: var(--action-bg); --stack-text: var(--action-bg); --stack-soft: var(--action-soft); --stack-solid: var(--action-bg); --stack-on: var(--action-fg);
+      --direct-fill: #4a8fd9; --direct-text: #8fb8e6; --direct-soft: rgba(74, 143, 217, 0.12); --direct-solid: #2f6db3; --direct-on: #ffffff;
+      --route-fill: #2a9d8f; --route-text: #7cc4ba; --route-soft: rgba(42, 157, 143, 0.12); --route-solid: #1f7d72; --route-on: #ffffff;
+      --stack-fill: #8b74d6; --stack-text: #b5a6e3; --stack-soft: rgba(139, 116, 214, 0.12); --stack-solid: #6a52bf; --stack-on: #ffffff;
       --success: #4ade80; --success-text: #4ade80; --success-soft: #0f2b1a;
       --warning: #fbbf24; --warning-text: #fcd34d; --warning-soft: #33260a;
       --danger: #f87171;  --danger-text: #fca5a5;  --danger-soft: #3a1414;
@@ -83,14 +83,14 @@
   }
 
   :root[data-theme="dark"] {
-    --action-bg: #f97315; --action-hover: #fb8a3c; --action-fg: #1c1c1e; --action-text: #fb923c; --action-soft: #3a1f0c; --ring: #fb8a3c;
+    --action-bg: #ea580c; --action-hover: #f06d1f; --action-fg: #ffffff; --action-text: #fb923c; --action-soft: rgba(249, 115, 21, 0.12); --ring: #d77a3c;
     --bg-app: #1c1c1e; --bg-sidebar: #161618; --bg-subtle: #26262a; --bg-selected: #313136; --bg-card: #2e2e33;
     --border: #3e3e45; --border-strong: #4a4a52;
     --text-1: #f4f4f5; --text-2: #d0d0d8; --text-3: #b5b5bd;
     --inverse-bg: #f4f4f5; --inverse-fg: #18181b; --overlay: rgba(0, 0, 0, .55); --control-off: #6f6f77;
-    --direct-fill: var(--action-bg); --direct-text: var(--action-bg); --direct-soft: var(--action-soft); --direct-solid: var(--action-bg); --direct-on: var(--action-fg);
-    --route-fill: var(--action-bg); --route-text: var(--action-bg); --route-soft: var(--action-soft); --route-solid: var(--action-bg); --route-on: var(--action-fg);
-    --stack-fill: var(--action-bg); --stack-text: var(--action-bg); --stack-soft: var(--action-soft); --stack-solid: var(--action-bg); --stack-on: var(--action-fg);
+    --direct-fill: #4a8fd9; --direct-text: #8fb8e6; --direct-soft: rgba(74, 143, 217, 0.12); --direct-solid: #2f6db3; --direct-on: #ffffff;
+    --route-fill: #2a9d8f; --route-text: #7cc4ba; --route-soft: rgba(42, 157, 143, 0.12); --route-solid: #1f7d72; --route-on: #ffffff;
+    --stack-fill: #8b74d6; --stack-text: #b5a6e3; --stack-soft: rgba(139, 116, 214, 0.12); --stack-solid: #6a52bf; --stack-on: #ffffff;
     --success: #4ade80; --success-text: #4ade80; --success-soft: #0f2b1a;
     --warning: #fbbf24; --warning-text: #fcd34d; --warning-soft: #33260a;
     --danger: #f87171;  --danger-text: #fca5a5;  --danger-soft: #3a1414;
@@ -582,7 +582,7 @@
           <input class="input" style="width:150px" placeholder="聚焦看焦点环">
         </div>
       </div>
-      <p class="note">对比度：浅色主题实心按钮白字 2.8:1，按钮文字统一用 600 字重补偿；橙色当文字用时一律换 <code>--action-text</code>（浅 #C2410C 5.2:1 / 深 #FB923C 7.5:1）。深色主题实心按钮改深字 <code>#1C1C1E</code>（6.1:1）。</p>
+      <p class="note">对比度：浅色主题实心按钮白字 2.8:1，按钮文字统一用 600 字重补偿；橙色当文字用时一律换 <code>--action-text</code>（浅 #C2410C 5.2:1 / 深 #FB923C 7.5:1）。深色主题实心按钮压暗为 <code>#EA580C</code> + 白字（3.6:1），焦点描边用更沉的 <code>#D77A3C</code>。</p>
 
       <h3 class="sub">中性面与文字</h3>
       <div class="swatches">
@@ -602,27 +602,27 @@
       <div class="modes3">
         <div class="modecol">
           <div class="head" style="color:var(--direct-text)"><svg class="i"><use href="#plug"/></svg>直连 direct</div>
-          <div class="row"><i style="background:var(--direct-fill)"></i>fill<span>#F97315</span></div>
-          <div class="row"><i style="background:var(--direct-text)"></i>text<span>#C2410C</span></div>
-          <div class="row"><i style="background:var(--direct-soft)"></i>soft<span>#FFF1E6</span></div>
-          <div class="row"><i style="background:var(--direct-solid)"></i>solid<span>#F97315</span></div>
+          <div class="row"><i style="background:var(--direct-fill)"></i>fill<span>#0A84FF</span></div>
+          <div class="row"><i style="background:var(--direct-text)"></i>text<span>#0063C7</span></div>
+          <div class="row"><i style="background:var(--direct-soft)"></i>soft<span>#EAF3FF</span></div>
+          <div class="row"><i style="background:var(--direct-solid)"></i>solid<span>#0066CC</span></div>
         </div>
         <div class="modecol">
           <div class="head" style="color:var(--route-text)"><svg class="i"><use href="#route"/></svg>路由 route</div>
-          <div class="row"><i style="background:var(--route-fill)"></i>fill<span>#F97315</span></div>
-          <div class="row"><i style="background:var(--route-text)"></i>text<span>#C2410C</span></div>
-          <div class="row"><i style="background:var(--route-soft)"></i>soft<span>#FFF1E6</span></div>
-          <div class="row"><i style="background:var(--route-solid)"></i>solid<span>#F97315</span></div>
+          <div class="row"><i style="background:var(--route-fill)"></i>fill<span>#0D9488</span></div>
+          <div class="row"><i style="background:var(--route-text)"></i>text<span>#06726B</span></div>
+          <div class="row"><i style="background:var(--route-soft)"></i>soft<span>#E7F6F4</span></div>
+          <div class="row"><i style="background:var(--route-solid)"></i>solid<span>#0F766E</span></div>
         </div>
         <div class="modecol">
           <div class="head" style="color:var(--stack-text)"><svg class="i"><use href="#layers"/></svg>叠加 stack</div>
-          <div class="row"><i style="background:var(--stack-fill)"></i>fill<span>#F97315</span></div>
-          <div class="row"><i style="background:var(--stack-text)"></i>text<span>#C2410C</span></div>
-          <div class="row"><i style="background:var(--stack-soft)"></i>soft<span>#FFF1E6</span></div>
-          <div class="row"><i style="background:var(--stack-solid)"></i>solid<span>#F97315</span></div>
+          <div class="row"><i style="background:var(--stack-fill)"></i>fill<span>#7C3AED</span></div>
+          <div class="row"><i style="background:var(--stack-text)"></i>text<span>#6D28D9</span></div>
+          <div class="row"><i style="background:var(--stack-soft)"></i>soft<span>#F2ECFE</span></div>
+          <div class="row"><i style="background:var(--stack-solid)"></i>solid<span>#6D28D9</span></div>
         </div>
       </div>
-      <p class="note">三种模式统一用主题色（模式变量都指向 <code>--action-*</code>），靠图标和文字区分，不再各用一种颜色。只出现在：模式 tab、侧栏模式标签、当前生效的供应商卡片、模式切换的主按钮。</p>
+      <p class="note">模式色只出现在：模式 tab、侧栏模式标签、当前生效的供应商卡片、模式切换的主按钮。其他地方不用。</p>
 
       <h3 class="sub">语义色</h3>
       <div class="swatches">

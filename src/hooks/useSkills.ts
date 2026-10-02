@@ -17,6 +17,7 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+import { readLocalCache, writeLocalCache } from "@/lib/localCache";
 import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
 
 /**
@@ -63,14 +64,29 @@ export function useDeleteSkillBackup() {
  * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
  * 实现首次进入使用缓存，只有刷新时才重新获取
  */
+// 发现要从 GitHub 下载每个仓库，很慢：上次的结果存在本地，打开时先显示，
+// 每次启动只在后台重新拉一次（之后同一次运行里不再自动拉，手动刷新照常）
+const DISCOVER_CACHE_KEY = "skills.discoverable.v1";
+let discoverRevalidated = false;
+
+const discoverableQuery = {
+  queryKey: ["skills", "discoverable"],
+  queryFn: async () => {
+    const result = await skillsApi.discoverAvailable();
+    discoverRevalidated = true;
+    writeLocalCache(DISCOVER_CACHE_KEY, result);
+    return result;
+  },
+  staleTime: Infinity,
+  initialData: () => readLocalCache<SkillDiscoveryResult>(DISCOVER_CACHE_KEY),
+  // 本地缓存是旧数据：时间记成 0，配合 refetchOnMount 在后台刷新
+  initialDataUpdatedAt: 0,
+  refetchOnMount: () => (discoverRevalidated ? false : ("always" as const)),
+  placeholderData: keepPreviousData,
+};
+
 export function useDiscoverableSkills() {
-  return useQuery({
-    queryKey: ["skills", "discoverable"],
-    queryFn: () => skillsApi.discoverAvailable(),
-    staleTime: Infinity,
-    placeholderData: keepPreviousData,
-    select: selectDiscoveredSkills,
-  });
+  return useQuery({ ...discoverableQuery, select: selectDiscoveredSkills });
 }
 
 const selectDiscoveredSkills = (result: SkillDiscoveryResult) => result.skills;
@@ -81,13 +97,7 @@ const selectDiscoveryFailures = (result: SkillDiscoveryResult) =>
  * 发现时没读到的仓库（和 useDiscoverableSkills 共用一次请求）
  */
 export function useDiscoverableSkillsFailures() {
-  return useQuery({
-    queryKey: ["skills", "discoverable"],
-    queryFn: () => skillsApi.discoverAvailable(),
-    staleTime: Infinity,
-    placeholderData: keepPreviousData,
-    select: selectDiscoveryFailures,
-  });
+  return useQuery({ ...discoverableQuery, select: selectDiscoveryFailures });
 }
 
 /**

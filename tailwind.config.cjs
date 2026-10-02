@@ -72,6 +72,7 @@ module.exports = {
           soft: "var(--direct-soft)",
           solid: "var(--direct-solid)",
           on: "var(--direct-on)",
+          border: "var(--direct-border)",
         },
         route: {
           DEFAULT: "var(--route-fill)",
@@ -79,6 +80,7 @@ module.exports = {
           soft: "var(--route-soft)",
           solid: "var(--route-solid)",
           on: "var(--route-on)",
+          border: "var(--route-border)",
         },
         stack: {
           DEFAULT: "var(--stack-fill)",
@@ -86,6 +88,7 @@ module.exports = {
           soft: "var(--stack-soft)",
           solid: "var(--stack-solid)",
           on: "var(--stack-on)",
+          border: "var(--stack-border)",
         },
         success: {
           DEFAULT: "var(--success)",
@@ -146,6 +149,10 @@ module.exports = {
         "v7-sm": "var(--shadow-sm)",
         "v7-md": "var(--shadow-md)",
         "v7-lg": "var(--shadow-lg)",
+      },
+      // 只写 border / divide 不带颜色时用主题边框色；不设的话 Tailwind 默认是浅灰 #e4e4e7，深色下成了白线
+      borderColor: {
+        DEFAULT: "hsl(var(--border))",
       },
       borderRadius: {
         sm: "0.375rem",
