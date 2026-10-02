@@ -141,6 +141,11 @@ vi.mock("@/contexts/UpdateContext", () => ({
   useUpdate: () => ({ hasUpdate: false, updateInfo: null }),
 }));
 
+// 设置页要 ThemeProvider，这里只看导航进去时发生了什么
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: () => <div data-testid="settings-page" />,
+}));
+
 vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
   // v7：Skills 的页头（添加 / 检查更新 / 存储与同步）在面板自己里面
   default: ({ initialView }: { initialView?: string }) => {
@@ -281,6 +286,48 @@ describe("App integration with MSW", () => {
     expect(mainScrollContainer.scrollLeft).toBe(0);
     expect(providerScrollContainer()!.scrollTop).toBe(0);
     expect(providerScrollContainer()!.scrollLeft).toBe(0);
+  }, 10_000);
+
+  it("closes provider panels when navigating away from the app page", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    // 面板只盖住内容区，侧栏还能点：切应用时编辑面板必须关掉，否则 Claude 的
+    // 供应商会以 appId=codex 保存进 Codex
+    fireEvent.click(screen.getByText("edit"));
+    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    fireEvent.click(sidebarApp("Codex"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-1",
+      ),
+    );
+    expect(screen.queryByTestId("edit-provider-dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("usage"));
+    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
+    fireEvent.click(sidebarApp("nav.usage"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("usage-modal")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(sidebarApp("Codex"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-1",
+      ),
+    );
+    fireEvent.click(screen.getByText("create"));
+    expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: ",", metaKey: true });
+    expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
