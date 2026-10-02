@@ -38,11 +38,13 @@ interface OutputTokensPerSecondInput {
   outputTokens: unknown;
   latencyMs: unknown;
   firstTokenMs?: unknown;
+  dataSource?: unknown;
 }
 
 /**
  * 一条请求的生成时间（毫秒）= 耗时 − 首字。缺耗时或首字、或差值不大于 0 时返回 null。
- * 会话日志没有首字计时，非流式请求也没有，这两类都不算速度。
+ * 会话日志没有首字计时，非流式请求也没有，这两类都不算精确速度
+ * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）。
  */
 export function getGenerationMs(
   log: OutputTokensPerSecondInput,
@@ -78,6 +80,54 @@ export function getOutputTokensPerSecond(
   const outputTokens = parseFiniteNumber(log.outputTokens) as number;
   const generationMs = getGenerationMs(log) as number;
   const tps = outputTokens / (generationMs / 1000);
+  return Number.isFinite(tps) && tps > 0 ? tps : null;
+}
+
+/**
+ * 估算速度的输出门槛。会话日志导入的请求没有首字计时，耗时是按日志时间戳估的、
+ * 含首字等待；输出越少首字占比越大、算出来越偏低，所以门槛比精确口径高。
+ */
+export const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS = 200;
+
+/** 估算耗时短于此值时不估速度：输出 200 token 以上却不到 1 秒，多半是起点取晚了。 */
+export const SPEED_ESTIMATE_MIN_DURATION_MS = 1000;
+
+/** 这条请求是不是从会话日志导入的（不是路由服务记的）。 */
+export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
+  return (
+    typeof log.dataSource === "string" &&
+    log.dataSource !== "" &&
+    log.dataSource !== "proxy"
+  );
+}
+
+/**
+ * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
+ * 没有首字计时、输出不少于 200 token、估算耗时不短于 1 秒。
+ */
+export function isSpeedEstimateEligible(
+  log: OutputTokensPerSecondInput,
+): boolean {
+  const outputTokens = parseFiniteNumber(log.outputTokens);
+  const latencyMs = parseFiniteNumber(log.latencyMs);
+  return (
+    isSessionLogRequest(log) &&
+    parseFiniteNumber(log.firstTokenMs) == null &&
+    outputTokens != null &&
+    outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
+    latencyMs != null &&
+    latencyMs >= SPEED_ESTIMATE_MIN_DURATION_MS
+  );
+}
+
+/** 单条估算速度（tok/s）= 输出 token ÷ (估算耗时 / 1000)，含首字等待；不满足条件返回 null。 */
+export function getEstimatedTokensPerSecond(
+  log: OutputTokensPerSecondInput,
+): number | null {
+  if (!isSpeedEstimateEligible(log)) return null;
+  const outputTokens = parseFiniteNumber(log.outputTokens) as number;
+  const latencyMs = parseFiniteNumber(log.latencyMs) as number;
+  const tps = outputTokens / (latencyMs / 1000);
   return Number.isFinite(tps) && tps > 0 ? tps : null;
 }
 
@@ -121,6 +171,12 @@ export function formatOutputTokensPerSecond(
   log: OutputTokensPerSecondInput,
 ): string | null {
   return formatTokensPerSecond(getOutputTokensPerSecond(log));
+}
+
+export function formatEstimatedTokensPerSecond(
+  log: OutputTokensPerSecondInput,
+): string | null {
+  return formatTokensPerSecond(getEstimatedTokensPerSecond(log));
 }
 
 /**

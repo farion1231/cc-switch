@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import {
   fmtInt,
   fmtUsd,
+  formatEstimatedTokensPerSecond,
   formatOutputTokensPerSecond,
   formatTokensCompact,
   getLocaleFromLanguage,
@@ -175,7 +176,11 @@ export function RequestLogTable({
     const time = formatLogTime(log.createdAt, now);
     const fullTime = formatLogFullTime(log.createdAt);
     const provider = log.providerName || t("usage.unknownProvider");
-    const tps = formatOutputTokensPerSecond(log);
+    const exactTps = formatOutputTokensPerSecond(log);
+    // 会话日志导入的请求没有首字计时，速度是按日志时间戳估的，前面带 ≈
+    const estimatedTps =
+      exactTps == null ? formatEstimatedTokensPerSecond(log) : null;
+    const tps = exactTps ?? estimatedTps;
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
     const timingTip =
@@ -184,7 +189,11 @@ export function RequestLogTable({
             duration: (latency / 1000).toFixed(1),
             ttft: (firstToken / 1000).toFixed(1),
           })
-        : undefined;
+        : estimatedTps != null && latency != null
+          ? t("usage.estimatedTimingTip", {
+              duration: (latency / 1000).toFixed(1),
+            })
+          : undefined;
     const multiplier = parseFiniteNumber(log.costMultiplier);
     const modelTitle =
       log.requestModel && log.requestModel !== log.model
@@ -301,6 +310,7 @@ export function RequestLogTable({
             "—"
           ) : (
             <>
+              {estimatedTps != null && "≈"}
               {tps}
               <span className="ms-0.5 text-badge font-normal text-fg-3">
                 tok/s

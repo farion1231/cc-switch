@@ -68,8 +68,51 @@ describe("RequestDetailPanel", () => {
     expect(screen.getByText("usage.detail.speedTooFew")).toBeInTheDocument();
   });
 
+  it("shows an estimated speed and duration for session logs", () => {
+    renderWith(
+      log({
+        dataSource: "session_log",
+        firstTokenMs: undefined,
+        outputTokens: 1_800,
+        latencyMs: 20_000,
+      }),
+    );
+
+    // 1800 / 20 s，含首字等待
+    expect(
+      screen.getByText("usage.speedEstimatedValue:90"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.detail.durationEstimated"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("20.0s")).toBeInTheDocument();
+    expect(screen.queryByText("usage.detail.firstToken")).toBeNull();
+  });
+
+  it("explains why short session-log outputs have no estimate", () => {
+    renderWith(
+      log({
+        dataSource: "session_log",
+        firstTokenMs: undefined,
+        outputTokens: 120,
+        latencyMs: 6_000,
+      }),
+    );
+
+    expect(
+      screen.getByText("usage.detail.speedEstimateTooFew"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("6.0s")).toBeInTheDocument();
+  });
+
   it("says session logs have no timing data", () => {
-    renderWith(log({ dataSource: "codex_session", firstTokenMs: undefined }));
+    renderWith(
+      log({
+        dataSource: "codex_session",
+        firstTokenMs: undefined,
+        latencyMs: 0,
+      }),
+    );
 
     expect(
       screen.getByText("usage.detail.noTimingSession"),

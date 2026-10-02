@@ -16,8 +16,10 @@ import {
 } from "@/types/usage";
 import { cn } from "@/lib/utils";
 import {
+  SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
   fmtInt,
+  formatEstimatedTokensPerSecond,
   formatOutputTokensPerSecond,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -90,6 +92,7 @@ function useDetailSections(request: RequestLog) {
   const multiplier = parseFiniteNumber(request.costMultiplier);
   const isProxy = !request.dataSource || request.dataSource === "proxy";
   const tps = formatOutputTokensPerSecond(request);
+  const estimatedTps = formatEstimatedTokensPerSecond(request);
   const latency = parseFiniteNumber(request.latencyMs);
   const firstToken = parseFiniteNumber(request.firstTokenMs);
 
@@ -220,14 +223,41 @@ function useDetailSections(request: RequestLog) {
 
   let performance: DetailRow[];
   if (!isProxy) {
-    performance = [
-      {
-        key: "speed",
-        label: t("usage.speed"),
-        value: t("usage.detail.noTimingSession"),
-        muted: true,
-      },
-    ];
+    // 会话日志没有首字计时；耗时是导入时按日志时间戳估的（0 = 没估出来）
+    if (latency == null || latency <= 0) {
+      performance = [
+        {
+          key: "speed",
+          label: t("usage.speed"),
+          value: t("usage.detail.noTimingSession"),
+          muted: true,
+        },
+      ];
+    } else {
+      performance = [
+        estimatedTps != null
+          ? {
+              key: "speed",
+              label: t("usage.speed"),
+              value: t("usage.speedEstimatedValue", { value: estimatedTps }),
+            }
+          : {
+              key: "speed",
+              label: t("usage.speed"),
+              value:
+                request.outputTokens < SPEED_ESTIMATE_MIN_OUTPUT_TOKENS
+                  ? t("usage.detail.speedEstimateTooFew")
+                  : "—",
+              muted: true,
+            },
+        {
+          key: "duration",
+          label: t("usage.detail.durationEstimated"),
+          value: `${(latency / 1000).toFixed(1)}s`,
+          title: `${fmtInt(latency, locale)} ms`,
+        },
+      ];
+    }
   } else {
     const speedRow: DetailRow =
       tps != null

@@ -30,6 +30,19 @@ export function getProviderSpeed(stat: ProviderStats): string | null {
   );
 }
 
+/**
+ * 会话日志导入的请求的汇总估算速度：Σ输出 ÷ Σ估算耗时（含首字等待）。
+ * 没有精确速度时才拿它顶上，显示时前面带 ≈。
+ */
+export function getProviderEstimatedSpeed(stat: ProviderStats): string | null {
+  return formatTokensPerSecond(
+    getAggregateTokensPerSecond(
+      stat.estSpeedOutputTokens,
+      stat.estSpeedDurationMs,
+    ),
+  );
+}
+
 export function ProviderStatsTable({
   range,
   appType,
@@ -89,7 +102,10 @@ export function ProviderStatsTable({
             </tr>
           ) : (
             rows.map((stat) => {
-              const speed = getProviderSpeed(stat);
+              const exactSpeed = getProviderSpeed(stat);
+              const estimatedSpeed =
+                exactSpeed == null ? getProviderEstimatedSpeed(stat) : null;
+              const speed = exactSpeed ?? estimatedSpeed;
               return (
                 <tr
                   key={`${stat.providerId}:${stat.providerName}`}
@@ -134,6 +150,7 @@ export function ProviderStatsTable({
                       "—"
                     ) : (
                       <>
+                        {estimatedSpeed != null && "≈"}
                         {speed}
                         <span className="ms-0.5 text-badge font-normal text-fg-3">
                           tok/s

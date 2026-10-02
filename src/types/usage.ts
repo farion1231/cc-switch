@@ -123,6 +123,10 @@ export interface ProviderStats {
   speedOutputTokens?: number;
   /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
   speedGenerationMs?: number;
+  /** 估算速度分子：会话日志导入、有估算耗时、输出 ≥ 200 token 的请求的输出之和 */
+  estSpeedOutputTokens?: number;
+  /** 估算速度分母：同一批请求的估算耗时（含首字等待）之和，毫秒 */
+  estSpeedDurationMs?: number;
 }
 
 export interface ModelStats {
