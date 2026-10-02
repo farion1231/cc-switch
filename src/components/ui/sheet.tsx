@@ -28,7 +28,7 @@ const SheetContent = React.forwardRef<
       ref={ref}
       style={{ width, ...style }}
       className={cn(
-        "fixed inset-y-2 end-2 z-50 flex max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-dialog border border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
+        "fixed inset-y-0 end-0 z-50 flex max-w-[100vw] flex-col overflow-hidden rounded-s-dialog border-s border-border bg-surface text-fg-1 shadow-v7-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-4 data-[state=open]:slide-in-from-right-4",
         className,
       )}
       {...props}

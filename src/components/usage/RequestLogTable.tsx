@@ -1,65 +1,74 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRequestLogs } from "@/lib/query/usage";
+import { HelpTip } from "@/components/ui/help-tip";
+import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import type { AppId } from "@/lib/api";
 import {
   getFreshInputTokens,
   isUnpricedUsage,
   type LogFilters,
+  type RequestLog,
   type UsageRangeSelection,
 } from "@/types/usage";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { UsageDateRangePicker } from "./UsageDateRangePicker";
+import { cn } from "@/lib/utils";
 import {
-  formatOutputTokensPerSecond,
   fmtInt,
   fmtUsd,
+  formatOutputTokensPerSecond,
+  formatTokensCompact,
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
+import { usageTable } from "./usageTable";
 
 interface RequestLogTableProps {
   range: UsageRangeSelection;
-  rangeLabel: string;
+  /** 旧接口保留；时间范围由页面顶部的筛选统一控制 */
+  rangeLabel?: string;
   appType?: string;
   providerName?: string;
   model?: string;
+  /** 状态码筛选（页签行右侧的下拉） */
+  statusCode?: number;
   refreshIntervalMs: number;
-  onRangeChange?: (range: UsageRangeSelection) => void;
+  /** 点一行打开请求详情 */
+  onOpenDetail?: (requestId: string) => void;
 }
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** 「09-30 14:21」：表格里只要月日时分，完整时间在详情抽屉里。 */
+export function formatLogTime(createdAt: number): string {
+  const date = new Date(createdAt * 1000);
+  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(
+    date.getHours(),
+  )}:${pad2(date.getMinutes())}`;
+}
+
+export function isKnownAppId(appType: string): appType is AppId {
+  return appType in APP_DISPLAY_NAME;
+}
+
+export function appDisplayName(appType: string): string {
+  return isKnownAppId(appType) ? APP_DISPLAY_NAME[appType] : appType;
+}
+
+const isSuccessStatus = (code: number) => code >= 200 && code < 300;
 
 export function RequestLogTable({
   range,
-  rangeLabel,
   appType: dashboardAppType,
   providerName,
   model,
+  statusCode,
   refreshIntervalMs,
-  onRangeChange,
+  onOpenDetail,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
-
-  // 应用/Provider/模型筛选已上移到 Dashboard 顶栏（全局生效）；
-  // 这里只保留日志特有的状态码筛选。
-  const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [page, setPage] = useState(0);
-  const [pageInput, setPageInput] = useState("");
+  const [pageDraft, setPageDraft] = useState<string | null>(null);
   const pageSize = 20;
 
   const effectiveFilters: LogFilters = {
@@ -84,333 +93,255 @@ export function RequestLogTable({
 
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
-  const totalPages = Math.ceil(total / pageSize);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   useEffect(() => {
     setPage(0);
+    setPageDraft(null);
   }, [
     dashboardAppType,
     providerName,
     model,
+    statusCode,
     range.customEndDate,
     range.customStartDate,
     range.preset,
   ]);
 
-  const handleGoToPage = () => {
-    const trimmed = pageInput.trim();
+  const commitPageDraft = () => {
+    if (pageDraft == null) return;
+    const trimmed = pageDraft.trim();
+    setPageDraft(null);
     if (!/^\d+$/.test(trimmed)) return;
     const parsed = Number(trimmed);
     if (parsed < 1 || parsed > totalPages) return;
     setPage(parsed - 1);
-    setPageInput("");
   };
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
-  return (
-    <div className="space-y-4">
-      <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* Status code */}
-          <Select
-            value={statusCode?.toString() || "all"}
-            onValueChange={(v) => {
-              const parsed = Number.parseInt(v, 10);
-              setStatusCode(
-                v === "all" || !Number.isFinite(parsed) ? undefined : parsed,
-              );
-              setPage(0);
+  if (isLoading) {
+    return <div className={usageTable.skeleton} />;
+  }
+
+  const renderRow = (log: RequestLog) => {
+    const unpriced = isUnpricedUsage(log);
+    const freshInput = getFreshInputTokens(log);
+    const isCacheInclusive = log.inputTokens !== freshInput;
+    const time = formatLogTime(log.createdAt);
+    const provider = log.providerName || t("usage.unknownProvider");
+    const tps = formatOutputTokensPerSecond(log);
+    const latency = parseFiniteNumber(log.latencyMs);
+    const firstToken = parseFiniteNumber(log.firstTokenMs);
+    const timingTip =
+      latency != null && latency > 0 && firstToken != null
+        ? t("usage.timingTip", {
+            duration: (latency / 1000).toFixed(1),
+            ttft: (firstToken / 1000).toFixed(1),
+          })
+        : undefined;
+    const multiplier = parseFiniteNumber(log.costMultiplier);
+    const modelTitle =
+      log.requestModel && log.requestModel !== log.model
+        ? `${log.requestModel} → ${log.model}`
+        : log.model;
+    const hasCache = log.cacheReadTokens > 0;
+
+    return (
+      <tr
+        key={log.requestId}
+        className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
+        onClick={() => onOpenDetail?.(log.requestId)}
+      >
+        <td className={usageTable.td}>
+          <button
+            type="button"
+            className="rounded-[4px] text-start tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t("usage.openRequestDetail", { time, provider })}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenDetail?.(log.requestId);
             }}
           >
-            <SelectTrigger className="h-8 w-[100px] bg-background text-xs">
-              <SelectValue placeholder={t("usage.statusCode")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("common.all")}</SelectItem>
-              <SelectItem value="200">200 OK</SelectItem>
-              <SelectItem value="400">400</SelectItem>
-              <SelectItem value="401">401</SelectItem>
-              <SelectItem value="429">429</SelectItem>
-              <SelectItem value="500">500</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {onRangeChange && (
-            <UsageDateRangePicker
-              selection={range}
-              triggerLabel={rangeLabel}
-              onApply={onRangeChange}
-            />
+            {time}
+          </button>
+          {!isSuccessStatus(log.statusCode) && (
+            <span
+              className="ms-1.5 rounded-[4px] bg-danger-soft px-1 text-badge text-danger-text"
+              title={log.errorMessage || undefined}
+            >
+              {log.statusCode}
+            </span>
           )}
-        </div>
+        </td>
+        <td className={usageTable.td}>
+          <span
+            className="flex max-w-[96px] items-center gap-1.5"
+            title={appDisplayName(log.appType)}
+          >
+            {isKnownAppId(log.appType) && (
+              <AppGlyph
+                app={log.appType}
+                size={14}
+                badgeClassName="bg-surface"
+              />
+            )}
+            <span className="truncate">{appDisplayName(log.appType)}</span>
+          </span>
+        </td>
+        <td className={usageTable.td}>
+          <span className="block max-w-[104px] truncate" title={provider}>
+            {provider}
+          </span>
+        </td>
+        <td className={cn(usageTable.td, usageTable.mono)}>
+          <span className="block max-w-[108px] truncate" title={modelTitle}>
+            {log.model}
+          </span>
+        </td>
+        <td
+          className={usageTable.tdEnd}
+          title={
+            isCacheInclusive
+              ? `${fmtInt(freshInput, locale)} (${t("usage.rawInputLabel")}: ${fmtInt(log.inputTokens, locale)})`
+              : fmtInt(freshInput, locale)
+          }
+        >
+          {formatTokensCompact(freshInput, locale)}
+        </td>
+        <td
+          className={usageTable.tdEnd}
+          title={fmtInt(log.outputTokens, locale)}
+        >
+          {formatTokensCompact(log.outputTokens, locale)}
+        </td>
+        <td
+          className={cn(usageTable.tdEnd, !hasCache && usageTable.muted)}
+          title={t("usage.cacheTip", {
+            read: fmtInt(log.cacheReadTokens, locale),
+            write: fmtInt(log.cacheCreationTokens, locale),
+          })}
+        >
+          {hasCache ? formatTokensCompact(log.cacheReadTokens, locale) : "—"}
+        </td>
+        <td
+          className={cn(
+            usageTable.tdEnd,
+            "font-medium",
+            unpriced && "font-normal text-fg-3",
+          )}
+          title={
+            multiplier != null && multiplier !== 1
+              ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
+              : undefined
+          }
+        >
+          {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
+        </td>
+        <td
+          className={cn(usageTable.tdEnd, tps == null && usageTable.muted)}
+          title={timingTip}
+        >
+          {tps == null ? (
+            "—"
+          ) : (
+            <>
+              {tps}
+              <span className="ms-0.5 text-badge font-normal text-fg-3">
+                tok/s
+              </span>
+            </>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  return (
+    <div className="flex flex-col">
+      <div className={usageTable.scroller}>
+        <table
+          className={cn(usageTable.table, "min-w-[700px]")}
+          aria-label={t("usage.requestLogs")}
+        >
+          <thead>
+            <tr className={usageTable.headRow}>
+              <th className={usageTable.th}>{t("usage.time")}</th>
+              <th className={usageTable.th}>{t("usage.app")}</th>
+              <th className={usageTable.th}>{t("usage.provider")}</th>
+              <th className={usageTable.th}>{t("usage.model")}</th>
+              <th className={usageTable.thEnd}>{t("usage.freshInput")}</th>
+              <th className={usageTable.thEnd}>{t("usage.outputTokens")}</th>
+              <th className={usageTable.thEnd}>{t("usage.cacheReadTokens")}</th>
+              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
+              <th className={usageTable.thEnd}>
+                <span className="inline-flex items-center gap-0.5">
+                  {t("usage.speed")}
+                  <HelpTip title={t("usage.speedHelpTitle")} align="end">
+                    {t("usage.speedHelp")}
+                  </HelpTip>
+                </span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 ? (
+              <tr>
+                <td colSpan={9} className={usageTable.empty}>
+                  {t("usage.noData")}
+                </td>
+              </tr>
+            ) : (
+              logs.map(renderRow)
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {isLoading ? (
-        <div className="h-[400px] animate-pulse rounded bg-gray-100" />
-      ) : (
-        <>
-          <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.time")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.provider")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.billingModel")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.inputTokens")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.outputTokens")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.totalCost")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.timingInfo")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.status")}
-                  </TableHead>
-                  <TableHead className="text-center whitespace-nowrap">
-                    {t("usage.source", { defaultValue: "Source" })}
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {logs.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={9}
-                      className="text-center text-muted-foreground"
-                    >
-                      {t("usage.noData")}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  logs.map((log) => {
-                    const unpriced = isUnpricedUsage(log);
-                    return (
-                      <TableRow key={log.requestId}>
-                        <TableCell className="text-center whitespace-nowrap text-xs px-1.5">
-                          {new Date(log.createdAt * 1000).toLocaleString(
-                            locale,
-                            {
-                              month: "2-digit",
-                              day: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            },
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {log.providerName || t("usage.unknownProvider")}
-                        </TableCell>
-                        <TableCell className="text-center font-mono text-xs max-w-[200px]">
-                          <div
-                            className="truncate"
-                            title={
-                              log.requestModel && log.requestModel !== log.model
-                                ? `${log.requestModel} → ${log.model}`
-                                : log.model
-                            }
-                          >
-                            {log.requestModel &&
-                            log.requestModel !== log.model ? (
-                              <span>
-                                {log.requestModel}
-                                <span className="text-muted-foreground">
-                                  {" → "}
-                                  {log.model}
-                                </span>
-                              </span>
-                            ) : (
-                              log.model
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center px-1.5">
-                          {(() => {
-                            const freshInput = getFreshInputTokens(log);
-                            const isCacheInclusive =
-                              log.inputTokens !== freshInput;
-                            return (
-                              <div
-                                className="tabular-nums"
-                                title={
-                                  isCacheInclusive
-                                    ? `Raw: ${log.inputTokens.toLocaleString()}`
-                                    : undefined
-                                }
-                              >
-                                {fmtInt(freshInput, locale)}
-                              </div>
-                            );
-                          })()}
-                          {(log.cacheReadTokens > 0 ||
-                            log.cacheCreationTokens > 0) && (
-                            <div className="text-[10px] text-muted-foreground whitespace-nowrap">
-                              {[
-                                log.cacheReadTokens > 0 &&
-                                  `R${fmtInt(log.cacheReadTokens, locale)}`,
-                                log.cacheCreationTokens > 0 &&
-                                  `W${fmtInt(log.cacheCreationTokens, locale)}`,
-                              ]
-                                .filter(Boolean)
-                                .join("·")}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center px-1.5">
-                          <div className="tabular-nums">
-                            {fmtInt(log.outputTokens, locale)}
-                            {(() => {
-                              const tpsStr = formatOutputTokensPerSecond(log);
-                              if (tpsStr == null) return null;
-                              return (
-                                <span className="text-muted-foreground text-xs">
-                                  /{tpsStr} tps
-                                </span>
-                              );
-                            })()}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center px-1.5">
-                          <div
-                            className={`font-medium tabular-nums ${
-                              unpriced ? "text-muted-foreground" : ""
-                            }`}
-                          >
-                            {unpriced
-                              ? t("usage.unpriced", "未定价")
-                              : fmtUsd(log.totalCostUsd, 4)}
-                          </div>
-                          {parseFiniteNumber(log.costMultiplier) != null &&
-                            parseFiniteNumber(log.costMultiplier) !== 1 && (
-                              <div className="text-[11px] text-muted-foreground">
-                                ×
-                                {parseFiniteNumber(log.costMultiplier)?.toFixed(
-                                  2,
-                                )}
-                              </div>
-                            )}
-                        </TableCell>
-                        <TableCell className="text-center whitespace-nowrap text-xs tabular-nums">
-                          {(log.latencyMs / 1000).toFixed(1)}s
-                          {log.firstTokenMs != null && (
-                            <span className="text-muted-foreground">
-                              /{(log.firstTokenMs / 1000).toFixed(1)}s
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={
-                              log.statusCode >= 200 && log.statusCode < 300
-                                ? "text-green-600"
-                                : "text-red-600"
-                            }
-                          >
-                            {log.statusCode}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-center text-xs text-muted-foreground">
-                          {log.dataSource || "proxy"}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>{t("usage.totalRecords", { total })}</span>
-            <div className="flex items-center gap-1">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page === 0}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              {(() => {
-                const pages: (number | string)[] = [];
-                if (totalPages <= 9) {
-                  for (let i = 0; i < totalPages; i++) pages.push(i);
-                } else {
-                  const pageSet = new Set<number>();
-                  for (let i = 0; i < 3; i++) pageSet.add(i);
-                  for (let i = totalPages - 3; i < totalPages; i++)
-                    pageSet.add(i);
-                  for (
-                    let i = Math.max(0, page - 1);
-                    i <= Math.min(totalPages - 1, page + 1);
-                    i++
-                  )
-                    pageSet.add(i);
-                  const sorted = Array.from(pageSet).sort((a, b) => a - b);
-                  for (let i = 0; i < sorted.length; i++) {
-                    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
-                      pages.push(`ellipsis-${i}`);
-                    }
-                    pages.push(sorted[i]);
-                  }
-                }
-                return pages.map((p) =>
-                  typeof p === "string" ? (
-                    <span key={p} className="px-2 text-muted-foreground">
-                      ...
-                    </span>
-                  ) : (
-                    <Button
-                      key={p}
-                      variant={p === page ? "default" : "outline"}
-                      size="sm"
-                      className="h-8 w-8 p-0"
-                      onClick={() => setPage(p)}
-                    >
-                      {p + 1}
-                    </Button>
-                  ),
-                );
-              })()}
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <div className="flex items-center gap-1 ml-2">
-                <Input
-                  type="text"
-                  value={pageInput}
-                  onChange={(e) => setPageInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleGoToPage();
-                  }}
-                  placeholder={t("usage.pageInputPlaceholder")}
-                  className="h-8 w-16 text-center text-xs"
-                />
-                <Button variant="outline" size="sm" onClick={handleGoToPage}>
-                  {t("usage.goToPage")}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
+      <div className="flex h-10 items-center gap-2 text-caption text-fg-3">
+        <span className="tabular-nums">
+          {t("usage.totalRecords", { total })}
+        </span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
+          aria-label={t("usage.prevPage")}
+          title={t("usage.prevPage")}
+          disabled={page === 0}
+          onClick={() => setPage((p) => Math.max(0, p - 1))}
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="flex items-center gap-1 tabular-nums text-fg-2">
+          <input
+            type="text"
+            inputMode="numeric"
+            aria-label={t("usage.pageInputPlaceholder")}
+            className="h-6 w-9 rounded-[4px] border border-transparent bg-transparent text-center text-caption text-fg-1 hover:border-border focus:border-border-strong focus:outline-none"
+            value={pageDraft ?? String(page + 1)}
+            onChange={(event) => setPageDraft(event.target.value)}
+            onFocus={(event) => event.target.select()}
+            onBlur={commitPageDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitPageDraft();
+              if (event.key === "Escape") setPageDraft(null);
+            }}
+          />
+          <span>/ {fmtInt(totalPages, locale)}</span>
+        </span>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
+          aria-label={t("usage.nextPage")}
+          title={t("usage.nextPage")}
+          disabled={page >= totalPages - 1}
+          onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }

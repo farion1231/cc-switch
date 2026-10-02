@@ -53,7 +53,7 @@ export function DirectorySettings({
       <section className="space-y-4">
         <header className="space-y-1">
           <h3 className="text-sm font-medium">{t("settings.appConfigDir")}</h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("settings.appConfigDirDescription")}
           </p>
         </header>
@@ -92,7 +92,7 @@ export function DirectorySettings({
           <h3 className="text-sm font-medium">
             {t("settings.configDirectoryOverride")}
           </h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("settings.configDirectoryDescription")}
           </p>
         </header>
@@ -221,10 +221,10 @@ export function DirectoryInput({
       {label || description ? (
         <div className="space-y-1">
           {label ? (
-            <p className="text-xs font-medium text-foreground">{label}</p>
+            <p className="text-xs font-medium text-fg-1">{label}</p>
           ) : null}
           {description ? (
-            <p className="text-xs text-muted-foreground">{description}</p>
+            <p className="text-xs text-fg-2">{description}</p>
           ) : null}
         </div>
       ) : null}

@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCdResumeCommand,
+  buildSessionDisplayItems,
   extractCodexPromptPreview,
   formatSessionMessagePreview,
-  groupSessionsByProviderAndDirectory,
+  formatToolNames,
+  getSessionLastText,
+  getSessionTimeBucket,
+  groupSessionsByProject,
+  groupSessionsByTime,
+  isArchivedSession,
+  isChatItem,
   shouldHideCodexMessageFromToc,
+  splitInlineCode,
+  splitMarkdownBlocks,
 } from "@/components/sessions/utils";
 import type { SessionMeta } from "@/types";
 
@@ -118,107 +128,151 @@ describe("session utils", () => {
     );
   });
 
-  it("groups sessions by provider and project directory", () => {
+  it("groups sessions by project directory, newest group first and unknown last", () => {
     const sessions: SessionMeta[] = [
       {
         providerId: "codex",
-        sessionId: "codex-1",
-        projectDir: "/workspace/app",
+        sessionId: "unknown",
+        projectDir: "  ",
+        lastActiveAt: 50,
       },
       {
         providerId: "codex",
-        sessionId: "codex-2",
-        projectDir: "/workspace/app",
-      },
-      {
-        providerId: "claude",
-        sessionId: "claude-1",
-        projectDir: "/workspace/docs",
-      },
-    ];
-
-    const groups = groupSessionsByProviderAndDirectory(sessions, "未知目录");
-
-    expect(groups).toHaveLength(2);
-    expect(groups[0].providerId).toBe("codex");
-    expect(groups[0].sessions.map((session) => session.sessionId)).toEqual([
-      "codex-1",
-      "codex-2",
-    ]);
-    expect(groups[0].directories).toHaveLength(1);
-    expect(groups[0].directories[0]).toMatchObject({
-      projectDir: "/workspace/app",
-      label: "app",
-    });
-    expect(
-      groups[0].directories[0].sessions.map((session) => session.sessionId),
-    ).toEqual(["codex-1", "codex-2"]);
-    expect(groups[1].providerId).toBe("claude");
-    expect(groups[1].directories[0].label).toBe("docs");
-  });
-
-  it("uses an unknown directory group for sessions without project directories", () => {
-    const sessions: SessionMeta[] = [
-      {
-        providerId: "codex",
-        sessionId: "codex-1",
-        projectDir: null,
-      },
-      {
-        providerId: "codex",
-        sessionId: "codex-2",
-        projectDir: "   ",
-      },
-    ];
-
-    const groups = groupSessionsByProviderAndDirectory(sessions, "未知目录");
-
-    expect(groups).toHaveLength(1);
-    expect(groups[0].directories).toHaveLength(1);
-    expect(groups[0].directories[0]).toMatchObject({
-      projectDir: null,
-      label: "未知目录",
-    });
-    expect(
-      groups[0].directories[0].sessions.map((session) => session.sessionId),
-    ).toEqual(["codex-1", "codex-2"]);
-  });
-
-  it("preserves filtered session order inside provider and directory groups", () => {
-    const sessions: SessionMeta[] = [
-      {
-        providerId: "codex",
-        sessionId: "newest",
+        sessionId: "app-new",
         projectDir: "/workspace/app",
         lastActiveAt: 30,
       },
       {
-        providerId: "codex",
-        sessionId: "middle",
+        providerId: "claude",
+        sessionId: "docs",
         projectDir: "/workspace/docs",
-        lastActiveAt: 20,
+        lastActiveAt: 40,
       },
       {
-        providerId: "codex",
-        sessionId: "oldest",
+        providerId: "claude",
+        sessionId: "app-old",
         projectDir: "/workspace/app",
         lastActiveAt: 10,
       },
     ];
 
-    const groups = groupSessionsByProviderAndDirectory(sessions, "未知目录");
+    const groups = groupSessionsByProject(sessions, "未知目录");
 
-    expect(groups[0].sessions.map((session) => session.sessionId)).toEqual([
-      "newest",
-      "middle",
-      "oldest",
-    ]);
-    expect(groups[0].directories.map((group) => group.label)).toEqual([
-      "app",
+    expect(groups.map((group) => group.label)).toEqual([
       "docs",
+      "app",
+      "未知目录",
     ]);
+    expect(groups[1].sessions.map((session) => session.sessionId)).toEqual([
+      "app-new",
+      "app-old",
+    ]);
+    expect(groups[2].projectDir).toBeNull();
+  });
+
+  it("buckets sessions into today / yesterday / this week / earlier", () => {
+    // 2026-10-01 is a Thursday; the week starts on Monday 2026-09-28
+    const now = new Date(2026, 9, 1, 8, 15).getTime();
+    const at = (day: number, hour = 12) =>
+      new Date(2026, 8, day, hour).getTime();
+    const sessions: SessionMeta[] = [
+      { providerId: "claude", sessionId: "a", lastActiveAt: now - 60000 },
+      { providerId: "claude", sessionId: "b", lastActiveAt: at(30) },
+      { providerId: "claude", sessionId: "c", lastActiveAt: at(28, 9) },
+      { providerId: "claude", sessionId: "d", lastActiveAt: at(27) },
+    ];
+
+    expect(getSessionTimeBucket(at(28, 0), now)).toBe("thisWeek");
     expect(
-      groups[0].directories[0].sessions.map((session) => session.sessionId),
-    ).toEqual(["newest", "oldest"]);
+      groupSessionsByTime(sessions, now).map((group) => [
+        group.bucket,
+        group.sessions.map((session) => session.sessionId),
+      ]),
+    ).toEqual([
+      ["today", ["a"]],
+      ["yesterday", ["b"]],
+      ["thisWeek", ["c"]],
+      ["earlier", ["d"]],
+    ]);
+  });
+
+  it("hides the summary when it repeats the title and marks archived sessions", () => {
+    expect(
+      getSessionLastText({
+        providerId: "gemini",
+        sessionId: "g",
+        title: "fix: flaky test",
+        summary: "fix: flaky test",
+      }),
+    ).toBe("");
+    expect(
+      isArchivedSession({
+        providerId: "codex",
+        sessionId: "x",
+        sourcePath: "/Users/me/.codex/archived_sessions/rollout.jsonl",
+      }),
+    ).toBe(true);
+    expect(
+      isArchivedSession({
+        providerId: "claude",
+        sessionId: "c",
+        sourcePath: "/Users/me/archived_sessions/a.jsonl",
+      }),
+    ).toBe(false);
+  });
+
+  it("merges consecutive tool calls and outputs into one display item", () => {
+    const items = buildSessionDisplayItems([
+      { role: "user", content: "look at the layout" },
+      { role: "assistant", content: "Sure.\n[Tool: Read]" },
+      { role: "tool", content: "file contents" },
+      { role: "assistant", content: "[Tool: Grep]" },
+      { role: "assistant", content: "[Tool: Grep]" },
+      { role: "tool", content: "matches" },
+      { role: "assistant", content: "Done." },
+    ]);
+
+    expect(items.map((item) => item.kind)).toEqual([
+      "message",
+      "message",
+      "tools",
+      "message",
+    ]);
+    const tools = items[2];
+    expect(tools.kind === "tools" && tools.names).toEqual([
+      "Read",
+      "Grep",
+      "Grep",
+    ]);
+    expect(tools.kind === "tools" && tools.output).toBe(
+      "file contents\nmatches",
+    );
+    expect(items[1].kind === "message" && items[1].content).toBe("Sure.");
+    expect(formatToolNames(["Read", "Grep", "Grep", "Grep", "Edit"])).toBe(
+      "Read · Grep ×3 · Edit",
+    );
+    expect(isChatItem(tools)).toBe(false);
+  });
+
+  it("splits fenced code blocks and inline code", () => {
+    expect(splitMarkdownBlocks("Before\n```tsx\n<div />\n```\nAfter")).toEqual([
+      { type: "text", text: "Before" },
+      { type: "code", lang: "tsx", code: "<div />" },
+      { type: "text", text: "After" },
+    ]);
+    expect(splitMarkdownBlocks("```\nunclosed")).toEqual([
+      { type: "code", lang: "", code: "unclosed" },
+    ]);
+    expect(splitInlineCode("use `SessionMeta` here")).toEqual([
+      { code: false, text: "use " },
+      { code: true, text: "SessionMeta" },
+      { code: false, text: " here" },
+    ]);
+  });
+
+  it("quotes the project directory in the cd-and-resume command", () => {
+    expect(buildCdResumeCommand("/tmp/it's", "claude --resume x")).toBe(
+      "cd '/tmp/it'\\''s' && claude --resume x",
+    );
   });
 });

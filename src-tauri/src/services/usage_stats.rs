@@ -86,6 +86,23 @@ pub struct ProviderStats {
     pub total_cost: String,
     pub success_rate: f32,
     pub avg_latency_ms: u64,
+    /// 速度的分子：满足条件（有首字、输出 >= 100 token、耗时 > 首字）的明细请求的输出 token 之和。
+    /// 汇总速度 = speed_output_tokens / (speed_generation_ms / 1000)，不是逐条平均。
+    /// 日汇总（rollup）没有逐条计时，不计入。
+    pub speed_output_tokens: u64,
+    /// 速度的分母：同一批请求的 (latency_ms - first_token_ms) 之和，单位毫秒。
+    pub speed_generation_ms: u64,
+}
+
+/// 计速度的门槛：输出少于这个数的请求（工具调用这类）不算速度，避免 0.1 秒回 15 个 token 算出离谱的数。
+pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
+
+/// 明细行能不能计速度的 SQL 条件（和前端 `getOutputTokensPerSecond` 同口径）。
+fn speed_eligible_sql(alias: &str) -> String {
+    format!(
+        "{alias}.first_token_ms IS NOT NULL AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
+         AND {alias}.latency_ms > {alias}.first_token_ms"
+    )
 }
 
 /// 模型统计
@@ -1333,6 +1350,7 @@ impl Database {
         let rollup_pname = provider_name_coalesce("r", "p2");
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
+        let speed_ok = speed_eligible_sql("l");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -1342,7 +1360,9 @@ impl Database {
                 SUM(success_count) as success_count,
                 CASE WHEN SUM(request_count) > 0
                     THEN SUM(latency_sum) / SUM(request_count)
-                    ELSE 0 END as avg_latency
+                    ELSE 0 END as avg_latency,
+                SUM(speed_output) as speed_output,
+                SUM(speed_gen_ms) as speed_gen_ms
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
@@ -1350,7 +1370,9 @@ impl Database {
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
-                    COALESCE(SUM(l.latency_ms), 0) as latency_sum
+                    COALESCE(SUM(l.latency_ms), 0) as latency_sum,
+                    COALESCE(SUM(CASE WHEN {speed_ok} THEN l.output_tokens ELSE 0 END), 0) as speed_output,
+                    COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -1362,7 +1384,9 @@ impl Database {
                     COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
-                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0),
+                    0,
+                    0
                 FROM usage_daily_rollups r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
                 {rollup_where}
@@ -1393,6 +1417,8 @@ impl Database {
                 total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
                 success_rate,
                 avg_latency_ms: row.get::<_, f64>(7)? as u64,
+                speed_output_tokens: row.get::<_, i64>(8)?.max(0) as u64,
+                speed_generation_ms: row.get::<_, i64>(9)?.max(0) as u64,
             })
         };
 
@@ -3951,6 +3977,43 @@ mod tests {
         assert_eq!(stats[0].provider_id, "p1");
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 275);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_speed_sums_only_eligible_requests() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            let insert = |id: &str, output: i64, latency: i64, first: Option<i64>| {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, first_token_ms, status_code, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![id, "p1", "claude", "m", 10, output, "0", latency, first, 200, 1000],
+                )
+            };
+            // 计入：1000 token / (11000 - 1000) ms
+            insert("ok-a", 1000, 11_000, Some(1_000))?;
+            // 计入：300 token / (4000 - 1000) ms
+            insert("ok-b", 300, 4_000, Some(1_000))?;
+            // 不计：输出不到 100
+            insert("short", 50, 2_000, Some(100))?;
+            // 不计：没有首字（会话日志 / 非流式）
+            insert("no-ttft", 5_000, 9_000, None)?;
+            // 不计：耗时不大于首字
+            insert("zero-gen", 500, 1_000, Some(1_000))?;
+        }
+
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].request_count, 5);
+        assert_eq!(stats[0].speed_output_tokens, 1_300);
+        assert_eq!(stats[0].speed_generation_ms, 13_000);
 
         Ok(())
     }

@@ -119,6 +119,10 @@ export interface ProviderStats {
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
+  speedOutputTokens?: number;
+  /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
+  speedGenerationMs?: number;
 }
 
 export interface ModelStats {

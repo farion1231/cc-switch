@@ -12,7 +12,8 @@
     --popover: 0 0% 100%;
     --popover-foreground: 240 5.9% 10%;
 
-    --primary: 210 100% 56%;
+    /* v7：主操作色和 --action-bg 一致（黑白），不再是蓝色 */
+    --primary: 240 5.9% 10%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 240 10.3% 94.3%;
@@ -41,8 +42,8 @@
     --popover: 240 5.2% 19%;
     --popover-foreground: 240 4.8% 95.9%;
 
-    --primary: 210 100% 54%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 240 4.8% 95.9%;
+    --primary-foreground: 240 5.9% 10%;
 
     --secondary: 240 5% 15.7%;
     --secondary-foreground: 240 4.8% 95.9%;

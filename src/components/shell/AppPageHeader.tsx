@@ -8,6 +8,8 @@ export const WindowControlsContext = createContext<ReactNode>(null);
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 
 interface AppPageHeaderProps {
+  /** 标题前的可操作元素（二级页的返回按钮）；和 icon 二选一 */
+  leading?: ReactNode;
   icon?: ReactNode;
   title: ReactNode;
   /** 应用页用 16px 的名字 + 13px 的页面名；全局页和设置用 18px 的页面标题 */
@@ -25,6 +27,7 @@ interface AppPageHeaderProps {
  * 内容区页头：高 52，整条可拖动窗口，左边是图标 + 标题，右边是操作。
  */
 export function AppPageHeader({
+  leading,
   icon,
   title,
   variant = "page",
@@ -44,6 +47,11 @@ export function AppPageHeader({
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
       <div className="flex min-w-0 shrink-0 items-center gap-2.5">
+        {leading && (
+          <span className="-ms-2 flex shrink-0 items-center" style={NO_DRAG}>
+            {leading}
+          </span>
+        )}
         {icon && (
           <span
             aria-hidden="true"

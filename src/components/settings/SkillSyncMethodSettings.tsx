@@ -21,11 +21,11 @@ export function SkillSyncMethodSettings({
     <section className="space-y-2">
       <header className="space-y-1">
         <h3 className="text-sm font-medium">{t("settings.skillSync.title")}</h3>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("settings.skillSync.description")}
         </p>
       </header>
-      <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
+      <div className="inline-flex gap-1 rounded-md border border-border bg-surface p-1">
         <SyncMethodButton
           active={displayValue === "symlink"}
           onClick={() => onChange("symlink")}
@@ -40,7 +40,7 @@ export function SkillSyncMethodSettings({
         </SyncMethodButton>
       </div>
       {displayValue === "symlink" && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("settings.skillSync.symlinkHint")}
         </p>
       )}
@@ -67,9 +67,7 @@ function SyncMethodButton({
       variant={active ? "default" : "ghost"}
       className={cn(
         "min-w-[96px]",
-        active
-          ? "shadow-sm"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        active ? "shadow-sm" : "text-fg-2 hover:text-fg-1 hover:bg-subtle",
       )}
     >
       {children}

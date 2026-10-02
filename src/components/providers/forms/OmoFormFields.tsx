@@ -158,9 +158,9 @@ function ModelCombobox({
           type="button"
           role="combobox"
           aria-expanded={open}
-          className="flex flex-1 h-8 items-center justify-between whitespace-nowrap rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm ring-offset-background focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex flex-1 h-8 items-center justify-between whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1 text-sm shadow-sm ring-offset-background focus:outline-none focus-visible:outline-none focus:border-border focus-visible:border-border focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <span className={cn("truncate", !value && "text-muted-foreground")}>
+          <span className={cn("truncate", !value && "text-fg-2")}>
             {selectedLabel || placeholderText}
           </span>
           <span className="flex items-center shrink-0 ml-1 gap-0.5">
@@ -183,7 +183,7 @@ function ModelCombobox({
         sideOffset={6}
         avoidCollisions={true}
         collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border"
       >
         <Command
           label={t("omo.searchModel", {
@@ -713,7 +713,7 @@ export function OmoFormFields({
         className="font-mono text-xs min-h-[130px] py-3"
       />
       {showHint && (
-        <p className="text-[10px] text-muted-foreground mt-1">
+        <p className="text-badge text-fg-2 mt-1">
           {t("omo.advancedJsonHint", {
             defaultValue:
               "temperature, top_p, budgetTokens, prompt_append, permission, etc. Leave empty for defaults",
@@ -784,7 +784,7 @@ export function OmoFormFields({
       onCategoriesChange(updatedCategories);
     }
 
-    const exampleNames = unmatchedExamples.slice(0, 3).join(", ");
+    const exampleNames = unmatchedExamples.slice(0, 3).join(",");
     const examples =
       unmatchedExamples.length > 3 ? `${exampleNames}…` : exampleNames;
 
@@ -915,15 +915,13 @@ export function OmoFormFields({
             <div className="flex items-center gap-1 text-sm font-medium">
               {def.display}
               <span className="relative inline-flex group/tip">
-                <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60 hover:text-muted-foreground cursor-help shrink-0" />
+                <HelpCircle className="h-3.5 w-3.5 text-fg-3 hover:text-fg-2 cursor-help shrink-0" />
                 <span className="invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-opacity duration-150 absolute left-0 top-full mt-1 z-50 w-[260px] rounded-md bg-popover text-popover-foreground border border-border shadow-md px-3 py-2 text-xs leading-relaxed font-normal pointer-events-none">
                   {t(def.tooltipKey)}
                 </span>
               </span>
             </div>
-            <div className="text-xs text-muted-foreground truncate">
-              {t(def.descKey)}
-            </div>
+            <div className="text-xs text-fg-2 truncate">{t(def.descKey)}</div>
           </div>
           {renderModelSelect(
             currentModel,
@@ -1078,13 +1076,13 @@ export function OmoFormFields({
     >
       <div className="flex items-center gap-2">
         {isOpen ? (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          <ChevronDown className="h-4 w-4 text-fg-2" />
         ) : (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          <ChevronRight className="h-4 w-4 text-fg-2" />
         )}
         <Label className="text-sm font-semibold cursor-pointer">{title}</Label>
         {typeof badge === "string" ? (
-          <Badge variant="outline" className="text-[10px] h-5">
+          <Badge variant="outline" className="text-badge h-5">
             {badge}
           </Badge>
         ) : (
@@ -1147,7 +1145,7 @@ export function OmoFormFields({
   const renderCustomDivider = (label: string) => (
     <div className="flex items-center gap-2 py-2">
       <div className="flex-1 border-t border-border/40" />
-      <span className="text-[10px] text-muted-foreground">{label}</span>
+      <span className="text-badge text-fg-2">{label}</span>
       <div className="flex-1 border-t border-border/40" />
     </div>
   );
@@ -1203,7 +1201,7 @@ export function OmoFormFields({
         </div>
       </div>
 
-      <div className="text-xs text-muted-foreground">
+      <div className="text-xs text-fg-2">
         {t("omo.configSummary", {
           agents: configuredAgentCount,
           categories: configuredCategoryCount,
@@ -1211,7 +1209,7 @@ export function OmoFormFields({
             "{{agents}} agents, {{categories}} categories configured · Click ⚙ for advanced params",
         })}
         <span className="ml-1">
-          ·{" "}
+          ·{""}
           {t("omo.enabledModelsCount", {
             count: modelOptions.length,
             defaultValue: "{{count}} configured models available",
@@ -1219,8 +1217,9 @@ export function OmoFormFields({
         </span>
         {localFilePath && (
           <span className="ml-1 text-primary/70">
-            · {t("omo.source", { defaultValue: "from:" })}{" "}
-            <span className="font-mono text-[10px]">
+            · {t("omo.source", { defaultValue: "from:" })}
+            {""}
+            <span className="font-mono text-badge">
               {localFilePath.replace(/^.*\//, "")}
             </span>
           </span>
@@ -1294,7 +1293,7 @@ export function OmoFormFields({
           !otherFieldsOpen && otherFieldsStr.trim() ? (
             <Badge
               variant="secondary"
-              className="text-[10px] h-5 font-mono max-w-[200px] truncate"
+              className="text-badge h-5 font-mono max-w-[200px] truncate"
             >
               {otherFieldsStr.trim().slice(0, 40)}
               {otherFieldsStr.trim().length > 40 ? "..." : ""}
@@ -1310,7 +1309,7 @@ export function OmoFormFields({
               className="font-mono text-xs min-h-[60px]"
             />
             {isSlim && (
-              <p className="mt-1 text-[10px] text-muted-foreground">
+              <p className="mt-1 text-badge text-fg-2">
                 {t("omo.slimOtherFieldsHint", {
                   defaultValue:
                     "Use this area for top-level OMO Slim config such as council, fallback, multiplexer, disabled_mcps, and todoContinuation.",

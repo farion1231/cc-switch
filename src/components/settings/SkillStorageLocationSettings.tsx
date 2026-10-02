@@ -73,11 +73,11 @@ export function SkillStorageLocationSettings({
         <h3 className="text-sm font-medium">
           {t("settings.skillStorage.title")}
         </h3>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("settings.skillStorage.description")}
         </p>
       </header>
-      <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
+      <div className="inline-flex gap-1 rounded-md border border-border bg-surface p-1">
         <StorageButton
           active={value === "cc_switch"}
           disabled={isMigrating}
@@ -96,7 +96,7 @@ export function SkillStorageLocationSettings({
           {t("settings.skillStorage.unified")}
         </StorageButton>
       </div>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-fg-2">
         {value === "unified"
           ? t("settings.skillStorage.unifiedHint")
           : t("settings.skillStorage.ccSwitchHint")}
@@ -154,9 +154,7 @@ function StorageButton({
       variant={active ? "default" : "ghost"}
       className={cn(
         "min-w-[96px]",
-        active
-          ? "shadow-sm"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        active ? "shadow-sm" : "text-fg-2 hover:text-fg-1 hover:bg-subtle",
       )}
     >
       {children}

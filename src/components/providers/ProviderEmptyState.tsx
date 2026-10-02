@@ -27,21 +27,21 @@ export function ProviderEmptyState({
 
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">
-      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-        <Users className="h-7 w-7 text-muted-foreground" />
+      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-subtle">
+        <Users className="h-7 w-7 text-fg-2" />
       </div>
       <h3 className="text-lg font-semibold">
         {emptyCopyNs
           ? t(`${emptyCopyNs}.empty.title`)
           : t("provider.noProviders")}
       </h3>
-      <p className="mt-2 max-w-lg text-sm text-muted-foreground">
+      <p className="mt-2 max-w-lg text-sm text-fg-2">
         {emptyCopyNs
           ? t(`${emptyCopyNs}.empty.description`)
           : t("provider.noProvidersDescription")}
       </p>
       {showKeyFieldsHint && (
-        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+        <p className="mt-1 max-w-lg text-sm text-fg-2">
           {t("provider.noProvidersDescriptionKeyFields")}
         </p>
       )}

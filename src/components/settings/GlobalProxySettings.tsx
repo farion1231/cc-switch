@@ -142,7 +142,7 @@ export function GlobalProxySettings() {
   if (isLoading && savedUrl === undefined) {
     return (
       <div className="flex items-center justify-center p-4">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <Loader2 className="h-5 w-5 animate-spin text-fg-2" />
       </div>
     );
   }
@@ -150,9 +150,7 @@ export function GlobalProxySettings() {
   return (
     <div className="space-y-3">
       {/* 描述 */}
-      <p className="text-sm text-muted-foreground">
-        {t("settings.globalProxy.hint")}
-      </p>
+      <p className="text-sm text-fg-2">{t("settings.globalProxy.hint")}</p>
 
       {/* 代理地址输入框和按钮 */}
       <div className="flex gap-2">
@@ -246,9 +244,9 @@ export function GlobalProxySettings() {
             tabIndex={-1}
           >
             {showPassword ? (
-              <EyeOff className="h-4 w-4 text-muted-foreground" />
+              <EyeOff className="h-4 w-4 text-fg-2" />
             ) : (
-              <Eye className="h-4 w-4 text-muted-foreground" />
+              <Eye className="h-4 w-4 text-fg-2" />
             )}
           </Button>
         </div>

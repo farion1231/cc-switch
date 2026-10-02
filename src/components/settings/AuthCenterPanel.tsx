@@ -51,7 +51,7 @@ export function AuthCenterPanel({
   return (
     <div className="space-y-6">
       {showIntro && (
-        <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <section className="rounded-xl border border-border/60 bg-surface p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -62,7 +62,7 @@ export function AuthCenterPanel({
                   })}
                 </h3>
               </div>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-fg-2">
                 {t("settings.authCenter.description", {
                   defaultValue:
                     "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
@@ -78,15 +78,15 @@ export function AuthCenterPanel({
 
       <section
         ref={copilotSectionRef}
-        className="scroll-mt-4 rounded-xl border border-border/60 bg-card/60 p-6"
+        className="scroll-mt-4 rounded-xl border border-border/60 bg-surface p-6"
       >
         <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-subtle">
             <Github className="h-5 w-5" />
           </div>
           <div>
             <h4 className="font-medium">GitHub Copilot</h4>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-fg-2">
               {t("settings.authCenter.copilotDescription", {
                 defaultValue: "管理 GitHub Copilot 账号",
               })}
@@ -99,15 +99,15 @@ export function AuthCenterPanel({
 
       <section
         ref={codexOauthSectionRef}
-        className="scroll-mt-4 rounded-xl border border-border/60 bg-card/60 p-6"
+        className="scroll-mt-4 rounded-xl border border-border/60 bg-surface p-6"
       >
         <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-subtle">
             <CodexIcon size={20} />
           </div>
           <div>
             <h4 className="font-medium">ChatGPT (Codex OAuth)</h4>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-fg-2">
               {t("settings.authCenter.codexOauthDescription", {
                 defaultValue: "管理 ChatGPT 账号",
               })}
@@ -120,15 +120,15 @@ export function AuthCenterPanel({
 
       <section
         ref={xaiOauthSectionRef}
-        className="scroll-mt-4 rounded-xl border border-border/60 bg-card/60 p-6"
+        className="scroll-mt-4 rounded-xl border border-border/60 bg-surface p-6"
       >
         <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-subtle">
             <ProviderIcon icon="xai" name="xAI" size={20} />
           </div>
           <div>
             <h4 className="font-medium">xAI (Grok OAuth)</h4>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-fg-2">
               {t("settings.authCenter.xaiOauthDescription", {
                 defaultValue: "管理 xAI / Grok 账号",
               })}

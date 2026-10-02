@@ -63,7 +63,7 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
       <div
         className={cn(
           "flex items-center justify-between px-3 py-2 rounded-md border",
-          enabled ? "bg-muted/30" : "bg-amber-500/10 border-amber-500/30",
+          enabled ? "bg-subtle" : "bg-warning-soft border-transparent",
         )}
       >
         <div className="flex items-center gap-2">
@@ -81,14 +81,14 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
           </span>
         </div>
         {!enabled && (
-          <span className="text-xs text-amber-700 dark:text-amber-400">
+          <span className="text-xs text-warning-text">
             {t("hermes.memory.disabledHint")}
           </span>
         )}
       </div>
 
       {isLoading && !loaded ? (
-        <div className="flex items-center justify-center h-64 text-muted-foreground">
+        <div className="flex items-center justify-center h-64 text-fg-2">
           {t("prompts.loading")}
         </div>
       ) : (
@@ -102,16 +102,13 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
 
       <div className="flex items-center justify-between gap-3 text-sm">
         <span
-          className={cn(
-            "text-muted-foreground",
-            isOver && "text-red-600 dark:text-red-400 font-medium",
-          )}
+          className={cn("text-fg-2", isOver && "text-danger-text font-medium")}
         >
           {t("hermes.memory.usage", { current: charCount, limit })}
           {isOver ? ` — ${t("hermes.memory.overLimit")}` : ""}
         </span>
         <div className="flex items-center gap-3">
-          <span className="hidden md:inline text-xs text-muted-foreground">
+          <span className="hidden md:inline text-xs text-fg-2">
             {t("hermes.memory.runtimeNote")}
           </span>
           <Button

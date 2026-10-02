@@ -5,7 +5,15 @@ import { promptsApi, type Prompt, type AppId } from "@/lib/api";
 
 const EMPTY_PROMPTS: Record<string, Prompt> = {};
 
-export function usePromptActions(appId: AppId) {
+interface PromptActionsOptions {
+  /** false：成功时不弹通用 toast（提示词页自己写带后果和撤销的 toast）；失败照样提示 */
+  notify?: boolean;
+}
+
+export function usePromptActions(
+  appId: AppId,
+  { notify = true }: PromptActionsOptions = {},
+) {
   const { t } = useTranslation();
   const [prompts, setPrompts] = useState<Record<string, Prompt>>({});
   const [promptsAppId, setPromptsAppId] = useState<AppId | null>(null);
@@ -18,6 +26,11 @@ export function usePromptActions(appId: AppId) {
   const reloadGenerationRef = useRef(0);
   const currentAppIdRef = useRef(appId);
   const promptsAppIdRef = useRef<AppId | null>(null);
+  // 最近一次从后端读到的列表（写操作之后调用方要拿新列表比对，比如启用时多出来的「原始提示词」）
+  const latestLoadedRef = useRef<{
+    appId: AppId;
+    prompts: Record<string, Prompt>;
+  } | null>(null);
   currentAppIdRef.current = appId;
 
   const visiblePrompts = promptsAppId === appId ? prompts : EMPTY_PROMPTS;
@@ -61,6 +74,7 @@ export function usePromptActions(appId: AppId) {
     try {
       const data = await promptsApi.getPrompts(requestAppId);
       if (!isCurrentRequest()) return false;
+      latestLoadedRef.current = { appId: requestAppId, prompts: data };
       updatePromptsForApp(requestAppId, () => data);
 
       try {
@@ -97,20 +111,22 @@ export function usePromptActions(appId: AppId) {
         }));
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.saveSuccess"), {
-          closeButton: true,
-          description:
-            appId === "pi" && prompt.enabled
-              ? t("pi.prompts.reloadNotice")
-              : undefined,
-        });
+        if (notify) {
+          toast.success(t("prompts.saveSuccess"), {
+            closeButton: true,
+            description:
+              appId === "pi" && prompt.enabled
+                ? t("pi.prompts.reloadNotice")
+                : undefined,
+          });
+        }
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.saveFailed"));
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp],
+    [appId, notify, reload, t, updatePromptsForApp],
   );
 
   const deletePrompt = useCallback(
@@ -124,14 +140,16 @@ export function usePromptActions(appId: AppId) {
         });
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.deleteSuccess"), { closeButton: true });
+        if (notify) {
+          toast.success(t("prompts.deleteSuccess"), { closeButton: true });
+        }
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.deleteFailed"));
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp],
+    [appId, notify, reload, t, updatePromptsForApp],
   );
 
   const enablePrompt = useCallback(
@@ -148,14 +166,16 @@ export function usePromptActions(appId: AppId) {
         );
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.enableSuccess"), { closeButton: true });
+        if (notify) {
+          toast.success(t("prompts.enableSuccess"), { closeButton: true });
+        }
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.enableFailed"));
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp],
+    [appId, notify, reload, t, updatePromptsForApp],
   );
 
   const toggleEnabled = useCallback(
@@ -177,17 +197,19 @@ export function usePromptActions(appId: AppId) {
           }
           const refreshed =
             currentAppIdRef.current === appId ? await reload() : false;
-          toast.success(
-            t(
-              enabled
-                ? "pi.prompts.usePromptSuccess"
-                : "pi.prompts.stopUsingSuccess",
-            ),
-            {
-              closeButton: true,
-              description: t("pi.prompts.reloadNotice"),
-            },
-          );
+          if (notify) {
+            toast.success(
+              t(
+                enabled
+                  ? "pi.prompts.usePromptSuccess"
+                  : "pi.prompts.stopUsingSuccess",
+              ),
+              {
+                closeButton: true,
+                description: t("pi.prompts.reloadNotice"),
+              },
+            );
+          }
           return refreshed;
         } catch (error) {
           toast.error(
@@ -227,13 +249,17 @@ export function usePromptActions(appId: AppId) {
       try {
         if (enabled) {
           await promptsApi.enablePrompt(appId, id);
-          toast.success(t("prompts.enableSuccess"), { closeButton: true });
+          if (notify) {
+            toast.success(t("prompts.enableSuccess"), { closeButton: true });
+          }
         } else {
           await promptsApi.upsertPrompt(appId, id, {
             ...visiblePrompts[id],
             enabled: false,
           });
-          toast.success(t("prompts.disableSuccess"), { closeButton: true });
+          if (notify) {
+            toast.success(t("prompts.disableSuccess"), { closeButton: true });
+          }
         }
         return currentAppIdRef.current === appId ? await reload() : false;
       } catch (error) {
@@ -249,7 +275,7 @@ export function usePromptActions(appId: AppId) {
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp, visiblePrompts],
+    [appId, notify, reload, t, updatePromptsForApp, visiblePrompts],
   );
 
   const importFromFile = useCallback(async () => {
@@ -258,13 +284,23 @@ export function usePromptActions(appId: AppId) {
       if (currentAppIdRef.current === appId) {
         await reload();
       }
-      toast.success(t("prompts.importSuccess"), { closeButton: true });
+      if (notify) {
+        toast.success(t("prompts.importSuccess"), { closeButton: true });
+      }
       return id;
     } catch (error) {
       toast.error(t("prompts.importFailed"));
       throw error;
     }
-  }, [appId, reload, t]);
+  }, [appId, notify, reload, t]);
+
+  /** 最近一次读到的当前应用列表；还没读过或读的是别的应用时返回 null。 */
+  const getLatestPrompts = useCallback((): Record<string, Prompt> | null => {
+    const latest = latestLoadedRef.current;
+    return latest && latest.appId === currentAppIdRef.current
+      ? latest.prompts
+      : null;
+  }, []);
 
   return {
     prompts: visiblePrompts,
@@ -277,5 +313,6 @@ export function usePromptActions(appId: AppId) {
     enablePrompt,
     toggleEnabled,
     importFromFile,
+    getLatestPrompts,
   };
 }

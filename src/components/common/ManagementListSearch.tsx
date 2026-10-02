@@ -24,7 +24,7 @@ export function ManagementListSearch({
     <div role="search" className={cn("relative flex-shrink-0 mb-4", className)}>
       <Search
         aria-hidden="true"
-        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-2"
       />
       <Input
         value={value}
@@ -45,7 +45,7 @@ export function ManagementListSearch({
           onClick={() => onValueChange("")}
           aria-label={clearLabel}
           title={clearLabel}
-          className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
         >
           <X aria-hidden="true" className="h-4 w-4" />
         </button>

@@ -81,9 +81,9 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           variant={isAuthenticated ? "default" : "secondary"}
           className={
             isAuthenticated
-              ? "bg-green-500 hover:bg-green-600"
+              ? "bg-success hover:bg-success"
               : hasAnyAccount
-                ? "border-amber-500 text-amber-600"
+                ? "border-warning text-warning-text"
                 : ""
           }
         >
@@ -100,7 +100,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
 
       {accounts.length > 0 && onAccountSelect && (
         <div className="space-y-2">
-          <Label className="text-sm text-muted-foreground">
+          <Label className="text-sm text-fg-2">
             {t("xaiOauth.selectAccount", "选择账号")}
           </Label>
           <Select
@@ -129,13 +129,13 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                 >
                   <span className="flex items-center gap-2">
                     {account.requires_reauth ? (
-                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      <AlertTriangle className="h-4 w-4 text-warning-text" />
                     ) : (
-                      <User className="h-4 w-4 text-muted-foreground" />
+                      <User className="h-4 w-4 text-fg-2" />
                     )}
                     {account.login}
                     {account.requires_reauth && (
-                      <span className="text-xs text-amber-600">
+                      <span className="text-xs text-warning-text">
                         ({t("xaiOauth.expired", "凭据已失效")})
                       </span>
                     )}
@@ -149,20 +149,20 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
 
       {hasAnyAccount && (
         <div className="space-y-2">
-          <Label className="text-sm text-muted-foreground">
+          <Label className="text-sm text-fg-2">
             {t("xaiOauth.accounts", "xAI 账号")}
           </Label>
           <div className="space-y-1">
             {accounts.map((account) => (
               <div
                 key={account.id}
-                className="flex items-center justify-between rounded-md border bg-muted/30 p-2"
+                className="flex items-center justify-between rounded-md border bg-subtle p-2"
               >
                 <div className="flex min-w-0 items-center gap-2">
                   {account.requires_reauth ? (
-                    <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-warning-text" />
                   ) : (
-                    <User className="h-5 w-5 shrink-0 text-muted-foreground" />
+                    <User className="h-5 w-5 shrink-0 text-fg-2" />
                   )}
                   <span className="truncate text-sm font-medium">
                     {account.login}
@@ -175,7 +175,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                   {account.requires_reauth && (
                     <Badge
                       variant="outline"
-                      className="border-amber-500 text-xs text-amber-600"
+                      className="border-warning text-xs text-warning-text"
                     >
                       {t("xaiOauth.expired", "凭据已失效")}
                     </Badge>
@@ -199,7 +199,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                    className="h-7 w-7 text-fg-2 hover:text-danger-text"
                     disabled={isRemovingAccount}
                     onClick={(event) => remove(account.id, event)}
                     title={t("xaiOauth.removeAccount", "移除账号")}
@@ -233,17 +233,17 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
       )}
 
       {isPolling && deviceCode && (
-        <div className="space-y-3 rounded-lg border bg-muted/50 p-4">
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div className="space-y-3 rounded-lg border bg-subtle p-4">
+          <div className="flex items-center justify-center gap-2 text-sm text-fg-2">
             <Loader2 className="h-4 w-4 animate-spin" />
             {t("xaiOauth.waitingForAuth", "等待 xAI 授权中…")}
           </div>
           <div className="text-center">
-            <p className="mb-1 text-xs text-muted-foreground">
+            <p className="mb-1 text-xs text-fg-2">
               {t("xaiOauth.enterCode", "若浏览器未自动填入，请输入：")}
             </p>
             <div className="flex items-center justify-center gap-2">
-              <code className="rounded border bg-background px-4 py-2 font-mono text-2xl font-bold tracking-wider">
+              <code className="rounded border bg-surface px-4 py-2 font-mono text-2xl font-bold tracking-wider">
                 {deviceCode.user_code}
               </code>
               <Button
@@ -253,7 +253,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                 onClick={copyUserCode}
               >
                 {copied ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-success-text" />
                 ) : (
                   <Copy className="h-4 w-4" />
                 )}
@@ -265,7 +265,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
               href={deviceCode.verification_uri}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
+              className="inline-flex items-center gap-1 text-sm text-fg-1 hover:underline"
             >
               {deviceCode.verification_uri}
               <ExternalLink className="h-3 w-3" />
@@ -286,7 +286,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
 
       {pollingState === "error" && error && (
         <div className="space-y-2">
-          <p className="text-sm text-red-500">{error}</p>
+          <p className="text-sm text-danger-text">{error}</p>
           <div className="flex gap-2">
             <Button
               type="button"
@@ -312,7 +312,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
         <Button
           type="button"
           variant="outline"
-          className="w-full text-red-500 hover:text-red-600"
+          className="w-full text-danger-text hover:text-danger-text"
           onClick={logout}
         >
           <LogOut className="mr-2 h-4 w-4" />

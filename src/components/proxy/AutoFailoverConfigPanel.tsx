@@ -179,7 +179,7 @@ export function AutoFailoverConfigPanel({
       );
     } catch (e) {
       toast.error(
-        t("proxy.autoFailover.configSaveFailed", "保存失败") + ": " + String(e),
+        t("proxy.autoFailover.configSaveFailed", "保存失败") + ":" + String(e),
       );
     }
   };
@@ -206,7 +206,7 @@ export function AutoFailoverConfigPanel({
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-4">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <Loader2 className="h-6 w-6 animate-spin text-fg-2" />
       </div>
     );
   }
@@ -222,7 +222,7 @@ export function AutoFailoverConfigPanel({
           </Alert>
         )}
 
-        <Alert className="border-blue-500/40 bg-blue-500/10">
+        <Alert className="border-border-strong bg-subtle">
           <Info className="h-4 w-4" />
           <AlertDescription className="text-sm">
             {t(
@@ -233,7 +233,7 @@ export function AutoFailoverConfigPanel({
         </Alert>
 
         {/* 重试与超时配置 */}
-        <div className="space-y-4 rounded-lg border border-white/10 bg-muted/30 p-4">
+        <div className="space-y-4 rounded-lg border border-white/10 bg-subtle p-4">
           <h4 className="text-sm font-semibold">
             {t("proxy.autoFailover.retrySettings", "重试与超时设置")}
           </h4>
@@ -254,7 +254,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.maxRetriesHint",
                   "请求失败时的重试次数（0-10）",
@@ -280,7 +280,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.failureThresholdHint",
                   "连续失败多少次后打开熔断器（建议: 3-10）",
@@ -291,7 +291,7 @@ export function AutoFailoverConfigPanel({
         </div>
 
         {/* 超时配置 */}
-        <div className="space-y-4 rounded-lg border border-white/10 bg-muted/30 p-4">
+        <div className="space-y-4 rounded-lg border border-white/10 bg-subtle p-4">
           <h4 className="text-sm font-semibold">
             {t("proxy.autoFailover.timeoutSettings", "超时配置")}
           </h4>
@@ -318,7 +318,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.streamingFirstByteHint",
                   "等待首个数据块的最大时间，范围 1-120 秒，默认 60 秒",
@@ -344,7 +344,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.streamingIdleHint",
                   "数据块之间的最大间隔，范围 60-600 秒，填 0 禁用（防止中途卡住）",
@@ -370,7 +370,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.nonStreamingHint",
                   "非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）",
@@ -381,7 +381,7 @@ export function AutoFailoverConfigPanel({
         </div>
 
         {/* 熔断器配置 */}
-        <div className="space-y-4 rounded-lg border border-white/10 bg-muted/30 p-4">
+        <div className="space-y-4 rounded-lg border border-white/10 bg-subtle p-4">
           <h4 className="text-sm font-semibold">
             {t("proxy.autoFailover.circuitBreakerSettings", "熔断器配置")}
           </h4>
@@ -405,7 +405,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.successThresholdHint",
                   "半开状态下成功多少次后关闭熔断器",
@@ -431,7 +431,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.timeoutHint",
                   "熔断器打开后，等待多久后尝试恢复（建议: 30-120）",
@@ -458,7 +458,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.errorRateHint",
                   "错误率超过此值时打开熔断器",
@@ -484,7 +484,7 @@ export function AutoFailoverConfigPanel({
                 }
                 disabled={isDisabled}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t(
                   "proxy.autoFailover.minRequestsHint",
                   "计算错误率前的最小请求数",

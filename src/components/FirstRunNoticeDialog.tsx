@@ -44,7 +44,7 @@ export function FirstRunNoticeDialog() {
       <DialogContent className="max-w-md" zIndex="top">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-blue-500" />
+            <Sparkles className="h-5 w-5 text-fg-1" />
             {t("firstRunNotice.title")}
           </DialogTitle>
         </DialogHeader>
