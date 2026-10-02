@@ -20,11 +20,8 @@ use crate::error::AppError;
 /// 为了让 Windows CI/本地测试能稳定隔离真实用户数据，可通过 `CC_SWITCH_TEST_HOME`
 /// 显式覆盖 home dir（仅用于测试/调试场景）。
 pub fn get_home_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("CC_SWITCH_TEST_HOME") {
-        let trimmed = home.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
+    if let Some(home) = test_home_override() {
+        return home;
     }
 
     dirs::home_dir().unwrap_or_else(|| {
@@ -33,14 +30,23 @@ pub fn get_home_dir() -> PathBuf {
     })
 }
 
-/// `CC_SWITCH_TEST_HOME` 是否被显式设置（测试/调试用的 home 覆盖）。
+/// `CC_SWITCH_TEST_HOME` 的覆盖值（测试/调试用的 home 覆盖）。
 ///
-/// 有值时就应当完全以它为准——任何基于“库里有没有 db”的启发式回退都不该再介入，
-/// 否则测试会被引导到真实用户数据上。
-fn is_test_home_overridden() -> bool {
-    std::env::var("CC_SWITCH_TEST_HOME")
-        .map(|home| !home.trim().is_empty())
-        .unwrap_or(false)
+/// 返回 `Some` 即表示显式覆盖生效——此时任何基于“库里有没有 db”的启发式回退
+/// 都不该再介入，否则测试会被引导到真实用户数据上。
+///
+/// 用 `var_os` 而非 `var`：非 Unicode 的取值只应让路径变 lossy，而不该让
+/// “覆盖是否存在”的判断失效、进而退回真实用户目录。
+fn test_home_override() -> Option<PathBuf> {
+    let raw = std::env::var_os("CC_SWITCH_TEST_HOME")?;
+    // to_string_lossy 的结果必须先绑住，否则 trim 借的是一个已释放的临时值。
+    let lossy = raw.to_string_lossy();
+    let trimmed = lossy.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
 }
 
 /// 获取 Claude Code 配置目录路径
@@ -283,7 +289,7 @@ pub fn get_app_config_dir() -> PathBuf {
     // 用户库（Windows 上 runner 的 HOME 下常常确实有该 db），既污染用户数据，又让
     // 隔离测试读到别人写的状态而失败。
     #[cfg(windows)]
-    if is_test_home_overridden() {
+    if test_home_override().is_some() {
         return default_dir;
     }
 
@@ -639,6 +645,20 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
+    /// 共享的环境变量互斥锁：改 `HOME` / `CC_SWITCH_TEST_HOME` 这类进程级
+    /// 状态的测试都必须经它（配合 `#[serial_test::serial]`）。锁必须放在
+    /// 函数里经 `OnceLock` 取用——写成某个测试函数体内的 `static` 只对那一个
+    /// 测试可见，等于没有互斥。
+    ///
+    /// 目前唯一使用者是下面的 Windows 回归测试，故同样 cfg 掉，避免在
+    /// Linux/macOS 的 `clippy -D warnings` 里变成 never-used。
+    #[cfg(windows)]
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        use std::sync::OnceLock;
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     fn assert_atomic_write_replaces_existing_file(dir: &Path) {
         let path = dir.join("atomic-write-contract.json");
         std::fs::write(&path, b"old contents").unwrap();
@@ -946,12 +966,12 @@ mod tests {
     /// 读写到真实用户数据（既污染用户库，又让断言读到别人写下的状态）。
     #[cfg(windows)]
     #[test]
+    #[serial_test::serial]
     fn test_home_short_circuits_the_home_legacy_fallback() {
-        use std::sync::Mutex;
-
-        // 与其他同样改进程级环境变量的测试互斥
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // 进程级环境变量的读写必须与同样改它们的测试互斥。锁是模块级共享的
+        // （写成测试函数体内的 static 只能锁住自己，等于没锁），见
+        // `proxy::http_client` 里同一套 env_lock() 用法。
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
 
         // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
         let legacy_home = tempfile::tempdir().expect("tempdir");
