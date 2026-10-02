@@ -36,6 +36,10 @@ import {
 } from "@/components/providers/forms/ProviderForm";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  PRESET_FAMILIES,
+  type PresetFamilyInfo,
+} from "@/config/presetFamilies";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const TEST_API_KEY = "sk-golden-test";
@@ -169,15 +173,37 @@ function renderForm(
   );
 }
 
-function clickPreset(presetName: string) {
+function clickRow(rowName: string) {
   const matches = screen
     .getAllByRole("button")
     .filter(
       (button) =>
-        button.querySelector("span.truncate")?.textContent === presetName,
+        button.querySelector("span.truncate")?.textContent === rowName,
     );
-  expect(matches, `预设按钮「${presetName}」应唯一`).toHaveLength(1);
+  expect(matches, `预设按钮「${rowName}」应唯一`).toHaveLength(1);
   fireEvent.click(matches[0]);
+}
+
+/** 同一家的多个版本合成一行：先点那一行，再在「版本」里点它 */
+function clickPreset(appId: GoldenAppId, presetName: string) {
+  const preset = (
+    appId === "claude" ? providerPresets : codexProviderPresets
+  ).find((item) => item.name === presetName);
+  if (!preset?.family) {
+    clickRow(presetName);
+    return;
+  }
+  const family: PresetFamilyInfo = PRESET_FAMILIES[preset.family];
+  clickRow(family.nameKey ?? family.name);
+  const versions = screen.getByRole("group", {
+    name: "providerPreset.versionLabel",
+  });
+  const label = `providerPreset.version.${preset.versionKey}`;
+  const button = Array.from(versions.querySelectorAll("button")).find(
+    (item) => item.textContent === label,
+  );
+  expect(button, `版本按钮「${label}」应存在`).toBeDefined();
+  fireEvent.click(button!);
 }
 
 function fillInputById(container: HTMLElement, id: string, value: string) {
@@ -230,7 +256,7 @@ async function submitPresetRow(appId: GoldenAppId, testCase: GoldenCase) {
   const onSubmit = vi.fn();
   const { container } = renderForm(appId, onSubmit);
 
-  clickPreset(testCase.preset);
+  clickPreset(appId, testCase.preset);
 
   for (const [key, value] of Object.entries(testCase.templateValues ?? {})) {
     fillInputById(container, `template-${key}`, value);

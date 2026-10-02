@@ -13,9 +13,11 @@ const mocks = vi.hoisted(() => ({
   bulkToggle: vi.fn(),
   deleteServer: vi.fn(),
   importServers: vi.fn(),
+  resync: vi.fn(),
   refetch: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  toastWarning: vi.fn(),
   visibleApps: ["claude", "codex", "gemini"] as string[],
 }));
 
@@ -40,6 +42,10 @@ vi.mock("@/hooks/useMcp", () => ({
     mutateAsync: mocks.importServers,
     isPending: false,
   }),
+  useResyncMcpToApps: () => ({
+    mutateAsync: mocks.resync,
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/components/mcp/useVisibleAppIds", () => ({
@@ -57,6 +63,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: mocks.toastError,
     success: mocks.toastSuccess,
+    warning: mocks.toastWarning,
     info: vi.fn(),
   },
 }));
@@ -107,6 +114,13 @@ describe("UnifiedMcpPanel", () => {
     }));
     mocks.deleteServer.mockReset().mockResolvedValue(true);
     mocks.importServers.mockReset().mockResolvedValue(0);
+    mocks.resync.mockReset().mockImplementation(async (apps?: string[]) =>
+      (apps ?? ["claude", "codex", "gemini"]).map((app) => ({
+        app,
+        ok: true,
+      })),
+    );
+    mocks.toastWarning.mockReset();
     mocks.refetch.mockReset().mockResolvedValue({ data: mocks.serversMap });
     mocks.toastError.mockReset();
     mocks.toastSuccess.mockReset();
@@ -239,6 +253,97 @@ describe("UnifiedMcpPanel", () => {
       expect(
         screen.queryByText("mcpPage.failNoticeTitle"),
       ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("retries a failed app from the notice by resyncing that app", async () => {
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
+    renderPanel();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalledWith(["codex"]));
+    expect(mocks.toggle).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        screen.queryByText("mcpPage.failNoticeTitle"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "mcpPage.toast.written",
+      expect.anything(),
+    );
+  });
+
+  it("keeps the notice when the resync retry fails again", async () => {
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
+    mocks.resync.mockResolvedValueOnce([
+      { app: "codex", ok: false, error: "still broken" },
+    ]);
+    renderPanel();
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "common.retry" }),
+    );
+
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument();
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("resyncs every app from the more menu and reports the ones that failed", async () => {
+    mocks.serversMap = {
+      serena: makeServer("serena", { apps: { codex: true } }),
+    };
+    mocks.resync.mockResolvedValueOnce([
+      { app: "claude", ok: true },
+      { app: "codex", ok: false, error: "config.toml line 12" },
+    ]);
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.resync" }),
+    );
+
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalledWith(undefined));
+    await waitFor(() =>
+      expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
+    );
+    expect(mocks.toastWarning).toHaveBeenCalledWith(
+      "mcpPage.toast.resyncPartial",
+      expect.anything(),
+    );
+
+    // 再来一次全部成功：通知条消失
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.resync" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("mcpPage.failNoticeTitle"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "mcpPage.toast.resynced",
+      expect.anything(),
     );
   });
 

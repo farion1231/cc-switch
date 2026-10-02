@@ -262,6 +262,13 @@ pub async fn sync_session_usage(
     .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))
 }
 
+/// 会话日志扫描（后台定时或手动同步）最近一次完成的时间，毫秒时间戳；
+/// 本次启动后还没扫过时为 `null`。
+#[tauri::command]
+pub fn get_session_usage_last_sync() -> Option<i64> {
+    crate::services::session_usage::last_sync_completed_at()
+}
+
 /// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
 /// 调用方应只在 reset 成功后调用，避免把未发生的数据变更误报为重建完成。
 fn finish_codex_rebuild(

@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
@@ -54,6 +55,21 @@ impl SessionSyncResult {
 pub fn session_sync_mutex() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// 最近一次完整扫描（[`sync_all_unlocked`]，后台定时和手动同步都走它）完成的时间，
+/// 毫秒时间戳；0 表示本次启动后还没扫过。只在内存里：启动时会立刻扫一轮。
+static LAST_SYNC_COMPLETED_AT_MS: AtomicI64 = AtomicI64::new(0);
+
+/// 记下一次扫描完成的时间；只会往后走（并发调用时不会被较早的时间覆盖）。
+pub(crate) fn record_sync_completed(at_ms: i64) {
+    LAST_SYNC_COMPLETED_AT_MS.fetch_max(at_ms, Ordering::Relaxed);
+}
+
+/// 最近一次完整扫描完成的时间（毫秒时间戳）；本次启动后还没扫过时为 `None`。
+pub fn last_sync_completed_at() -> Option<i64> {
+    let value = LAST_SYNC_COMPLETED_AT_MS.load(Ordering::Relaxed);
+    (value > 0).then_some(value)
 }
 
 /// session_log_sync 表一行的内存快照。
@@ -151,6 +167,7 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         crate::services::session_usage_mcode::sync_mcode_usage(db),
     );
     notify_sync_result(&result);
+    record_sync_completed(chrono::Utc::now().timestamp_millis());
     result
 }
 
@@ -957,6 +974,17 @@ mod tests {
         };
         notify_sync_result(&result);
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
+    }
+
+    #[test]
+    fn last_sync_completed_at_only_moves_forward() {
+        // 别的测试会跑 sync_all_unlocked 记下「现在」，这里用一小时后的时间避开它们
+        let later = chrono::Utc::now().timestamp_millis() + 3_600_000;
+        record_sync_completed(later);
+        assert_eq!(last_sync_completed_at(), Some(later));
+
+        record_sync_completed(later - 1_000);
+        assert_eq!(last_sync_completed_at(), Some(later));
     }
 
     #[tokio::test]

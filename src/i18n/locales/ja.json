@@ -1794,7 +1794,7 @@
     "crossApp": "アプリ横断",
     "groupHint": {
       "login": "API Key は不要で、既存のアカウントでログインします。Claude 以外はルーティングを経由します。",
-      "vendor": "ベンダー自身の API とコーディングプラン。",
+      "vendor": "ベンダー自身の API とコーディングプラン。同じベンダーの中国サイト・グローバルサイト・各プランは 1 行にまとめ、次のステップでバージョンを選びます。",
       "thirdparty": "複数のモデルをまとめたプラットフォーム、または公式モデルを再販する中継サービス。",
       "cloud": "クラウド事業者のアカウントでモデルを呼び出します。",
       "plugin": "OpenCode プラグインのモデル割り当て設定。",
@@ -1815,7 +1815,40 @@
       "github": "GitHub アカウントでログイン",
       "xai": "xAI アカウントでログイン",
       "google": "Google アカウントでログイン"
-    }
+    },
+    "versionCount": "{{domain}} · {{n}} バージョン",
+    "matchedVersion": "一致：{{name}}",
+    "matchedVersions": "一致：{{name}} ほか {{more}} 件",
+    "versionLabel": "バージョン",
+    "family": {
+      "volcengine": "Volcengine"
+    },
+    "version": {
+      "payg": "従量課金",
+      "paygCn": "従量課金 · 中国",
+      "paygIntl": "従量課金 · グローバル",
+      "coding": "コーディングサブスク",
+      "codingCn": "コーディングサブスク · 中国",
+      "codingIntl": "コーディングサブスク · グローバル",
+      "cn": "中国",
+      "intl": "グローバル",
+      "agentPlan": "Agent Plan",
+      "codingPlan": "Coding Plan",
+      "tokenPlan": "Token Plan",
+      "tokenPlanCn": "Token Plan · 中国",
+      "tokenPlanIntl": "Token Plan · グローバル",
+      "enterpriseLiteCn": "Enterprise Lite · 中国",
+      "enterpriseLiteIntl": "Enterprise Lite · グローバル",
+      "enterpriseProCn": "Enterprise Pro · 中国",
+      "enterpriseProIntl": "Enterprise Pro · グローバル",
+      "stepPlanCn": "Step Plan · 中国",
+      "stepPlanIntl": "Step Plan · グローバル",
+      "aksk": "AKSK",
+      "apiKey": "API Key"
+    },
+    "switchVersionTitle": "{{version}} に切り替えますか？",
+    "switchVersionMessage": "フォームは新しいバージョンの内容で入力し直され、入力済みの API Key やその他の変更は消去されます。",
+    "switchVersionConfirm": "切り替える"
   },
   "usage": {
     "title": "利用統計",
@@ -2123,7 +2156,7 @@
       "off": "オフ",
       "editLogging": "「リクエストの使用量を記録」を変更",
       "codexHelpTitle": "Codex 使用量メンテナンスとは",
-      "lastSynced": "前回の手動同期：{{time}}"
+      "lastSynced": "前回の同期：{{time}}"
     },
     "empty": {
       "title": "使用量データはまだありません",
@@ -3003,14 +3036,25 @@
       "installing": "インストール中...",
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
-      "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+      "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）",
+      "skippedTitle": "{{count}} 個の Skill をスキップ：フォルダ名が使用中",
+      "allSkipped": "インストールしませんでした：ZIP 内の {{count}} 個の Skill のフォルダ名はすべて使用中です",
+      "skippedItem": "{{directory}}（{{name}} が使用中）",
+      "skippedBody": "{{list}}。ZIP 内のバージョンを使うには、先に同名の Skill をアンインストールしてください。"
     },
     "backToInstalled": "インストール済みに戻る",
     "moreActions": "Skills のその他の操作",
     "storageSheet": {
       "title": "保存と同期",
-      "open": "保存と同期…"
-    }
+      "open": "保存と同期…",
+      "resync": "今すぐ再同期",
+      "resyncing": "再同期中…",
+      "resyncHint": "変更はこの後に有効化または更新した Skill にのみ適用されます。「今すぐ再同期」で、有効な Skill を現在の方式で各アプリの Skills フォルダに入れ直します。",
+      "resyncDone": "現在の方式で Skill を各アプリに再同期しました",
+      "resyncPartial": "{{count}} 個のアプリで同期が完了しませんでした：{{apps}}",
+      "resyncSkillItem": "{{directory}}：{{error}}"
+    },
+    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした"
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",
@@ -3996,7 +4040,9 @@
       "added": "{{id}} を追加しました",
       "saved": "{{id}} を保存しました",
       "batchAdded": "MCP を {{count}} 件追加しました",
-      "batchAddedReplaced": "MCP を {{count}} 件追加、{{replaced}} 件を上書きしました"
+      "batchAddedReplaced": "MCP を {{count}} 件追加、{{replaced}} 件を上書きしました",
+      "resynced": "ここのスイッチで {{count}} 個のアプリの設定を書き直しました",
+      "resyncPartial": "{{count}} 個のアプリへの書き込みに失敗：{{apps}}"
     },
     "import": {
       "title": "取り込み完了",
@@ -4104,7 +4150,8 @@
       "homepage": "ホームページ",
       "docs": "ドキュメント",
       "delete": "削除…"
-    }
+    },
+    "resync": "ここのスイッチで各アプリの設定を書き直す"
   },
   "skillsPage": {
     "noun": "Skill",
@@ -4244,7 +4291,8 @@
       "disabled": "停止中（「見つける」では使いません）",
       "manage": "リポジトリの追加・管理…",
       "openAria": "GitHub で {{repo}} を開く",
-      "removeAria": "リポジトリ {{repo}} を削除"
+      "removeAria": "リポジトリ {{repo}} を削除",
+      "readFailed": "読み込み失敗"
     },
     "import": {
       "title": "このコンピューターの Skill を取り込む",
@@ -4264,6 +4312,12 @@
     },
     "restore": {
       "lead": "バックアップを選ぶとファイルを復元してリストに戻し、{{apps}} で有効にします（「見つける」の「インストール先」で決まります）。"
+    },
+    "repoFail": {
+      "title": "{{count}} 個のリポジトリを読み込めませんでした：{{repos}}",
+      "item": "{{repo}}（{{reason}}）",
+      "discoverBody": "一覧が不完全な可能性があります。",
+      "updatesBody": "これらのリポジトリの Skill は確認されていないため、結果が不完全な可能性があります。"
     }
   }
 }

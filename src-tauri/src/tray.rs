@@ -1,19 +1,20 @@
 //! 托盘菜单（v7）
 //!
-//! 结构：问题区（出问题才有）→ 打开 CC Switch → 切换式应用的子菜单（Claude Code、Claude
-//! Desktop、Codex、Gemini CLI、Grok Build；在「应用」页隐藏的不列）→ 轻量模式 → 打开官方网站 /
-//! 退出 CC Switch。累加式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）不进托盘；托盘里
-//! 不切模式、不启停路由服务。
+//! 结构：问题区（出问题才有）→ 反馈行（托盘里刚做完要重启才生效的操作）→ 打开 CC Switch →
+//! 切换式应用的子菜单（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build；在「应用」页
+//! 隐藏的不列）→ 轻量模式 → 打开官方网站 / 退出 CC Switch。累加式应用（OpenCode / OpenClaw /
+//! Hermes / Pi / MiniMax Code）不进托盘；托盘里不切模式、不启停路由服务。
 //!
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
 //! 模型（单测覆盖这一层），`attach_*` 把模型挂到 Tauri 原生菜单上。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use once_cell::sync::Lazy;
 use serde::Serialize;
+use tauri::image::Image;
 use tauri::menu::{
     CheckMenuItem, Menu, MenuBuilder, MenuItem, MenuItemKind, Submenu, SubmenuBuilder,
 };
@@ -85,12 +86,16 @@ pub struct TrayTexts {
     pub open_website: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
+    /// 有应用在用路由服务时的「退出」：写明后果（客户端指回直连、路由服务停止，下次打开自动接回）。
+    pub quit_stops_routing: &'static str,
     pub projects_label: &'static str,
     pub no_project_label: &'static str,
     pub header_direct: &'static str,
     pub header_route: &'static str,
     pub header_failover: &'static str,
     pub header_stack: &'static str,
+    /// 叠加子菜单标题，写出默认那家：`{name}`
+    pub header_stack_default: &'static str,
     pub failover_note: &'static str,
     pub mode_route: &'static str,
     pub mode_stack: &'static str,
@@ -107,6 +112,14 @@ pub struct TrayTexts {
     pub problem_switch_failed: &'static str,
     pub problem_more: &'static str,
     pub desktop_unavailable: &'static str,
+    /// 出问题时托盘图标的悬停提示：`{problem}` 是问题区第一条
+    pub tooltip_problem: &'static str,
+    /// 反馈行（灰字）：直连切换 / Claude Desktop 切换，`{app}` `{name}`
+    pub feedback_switched: &'static str,
+    /// 反馈行：叠加换默认
+    pub feedback_stack_default: &'static str,
+    /// 反馈行：应用项目
+    pub feedback_profile: &'static str,
     pub tier_five_hour: &'static str,
     pub tier_weekly: &'static str,
     pub tier_fable: &'static str,
@@ -174,12 +187,14 @@ impl TrayTexts {
                 open_website: "Open official website",
                 lightweight_mode: "Lightweight mode",
                 quit: "Quit CC Switch",
+                quit_stops_routing: "Quit CC Switch (stops the routing service)",
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
                 header_route: "Routing",
                 header_failover: "Routing · Failover on",
                 header_stack: "Stack · Default provider",
+                header_stack_default: "Stack · Default: {name}",
                 failover_note: "Picked from the queue automatically; change it on the app page",
                 mode_route: "Routing",
                 mode_stack: "Stack",
@@ -198,6 +213,11 @@ impl TrayTexts {
                 problem_more: "{count} more issues — open CC Switch to see them",
                 desktop_unavailable:
                     "The routing service isn't running; {name} is unavailable for now",
+                tooltip_problem: "CC Switch · Needs attention: {problem}",
+                feedback_switched: "{app} switched to {name}. Restart {app} to apply",
+                feedback_stack_default:
+                    "{app}'s default provider is now {name}. Restart {app} to apply",
+                feedback_profile: "Applied project \u{201c}{name}\u{201d} to {app}",
                 tier_five_hour: "5-hour",
                 tier_weekly: "Weekly",
                 tier_fable: "Fable",
@@ -225,12 +245,14 @@ impl TrayTexts {
                 open_website: "公式サイトを開く",
                 lightweight_mode: "軽量モード",
                 quit: "CC Switch を終了",
+                quit_stops_routing: "CC Switch を終了（ルーティングサービスが停止します）",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
                 header_route: "ルーティング",
                 header_failover: "ルーティング · フェイルオーバー有効",
                 header_stack: "Stack · デフォルトのプロバイダー",
+                header_stack_default: "Stack · デフォルト：{name}",
                 failover_note: "キューの順に自動で選ばれます（変更はアプリのページで）",
                 mode_route: "ルーティング",
                 mode_stack: "Stack",
@@ -249,6 +271,11 @@ impl TrayTexts {
                     "ほかに {count} 件の問題があります。CC Switch を開いて確認してください",
                 desktop_unavailable:
                     "ルーティングサービスが動いていないため、{name} は今使えません",
+                tooltip_problem: "CC Switch · 対応が必要：{problem}",
+                feedback_switched:
+                    "{app} を {name} に切り替えました。反映するには {app} を再起動してください",
+                feedback_stack_default: "{app} のデフォルトのプロバイダーを {name} に変更しました。反映するには {app} を再起動してください",
+                feedback_profile: "プロジェクト「{name}」を {app} に適用しました",
                 tier_five_hour: "5時間",
                 tier_weekly: "週間",
                 tier_fable: "Fable",
@@ -276,12 +303,14 @@ impl TrayTexts {
                 open_website: "開啟官方網站",
                 lightweight_mode: "輕量模式",
                 quit: "退出 CC Switch",
+                quit_stops_routing: "退出 CC Switch（路由服務會停止）",
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
                 header_route: "路由",
                 header_failover: "路由 · 故障轉移開啟中",
                 header_stack: "疊加 · 預設供應商",
+                header_stack_default: "疊加 · 預設 {name}",
                 failover_note: "依佇列自動選擇，要調整請到應用頁",
                 mode_route: "路由",
                 mode_stack: "疊加",
@@ -298,6 +327,10 @@ impl TrayTexts {
                 problem_switch_failed: "{app} 沒切換成功：{reason}",
                 problem_more: "還有 {count} 個問題，開啟 CC Switch 查看",
                 desktop_unavailable: "路由服務沒在執行，{name} 暫時無法使用",
+                tooltip_problem: "CC Switch · 需要處理：{problem}",
+                feedback_switched: "{app} 已切換到 {name}，重新啟動 {app} 後生效",
+                feedback_stack_default: "{app} 的預設供應商改為 {name}，重新啟動 {app} 後生效",
+                feedback_profile: "已把專案「{name}」套用到 {app}",
                 tier_five_hour: "5 小時",
                 tier_weekly: "每週",
                 tier_fable: "Fable",
@@ -325,12 +358,14 @@ impl TrayTexts {
                 open_website: "打开官方网站",
                 lightweight_mode: "轻量模式",
                 quit: "退出 CC Switch",
+                quit_stops_routing: "退出 CC Switch（路由服务会停止）",
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
                 header_route: "路由",
                 header_failover: "路由 · 故障转移开启中",
                 header_stack: "叠加 · 默认供应商",
+                header_stack_default: "叠加 · 默认 {name}",
                 failover_note: "按队列自动选择，要调整请到应用页",
                 mode_route: "路由",
                 mode_stack: "叠加",
@@ -347,6 +382,10 @@ impl TrayTexts {
                 problem_switch_failed: "{app} 没切换成功：{reason}",
                 problem_more: "还有 {count} 个问题，打开 CC Switch 查看",
                 desktop_unavailable: "路由服务没在运行，{name} 暂时不可用",
+                tooltip_problem: "CC Switch · 需要处理：{problem}",
+                feedback_switched: "{app} 已切换到 {name}，重启 {app} 后生效",
+                feedback_stack_default: "{app} 的默认供应商改为 {name}，重启 {app} 后生效",
+                feedback_profile: "已把项目「{name}」用到 {app}",
                 tier_five_hour: "5 小时",
                 tier_weekly: "每周",
                 tier_fable: "Fable",
@@ -1211,8 +1250,8 @@ struct SwitchFailure {
 }
 
 static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::new(Vec::new()));
-/// 上一次建菜单时的问题，悬停图标时比一下，变了才重建。
-static LAST_PROBLEMS: Lazy<Mutex<Vec<TrayProblem>>> = Lazy::new(|| Mutex::new(Vec::new()));
+/// 上一次建菜单时菜单上会自己过时的那部分，悬停图标 / 路由服务启停时比一下，变了才重建。
+static LAST_STATUS: Lazy<Mutex<MenuStatus>> = Lazy::new(|| Mutex::new(MenuStatus::default()));
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -1308,6 +1347,127 @@ fn mark_attention(snapshots: &mut [AppSnapshot], problems: &[TrayProblem]) {
                 matches!(problem, TrayProblem::AttachFailed { app, .. } if *app == snapshot.app)
             });
     }
+}
+
+// ─── 反馈行 ───────────────────────────────────────────────────────────────────
+
+/// 反馈行显示多久（Linux 没有点击事件，只按时间）。
+const FEEDBACK_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+
+/// 托盘里做完一个要重启才生效（或应用了项目）的操作后，下次打开菜单时最上面那行灰字。
+/// 存结构不存文字：语言改了照样按新语言写。
+#[derive(Debug, Clone, PartialEq)]
+enum TrayFeedback {
+    /// Codex / Gemini CLI / Grok Build 直连切换，或 Claude Desktop 切换。
+    Switched { app: AppType, name: String },
+    /// 叠加换默认：发布给客户端的模型列表跟着变。
+    StackDefault { app: AppType, name: String },
+    /// 应用项目：同时改了供应商、MCP、Skills、提示词。
+    ProfileApplied { app: AppType, name: String },
+}
+
+struct FeedbackRecord {
+    feedback: TrayFeedback,
+    at: std::time::Instant,
+    /// 已经在打开的菜单里显示过一次（点过托盘图标）。
+    seen: bool,
+}
+
+static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
+
+/// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
+/// 换一家立即生效，不说。
+fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFeedback> {
+    match mode {
+        TrayMode::Desktop => Some(TrayFeedback::Switched {
+            app: app.clone(),
+            name,
+        }),
+        TrayMode::Direct
+            if matches!(app, AppType::Codex | AppType::Gemini | AppType::GrokBuild) =>
+        {
+            Some(TrayFeedback::Switched {
+                app: app.clone(),
+                name,
+            })
+        }
+        TrayMode::Stack => Some(TrayFeedback::StackDefault {
+            app: app.clone(),
+            name,
+        }),
+        _ => None,
+    }
+}
+
+/// 记下最近一次托盘操作的结果（覆盖上一条）。调用方随后会重建菜单。
+fn record_feedback(app: &tauri::AppHandle, feedback: TrayFeedback) {
+    *lock(&FEEDBACK) = Some(FeedbackRecord {
+        feedback,
+        at: std::time::Instant::now(),
+        seen: false,
+    });
+    // Linux 没有悬停 / 点击事件，到点了自己重建一次把它拿掉。其它平台在悬停图标时就会重建，
+    // 不在这里定时重建，免得把正开着的菜单关掉。
+    #[cfg(target_os = "linux")]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(FEEDBACK_TTL + std::time::Duration::from_secs(1));
+            refresh_tray_if_status_changed(&app);
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = app;
+}
+
+/// 现在该显示的反馈：没过期、也还没在打开的菜单里显示过。
+fn current_feedback() -> Option<TrayFeedback> {
+    let mut record = lock(&FEEDBACK);
+    if record
+        .as_ref()
+        .is_some_and(|r| r.seen || r.at.elapsed() >= FEEDBACK_TTL)
+    {
+        *record = None;
+    }
+    record.as_ref().map(|r| r.feedback.clone())
+}
+
+/// 点了托盘图标：这次弹出的菜单里已经有反馈行了，算显示过；下次重建（悬停图标时）就拿掉。
+/// 只算会弹出菜单的点击：Windows 左键是打开主界面，不算。
+pub fn note_tray_click(button: tauri::tray::MouseButton) {
+    let opens_menu = match button {
+        tauri::tray::MouseButton::Right => true,
+        tauri::tray::MouseButton::Left => !cfg!(target_os = "windows"),
+        _ => false,
+    };
+    if opens_menu {
+        if let Some(record) = lock(&FEEDBACK).as_mut() {
+            record.seen = true;
+        }
+    }
+}
+
+fn feedback_text(texts: &TrayTexts, feedback: &TrayFeedback) -> String {
+    let (template, app, name) = match feedback {
+        TrayFeedback::Switched { app, name } => (texts.feedback_switched, app, name),
+        TrayFeedback::StackDefault { app, name } => (texts.feedback_stack_default, app, name),
+        TrayFeedback::ProfileApplied { app, name } => (texts.feedback_profile, app, name),
+    };
+    fill(
+        template,
+        &[
+            ("app", app_display_name(app)),
+            ("name", &truncate_chars(name, MAX_NAME_CHARS)),
+        ],
+    )
+}
+
+/// 菜单上会自己过时的那部分：问题区、反馈行、「退出」写不写后果。
+#[derive(Debug, Clone, Default, PartialEq)]
+struct MenuStatus {
+    problems: Vec<TrayProblem>,
+    feedback: Option<TrayFeedback>,
+    routing_in_use: bool,
 }
 
 // ─── 菜单模型（纯数据）────────────────────────────────────────────────────────
@@ -1577,10 +1737,17 @@ fn app_children(
     let mut children = Vec::new();
 
     let header = match snapshot.mode {
-        TrayMode::Direct => Some(texts.header_direct),
-        TrayMode::Route => Some(texts.header_route),
-        TrayMode::Failover => Some(texts.header_failover),
-        TrayMode::Stack => Some(texts.header_stack),
+        TrayMode::Direct => Some(texts.header_direct.to_string()),
+        TrayMode::Route => Some(texts.header_route.to_string()),
+        TrayMode::Failover => Some(texts.header_failover.to_string()),
+        // 叠加：标题写出默认那家（勾着的就是它）；还没有默认时退回泛称。
+        TrayMode::Stack => Some(match snapshot.current() {
+            Some(current) => fill(
+                texts.header_stack_default,
+                &[("name", &truncate_chars(&current.name, MAX_NAME_CHARS))],
+            ),
+            None => texts.header_stack.to_string(),
+        }),
         TrayMode::Desktop => None,
     };
     if let Some(header) = header {
@@ -1669,12 +1836,13 @@ fn app_entry(
 
 fn build_menu_model(
     texts: &TrayTexts,
-    problems: &[TrayProblem],
+    status: &MenuStatus,
     apps: &[AppSnapshot],
     lightweight: bool,
     now: chrono::DateTime<chrono::Local>,
 ) -> Vec<TrayEntry> {
     let mut menu = Vec::new();
+    let problems = &status.problems;
 
     if !problems.is_empty() {
         for problem in problems.iter().take(MAX_PROBLEM_ROWS) {
@@ -1690,6 +1858,15 @@ fn build_menu_model(
                 fill(texts.problem_more, &[("count", &count)]),
             ));
         }
+    }
+    // 反馈行：灰字、不可点，只说一句结果（文案同主界面 toast）。
+    if let Some(feedback) = &status.feedback {
+        menu.push(TrayEntry::label(
+            "info:feedback",
+            feedback_text(texts, feedback),
+        ));
+    }
+    if !problems.is_empty() || status.feedback.is_some() {
         menu.push(TrayEntry::Separator);
     }
 
@@ -1711,7 +1888,15 @@ fn build_menu_model(
     menu.push(TrayEntry::Separator);
     menu.push(TrayEntry::item("open_website", texts.open_website));
     // 不能换成系统自带的 quit：它会跳过 app.exit(0) 的清理（客户端指回直连、停服务）。
-    menu.push(TrayEntry::item("quit", texts.quit));
+    // 有应用在用路由服务时把这个后果写在「退出」上（后果不进说明，写在按钮文字里）。
+    menu.push(TrayEntry::item(
+        "quit",
+        if status.routing_in_use {
+            texts.quit_stops_routing
+        } else {
+            texts.quit
+        },
+    ));
     menu
 }
 
@@ -1719,7 +1904,7 @@ fn build_menu_model(
 
 struct TrayModel {
     entries: Vec<TrayEntry>,
-    problems: Vec<TrayProblem>,
+    status: MenuStatus,
 }
 
 fn collect_snapshots(
@@ -1755,16 +1940,37 @@ fn collect_snapshots(
     Ok((snapshots, problems))
 }
 
-fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, AppError> {
+fn collect_status(
+    app_state: &AppState,
+    texts: &TrayTexts,
+) -> Result<(Vec<AppSnapshot>, MenuStatus), AppError> {
     let (snapshots, problems) = collect_snapshots(app_state, texts)?;
+    let status = MenuStatus {
+        problems,
+        feedback: current_feedback(),
+        routing_in_use: routing_in_use(app_state),
+    };
+    Ok((snapshots, status))
+}
+
+fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, AppError> {
+    let (snapshots, status) = collect_status(app_state, texts)?;
     let entries = build_menu_model(
         texts,
-        &problems,
+        &status,
         &snapshots,
         crate::lightweight::is_lightweight_mode(),
         chrono::Local::now(),
     );
-    Ok(TrayModel { entries, problems })
+    Ok(TrayModel { entries, status })
+}
+
+/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 叠加模式，或 Claude Desktop 在用
+/// 模型映射卡（和 `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
+fn routing_in_use(app_state: &AppState) -> bool {
+    app_state.proxy_service.running_now() == Some(true)
+        && (crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
+            || crate::claude_desktop_config::current_provider_uses_proxy(&app_state.db))
 }
 
 // ─── 模型 → Tauri 菜单 ─────────────────────────────────────────────────────────
@@ -1834,8 +2040,145 @@ pub fn create_tray_menu(
     let menu = builder.build().map_err(menu_error)?;
 
     *lock(&TRAY_SECTION_SUBMENUS) = handles;
-    *lock(&LAST_PROBLEMS) = model.problems;
+    update_problem_indicator(app, &texts, &model.status.problems);
+    *lock(&LAST_STATUS) = model.status;
     Ok(menu)
+}
+
+// ─── 图标圆点和悬停提示 ───────────────────────────────────────────────────────
+
+/// 悬停提示最多几个字（Windows 的提示缓冲区是 128 个 UTF-16 单元，超了会被截掉结尾的 0）。
+const MAX_TOOLTIP_CHARS: usize = 100;
+/// 圆点颜色（彩色图标用，同画板 `--sys-dot`）。
+const PROBLEM_DOT_RGB: [u8; 3] = [0xF7, 0x63, 0x0C];
+/// 圆点半径、连同外圈透明边的半径（占图标边长的比例，照画板 24px 图标上 3.3 / 5.1 的圆）。
+const DOT_RADIUS: f32 = 0.15;
+const DOT_RING_RADIUS: f32 = 0.21;
+
+/// 托盘平时的图标和它是不是 macOS 模板图：macOS 用单色模板图（跟随菜单栏深浅色），读不到时
+/// 和其它平台一样用应用图标。读一次缓存起来，出问题 / 恢复时在它上面加减圆点。
+pub fn base_tray_icon(app: &tauri::AppHandle) -> Option<(Image<'static>, bool)> {
+    static BASE: OnceLock<Option<(Image<'static>, bool)>> = OnceLock::new();
+    BASE.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        {
+            const ICON_BYTES: &[u8] =
+                include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
+            match Image::from_bytes(ICON_BYTES) {
+                Ok(icon) => return Some((icon, true)),
+                Err(err) => {
+                    log::warn!("Failed to load macOS tray icon: {err}");
+                    log::warn!("Falling back to default window icon for tray");
+                }
+            }
+        }
+        match app.default_window_icon() {
+            Some(icon) => Some((icon.clone().to_owned(), false)),
+            None => {
+                log::warn!("Failed to get default window icon for tray");
+                None
+            }
+        }
+    })
+    .clone()
+}
+
+/// 出问题时的图标：右下角一个实心圆点，圆点外挖一圈透明边和图形隔开。模板图只看不透明度，
+/// 圆点画成黑色、由系统按菜单栏深浅色着色（单色，靠形状区分）；彩色图画橙点。
+fn icon_with_problem_dot(icon: &Image<'_>, template: bool) -> Image<'static> {
+    let (width, height) = (icon.width(), icon.height());
+    let mut rgba = icon.rgba().to_vec();
+    if width == 0 || height == 0 || rgba.len() != (width as usize) * (height as usize) * 4 {
+        return Image::new_owned(rgba, width, height);
+    }
+    let size = width.min(height) as f32;
+    let dot_radius = size * DOT_RADIUS;
+    let ring_radius = size * DOT_RING_RADIUS;
+    let (cx, cy) = (width as f32 - ring_radius, height as f32 - ring_radius);
+    let color = if template { [0, 0, 0] } else { PROBLEM_DOT_RGB };
+    let x0 = (cx - ring_radius - 1.0).max(0.0) as u32;
+    let y0 = (cy - ring_radius - 1.0).max(0.0) as u32;
+    for y in y0..height {
+        for x in x0..width {
+            let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+            let distance = (dx * dx + dy * dy).sqrt();
+            // 边缘各留半个像素做抗锯齿。
+            let cut = (ring_radius + 0.5 - distance).clamp(0.0, 1.0);
+            if cut <= 0.0 {
+                continue;
+            }
+            let i = ((y * width + x) * 4) as usize;
+            let fill = (dot_radius + 0.5 - distance).clamp(0.0, 1.0);
+            if fill > 0.0 {
+                // 圆点（含边缘）整个落在透明圈里，底下原本的像素已经挖掉了。
+                rgba[i..i + 3].copy_from_slice(&color);
+                rgba[i + 3] = (255.0 * fill).round() as u8;
+            } else {
+                rgba[i + 3] = (f32::from(rgba[i + 3]) * (1.0 - cut)).round() as u8;
+            }
+        }
+    }
+    Image::new_owned(rgba, width, height)
+}
+
+/// 悬停提示：平时 `CC Switch`，出问题时 `CC Switch · 需要处理：<问题区第一条>`。额度不算问题。
+fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
+    match problems.first() {
+        None => "CC Switch".to_string(),
+        Some(problem) => truncate_chars(
+            &fill(
+                texts.tooltip_problem,
+                &[("problem", &problem_text(texts, problem))],
+            ),
+            MAX_TOOLTIP_CHARS,
+        ),
+    }
+}
+
+/// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
+static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
+
+/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题；问题都消失后换回原图标和提示。只在
+/// 变了时才动（Linux 每次换图标都要写临时文件）。
+fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems: &[TrayProblem]) {
+    // 启动时第一次建菜单那会儿托盘图标还没建，等下一次重建。
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let has_dot = !problems.is_empty();
+    let tooltip = tray_tooltip(texts, problems);
+    // 只在锁里比对和记账：换图标要回主线程执行，不能拿着锁等。
+    let icon_changed = {
+        let mut applied = lock(&APPLIED_INDICATOR);
+        if applied.as_ref() == Some(&(has_dot, tooltip.clone())) {
+            return;
+        }
+        let changed = applied.as_ref().map_or(has_dot, |(dot, _)| *dot != has_dot);
+        *applied = Some((has_dot, tooltip.clone()));
+        changed
+    };
+    if icon_changed {
+        if let Some((base, template)) = base_tray_icon(app) {
+            let icon = if has_dot {
+                icon_with_problem_dot(&base, template)
+            } else {
+                base
+            };
+            if let Err(e) = tray.set_icon(Some(icon)) {
+                log::warn!("[Tray] 更新托盘图标失败: {e}");
+            }
+            // macOS 上 set_icon 会把模板标记清掉，要再设一次，否则深色菜单栏里是黑图标。
+            if template {
+                if let Err(e) = tray.set_icon_as_template(true) {
+                    log::warn!("[Tray] 恢复模板图标标记失败: {e}");
+                }
+            }
+        }
+    }
+    // Linux（AppIndicator）不显示悬停提示，设了也无害。
+    if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
+        log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+    }
 }
 
 /// 就地更新各应用行的标题（额度变化时走这条），避免 `set_menu` 关掉用户正开着的菜单。
@@ -1886,8 +2229,8 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     }
 }
 
-/// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）就重建菜单。只在变了时
-/// 重建，菜单还没打开，不会被关掉。
+/// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）、反馈行显示过了或到点了，
+/// 就重建菜单。只在变了时重建，菜单还没打开，不会被关掉。
 pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     static LAST_CHECK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     {
@@ -1897,19 +2240,27 @@ pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
         }
         *last = Some(std::time::Instant::now());
     }
+    schedule_tray_status_check(app);
+}
+
+/// 路由服务启动 / 停止之后：圆点、问题区、「退出」的后果可能要跟着变。在后台线程比对，
+/// 变了才重建（调用方可能在异步任务里，也可能正等着主线程）。
+pub fn schedule_tray_status_check(app: &tauri::AppHandle) {
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let Some(state) = app.try_state::<AppState>() else {
-            return;
-        };
-        let texts = TrayTexts::current();
-        let Ok((_, problems)) = collect_snapshots(state.inner(), &texts) else {
-            return;
-        };
-        if *lock(&LAST_PROBLEMS) != problems {
-            refresh_tray_menu(&app);
-        }
-    });
+    tauri::async_runtime::spawn_blocking(move || refresh_tray_if_status_changed(&app));
+}
+
+fn refresh_tray_if_status_changed(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let texts = TrayTexts::current();
+    let Ok((_, status)) = collect_status(state.inner(), &texts) else {
+        return;
+    };
+    if *lock(&LAST_STATUS) != status {
+        refresh_tray_menu(app);
+    }
 }
 
 // ─── 点击 ────────────────────────────────────────────────────────────────────
@@ -2088,6 +2439,22 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
                 for app_type in scope.apps() {
                     clear_app_problems(app_type);
                 }
+                // 应用项目会同时改供应商、MCP、Skills、提示词，值得说一声。
+                let profile_name = app_state
+                    .db
+                    .get_profile(&profile_id)
+                    .ok()
+                    .flatten()
+                    .map(|profile| profile.name);
+                if let (Some(name), Some(app_type)) = (profile_name, scope.apps().first()) {
+                    record_feedback(
+                        &app_handle,
+                        TrayFeedback::ProfileApplied {
+                            app: app_type.clone(),
+                            name,
+                        },
+                    );
+                }
                 crate::commands::emit_profile_apply_events(
                     &app_handle,
                     app_state.inner(),
@@ -2125,8 +2492,11 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     let provider_id = provider_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         match handle_provider_click(&app_handle, &app_type, &provider_id) {
-            Ok(ClickOutcome::Switched) => {
+            Ok(ClickOutcome::Switched { mode, name }) => {
                 clear_app_problems(&app_type);
+                if let Some(feedback) = switch_feedback(&app_type, mode, name) {
+                    record_feedback(&app_handle, feedback);
+                }
                 emit_switched(&app_handle, &app_type, &provider_id);
                 if app_type == AppType::ClaudeDesktop {
                     // 选了模型映射卡要把路由服务拉起来（同主界面 `switch_provider`），起来之后再重建一次。
@@ -2165,7 +2535,8 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
 }
 
 enum ClickOutcome {
-    Switched,
+    /// 切过去了；`mode` 是点击时的模式，决定要不要出反馈行。
+    Switched { mode: TrayMode, name: String },
     /// 已经在用 / 故障转移开着（只读）：什么都不做。
     Unchanged,
     /// 直连下点了需要路由的那家：不直接切。
@@ -2191,27 +2562,26 @@ fn handle_provider_click(
     if current.as_deref() == Some(provider_id) {
         return Ok(ClickOutcome::Unchanged);
     }
-    match tray_mode(state, app_type) {
-        TrayMode::Failover => {
-            log::info!(
-                "{} 的故障转移开着，托盘只读，不切换",
-                app_display_name(app_type)
-            );
-            return Ok(ClickOutcome::Unchanged);
-        }
-        TrayMode::Direct => {
-            let provider = state
-                .db
-                .get_provider_by_id(provider_id, app_type.as_str())?
-                .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
-            if provider_needs_routing(app_type, &provider) {
-                return Ok(ClickOutcome::NeedsRoute);
-            }
-        }
-        _ => {}
+    let mode = tray_mode(state, app_type);
+    if mode == TrayMode::Failover {
+        log::info!(
+            "{} 的故障转移开着，托盘只读，不切换",
+            app_display_name(app_type)
+        );
+        return Ok(ClickOutcome::Unchanged);
+    }
+    let provider = state
+        .db
+        .get_provider_by_id(provider_id, app_type.as_str())?
+        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+    if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
+        return Ok(ClickOutcome::NeedsRoute);
     }
     crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;
-    Ok(ClickOutcome::Switched)
+    Ok(ClickOutcome::Switched {
+        mode,
+        name: provider.name,
+    })
 }
 
 fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) {
@@ -3129,7 +3499,11 @@ mod tests {
     }
 
     fn model(problems: &[TrayProblem], apps: &[AppSnapshot]) -> Vec<TrayEntry> {
-        build_menu_model(&zh(), problems, apps, false, now())
+        let status = MenuStatus {
+            problems: problems.to_vec(),
+            ..Default::default()
+        };
+        build_menu_model(&zh(), &status, apps, false, now())
     }
 
     fn text_of(entry: &TrayEntry) -> String {
@@ -3303,7 +3677,7 @@ mod tests {
         assert_eq!(
             texts_of(&children),
             [
-                "叠加 · 默认供应商",
+                "叠加 · 默认 DeepSeek",
                 "DeepSeek",
                 "Kimi For Coding",
                 "OpenAI Official",
@@ -3479,10 +3853,238 @@ mod tests {
 
     #[test]
     fn lightweight_mode_is_a_check_item() {
-        let menu = build_menu_model(&en(), &[], &[], true, now());
+        let menu = build_menu_model(&en(), &MenuStatus::default(), &[], true, now());
         assert!(menu.iter().any(|entry| matches!(entry,
             TrayEntry::Check { id, checked: true, text, .. }
                 if id == "lightweight_mode" && text == "Lightweight mode")));
+    }
+
+    #[test]
+    fn stack_header_falls_back_to_the_generic_word_without_a_default() {
+        let mut app = snapshot(
+            AppType::Claude,
+            TrayMode::Stack,
+            vec![entry("deepseek", "DeepSeek")],
+        );
+        app.current_id = None;
+        app.stack_members = vec!["deepseek".to_string()];
+        let children = children_of(&model(&[], &[app.clone()]), &AppType::Claude);
+        assert_eq!(text_of(&children[0]), "叠加 · 默认供应商");
+        app.current_id = Some("deepseek".to_string());
+        let menu = build_menu_model(&en(), &MenuStatus::default(), &[app], false, now());
+        let children = children_of(&menu, &AppType::Claude);
+        assert_eq!(text_of(&children[0]), "Stack · Default: DeepSeek");
+    }
+
+    #[test]
+    fn quit_says_the_routing_service_stops_only_while_it_is_in_use() {
+        let quit_text = |texts: &TrayTexts, routing: bool| {
+            let status = MenuStatus {
+                routing_in_use: routing,
+                ..Default::default()
+            };
+            let menu = build_menu_model(texts, &status, &[], false, now());
+            match menu.last() {
+                Some(TrayEntry::Item { id, text, .. }) if id == "quit" => text.clone(),
+                other => panic!("last entry is not quit: {other:?}"),
+            }
+        };
+        assert_eq!(quit_text(&zh(), false), "退出 CC Switch");
+        assert_eq!(quit_text(&zh(), true), "退出 CC Switch（路由服务会停止）");
+        assert_eq!(
+            quit_text(&en(), true),
+            "Quit CC Switch (stops the routing service)"
+        );
+        for language in ["zh", "zh-TW", "en", "ja"] {
+            let texts = TrayTexts::from_language(language);
+            assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
+            assert!(
+                texts.quit_stops_routing.starts_with(texts.quit),
+                "{language}"
+            );
+            assert!(texts.header_stack_default.contains("{name}"), "{language}");
+            assert!(texts.tooltip_problem.contains("{problem}"), "{language}");
+            for template in [
+                texts.feedback_switched,
+                texts.feedback_stack_default,
+                texts.feedback_profile,
+            ] {
+                assert!(
+                    template.contains("{app}") && template.contains("{name}"),
+                    "{language}: {template}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tooltip_names_the_first_problem_and_is_plain_otherwise() {
+        assert_eq!(tray_tooltip(&zh(), &[]), "CC Switch");
+        let problems = [
+            TrayProblem::ServiceDown { port: 15721 },
+            TrayProblem::SwitchFailed {
+                app: AppType::Codex,
+                reason: "boom".to_string(),
+            },
+        ];
+        assert_eq!(
+            tray_tooltip(&zh(), &problems),
+            "CC Switch · 需要处理：路由服务没在运行（端口 15721）"
+        );
+        let long = [TrayProblem::SwitchFailed {
+            app: AppType::Codex,
+            reason: "x".repeat(500),
+        }];
+        assert!(tray_tooltip(&en(), &long).chars().count() <= MAX_TOOLTIP_CHARS);
+    }
+
+    #[test]
+    fn problem_dot_sits_bottom_right_with_a_clear_ring() {
+        let size = 72u32;
+        let pixel = |image: &Image<'_>, x: u32, y: u32| {
+            let i = ((y * size + x) * 4) as usize;
+            image.rgba()[i..i + 4].to_vec()
+        };
+        // 整张图都是不透明白色，方便看哪里被挖掉、哪里画了点。
+        let base = Image::new_owned(vec![255; (size * size * 4) as usize], size, size);
+
+        let colored = icon_with_problem_dot(&base, false);
+        let dot_center = size - (size as f32 * DOT_RING_RADIUS) as u32;
+        assert_eq!(
+            pixel(&colored, dot_center, dot_center),
+            vec![0xF7, 0x63, 0x0C, 255]
+        );
+        // 圆点和圈之间是透明的。
+        let ring = dot_center - (size as f32 * (DOT_RADIUS + DOT_RING_RADIUS) / 2.0) as u32;
+        assert_eq!(pixel(&colored, ring, dot_center)[3], 0);
+        // 左上角不动。
+        assert_eq!(pixel(&colored, 2, 2), vec![255, 255, 255, 255]);
+
+        let template = icon_with_problem_dot(&base, true);
+        assert_eq!(pixel(&template, dot_center, dot_center), vec![0, 0, 0, 255]);
+        assert_eq!(pixel(&template, 2, 2), vec![255, 255, 255, 255]);
+
+        // 尺寸对不上的图原样返回，不越界。
+        let broken = Image::new_owned(vec![1, 2, 3], 4, 4);
+        assert_eq!(icon_with_problem_dot(&broken, false).rgba(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn feedback_only_for_switches_that_need_a_client_restart() {
+        let name = || "DeepSeek".to_string();
+        for app in [AppType::Codex, AppType::Gemini, AppType::GrokBuild] {
+            assert_eq!(
+                switch_feedback(&app, TrayMode::Direct, name()),
+                Some(TrayFeedback::Switched {
+                    app: app.clone(),
+                    name: name()
+                })
+            );
+            // 路由 / 故障转移换一家立即生效。
+            assert_eq!(switch_feedback(&app, TrayMode::Route, name()), None);
+            assert_eq!(switch_feedback(&app, TrayMode::Failover, name()), None);
+        }
+        assert_eq!(
+            switch_feedback(&AppType::Claude, TrayMode::Direct, name()),
+            None
+        );
+        assert!(matches!(
+            switch_feedback(&AppType::ClaudeDesktop, TrayMode::Desktop, name()),
+            Some(TrayFeedback::Switched { .. })
+        ));
+        for app in [AppType::Claude, AppType::Codex] {
+            assert!(matches!(
+                switch_feedback(&app, TrayMode::Stack, name()),
+                Some(TrayFeedback::StackDefault { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn feedback_row_is_a_grey_line_after_the_problems() {
+        let status = MenuStatus {
+            problems: vec![TrayProblem::ServiceDown { port: 15721 }],
+            feedback: Some(TrayFeedback::Switched {
+                app: AppType::Codex,
+                name: "DeepSeek".to_string(),
+            }),
+            routing_in_use: false,
+        };
+        let menu = build_menu_model(&zh(), &status, &[], false, now());
+        assert_eq!(
+            texts_of(&menu[..4]),
+            [
+                "路由服务没在运行（端口 15721）",
+                "Codex 已切换到 DeepSeek，重启 Codex 后生效",
+                "---",
+                "打开 CC Switch",
+            ]
+        );
+        assert!(matches!(&menu[1], TrayEntry::Item { enabled: false, .. }));
+
+        let only_feedback = MenuStatus {
+            feedback: Some(TrayFeedback::StackDefault {
+                app: AppType::Codex,
+                name: "Kimi For Coding".to_string(),
+            }),
+            ..Default::default()
+        };
+        let menu = build_menu_model(&zh(), &only_feedback, &[], false, now());
+        assert_eq!(
+            texts_of(&menu[..3]),
+            [
+                "Codex 的默认供应商改为 Kimi For Coding，重启 Codex 后生效",
+                "---",
+                "打开 CC Switch",
+            ]
+        );
+        assert_eq!(
+            feedback_text(
+                &zh(),
+                &TrayFeedback::ProfileApplied {
+                    app: AppType::Claude,
+                    name: "公司项目".to_string()
+                }
+            ),
+            "已把项目「公司项目」用到 Claude Code"
+        );
+        assert_eq!(
+            feedback_text(
+                &en(),
+                &TrayFeedback::Switched {
+                    app: AppType::ClaudeDesktop,
+                    name: "DeepSeek".to_string()
+                }
+            ),
+            "Claude Desktop switched to DeepSeek. Restart Claude Desktop to apply"
+        );
+    }
+
+    #[test]
+    fn feedback_goes_away_after_the_menu_showed_it_or_two_minutes() {
+        let record = |at: std::time::Instant| {
+            *lock(&FEEDBACK) = Some(FeedbackRecord {
+                feedback: TrayFeedback::Switched {
+                    app: AppType::Codex,
+                    name: "DeepSeek".to_string(),
+                },
+                at,
+                seen: false,
+            });
+        };
+        record(std::time::Instant::now());
+        assert!(current_feedback().is_some());
+        // 中键不弹菜单；右键弹菜单 = 这次菜单里已经显示过。
+        note_tray_click(tauri::tray::MouseButton::Middle);
+        assert!(current_feedback().is_some());
+        note_tray_click(tauri::tray::MouseButton::Right);
+        assert!(current_feedback().is_none());
+        assert!(lock(&FEEDBACK).is_none());
+
+        if let Some(at) = std::time::Instant::now().checked_sub(FEEDBACK_TTL) {
+            record(at);
+            assert!(current_feedback().is_none());
+        }
     }
 
     // ─── 托盘 → 主界面 ───

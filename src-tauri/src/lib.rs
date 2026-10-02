@@ -79,8 +79,6 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, sync::Arc};
-#[cfg(target_os = "macos")]
-use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
@@ -330,19 +328,6 @@ async fn update_tray_menu(
         Err(err) => {
             log::error!("创建托盘菜单失败: {err}");
             Ok(false)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_tray_icon() -> Option<Image<'static>> {
-    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
-
-    match Image::from_bytes(ICON_BYTES) {
-        Ok(icon) => Some(icon),
-        Err(err) => {
-            log::warn!("Failed to load macOS tray icon: {err}");
-            None
         }
     }
 }
@@ -1128,6 +1113,10 @@ pub fn run() {
                             if matches!(event, TrayIconEvent::Enter { .. }) {
                                 tray::refresh_tray_if_problems_changed(&app);
                             }
+                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停时拿掉。
+                            if let TrayIconEvent::Click { button, .. } = &event {
+                                tray::note_tray_click(*button);
+                            }
                             tauri::async_runtime::spawn(async move {
                                 crate::tray::refresh_all_usage_in_tray(&app).await;
                             });
@@ -1141,26 +1130,9 @@ pub fn run() {
                 })
                 .show_menu_on_left_click(cfg!(not(target_os = "windows")));
 
-            // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(icon) = macos_tray_icon() {
-                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
-                } else if let Some(icon) = app.default_window_icon() {
-                    log::warn!("Falling back to default window icon for tray");
-                    tray_builder = tray_builder.icon(icon.clone());
-                } else {
-                    log::warn!("Failed to load macOS tray icon for tray");
-                }
-            }
-
-            #[cfg(not(target_os = "macos"))]
-            {
-                if let Some(icon) = app.default_window_icon() {
-                    tray_builder = tray_builder.icon(icon.clone());
-                } else {
-                    log::warn!("Failed to get default window icon for tray");
-                }
+            // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）；出问题时 tray.rs 换成带圆点的那张
+            if let Some((icon, template)) = tray::base_tray_icon(app.handle()) {
+                tray_builder = tray_builder.icon(icon).icon_as_template(template);
             }
 
             let _tray = tray_builder.build(app)?;
@@ -1484,6 +1456,7 @@ pub fn run() {
             commands::delete_mcp_server,
             commands::toggle_mcp_app,
             commands::import_mcp_from_apps,
+            commands::resync_mcp_to_apps,
             // Prompt management
             commands::get_prompts,
             commands::upsert_prompt,
@@ -1568,6 +1541,7 @@ pub fn run() {
             commands::import_skills_from_apps,
             commands::discover_available_skills,
             commands::check_skill_updates,
+            commands::resync_skills_to_apps,
             commands::update_skill,
             commands::migrate_skill_storage,
             commands::search_skills_sh,
@@ -1644,6 +1618,7 @@ pub fn run() {
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
+            commands::get_session_usage_last_sync,
             commands::get_usage_data_sources,
             // Stream health check
             commands::stream_check_provider,

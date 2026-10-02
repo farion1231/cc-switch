@@ -194,6 +194,27 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/import_mcp_from_claude`, () => success(1)),
   http.post(`${TAURI_ENDPOINT}/import_mcp_from_codex`, () => success(1)),
+  http.post(`${TAURI_ENDPOINT}/resync_mcp_to_apps`, async ({ request }) => {
+    const { apps } = await withJson<{ apps?: AppId[] | null }>(request);
+    const targets = apps?.length
+      ? apps
+      : [
+          "claude",
+          "codex",
+          "gemini",
+          "grokbuild",
+          "opencode",
+          "hermes",
+          "mcode",
+        ];
+    return success(targets.map((app) => ({ app, ok: true })));
+  }),
+
+  // Skills / 用量：新加的只读或重投影命令，测试里默认都成功
+  http.post(`${TAURI_ENDPOINT}/resync_skills_to_apps`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_session_usage_last_sync`, () =>
+    success(null),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/set_mcp_enabled`, async ({ request }) => {
     const { app, id, enabled } = await withJson<{

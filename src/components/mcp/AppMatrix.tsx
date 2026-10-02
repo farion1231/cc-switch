@@ -15,22 +15,19 @@ import { cn } from "@/lib/utils";
  */
 
 // ─── 批量作用范围（只在这里决定） ─────────────────────────────────────────
-/**
- * 列头批量只作用于当前搜索 / 筛选出的行（画板 McpBulk 的写法，有意改变旧版
- * 「搜索时也作用于全集」）。Jason 还没最终拍板，可能要改回作用于全部：
- * 改这一个常量即可，弹层里的范围说明会跟着变。
- */
-export const BULK_APPLIES_TO_FILTERED_ROWS = true;
-
 export type BulkScopeKind = "all" | "search" | "filter";
 
-/** 批量操作实际作用的行，以及弹层里怎么描述这个范围。 */
+/**
+ * 批量操作实际作用的行，以及弹层里怎么描述这个范围。
+ * 列头批量只作用于当前搜索 / 筛选出的行（画板 McpBulk 的写法，有意改变旧版
+ * 「搜索时也作用于全集」），弹层写明范围，执行后给撤销。
+ */
 export function resolveBulkScope<T>(
   allRows: readonly T[],
   visibleRows: readonly T[],
   narrowedBy: "search" | "filter" | null,
 ): { rows: readonly T[]; kind: BulkScopeKind } {
-  if (!BULK_APPLIES_TO_FILTERED_ROWS || !narrowedBy) {
+  if (!narrowedBy) {
     return { rows: allRows, kind: "all" };
   }
   return { rows: visibleRows, kind: narrowedBy };

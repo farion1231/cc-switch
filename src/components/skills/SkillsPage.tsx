@@ -11,11 +11,13 @@ import { toast } from "sonner";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
   useAddSkillRepo,
   useDiscoverableSkills,
+  useDiscoverableSkillsFailures,
   useInstallSkill,
   useInstalledSkills,
   useRemoveSkillRepo,
@@ -27,14 +29,19 @@ import type {
   DiscoverableSkill,
   InstalledSkill,
   SkillRepo,
+  SkillRepoFailure,
   SkillsShDiscoverableSkill,
 } from "@/lib/api/skills";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
-import { formatSkillError } from "@/lib/errors/skillErrorParser";
+import {
+  formatSkillError,
+  skillErrorReason,
+} from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
 import { MatrixSearch, NeutralBadge } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
 import { countRepoSkills } from "./RepoManagerPanel";
+import { describeRepoFailures, repoFailureKey } from "./repoFailures";
 
 export type SkillsPageSource = "repos" | "skillssh";
 
@@ -173,6 +180,7 @@ export function SkillsPage({
     error: discoverErrorValue,
     refetch: refetchDiscoverable,
   } = useDiscoverableSkills();
+  const { data: repoFailures = [] } = useDiscoverableSkillsFailures();
   const { data: installedSkills = [] } = useInstalledSkills();
   const {
     data: repos = [],
@@ -413,10 +421,20 @@ export function SkillsPage({
         },
       ];
     } else if (repoRows.length === 0) {
-      title = t("skillsPage.discover.noneRead");
-      body = t("skillsPage.discover.noneReadBody", {
-        count: enabledRepos.length,
-      });
+      // 后端逐仓库报告了失败：如实写哪些没读到、为什么；否则是读到了但里面没有 Skill
+      title =
+        repoFailures.length > 0
+          ? t("skillsPage.discover.loadFailed")
+          : t("skillsPage.discover.noneRead");
+      body =
+        repoFailures.length > 0
+          ? t("skillsPage.repoFail.title", {
+              count: repoFailures.length,
+              repos: describeRepoFailures(repoFailures, t),
+            })
+          : t("skillsPage.discover.noneReadBody", {
+              count: enabledRepos.length,
+            });
       buttons = [
         { label: t("common.retry"), onClick: reload },
         {
@@ -533,6 +551,7 @@ export function SkillsPage({
             <RepoPopover
               repos={repos}
               discoverable={discoverable ?? []}
+              failures={repoFailures}
               onToggle={setRepoEnabled}
               onManage={onOpenRepoManager}
             />
@@ -576,6 +595,32 @@ export function SkillsPage({
           </>
         )}
       </div>
+
+      {/* 部分仓库没读到：列表照常显示读到的，横幅如实说哪些没读到。全部没读到时由空状态说明。 */}
+      {!isSkillsSh && repoFailures.length > 0 && repoRows.length > 0 && (
+        <div className="px-6 pb-3">
+          <Notice
+            tone="warning"
+            title={t("skillsPage.repoFail.title", {
+              count: repoFailures.length,
+              repos: describeRepoFailures(repoFailures, t),
+            })}
+            actions={
+              <Button
+                type="button"
+                variant="neutral"
+                size="compact"
+                disabled={fetchingDiscoverable}
+                onClick={reload}
+              >
+                {t("common.retry")}
+              </Button>
+            }
+          >
+            {t("skillsPage.repoFail.discoverBody")}
+          </Notice>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
         <div className="min-h-0 overflow-auto rounded-panel border border-border bg-surface">
@@ -848,15 +893,20 @@ function InstallToPopover({
 function RepoPopover({
   repos,
   discoverable,
+  failures,
   onToggle,
   onManage,
 }: {
   repos: SkillRepo[];
   discoverable: DiscoverableSkill[];
+  failures: SkillRepoFailure[];
   onToggle: (repo: SkillRepo, enabled: boolean) => Promise<void>;
   onManage: () => void;
 }) {
   const { t } = useTranslation();
+  const failureByRepo = new Map(
+    failures.map((failure) => [repoFailureKey(failure), failure]),
+  );
   const [open, setOpen] = useState(false);
   const enabled = repos.filter((repo) => repo.enabled).length;
   const label =
@@ -890,6 +940,9 @@ function RepoPopover({
           <div className="flex max-h-[280px] flex-col overflow-y-auto">
             {repos.map((repo) => {
               const id = `${repo.owner}/${repo.name}`;
+              const failure = repo.enabled
+                ? failureByRepo.get(repoFailureKey(repo))
+                : undefined;
               return (
                 <label
                   key={id}
@@ -910,11 +963,20 @@ function RepoPopover({
                   <span className="shrink-0 text-caption text-fg-3">
                     {repo.branch || "main"}
                   </span>
-                  <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
-                    {repo.enabled
-                      ? countRepoSkills(discoverable, repo)
-                      : t("skillsPage.repos.disabledShort")}
-                  </span>
+                  {failure ? (
+                    <span
+                      className="shrink-0 text-right text-caption text-warning-text"
+                      title={skillErrorReason(failure.error, t)}
+                    >
+                      {t("skillsPage.repos.readFailed")}
+                    </span>
+                  ) : (
+                    <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
+                      {repo.enabled
+                        ? countRepoSkills(discoverable, repo)
+                        : t("skillsPage.repos.disabledShort")}
+                    </span>
+                  )}
                 </label>
               );
             })}

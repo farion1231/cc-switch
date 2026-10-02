@@ -17,6 +17,7 @@ const detailPanelMock = vi.hoisted(() => vi.fn());
 const usageApiMock = vi.hoisted(() => ({
   getUsageSummary: vi.fn(),
   syncSessionUsage: vi.fn(),
+  getSessionUsageLastSync: vi.fn(),
   rebuildCodexUsage: vi.fn(),
 }));
 
@@ -156,6 +157,7 @@ describe("UsageDashboard", () => {
     useModelStatsMock.mockReturnValue({ data: [] });
     useSummaryByAppMock.mockReturnValue({ data: [] });
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
+    usageApiMock.getSessionUsageLastSync.mockReset().mockResolvedValue(null);
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 2,
       skipped: 0,
@@ -314,6 +316,42 @@ describe("UsageDashboard", () => {
     await waitFor(() =>
       expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
     );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "usage.syncStatus.justNow",
+      ),
+    );
+  });
+
+  it("shows when the background scan last finished", async () => {
+    usageApiMock.getSessionUsageLastSync.mockResolvedValue(
+      Date.now() - 5 * 60_000 - 1_000,
+    );
+    renderDashboard();
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "usage.syncStatus.minutesAgo:5",
+      ),
+    );
+  });
+
+  it("prefers a manual sync that is newer than the last background scan", async () => {
+    const user = userEvent.setup();
+    usageApiMock.getSessionUsageLastSync.mockResolvedValue(
+      Date.now() - 30 * 60_000,
+    );
+    renderDashboard();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "usage.syncStatus.minutesAgo:30",
+      ),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
+    );
+
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
         "usage.syncStatus.justNow",

@@ -1794,7 +1794,7 @@
     "crossApp": "跨应用",
     "groupHint": {
       "login": "不用 API Key，用已有账号登录。除 Claude 以外都要经过路由。",
-      "vendor": "厂商自己的 API 和编程套餐。",
+      "vendor": "厂商自己的 API 和编程套餐。同一家的国内站、海外站、套餐合成一行，下一步再选版本。",
       "thirdparty": "聚合多家模型的平台，或转售官方模型的中转服务。",
       "cloud": "用云厂商账号调用模型。",
       "plugin": "OpenCode 插件的模型分配配置。",
@@ -1815,7 +1815,40 @@
       "github": "用 GitHub 账号登录",
       "xai": "用 xAI 账号登录",
       "google": "用 Google 账号登录"
-    }
+    },
+    "versionCount": "{{domain}} · {{n}} 个版本",
+    "matchedVersion": "匹配：{{name}}",
+    "matchedVersions": "匹配：{{name}} 等 {{n}} 个版本",
+    "versionLabel": "版本",
+    "family": {
+      "volcengine": "火山引擎"
+    },
+    "version": {
+      "payg": "按量付费",
+      "paygCn": "按量付费 · 国内",
+      "paygIntl": "按量付费 · 海外",
+      "coding": "编程订阅",
+      "codingCn": "编程订阅 · 国内",
+      "codingIntl": "编程订阅 · 海外",
+      "cn": "国内",
+      "intl": "海外",
+      "agentPlan": "Agent Plan",
+      "codingPlan": "Coding Plan",
+      "tokenPlan": "Token Plan",
+      "tokenPlanCn": "Token Plan · 国内",
+      "tokenPlanIntl": "Token Plan · 海外",
+      "enterpriseLiteCn": "企业 Lite · 国内",
+      "enterpriseLiteIntl": "企业 Lite · 海外",
+      "enterpriseProCn": "企业 Pro · 国内",
+      "enterpriseProIntl": "企业 Pro · 海外",
+      "stepPlanCn": "Step Plan · 国内",
+      "stepPlanIntl": "Step Plan · 海外",
+      "aksk": "AKSK",
+      "apiKey": "API Key"
+    },
+    "switchVersionTitle": "切换到 {{version}}？",
+    "switchVersionMessage": "表单会按新版本重新填写，已填的 API Key 和其他修改会清空。",
+    "switchVersionConfirm": "切换"
   },
   "usage": {
     "title": "使用统计",
@@ -2123,7 +2156,7 @@
       "off": "已关闭",
       "editLogging": "修改「记录请求用量」",
       "codexHelpTitle": "Codex 用量维护做什么",
-      "lastSynced": "上次手动同步：{{time}}"
+      "lastSynced": "上次同步：{{time}}"
     },
     "empty": {
       "title": "还没有用量数据",
@@ -3003,14 +3036,25 @@
       "installing": "安装中...",
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
-      "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
+      "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
+      "skippedTitle": "跳过了 {{count}} 个 Skill：目录名已被占用",
+      "allSkipped": "没有安装：ZIP 里的 {{count}} 个 Skill 目录名都已被占用",
+      "skippedItem": "{{directory}}（已被 {{name}} 使用）",
+      "skippedBody": "{{list}}。要换成 ZIP 里的版本，先卸载同名的 Skill 再安装。"
     },
     "backToInstalled": "返回已安装",
     "moreActions": "Skills 的更多操作",
     "storageSheet": {
       "title": "存储与同步",
-      "open": "存储与同步…"
-    }
+      "open": "存储与同步…",
+      "resync": "立即重新同步",
+      "resyncing": "正在重新同步…",
+      "resyncHint": "修改只对之后启用或更新的 Skill 生效。点「立即重新同步」，已启用的 Skill 会按当前方式重新放进各应用的 Skills 目录。",
+      "resyncDone": "已按当前方式把 Skill 重新同步到各应用",
+      "resyncPartial": "{{count}} 个应用没有同步完整：{{apps}}",
+      "resyncSkillItem": "{{directory}}：{{error}}"
+    },
+    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
@@ -3996,7 +4040,9 @@
       "added": "已添加 {{id}}",
       "saved": "已保存 {{id}}",
       "batchAdded": "已添加 {{count}} 个 MCP",
-      "batchAddedReplaced": "已添加 {{count}} 个 MCP，覆盖 {{replaced}} 个"
+      "batchAddedReplaced": "已添加 {{count}} 个 MCP，覆盖 {{replaced}} 个",
+      "resynced": "已按这里的开关重新写入 {{count}} 个应用的配置",
+      "resyncPartial": "{{count}} 个应用写入失败：{{apps}}"
     },
     "import": {
       "title": "导入完成",
@@ -4104,7 +4150,8 @@
       "homepage": "主页",
       "docs": "文档",
       "delete": "删除…"
-    }
+    },
+    "resync": "按这里的开关重写各应用配置"
   },
   "skillsPage": {
     "noun": "Skill",
@@ -4244,7 +4291,8 @@
       "disabled": "已停用，不参与发现",
       "manage": "添加或管理仓库…",
       "openAria": "在 GitHub 打开 {{repo}}",
-      "removeAria": "删除仓库 {{repo}}"
+      "removeAria": "删除仓库 {{repo}}",
+      "readFailed": "读取失败"
     },
     "import": {
       "title": "导入本机已有的 Skill",
@@ -4264,6 +4312,12 @@
     },
     "restore": {
       "lead": "选一个备份，把文件恢复到本地并重新加入列表，并在 {{apps}} 启用（「发现」里的「安装到」决定）。"
+    },
+    "repoFail": {
+      "title": "{{count}} 个仓库没有读到：{{repos}}",
+      "item": "{{repo}}（{{reason}}）",
+      "discoverBody": "列表可能不完整。",
+      "updatesBody": "这些仓库里的 Skill 没有检查，更新结果可能不完整。"
     }
   }
 }

@@ -20,6 +20,7 @@ const usageApiMock = vi.hoisted(() => ({
   getModelsDevSyncConfig: vi.fn(),
   saveModelsDevSyncConfig: vi.fn(),
   syncSessionUsage: vi.fn(),
+  getSessionUsageLastSync: vi.fn().mockResolvedValue(null),
   rebuildCodexUsage: vi.fn(),
 }));
 
