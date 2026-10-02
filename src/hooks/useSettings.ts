@@ -28,6 +28,8 @@ export interface UseSettingsResult {
   isSaving: boolean;
   isPortable: boolean;
   appConfigDir?: string;
+  /** 已保存的 CC Switch 数据目录（没覆盖时为空），用来判断有没有改动没保存 */
+  initialAppConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
@@ -516,6 +518,7 @@ export function useSettings(): UseSettingsResult {
     isSaving: saveMutation.isPending,
     isPortable,
     appConfigDir,
+    initialAppConfigDir,
     resolvedDirs,
     requiresRestart,
     updateSettings,

@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
-type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode">;
+export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode">;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;
@@ -189,7 +189,7 @@ export function DirectorySettings({
   );
 }
 
-interface DirectoryInputProps {
+export interface DirectoryInputProps {
   label: string;
   description?: string;
   value?: string;
@@ -200,7 +200,7 @@ interface DirectoryInputProps {
   onReset: () => Promise<void>;
 }
 
-function DirectoryInput({
+export function DirectoryInput({
   label,
   description,
   value,
@@ -218,12 +218,16 @@ function DirectoryInput({
 
   return (
     <div className="space-y-1.5">
-      <div className="space-y-1">
-        <p className="text-xs font-medium text-foreground">{label}</p>
-        {description ? (
-          <p className="text-xs text-muted-foreground">{description}</p>
-        ) : null}
-      </div>
+      {label || description ? (
+        <div className="space-y-1">
+          {label ? (
+            <p className="text-xs font-medium text-foreground">{label}</p>
+          ) : null}
+          {description ? (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex items-center gap-2">
         <Input
           value={displayValue}

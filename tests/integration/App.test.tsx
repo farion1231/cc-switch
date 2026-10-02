@@ -1,6 +1,12 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
@@ -132,15 +138,8 @@ vi.mock("@/components/ConfirmDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/AppSwitcher", () => ({
-  AppSwitcher: ({ activeApp, onSwitch }: any) => (
-    <div data-testid="app-switcher">
-      <span>{activeApp}</span>
-      <button onClick={() => onSwitch("claude")}>switch-claude</button>
-      <button onClick={() => onSwitch("codex")}>switch-codex</button>
-      <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
-    </div>
-  ),
+vi.mock("@/contexts/UpdateContext", () => ({
+  useUpdate: () => ({ hasUpdate: false, updateInfo: null }),
 }));
 
 vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
@@ -169,12 +168,6 @@ vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
   return { default: MockUnifiedSkillsPanel };
 });
 
-vi.mock("@/components/UpdateBadge", () => ({
-  UpdateBadge: ({ onClick }: any) => (
-    <button onClick={onClick}>update-badge</button>
-  ),
-}));
-
 vi.mock("@/components/mcp/McpPanel", () => ({
   default: ({ open, onOpenChange }: any) =>
     open ? (
@@ -185,6 +178,14 @@ vi.mock("@/components/mcp/McpPanel", () => ({
       <button onClick={() => onOpenChange(true)}>open-mcp</button>
     ),
 }));
+
+/** 侧栏里的应用行（v7 侧栏取代了原来页头的应用切换器） */
+const sidebarApp = (name: string) =>
+  // 首次启动提示是模态对话框，会把侧栏标成 aria-hidden，所以带上 hidden
+  within(document.querySelector("nav") as HTMLElement).getByRole("button", {
+    name,
+    hidden: true,
+  });
 
 const renderApp = (AppComponent: ComponentType) => {
   const client = new QueryClient();
@@ -218,7 +219,7 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    fireEvent.click(screen.getByText("switch-codex"));
+    fireEvent.click(sidebarApp("Codex"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "codex-1",
@@ -291,7 +292,7 @@ describe("App integration with MSW", () => {
     providerScrollContainer!.scrollTop = 640;
     providerScrollContainer!.scrollLeft = 24;
 
-    fireEvent.click(screen.getByText("switch-codex"));
+    fireEvent.click(sidebarApp("Codex"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -369,7 +370,7 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
+    fireEvent.click(sidebarApp("OpenClaw"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -629,7 +630,7 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
+    fireEvent.click(sidebarApp("OpenClaw"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(

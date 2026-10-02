@@ -4,6 +4,8 @@ module.exports = {
   darkMode: ["selector", ".dark"],
   theme: {
     extend: {
+      // v7 禁用态统一 0.45（tokens.css 的 [aria-disabled] 规则）
+      opacity: { 45: "0.45" },
       colors: {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
