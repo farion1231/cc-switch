@@ -99,6 +99,11 @@ export const handlers = [
     success(null),
   ),
 
+  // 节点缺失默认 null（回退 DB 快照），与后端 Option 契约一致
+  http.post(`${TAURI_ENDPOINT}/get_opencode_live_provider`, () =>
+    success(null),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
     success(getLiveProviderIds("openclaw")),
   ),

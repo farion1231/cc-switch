@@ -189,9 +189,42 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode, while Pi's shared models.json is owned by
-      // the catalog coordinator. Neither has a per-provider generic live
-      // snapshot that may replace the DB aggregate in this form.
+      // OpenCode 普通供应商的 live 节点就是 DB settingsConfig 的原文（import
+      // 时 verbatim 存、保存时按原格式写回），可以用它替换 DB 聚合做表单初值，
+      // 避免"手改 live → 打开编辑 → 保存"被 DB 快照静默覆盖。契约与 openclaw
+      // 相同：命中 → 替换初值；节点缺失(null，含 live 文件尚未写出) → 回退
+      // DB 且允许保存；读取失败 → 静默回退 DB（不打断编辑流程）。
+      // 后端经合并读取同时覆盖 V1 provider 与 V2 providers 声明。
+      // OMO/OMO-Slim 的节点不在 opencode.json 的 provider 对象下，走下方豁免。
+      if (
+        appId === "opencode" &&
+        provider.category !== "omo" &&
+        provider.category !== "omo-slim"
+      ) {
+        try {
+          const live = await providersApi.getOpenCodeLiveProvider(provider.id);
+          if (!cancelled && live && typeof live === "object") {
+            setLiveSettings(live);
+          } else if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } catch {
+          if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setHasLoadedLive(true);
+          }
+        }
+        return;
+      }
+
+      // Pi's shared models.json is owned by the catalog coordinator; neither
+      // it nor mcode/kimi has a per-provider generic live snapshot that may
+      // replace the DB aggregate in this form. OpenCode rows reaching here are
+      // only omo/omo-slim, whose nodes are not under opencode.json's provider
+      // object.
       if (
         appId === "opencode" ||
         appId === "pi" ||
@@ -340,7 +373,15 @@ export function EditProviderDialog({
     return null;
   }
 
-  const waitingForEditorView = usesEditorView(appId) && !hasLoadedLive;
+  // OpenCode 普通供应商与 editor-view 应用一样，等 live 读取落地再挂表单：
+  // 结构化字段（useOpencodeFormState）只在挂载时初始化，live 后到会造成
+  // "JSON 编辑器是 live、结构化字段还是 DB"的混合态。
+  const isOpencodePlain =
+    appId === "opencode" &&
+    provider.category !== "omo" &&
+    provider.category !== "omo-slim";
+  const waitingForLive =
+    (usesEditorView(appId) || isOpencodePlain) && !hasLoadedLive;
 
   const liveFile = !isProxyTakeover ? LIVE_FILE[appId] : undefined;
   const currentNotice =
@@ -365,7 +406,7 @@ export function EditProviderDialog({
     <FullScreenPanel
       // Keep the list visible until the initial projection is ready.
       // Showing a loading page first causes a flash for fast local reads.
-      isOpen={open && !waitingForEditorView}
+      isOpen={open && !waitingForLive}
       trackUnsavedChanges
       title={t("provider.editProviderNamed", { name: provider.name })}
       subtitle={
@@ -403,7 +444,7 @@ export function EditProviderDialog({
       }
     >
       {currentNotice}
-      {waitingForEditorView ? (
+      {waitingForLive ? (
         <div className="py-12 text-center text-body text-fg-2">
           {t("common.loading")}
         </div>

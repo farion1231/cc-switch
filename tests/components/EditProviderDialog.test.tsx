@@ -14,6 +14,7 @@ const apiMocks = vi.hoisted(() => ({
   getEditorView: vi.fn(),
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
+  getOpenCodeLiveProvider: vi.fn(),
 }));
 let mockFormReady = true;
 let mockCodexManagedAccountSelected = false;
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({
   providersApi: {
     getCurrent: apiMocks.getCurrent,
     getEditorView: apiMocks.getEditorView,
+    getOpenCodeLiveProvider: apiMocks.getOpenCodeLiveProvider,
   },
   vscodeApi: {
     getLiveProviderSettings: apiMocks.getLiveProviderSettings,
@@ -152,6 +154,7 @@ describe("EditProviderDialog", () => {
     );
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
+    apiMocks.getOpenCodeLiveProvider.mockReset();
   });
 
   it("keeps the list visible until the initial editor projection is ready", async () => {
@@ -615,5 +618,156 @@ describe("EditProviderDialog", () => {
 
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
+  });
+
+  it("OpenCode 编辑时用 live 节点替换数据库快照作为表单初值，且 live 落地前不挂表单", async () => {
+    const provider: Provider = {
+      id: "oc-1",
+      name: "OC",
+      category: "custom",
+      settingsConfig: {
+        npm: "@ai-sdk/openai-compatible",
+        options: { apiKey: "db-key" },
+      },
+    };
+    const liveFragment = {
+      npm: "@ai-sdk/openai-compatible",
+      options: {
+        baseURL: "https://live.example.com/v1",
+        apiKey: "live-key",
+      },
+    };
+    let resolveLive: (value: unknown) => void = () => {};
+    apiMocks.getOpenCodeLiveProvider.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLive = resolve;
+        }),
+    );
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="opencode"
+      />,
+    );
+
+    // live 未落地前表单不挂载：结构化字段只在挂载时初始化，
+    // 后到的 live 片段会造成 JSON 编辑器与结构化字段不一致
+    expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
+    expect(apiMocks.getOpenCodeLiveProvider).toHaveBeenCalledWith("oc-1");
+
+    await act(async () => resolveLive(liveFragment));
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(liveFragment);
+    });
+  });
+
+  it("OpenCode live 节点不存在时用数据库快照渲染并允许保存", async () => {
+    const provider: Provider = {
+      id: "oc-1",
+      name: "OC",
+      category: "custom",
+      settingsConfig: {
+        npm: "@ai-sdk/openai-compatible",
+        options: { apiKey: "db-key" },
+      },
+    };
+    apiMocks.getOpenCodeLiveProvider.mockResolvedValue(null);
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="opencode"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(provider.settingsConfig);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
+      provider.settingsConfig,
+    );
+  });
+
+  it("OpenCode live 配置读取失败时静默回退数据库快照并允许保存", async () => {
+    const provider: Provider = {
+      id: "oc-1",
+      name: "OC",
+      category: "custom",
+      settingsConfig: {
+        npm: "@ai-sdk/openai-compatible",
+        options: { apiKey: "db-key" },
+      },
+    };
+    apiMocks.getOpenCodeLiveProvider.mockRejectedValue(new Error("boom"));
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="opencode"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(provider.settingsConfig);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+  });
+
+  it("OpenCode omo 供应商不读取 live 节点，直接用数据库快照", async () => {
+    const provider: Provider = {
+      id: "omo-1",
+      name: "OMO",
+      category: "omo",
+      settingsConfig: { agents: {} },
+    };
+    apiMocks.getOpenCodeLiveProvider.mockResolvedValue({ npm: "x" });
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="opencode"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({ agents: {} });
+    });
+    expect(apiMocks.getOpenCodeLiveProvider).not.toHaveBeenCalled();
+    // 豁免分支不得发起任何 getCurrent IPC：
+    // mockReset 后 getCurrent 默认返回 undefined，若误入通用 getCurrent
+    // 分支会因 falsy 值侥幸落入快照渲染，此断言直接锁死该盲区
+    expect(apiMocks.getCurrent).not.toHaveBeenCalled();
   });
 });
