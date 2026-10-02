@@ -94,7 +94,7 @@
     "connectivityCheck": "檢測連通",
     "tabProvider": "供應商",
     "tabUniversal": "通用供應商",
-    "noProviders": "尚未新增任何供應商",
+    "noProviders": "還沒有供應商",
     "noProvidersDescription": "如果您已有設定，請點擊「匯入目前設定」，所有資料將安全儲存在 default 供應商中",
     "noProvidersDescriptionKeyFields": "切換供應商只會替換 Key、請求位址和模型，外掛程式等其他設定會保留在設定檔中，對所有供應商生效",
     "importCurrent": "匯入目前設定",
@@ -355,8 +355,8 @@
       "sidebarAndHeader": "側欄與頁首",
       "visibleApps": "在側欄顯示哪些應用",
       "goToApps": "前往「應用」",
-      "updates": "應用更新",
-      "checkToolUpdates": "啟動時檢查應用更新",
+      "updates": "各應用的新版本",
+      "checkToolUpdates": "啟動時檢查各應用的新版本",
       "checkToolUpdatesHelp": "開啟後，每次啟動 CC Switch 會查一次已安裝的命令列應用有沒有新版本，查到了就在側欄「應用」上顯示一個圓點。不會自動升級。",
       "windowAndTerminal": "視窗與終端機",
       "minimizeToTrayHelp": "開啟時，點關閉按鈕只隱藏視窗，CC Switch 留在系統匣裡繼續執行（輕量模式在系統匣選單裡）；關閉時點關閉按鈕直接結束。",
@@ -1577,7 +1577,24 @@
   "managedAuth": {
     "accountRemoved": "帳號已移除",
     "selectedAccountNeedsReauth": "已綁定的帳號不存在或需要重新登入",
-    "selectedAccountUnavailable": "已綁定的帳號不存在或需要重新登入，請重新選擇帳號"
+    "selectedAccountUnavailable": "已綁定的帳號不存在或需要重新登入，請重新選擇帳號",
+    "usedBy": "{{count}} 個供應商在用",
+    "usedByTitle": "在用的供應商：{{names}}",
+    "remove": {
+      "titleOne": "刪除帳號「{{login}}」？",
+      "titleAll": "刪除全部 {{service}} 帳號？",
+      "leadOne": "會刪除這個帳號儲存在 CC Switch 裡的登入憑證，無法復原。",
+      "leadAll": "會刪除這 {{count}} 個帳號儲存在 CC Switch 裡的登入憑證，無法復原。",
+      "brokenOne": "這些供應商會無法使用，直到重新登入或改選別的帳號：",
+      "brokenAll": "這些供應商會無法使用，直到重新登入：",
+      "moved": "這些供應商用的是預設帳號，刪除後改用新的預設帳號：",
+      "noneOne": "沒有供應商在用這個帳號。",
+      "noneAll": "沒有供應商在用這些帳號。",
+      "confirmOne": "刪除帳號",
+      "confirmAll": "刪除 {{count}} 個帳號",
+      "appSeparator": "：",
+      "nameSeparator": "、"
+    }
   },
   "endpointTest": {
     "title": "請求位址管理",
@@ -1806,32 +1823,28 @@
       "volcengine": "火山引擎",
       "tencent": "騰訊雲"
     },
-    "version": {
+    "version": {},
+    "switchVersionTitle": "切換到 {{version}}？",
+    "switchVersionMessage": "表單會按新版本重新填寫，已填的 API Key 和其他修改會清空。",
+    "switchVersionConfirm": "切換",
+    "plan": {
       "payg": "按量付費",
-      "paygCn": "按量付費 · 國內",
-      "paygIntl": "按量付費 · 海外",
       "coding": "程式設計訂閱",
-      "codingCn": "程式設計訂閱 · 國內",
-      "codingIntl": "程式設計訂閱 · 海外",
-      "cn": "國內",
-      "intl": "海外",
-      "agentPlan": "Agent Plan",
       "codingPlan": "Coding Plan",
+      "agentPlan": "Agent Plan",
       "tokenPlan": "Token Plan",
-      "tokenPlanCn": "Token Plan · 國內",
-      "tokenPlanIntl": "Token Plan · 海外",
-      "enterpriseLiteCn": "企業 Lite · 國內",
-      "enterpriseLiteIntl": "企業 Lite · 海外",
-      "enterpriseProCn": "企業 Pro · 國內",
-      "enterpriseProIntl": "企業 Pro · 海外",
-      "stepPlanCn": "Step Plan · 國內",
-      "stepPlanIntl": "Step Plan · 海外",
+      "enterpriseLite": "企業 Lite",
+      "enterprisePro": "企業 Pro",
+      "stepPlan": "Step Plan",
       "aksk": "AKSK",
       "apiKey": "API Key"
     },
-    "switchVersionTitle": "切換到 {{version}}？",
-    "switchVersionMessage": "表單會按新版本重新填寫，已填的 API Key 和其他修改會清空。",
-    "switchVersionConfirm": "切換"
+    "region": {
+      "cn": "國內",
+      "intl": "海外"
+    },
+    "planLabel": "方案",
+    "regionLabel": "地區"
   },
   "usage": {
     "title": "使用統計",
@@ -2085,8 +2098,7 @@
       "requests": "請求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "請求數",
-      "costLine": "成本（右軸）"
+      "requestsLegend": "請求數"
     },
     "tabs": {
       "label": "明細",
@@ -3774,7 +3786,7 @@
     "queueMoved": "{{name}} 移到第 {{position}} 位。",
     "status": {
       "directLead": "直連生效中 · 直接連線",
-      "routeLead": "路由生效中 ·",
+      "routeLead": "路由生效中",
       "byQueue": "依佇列",
       "stackLead": "疊加生效中 · 預設",
       "stackValue": "{{name}} · 另有 {{count}} 家共 {{models}} 個模型"
@@ -3805,10 +3817,6 @@
       "switchTitle": "把 {{app}} 從「{{from}}」切換到「{{to}}」？",
       "routeLead": "請求會先經過本機的 CC Switch，再轉給你選的供應商。",
       "stackLead": "預設供應商承接不帶前綴的請求。",
-      "switchLead": "會先讓 {{app}} 回到直連，再以「{{to}}」重新接入：",
-      "stepDirect": "寫回直連設定（{{provider}}）",
-      "stepRoute": "以路由模式接入，路由到下面選擇的供應商",
-      "stepStack": "以疊加模式接入，預設供應商為下面選擇的這家",
       "routeTo": "路由到",
       "stackDefault": "預設供應商",
       "officialOption": "{{name}}（官方）",
@@ -3821,14 +3829,18 @@
       "stackNoteRestart": "需要重新啟動 {{app}} 才能看到疊加的模型。",
       "stackNoteRestartCodex": "需要重新啟動 {{app}} 才能看到疊加的模型；桌面版要徹底結束後重新開啟。",
       "stackToRouteNote": "疊加的模型會從 /model 撤下（名單保留）；已選中的疊加模型需要改回一般模型。",
-      "ack": "我了解路由模式是進階功能（只在第一次詢問）",
-      "ackRequired": "請先勾選這一項。",
       "confirmRoute": "開始路由",
       "confirmStack": "切換到疊加模式",
       "needsRouteTitle": "{{provider}} 需要路由",
       "needsRouteLead": "{{provider}}：{{reason}}。直連切換過去，{{app}} 會無法使用它。",
       "switchAnyway": "仍然直連切換",
       "routeAndUse": "開始路由並使用它"
+    },
+    "help": {
+      "title": "連線模式的差別",
+      "direct": "直連：用戶端直接連所選那家，切換即改寫設定。",
+      "route": "路由：請求先經過本機的 CC Switch，可開啟故障轉移。",
+      "stack": "疊加：多家模型同列在 /model，不做故障轉移。"
     }
   },
   "providerCard": {
@@ -3837,8 +3849,6 @@
       "routing": "路由中",
       "currentDefault": "目前預設",
       "defaultAfterSwitch": "切換後預設",
-      "added": "已加入",
-      "enabled": "已啟用",
       "current": "目前",
       "default": "預設"
     },
@@ -3857,7 +3867,8 @@
       "edit": "編輯 {{name}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
-      "moveDown": "{{name}} 下移一位"
+      "moveDown": "{{name}} 下移一位",
+      "startStackFrom": "以這家為預設開始疊加…"
     },
     "chip": {
       "official": "官方",
@@ -3876,7 +3887,6 @@
       "noRoute": "官方訂閱不經過路由，回到直連後可用。",
       "noStack": "官方訂閱不能用於疊加模式。",
       "officialStack": "官方帳號只能當預設，不能疊加。",
-      "stackLater": "切換到疊加模式後才能設定預設供應商。",
       "needsRoute": "需要路由：{{reason}}，不能直連。",
       "defaultCannotRemove": "預設那家不能移除，先把別家設為預設。",
       "currentCannotRemove": "正在用的這家不能移除，先啟用別家。"
@@ -3896,7 +3906,7 @@
       "addedHelp": "已加入的供應商會同時寫進 {{app}} 的設定，在 {{app}} 裡選模型即可。",
       "addedEmpty": "還沒有加入供應商。",
       "available": "可加入 · {{count}}",
-      "stackNoDefault": "還沒有可以當預設的供應商；切換時在確認框裡選。"
+      "stackNoDefault": "還沒有預設供應商；在下面選一家，點「以這家為預設開始疊加…」。"
     }
   },
   "desktopAccess": {
@@ -4160,8 +4170,6 @@
     "noun": "Skill",
     "helpTitle": "Skills 怎麼同步",
     "help": "主副本放在 CC Switch 的目錄裡，再同步到你勾選的應用。Claude Desktop、OpenClaw 不支援 Skills，所以表格裡沒有這兩欄。",
-    "headerCount": "已安裝 {{count}}",
-    "headerCountUpdates": "已安裝 {{count}} · {{updates}} 個可更新",
     "add": "新增 Skill",
     "addMenu": {
       "discover": "在探索裡瀏覽",
@@ -4183,10 +4191,7 @@
       "unmanaged": "本機有 {{count}} 個 Skill 不在 CC Switch 管理中。",
       "reviewImport": "查看並匯入",
       "ignore": "忽略",
-      "close": "關閉提示",
-      "updates": "{{count}} 個 Skill 有更新",
-      "updatesChecked": "{{count}} 個 Skill 有更新 · 上次檢查 {{when}}",
-      "updateAll": "全部更新…"
+      "close": "關閉提示"
     },
     "filter": {
       "all": "全部",
@@ -4267,7 +4272,6 @@
       "skillsShNone": "skills.sh 上沒有找到「{{query}}」",
       "sourceAria": "探索來源",
       "sourceRepos": "倉庫 · {{count}}",
-      "statusAria": "按安裝狀態篩選",
       "reload": "重新讀取倉庫",
       "listLabel": "可安裝的 Skill",
       "installed": "已安裝 · {{count}} 個應用",
@@ -4283,7 +4287,8 @@
       "noneReadBody": "{{count}} 個倉庫都沒有讀到 Skill，可能是網路問題或 GitHub 限制了存取。",
       "manageRepos": "管理倉庫",
       "allInstalled": "這些倉庫裡的 Skill 都已安裝",
-      "showAll": "顯示全部"
+      "showAll": "顯示全部",
+      "onlyUninstalled": "只看未安裝"
     },
     "repos": {
       "buttonAll": "倉庫：全部",
@@ -4321,6 +4326,13 @@
       "item": "{{repo}}（{{reason}}）",
       "discoverBody": "列表可能不完整。",
       "updatesBody": "這些倉庫裡的 Skill 沒有檢查，更新結果可能不完整。"
-    }
+    },
+    "headerUpdates": "{{count}} 個可更新",
+    "headerUpdatesShow": "只看可更新的 Skill",
+    "headerUpdatesClear": "顯示全部 Skill",
+    "updateAllCount": "全部更新（{{count}} 個）…"
+  },
+  "coach": {
+    "newLayout": "介面改版了：模式移到了每個應用頁的頂部，用量統計和授權中心在左側邊欄。"
   }
 }

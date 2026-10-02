@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AppGlyph } from "@/components/shell/AppGlyph";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type { SessionMessage, SessionMeta } from "@/types";
@@ -439,10 +440,101 @@ export function SessionReader({
     );
   };
 
+  const moreMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          id="session-reader-more"
+          aria-label={t("sessionManager.moreFor", {
+            defaultValue: "{{title}} 的更多操作",
+            title,
+          })}
+          title={t("common.more", { defaultValue: "更多" })}
+          className={cn(iconButton, "h-8 w-8")}
+        >
+          <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-[210px] rounded-panel p-1 shadow-v7-md"
+      >
+        <DropdownMenuItem
+          className={sessionMenuItemClass}
+          disabled={failed || messages.length === 0}
+          onSelect={copyMarkdown}
+        >
+          {t("sessionManager.copyAsMarkdown", {
+            defaultValue: "复制整段为 Markdown",
+          })}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className={sessionMenuItemClass}
+          onSelect={() =>
+            onCopy(
+              session.sessionId,
+              t("sessionManager.sessionIdCopied", {
+                defaultValue: "已复制会话 ID",
+              }),
+            )
+          }
+        >
+          {t("sessionManager.copySessionId", {
+            defaultValue: "复制会话 ID",
+          })}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className={sessionMenuItemClass}
+          disabled={!session.sourcePath}
+          onSelect={() =>
+            session.sourcePath &&
+            onCopy(
+              session.sourcePath,
+              t("sessionManager.sourcePathCopied", {
+                defaultValue: "已复制源文件路径",
+              }),
+            )
+          }
+        >
+          {t("sessionManager.copySourcePath", {
+            defaultValue: "复制源文件路径",
+          })}
+        </DropdownMenuItem>
+        <DropdownMenuItem className={sessionMenuItemClass} onSelect={onReload}>
+          {t("sessionManager.reload", { defaultValue: "重新读取" })}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className={cn(
+            sessionMenuItemClass,
+            deletable ? "text-danger-text" : "text-fg-3",
+          )}
+          disabled={!deletable}
+          onSelect={onDelete}
+        >
+          {t("sessionManager.deleteEllipsis", {
+            defaultValue: "删除…",
+          })}
+        </DropdownMenuItem>
+        {!deletable && session.providerId === "mcode" && (
+          <p className="px-2.5 pb-1.5 text-caption text-fg-2">
+            {t("sessionManager.mcodeDeleteHint", {
+              defaultValue: "请在 MiniMax Code 中删除",
+            })}
+          </p>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-col border-b border-border py-3 pe-4 ps-6">
-        <div className="flex h-7 min-w-0 items-center gap-2">
+      {/* 返回、会话名、上一个 / 下一个、恢复和 ⋯ 都在页头这一条里，下面只留一行信息和阅读工具 */}
+      <AppPageHeader
+        variant="app"
+        truncateTitle
+        leading={
           <button
             type="button"
             id="session-reader-back"
@@ -451,104 +543,121 @@ export function SessionReader({
             })}
             title={t("sessionManager.back", { defaultValue: "返回" })}
             onClick={onBack}
-            className={cn(iconButton, "-ms-1.5")}
+            className={iconButton}
           >
             <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
           </button>
-          {appId && <AppGlyph app={appId} size={16} badgeClassName="bg-app" />}
-          <h2
+        }
+        icon={
+          appId ? (
+            <AppGlyph app={appId} size={16} badgeClassName="bg-app" />
+          ) : undefined
+        }
+        title={
+          <span
             title={title}
-            className={cn(
-              "m-0 min-w-0 flex-1 truncate text-section text-fg-1",
-              !session.title && !session.projectDir && "font-mono",
-            )}
+            className={cn(!session.title && !session.projectDir && "font-mono")}
           >
             {title}
-          </h2>
+          </span>
+        }
+        titleExtra={
           <span className="sr-only">
             {t("sessionManager.sessionOf", {
               defaultValue: "{{app}} 的会话",
               app: appName,
             })}
           </span>
-          <button
-            type="button"
-            aria-label={t("sessionManager.prevSession", {
-              defaultValue: "上一个会话",
-            })}
-            title={t("sessionManager.prevShort", { defaultValue: "上一个" })}
-            disabled={!hasPrev}
-            onClick={onPrev}
-            className={iconButton}
-          >
-            <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
-          </button>
-          <button
-            type="button"
-            aria-label={t("sessionManager.nextSession", {
-              defaultValue: "下一个会话",
-            })}
-            title={t("sessionManager.nextShort", { defaultValue: "下一个" })}
-            disabled={!hasNext}
-            onClick={onNext}
-            className={iconButton}
-          >
-            <ChevronRight className="h-4 w-4" strokeWidth={1.5} />
-          </button>
-        </div>
+        }
+        actions={
+          <>
+            <div className="flex shrink-0 items-center">
+              <button
+                type="button"
+                aria-label={t("sessionManager.prevSession", {
+                  defaultValue: "上一个会话",
+                })}
+                title={t("sessionManager.prevShort", {
+                  defaultValue: "上一个",
+                })}
+                disabled={!hasPrev}
+                onClick={onPrev}
+                className={cn(iconButton, "h-8 w-8")}
+              >
+                <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                aria-label={t("sessionManager.nextSession", {
+                  defaultValue: "下一个会话",
+                })}
+                title={t("sessionManager.nextShort", {
+                  defaultValue: "下一个",
+                })}
+                disabled={!hasNext}
+                onClick={onNext}
+                className={cn(iconButton, "h-8 w-8")}
+              >
+                <ChevronRight className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+            </div>
+            {renderResume()}
+            {moreMenu}
+          </>
+        }
+      />
 
-        <div className="mt-1 flex min-w-0 items-center gap-1.5 whitespace-nowrap ps-[30px] text-caption tabular-nums text-fg-2">
-          {session.projectDir ? (
-            <button
-              type="button"
-              aria-label={t("sessionManager.copyPathAria", {
-                defaultValue: "复制路径 {{path}}",
-                path: session.projectDir,
-              })}
-              title={t("sessionManager.copyPathTitle", {
-                defaultValue: "复制路径",
-              })}
-              onClick={() =>
-                onCopy(
-                  session.projectDir!,
-                  t("sessionManager.pathCopied", {
-                    defaultValue: "已复制路径 {{path}}",
-                    path: session.projectDir,
-                  }),
-                )
-              }
-              className="min-w-0 truncate font-mono decoration-border-strong underline-offset-[3px] hover:text-fg-1 hover:underline"
-            >
-              {shortenHomePath(session.projectDir)}
-            </button>
-          ) : (
-            <span>
-              {t("sessionManager.unknownDirectory", {
-                defaultValue: "未知目录",
-              })}
-            </span>
-          )}
-          {range && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className="shrink-0">{range}</span>
-            </>
-          )}
-          {!failed && !isLoading && (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className="shrink-0">
-                {t("sessionManager.messageCount", {
-                  defaultValue: "{{count}} 条消息",
-                  count: messages.length,
+      <div className="flex shrink-0 flex-col border-b border-border py-1.5 pe-4 ps-6">
+        <div className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1">
+          <div className="flex min-w-0 flex-1 basis-60 items-center gap-1.5 whitespace-nowrap text-caption tabular-nums text-fg-2">
+            {session.projectDir ? (
+              <button
+                type="button"
+                aria-label={t("sessionManager.copyPathAria", {
+                  defaultValue: "复制路径 {{path}}",
+                  path: session.projectDir,
+                })}
+                title={t("sessionManager.copyPathTitle", {
+                  defaultValue: "复制路径",
+                })}
+                onClick={() =>
+                  onCopy(
+                    session.projectDir!,
+                    t("sessionManager.pathCopied", {
+                      defaultValue: "已复制路径 {{path}}",
+                      path: session.projectDir,
+                    }),
+                  )
+                }
+                className="min-w-0 truncate font-mono decoration-border-strong underline-offset-[3px] hover:text-fg-1 hover:underline"
+              >
+                {shortenHomePath(session.projectDir)}
+              </button>
+            ) : (
+              <span>
+                {t("sessionManager.unknownDirectory", {
+                  defaultValue: "未知目录",
                 })}
               </span>
-            </>
-          )}
-        </div>
-
-        <div className="mt-2.5 flex min-h-8 flex-wrap items-center gap-2 ps-[30px]">
-          {renderResume()}
+            )}
+            {range && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="shrink-0">{range}</span>
+              </>
+            )}
+            {!failed && !isLoading && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="shrink-0">
+                  {t("sessionManager.messageCount", {
+                    defaultValue: "{{count}} 条消息",
+                    count: messages.length,
+                  })}
+                </span>
+              </>
+            )}
+          </div>
 
           {!failed && (
             <>
@@ -579,7 +688,6 @@ export function SessionReader({
               )}
             </>
           )}
-          <div className="flex-1" />
           {findOpen && !failed && (
             <div
               role="search"
@@ -662,100 +770,12 @@ export function SessionReader({
               </button>
             </div>
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                id="session-reader-more"
-                aria-label={t("sessionManager.moreFor", {
-                  defaultValue: "{{title}} 的更多操作",
-                  title,
-                })}
-                title={t("common.more", { defaultValue: "更多" })}
-                className={cn(iconButton, "h-8 w-8")}
-              >
-                <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-[210px] rounded-panel p-1 shadow-v7-md"
-            >
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                disabled={failed || messages.length === 0}
-                onSelect={copyMarkdown}
-              >
-                {t("sessionManager.copyAsMarkdown", {
-                  defaultValue: "复制整段为 Markdown",
-                })}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                onSelect={() =>
-                  onCopy(
-                    session.sessionId,
-                    t("sessionManager.sessionIdCopied", {
-                      defaultValue: "已复制会话 ID",
-                    }),
-                  )
-                }
-              >
-                {t("sessionManager.copySessionId", {
-                  defaultValue: "复制会话 ID",
-                })}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                disabled={!session.sourcePath}
-                onSelect={() =>
-                  session.sourcePath &&
-                  onCopy(
-                    session.sourcePath,
-                    t("sessionManager.sourcePathCopied", {
-                      defaultValue: "已复制源文件路径",
-                    }),
-                  )
-                }
-              >
-                {t("sessionManager.copySourcePath", {
-                  defaultValue: "复制源文件路径",
-                })}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                onSelect={onReload}
-              >
-                {t("sessionManager.reload", { defaultValue: "重新读取" })}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className={cn(
-                  sessionMenuItemClass,
-                  deletable ? "text-danger-text" : "text-fg-3",
-                )}
-                disabled={!deletable}
-                onSelect={onDelete}
-              >
-                {t("sessionManager.deleteEllipsis", {
-                  defaultValue: "删除…",
-                })}
-              </DropdownMenuItem>
-              {!deletable && session.providerId === "mcode" && (
-                <p className="px-2.5 pb-1.5 text-caption text-fg-2">
-                  {t("sessionManager.mcodeDeleteHint", {
-                    defaultValue: "请在 MiniMax Code 中删除",
-                  })}
-                </p>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
 
         {noResumeReason && (
           <p
             id="session-resume-note"
-            className="m-0 mt-2 ps-[30px] text-caption text-fg-2"
+            className="m-0 mb-1 text-caption text-fg-2"
           >
             {noResumeReason}
           </p>

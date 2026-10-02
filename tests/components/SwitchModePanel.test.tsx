@@ -227,6 +227,86 @@ describe("SwitchModePanel — Stack mode", () => {
   });
 });
 
+describe("SwitchModePanel — mode layer", () => {
+  function captureTakeover() {
+    const calls: unknown[] = [];
+    server.use(
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_takeover_for_app`,
+        async ({ request }) => {
+          calls.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+    return calls;
+  }
+
+  it("starts Stack from a preview row with that provider as the fixed default", async () => {
+    mockMode("direct", null);
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+    );
+    const calls = captureTakeover();
+    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    // 名单的添加照旧能点；没有不能点的「设为默认」
+    expect(await screen.findByTestId("add-kimi")).not.toBeDisabled();
+    expect(screen.queryByTestId("setDefault-kimi")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("startStackFrom-kimi"));
+
+    expect(await screen.findByText("mode.dialog.stackTitle")).toBeVisible();
+    // 默认那家就是点的这家，框里不再让选
+    expect(screen.getByTestId("stack-default")).toHaveTextContent("kimi");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() =>
+      expect(calls).toEqual([
+        { appType: "claude", enabled: true, stack: true, route: "kimi" },
+      ]),
+    );
+  });
+
+  it("enters routing without an acknowledgement checkbox", async () => {
+    mockMode("direct", null);
+    const calls = captureTakeover();
+    renderPanel("claude", { a: provider("a"), b: provider("b") });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /mode\.names\.route/ }),
+    );
+    fireEvent.click(await screen.findByTestId("startRouteFrom-b"));
+    expect(await screen.findByText("mode.dialog.routeTitle")).toBeVisible();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    const confirm = screen.getByText("mode.dialog.confirmRoute");
+    expect(confirm.closest("button")).not.toBeDisabled();
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(calls).toEqual([
+        { appType: "claude", enabled: true, stack: false, route: "b" },
+      ]),
+    );
+  });
+
+  it("shows only the route target in the status line, not the local address", async () => {
+    mockMode("route", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
+        HttpResponse.json({ running: true, address: "127.0.0.1", port: 15721 }),
+      ),
+    );
+    renderPanel("gemini", { route: provider("route") });
+
+    expect(await screen.findByText("→ route")).toBeInTheDocument();
+    expect(screen.queryByText(/15721/)).not.toBeInTheDocument();
+  });
+});
+
 describe("SwitchModePanel — tray needs-route request", () => {
   it("opens the same needs-routing dialog once the provider is there", async () => {
     mockMode("direct", null);

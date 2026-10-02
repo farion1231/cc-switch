@@ -349,7 +349,7 @@ export function ProviderList({
 
   if (isLoading) {
     return (
-      <div className="space-y-2">
+      <div className="max-w-content space-y-2">
         {[0, 1, 2].map((index) => (
           <div
             key={index}
@@ -362,7 +362,7 @@ export function ProviderList({
 
   if (sortedProviders.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className="max-w-content space-y-4">
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -408,8 +408,9 @@ export function ProviderList({
     />
   );
 
+  // 宽窗口下卡片列表限宽（max-w-content = 1040px），靠左和页头左边缘对齐
   return (
-    <div className="space-y-4">
+    <div className="max-w-content space-y-4">
       {piStateErrorNotice}
       <AnimatePresence>
         {isSearchOpen && (

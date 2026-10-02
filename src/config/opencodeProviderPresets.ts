@@ -298,7 +298,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Kimi",
     family: "kimi",
-    versionKey: "paygCn",
+    planKey: "payg",
+    regionKey: "cn",
     primePartner: true,
     websiteUrl:
       "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
@@ -348,7 +349,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Kimi Global",
     family: "kimi",
-    versionKey: "paygIntl",
+    planKey: "payg",
+    regionKey: "intl",
     websiteUrl:
       "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
@@ -396,7 +398,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Kimi For Coding",
     family: "kimi",
-    versionKey: "codingCn",
+    planKey: "coding",
+    regionKey: "cn",
     primePartner: true,
     websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
@@ -433,7 +436,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Kimi For Coding Global",
     family: "kimi",
-    versionKey: "codingIntl",
+    planKey: "coding",
+    regionKey: "intl",
     websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
     apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
     settingsConfig: {
@@ -1097,7 +1101,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "火山 Agent Plan",
     family: "volcengine",
-    versionKey: "agentPlan",
+    planKey: "agentPlan",
     websiteUrl:
       "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
@@ -1132,7 +1136,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "火山 Coding Plan",
     family: "volcengine",
-    versionKey: "codingPlan",
+    planKey: "codingPlan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -1200,7 +1204,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Volcengine Doubao",
     family: "volcengine",
-    versionKey: "payg",
+    planKey: "payg",
     nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
@@ -1748,7 +1752,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Zhipu GLM",
     family: "zhipu",
-    versionKey: "cn",
+    regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     settingsConfig: {
@@ -1788,7 +1792,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Zhipu GLM en",
     family: "zhipu",
-    versionKey: "intl",
+    regionKey: "intl",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
@@ -1834,7 +1838,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     // 表内、但 /plan/v3/models 收录且真 Key 实测可用（2026-08-31），照实收
     name: "Tencent Token Plan",
     family: "tencent",
-    versionKey: "tokenPlanCn",
+    planKey: "tokenPlan",
+    regionKey: "cn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
     settingsConfig: {
@@ -1880,7 +1885,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     // tencentcloudmaas.com 域；Key 按站独立不跨站通用
     name: "Tencent Token Plan (Intl)",
     family: "tencent",
-    versionKey: "tokenPlanIntl",
+    planKey: "tokenPlan",
+    regionKey: "intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
     settingsConfig: {
@@ -1922,7 +1928,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     // 但真 Key 实测仍可用（2026-08-31），照实收录
     name: "Tencent Token Plan Enterprise Pro",
     family: "tencent",
-    versionKey: "enterpriseProCn",
+    planKey: "enterprisePro",
+    regionKey: "cn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
     settingsConfig: {
@@ -1974,7 +1981,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
     name: "Tencent Token Plan Enterprise Pro (Intl)",
     family: "tencent",
-    versionKey: "enterpriseProIntl",
+    planKey: "enterprisePro",
+    regionKey: "intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
     settingsConfig: {
@@ -2020,7 +2028,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
     name: "Tencent Token Plan Enterprise Lite",
     family: "tencent",
-    versionKey: "enterpriseLiteCn",
+    planKey: "enterpriseLite",
+    regionKey: "cn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
     settingsConfig: {
@@ -2056,7 +2065,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     // Global），仅 Auto 模型
     name: "Tencent Token Plan Enterprise Lite (Intl)",
     family: "tencent",
-    versionKey: "enterpriseLiteIntl",
+    planKey: "enterpriseLite",
+    regionKey: "intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
     settingsConfig: {
@@ -2130,7 +2140,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "千问AI平台",
     family: "qianwen",
-    versionKey: "payg",
+    planKey: "payg",
     websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
@@ -2175,7 +2185,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "千问AI平台 Token Plan",
     family: "qianwen",
-    versionKey: "tokenPlan",
+    planKey: "tokenPlan",
     websiteUrl:
       "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
     apiKeyUrl:
@@ -2228,7 +2238,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "QwenCloud",
     family: "qwencloud",
-    versionKey: "payg",
+    planKey: "payg",
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
@@ -2273,7 +2283,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "QwenCloud For Coding",
     family: "qwencloud",
-    versionKey: "coding",
+    planKey: "coding",
     websiteUrl: "https://www.qwencloud.com",
     apiKeyUrl: "https://home.qwencloud.com/api-keys",
     settingsConfig: {
@@ -2312,7 +2322,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "QwenCloud Token Plan",
     family: "qwencloud",
-    versionKey: "tokenPlan",
+    planKey: "tokenPlan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
@@ -2361,7 +2371,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "StepFun",
     family: "stepfun",
-    versionKey: "cn",
+    regionKey: "cn",
     websiteUrl: "https://platform.stepfun.com/step-plan",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
     settingsConfig: {
@@ -2407,7 +2417,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "StepFun en",
     family: "stepfun",
-    versionKey: "intl",
+    regionKey: "intl",
     websiteUrl: "https://platform.stepfun.ai/step-plan",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
     settingsConfig: {
@@ -2599,7 +2609,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "MiniMax",
     family: "minimax",
-    versionKey: "cn",
+    regionKey: "cn",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
@@ -2637,7 +2647,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "MiniMax en",
     family: "minimax",
-    versionKey: "intl",
+    regionKey: "intl",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
     settingsConfig: {
@@ -2700,7 +2710,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Xiaomi MiMo",
     family: "xiaomi-mimo",
-    versionKey: "payg",
+    planKey: "payg",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     settingsConfig: {
@@ -2753,7 +2763,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Xiaomi MiMo Token Plan (China)",
     family: "xiaomi-mimo",
-    versionKey: "tokenPlan",
+    planKey: "tokenPlan",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     settingsConfig: {

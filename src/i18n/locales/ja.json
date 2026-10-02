@@ -355,8 +355,8 @@
       "sidebarAndHeader": "サイドバーとヘッダー",
       "visibleApps": "サイドバーに表示するアプリ",
       "goToApps": "「アプリ」を開く",
-      "updates": "アプリの更新",
-      "checkToolUpdates": "起動時にアプリの更新を確認",
+      "updates": "各アプリの新しいバージョン",
+      "checkToolUpdates": "起動時に各アプリの新しいバージョンを確認",
       "checkToolUpdatesHelp": "オンにすると、CC Switch の起動時にインストール済みのコマンドラインアプリの新しいバージョンを確認し、見つかればサイドバーの「アプリ」に点を表示します。自動でアップグレードはしません。",
       "windowAndTerminal": "ウィンドウとターミナル",
       "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
@@ -1576,7 +1576,24 @@
   "managedAuth": {
     "accountRemoved": "アカウントを削除しました",
     "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",
-    "selectedAccountUnavailable": "リンクされたアカウントが存在しないか、再ログインが必要です。別のアカウントを選択してください"
+    "selectedAccountUnavailable": "リンクされたアカウントが存在しないか、再ログインが必要です。別のアカウントを選択してください",
+    "usedBy": "{{count}} 件のプロバイダーが使用中",
+    "usedByTitle": "使用中のプロバイダー：{{names}}",
+    "remove": {
+      "titleOne": "アカウント「{{login}}」を削除しますか？",
+      "titleAll": "{{service}} のアカウントをすべて削除しますか？",
+      "leadOne": "CC Switch に保存されているこのアカウントのログイン情報を削除します。元に戻せません。",
+      "leadAll": "CC Switch に保存されているこれら {{count}} 件のアカウントのログイン情報を削除します。元に戻せません。",
+      "brokenOne": "次のプロバイダーは、再ログインするか別のアカウントを選ぶまで使えなくなります：",
+      "brokenAll": "次のプロバイダーは、再ログインするまで使えなくなります：",
+      "moved": "次のプロバイダーはデフォルトのアカウントを使っているため、新しいデフォルトのアカウントに切り替わります：",
+      "noneOne": "このアカウントを使っているプロバイダーはありません。",
+      "noneAll": "これらのアカウントを使っているプロバイダーはありません。",
+      "confirmOne": "アカウントを削除",
+      "confirmAll": "{{count}} 件のアカウントを削除",
+      "appSeparator": "：",
+      "nameSeparator": "、"
+    }
   },
   "endpointTest": {
     "title": "API エンドポイント管理",
@@ -1805,32 +1822,28 @@
       "volcengine": "Volcengine",
       "tencent": "Tencent Cloud"
     },
-    "version": {
+    "version": {},
+    "switchVersionTitle": "{{version}} に切り替えますか？",
+    "switchVersionMessage": "フォームは新しいバージョンの内容で入力し直され、入力済みの API Key やその他の変更は消去されます。",
+    "switchVersionConfirm": "切り替える",
+    "plan": {
       "payg": "従量課金",
-      "paygCn": "従量課金 · 中国",
-      "paygIntl": "従量課金 · グローバル",
       "coding": "コーディングサブスク",
-      "codingCn": "コーディングサブスク · 中国",
-      "codingIntl": "コーディングサブスク · グローバル",
-      "cn": "中国",
-      "intl": "グローバル",
-      "agentPlan": "Agent Plan",
       "codingPlan": "Coding Plan",
+      "agentPlan": "Agent Plan",
       "tokenPlan": "Token Plan",
-      "tokenPlanCn": "Token Plan · 中国",
-      "tokenPlanIntl": "Token Plan · グローバル",
-      "enterpriseLiteCn": "Enterprise Lite · 中国",
-      "enterpriseLiteIntl": "Enterprise Lite · グローバル",
-      "enterpriseProCn": "Enterprise Pro · 中国",
-      "enterpriseProIntl": "Enterprise Pro · グローバル",
-      "stepPlanCn": "Step Plan · 中国",
-      "stepPlanIntl": "Step Plan · グローバル",
+      "enterpriseLite": "Enterprise Lite",
+      "enterprisePro": "Enterprise Pro",
+      "stepPlan": "Step Plan",
       "aksk": "AKSK",
       "apiKey": "API Key"
     },
-    "switchVersionTitle": "{{version}} に切り替えますか？",
-    "switchVersionMessage": "フォームは新しいバージョンの内容で入力し直され、入力済みの API Key やその他の変更は消去されます。",
-    "switchVersionConfirm": "切り替える"
+    "region": {
+      "cn": "中国",
+      "intl": "グローバル"
+    },
+    "planLabel": "プラン",
+    "regionLabel": "地域"
   },
   "usage": {
     "title": "利用統計",
@@ -2084,8 +2097,7 @@
       "requests": "リクエスト",
       "tokens": "Tokens",
       "cost": "コスト",
-      "requestsLegend": "リクエスト数",
-      "costLine": "コスト（右軸）"
+      "requestsLegend": "リクエスト数"
     },
     "tabs": {
       "label": "明細",
@@ -3773,7 +3785,7 @@
     "queueMoved": "{{name}} を {{position}} 番目に移動しました。",
     "status": {
       "directLead": "直接接続が有効 · 接続先",
-      "routeLead": "ルーティングが有効 ·",
+      "routeLead": "ルーティングが有効",
       "byQueue": "キュー順",
       "stackLead": "Stack が有効 · 既定",
       "stackValue": "{{name}} · ほか {{count}} 社、{{models}} モデル"
@@ -3804,10 +3816,6 @@
       "switchTitle": "{{app}} を「{{from}}」から「{{to}}」に切り替えますか？",
       "routeLead": "リクエストはまずこのマシンの CC Switch を経由し、選んだプロバイダーに転送されます。",
       "stackLead": "既定のプロバイダーがプレフィックスなしのリクエストを受けます。",
-      "switchLead": "{{app}} をいったん直接接続に戻し、「{{to}}」で接続し直します：",
-      "stepDirect": "直接接続の設定を書き戻す（{{provider}}）",
-      "stepRoute": "ルーティングで接続し、下で選んだプロバイダーへ転送",
-      "stepStack": "Stack で接続し、下で選んだプロバイダーを既定にする",
       "routeTo": "転送先",
       "stackDefault": "既定のプロバイダー",
       "officialOption": "{{name}}（公式）",
@@ -3820,14 +3828,18 @@
       "stackNoteRestart": "{{app}} を再起動すると Stack のモデルが表示されます。",
       "stackNoteRestartCodex": "{{app}} を再起動すると Stack のモデルが表示されます。デスクトップ版は完全に終了してから開き直してください。",
       "stackToRouteNote": "Stack のモデルは /model から外れます（リストは保持）。選択中の Stack モデルは通常のモデルに戻す必要があります。",
-      "ack": "ルーティングが上級者向け機能であることを理解しました（初回のみ）",
-      "ackRequired": "先にチェックを入れてください。",
       "confirmRoute": "ルーティングを開始",
       "confirmStack": "Stack に切り替え",
       "needsRouteTitle": "{{provider}} にはルーティングが必要です",
       "needsRouteLead": "{{provider}}：{{reason}}。直接接続で切り替えると {{app}} では使えません。",
       "switchAnyway": "それでも直接切り替える",
       "routeAndUse": "ルーティングを開始して使う"
+    },
+    "help": {
+      "title": "接続モードの違い",
+      "direct": "直接接続：クライアントが選んだプロバイダーに直接つながります。切り替えると設定を書き換えます。",
+      "route": "ルーティング：リクエストはまずこのマシンの CC Switch を通ります。フェイルオーバーを使えます。",
+      "stack": "Stack：複数のプロバイダーのモデルを /model に並べます。フェイルオーバーはしません。"
     }
   },
   "providerCard": {
@@ -3836,8 +3848,6 @@
       "routing": "転送中",
       "currentDefault": "現在の既定",
       "defaultAfterSwitch": "切り替え後の既定",
-      "added": "追加済み",
-      "enabled": "有効",
       "current": "現在",
       "default": "既定"
     },
@@ -3856,7 +3866,8 @@
       "edit": "{{name}} を編集",
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
-      "moveDown": "{{name}} を下へ"
+      "moveDown": "{{name}} を下へ",
+      "startStackFrom": "ここを既定にして Stack を開始…"
     },
     "chip": {
       "official": "公式",
@@ -3875,7 +3886,6 @@
       "noRoute": "公式サブスクリプションはルーティングを通りません。直接接続に戻すと使えます。",
       "noStack": "公式サブスクリプションは Stack では使えません。",
       "officialStack": "公式アカウントは既定にだけでき、Stack には追加できません。",
-      "stackLater": "Stack に切り替えてから既定を設定できます。",
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
       "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。"
@@ -3895,7 +3905,7 @@
       "addedHelp": "追加したプロバイダーはすべて {{app}} の設定に書き込まれます。モデルは {{app}} の中で選びます。",
       "addedEmpty": "まだプロバイダーを追加していません。",
       "available": "追加できるもの · {{count}}",
-      "stackNoDefault": "既定にできるプロバイダーがまだありません。切り替え時の確認で選んでください。"
+      "stackNoDefault": "既定のプロバイダーはまだありません。下から選んで「ここを既定にして Stack を開始…」を押してください。"
     }
   },
   "desktopAccess": {
@@ -4159,8 +4169,6 @@
     "noun": "Skill",
     "helpTitle": "Skills の同期のしくみ",
     "help": "本体は CC Switch のフォルダーに置き、チェックしたアプリへ同期します。Claude Desktop と OpenClaw は Skills 非対応のため列がありません。",
-    "headerCount": "インストール済み {{count}}",
-    "headerCountUpdates": "インストール済み {{count}} · 更新あり {{updates}}",
     "add": "Skill を追加",
     "addMenu": {
       "discover": "「見つける」で探す",
@@ -4182,10 +4190,7 @@
       "unmanaged": "このコンピューターに CC Switch の管理外の Skill が {{count}} 件あります。",
       "reviewImport": "確認して取り込む",
       "ignore": "無視",
-      "close": "閉じる",
-      "updates": "{{count}} 件の Skill に更新があります",
-      "updatesChecked": "{{count}} 件の Skill に更新があります · 前回の確認 {{when}}",
-      "updateAll": "すべて更新…"
+      "close": "閉じる"
     },
     "filter": {
       "all": "すべて",
@@ -4266,7 +4271,6 @@
       "skillsShNone": "skills.sh で「{{query}}」は見つかりませんでした",
       "sourceAria": "探す場所",
       "sourceRepos": "リポジトリ · {{count}}",
-      "statusAria": "インストール状態で絞り込み",
       "reload": "リポジトリを読み直す",
       "listLabel": "インストールできる Skill",
       "installed": "インストール済み · {{count}} アプリ",
@@ -4282,7 +4286,8 @@
       "noneReadBody": "{{count}} 件のリポジトリのどれからも Skill を読み込めませんでした。ネットワークの問題か GitHub の制限かもしれません。",
       "manageRepos": "リポジトリを管理",
       "allInstalled": "これらのリポジトリの Skill はすべてインストール済みです",
-      "showAll": "すべて表示"
+      "showAll": "すべて表示",
+      "onlyUninstalled": "未インストールのみ"
     },
     "repos": {
       "buttonAll": "リポジトリ：すべて",
@@ -4320,6 +4325,13 @@
       "item": "{{repo}}（{{reason}}）",
       "discoverBody": "一覧が不完全な可能性があります。",
       "updatesBody": "これらのリポジトリの Skill は確認されていないため、結果が不完全な可能性があります。"
-    }
+    },
+    "headerUpdates": "{{count}} 件の更新",
+    "headerUpdatesShow": "更新がある Skill だけを表示",
+    "headerUpdatesClear": "すべての Skill を表示",
+    "updateAllCount": "すべて更新（{{count}} 件）…"
+  },
+  "coach": {
+    "newLayout": "画面が新しくなりました：モードは各アプリのページ上部に、使用量とアカウントはサイドバーにあります。"
   }
 }

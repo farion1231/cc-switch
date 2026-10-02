@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +20,7 @@ import {
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { HelpTip } from "@/components/ui/help-tip";
+import { PageTabs } from "@/components/ui/page-tabs";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -180,12 +180,6 @@ export function UsageDashboard({
   );
   const { data: lastScanAt } = useSessionUsageLastSync();
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
-  const tabRefs = useRef<Record<UsageTab, HTMLButtonElement | null>>({
-    logs: null,
-    providers: null,
-    models: null,
-    pricing: null,
-  });
   const [containerRef, measuredWidth] = useContainerWidth<HTMLDivElement>();
   const now = useMinuteTicker();
 
@@ -679,23 +673,6 @@ export function UsageDashboard({
     models: t("usage.tabs.models"),
     pricing: t("usage.tabs.pricing"),
   };
-  const goTab = (next: UsageTab) => {
-    setTab(next);
-    tabRefs.current[next]?.focus();
-  };
-  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const index = TABS.indexOf(tab);
-    let next = -1;
-    if (event.key === "ArrowRight") next = (index + 1) % TABS.length;
-    else if (event.key === "ArrowLeft")
-      next = (index - 1 + TABS.length) % TABS.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = TABS.length - 1;
-    if (next < 0) return;
-    event.preventDefault();
-    goTab(TABS[next]);
-  };
-
   const statusLabel =
     statusCode == null
       ? t("usage.statusFilter.all")
@@ -796,43 +773,15 @@ export function UsageDashboard({
       />
 
       <section aria-label={t("usage.tabs.label")} className="flex flex-col">
-        <div className="flex h-9 items-end gap-4 border-b border-border">
-          <div
-            role="tablist"
-            aria-label={t("usage.tabs.label")}
-            className="flex h-full items-end gap-4"
-          >
-            {TABS.map((id) => {
-              const selected = tab === id;
-              return (
-                <button
-                  key={id}
-                  ref={(element) => {
-                    tabRefs.current[id] = element;
-                  }}
-                  type="button"
-                  role="tab"
-                  id={`usage-tab-${id}`}
-                  aria-selected={selected}
-                  aria-controls="usage-tabpanel"
-                  tabIndex={selected ? 0 : -1}
-                  onClick={() => setTab(id)}
-                  onKeyDown={onTabKeyDown}
-                  className={cn(
-                    "-mb-px h-full whitespace-nowrap border-b-2 px-0.5 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    selected
-                      ? "border-fg-1 font-semibold text-fg-1"
-                      : "border-transparent font-medium text-fg-2 hover:text-fg-1",
-                  )}
-                >
-                  {tabLabel[id]}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex-1" />
-          <div className="flex h-full items-center">{tabTrailing}</div>
-        </div>
+        <PageTabs<UsageTab>
+          aria-label={t("usage.tabs.label")}
+          items={TABS.map((id) => ({ value: id, label: tabLabel[id] }))}
+          value={tab}
+          onValueChange={setTab}
+          idPrefix="usage-tab"
+          controls="usage-tabpanel"
+          trailing={tabTrailing}
+        />
 
         <div
           role="tabpanel"
@@ -910,7 +859,8 @@ export function UsageDashboard({
         title={t("usage.rebuildCodex.confirmTitle")}
         message={t("usage.rebuildCodex.confirmMessage")}
         confirmText={t("usage.rebuildCodex.confirmAction")}
-        variant="destructive"
+        // 重建前会自动备份数据库，可从备份恢复：不算不可撤销，不用红色确认键
+        variant="info"
         zIndex="top"
         onConfirm={() => void rebuildCodexUsage()}
         onCancel={() => setShowRebuildConfirm(false)}

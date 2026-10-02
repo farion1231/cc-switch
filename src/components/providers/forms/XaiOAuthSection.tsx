@@ -24,6 +24,12 @@ import {
 } from "@/components/ui/select";
 import { copyText } from "@/lib/clipboard";
 import { useXaiOauth } from "./hooks/useXaiOauth";
+import {
+  ManagedAccountRemoveDialog,
+  ManagedAccountUsage,
+  type ManagedAccountRemoveTarget,
+} from "./ManagedAccountRemoveDialog";
+import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 
 interface XaiOAuthSectionProps {
   className?: string;
@@ -56,6 +62,9 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     cancelAuth,
     logout,
   } = useXaiOauth();
+  const accountUsers = useManagedAccountUsers("xai_oauth", defaultAccountId);
+  const [removeTarget, setRemoveTarget] =
+    React.useState<ManagedAccountRemoveTarget | null>(null);
 
   const usableAccounts = accounts.filter((account) => !account.requires_reauth);
 
@@ -66,11 +75,27 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     setTimeout(() => setCopied(false), 2_000);
   };
 
-  const remove = (accountId: string, event: React.MouseEvent) => {
+  // 删账号先确认：确认框里列出在用它的供应商
+  const remove = (
+    accountId: string,
+    login: string,
+    event: React.MouseEvent,
+  ) => {
     event.preventDefault();
     event.stopPropagation();
-    removeAccount(accountId);
-    if (selectedAccountId === accountId) onAccountSelect?.(null);
+    setRemoveTarget({ kind: "one", accountId, login });
+  };
+
+  const confirmRemove = () => {
+    const target = removeTarget;
+    setRemoveTarget(null);
+    if (!target) return;
+    if (target.kind === "all") {
+      logout();
+      return;
+    }
+    removeAccount(target.accountId);
+    if (selectedAccountId === target.accountId) onAccountSelect?.(null);
   };
 
   return (
@@ -180,6 +205,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                       {t("xaiOauth.expired", "凭据已失效")}
                     </Badge>
                   )}
+                  <ManagedAccountUsage users={accountUsers([account.id])} />
                 </div>
                 <div className="flex items-center gap-1">
                   {!account.requires_reauth &&
@@ -201,7 +227,9 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                     size="icon"
                     className="h-7 w-7 text-fg-2 hover:text-danger-text"
                     disabled={isRemovingAccount}
-                    onClick={(event) => remove(account.id, event)}
+                    onClick={(event) =>
+                      remove(account.id, account.login, event)
+                    }
                     title={t("xaiOauth.removeAccount", "移除账号")}
                   >
                     <X className="h-4 w-4" />
@@ -313,12 +341,35 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           type="button"
           variant="outline"
           className="w-full text-danger-text hover:text-danger-text"
-          onClick={logout}
+          onClick={() =>
+            setRemoveTarget({
+              kind: "all",
+              accountIds: accounts.map((account) => account.id),
+            })
+          }
         >
           <LogOut className="mr-2 h-4 w-4" />
           {t("xaiOauth.logoutAll", "移除所有 xAI 账号")}
         </Button>
       )}
+
+      <ManagedAccountRemoveDialog
+        target={removeTarget}
+        serviceName="xAI"
+        users={
+          removeTarget
+            ? accountUsers(
+                removeTarget.kind === "one"
+                  ? [removeTarget.accountId]
+                  : removeTarget.accountIds,
+              )
+            : []
+        }
+        othersRemain={accounts.length > 1}
+        pending={isRemovingAccount}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 };

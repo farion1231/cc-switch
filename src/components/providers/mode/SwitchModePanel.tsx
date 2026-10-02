@@ -228,6 +228,8 @@ export function SwitchModePanel({
       routeTo: (provider: Provider) => void onSwitch(provider),
       startRouteFrom: (provider: Provider) =>
         setDialog({ kind: "enter", target: "route", pick: provider.id }),
+      startStackFrom: (provider: Provider) =>
+        setDialog({ kind: "enter", target: "stack", pick: provider.id }),
       queueAdd: (provider: Provider) =>
         addToQueue.mutate({ appType: app, providerId: provider.id }),
       queueRemove: (provider: Provider) =>
@@ -254,7 +256,7 @@ export function SwitchModePanel({
     },
   };
 
-  // 状态行：只在看生效的那格时显示
+  // 状态行：只在看生效的那格时显示；路由只写目标，不写本机地址和端口
   const routeTarget = failoverOn ? t("mode.status.byQueue") : nameOf(routeId);
   const otherMembers = (stack?.members ?? []).filter(
     (member) => member.providerId !== routeId,
@@ -271,7 +273,7 @@ export function SwitchModePanel({
         : active === "route"
           ? {
               lead: t("mode.status.routeLead"),
-              value: `${proxyStatus?.address ?? "127.0.0.1"}:${proxyStatus?.port ?? ""} → ${routeTarget}`,
+              value: `→ ${routeTarget}`,
             }
           : {
               lead: t("mode.status.stackLead"),
@@ -311,13 +313,7 @@ export function SwitchModePanel({
   const enterMode = async (
     target: Exclude<AppMode, "direct">,
     pick: string,
-    acknowledged: boolean,
   ) => {
-    if (acknowledged && !settings?.proxyConfirmed) {
-      const current = await settingsApi.get();
-      await settingsApi.save({ ...current, proxyConfirmed: true });
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
-    }
     await modeActions.enter(target, pick, providers[pick]?.name);
   };
 
@@ -507,7 +503,7 @@ export function SwitchModePanel({
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-3"
       >
         {notices.length > 0 && (
-          <div role="status" className="mb-3 flex flex-col gap-2">
+          <div role="status" className="mb-3 flex max-w-content flex-col gap-2">
             {notices}
           </div>
         )}
@@ -528,7 +524,6 @@ export function SwitchModePanel({
         active={active}
         providers={providerList}
         eligibleIds={eligibleIds}
-        directProviderName={nameOf(directId)}
         defaultPick={{
           route: routeId,
           stack: active === "stack" ? routeId : (routeId ?? directId),
@@ -537,7 +532,6 @@ export function SwitchModePanel({
           name: nameOf(member.providerId),
           models: member.modelIds.length,
         }))}
-        needsAck={!settings?.proxyConfirmed}
         onClose={() => setDialog(null)}
         onEnter={enterMode}
         onSwitchDirect={(providerId) => {

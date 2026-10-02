@@ -134,6 +134,8 @@ export function AppsPage() {
 
   const visibilitySwitch = (app: AppId) => (
     <Switch
+      size="sm"
+      tone="neutral"
       checked={visibleApps[app]}
       disabled={!settings || (visibleApps[app] && visibleCount <= 1)}
       onCheckedChange={(checked) => setVisible(app, checked)}

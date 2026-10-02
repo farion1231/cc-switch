@@ -845,3 +845,18 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
   });
 });
+
+describe("AppsPage visibility column", () => {
+  it("renders the sidebar visibility switches small and neutral", async () => {
+    vi.resetModules();
+    await renderApps();
+    const switches = screen.getAllByRole("switch", {
+      name: /appsPage\.showInSidebar/,
+    });
+    expect(switches.length).toBeGreaterThan(0);
+    for (const element of switches) {
+      expect(element).toHaveAttribute("data-size", "sm");
+      expect(element).toHaveAttribute("data-tone", "neutral");
+    }
+  });
+});

@@ -796,82 +796,85 @@ export function SessionManagerPage({
       onKeyDown={handleRootKeyDown}
       onWheel={(event) => event.stopPropagation()}
     >
-      <AppPageHeader
-        icon={<History className="h-5 w-5" strokeWidth={1.5} />}
-        title={t("nav.sessions", { defaultValue: "会话" })}
-        titleExtra={
-          <HelpTip
-            title={t("sessionManager.helpTitle", {
-              defaultValue: "会话从哪里来",
-            })}
-          >
-            {t("sessionManager.helpBody", {
-              defaultValue:
-                "CC Switch 读取各个应用保存在本机的会话记录，位置见右上角 ⋯ 里的「会话记录在哪里」。Claude Desktop 没有单独的会话记录。",
-            })}
-          </HelpTip>
-        }
-        actions={
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="quiet"
-                size="icon-compact"
-                className="h-8 w-8"
-                aria-label={t("sessionManager.moreActions", {
-                  defaultValue: "会话的更多操作",
-                })}
-                title={t("common.more", { defaultValue: "更多" })}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-[196px] rounded-panel p-1 shadow-v7-md"
+      {/* 阅读页自己画页头（返回、会话名和会话的操作并在一条里），这里只在列表时画 */}
+      {!readerSession && (
+        <AppPageHeader
+          icon={<History className="h-5 w-5" strokeWidth={1.5} />}
+          title={t("nav.sessions", { defaultValue: "会话" })}
+          titleExtra={
+            <HelpTip
+              title={t("sessionManager.helpTitle", {
+                defaultValue: "会话从哪里来",
+              })}
             >
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                onSelect={() => void refreshList()}
+              {t("sessionManager.helpBody", {
+                defaultValue:
+                  "CC Switch 读取各个应用保存在本机的会话记录，位置见右上角 ⋯ 里的「会话记录在哪里」。Claude Desktop 没有单独的会话记录。",
+              })}
+            </HelpTip>
+          }
+          actions={
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  className="h-8 w-8"
+                  aria-label={t("sessionManager.moreActions", {
+                    defaultValue: "会话的更多操作",
+                  })}
+                  title={t("common.more", { defaultValue: "更多" })}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-[196px] rounded-panel p-1 shadow-v7-md"
               >
-                {t("sessionManager.refreshList", {
-                  defaultValue: "刷新列表",
-                })}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                onSelect={() => {
-                  enterSelection();
-                  focusSoon(["session-search"]);
-                }}
-              >
-                {t("sessionManager.selectMany", {
-                  defaultValue: "选择多个…",
-                })}
-              </DropdownMenuItem>
-              {onOpenTerminalSettings && (
                 <DropdownMenuItem
                   className={sessionMenuItemClass}
-                  onSelect={onOpenTerminalSettings}
+                  onSelect={() => void refreshList()}
                 >
-                  {t("sessionManager.preferredTerminal", {
-                    defaultValue: "首选终端…",
+                  {t("sessionManager.refreshList", {
+                    defaultValue: "刷新列表",
                   })}
                 </DropdownMenuItem>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className={sessionMenuItemClass}
-                onSelect={() => setWhereOpen(true)}
-              >
-                {t("sessionManager.whereMenu", {
-                  defaultValue: "会话记录在哪里…",
-                })}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        }
-      />
+                <DropdownMenuItem
+                  className={sessionMenuItemClass}
+                  onSelect={() => {
+                    enterSelection();
+                    focusSoon(["session-search"]);
+                  }}
+                >
+                  {t("sessionManager.selectMany", {
+                    defaultValue: "选择多个…",
+                  })}
+                </DropdownMenuItem>
+                {onOpenTerminalSettings && (
+                  <DropdownMenuItem
+                    className={sessionMenuItemClass}
+                    onSelect={onOpenTerminalSettings}
+                  >
+                    {t("sessionManager.preferredTerminal", {
+                      defaultValue: "首选终端…",
+                    })}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className={sessionMenuItemClass}
+                  onSelect={() => setWhereOpen(true)}
+                >
+                  {t("sessionManager.whereMenu", {
+                    defaultValue: "会话记录在哪里…",
+                  })}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }
+        />
+      )}
 
       <div id="main-content" className="flex min-h-0 flex-1 flex-col">
         {readerSession && (

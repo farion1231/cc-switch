@@ -185,7 +185,6 @@ export function UsageDataSourcesSheet({
                 type="button"
                 variant="neutral"
                 size="compact"
-                className="text-danger-text"
                 disabled={rebuildingCodex}
                 onClick={onRebuildCodex}
               >

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
 import type { ProviderCategory } from "@/types";
 import {
@@ -20,9 +20,16 @@ import {
   domainBody,
   groupPresetRows,
   presetGroup,
+  presetVersionLayout,
+  sectionPresetRows,
 } from "@/components/providers/forms/presetGroups";
 import { providerPresets } from "@/config/claudeProviderPresets";
-import { PRESET_FAMILIES, PRESET_VERSION_KEYS } from "@/config/presetFamilies";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  PRESET_FAMILIES,
+  PRESET_PLAN_KEYS,
+  PRESET_REGION_KEYS,
+} from "@/config/presetFamilies";
 import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import en from "@/i18n/locales/en.json";
@@ -88,31 +95,77 @@ const entries: PresetEntry[] = [
   },
 ];
 
-// 同一家的三个版本（按预设文件顺序；显示时按 versionOrder 排），外加一个单独的预设
+// 同一家的四个版本：套餐 × 地区成完整网格（文件顺序故意打乱；显示时按 planOrder 排）
 const kimiEntries: PresetEntry[] = [
   {
     id: "kimi-cn",
     preset: preset("Kimi", "cn_official", "https://platform.kimi.com", {
       family: "kimi",
-      versionKey: "paygCn",
-    }),
-  },
-  {
-    id: "kimi-intl",
-    preset: preset("Kimi Global", "cn_official", "https://platform.kimi.ai", {
-      family: "kimi",
-      versionKey: "paygIntl",
+      planKey: "payg",
+      regionKey: "cn",
     }),
   },
   {
     id: "kimi-coding",
     preset: preset("Kimi For Coding", "cn_official", "https://www.kimi.com", {
       family: "kimi",
-      versionKey: "codingCn",
+      planKey: "coding",
+      regionKey: "cn",
     }),
+  },
+  {
+    id: "kimi-intl",
+    preset: preset("Kimi Global", "cn_official", "https://platform.kimi.ai", {
+      family: "kimi",
+      planKey: "payg",
+      regionKey: "intl",
+    }),
+  },
+  {
+    id: "kimi-coding-intl",
+    preset: preset(
+      "Kimi For Coding Global",
+      "cn_official",
+      "https://www.kimi.com",
+      { family: "kimi", planKey: "coding", regionKey: "intl" },
+    ),
   },
 ];
 const familyEntries: PresetEntry[] = [...entries, ...kimiEntries];
+
+// 只在一个维度上变化的一家（智谱：国内 / 海外）
+const zhipuFamily: PresetEntry[] = [
+  {
+    id: "glm-cn",
+    preset: preset("GLM", "cn_official", "https://open.bigmodel.cn", {
+      family: "zhipu",
+      regionKey: "cn",
+    }),
+  },
+  {
+    id: "glm-intl",
+    preset: preset("GLM en", "cn_official", "https://z.ai", {
+      family: "zhipu",
+      regionKey: "intl",
+    }),
+  },
+];
+
+// 两维都变但缺格子（腾讯在 Codex 里多一个只有国内的按量付费）
+const tencentPartial: PresetEntry[] = [
+  ["tp-cn", "tokenPlan", "cn"],
+  ["tp-intl", "tokenPlan", "intl"],
+  ["pro-cn", "enterprisePro", "cn"],
+  ["pro-intl", "enterprisePro", "intl"],
+  ["hunyuan", "payg", "cn"],
+].map(([id, planKey, regionKey]) => ({
+  id,
+  preset: preset(`Tencent ${id}`, "cn_official", "https://cloud.tencent.com", {
+    family: "tencent",
+    planKey,
+    regionKey,
+  }),
+}));
 
 describe("preset helpers", () => {
   it("groups presets from existing fields without touching category", () => {
@@ -150,10 +203,12 @@ describe("preset families", () => {
     const rows = groupPresetRows(familyEntries);
     expect(rows).toHaveLength(entries.length + 1);
     const kimi = rows.find((row) => row.family === "kimi");
+    // 先按套餐（planOrder），同一套餐里先国内后海外
     expect(kimi?.versions.map((entry) => entry.id)).toEqual([
       "kimi-cn",
-      "kimi-coding",
       "kimi-intl",
+      "kimi-coding",
+      "kimi-coding-intl",
     ]);
   });
 
@@ -164,9 +219,9 @@ describe("preset families", () => {
         hits,
       ]);
     expect(hits("kimi")).toEqual([["family:kimi", []]]);
-    expect(hits("coding")).toEqual([["family:kimi", [1]]]);
+    expect(hits("coding")).toEqual([["family:kimi", [2, 3]]]);
     // 带点的词可以命中某个版本自己的完整域名
-    expect(hits("kimi.ai")).toEqual([["family:kimi", [2]]]);
+    expect(hits("kimi.ai")).toEqual([["family:kimi", [1]]]);
     // 别名算整家命中
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
@@ -178,30 +233,94 @@ describe("preset families", () => {
     expect(groupPresetRows(claudeEntries)).toHaveLength(71);
   });
 
-  it("orders versions as the design does where a family says so", () => {
+  it("orders plans and regions as the design does where a family says so", () => {
     const claudeEntries = providerPresets
       .filter((item) => !item.hidden)
       .map((item, index) => ({ id: `claude-${index}`, preset: item }));
     const versionsOf = (family: string) =>
       groupPresetRows(claudeEntries)
         .find((row) => row.family === family)
-        ?.versions.map((entry) => entry.preset.versionKey);
+        ?.versions.map((entry) =>
+          [entry.preset.planKey, entry.preset.regionKey]
+            .filter(Boolean)
+            .join("|"),
+        );
     expect(versionsOf("kimi")).toEqual([
-      "paygCn",
-      "codingCn",
-      "paygIntl",
-      "codingIntl",
+      "payg|cn",
+      "payg|intl",
+      "coding|cn",
+      "coding|intl",
     ]);
-    expect(versionsOf("tencent")?.slice(2, 4)).toEqual([
-      "enterpriseLiteCn",
-      "enterpriseLiteIntl",
+    expect(versionsOf("tencent")).toEqual([
+      "tokenPlan|cn",
+      "tokenPlan|intl",
+      "enterpriseLite|cn",
+      "enterpriseLite|intl",
+      "enterprisePro|cn",
+      "enterprisePro|intl",
     ]);
-    // 没写 versionOrder 的保持文件顺序
+    // 没写 planOrder 的保持文件顺序
     expect(versionsOf("volcengine")).toEqual([
       "agentPlan",
       "codingPlan",
       "payg",
     ]);
+  });
+
+  it("lays out versions by plan × region: segments, a grid or a dropdown", () => {
+    const layoutOf = (
+      presets: PresetEntry["preset"][],
+      family: string,
+    ): ReturnType<typeof presetVersionLayout> | undefined => {
+      const row = groupPresetRows(
+        presets.map((item, index) => ({ id: `p-${index}`, preset: item })),
+      ).find((item) => item.family === family);
+      return row ? presetVersionLayout(row.versions) : undefined;
+    };
+    const claude = providerPresets.filter((item) => !item.hidden);
+
+    expect(layoutOf(claude, "kimi")).toEqual({
+      kind: "grid",
+      plans: ["payg", "coding"],
+      regions: ["cn", "intl"],
+    });
+    expect(layoutOf(claude, "tencent")).toEqual({
+      kind: "grid",
+      plans: ["tokenPlan", "enterpriseLite", "enterprisePro"],
+      regions: ["cn", "intl"],
+    });
+    // Codex 的腾讯多一个只有国内的混元：不成网格，用下拉
+    expect(layoutOf(codexProviderPresets, "tencent")).toEqual({
+      kind: "list",
+    });
+    expect(layoutOf(claude, "volcengine")).toEqual({
+      kind: "single",
+      dimension: "plan",
+    });
+    expect(layoutOf(claude, "zhipu")).toEqual({
+      kind: "single",
+      dimension: "region",
+    });
+    // 两维都没写：用域名区分
+    expect(layoutOf(claude, "sudocode")).toEqual({
+      kind: "single",
+      dimension: null,
+    });
+    expect(presetVersionLayout(tencentPartial)).toEqual({ kind: "list" });
+  });
+
+  it("splits the all view into category sections, skipping empty ones", () => {
+    const sections = (query: string) =>
+      sectionPresetRows(getVisiblePresetRows(familyEntries, { query, t })).map(
+        (section) => [section.group, section.items.map(({ row }) => row.key)],
+      );
+    expect(sections("")).toEqual([
+      ["login", ["alpha", "copilot"]],
+      ["vendor", ["huoshan", "family:kimi", "zhipu"]],
+      ["thirdparty", ["gamma"]],
+      ["cloud", ["bedrock"]],
+    ]);
+    expect(sections("gamma")).toEqual([["thirdparty", ["gamma"]]]);
   });
 
   it("has every family name and version label in all four locales", () => {
@@ -216,7 +335,11 @@ describe("preset families", () => {
           data,
         );
     const keys = [
-      ...PRESET_VERSION_KEYS.map((key) => `providerPreset.version.${key}`),
+      "providerPreset.versionLabel",
+      "providerPreset.planLabel",
+      "providerPreset.regionLabel",
+      ...PRESET_PLAN_KEYS.map((key) => `providerPreset.plan.${key}`),
+      ...PRESET_REGION_KEYS.map((key) => `providerPreset.region.${key}`),
       ...Object.values(PRESET_FAMILIES).flatMap((info) =>
         "nameKey" in info ? [info.nameKey] : [],
       ),
@@ -274,18 +397,47 @@ function TwoSteps({
 }
 
 describe("ProviderPresetSelector", () => {
+  beforeAll(() => {
+    // Radix Select 打开时会滚动到选中项，jsdom 没有 scrollIntoView
+    Element.prototype.scrollIntoView ??= vi.fn();
+  });
+
   it("picks a preset in step 1, then shows a preset bar that goes back", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
     render(<TwoSteps onPresetChange={onPresetChange} />);
 
     const host = await screen.findByTestId("host");
-    // 自定义配置固定第一行，其余按名称排
+    // 自定义配置固定第一行；其余按分类分段（账号登录 → 模型厂商 → 第三方平台 → 云服务商），段内按名称
     const rows = within(host)
       .getAllByRole("button")
       .filter((button) => !button.hasAttribute("aria-pressed"));
     expect(rows[0]).toHaveTextContent("providerPreset.custom");
-    expect(rows[1]).toHaveTextContent("AWS Bedrock");
+    expect(
+      within(host)
+        .getAllByRole("heading")
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "providerPreset.group.login",
+      "providerPreset.group.vendor",
+      "providerPreset.group.thirdparty",
+      "providerPreset.group.cloud",
+    ]);
+    const login = within(host).getByRole("region", {
+      name: "providerPreset.group.login",
+    });
+    expect(
+      within(login)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["GitHub Copilot", "preset.alpha"]);
+    expect(
+      within(
+        within(host).getByRole("region", {
+          name: "providerPreset.group.cloud",
+        }),
+      ).getByRole("button", { name: "AWS Bedrock" }),
+    ).toBeInTheDocument();
 
     await user.click(within(host).getByText("preset.zhipu"));
     expect(onPresetChange).toHaveBeenCalledWith("zhipu");
@@ -323,7 +475,7 @@ describe("ProviderPresetSelector", () => {
     ).toBeInTheDocument();
   });
 
-  it("picks the first version of a merged row, then switches versions in the bar", async () => {
+  it("picks the first version of a merged row, then switches plan and region in the bar", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
     render(
@@ -341,18 +493,30 @@ describe("ProviderPresetSelector", () => {
     await user.click(within(host).getByRole("button", { name: "Kimi" }));
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-cn");
 
-    const versions = screen.getByRole("group", {
-      name: "providerPreset.versionLabel",
-    });
-    const buttons = within(versions).getAllByRole("button");
-    expect(buttons.map((button) => button.textContent)).toEqual([
-      "providerPreset.version.paygCn",
-      "providerPreset.version.codingCn",
-      "providerPreset.version.paygIntl",
+    // 完整网格：套餐一组、地区一组
+    const plans = () =>
+      within(
+        screen.getByRole("group", { name: "providerPreset.planLabel" }),
+      ).getAllByRole("button");
+    const regions = () =>
+      within(
+        screen.getByRole("group", { name: "providerPreset.regionLabel" }),
+      ).getAllByRole("button");
+    expect(plans().map((button) => button.textContent)).toEqual([
+      "providerPreset.plan.payg",
+      "providerPreset.plan.coding",
     ]);
-    expect(buttons[0]).toHaveAttribute("aria-pressed", "true");
+    expect(regions().map((button) => button.textContent)).toEqual([
+      "providerPreset.region.cn",
+      "providerPreset.region.intl",
+    ]);
+    expect(
+      screen.queryByRole("group", { name: "providerPreset.versionLabel" }),
+    ).not.toBeInTheDocument();
+    expect(plans()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(regions()[0]).toHaveAttribute("aria-pressed", "true");
 
-    await user.click(buttons[2]);
+    await user.click(regions()[1]);
     // 没手动改过表单：直接切，不弹确认
     expect(
       screen.queryByText("providerPreset.switchVersionTitle"),
@@ -360,11 +524,80 @@ describe("ProviderPresetSelector", () => {
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-intl");
     // 换版本留在第 2 步
     expect(screen.queryByTestId("host")).not.toBeInTheDocument();
+    expect(regions()[1]).toHaveAttribute("aria-pressed", "true");
+
+    // 切套餐时地区保持海外
+    await user.click(plans()[1]);
+    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding-intl");
+    expect(plans()[1]).toHaveAttribute("aria-pressed", "true");
+    expect(regions()[1]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("uses one segmented control, labelled by the dimension that changes", async () => {
+    const user = userEvent.setup();
+    const onPresetChange = vi.fn();
+    render(
+      <TwoSteps
+        onPresetChange={onPresetChange}
+        presetEntries={[...entries.slice(0, 1), ...zhipuFamily]}
+      />,
+    );
+    const host = await screen.findByTestId("host");
+    await user.click(within(host).getByRole("button", { name: "Zhipu GLM" }));
+    expect(onPresetChange).toHaveBeenLastCalledWith("glm-cn");
+
+    const versions = screen.getByRole("group", {
+      name: "providerPreset.versionLabel",
+    });
     expect(
-      within(
-        screen.getByRole("group", { name: "providerPreset.versionLabel" }),
-      ).getAllByRole("button")[2],
-    ).toHaveAttribute("aria-pressed", "true");
+      within(versions)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["providerPreset.region.cn", "providerPreset.region.intl"]);
+    expect(
+      screen.queryByRole("group", { name: "providerPreset.planLabel" }),
+    ).not.toBeInTheDocument();
+    await user.click(within(versions).getAllByRole("button")[1]);
+    expect(onPresetChange).toHaveBeenLastCalledWith("glm-intl");
+  });
+
+  it("falls back to a dropdown when plans and regions do not form a grid", async () => {
+    const user = userEvent.setup();
+    const onPresetChange = vi.fn();
+    render(
+      <TwoSteps
+        onPresetChange={onPresetChange}
+        presetEntries={[...entries.slice(0, 1), ...tencentPartial]}
+      />,
+    );
+    const host = await screen.findByTestId("host");
+    await user.click(
+      within(host).getByRole("button", {
+        name: "providerPreset.family.tencent",
+      }),
+    );
+    expect(onPresetChange).toHaveBeenLastCalledWith("tp-cn");
+    expect(
+      screen.queryByRole("group", { name: "providerPreset.planLabel" }),
+    ).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole("combobox", {
+      name: "providerPreset.versionLabel",
+    });
+    expect(trigger).toHaveTextContent(
+      "providerPreset.plan.tokenPlan · providerPreset.region.cn",
+    );
+    await user.click(trigger);
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "providerPreset.plan.tokenPlan · providerPreset.region.cn",
+      "providerPreset.plan.tokenPlan · providerPreset.region.intl",
+      "providerPreset.plan.enterprisePro · providerPreset.region.cn",
+      "providerPreset.plan.enterprisePro · providerPreset.region.intl",
+      "providerPreset.plan.payg · providerPreset.region.cn",
+    ]);
+    await user.click(options[4]);
+    expect(onPresetChange).toHaveBeenLastCalledWith("hunyuan");
   });
 
   it("asks before switching versions once the form was edited", async () => {
@@ -381,13 +614,17 @@ describe("ProviderPresetSelector", () => {
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-cn");
     onPresetChange.mockClear();
 
-    const versionButtons = () =>
+    const plans = () =>
       within(
-        screen.getByRole("group", { name: "providerPreset.versionLabel" }),
+        screen.getByRole("group", { name: "providerPreset.planLabel" }),
+      ).getAllByRole("button");
+    const regions = () =>
+      within(
+        screen.getByRole("group", { name: "providerPreset.regionLabel" }),
       ).getAllByRole("button");
 
     await user.type(screen.getByLabelText("api-key"), "sk-typed");
-    await user.click(versionButtons()[1]);
+    await user.click(plans()[1]);
     expect(
       await screen.findByText("providerPreset.switchVersionTitle"),
     ).toBeInTheDocument();
@@ -401,11 +638,11 @@ describe("ProviderPresetSelector", () => {
       ).not.toBeInTheDocument(),
     );
     expect(onPresetChange).not.toHaveBeenCalled();
-    expect(versionButtons()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(plans()[0]).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("api-key")).toHaveValue("sk-typed");
 
     // 确认：切过去、表单重填；重填之后再切不用确认
-    await user.click(versionButtons()[1]);
+    await user.click(plans()[1]);
     await user.click(
       await screen.findByRole("button", {
         name: "providerPreset.switchVersionConfirm",
@@ -413,11 +650,11 @@ describe("ProviderPresetSelector", () => {
     );
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding");
     expect(screen.getByLabelText("api-key")).toHaveValue("");
-    await user.click(versionButtons()[2]);
+    await user.click(regions()[1]);
     expect(
       screen.queryByText("providerPreset.switchVersionTitle"),
     ).not.toBeInTheDocument();
-    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-intl");
+    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding-intl");
   });
 
   it("selects the version a search matched", async () => {
@@ -437,8 +674,9 @@ describe("ProviderPresetSelector", () => {
       }),
       "coding",
     );
+    // 命中两个编程订阅版本，选中第一个
     expect(
-      within(host).getByText("providerPreset.matchedVersion"),
+      within(host).getByText("providerPreset.matchedVersions"),
     ).toBeInTheDocument();
     await user.click(within(host).getByRole("button", { name: "Kimi" }));
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding");

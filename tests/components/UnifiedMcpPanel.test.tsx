@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -181,6 +181,20 @@ describe("UnifiedMcpPanel", () => {
     expect(
       within(header).getAllByRole("button", { name: /appMatrix.columnAria/ }),
     ).toHaveLength(3);
+  });
+
+  it("highlights the column header when a cell gets keyboard focus", async () => {
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    renderPanel();
+    const columns = screen.getAllByRole("button", {
+      name: /appMatrix.columnAria/,
+    });
+    const cell = screen.getAllByRole("button", { name: /appMatrix.cell/ })[1];
+    act(() => cell.focus());
+    expect(columns[1]).toHaveAttribute("data-highlighted");
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    act(() => cell.blur());
+    expect(columns[1]).not.toHaveAttribute("data-highlighted");
   });
 
   it("bulk-enables only the rows left by the search and offers undo", async () => {

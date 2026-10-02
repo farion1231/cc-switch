@@ -145,7 +145,7 @@ export function SessionDeleteDialog({
               {t("common.cancel", { defaultValue: "取消" })}
             </Button>
             <Button
-              variant="solid"
+              variant="destructive"
               size="regular"
               disabled={pending}
               onClick={onConfirm}

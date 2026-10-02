@@ -220,7 +220,7 @@ export function EnvWarningBanner({
                     </Button>
 
                     <Button
-                      variant="destructive"
+                      variant="neutral"
                       size="sm"
                       onClick={() => setShowConfirmDialog(true)}
                       disabled={selectedConflicts.size === 0 || isDeleting}
@@ -264,7 +264,7 @@ export function EnvWarningBanner({
             >
               {t("common.cancel")}
             </Button>
-            <Button variant="destructive" onClick={handleDelete}>
+            <Button variant="solid" onClick={handleDelete}>
               {t("env.confirm.confirm")}
             </Button>
           </DialogFooter>

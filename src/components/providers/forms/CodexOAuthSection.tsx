@@ -26,6 +26,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
+import {
+  ManagedAccountRemoveDialog,
+  ManagedAccountUsage,
+  type ManagedAccountRemoveTarget,
+} from "./ManagedAccountRemoveDialog";
+import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import { copyText } from "@/lib/clipboard";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 import { cn } from "@/lib/utils";
@@ -116,6 +122,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     logout,
     refetchStatus,
   } = useCodexOauth();
+  const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
+  const [removeTarget, setRemoveTarget] =
+    React.useState<ManagedAccountRemoveTarget | null>(null);
 
   const copyUserCode = async () => {
     if (deviceCode?.user_code) {
@@ -161,11 +170,27 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     selectedAccountId,
   ]);
 
-  const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
+  // 删账号先确认：确认框里列出在用它的供应商
+  const handleRemoveAccount = (
+    accountId: string,
+    login: string,
+    e: React.MouseEvent,
+  ) => {
     e.stopPropagation();
     e.preventDefault();
-    removeAccount(accountId);
-    if (selectedAccountId === accountId) {
+    setRemoveTarget({ kind: "one", accountId, login });
+  };
+
+  const confirmRemove = () => {
+    const target = removeTarget;
+    setRemoveTarget(null);
+    if (!target) return;
+    if (target.kind === "all") {
+      logout();
+      return;
+    }
+    removeAccount(target.accountId);
+    if (selectedAccountId === target.accountId) {
       onSelectionInvalidated?.();
       onAccountSelect?.(null);
     }
@@ -494,6 +519,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                         {t("codexOauth.reauthBadge", "需要重新登录")}
                       </Badge>
                     )}
+                    <ManagedAccountUsage users={accountUsers([account.id])} />
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <Button
@@ -528,7 +554,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-fg-2 hover:text-danger-text"
-                      onClick={(e) => handleRemoveAccount(account.id, e)}
+                      onClick={(e) =>
+                        handleRemoveAccount(account.id, account.login, e)
+                      }
                       disabled={isRemovingAccount}
                       title={t("codexOauth.removeAccount", "移除账号")}
                     >
@@ -668,13 +696,36 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
           <Button
             type="button"
             variant="outline"
-            onClick={logout}
+            onClick={() =>
+              setRemoveTarget({
+                kind: "all",
+                accountIds: accounts.map((account) => account.id),
+              })
+            }
             className="w-full text-danger-text hover:text-danger-text hover:bg-danger-soft"
           >
             <LogOut className="mr-2 h-4 w-4" />
             {t("codexOauth.logoutAll", "注销所有账号")}
           </Button>
         )}
+
+      <ManagedAccountRemoveDialog
+        target={removeTarget}
+        serviceName="ChatGPT"
+        users={
+          removeTarget
+            ? accountUsers(
+                removeTarget.kind === "one"
+                  ? [removeTarget.accountId]
+                  : removeTarget.accountIds,
+              )
+            : []
+        }
+        othersRemain={accounts.length > 1}
+        pending={isRemovingAccount}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 };

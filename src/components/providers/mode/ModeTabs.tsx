@@ -3,6 +3,7 @@ import { ChevronRight, Layers, Plug, Route, Shuffle } from "lucide-react";
 import type { AppMode } from "@/types/proxy";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
 
 const MODE_ICON = { direct: Plug, route: Route, stack: Layers } as const;
@@ -48,7 +49,8 @@ interface ModeTabsProps {
 }
 
 /**
- * 模式行：三段 tab 只负责查看；生效的那段用模式色的淡底和圆点，正在看的那段是白色凸起。
+ * 模式行：三段 tab 只负责查看。白底凸起只给正在看的那段；生效的那段只用模式色文字和圆点，
+ * 不铺底（否则彩色那格比正在看的更抢眼）。组右边的「?」说明三种模式的区别。
  */
 export function ModeTabs({
   modes,
@@ -85,12 +87,12 @@ export function ModeTabs({
               }
               className={cn(
                 "inline-flex h-[30px] min-w-[96px] items-center justify-center gap-1.5 rounded-[7px] px-4 text-body transition-[background-color,color,box-shadow] duration-150",
+                selected && "bg-surface shadow-v7-sm",
                 isActive
-                  ? cn(MODE_TONE[mode].soft, MODE_TONE[mode].text)
+                  ? MODE_TONE[mode].text
                   : selected
-                    ? "bg-surface text-fg-1"
+                    ? "text-fg-1"
                     : "text-fg-2 hover:text-fg-1",
-                selected && "shadow-v7-sm",
                 selected || isActive ? "font-semibold" : "font-medium",
               )}
             >
@@ -114,6 +116,13 @@ export function ModeTabs({
           );
         })}
       </div>
+      <HelpTip title={t("mode.help.title")} className="-ms-2">
+        {modes.map((mode) => (
+          <span key={mode} className="block">
+            {t(`mode.help.${mode}`)}
+          </span>
+        ))}
+      </HelpTip>
 
       {status && (status.lead || status.value) && (
         <div className="flex min-w-0 flex-1 items-center gap-1 text-caption text-fg-2">

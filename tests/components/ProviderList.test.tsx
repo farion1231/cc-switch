@@ -177,6 +177,7 @@ describe("ProviderList Component", () => {
         exitAndUse: vi.fn(),
         routeTo: vi.fn(),
         startRouteFrom: vi.fn(),
+        startStackFrom: vi.fn(),
         queueAdd: vi.fn(),
         queueRemove: vi.fn(),
         queueMove: vi.fn(),
@@ -208,9 +209,22 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "provider.addProvider" }),
-    );
+    expect(
+      screen.getByRole("heading", { name: "provider.noProviders" }),
+    ).toBeInTheDocument();
+    // 页头已经有实心的「添加供应商」，空状态里的两个按钮都是描边
+    const importButton = screen.getByRole("button", {
+      name: "provider.importCurrent",
+    });
+    const addButton = screen.getByRole("button", {
+      name: "provider.addProvider",
+    });
+    for (const button of [importButton, addButton]) {
+      expect(button.className).toContain("border-border-strong");
+      expect(button.className).not.toContain("bg-action");
+    }
+
+    fireEvent.click(addButton);
     expect(handleCreate).toHaveBeenCalledTimes(1);
   });
 

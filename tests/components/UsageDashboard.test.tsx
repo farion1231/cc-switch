@@ -401,6 +401,44 @@ describe("UsageDashboard", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
+  it("wires the tabs to the tabpanel and supports arrow / Home / End keys", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    const logsTab = screen.getByRole("tab", { name: "usage.requestLogs" });
+    expect(logsTab).toHaveAttribute("id", "usage-tab-logs");
+    expect(logsTab).toHaveAttribute("aria-controls", "usage-tabpanel");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "usage-tab-logs",
+    );
+
+    logsTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const providersTab = screen.getByRole("tab", {
+      name: "usage.tabs.providers",
+    });
+    expect(providersTab).toHaveAttribute("aria-selected", "true");
+    expect(providersTab).toHaveFocus();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "usage-tab-providers",
+    );
+
+    await user.keyboard("{End}");
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+    ).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(logsTab).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowLeft}");
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+    ).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Home}");
+    expect(logsTab).toHaveFocus();
+  });
+
   it("toggles session scanning and links to routing settings from the data sources drawer", async () => {
     const user = userEvent.setup();
     const onSessionAutoSyncEnabledChange = vi.fn();

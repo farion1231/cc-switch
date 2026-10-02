@@ -1,18 +1,20 @@
 /**
  * 预设的「厂商 / 版本」：同一家的国内站、海外站、各种套餐在添加供应商第 1 步合成一行，
- * 第 2 步的预设条里再用分段控件选版本。只是显示用的分组，不影响请求和 `category`。
+ * 第 2 步的预设条里再选版本。只是显示用的分组，不影响请求和 `category`。
  *
- * 写法：预设上加 `family`（这里的 id）和 `versionKey`（版本标签，见 PRESET_VERSION_KEYS）。
+ * 写法：预设上加 `family`（这里的 id），再按版本的实际差别写两个维度：
+ * `planKey`（套餐，见 PRESET_PLAN_KEYS）和 `regionKey`（地区，见 PRESET_REGION_KEYS）。
+ * 只在一个维度上有差别的只写那一个（例如智谱只有国内 / 海外，火山只有不同套餐）。
  * 只给在同一个应用里真有多个版本的厂商打；某个应用里只剩一个版本时不打，照旧单独一行。
- * 没写 `versionKey` 的版本用它的域名当标签（例如 SudoCode 的 sudocode.chat / sudocode.us）。
+ * 两个都没写的版本用它的域名当标签（例如 SudoCode 的 sudocode.chat / sudocode.us）。
  */
 export interface PresetFamilyInfo {
   /** 合成那一行的名称 */
   name: string;
   /** 名称需要翻译时用的 i18n key */
   nameKey?: string;
-  /** 版本的显示顺序（设计稿顺序）；不写或没列到的版本按预设文件顺序排在后面 */
-  versionOrder?: readonly PresetVersionKey[];
+  /** 套餐的显示顺序（设计稿顺序）；不写或没列到的套餐按预设文件里第一次出现的顺序排在后面 */
+  planOrder?: readonly PresetPlanKey[];
 }
 
 export const PRESET_FAMILIES = {
@@ -21,7 +23,7 @@ export const PRESET_FAMILIES = {
   compshare: { name: "Compshare", nameKey: "providerForm.presets.ucloud" },
   kimi: {
     name: "Kimi",
-    versionOrder: ["paygCn", "codingCn", "paygIntl", "codingIntl"],
+    planOrder: ["payg", "coding"],
   },
   minimax: { name: "MiniMax" },
   qianwen: { name: "千问AI平台" },
@@ -32,14 +34,7 @@ export const PRESET_FAMILIES = {
   tencent: {
     name: "Tencent Cloud",
     nameKey: "providerPreset.family.tencent",
-    versionOrder: [
-      "tokenPlanCn",
-      "tokenPlanIntl",
-      "enterpriseLiteCn",
-      "enterpriseLiteIntl",
-      "enterpriseProCn",
-      "enterpriseProIntl",
-    ],
+    planOrder: ["tokenPlan", "enterpriseLite", "enterprisePro"],
   },
   volcengine: {
     name: "Volcengine",
@@ -51,37 +46,36 @@ export const PRESET_FAMILIES = {
 
 export type PresetFamilyId = keyof typeof PRESET_FAMILIES;
 
-/** 版本标签，显示为 `providerPreset.version.<key>` */
-export const PRESET_VERSION_KEYS = [
+/**
+ * 套餐，显示为 `providerPreset.plan.<key>`。AWS Bedrock 的 AKSK / API Key 是认证方式，
+ * 也放在这一维（它只有这一维，界面上照旧叫「版本」）。
+ */
+export const PRESET_PLAN_KEYS = [
   "payg",
-  "paygCn",
-  "paygIntl",
   "coding",
-  "codingCn",
-  "codingIntl",
-  "cn",
-  "intl",
-  "agentPlan",
   "codingPlan",
+  "agentPlan",
   "tokenPlan",
-  "tokenPlanCn",
-  "tokenPlanIntl",
-  "enterpriseLiteCn",
-  "enterpriseLiteIntl",
-  "enterpriseProCn",
-  "enterpriseProIntl",
-  "stepPlanCn",
-  "stepPlanIntl",
+  "enterpriseLite",
+  "enterprisePro",
+  "stepPlan",
   "aksk",
   "apiKey",
 ] as const;
 
-export type PresetVersionKey = (typeof PRESET_VERSION_KEYS)[number];
+export type PresetPlanKey = (typeof PRESET_PLAN_KEYS)[number];
 
-/** 各应用预设接口共用的两个字段 */
+/** 地区，显示为 `providerPreset.region.<key>`；数组顺序就是显示顺序（先国内后海外） */
+export const PRESET_REGION_KEYS = ["cn", "intl"] as const;
+
+export type PresetRegionKey = (typeof PRESET_REGION_KEYS)[number];
+
+/** 各应用预设接口共用的字段 */
 export interface PresetFamilyFields {
   /** 厂商（同一家的多个版本合成一行），见 PRESET_FAMILIES */
   family?: PresetFamilyId;
-  /** 版本标签，见 PRESET_VERSION_KEYS；缺省时用域名 */
-  versionKey?: PresetVersionKey;
+  /** 套餐，见 PRESET_PLAN_KEYS */
+  planKey?: PresetPlanKey;
+  /** 地区，见 PRESET_REGION_KEYS */
+  regionKey?: PresetRegionKey;
 }

@@ -103,7 +103,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi",
     family: "kimi",
-    versionKey: "paygCn",
+    planKey: "payg",
+    regionKey: "cn",
     providerKey: "cc-switch-kimi",
     websiteUrl:
       "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
@@ -142,7 +143,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi Global",
     family: "kimi",
-    versionKey: "paygIntl",
+    planKey: "payg",
+    regionKey: "intl",
     providerKey: "cc-switch-kimi-global",
     websiteUrl:
       "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
@@ -179,7 +181,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi For Coding",
     family: "kimi",
-    versionKey: "codingCn",
+    planKey: "coding",
+    regionKey: "cn",
     providerKey: "cc-switch-kimi-for-coding",
     websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
@@ -205,7 +208,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi For Coding Global",
     family: "kimi",
-    versionKey: "codingIntl",
+    planKey: "coding",
+    regionKey: "intl",
     providerKey: "cc-switch-kimi-for-coding-global",
     websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
     apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
@@ -699,7 +703,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "火山Agentplan",
     family: "volcengine",
-    versionKey: "agentPlan",
+    planKey: "agentPlan",
     providerKey: "cc-switch-agentplan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
@@ -749,7 +753,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Volcengine Doubao",
     family: "volcengine",
-    versionKey: "payg",
+    planKey: "payg",
     nameKey: "providerForm.presets.doubaoseed",
     providerKey: "cc-switch-dou-bao-seed",
     websiteUrl:
@@ -1128,7 +1132,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Zhipu GLM",
     family: "zhipu",
-    versionKey: "cn",
+    regionKey: "cn",
     providerKey: "cc-switch-zhipu-glm",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
@@ -1151,7 +1155,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Zhipu GLM en",
     family: "zhipu",
-    versionKey: "intl",
+    regionKey: "intl",
     providerKey: "cc-switch-zhipu-glm-en",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
@@ -1174,7 +1178,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "千问AI平台",
     family: "qianwen",
-    versionKey: "payg",
+    planKey: "payg",
     providerKey: "cc-switch-qianwenai",
     websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
     apiKeyUrl:
@@ -1200,7 +1204,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "千问AI平台 Token Plan",
     family: "qianwen",
-    versionKey: "tokenPlan",
+    planKey: "tokenPlan",
     providerKey: "cc-switch-qianwenai-token-plan",
     websiteUrl:
       "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
@@ -1233,7 +1237,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "QwenCloud",
     family: "qwencloud",
-    versionKey: "payg",
+    planKey: "payg",
     providerKey: "cc-switch-qwencloud",
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
@@ -1264,7 +1268,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "QwenCloud For Coding",
     family: "qwencloud",
-    versionKey: "coding",
+    planKey: "coding",
     providerKey: "cc-switch-qwencloud-coding",
     websiteUrl: "https://www.qwencloud.com",
     apiKeyUrl: "https://home.qwencloud.com/api-keys",
@@ -1288,7 +1292,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "QwenCloud Token Plan",
     family: "qwencloud",
-    versionKey: "tokenPlan",
+    planKey: "tokenPlan",
     providerKey: "cc-switch-qwencloud-token-plan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
@@ -1321,7 +1325,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "StepFun",
     family: "stepfun",
-    versionKey: "cn",
+    regionKey: "cn",
     providerKey: "cc-switch-step-fun",
     websiteUrl: "https://platform.stepfun.com/step-plan",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
@@ -1349,7 +1353,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "StepFun en",
     family: "stepfun",
-    versionKey: "intl",
+    regionKey: "intl",
     providerKey: "cc-switch-step-fun-en",
     websiteUrl: "https://platform.stepfun.ai/step-plan",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
@@ -1459,7 +1463,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "MiniMax",
     family: "minimax",
-    versionKey: "cn",
+    regionKey: "cn",
     providerKey: "cc-switch-mini-max",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
@@ -1486,7 +1490,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "MiniMax en",
     family: "minimax",
-    versionKey: "intl",
+    regionKey: "intl",
     providerKey: "cc-switch-mini-max-en",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
@@ -1531,7 +1535,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Xiaomi MiMo",
     family: "xiaomi-mimo",
-    versionKey: "payg",
+    planKey: "payg",
     providerKey: "cc-switch-xiaomi-mi-mo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
@@ -1576,7 +1580,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Xiaomi MiMo Token Plan (China)",
     family: "xiaomi-mimo",
-    versionKey: "tokenPlan",
+    planKey: "tokenPlan",
     providerKey: "cc-switch-xiaomi-mi-mo-token-plan-china",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
@@ -1935,7 +1939,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent Token Plan",
     family: "tencent",
-    versionKey: "tokenPlanCn",
+    planKey: "tokenPlan",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-token-plan",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
@@ -1977,7 +1982,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent Token Plan (Intl)",
     family: "tencent",
-    versionKey: "tokenPlanIntl",
+    planKey: "tokenPlan",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-token-plan-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
@@ -2016,7 +2022,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent Token Plan Enterprise Pro",
     family: "tencent",
-    versionKey: "enterpriseProCn",
+    planKey: "enterprisePro",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-token-plan-enterprise-pro",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
@@ -2098,7 +2105,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent Token Plan Enterprise Pro (Intl)",
     family: "tencent",
-    versionKey: "enterpriseProIntl",
+    planKey: "enterprisePro",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-token-plan-enterprise-pro-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
@@ -2175,7 +2183,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent Token Plan Enterprise Lite",
     family: "tencent",
-    versionKey: "enterpriseLiteCn",
+    planKey: "enterpriseLite",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-token-plan-enterprise-lite",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
@@ -2193,7 +2202,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent Token Plan Enterprise Lite (Intl)",
     family: "tencent",
-    versionKey: "enterpriseLiteIntl",
+    planKey: "enterpriseLite",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-token-plan-enterprise-lite-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
@@ -2216,7 +2226,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent TokenHub",
     family: "tencent",
-    versionKey: "paygCn",
+    planKey: "payg",
+    regionKey: "cn",
     providerKey: "cc-switch-tencent-tokenhub",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
@@ -2311,7 +2322,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Tencent TokenHub (Intl)",
     family: "tencent",
-    versionKey: "paygIntl",
+    planKey: "payg",
+    regionKey: "intl",
     providerKey: "cc-switch-tencent-tokenhub-intl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/apikey",
