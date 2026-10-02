@@ -16,7 +16,7 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    FileParseCache, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -62,15 +62,19 @@ fn scan_sessions_in_roots_with_titles(
         collect_jsonl_files(root, &mut files);
     }
 
-    let mut sessions = Vec::new();
-    for path in files {
-        if let Some(meta) = parse_session_with_titles(&path, thread_titles) {
-            sessions.push(meta);
+    // 缓存里只放文件本身解析出的结果；线程标题来自外部索引 / 数据库，
+    // 每轮重新读取后再覆盖上去，和逐个调用 parse_session_with_titles 等价。
+    let mut sessions = PARSE_CACHE.scan(files, parse_session);
+    for meta in &mut sessions {
+        if let Some(title) = thread_titles.get(&meta.session_id) {
+            meta.title = Some(truncate_summary(title, TITLE_MAX_CHARS));
         }
     }
-
     sessions
 }
+
+/// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
 
 fn load_thread_titles() -> HashMap<String, String> {
     let config_dir = get_codex_config_dir();

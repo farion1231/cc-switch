@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use serde_json::Value;
 
@@ -9,24 +10,20 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    FileParseCache, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
+
+/// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let root = get_claude_config_dir().join("projects");
     let mut files = Vec::new();
     collect_jsonl_files(&root, &mut files);
 
-    let mut sessions = Vec::new();
-    for path in files {
-        if let Some(meta) = parse_session(&path) {
-            sessions.push(meta);
-        }
-    }
-
-    sessions
+    PARSE_CACHE.scan(files, parse_session)
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {

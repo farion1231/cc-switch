@@ -1,12 +1,93 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
 
+use crate::session_manager::SessionMeta;
+
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
+
+/// 会话文件解析结果的缓存：按文件的修改时间和大小判断有没有变，没变就复用上次
+/// 解析出的 [`SessionMeta`]，只重新解析新增或改过的文件。
+///
+/// 只存摘要（标题、路径、时间等），不存会话正文；每次扫描都会用本轮看到的文件
+/// 重建整张表，已删除文件的条目随之丢弃，内存占用和会话数量成正比（约每千个
+/// 会话 1 MB）。解析结果必须只取决于文件本身——依赖外部数据的部分（如 Codex 的
+/// 线程标题）要在拿到缓存结果后再叠加。
+pub struct FileParseCache {
+    entries: Mutex<HashMap<PathBuf, CachedParse>>,
+}
+
+struct CachedParse {
+    modified: Option<SystemTime>,
+    len: u64,
+    meta: Option<SessionMeta>,
+}
+
+impl FileParseCache {
+    pub fn new() -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 按顺序解析 `files`，没变过的文件直接用缓存。返回能解析出会话的那些。
+    pub fn scan<F>(&self, files: Vec<PathBuf>, parse: F) -> Vec<SessionMeta>
+    where
+        F: Fn(&Path) -> Option<SessionMeta>,
+    {
+        // 锁中毒（上次扫描 panic）时丢掉旧缓存重来，不影响本次结果
+        let mut previous = match self.entries.lock() {
+            Ok(mut guard) => std::mem::take(&mut *guard),
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                guard.clear();
+                HashMap::new()
+            }
+        };
+
+        let mut next = HashMap::with_capacity(files.len());
+        let mut sessions = Vec::new();
+        for path in files {
+            let (modified, len) = match std::fs::metadata(&path) {
+                Ok(meta) => (meta.modified().ok(), meta.len()),
+                Err(_) => continue,
+            };
+            let meta = match previous.remove(&path) {
+                Some(entry) if entry.modified == modified && entry.len == len => entry.meta,
+                _ => parse(&path),
+            };
+            if let Some(meta) = &meta {
+                sessions.push(meta.clone());
+            }
+            next.insert(
+                path,
+                CachedParse {
+                    modified,
+                    len,
+                    meta,
+                },
+            );
+        }
+
+        if let Ok(mut guard) = self.entries.lock() {
+            *guard = next;
+        }
+        sessions
+    }
+}
+
+impl Default for FileParseCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
@@ -158,6 +239,69 @@ pub fn path_basename(value: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn meta_from_file(path: &Path) -> Option<SessionMeta> {
+        let text = std::fs::read_to_string(path).ok()?;
+        if text.trim() == "skip" {
+            return None;
+        }
+        Some(SessionMeta {
+            provider_id: "test".to_string(),
+            session_id: text.trim().to_string(),
+            title: None,
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at: None,
+            source_path: Some(path.to_string_lossy().to_string()),
+            resume_command: None,
+        })
+    }
+
+    #[test]
+    fn file_parse_cache_reparses_only_changed_files() {
+        use std::cell::Cell;
+
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.jsonl");
+        let b = dir.path().join("b.jsonl");
+        let c = dir.path().join("c.jsonl");
+        std::fs::write(&a, "alpha").unwrap();
+        std::fs::write(&b, "beta").unwrap();
+        std::fs::write(&c, "skip").unwrap();
+
+        let cache = FileParseCache::new();
+        let calls = Cell::new(0);
+        let parse = |path: &Path| {
+            calls.set(calls.get() + 1);
+            meta_from_file(path)
+        };
+        let ids = |sessions: Vec<SessionMeta>| -> Vec<String> {
+            sessions.into_iter().map(|m| m.session_id).collect()
+        };
+
+        // 第一次全部解析；解析不出会话的文件也记下来，下次不重复解析
+        let files = vec![a.clone(), b.clone(), c.clone()];
+        assert_eq!(ids(cache.scan(files.clone(), parse)), ["alpha", "beta"]);
+        assert_eq!(calls.get(), 3);
+
+        // 没有改动：一个都不重新解析
+        assert_eq!(ids(cache.scan(files.clone(), parse)), ["alpha", "beta"]);
+        assert_eq!(calls.get(), 3);
+
+        // 改了内容（长度变了）：只重新解析这一个
+        std::fs::write(&b, "beta-2").unwrap();
+        assert_eq!(ids(cache.scan(files.clone(), parse)), ["alpha", "beta-2"]);
+        assert_eq!(calls.get(), 4);
+
+        // 文件删掉：不再出现，条目也被丢弃；重新出现时要重新解析
+        std::fs::remove_file(&a).unwrap();
+        assert_eq!(ids(cache.scan(files.clone(), parse)), ["beta-2"]);
+        assert_eq!(calls.get(), 4);
+        std::fs::write(&a, "alpha").unwrap();
+        assert_eq!(ids(cache.scan(files, parse)), ["alpha", "beta-2"]);
+        assert_eq!(calls.get(), 5);
+    }
 
     #[test]
     fn parse_timestamp_to_ms_supports_integers_and_rfc3339() {
