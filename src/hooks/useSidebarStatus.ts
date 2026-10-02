@@ -3,16 +3,15 @@ import { useQueries } from "@tanstack/react-query";
 import type { AppId } from "@/lib/api";
 import * as authApi from "@/lib/api/auth";
 import type { ManagedAuthProvider } from "@/lib/api/auth";
-import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
-import { useProxyStatusQuery, useProxyTakeoverStatus } from "@/lib/query/proxy";
+import { useProvidersQuery } from "@/lib/query";
+import { useProxyStatusQuery } from "@/lib/query/proxy";
+import { proxyApi } from "@/lib/api/proxy";
 import { useUsageSummary } from "@/lib/query/usage";
-import { isProxyAppId, isStackAppId } from "@/config/appConfig";
+import { PROXY_APP_IDS, isProxyAppId } from "@/config/appConfig";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import { parseFiniteNumber } from "@/components/usage/format";
 import type { UsageRangeSelection } from "@/types/usage";
-
-/** 应用当前生效的连接方式。直连不在侧栏显示标签。 */
-export type AppMode = "direct" | "route" | "stack";
+import type { AppMode } from "@/types/proxy";
 
 export interface AppNavStatus {
   mode: AppMode;
@@ -33,9 +32,14 @@ const MANAGED_AUTH_PROVIDERS: ManagedAuthProvider[] = [
  * 侧栏需要的状态：每个应用的模式标签和提醒、今日花费、授权中心是否有账号要重新登录。
  */
 export function useSidebarStatus() {
-  const { data: settings } = useSettingsQuery();
   const { data: proxyStatus } = useProxyStatusQuery();
-  const { data: takeover } = useProxyTakeoverStatus(false);
+  // 和应用页的模式行同一份数据（["providers", app, "mode"]），进出模式时一起刷新
+  const modeQueries = useQueries({
+    queries: PROXY_APP_IDS.map((app) => ({
+      queryKey: ["providers", app, "mode"],
+      queryFn: () => proxyApi.getAppMode(app),
+    })),
+  });
   const { data: desktopProviders } = useProvidersQuery("claude-desktop");
   const { data: todaySummary } = useUsageSummary(TODAY, undefined, {
     refetchInterval: 60_000,
@@ -50,7 +54,8 @@ export function useSidebarStatus() {
   });
 
   const serviceRunning = proxyStatus?.running ?? false;
-  const stackModeEnabled = settings?.enableStackMode ?? false;
+  const modes = PROXY_APP_IDS.map((_, index) => modeQueries[index]?.data?.mode);
+  const modeKey = modes.join(",");
 
   const desktopMapping = useMemo(() => {
     const current =
@@ -67,18 +72,20 @@ export function useSidebarStatus() {
           alert: desktopMapping && proxyStatus !== undefined && !serviceRunning,
         };
       }
-      if (!isProxyAppId(app) || !takeover?.[app]) {
+      if (!isProxyAppId(app)) {
         return { mode: "direct", mapping: false, alert: false };
       }
-      const mode: AppMode =
-        stackModeEnabled && isStackAppId(app) ? "stack" : "route";
+      const mode = modes[PROXY_APP_IDS.indexOf(app)] ?? "direct";
       return {
         mode,
         mapping: false,
-        alert: proxyStatus !== undefined && !serviceRunning,
+        alert:
+          mode !== "direct" && proxyStatus !== undefined && !serviceRunning,
       };
     };
-  }, [desktopMapping, proxyStatus, serviceRunning, stackModeEnabled, takeover]);
+    // modes 是每次渲染新建的数组，用 modeKey 判断变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktopMapping, proxyStatus, serviceRunning, modeKey]);
 
   const todayCost = parseFiniteNumber(todaySummary?.totalCost) ?? 0;
 

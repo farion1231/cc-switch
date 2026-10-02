@@ -59,8 +59,7 @@ function renderCard({
         provider={provider}
         appId="claude"
         isCurrent={true}
-        isProxyRunning={false}
-        onSwitch={vi.fn()}
+        presentation={{ chips: [], buttons: [] }}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onConfigureUsage={vi.fn()}

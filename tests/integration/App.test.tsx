@@ -277,20 +277,17 @@ describe("App integration with MSW", () => {
     );
 
     const mainScrollContainer = container.querySelector("main") as HTMLElement;
-    const providerScrollContainer = Array.from(
-      container.querySelectorAll<HTMLElement>(".overflow-y-auto"),
-    ).find(
-      (element) =>
-        element !== mainScrollContainer && element.className.includes("pb-12"),
-    );
+    // 列表的滚动区在模式行下面（切换式应用每个应用一份）
+    const providerScrollContainer = () =>
+      container.querySelector<HTMLElement>("#main-content");
 
     expect(mainScrollContainer).not.toBeNull();
-    expect(providerScrollContainer).toBeDefined();
+    expect(providerScrollContainer()).not.toBeNull();
 
     mainScrollContainer.scrollTop = 320;
     mainScrollContainer.scrollLeft = 12;
-    providerScrollContainer!.scrollTop = 640;
-    providerScrollContainer!.scrollLeft = 24;
+    providerScrollContainer()!.scrollTop = 640;
+    providerScrollContainer()!.scrollLeft = 24;
 
     fireEvent.click(sidebarApp("Codex"));
 
@@ -302,8 +299,8 @@ describe("App integration with MSW", () => {
 
     expect(mainScrollContainer.scrollTop).toBe(0);
     expect(mainScrollContainer.scrollLeft).toBe(0);
-    expect(providerScrollContainer!.scrollTop).toBe(0);
-    expect(providerScrollContainer!.scrollLeft).toBe(0);
+    expect(providerScrollContainer()!.scrollTop).toBe(0);
+    expect(providerScrollContainer()!.scrollLeft).toBe(0);
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {

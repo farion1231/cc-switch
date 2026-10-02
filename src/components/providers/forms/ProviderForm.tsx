@@ -85,7 +85,7 @@ import {
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
 import { setClaudeOneMMarker } from "./hooks/useModelState";
-import { useSettingsQuery } from "@/lib/query";
+import { useAppMode } from "@/lib/query/proxy";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -673,7 +673,10 @@ function ProviderFormFull({
 
   // 设置里开了 Stack 模式时，Claude Code / Codex 的第三方供应商默认用简化面板（连接 + 模型
   // 列表 + 高级）；可以切到完整表单，两种布局共用同一份表单状态。
-  const { data: settingsData } = useSettingsQuery();
+  const { data: appModeView } = useAppMode(
+    appId,
+    appId === "claude" || appId === "codex",
+  );
   const [preferFullForm, setPreferFullForm] = useState(false);
 
   const {
@@ -875,8 +878,9 @@ function ProviderFormFull({
         selectedPresetEntry?.preset.category === "official"));
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
+  // 应用实际在叠加模式时，新增 / 编辑用叠加的简化表单
   const stackLayoutAvailable =
-    settingsData?.enableStackMode === true &&
+    appModeView?.mode === "stack" &&
     (appId === "claude" || appId === "codex") &&
     category !== "official" &&
     !isCodexOfficialProvider;

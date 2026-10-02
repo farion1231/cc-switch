@@ -10,14 +10,17 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const settingsState = vi.hoisted(() => ({ enableStackMode: true }));
 
-vi.mock("@/lib/query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/query")>();
+// 叠加版式只看应用当前是不是叠加模式（和应用页同一份 get_app_mode 数据）
+vi.mock("@/lib/query/proxy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/query/proxy")>();
   return {
     ...actual,
-    useSettingsQuery: () => ({
+    useAppMode: () => ({
       data: {
-        commonConfigConfirmed: true,
-        enableStackMode: settingsState.enableStackMode,
+        mode: settingsState.enableStackMode ? "stack" : "direct",
+        attached: false,
+        routeProviderId: null,
+        directProviderId: null,
       },
     }),
   };

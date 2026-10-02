@@ -59,20 +59,44 @@ pub async fn get_proxy_takeover_status(
 }
 
 /// 为指定应用进入 / 退出代理模式。`stack` 为真时进入的是 Stack 模式（和路由模式二选一），
-/// 退出时不看它。
+/// `route` 是确认框里选的路由目标（Stack 模式下是默认那家，不传沿用上次的路由）；退出时
+/// 两者都不看。
 #[tauri::command]
 pub async fn set_proxy_takeover_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
     enabled: bool,
     stack: Option<bool>,
+    route: Option<String>,
 ) -> Result<(), String> {
     let app = require_proxy_app(&app_type)?;
     if enabled {
-        crate::mode::controller::enter(state.inner(), &app, stack.unwrap_or(false)).await
+        crate::mode::controller::enter_with_route(
+            state.inner(),
+            &app,
+            stack.unwrap_or(false),
+            route.as_deref(),
+        )
+        .await
     } else {
         crate::mode::controller::exit(state.inner(), &app).await
     }
+}
+
+/// 应用页模式行用：生效的模式、路由目标（直连时是上次路由的那家）、直连那家。
+#[tauri::command]
+pub fn get_app_mode(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<crate::mode::controller::AppModeView, String> {
+    let app = require_proxy_app(&app_type)?;
+    crate::mode::controller::app_mode_view(state.inner(), &app)
+}
+
+/// 启动时没能接上代理、已退回直连的应用（取一次就清空）。
+#[tauri::command]
+pub fn take_startup_attach_failures() -> Vec<crate::mode::controller::StartupAttachFailure> {
+    crate::mode::controller::take_startup_attach_failures()
 }
 
 /// 设置里在路由和 Stack 之间换的时候：处于另一种模式（`stack` 为真是 Stack 模式）的

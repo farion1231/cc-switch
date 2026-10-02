@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
@@ -80,9 +79,10 @@ import {
 } from "@/components/apps/useToolManagement";
 import { UsagePage } from "@/components/usage/UsagePage";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
-import { ProxyToggle } from "@/components/proxy/ProxyToggle";
-import { ClaudeDesktopRouteToggle } from "@/components/proxy/ClaudeDesktopRouteToggle";
-import { FailoverToggle } from "@/components/proxy/FailoverToggle";
+import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
+import { DesktopAccessBar } from "@/components/providers/mode/DesktopAccessBar";
+import { proxyApi } from "@/lib/api/proxy";
+import type { StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel, {
@@ -134,7 +134,6 @@ import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
-  isStackAppId,
   isProxyAppId,
 } from "@/config/appConfig";
 
@@ -234,6 +233,19 @@ function App() {
     void checkToolUpdatesInBackground();
   }, [checkToolUpdatesOnStartup]);
 
+  // 启动时没能接上路由 / 叠加、已退回直连的应用：在对应的应用页提示一次并给「重试」
+  const [startupFailures, setStartupFailures] = useState<
+    StartupAttachFailure[]
+  >([]);
+  useEffect(() => {
+    proxyApi
+      .takeStartupAttachFailures()
+      .then((failures) => {
+        if (failures?.length) setStartupFailures(failures);
+      })
+      .catch(() => undefined);
+  }, []);
+
   // 应用专属页（工作区、记忆…）只属于它的应用；换了应用就回到供应商页
   useEffect(() => {
     if (isAppPage(currentView) && !appPageBelongsTo(currentView, activeApp)) {
@@ -282,24 +294,13 @@ function App() {
   const { data: unmanagedSkills } = useScanUnmanagedSkills();
   const hasUnmanagedSkills = (unmanagedSkills?.length ?? 0) > 0;
 
-  const {
-    isRunning: isProxyRunning,
-    takeoverStatus,
-    status: proxyStatus,
-  } = useProxyStatus();
+  const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
   const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
   const currentAppUsesProxy =
     proxyAppId !== null || activeApp === "claude-desktop";
   const isCurrentAppTakeoverActive = proxyAppId
     ? takeoverStatus?.[proxyAppId] || false
     : false;
-  const activeProviderId = useMemo(() => {
-    if (!proxyAppId) return undefined;
-    const target = proxyStatus?.active_targets?.find(
-      (t) => t.app_type === proxyAppId,
-    );
-    return target?.provider_id;
-  }, [proxyStatus?.active_targets, proxyAppId]);
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
@@ -1026,28 +1027,6 @@ function App() {
 
   // ─── 应用页 ─────────────────────────────────────────────────────────────
 
-  // 旧的路由开关（阶段 3 换成模式 tab），暂时放在页头
-  const routeToggles =
-    activeApp === "claude-desktop" ? (
-      <ClaudeDesktopRouteToggle />
-    ) : proxyAppId ? (
-      // 设置里选了 Stack 模式：Claude Code、Codex 的开关换成 Stack 模式开关（不做
-      // 故障转移），其余应用仍显示路由开关。
-      settingsData?.enableStackMode && isStackAppId(proxyAppId) ? (
-        <ProxyToggle activeApp={proxyAppId} stack />
-      ) : (
-        <>
-          {(settingsData?.enableLocalProxy ||
-            settingsData?.enableStackMode) && (
-            <ProxyToggle activeApp={proxyAppId} />
-          )}
-          {settingsData?.enableFailoverToggle && (
-            <FailoverToggle activeApp={proxyAppId} />
-          )}
-        </>
-      )
-    ) : null;
-
   const appMenu = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -1105,7 +1084,6 @@ function App() {
       }
       actions={
         <>
-          {currentView === "providers" && routeToggles}
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             (settingsData?.showProfileSwitcher ?? true) && (
@@ -1173,37 +1151,66 @@ function App() {
     return null;
   };
 
-  const renderProviderList = () => (
-    <div
-      ref={providerScrollContainerRef}
-      id="main-content"
-      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-4"
-    >
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeApp}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          className="space-y-4"
-        >
+  const listCallbacks = {
+    onEdit: (provider: Provider) => setEditingProvider(provider),
+    onDelete: (provider: Provider) =>
+      setConfirmAction({ provider, action: "delete" }),
+    onDuplicate: handleDuplicateProvider,
+    onConfigureUsage: setUsageProvider,
+    onOpenWebsite: handleOpenWebsite,
+    onOpenTerminal: activeApp === "claude" ? handleOpenTerminal : undefined,
+    onCreate: () => setIsAddOpen(true),
+  };
+
+  const renderProviderList = () => {
+    if (proxyAppId) {
+      const startupFailure = startupFailures.find(
+        (failure) => failure.appType === proxyAppId,
+      );
+      return (
+        <SwitchModePanel
+          key={proxyAppId}
+          app={proxyAppId}
+          providers={providers}
+          currentProviderId={currentProviderId}
+          isLoading={isLoading}
+          scrollRef={providerScrollContainerRef}
+          onSwitch={switchProvider}
+          onOpenRoutingSettings={() => openSettings("routing")}
+          startupFailure={startupFailure}
+          onDismissStartupFailure={() =>
+            setStartupFailures((list) =>
+              list.filter((failure) => failure.appType !== proxyAppId),
+            )
+          }
+          {...listCallbacks}
+        />
+      );
+    }
+
+    return (
+      <div
+        ref={providerScrollContainerRef}
+        id="main-content"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-4"
+      >
+        <div className="space-y-4">
+          {activeApp === "claude-desktop" && (
+            <DesktopAccessBar
+              current={providers[currentProviderId]}
+              onOpenRoutingSettings={() => openSettings("routing")}
+            />
+          )}
           <ProviderList
+            {...listCallbacks}
             providers={providers}
             currentProviderId={currentProviderId}
             appId={activeApp}
             isLoading={isLoading}
-            isProxyRunning={currentAppUsesProxy && isProxyRunning}
-            isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
-            activeProviderId={activeProviderId}
-            onSwitch={
-              activeApp === "pi" ? handleEnablePiProvider : switchProvider
-            }
-            onEdit={(provider) => {
-              setEditingProvider(provider);
-            }}
-            onDelete={(provider) =>
-              setConfirmAction({ provider, action: "delete" })
+            onSwitch={(provider) =>
+              void (activeApp === "pi"
+                ? handleEnablePiProvider(provider)
+                : switchProvider(provider))
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
@@ -1220,25 +1227,19 @@ function App() {
             onDisableOmoSlim={
               activeApp === "opencode" ? handleDisableOmoSlim : undefined
             }
-            onDuplicate={handleDuplicateProvider}
-            onConfigureUsage={setUsageProvider}
-            onOpenWebsite={handleOpenWebsite}
-            onOpenTerminal={
-              activeApp === "claude" ? handleOpenTerminal : undefined
-            }
-            onCreate={() => setIsAddOpen(true)}
             onSetAsDefault={
               activeApp === "openclaw"
-                ? setAsDefaultModel
+                ? (provider, modelId) =>
+                    void setAsDefaultModel(provider, modelId)
                 : activeApp === "hermes"
-                  ? switchProvider
+                  ? (provider) => void switchProvider(provider)
                   : undefined
             }
           />
-        </motion.div>
-      </AnimatePresence>
-    </div>
-  );
+        </div>
+      </div>
+    );
+  };
 
   const renderAppPage = () => {
     const body = (() => {
@@ -1627,6 +1628,7 @@ function App() {
           section={settingsSection}
           onImportSuccess={handleImportSuccess}
           onOpenApps={() => setCurrentView("apps")}
+          onOpenApp={selectApp}
         />
       );
     }

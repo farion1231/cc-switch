@@ -541,6 +541,18 @@ pub(crate) fn lock_settled_blocking(
 /// [`StackState::enabled`]）：默认那家（代理路由）随之加入名单，名单里其余各家的模型发布给
 /// 客户端。已经在代理模式时按选的模式重写。
 pub async fn enter(state: &AppState, app: &AppType, stack_mode: bool) -> Result<(), String> {
+    enter_with_route(state, app, stack_mode, None).await
+}
+
+/// 同 [`enter`]，`route` 是确认框里选的路由目标（Stack 模式下是默认那家）；`None` 沿用上次
+/// 的路由，没有就用直连那家。已经在代理模式时（路由 ↔ Stack）在同一把切换锁里按新模式和
+/// 新目标重写，不经过直连。
+pub async fn enter_with_route(
+    state: &AppState,
+    app: &AppType,
+    stack_mode: bool,
+    route: Option<&str>,
+) -> Result<(), String> {
     require_proxy_app(app)?;
     if stack_mode && !stack::supports_stack(app) {
         return Err(format!(
@@ -549,8 +561,16 @@ pub async fn enter(state: &AppState, app: &AppType, stack_mode: bool) -> Result<
             app.as_str()
         ));
     }
+    let explicit = match route {
+        Some(id) => {
+            let target = provider(state, app, id)?.ok_or_else(|| format!("供应商不存在: {id}"))?;
+            reject_unsupported_official(app, &target)?;
+            Some(target)
+        }
+        None => None,
+    };
     let result = match lock_settled(state, app).await {
-        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(stack_mode)).await,
+        Ok(_guard) => enter_locked(state, app, op::ENTER, Some(stack_mode), explicit).await,
         Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
@@ -559,18 +579,24 @@ pub async fn enter(state: &AppState, app: &AppType, stack_mode: bool) -> Result<
     result
 }
 
-/// `stack_mode` 为 `None` 时沿用已落定的模式（启动时接上）。
+/// `stack_mode` 为 `None` 时沿用已落定的模式（启动时接上）。`explicit_route` 是指定的路由
+/// 目标，`None` 沿用上次的路由。
 async fn enter_locked(
     state: &AppState,
     app: &AppType,
     op_name: &str,
     stack_mode: Option<bool>,
+    explicit_route: Option<Provider>,
 ) -> Result<(), String> {
     if !state.proxy_service.is_running().await {
         state.proxy_service.start().await?;
     }
     let mode = current::mode_state(app);
-    let route = match route_provider(state, app, &mode)? {
+    let saved_route = match explicit_route {
+        Some(route) => Some(route),
+        None => route_provider(state, app, &mode)?,
+    };
+    let route = match saved_route {
         Some(route) => route,
         None => direct_provider(state, app)?.ok_or_else(|| {
             format!(
@@ -1297,10 +1323,22 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             ..mode
         };
         commit_state(state, app, &PendingTarget::mode(mode))?;
-        match enter_locked(state, app, op::ATTACH, None).await {
+        match enter_locked(state, app, op::ATTACH, None, None).await {
             Ok(()) => return Ok(()),
             Err(error) => {
                 log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
+                let stack = stack::supports_stack(app)
+                    && settled_stack(app)
+                        .map(|stack| stack.enabled)
+                        .unwrap_or(false);
+                startup_attach_failures()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(StartupAttachFailure {
+                        app_type: app.as_str().to_string(),
+                        stack,
+                        error: error.clone(),
+                    });
                 exit_locked(state, app, false)?;
                 return Err(error);
             }
@@ -1389,6 +1427,60 @@ async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
 /// 给前端：直连指针（代理模式下退出代理时写回的那家）。
 pub fn direct_provider_id(state: &AppState, app: &AppType) -> Result<Option<String>, AppError> {
     current::provider_for(&state.db, app, Purpose::Direct)
+}
+
+/// 应用页的模式行：现在生效的是哪种模式、路由到谁（直连模式下是上次路由的那家）、直连那家。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppModeView {
+    /// `direct` / `route` / `stack`
+    pub mode: &'static str,
+    /// 客户端文件指着代理（CC Switch 运行时为真；退出时分离）
+    pub attached: bool,
+    pub route_provider_id: Option<String>,
+    pub direct_provider_id: Option<String>,
+}
+
+pub fn app_mode_view(state: &AppState, app: &AppType) -> Result<AppModeView, String> {
+    require_proxy_app(app)?;
+    let mode = current::mode_state(app);
+    let name = if !mode.is_proxy() {
+        "direct"
+    } else if stack::supports_stack(app) && settled_stack(app)?.enabled {
+        "stack"
+    } else {
+        "route"
+    };
+    Ok(AppModeView {
+        mode: name,
+        attached: mode.attached,
+        route_provider_id: mode.proxy_route,
+        direct_provider_id: direct_provider_id(state, app).map_err(err)?,
+    })
+}
+
+/// 启动时没能接上代理、退回直连的应用。界面打开时取走一次，在应用页提示并给「重试」。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupAttachFailure {
+    pub app_type: String,
+    pub stack: bool,
+    pub error: String,
+}
+
+fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailure>> {
+    static FAILURES: std::sync::OnceLock<std::sync::Mutex<Vec<StartupAttachFailure>>> =
+        std::sync::OnceLock::new();
+    FAILURES.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// 取走启动时记下的接上失败（取一次就清空）。
+pub fn take_startup_attach_failures() -> Vec<StartupAttachFailure> {
+    std::mem::take(
+        &mut *startup_attach_failures()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+    )
 }
 
 #[cfg(test)]
@@ -2208,7 +2300,7 @@ mod mode_tests {
         assert!(!updater.is_finished(), "the save waits for the switch lock");
         assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
 
-        enter_locked(state, &AppType::Claude, op::ENTER, Some(false))
+        enter_locked(state, &AppType::Claude, op::ENTER, Some(false), None)
             .await
             .expect("enter");
         drop(guard);
@@ -2237,7 +2329,7 @@ mod mode_tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert!(!syncer.is_finished(), "the sync waits for the switch lock");
-        enter_locked(state, &AppType::Claude, op::ENTER, Some(false))
+        enter_locked(state, &AppType::Claude, op::ENTER, Some(false), None)
             .await
             .expect("enter");
         drop(guard);
@@ -4962,6 +5054,46 @@ model_provider = "c"
             .expect("stack mode again");
         assert_eq!(discovery(), Some(json!("1")));
         assert_eq!(stack_state().members, vec!["kimi", "a"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn entering_with_a_picked_route_changes_target_and_mode_in_one_step() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        let view = || app_mode_view(&state, &AppType::Claude).expect("mode view");
+
+        assert_eq!(view().mode, "direct");
+        assert_eq!(view().direct_provider_id.as_deref(), Some("a"));
+
+        // 直连 → 路由，路由到确认框里选的那家；直连指针不动。
+        enter_with_route(&state, &AppType::Claude, false, Some("kimi"))
+            .await
+            .expect("route to kimi");
+        assert_eq!(view().mode, "route");
+        assert_eq!(view().route_provider_id.as_deref(), Some("kimi"));
+        assert_eq!(view().direct_provider_id.as_deref(), Some("a"));
+
+        // 路由 → Stack，默认换成另一家：同一把锁里一次写完，不经过直连。
+        enter_with_route(&state, &AppType::Claude, true, Some("zhipu"))
+            .await
+            .expect("stack with zhipu");
+        assert_eq!(view().mode, "stack");
+        assert_eq!(view().route_provider_id.as_deref(), Some("zhipu"));
+        assert!(stack_state().members.contains(&"zhipu".to_string()));
+
+        // 回到直连：路由目标留着，下次进入沿用。
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_eq!(view().mode, "direct");
+        assert_eq!(view().route_provider_id.as_deref(), Some("zhipu"));
+        assert_back_to_user_settings();
+
+        // 选了不存在的供应商：什么都不改。
+        enter_with_route(&state, &AppType::Claude, false, Some("missing"))
+            .await
+            .expect_err("unknown provider");
+        assert_eq!(view().mode, "direct");
     }
 
     #[tokio::test]

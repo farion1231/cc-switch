@@ -165,6 +165,7 @@ const renderSettingsPage = (
   const allProps = {
     section: "general" as const,
     onOpenApps: vi.fn(),
+    onOpenApp: vi.fn(),
     ...props,
   };
   const view = render(
