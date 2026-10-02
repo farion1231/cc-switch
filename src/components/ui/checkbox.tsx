@@ -48,7 +48,7 @@ const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
           onCheckedChange?.(event.target.checked);
         }}
         className={cn(
-          "w-4 h-4 text-fg-1 bg-white border-border rounded focus:ring-border focus:ring-2",
+          "w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2",
           className,
         )}
       />

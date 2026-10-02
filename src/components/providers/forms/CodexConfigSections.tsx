@@ -259,7 +259,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
                 type="checkbox"
                 checked={remoteCompactionEnabled}
                 onChange={(e) => handleRemoteCompactionToggle(e.target.checked)}
-                className="w-4 h-4 text-fg-1 bg-white border-border rounded focus:ring-border focus:ring-2"
+                className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
               />
               {t("codexConfig.enableRemoteCompaction")}
             </label>
@@ -280,7 +280,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             type="checkbox"
             checked={toggleStates.contextWindow1M}
             onChange={(e) => handleContextWindowToggle(e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-white border-border rounded focus:ring-border focus:ring-2"
+            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
           />
           <span>{t("codexConfig.contextWindow1M")}</span>
         </label>
