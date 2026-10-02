@@ -410,14 +410,14 @@ export function ProviderCard({
                         : managedCodexAccount.login)}
                   </span>
                   {managedCodexAccount.reauth_required && (
-                    <span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                    <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
                       <AlertTriangle className="h-3.5 w-3.5" />
                       {t("codexOauth.reauthBadge", "需要重新登录")}
                     </span>
                   )}
                 </>
               ) : isCodexAuthStatusError ? (
-                <span className="inline-flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+                <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">
                     {t("codex.accountStatusUnavailable", {
@@ -427,7 +427,7 @@ export function ProviderCard({
                 </span>
               ) : isCodexAuthStatusSuccess ? (
                 <>
-                  <span className="inline-flex min-w-0 items-center gap-1 text-sm text-amber-700 dark:text-amber-300">
+                  <span className="inline-flex min-w-0 items-center gap-1 text-sm text-warning-text">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                     <span className="truncate">
                       {t("codex.boundAccountUnavailable", {

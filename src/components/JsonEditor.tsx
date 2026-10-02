@@ -372,7 +372,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         <button
           type="button"
           onClick={handleFormat}
-          className={`${isFullHeight ? "mt-2 flex-shrink-0" : "mt-2"} inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors`}
+          className={`${isFullHeight ? "mt-2 flex-shrink-0" : "mt-2"} inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-fg-1  hover:text-fg-1  transition-colors`}
         >
           <Wand2 className="w-3.5 h-3.5" />
           {t("common.format", { defaultValue: "格式化" })}

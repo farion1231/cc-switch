@@ -460,6 +460,26 @@ export const handlers = [
       accounts: [],
     });
   }),
+  // 应用页页头的「提示词：X ›」会读各应用的提示词列表
+  http.post(`${TAURI_ENDPOINT}/get_prompts`, () => success({})),
+  http.post(
+    `${TAURI_ENDPOINT}/get_prompt_file_location`,
+    async ({ request }) => {
+      const { app } = await withJson<{ app: AppId }>(request);
+      const file =
+        app === "claude"
+          ? "CLAUDE.md"
+          : app === "gemini"
+            ? "GEMINI.md"
+            : app === "hermes"
+              ? "SOUL.md"
+              : "AGENTS.md";
+      return success({
+        path: `/home/test/.${app}/${file}`,
+        displayPath: `~/.${app}/${file}`,
+      });
+    },
+  ),
   http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
     success({
       supported: true,

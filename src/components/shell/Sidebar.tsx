@@ -17,6 +17,7 @@ import {
   Layers,
   LayoutGrid,
   Route,
+  Search,
   Server,
   Settings,
   SlidersHorizontal,
@@ -51,6 +52,8 @@ interface SidebarProps {
   onExitSettings: () => void;
   /** 打开了「启动时检查应用更新」并且查到了新版本 */
   appsUpdateAvailable?: boolean;
+  /** 顶条的搜索按钮（⌘K） */
+  onOpenSearch?: () => void;
 }
 
 /**
@@ -76,7 +79,11 @@ export function Sidebar(props: SidebarProps) {
       >
         {t("nav.skipToContent")}
       </a>
-      <SidebarTopBar collapsed={collapsed} onToggle={onToggleCollapsed} />
+      <SidebarTopBar
+        collapsed={collapsed}
+        onToggle={onToggleCollapsed}
+        onSearch={props.onOpenSearch}
+      />
       {inSettings ? (
         <SettingsDirectory {...props} />
       ) : (
@@ -89,11 +96,28 @@ export function Sidebar(props: SidebarProps) {
 function SidebarTopBar({
   collapsed,
   onToggle,
+  onSearch,
 }: {
   collapsed: boolean;
   onToggle: () => void;
+  onSearch?: () => void;
 }) {
   const { t } = useTranslation();
+  const searchLabel = t("commandPalette.open", {
+    shortcut: isMac() ? "⌘K" : "Ctrl+K",
+  });
+  const searchButton = onSearch ? (
+    <button
+      type="button"
+      onClick={onSearch}
+      aria-label={searchLabel}
+      title={searchLabel}
+      style={NO_DRAG}
+      className="flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-[background-color,color,scale] hover:bg-subtle hover:text-fg-1 active:scale-[0.96]"
+    >
+      <Search className="h-4 w-4" strokeWidth={1.5} />
+    </button>
+  ) : null;
   const label = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
   const Icon = collapsed ? ChevronsRight : ChevronsLeft;
   const toggleButton = (
@@ -121,6 +145,11 @@ function SidebarTopBar({
         <div className="flex h-8 shrink-0 items-center justify-center">
           {toggleButton}
         </div>
+        {searchButton && (
+          <div className="flex h-8 shrink-0 items-center justify-center">
+            {searchButton}
+          </div>
+        )}
       </>
     );
   }
@@ -139,6 +168,7 @@ function SidebarTopBar({
           CC Switch
         </span>
       )}
+      {searchButton}
       {toggleButton}
     </div>
   );

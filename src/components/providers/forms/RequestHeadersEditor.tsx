@@ -107,13 +107,11 @@ export function RequestHeadersEditor({
   };
 
   return (
-    <div
-      className={cn("space-y-2 border-l border-border-default pl-3", className)}
-    >
+    <div className={cn("space-y-2 border-l border-border pl-3", className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="max-w-3xl space-y-1">
           <Label>{t("opencode.headers", { defaultValue: "Headers" })}</Label>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("opencode.headersHint", {
               defaultValue:
                 "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
@@ -137,14 +135,14 @@ export function RequestHeadersEditor({
 
       <div className="max-w-3xl" aria-live="polite">
         {Object.keys(headers).length === 0 ? (
-          <p className="py-1 text-sm text-muted-foreground">
+          <p className="py-1 text-sm text-fg-2">
             {t("opencode.noHeaders", {
               defaultValue: "No custom headers configured",
             })}
           </p>
         ) : (
           <div className="space-y-2">
-            <div className="mb-1 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
               <span className="flex-1">
                 {t("opencode.headerName", { defaultValue: "Header" })}
               </span>
@@ -184,7 +182,7 @@ export function RequestHeadersEditor({
                   aria-label={t("opencode.removeHeader", {
                     defaultValue: "Remove header",
                   })}
-                  className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                  className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

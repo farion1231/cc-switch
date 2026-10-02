@@ -4,29 +4,21 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-control text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        // 主按钮：蓝底白字（对应旧版 primary）
+        // 旧变体都映射到 v7 的样式（不再有蓝色 / 绿色按钮）
         default:
-          "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-        // 危险按钮：红底白字（对应旧版 danger）
+          "border border-transparent bg-action text-action-fg hover:bg-action-hover",
         destructive:
-          "bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700",
-        // 轮廓按钮
+          "border border-transparent bg-danger text-white hover:brightness-110",
         outline:
-          "border border-border-default bg-background text-muted-foreground hover:bg-gray-100 hover:text-gray-900 hover:border-border-hover dark:hover:bg-gray-800 dark:hover:text-gray-100",
-        // 次按钮：灰色（对应旧版 secondary）
-        secondary:
-          "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200",
-        // 幽灵按钮（对应旧版 ghost）
-        ghost:
-          "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
-        // MCP 专属按钮：祖母绿
-        mcp: "bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
-        // 链接按钮
-        link: "text-blue-500 underline-offset-4 hover:underline dark:text-blue-400",
+          "border border-border-strong bg-surface text-fg-1 hover:bg-subtle",
+        secondary: "text-fg-2 hover:bg-subtle hover:text-fg-1",
+        ghost: "text-fg-2 hover:bg-subtle hover:text-fg-1",
+        mcp: "border border-transparent bg-action text-action-fg hover:bg-action-hover",
+        link: "text-fg-1 underline-offset-4 hover:underline",
         // ── v7（tokens.css 的 btn-*）：一个视图只有一个实心按钮，其余用 neutral ──
         // 中性实心：页头主操作（操作色，以后的主题色只改这一组变量）
         solid:

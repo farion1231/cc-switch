@@ -1,637 +1,211 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
-import { useForm } from "react-hook-form";
-import { Form } from "@/components/ui/form";
 import type { ProviderCategory } from "@/types";
 import {
   ProviderPresetSelector,
   filterPresetEntries,
   getPresetDisplayName,
-  getPresetSearchText,
   getVisiblePresetEntries,
-  sortPresetEntries,
-  type PresetSortMode,
+  type PresetEntry,
 } from "@/components/providers/forms/ProviderPresetSelector";
+import {
+  PresetStepContext,
+  type PresetStepState,
+} from "@/components/providers/forms/presetStep";
+import {
+  domainBody,
+  presetGroup,
+} from "@/components/providers/forms/presetGroups";
 
-// Mock ProviderIcon 以避免依赖图标库的实际内容
 vi.mock("@/components/ProviderIcon", () => ({
-  ProviderIcon: ({
-    icon,
-    name,
-    color,
-    size,
-    className,
-  }: {
-    icon?: string;
-    name: string;
-    color?: string;
-    size?: number;
-    className?: string;
-  }) => (
-    <span
-      data-testid="provider-icon"
-      data-icon={icon}
-      data-name={name}
-      data-color={color}
-      data-size={size}
-      className={className}
-    />
+  ProviderIcon: ({ name }: { name: string }) => (
+    <span data-testid="provider-icon" data-name={name} />
   ),
 }));
 
-const presetCategoryLabels = {
-  official: "官方",
-  cn_official: "国产官方",
-  aggregator: "聚合服务",
-  third_party: "第三方",
-};
-
 const translations: Record<string, string> = {
   "preset.alpha": "Alpha 本地名",
-  "preset.gamma": "Gamma 本地名",
+  "preset.zhipu": "智谱 GLM",
 };
-
 const t = ((key: string) => translations[key] ?? key) as TFunction;
 
-type TestPresetEntry = {
-  id: string;
-  preset: {
-    name: string;
-    nameKey?: string;
-    websiteUrl: string;
-    settingsConfig: Record<string, never>;
-    category: ProviderCategory;
-    primePartner?: boolean;
-    isPartner?: boolean;
-  };
-};
+function preset(
+  name: string,
+  category: ProviderCategory,
+  websiteUrl: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    name,
+    websiteUrl,
+    settingsConfig: {},
+    category,
+    ...extra,
+  } as PresetEntry["preset"];
+}
 
-const presetEntries: TestPresetEntry[] = [
+const entries: PresetEntry[] = [
   {
     id: "gamma",
-    preset: {
-      name: "Gamma Raw",
-      nameKey: "preset.gamma",
-      websiteUrl: "https://gamma.example.com",
-      settingsConfig: {},
-      category: "aggregator",
-    },
+    preset: preset("Gamma", "aggregator", "https://api.gamma.com"),
   },
   {
     id: "alpha",
-    preset: {
-      name: "Alpha Raw",
+    preset: preset("Alpha Raw", "official", "https://alpha.example.com", {
       nameKey: "preset.alpha",
-      websiteUrl: "https://alpha.example.com/v1",
-      settingsConfig: {},
-      category: "official",
-    },
+    }),
   },
   {
-    id: "beta",
-    preset: {
-      name: "Beta Gateway",
-      websiteUrl: "https://CN-Gateway.example.com",
-      settingsConfig: {},
-      category: "cn_official",
-    },
+    id: "huoshan",
+    preset: preset("火山引擎", "cn_official", "https://www.volcengine.com"),
   },
   {
-    id: "delta",
-    preset: {
-      name: "Delta Mirror",
-      websiteUrl: "https://delta.example.com",
-      settingsConfig: {},
-      category: "third_party",
-    },
+    id: "zhipu",
+    preset: preset("Zhipu GLM", "cn_official", "https://open.bigmodel.cn", {
+      nameKey: "preset.zhipu",
+    }),
   },
-] satisfies TestPresetEntry[];
+  {
+    id: "bedrock",
+    preset: preset("AWS Bedrock", "cloud_provider", "https://aws.amazon.com"),
+  },
+  {
+    id: "copilot",
+    preset: preset("GitHub Copilot", "third_party", "https://github.com", {
+      providerType: "github_copilot",
+    }),
+  },
+];
 
-function getIds(entries: ReadonlyArray<{ id: string }>) {
-  return entries.map((entry) => entry.id);
-}
-
-function renderSelector({
-  entries = presetEntries,
-  onPresetChange = vi.fn(),
-  selectedPresetId = "custom",
-}: {
-  entries?: TestPresetEntry[];
-  onPresetChange?: (value: string) => void;
-  selectedPresetId?: string;
-} = {}) {
-  const Wrapper = () => {
-    const form = useForm();
-
-    return (
-      <Form {...form}>
-        <ProviderPresetSelector
-          selectedPresetId={selectedPresetId}
-          presetEntries={entries}
-          presetCategoryLabels={presetCategoryLabels}
-          onPresetChange={onPresetChange}
-        />
-      </Form>
-    );
-  };
-
-  return render(<Wrapper />);
-}
-
-function getPresetButtonTexts() {
-  const knownNames = new Set([
-    "providerPreset.custom",
-    ...presetEntries.flatMap((entry) => [
-      entry.preset.name,
-      entry.preset.nameKey ?? entry.preset.name,
-    ]),
-  ]);
-
-  return screen
-    .getAllByRole("button")
-    .map((button) => button.textContent?.trim() ?? "")
-    .filter((text) => knownNames.has(text));
-}
-
-function getSearchButton() {
-  return screen.getByRole("button", {
-    name: /providerPreset\.(search|searchAriaLabel|openSearch)|搜索|search/i,
-  });
-}
-
-function getSortButton() {
-  return screen.getByRole("button", {
-    name: /providerPreset\.(sort|sortByName|restoreOriginalOrder)|按名称排序|恢复原顺序|sort/i,
-  });
-}
-
-function getSearchInput() {
-  return screen.getByRole("textbox", {
-    name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-  });
-}
-
-describe("ProviderPresetSelector pure helpers", () => {
-  it("优先使用 nameKey 翻译作为显示名，否则使用原始 name", () => {
-    expect(getPresetDisplayName(presetEntries[1].preset, t)).toBe(
-      "Alpha 本地名",
-    );
-    expect(getPresetDisplayName(presetEntries[2].preset, t)).toBe(
-      "Beta Gateway",
-    );
-  });
-
-  it("仅拼接显示名与原始名称、统一 lower-case，不含 URL 或分类 label", () => {
-    const searchText = getPresetSearchText(presetEntries[1], t);
-
-    expect(searchText).toContain("alpha 本地名");
-    expect(searchText).toContain("alpha raw");
-    expect(searchText).not.toContain("example.com");
-    expect(searchText).not.toContain("官方");
-    expect(searchText).toBe(searchText.toLowerCase());
-  });
-
-  it("空 query 返回原数组，非空 query 大小写不敏感匹配", () => {
-    expect(filterPresetEntries(presetEntries, "   ", t)).toBe(presetEntries);
-    expect(
-      getIds(filterPresetEntries(presetEntries, "ALPHA 本地名", t)),
-    ).toEqual(["alpha"]);
-  });
-
-  it("不再通过 URL 或分类 label 搜索（仅匹配名称）", () => {
-    expect(
-      getIds(filterPresetEntries(presetEntries, "cn-gateway.example.com", t)),
-    ).toEqual([]);
-    expect(getIds(filterPresetEntries(presetEntries, "聚合", t))).toEqual([]);
-  });
-
-  it("支持 A-Z 排序、original 模式将官方分类置顶，并且 getVisible 先 filter 再 sort", () => {
-    const originalMode: PresetSortMode = "original";
-    const nameAscMode: PresetSortMode = "nameAsc";
-
-    const original = sortPresetEntries(presetEntries, originalMode, t);
-    expect(original).not.toBe(presetEntries);
-    // original 模式置顶官方分类（alpha）；其余均非赞助商，按显示名排序
-    // （Beta Gateway < Delta Mirror < Gamma 本地名）。
-    expect(getIds(original)).toEqual(["alpha", "beta", "delta", "gamma"]);
-
-    expect(getIds(sortPresetEntries(presetEntries, nameAscMode, t))).toEqual([
-      "alpha",
-      "beta",
-      "delta",
-      "gamma",
+describe("preset helpers", () => {
+  it("groups presets from existing fields without touching category", () => {
+    expect(entries.map((entry) => presetGroup(entry.preset))).toEqual([
+      "thirdparty",
+      "login",
+      "vendor",
+      "vendor",
+      "cloud",
+      "login",
     ]);
-    expect(getIds(presetEntries)).toEqual(["gamma", "alpha", "beta", "delta"]);
+  });
 
+  it("sorts only by name, with Chinese names placed by pinyin initial", () => {
     expect(
-      getIds(
-        getVisiblePresetEntries(presetEntries, {
-          query: "a",
-          sortMode: nameAscMode,
-          t,
-        }),
+      getVisiblePresetEntries(entries, { query: "", t }).map(
+        (entry) => entry.id,
       ),
-    ).toEqual(["alpha", "beta", "delta", "gamma"]);
+    ).toEqual(["alpha", "bedrock", "gamma", "copilot", "huoshan", "zhipu"]);
   });
 
-  it("original 模式按「官方 → 尊享伙伴 → 赞助商 → 非赞助商」四段排序，前三组保序、末组按显示名，双重身份不重复", () => {
-    // 故意打乱传入顺序，验证：
-    // - official 组置顶（officialOnly、officialPrime 按出现顺序）；
-    // - 非官方且 primePartner 的预设次之（primeAndPartner）；
-    // - 赞助商（isPartner）第三段，保持传入（预设文件）顺序：
-    //   partnerZeta 在 partnerAlpha 前，不按字母重排；
-    // - 非赞助商按显示名排序：restAlpha 排到 restZulu 前；
-    // - 既是 official 又是 primePartner 的只归入官方组；
-    //   既是 primePartner 又是 isPartner 的只归入 prime 组、不在赞助商组重复。
-    const mixed: TestPresetEntry[] = [
-      {
-        id: "restZulu",
-        preset: {
-          name: "Zulu Rest",
-          websiteUrl: "https://rest-zulu.example.com",
-          settingsConfig: {},
-          category: "third_party",
-        },
-      },
-      {
-        id: "partnerZeta",
-        preset: {
-          name: "Zeta Partner",
-          websiteUrl: "https://partner-zeta.example.com",
-          settingsConfig: {},
-          category: "aggregator",
-          isPartner: true,
-        },
-      },
-      {
-        id: "primeAndPartner",
-        preset: {
-          name: "Prime And Partner",
-          websiteUrl: "https://prime-and-partner.example.com",
-          settingsConfig: {},
-          category: "cn_official",
-          primePartner: true,
-          isPartner: true,
-        },
-      },
-      {
-        id: "officialOnly",
-        preset: {
-          name: "Official Only",
-          websiteUrl: "https://official-only.example.com",
-          settingsConfig: {},
-          category: "official",
-        },
-      },
-      {
-        id: "officialPrime",
-        preset: {
-          name: "Official Prime",
-          websiteUrl: "https://official-prime.example.com",
-          settingsConfig: {},
-          category: "official",
-          primePartner: true,
-        },
-      },
-      {
-        id: "partnerAlpha",
-        preset: {
-          name: "Alpha Partner",
-          websiteUrl: "https://partner-alpha.example.com",
-          settingsConfig: {},
-          category: "third_party",
-          isPartner: true,
-        },
-      },
-      {
-        id: "restAlpha",
-        preset: {
-          name: "Alpha Rest",
-          websiteUrl: "https://rest-alpha.example.com",
-          settingsConfig: {},
-          category: "aggregator",
-        },
-      },
-    ];
-
-    expect(getIds(sortPresetEntries(mixed, "original", t))).toEqual([
-      "officialOnly",
-      "officialPrime",
-      "primeAndPartner",
-      "partnerZeta",
-      "partnerAlpha",
-      "restAlpha",
-      "restZulu",
-    ]);
+  it("searches display names, domains and aliases but not TLDs", () => {
+    expect(domainBody("api.gamma.com")).toBe("gamma");
+    const ids = (query: string) =>
+      filterPresetEntries(entries, query, t).map((entry) => entry.id);
+    expect(ids("智谱")).toEqual(["zhipu"]);
+    expect(ids("bigmodel")).toEqual(["zhipu"]);
+    expect(ids("com")).toEqual([]);
+    expect(getPresetDisplayName(entries[1].preset, t)).toBe("Alpha 本地名");
   });
 });
 
+function TwoSteps({
+  onPresetChange,
+}: {
+  onPresetChange: (id: string) => void;
+}) {
+  const [step, setStep] = useState<"pick" | "form">("pick");
+  const [host, setHost] = useState<HTMLDivElement | null>(null);
+  const [selected, setSelected] = useState<string | null>("custom");
+  const state: PresetStepState = {
+    appId: "claude",
+    step,
+    setStep,
+    host,
+    registerSelector: () => () => undefined,
+  };
+  return (
+    <PresetStepContext.Provider value={state}>
+      {step === "pick" && <div data-testid="host" ref={setHost} />}
+      <ProviderPresetSelector
+        selectedPresetId={selected}
+        presetEntries={entries}
+        onPresetChange={(id) => {
+          setSelected(id);
+          onPresetChange(id);
+        }}
+      />
+    </PresetStepContext.Provider>
+  );
+}
+
 describe("ProviderPresetSelector", () => {
-  it("默认（original 模式）将官方分类置顶，非赞助商按显示名排序", () => {
-    renderSelector();
-
-    // 组件内 t() 未配置翻译资源，显示名回退为 key 字面量：
-    // Beta Gateway < Delta Mirror < preset.gamma。
-    expect(getPresetButtonTexts()).toEqual([
-      "providerPreset.custom",
-      "preset.alpha",
-      "Beta Gateway",
-      "Delta Mirror",
-      "preset.gamma",
-    ]);
-  });
-
-  it("点击排序按钮后普通 preset A-Z，再点恢复原顺序", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    await user.click(getSortButton());
-
-    expect(getPresetButtonTexts()).toEqual([
-      "providerPreset.custom",
-      "Beta Gateway",
-      "Delta Mirror",
-      "preset.alpha",
-      "preset.gamma",
-    ]);
-
-    await user.click(getSortButton());
-
-    expect(getPresetButtonTexts()).toEqual([
-      "providerPreset.custom",
-      "preset.alpha",
-      "Beta Gateway",
-      "Delta Mirror",
-      "preset.gamma",
-    ]);
-  });
-
-  it("搜索只过滤普通 preset，自定义配置始终保留", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
-
-    expect(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Beta Gateway" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.gamma" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.alpha" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Delta Mirror" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("搜索无普通 preset 结果时保留自定义配置并显示空状态", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "not-found");
-
-    expect(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.gamma" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.alpha" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Beta Gateway" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Delta Mirror" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /providerPreset\.(empty|noResults)|没有匹配|无结果|no matching presets/i,
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("所有预设按钮填满网格列宽(w-full)实现等宽对齐", () => {
-    renderSelector();
-
-    const presetButtons = screen.getAllByRole("button");
-    const fullWidthButtons = presetButtons.filter((btn) =>
-      btn.className.includes("w-full"),
-    );
-
-    // 至少包含 custom + 4 个预设 = 5 个等宽按钮(搜索/排序按钮为 size-8 不计入)
-    expect(fullWidthButtons.length).toBeGreaterThanOrEqual(5);
-  });
-
-  it("preset.icon 存在时按钮内渲染图标元素(img/svg)", () => {
-    const entriesWithIcon = [
-      {
-        id: "with-icon",
-        preset: {
-          name: "With Icon",
-          websiteUrl: "https://icon.example.com",
-          settingsConfig: {},
-          category: "official" as ProviderCategory,
-          icon: "claude-api",
-          iconColor: "#D4915D",
-        },
-      },
-    ];
-
-    renderSelector({ entries: entriesWithIcon });
-
-    const button = screen.getByRole("button", { name: /with icon/i });
-    const icon = button.querySelector('[data-testid="provider-icon"]');
-    expect(icon).not.toBeNull();
-    expect(icon?.getAttribute("data-icon")).toBe("claude-api");
-    expect(icon?.getAttribute("data-color")).toBe("#D4915D");
-  });
-
-  it("未选中的预设图标取前景色(不继承按钮的 muted 文字色),选中后交还给按钮的 text-white", () => {
-    const entriesWithIcon = [
-      {
-        id: "mono-icon",
-        preset: {
-          name: "Mono Icon",
-          websiteUrl: "https://mono.example.com",
-          settingsConfig: {},
-          category: "aggregator" as ProviderCategory,
-          icon: "9527code",
-        },
-      },
-    ];
-    const getIcon = () =>
-      screen
-        .getByRole("button", { name: /mono icon/i })
-        .querySelector('[data-testid="provider-icon"]');
-
-    const { unmount } = renderSelector({ entries: entriesWithIcon });
-    expect(getIcon()?.className).toContain("text-foreground");
-    unmount();
-
-    renderSelector({ entries: entriesWithIcon, selectedPresetId: "mono-icon" });
-    expect(getIcon()?.className).not.toContain("text-foreground");
-  });
-
-  it("preset 无 icon 且无 theme.icon 时,按钮内仍渲染占位元素保持文字对齐", () => {
-    const entriesWithoutIcon = [
-      {
-        id: "no-icon",
-        preset: {
-          name: "No Icon",
-          websiteUrl: "https://noicon.example.com",
-          settingsConfig: {},
-          category: "official" as ProviderCategory,
-        },
-      },
-    ];
-
-    renderSelector({ entries: entriesWithoutIcon });
-
-    const button = screen.getByRole("button", { name: /no icon/i });
-    // 占位 span(16x16)应该存在,保证文字位置与有图标的按钮对齐
-    const placeholder = button.querySelector("span[aria-hidden]");
-    expect(placeholder).not.toBeNull();
-  });
-
-  it("custom 按钮同样渲染占位元素,文字与带图标的预设按钮对齐", () => {
-    renderSelector();
-
-    const customButton = screen.getByRole("button", {
-      name: "providerPreset.custom",
-    });
-    const placeholder = customButton.querySelector("span[aria-hidden]");
-    expect(placeholder).not.toBeNull();
-  });
-
-  it("点击放大镜 inline 切换搜索输入框可见性,ESC 收起并清空", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    // 初始没有搜索输入框
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-
-    // 点击放大镜展开输入框
-    await user.click(getSearchButton());
-    const input = getSearchInput();
-    expect(input).toBeInTheDocument();
-
-    // 输入关键字过滤
-    await user.type(input, "gateway");
-    expect(
-      screen.getByRole("button", { name: "Beta Gateway" }),
-    ).toBeInTheDocument();
-
-    // ESC 收起输入框并清空
-    await user.keyboard("{Escape}");
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-    // 收起后所有预设恢复显示
-    expect(
-      screen.getByRole("button", { name: "preset.gamma" }),
-    ).toBeInTheDocument();
-  });
-
-  it("按 Ctrl+F 快捷键打开搜索输入框", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    // 初始没有搜索输入框
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-
-    // 按 Ctrl+F 展开输入框
-    await user.keyboard("{Control>}f{/Control}");
-    expect(getSearchInput()).toBeInTheDocument();
-  });
-
-  it("搜索后点击预设按钮可选中预设且不清空搜索关键词", async () => {
+  it("picks a preset in step 1, then shows a preset bar that goes back", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
-    renderSelector({ onPresetChange });
+    render(<TwoSteps onPresetChange={onPresetChange} />);
 
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
+    const host = await screen.findByTestId("host");
+    // 自定义配置固定第一行，其余按名称排
+    const rows = within(host)
+      .getAllByRole("button")
+      .filter((button) => !button.hasAttribute("aria-pressed"));
+    expect(rows[0]).toHaveTextContent("providerPreset.custom");
+    expect(rows[1]).toHaveTextContent("AWS Bedrock");
 
-    await user.click(screen.getByRole("button", { name: "Beta Gateway" }));
+    await user.click(within(host).getByText("preset.zhipu"));
+    expect(onPresetChange).toHaveBeenCalledWith("zhipu");
+    expect(screen.queryByTestId("host")).not.toBeInTheDocument();
+    expect(screen.getByText("open.bigmodel.cn")).toBeInTheDocument();
 
-    expect(onPresetChange).toHaveBeenCalledWith("beta");
-    // 搜索框仍展开、关键词保留
-    expect(getSearchInput()).toBeInTheDocument();
-    expect(getSearchInput()).toHaveValue("gateway");
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.change" }),
+    );
+    expect(await screen.findByTestId("host")).toBeInTheDocument();
   });
 
-  it("搜索已打开、焦点在别处时再次 Ctrl+F 把焦点移回搜索框且保留关键词", async () => {
+  it("filters by category and keeps the search text when clicking around", async () => {
     const user = userEvent.setup();
-    renderSelector();
+    render(<TwoSteps onPresetChange={vi.fn()} />);
+    const host = await screen.findByTestId("host");
 
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
-
-    // 选中 preset 后焦点离开搜索框（搜索框仍展开、关键词保留）
-    await user.click(screen.getByRole("button", { name: "Beta Gateway" }));
-    expect(getSearchInput()).not.toHaveFocus();
-
-    // 再次 Ctrl+F：setSearchOpen(true) 同值不重渲染、autoFocus 不重触发，
-    // 需靠快捷键命中时的命令式聚焦把焦点移回搜索框，且不清空关键词
-    await user.keyboard("{Control>}f{/Control}");
-    await waitFor(() => expect(getSearchInput()).toHaveFocus());
-    expect(getSearchInput()).toHaveValue("gateway");
-  });
-
-  it("点击组件外区域自动收起并清空", async () => {
-    const user = userEvent.setup();
-    const Wrapper = () => {
-      const form = useForm();
-      return (
-        <Form {...form}>
-          <ProviderPresetSelector
-            selectedPresetId="custom"
-            presetEntries={presetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={vi.fn()}
-          />
-          <div data-testid="outside">Outside</div>
-        </Form>
-      );
-    };
-    render(<Wrapper />);
-
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
-    expect(getSearchInput()).toBeInTheDocument();
-
-    // 点击组件外的元素应收起搜索框
-    await user.click(screen.getByTestId("outside"));
-
+    await user.click(
+      within(host).getByRole("button", { name: /providerPreset.group.login/ }),
+    );
+    expect(within(host).getByText("GitHub Copilot")).toBeInTheDocument();
+    expect(within(host).queryByText("Gamma")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-    // 收起后清空 query,所有预设恢复显示
-    expect(
-      screen.getByRole("button", { name: "preset.gamma" }),
+      within(host).getByText("providerPreset.loginWith.github"),
     ).toBeInTheDocument();
+
+    const search = within(host).getByRole("textbox", {
+      name: "providerPreset.searchAriaLabel",
+    });
+    await user.type(search, "zzz");
+    await user.click(document.body);
+    expect(search).toHaveValue("zzz");
+    expect(
+      within(host).getByText("providerPreset.noResults"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the custom config when nothing matches", async () => {
+    const user = userEvent.setup();
+    const onPresetChange = vi.fn();
+    render(<TwoSteps onPresetChange={onPresetChange} />);
+    const host = await screen.findByTestId("host");
+
+    await user.type(
+      within(host).getByRole("textbox", {
+        name: "providerPreset.searchAriaLabel",
+      }),
+      "nothing-here",
+    );
+    await user.click(
+      within(host).getByRole("button", { name: "providerPreset.useCustom" }),
+    );
+    await waitFor(() => expect(onPresetChange).toHaveBeenCalledWith("custom"));
   });
 });

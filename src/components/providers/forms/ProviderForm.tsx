@@ -2204,7 +2204,7 @@ function ProviderFormFull({
         <form
           id="provider-form"
           onSubmit={form.handleSubmit(handleSubmit)}
-          className="space-y-6 glass rounded-xl p-6 border border-white/10"
+          className="space-y-6"
         >
           {!initialData && (
             <ProviderPresetSelector
@@ -2274,7 +2274,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         opencodeForm.opencodeProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("opencode.providerKeyLockedHint", {
                               defaultValue:
@@ -2337,7 +2337,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         openclawForm.openclawProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("openclaw.providerKeyLockedHint", {
                               defaultValue:
@@ -2404,7 +2404,7 @@ function ProviderFormFull({
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         hermesForm.hermesProviderKey,
                       )) && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-fg-2">
                         {isProviderKeyLocked
                           ? t("hermes.form.providerKeyLockedHint", {
                               defaultValue:
@@ -2427,7 +2427,7 @@ function ProviderFormFull({
                 type="button"
                 variant="link"
                 size="sm"
-                className="h-auto p-0 text-xs text-muted-foreground"
+                className="h-auto p-0 text-xs text-fg-2"
                 onClick={() => setPreferFullForm((value) => !value)}
               >
                 {useStackLayout

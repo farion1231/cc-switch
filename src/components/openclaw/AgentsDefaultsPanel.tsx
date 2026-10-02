@@ -182,9 +182,7 @@ const AgentsDefaultsPanel: React.FC = () => {
   if (isLoading) {
     return (
       <div className="px-6 pt-4 pb-8 flex items-center justify-center min-h-[200px]">
-        <div className="text-sm text-muted-foreground">
-          {t("common.loading")}
-        </div>
+        <div className="text-sm text-fg-2">{t("common.loading")}</div>
       </div>
     );
   }
@@ -198,12 +196,12 @@ const AgentsDefaultsPanel: React.FC = () => {
 
   return (
     <div className="px-6 pt-4 pb-8">
-      <p className="text-sm text-muted-foreground mb-6">
+      <p className="text-sm text-fg-2 mb-6">
         {t("openclaw.agents.description")}
       </p>
 
       {hasLegacyTimeout && (
-        <Alert className="mb-4 border-amber-500/30 bg-amber-500/5">
+        <Alert className="mb-4 border-transparent bg-warning-soft">
           <TriangleAlert className="h-4 w-4" />
           <AlertTitle>
             {t("openclaw.agents.legacyTimeoutTitle", {
@@ -220,7 +218,7 @@ const AgentsDefaultsPanel: React.FC = () => {
       )}
 
       {/* Model Configuration Card */}
-      <div className="rounded-xl border border-border bg-card p-5 mb-4">
+      <div className="rounded-xl border border-border bg-surface p-5 mb-4">
         <h3 className="text-sm font-medium mb-4">
           {t("openclaw.agents.modelSection")}
         </h3>
@@ -232,7 +230,7 @@ const AgentsDefaultsPanel: React.FC = () => {
               {t("openclaw.agents.primaryModel")}
             </Label>
             {noModels ? (
-              <p className="text-xs text-muted-foreground italic">
+              <p className="text-xs text-fg-2 italic">
                 {t("openclaw.agents.noModels", {
                   defaultValue:
                     "No configured provider models. Please add an OpenClaw provider first.",
@@ -260,7 +258,7 @@ const AgentsDefaultsPanel: React.FC = () => {
                 </SelectContent>
               </Select>
             )}
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-fg-2 mt-1">
               {t("openclaw.agents.primaryModelHint")}
             </p>
           </div>
@@ -272,7 +270,7 @@ const AgentsDefaultsPanel: React.FC = () => {
             </Label>
 
             {fallbacks.length === 0 && !noModels && (
-              <p className="text-xs text-muted-foreground italic mb-2">
+              <p className="text-xs text-fg-2 italic mb-2">
                 {t("openclaw.agents.fallbackModelsHint")}
               </p>
             )}
@@ -308,7 +306,7 @@ const AgentsDefaultsPanel: React.FC = () => {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                      className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                       onClick={() => handleRemoveFallback(index)}
                     >
                       <Trash2 className="w-4 h-4" />
@@ -336,7 +334,7 @@ const AgentsDefaultsPanel: React.FC = () => {
       </div>
 
       {/* Runtime Parameters Card */}
-      <div className="rounded-xl border border-border bg-card p-5 mb-4">
+      <div className="rounded-xl border border-border bg-surface p-5 mb-4">
         <h3 className="text-sm font-medium mb-4">
           {t("openclaw.agents.runtimeSection")}
         </h3>

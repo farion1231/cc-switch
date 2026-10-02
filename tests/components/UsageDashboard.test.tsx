@@ -1,22 +1,37 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import {
+  UsageDashboard,
+  resetUsageSyncClockForTests,
+} from "@/components/usage/UsageDashboard";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
+const useSummaryByAppMock = vi.hoisted(() => vi.fn());
 const usageHeroMock = vi.hoisted(() => vi.fn());
+const requestLogTableMock = vi.hoisted(() => vi.fn());
+const detailPanelMock = vi.hoisted(() => vi.fn());
+const usageApiMock = vi.hoisted(() => ({
+  getUsageSummary: vi.fn(),
+  syncSessionUsage: vi.fn(),
+  rebuildCodexUsage: vi.fn(),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, options?: unknown) => {
+      if (typeof options === "string") return options;
+      if (options && typeof options === "object") {
+        const values = Object.entries(options as Record<string, unknown>)
+          .filter(([name]) => name !== "defaultValue")
+          .map(([, value]) => String(value));
+        return values.length ? `${key}:${values.join(",")}` : key;
+      }
+      return key;
+    },
     i18n: {
       resolvedLanguage: "en",
       language: "en",
@@ -24,15 +39,15 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-vi.mock("framer-motion", () => ({
-  motion: {
-    div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-  },
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("@/hooks/useUsageEventBridge", () => ({
   useUsageEventBridge: () => {},
 }));
+
+vi.mock("@/lib/api/usage", () => ({ usageApi: usageApiMock }));
 
 vi.mock("@/lib/query/usage", async () => {
   const actual =
@@ -43,6 +58,7 @@ vi.mock("@/lib/query/usage", async () => {
     ...actual,
     useProviderStats: (...args: unknown[]) => useProviderStatsMock(...args),
     useModelStats: (...args: unknown[]) => useModelStatsMock(...args),
+    useUsageSummaryByApp: (...args: unknown[]) => useSummaryByAppMock(...args),
   };
 });
 
@@ -58,7 +74,23 @@ vi.mock("@/components/usage/UsageTrendChart", () => ({
 }));
 
 vi.mock("@/components/usage/RequestLogTable", () => ({
-  RequestLogTable: () => <div data-testid="request-log-table" />,
+  RequestLogTable: (props: { onOpenDetail?: (id: string) => void }) => {
+    requestLogTableMock(props);
+    return (
+      <button type="button" onClick={() => props.onOpenDetail?.("req-1")}>
+        open-row
+      </button>
+    );
+  },
+}));
+
+vi.mock("@/components/usage/RequestDetailPanel", () => ({
+  RequestDetailPanel: (props: { requestId: string | null }) => {
+    detailPanelMock(props);
+    return props.requestId ? (
+      <div data-testid="request-detail">{props.requestId}</div>
+    ) : null;
+  },
 }));
 
 vi.mock("@/components/usage/ProviderStatsTable", () => ({
@@ -74,26 +106,16 @@ vi.mock("@/components/usage/PricingConfigPanel", () => ({
 }));
 
 vi.mock("@/components/usage/UsageDateRangePicker", () => ({
-  UsageDateRangePicker: () => <button type="button">date-range</button>,
+  UsageDateRangePicker: ({ triggerLabel }: { triggerLabel: string }) => (
+    <button type="button">{triggerLabel}</button>
+  ),
 }));
 
-vi.mock("@/components/ui/select", () => ({
-  Select: ({ value, onValueChange, children }: any) => (
-    <div data-testid={`select-${value}`}>
-      {children}
-      <button type="button" onClick={() => onValueChange?.("5000")}>
-        choose-5000
-      </button>
-    </div>
-  ),
-  SelectTrigger: ({ children, ...props }: any) => (
-    <button type="button" {...props}>
-      {children}
-    </button>
-  ),
-  SelectValue: () => null,
-  SelectContent: ({ children }: any) => <div>{children}</div>,
-  SelectItem: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+vi.mock("@/lib/query/proxy", () => ({
+  useGlobalProxyConfig: () => ({
+    data: { enableLogging: true },
+    isLoading: false,
+  }),
 }));
 
 const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
@@ -111,23 +133,68 @@ const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
 
 describe("UsageDashboard", () => {
   beforeEach(() => {
+    resetUsageSyncClockForTests();
     useProviderStatsMock.mockReset();
     useModelStatsMock.mockReset();
+    useSummaryByAppMock.mockReset();
     usageHeroMock.mockReset();
-    useProviderStatsMock.mockReturnValue({ data: [] });
+    requestLogTableMock.mockReset();
+    detailPanelMock.mockReset();
+    useProviderStatsMock.mockReturnValue({
+      data: [
+        {
+          providerId: "p1",
+          providerName: "DeepSeek",
+          requestCount: 12,
+          totalTokens: 100,
+          totalCost: "1",
+          successRate: 100,
+          avgLatencyMs: 0,
+        },
+      ],
+    });
     useModelStatsMock.mockReturnValue({ data: [] });
+    useSummaryByAppMock.mockReturnValue({ data: [] });
+    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
+    usageApiMock.syncSessionUsage.mockResolvedValue({
+      imported: 2,
+      skipped: 0,
+      filesScanned: 3,
+      suspectedDuplicates: 0,
+      deferredFiles: 0,
+      errors: [],
+    });
   });
 
-  it("uses the saved refresh interval when mounted", () => {
+  it("shows the saved refresh interval in the header menu", () => {
     renderDashboard({ refreshIntervalMs: 5000 });
 
-    expect(screen.getByTestId("select-5000")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:5",
+      }),
+    ).toBeInTheDocument();
   });
 
-  it("filters usage queries to Pi", async () => {
+  it("defaults to the last 7 days", () => {
     renderDashboard();
 
-    fireEvent.click(screen.getByRole("button", { name: "usage.appFilter.pi" }));
+    expect(
+      screen.getByRole("button", { name: "usage.preset7d" }),
+    ).toBeInTheDocument();
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: { preset: "7d" } }),
+    );
+  });
+
+  it("filters usage queries to an app from the overflow menu", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(
+      screen.getByRole("button", { name: /usage.appFilter.more/ }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /^Pi/ }));
 
     await waitFor(() =>
       expect(useProviderStatsMock).toHaveBeenLastCalledWith(
@@ -144,31 +211,80 @@ describe("UsageDashboard", () => {
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ appType: "pi" }),
     );
+    // 选中的溢出应用顶替「更多」
+    expect(
+      screen.getByRole("button", { name: /Pi/, pressed: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("starts with the app filter passed in from an app page", () => {
+    renderDashboard({ initialAppType: "codex" });
+
+    expect(
+      screen.getByRole("button", { name: /Codex/, pressed: true }),
+    ).toBeInTheDocument();
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: "codex" }),
+    );
+  });
+
+  it("filters by provider and lists request counts", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.providerFilter.label" }),
+    );
+    const item = await screen.findByRole("menuitem", { name: /DeepSeek/ });
+    expect(item).toHaveTextContent("12");
+    await user.click(item);
+
+    await waitFor(() =>
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ providerName: "DeepSeek" }),
+      ),
+    );
   });
 
   it("persists refresh interval changes", async () => {
+    const user = userEvent.setup();
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(true);
     renderDashboard({ onRefreshIntervalChange });
 
-    fireEvent.click(
-      within(screen.getByTestId("select-30000")).getByRole("button", {
-        name: "choose-5000",
+    await user.click(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "usage.refreshMenu.seconds:5",
       }),
     );
 
     await waitFor(() =>
       expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
     );
-    expect(screen.getByTestId("select-5000")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:5",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("rolls back optimistic interval changes when persistence fails", async () => {
+    const user = userEvent.setup();
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(false);
     renderDashboard({ onRefreshIntervalChange });
 
-    fireEvent.click(
-      within(screen.getByTestId("select-30000")).getByRole("button", {
-        name: "choose-5000",
+    await user.click(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "usage.refreshMenu.seconds:5",
       }),
     );
 
@@ -176,7 +292,100 @@ describe("UsageDashboard", () => {
       expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("select-30000")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", {
+          name: "usage.refreshInterval: usage.refreshMenu.label:30",
+        }),
+      ).toBeInTheDocument(),
     );
+  });
+
+  it("syncs session logs from the header and shows when it last synced", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "usage.syncStatus.auto",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
+    );
+
+    await waitFor(() =>
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "usage.syncStatus.justNow",
+      ),
+    );
+  });
+
+  it("says when automatic scanning is off", () => {
+    renderDashboard({ sessionAutoSyncEnabled: false });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "usage.syncStatus.off",
+    );
+  });
+
+  it("opens the request detail drawer from a log row", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(screen.getByRole("button", { name: "open-row" }));
+
+    expect(await screen.findByTestId("request-detail")).toHaveTextContent(
+      "req-1",
+    );
+  });
+
+  it("switches tabs and filters logs by status code", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "usage.statusCode: usage.statusFilter.all",
+      }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "429" }));
+    await waitFor(() =>
+      expect(requestLogTableMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ statusCode: 429 }),
+      ),
+    );
+
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.pricing" }));
+    expect(screen.getByTestId("pricing-config-panel")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("toggles session scanning and links to routing settings from the data sources drawer", async () => {
+    const user = userEvent.setup();
+    const onSessionAutoSyncEnabledChange = vi.fn();
+    const onOpenRoutingSettings = vi.fn();
+    renderDashboard({ onSessionAutoSyncEnabledChange, onOpenRoutingSettings });
+
+    await user.click(screen.getByRole("button", { name: "usage.dataSources" }));
+    await user.click(
+      await screen.findByRole("switch", { name: "usage.sources.scanTitle" }),
+    );
+    expect(onSessionAutoSyncEnabledChange).toHaveBeenCalledWith(false);
+
+    await user.click(
+      screen.getByRole("button", { name: /usage.sources.editLogging/ }),
+    );
+    expect(onOpenRoutingSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the empty state when there is no usage at all", async () => {
+    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
+    renderDashboard();
+
+    expect(await screen.findByText("usage.empty.title")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
   });
 });

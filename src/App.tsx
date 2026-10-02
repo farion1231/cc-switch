@@ -3,22 +3,10 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  BookOpen,
-  Download,
-  ExternalLink,
-  FolderArchive,
-  History,
-  KeyRound,
-  Loader2,
-  MoreHorizontal,
-  Plus,
-  RefreshCw,
-  Search,
-  Server,
-} from "lucide-react";
+import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
+import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
@@ -38,7 +26,6 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
-import { useScanUnmanagedSkills } from "@/hooks/useSkills";
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import {
   extractErrorMessage,
@@ -59,6 +46,7 @@ import {
   type View,
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { CommandPalette } from "@/components/shell/CommandPalette";
 import {
   AppPageHeader,
   WindowControlsContext,
@@ -85,22 +73,12 @@ import { proxyApi } from "@/lib/api/proxy";
 import type { StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
-import PromptPanel, {
-  type PromptPanelHandle,
-  type PromptPrimaryAction,
-} from "@/components/prompts/PromptPanel";
-import {
-  SkillsPage,
-  getSkillsPageHeaderActions,
-  type SkillsPageSource,
-} from "@/components/skills/SkillsPage";
-import UnifiedSkillsPanel, {
-  type SkillsCheckUpdatesState,
-} from "@/components/skills/UnifiedSkillsPanel";
+import PromptPanel from "@/components/prompts/PromptPanel";
+import { PromptEntryButton } from "@/components/prompts/PromptEntryButton";
+import { PROMPT_APP_IDS } from "@/lib/query/prompts";
+import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
-import { SkillsIcon } from "@/components/BrandIcons";
-import { SkillsStorageSheet } from "@/components/skills/SkillsStorageSheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -112,13 +90,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
   useDisableCurrentOmo,
@@ -144,17 +115,6 @@ interface SyncStatusUpdatedPayload {
 }
 
 type OpenClawConfigTab = "env" | "tools" | "agents";
-
-/** 提示词页的应用下拉：有提示词文件的应用（Claude Desktop 和 Claude Code 共用）。 */
-const PROMPT_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "pi",
-  "mcode",
-];
 
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(APP_STORAGE_KEY) as AppId | null;
@@ -182,20 +142,10 @@ function App() {
   );
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } =
     useSidebarCollapsed();
-  const [skillsDiscoverySource, setSkillsDiscoverySource] =
-    useState<SkillsPageSource>("repos");
-  const [skillsStorageOpen, setSkillsStorageOpen] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
-  const [skillsManagementBusy, setSkillsManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
-  const [promptManagementBusy, setPromptManagementBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
-  const [skillsCheckUpdatesState, setSkillsCheckUpdatesState] =
-    useState<SkillsCheckUpdatesState>({
-      isChecking: false,
-      hasSkills: false,
-    });
 
   useEffect(() => {
     storeView(currentView);
@@ -282,17 +232,6 @@ function App() {
       }
     }
   }, [activeApp, currentView]);
-
-  const promptPanelRef = useRef<PromptPanelHandle>(null);
-  const [promptPrimaryAction, setPromptPrimaryAction] =
-    useState<PromptPrimaryAction>("prompt");
-  const mcpPanelRef = useRef<any>(null);
-  const skillsPageRef = useRef<any>(null);
-  const unifiedSkillsPanelRef = useRef<any>(null);
-  // 订阅未管理 Skill 的共享缓存（实际扫描由 UnifiedSkillsPanel 进入页面时触发）。
-  // 这里 enabled 默认 false，仅用于「导入」按钮的绿点提示，不主动发起扫描。
-  const { data: unmanagedSkills } = useScanUnmanagedSkills();
-  const hasUnmanagedSkills = (unmanagedSkills?.length ?? 0) > 0;
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
   const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
@@ -654,10 +593,18 @@ function App() {
     setCurrentView(page);
   };
 
+  // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
+  const openPageFromNav = (page: GlobalPage | "settings") => {
+    if (page === "usage") setUsageAppFilter("all");
+    openPage(page);
+  };
+
   const openSettingsRef = useRef(openSettings);
   openSettingsRef.current = openSettings;
   const toggleSidebarRef = useRef(toggleSidebar);
   toggleSidebarRef.current = toggleSidebar;
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [usageAppFilter, setUsageAppFilter] = useState<AppTypeFilter>("all");
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -671,6 +618,12 @@ function App() {
       if (mod && event.key === "\\") {
         event.preventDefault();
         toggleSidebarRef.current();
+        return;
+      }
+
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
         return;
       }
 
@@ -1002,11 +955,6 @@ function App() {
     }
   };
 
-  const handleOpenSkillsDiscovery = () => {
-    setSkillsDiscoverySource("repos");
-    setCurrentView("skillsDiscovery");
-  };
-
   const handleHideActiveApp = async () => {
     const visibleCount = Object.values(visibleApps).filter(Boolean).length;
     if (visibleCount <= 1) return;
@@ -1027,6 +975,15 @@ function App() {
 
   // ─── 应用页 ─────────────────────────────────────────────────────────────
 
+  // 应用页 ⋯ →「查看此应用的用量」：带上这个应用的筛选（Claude Desktop 的流量并在 Claude 里）
+  const usageAppOf = (app: AppId): AppTypeFilter | null => {
+    const type = app === "claude-desktop" ? "claude" : app;
+    return (KNOWN_APP_TYPES as ReadonlyArray<string>).includes(type)
+      ? (type as AppTypeFilter)
+      : null;
+  };
+  const activeUsageApp = usageAppOf(activeApp);
+
   const appMenu = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -1046,6 +1003,16 @@ function App() {
         <DropdownMenuItem onSelect={() => openPage("sessions")}>
           {t("appPage.viewSessions")}
         </DropdownMenuItem>
+        {activeUsageApp && (
+          <DropdownMenuItem
+            onSelect={() => {
+              setUsageAppFilter(activeUsageApp);
+              openPage("usage");
+            }}
+          >
+            {t("appPage.viewUsage")}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={() => openSettings("appConfig")}>
           {t("appPage.configDirectory")}
         </DropdownMenuItem>
@@ -1089,6 +1056,10 @@ function App() {
             (settingsData?.showProfileSwitcher ?? true) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
+          <PromptEntryButton
+            app={activeApp}
+            onOpen={() => openPage("prompts")}
+          />
           {activeApp === "hermes" && (
             <Button
               variant="quiet"
@@ -1298,37 +1269,15 @@ function App() {
 
   // ─── 全局页 ─────────────────────────────────────────────────────────────
 
-  const quietAction = (
-    key: string,
-    label: string,
-    icon: React.ReactNode,
-    onClick: () => void,
-    options?: { disabled?: boolean; title?: string; dot?: boolean },
-  ) => (
-    <Button
-      key={key}
-      variant="quiet"
-      size="regular"
-      disabled={options?.disabled}
-      onClick={onClick}
-      title={options?.title}
-      className="relative"
-    >
-      {icon}
-      {label}
-      {options?.dot && (
-        <span
-          className="absolute end-1 top-1 h-2 w-2 rounded-full bg-success"
-          aria-hidden="true"
-        />
-      )}
-    </Button>
-  );
-
   const renderGlobalPage = () => {
     switch (currentView) {
       case "usage":
-        return <UsagePage />;
+        return (
+          <UsagePage
+            initialAppType={usageAppFilter}
+            onOpenRoutingSettings={() => openSettings("routing")}
+          />
+        );
       case "auth":
         return (
           <>
@@ -1358,261 +1307,44 @@ function App() {
         );
       case "mcp":
         return (
-          <>
-            <AppPageHeader
-              icon={<Server className="h-5 w-5" strokeWidth={1.5} />}
-              title="MCP"
-              actions={
-                <>
-                  {quietAction(
-                    "import",
-                    t("mcp.importExisting"),
-                    <Download className="h-4 w-4" />,
-                    () => mcpPanelRef.current?.openImport(),
-                    { disabled: mcpManagementBusy },
-                  )}
-                  <Button
-                    variant="solid"
-                    size="regular"
-                    disabled={mcpManagementBusy}
-                    onClick={() => mcpPanelRef.current?.openAdd()}
-                  >
-                    <Plus className="h-4 w-4" />
-                    {t("mcp.addMcp")}
-                  </Button>
-                </>
-              }
-            />
-            <div id="main-content" className="flex min-h-0 flex-1 flex-col">
-              <UnifiedMcpPanel
-                ref={mcpPanelRef}
-                onOpenChange={() => setCurrentView("providers")}
-                onInteractionBlockedChange={setMcpManagementBusy}
-              />
-            </div>
-          </>
+          <UnifiedMcpPanel onInteractionBlockedChange={setMcpManagementBusy} />
         );
       case "skills":
-        return (
-          <>
-            <AppPageHeader
-              icon={<SkillsIcon size={20} />}
-              title="Skills"
-              actions={
-                <>
-                  {quietAction(
-                    "check",
-                    skillsCheckUpdatesState.isChecking
-                      ? t("skills.checkingUpdates")
-                      : t("skills.checkUpdates"),
-                    skillsCheckUpdatesState.isChecking ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    ),
-                    () => unifiedSkillsPanelRef.current?.checkUpdates(),
-                    {
-                      disabled:
-                        skillsManagementBusy ||
-                        skillsCheckUpdatesState.isChecking ||
-                        !skillsCheckUpdatesState.hasSkills,
-                    },
-                  )}
-                  {quietAction(
-                    "restore",
-                    t("skills.restoreFromBackup.button"),
-                    <History className="h-4 w-4" />,
-                    () =>
-                      unifiedSkillsPanelRef.current?.openRestoreFromBackup(),
-                    { disabled: skillsManagementBusy },
-                  )}
-                  {quietAction(
-                    "zip",
-                    t("skills.installFromZip.button"),
-                    <FolderArchive className="h-4 w-4" />,
-                    () => unifiedSkillsPanelRef.current?.openInstallFromZip(),
-                    { disabled: skillsManagementBusy },
-                  )}
-                  {quietAction(
-                    "import",
-                    t("skills.import"),
-                    <Download className="h-4 w-4" />,
-                    () => unifiedSkillsPanelRef.current?.openImport(),
-                    {
-                      disabled: skillsManagementBusy,
-                      title: hasUnmanagedSkills
-                        ? t("skills.unmanagedAvailable")
-                        : undefined,
-                      dot: hasUnmanagedSkills,
-                    },
-                  )}
-                  <Button
-                    variant="solid"
-                    size="regular"
-                    disabled={skillsManagementBusy}
-                    onClick={() =>
-                      unifiedSkillsPanelRef.current?.openDiscovery()
-                    }
-                  >
-                    <Search className="h-4 w-4" />
-                    {t("skills.discover")}
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="quiet"
-                        size="icon-compact"
-                        className="h-8 w-8"
-                        aria-label={t("skills.moreActions")}
-                        title={t("common.more")}
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onSelect={() => setSkillsStorageOpen(true)}
-                      >
-                        {t("skills.storageSheet.open")}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </>
-              }
-            />
-            <div id="main-content" className="flex min-h-0 flex-1 flex-col">
-              <UnifiedSkillsPanel
-                ref={unifiedSkillsPanelRef}
-                onOpenDiscovery={handleOpenSkillsDiscovery}
-                onInteractionBlockedChange={setSkillsManagementBusy}
-                onNavigationBlockedChange={setSkillsNavigationBusy}
-                onCheckUpdatesStateChange={setSkillsCheckUpdatesState}
-                currentApp={
-                  sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
-                }
-              />
-            </div>
-          </>
-        );
       case "skillsDiscovery":
+        // 「已安装 / 发现」合成一页；旧的 skillsDiscovery 视图直接打开「发现」段
         return (
-          <>
-            <AppPageHeader
-              icon={<SkillsIcon size={20} />}
-              title="Skills"
-              subtitle={t("skills.discover")}
-              actions={
-                <>
-                  {getSkillsPageHeaderActions(skillsDiscoverySource).map(
-                    ({ key, labelKey, Icon, execute }) =>
-                      quietAction(
-                        key,
-                        t(labelKey),
-                        <Icon className="h-4 w-4" />,
-                        () => execute(skillsPageRef.current),
-                      ),
-                  )}
-                  <Button
-                    variant="neutral"
-                    size="regular"
-                    onClick={() => setCurrentView("skills")}
-                  >
-                    {t("skills.backToInstalled")}
-                  </Button>
-                </>
-              }
-            />
-            <div id="main-content" className="flex min-h-0 flex-1 flex-col">
-              <SkillsPage
-                ref={skillsPageRef}
-                initialApp={
-                  sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
-                }
-                onSourceChange={setSkillsDiscoverySource}
-              />
-            </div>
-          </>
+          <UnifiedSkillsPanel
+            initialView={
+              currentView === "skillsDiscovery" ? "discover" : "installed"
+            }
+            onNavigationBlockedChange={setSkillsNavigationBusy}
+          />
         );
       case "prompts":
         return (
-          <>
-            <AppPageHeader
-              icon={<BookOpen className="h-5 w-5" strokeWidth={1.5} />}
-              title={t("nav.prompts")}
-              actions={
-                promptPrimaryAction ? (
-                  <Button
-                    variant="solid"
-                    size="regular"
-                    disabled={promptManagementBusy}
-                    onClick={() => promptPanelRef.current?.openAdd()}
-                  >
-                    <Plus className="h-4 w-4" />
-                    {t(
-                      promptPrimaryAction === "template"
-                        ? "pi.prompts.newTemplate"
-                        : "prompts.add",
-                    )}
-                  </Button>
-                ) : null
-              }
+          <div id="main-content" className="flex min-h-0 flex-1 flex-col">
+            <PromptPanel
+              appId={promptsApp}
+              apps={PROMPT_APP_IDS.filter(
+                (app) =>
+                  visibleApps[app] ||
+                  (app === "claude" && visibleApps["claude-desktop"]) ||
+                  app === promptsApp,
+              )}
+              onAppChange={setPromptsApp}
+              onNavigationBlockedChange={setPromptNavigationBusy}
             />
-            <div className="shrink-0 px-6 pt-4">
-              <Select
-                value={promptsApp}
-                disabled={promptNavigationBusy}
-                onValueChange={(value) => setPromptsApp(value as AppId)}
-              >
-                <SelectTrigger
-                  className="h-9 w-[200px]"
-                  aria-label={t("prompts.appSelect")}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROMPT_APP_IDS.filter(
-                    (app) =>
-                      visibleApps[app] ||
-                      (app === "claude" && visibleApps["claude-desktop"]),
-                  ).map((app) => (
-                    <SelectItem key={app} value={app}>
-                      <span className="flex items-center gap-2">
-                        <AppGlyph app={app} size={16} />
-                        {APP_DISPLAY_NAME[app]}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div id="main-content" className="flex min-h-0 flex-1 flex-col">
-              <PromptPanel
-                key={promptsApp}
-                ref={promptPanelRef}
-                open={true}
-                onOpenChange={() => setCurrentView("providers")}
-                appId={promptsApp}
-                onInteractionBlockedChange={setPromptManagementBusy}
-                onNavigationBlockedChange={setPromptNavigationBusy}
-                onPrimaryActionChange={setPromptPrimaryAction}
-              />
-            </div>
-          </>
+          </div>
         );
       case "sessions":
+        // 页头（含 ⋯ 菜单）由会话页自己画：菜单里的操作都在页面状态里
         return (
-          <>
-            <AppPageHeader
-              icon={<History className="h-5 w-5" strokeWidth={1.5} />}
-              title={t("nav.sessions")}
-            />
-            <div id="main-content" className="flex min-h-0 flex-1 flex-col">
-              <SessionManagerPage
-                key={sharedFeatureApp}
-                appId={sharedFeatureApp}
-              />
-            </div>
-          </>
+          <SessionManagerPage
+            key={sharedFeatureApp}
+            appId={sharedFeatureApp}
+            fromApp={activeApp}
+            onOpenTerminalSettings={() => openSettings("general")}
+          />
         );
       case "apps":
         return <AppsPage />;
@@ -1648,16 +1380,26 @@ function App() {
           visibleApps={visibleApps}
           settingsSection={settingsSection}
           onSelectApp={selectApp}
-          onSelectPage={openPage}
+          onSelectPage={openPageFromNav}
           onSelectSettingsSection={setSettingsSection}
           onExitSettings={exitSettings}
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }
+          onOpenSearch={() => setPaletteOpen(true)}
+        />
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          visibleApps={visibleApps}
+          onSelectApp={selectApp}
+          onSelectPage={openPageFromNav}
+          onOpenSettings={openSettings}
         />
         <main
           ref={mainScrollRef}
-          className="flex min-w-0 flex-1 flex-col overflow-hidden"
+          id="content-area"
+          className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
           {showEnvBanner && envConflicts.length > 0 && (
             <EnvWarningBanner
@@ -1716,6 +1458,7 @@ function App() {
         onSubmit={handleEditProvider}
         appId={activeApp}
         isProxyTakeover={isCurrentAppTakeoverActive}
+        isCurrent={effectiveEditingProvider?.id === currentProviderId}
       />
 
       {effectiveUsageProvider && (
@@ -1765,11 +1508,6 @@ function App() {
           })();
         }}
         onCancel={() => setLaunchDashboardOpen(false)}
-      />
-
-      <SkillsStorageSheet
-        open={skillsStorageOpen}
-        onOpenChange={setSkillsStorageOpen}
       />
 
       <DeepLinkImportDialog />

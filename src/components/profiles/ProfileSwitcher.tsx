@@ -117,7 +117,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
             className={cn(
               "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
               "hover:bg-black/5 dark:hover:bg-white/5",
-              currentProfile ? "text-foreground" : "text-muted-foreground",
+              currentProfile ? "text-fg-1" : "text-fg-2",
             )}
           >
             <FolderOpen className="h-4 w-4 shrink-0 opacity-70" />
@@ -157,7 +157,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
                       />
                       <span className="truncate">{profile.name}</span>
                       {!hasScopeSnapshot(profile, scope) && (
-                        <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+                        <span className="ml-auto shrink-0 pl-2 text-xs text-fg-2">
                           {t("profiles.noSnapshotForScope")}
                         </span>
                       )}

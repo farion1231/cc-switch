@@ -31,12 +31,12 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
 
   // 首次加载占位：账号头部由父组件独立渲染，这里只负责用量区。
   // 用量请求是异步的（Tauri invoke + React Query），加载期间给一个
-  // 与最终额度卡片同形状（rounded-xl / border / bg-card）的转圈占位，
+  // 与最终额度卡片同形状（rounded-xl / border / bg-surface）的转圈占位，
   // 这样账号会立刻显示、用量数据到达后原地平滑替换，不产生跳版。
   if (loading && !quota) {
     return (
-      <div className="mt-3 flex items-center justify-center rounded-xl border border-border-default bg-card py-5 shadow-sm">
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+      <div className="mt-3 flex items-center justify-center rounded-xl border border-border bg-surface py-5 shadow-sm">
+        <Loader2 className="h-4 w-4 animate-spin text-fg-2" />
       </div>
     );
   }

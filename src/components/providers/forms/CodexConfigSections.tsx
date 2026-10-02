@@ -64,7 +64,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
     <div className="space-y-2">
       <label
         htmlFor="codexAuth"
-        className="block text-sm font-medium text-foreground"
+        className="block text-sm font-medium text-fg-1"
       >
         {t("codexConfig.authJson")}
       </label>
@@ -79,12 +79,10 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
         language="json"
       />
 
-      {error && (
-        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
-      )}
+      {error && <p className="text-xs text-danger-text">{error}</p>}
 
       {!error && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t(
             isProxyTakeover
               ? "codexConfig.authJsonStorageHint"
@@ -246,7 +244,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label
           htmlFor="codexConfig"
-          className="block text-sm font-medium text-foreground"
+          className="block text-sm font-medium text-fg-1"
         >
           {t("codexConfig.configToml")}
         </label>
@@ -254,14 +252,14 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
           {showRemoteCompaction && (
             <label
-              className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+              className="inline-flex cursor-pointer items-center gap-2 text-sm text-fg-2"
               title={t("codexConfig.remoteCompactionHint")}
             >
               <input
                 type="checkbox"
                 checked={remoteCompactionEnabled}
                 onChange={(e) => handleRemoteCompactionToggle(e.target.checked)}
-                className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+                className="w-4 h-4 text-fg-1 bg-white border-border rounded focus:ring-border focus:ring-2"
               />
               {t("codexConfig.enableRemoteCompaction")}
             </label>
@@ -269,7 +267,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-fg-2">
         {t("codexConfig.keyFieldsHint", {
           defaultValue:
             "地址、Key、模型、推理档位、上下文窗口和兼容开关随供应商切换；其余是 Codex 全局设置，保存后对所有供应商生效。",
@@ -277,16 +275,16 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       </p>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
           <input
             type="checkbox"
             checked={toggleStates.contextWindow1M}
             onChange={(e) => handleContextWindowToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            className="w-4 h-4 text-fg-1 bg-white border-border rounded focus:ring-border focus:ring-2"
           />
           <span>{t("codexConfig.contextWindow1M")}</span>
         </label>
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <label className="inline-flex items-center gap-2 text-sm text-fg-2">
           <span>{t("codexConfig.autoCompactLimit")}:</span>
           <input
             type="text"
@@ -296,7 +294,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             defaultValue={toggleStates.compactLimit}
             disabled={!toggleStates.contextWindow1M}
             onChange={(e) => handleCompactLimitChange(e.target.value)}
-            className="w-28 h-7 px-2 text-sm rounded border border-border bg-background text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-28 h-7 px-2 text-sm rounded border border-border bg-surface text-fg-1 disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </label>
       </div>
@@ -326,12 +324,10 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         }}
       />
 
-      {configError && (
-        <p className="text-xs text-red-500 dark:text-red-400">{configError}</p>
-      )}
+      {configError && <p className="text-xs text-danger-text">{configError}</p>}
 
       {!configError && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t(
             isProxyTakeover
               ? "codexConfig.configTomlStorageHint"

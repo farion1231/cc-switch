@@ -1429,7 +1429,7 @@ export function PiProviderForm({
         onChangeCapture={() => {
           if (formError) setFormError(null);
         }}
-        className="space-y-6 glass rounded-xl p-6 border border-white/10"
+        className="space-y-6"
       >
         {!isEdit && (
           <ProviderPresetSelector
@@ -1454,7 +1454,7 @@ export function PiProviderForm({
         {hasConfigurationSelection && !isSettingsConfigValid && (
           <p
             role="status"
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
+            className="rounded-lg border border-transparent bg-warning-soft px-4 py-3 text-sm text-warning-text"
           >
             {t("pi.form.fixJsonFirst")}
           </p>
@@ -1489,7 +1489,7 @@ export function PiProviderForm({
                       placeholder="my-provider"
                       autoComplete="off"
                     />
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-fg-2">
                       {isEdit
                         ? t("opencode.providerKeyLockedHint", {
                             defaultValue:
@@ -1526,7 +1526,7 @@ export function PiProviderForm({
                   )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("opencode.npmPackageHint", {
                   defaultValue: "选择 AI 服务的 API 接口格式",
                 })}
@@ -1553,7 +1553,7 @@ export function PiProviderForm({
                 onChange={handleBaseUrlChange}
                 placeholder="https://api.example.com/v1"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("opencode.baseUrlHint", {
                   defaultValue: "自定义 API 端点地址",
                 })}
@@ -1583,7 +1583,7 @@ export function PiProviderForm({
             <div
               id="pi-models-section"
               tabIndex={-1}
-              className="space-y-3 border-l border-border-default pl-3 outline-none"
+              className="space-y-3 border-l border-border pl-3 outline-none"
             >
               <div className="flex items-center justify-between gap-3">
                 <FormLabel>
@@ -1620,14 +1620,14 @@ export function PiProviderForm({
               </div>
 
               {models.length === 0 ? (
-                <p role="status" className="py-2 text-sm text-muted-foreground">
+                <p role="status" className="py-2 text-sm text-fg-2">
                   {t("pi.form.noModels", {
                     defaultValue: "暂无模型配置",
                   })}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
                     <span className="w-9" />
                     <span className="flex-1">
                       {t("pi.form.modelId")}
@@ -1722,7 +1722,7 @@ export function PiProviderForm({
                             size="icon"
                             onClick={() => removeModel(model.key)}
                             aria-label={t("pi.form.removeModel")}
-                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                            className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1868,7 +1868,7 @@ export function PiProviderForm({
                                         : t("pi.form.customizeThinkingLevels")
                                     }
                                     aria-expanded={thinkingMapIsExpanded}
-                                    className="-ml-2 h-8 gap-1.5 px-2 text-foreground"
+                                    className="-ml-2 h-8 gap-1.5 px-2 text-fg-1"
                                   >
                                     <span>
                                       {t("pi.form.thinkingLevelsLabel")}
@@ -1885,7 +1885,7 @@ export function PiProviderForm({
 
                                 {thinkingMapIsExpanded &&
                                   editableThinkingLevelMap && (
-                                    <div className="overflow-hidden rounded-lg border border-border/70 bg-background/30">
+                                    <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
                                       {PI_THINKING_LEVELS.map((level) => {
                                         const mode = thinkingLevelMode(
                                           editableThinkingLevelMap,
@@ -1923,7 +1923,7 @@ export function PiProviderForm({
                                                     ),
                                                   },
                                                 )}
-                                                className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-muted/40"
+                                                className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-subtle"
                                               >
                                                 <span className="flex-1">
                                                   {t(
@@ -1933,8 +1933,8 @@ export function PiProviderForm({
                                                 <span
                                                   className={
                                                     mode === "value"
-                                                      ? "max-w-[18rem] truncate text-right font-mono text-xs text-foreground"
-                                                      : "text-xs text-muted-foreground"
+                                                      ? "max-w-[18rem] truncate text-right font-mono text-xs text-fg-1"
+                                                      : "text-xs text-fg-2"
                                                   }
                                                 >
                                                   {mode === "default"
@@ -1952,7 +1952,7 @@ export function PiProviderForm({
                                                     className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-[color,background-color,transform] duration-200 ${
                                                       popoverOpen
                                                         ? "translate-x-0.5 bg-primary/10 text-primary"
-                                                        : "text-muted-foreground/50 group-hover:translate-x-0.5 group-hover:text-muted-foreground"
+                                                        : "text-fg-3 group-hover:translate-x-0.5 group-hover:text-fg-2"
                                                     }`}
                                                   >
                                                     <ChevronRight className="h-3.5 w-3.5" />
@@ -2089,7 +2089,7 @@ export function PiProviderForm({
                 </div>
               )}
 
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-fg-2">
                 {t("opencode.modelsHint", {
                   defaultValue: "配置可用的模型及其显示名称。",
                 })}

@@ -115,21 +115,19 @@ const ToolsPanel: React.FC = () => {
   if (isLoading) {
     return (
       <div className="px-6 pt-4 pb-8 flex items-center justify-center min-h-[200px]">
-        <div className="text-sm text-muted-foreground">
-          {t("common.loading")}
-        </div>
+        <div className="text-sm text-fg-2">{t("common.loading")}</div>
       </div>
     );
   }
 
   return (
     <div className="px-6 pt-4 pb-8">
-      <p className="text-sm text-muted-foreground mb-6">
+      <p className="text-sm text-fg-2 mb-6">
         {t("openclaw.tools.description")}
       </p>
 
       {unsupportedProfile && (
-        <Alert className="mb-6 border-amber-500/30 bg-amber-500/5">
+        <Alert className="mb-6 border-transparent bg-warning-soft">
           <TriangleAlert className="h-4 w-4" />
           <AlertTitle>
             {t("openclaw.tools.unsupportedProfileTitle", {
@@ -204,7 +202,7 @@ const ToolsPanel: React.FC = () => {
               <Button
                 variant="ghost"
                 size="icon"
-                className="flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-destructive"
+                className="flex-shrink-0 h-9 w-9 text-fg-2 hover:text-destructive"
                 onClick={() => removeListItem(setAllowList, index)}
               >
                 <Trash2 className="w-4 h-4" />
@@ -243,7 +241,7 @@ const ToolsPanel: React.FC = () => {
               <Button
                 variant="ghost"
                 size="icon"
-                className="flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-destructive"
+                className="flex-shrink-0 h-9 w-9 text-fg-2 hover:text-destructive"
                 onClick={() => removeListItem(setDenyList, index)}
               >
                 <Trash2 className="w-4 h-4" />

@@ -91,14 +91,14 @@ export function ProfileManageDialog({
           </DialogHeader>
           <div className="max-h-[50vh] space-y-1 overflow-y-auto px-6 pb-4 pt-3">
             {profiles.length === 0 && (
-              <div className="py-4 text-center text-sm text-muted-foreground">
+              <div className="py-4 text-center text-sm text-fg-2">
                 {t("profiles.empty")}
               </div>
             )}
             {profiles.map((profile) => (
               <div
                 key={profile.id}
-                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-subtle"
               >
                 {editingId === profile.id ? (
                   <>

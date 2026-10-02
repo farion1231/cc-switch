@@ -170,7 +170,7 @@ export function McodeProviderForm({
     <Form {...form}>
       <form
         id="provider-form"
-        className="space-y-6 glass rounded-xl p-6 border border-white/10"
+        className="space-y-6"
         onSubmit={form.handleSubmit(async (identity) => {
           if (!ready || busy) return;
           setBusy(true);
@@ -252,7 +252,7 @@ export function McodeProviderForm({
                   className={
                     keyTaken || keyInvalid
                       ? "text-xs text-destructive"
-                      : "text-xs text-muted-foreground"
+                      : "text-xs text-fg-2"
                   }
                 >
                   {keyTaken

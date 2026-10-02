@@ -242,7 +242,7 @@ describe("CodexOAuthSection", () => {
     expect(accountPlaceholder.parentElement).toHaveClass(
       "text-sm",
       "font-normal",
-      "text-muted-foreground",
+      "text-fg-2",
     );
   });
 

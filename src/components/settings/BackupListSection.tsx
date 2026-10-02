@@ -293,9 +293,9 @@ export function BackupListSection({
         </div>
 
         {isLoading ? (
-          <div className="text-sm text-muted-foreground py-2">Loading...</div>
+          <div className="text-sm text-fg-2 py-2">Loading...</div>
         ) : backups.length === 0 ? (
-          <div className="text-sm text-muted-foreground py-2">
+          <div className="text-sm text-fg-2 py-2">
             {t("settings.backupManager.empty", {
               defaultValue: "No backups yet",
             })}
@@ -305,7 +305,7 @@ export function BackupListSection({
             {backups.map((backup) => (
               <div
                 key={backup.filename}
-                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors text-sm"
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-subtle hover:bg-subtle transition-colors text-sm"
               >
                 <div className="flex-1 min-w-0">
                   {editingFilename === backup.filename ? (
@@ -349,8 +349,8 @@ export function BackupListSection({
                       <div className="font-mono text-xs truncate">
                         {getDisplayName(backup.filename)}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatBackupDate(backup.createdAt)} &middot;{" "}
+                      <div className="text-xs text-fg-2">
+                        {formatBackupDate(backup.createdAt)} &middot;{""}
                         {formatBytes(backup.sizeBytes)}
                       </div>
                     </>

@@ -166,14 +166,12 @@ export function StructuredOptionsEditor({
   return (
     <div
       id={id}
-      className={cn("space-y-2 border-l border-border-default pl-3", className)}
+      className={cn("space-y-2 border-l border-border pl-3", className)}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 max-w-3xl flex-1 space-y-1">
-          <span className="block text-sm font-medium text-foreground">
-            {title}
-          </span>
-          <p className="text-xs text-muted-foreground">{hint}</p>
+          <span className="block text-sm font-medium text-fg-1">{title}</span>
+          <p className="text-xs text-fg-2">{hint}</p>
         </div>
         <Button
           type="button"
@@ -190,10 +188,10 @@ export function StructuredOptionsEditor({
 
       <div className="max-w-3xl space-y-2">
         {!hasRows ? (
-          <p className="py-1 text-sm text-muted-foreground">{emptyLabel}</p>
+          <p className="py-1 text-sm text-fg-2">{emptyLabel}</p>
         ) : (
           <div className="space-y-2">
-            <div className="mb-1 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
               <span className="flex-1">{keyLabel}</span>
               <span className="flex-1">{valueLabel}</span>
               <span className="w-9" />
@@ -220,7 +218,7 @@ export function StructuredOptionsEditor({
                   size="icon"
                   onClick={() => removeOption(key)}
                   aria-label={removeLabel}
-                  className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                  className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -278,7 +276,7 @@ export function StructuredOptionsEditor({
                   size="icon"
                   onClick={() => removeDraft(draft.id)}
                   aria-label={removeLabel}
-                  className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                  className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

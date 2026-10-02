@@ -33,7 +33,7 @@ export const AppCountBar: React.FC<AppCountBarProps> = ({
     <div className="mb-4 flex flex-shrink-0 items-center gap-4 rounded-xl border border-white/10 px-6 py-4 glass">
       <Badge
         variant="outline"
-        className="h-7 shrink-0 whitespace-nowrap bg-background/50 px-3"
+        className="h-7 shrink-0 whitespace-nowrap bg-surface px-3"
       >
         {totalLabel}
       </Badge>

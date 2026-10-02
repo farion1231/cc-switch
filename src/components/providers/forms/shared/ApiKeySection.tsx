@@ -44,47 +44,33 @@ export function ApiKeySection({
 
   const finalPlaceholder = placeholder || defaultPlaceholder;
 
+  // 促销框已取消（v7 不画任何推广样式）；partnerPromotionKey 仍有别的判断在用，只是不再渲染。
+  void partnerPromotionKey;
+
   return (
-    <div className="space-y-1">
-      <ApiKeyInput
-        id={id}
-        label={label}
-        value={value}
-        onChange={onChange}
-        placeholder={
-          category === "official"
-            ? finalPlaceholder.official
-            : finalPlaceholder.thirdParty
-        }
-        disabled={disabled ?? category === "official"}
-      />
-      {/* API Key 获取链接 */}
-      {shouldShowLink && websiteUrl && (
-        <div className="space-y-2 -mt-1 pl-1">
+    <ApiKeyInput
+      id={id}
+      label={label}
+      value={value}
+      onChange={onChange}
+      placeholder={
+        category === "official"
+          ? finalPlaceholder.official
+          : finalPlaceholder.thirdParty
+      }
+      disabled={disabled ?? category === "official"}
+      labelAside={
+        shouldShowLink && websiteUrl ? (
           <a
             href={websiteUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+            className="text-caption text-fg-1 underline underline-offset-2 hover:text-fg-2"
           >
-            {t("providerForm.getApiKey", {
-              defaultValue: "获取 API Key",
-            })}
+            {t("providerForm.getApiKey", { defaultValue: "获取 API Key" })} ↗
           </a>
-
-          {/* 促销信息（与 isPartner 解耦：仅凭 partnerPromotionKey 即可展示，星标仍由 isPartner 控制） */}
-          {partnerPromotionKey && (
-            <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 p-2.5 border border-blue-200 dark:border-blue-800">
-              <p className="text-xs leading-relaxed text-blue-700 dark:text-blue-300">
-                💡{" "}
-                {t(`providerForm.partnerPromotion.${partnerPromotionKey}`, {
-                  defaultValue: "",
-                })}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+        ) : null
+      }
+    />
   );
 }

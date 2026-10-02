@@ -76,7 +76,7 @@ const WorkspaceFileEditor: React.FC<WorkspaceFileEditorProps> = ({
       }
     >
       {loading ? (
-        <div className="flex items-center justify-center h-64 text-muted-foreground">
+        <div className="flex items-center justify-center h-64 text-fg-2">
           {t("prompts.loading")}
         </div>
       ) : (

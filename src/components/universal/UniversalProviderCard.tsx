@@ -29,18 +29,16 @@ export function UniversalProviderCard({
   ].filter((app): app is string => app !== null);
 
   return (
-    <div className="group relative rounded-xl border border-border/50 bg-card p-4 transition-all hover:border-border hover:shadow-md">
+    <div className="group relative rounded-xl border border-border/50 bg-surface p-4 transition-all hover:border-border hover:shadow-md">
       {/* 头部：图标和名称 */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-subtle">
             <ProviderIcon icon={provider.icon} name={provider.name} size={24} />
           </div>
           <div>
-            <h3 className="font-semibold text-foreground">{provider.name}</h3>
-            <p className="text-xs text-muted-foreground">
-              {provider.providerType}
-            </p>
+            <h3 className="font-semibold text-fg-1">{provider.name}</h3>
+            <p className="text-xs text-fg-2">{provider.providerType}</p>
           </div>
         </div>
 
@@ -89,10 +87,8 @@ export function UniversalProviderCard({
       <div className="mt-4 space-y-2">
         {/* Base URL */}
         <div className="flex items-center gap-2 text-sm">
-          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="truncate text-muted-foreground">
-            {provider.baseUrl || "-"}
-          </span>
+          <Globe className="h-3.5 w-3.5 text-fg-2" />
+          <span className="truncate text-fg-2">{provider.baseUrl || "-"}</span>
         </div>
 
         {/* 启用的应用 */}
@@ -106,7 +102,7 @@ export function UniversalProviderCard({
             </span>
           ))}
           {enabledApps.length === 0 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-fg-2">
               {t("universalProvider.noAppsEnabled", {
                 defaultValue: "未启用任何应用",
               })}
@@ -117,9 +113,7 @@ export function UniversalProviderCard({
 
       {/* 备注 */}
       {provider.notes && (
-        <p className="mt-3 text-xs text-muted-foreground line-clamp-2">
-          {provider.notes}
-        </p>
+        <p className="mt-3 text-xs text-fg-2 line-clamp-2">{provider.notes}</p>
       )}
     </div>
   );
