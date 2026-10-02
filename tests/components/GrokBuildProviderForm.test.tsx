@@ -322,4 +322,57 @@ context_window = 500000
       screen.queryByText(/Codex 不会把 model_max_output_tokens/),
     ).toBeNull();
   });
+
+  // #7724：官方条目只有名称/备注，没有任何配置编辑入口，用户改不了全局设置。
+  // 与 Codex/Gemini 官方卡一致：编辑态渲染 config.toml 编辑器，内容作为全局
+  // 设置透传（后端三方比较后写 live，行本身保持为空快照）。
+  it("offers the config editor on official entries and passes edits through", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="grokbuild-official"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Grok Official",
+          category: "official",
+          settingsConfig: { config: "" },
+        }}
+      />,
+    );
+
+    // 没有自定义模型字段（官方走 Grok 自带 OAuth），但有 config.toml 编辑器。
+    expect(screen.getByLabelText("raw-config")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("raw-config"), {
+      target: { value: '[ui]\ntheme = "dark"\n' },
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.presetCategory).toBe("official");
+    expect(JSON.parse(submitted.settingsConfig)).toEqual({
+      config: '[ui]\ntheme = "dark"\n',
+    });
+  });
+
+  it("shows no config editor for the official preset when adding", async () => {
+    // 新增流程的官方条目走 ensure seed（行内容固定为空快照），编辑器不出现，
+    // 免得用户填的全局设置被静默丢弃。
+    const user = userEvent.setup();
+    render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Grok Official/ }));
+
+    expect(screen.queryByLabelText("raw-config")).toBeNull();
+  });
 });

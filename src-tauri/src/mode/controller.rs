@@ -4604,6 +4604,58 @@ model_provider = "c"
         assert_eq!(grok_tables(), vec!["grok-4.5", "mine"]);
     }
 
+    /// #7724：用户手写的 config.toml（这台设备没有 CC Switch 的写入记录，指针就在官方卡上）
+    /// 切到官方不得清空文件。旧版 v3.20.4 会把官方行的空 config 整份写进 live；现在的边界
+    /// 是：官方态激活只拿走 `models.default`，用户的表和其余内容原样保留。
+    #[tokio::test]
+    #[serial]
+    async fn grok_switch_to_official_keeps_user_content_without_a_write_record() {
+        let _home = Home::new();
+        let user_live = "# mine\n[ui]\ntheme = \"dark\"\n\n[models]\ndefault = \"mine\"\nweb_search = \"grok-4.6\"\n\n[model.mine]\nmodel = \"m\"\nname = \"Mine\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
+        seed_grok(user_live);
+        let state = state_with(AppType::GrokBuild, &[grok_official()], "grok-official").await;
+
+        ProviderService::switch(&state, AppType::GrokBuild, "grok-official").expect("to official");
+
+        let text = grok_text();
+        assert!(
+            text.starts_with("# mine\n[ui]\ntheme = \"dark\"\n"),
+            "user content before the model tables must survive: {text}"
+        );
+        assert_eq!(
+            grok_doc()["model"]["mine"]["model"].as_str(),
+            Some("m"),
+            "{text}"
+        );
+        assert_eq!(
+            grok_doc()["models"]["web_search"].as_str(),
+            Some("grok-4.6"),
+            "{text}"
+        );
+        assert!(text.contains("[mcp_servers.fs]"), "{text}");
+        // 官方态激活：models.default 移除（Grok 回落内置模型 + 自带 OAuth）。
+        assert!(grok_doc()["models"].get("default").is_none(), "{text}");
+    }
+
+    /// #7724：live 已经是官方态（没有自定义模型表，只有用户的其它设置）时，切到官方
+    /// 对文件零改动——旧版会用官方行的空 config 重写整个文件。
+    #[tokio::test]
+    #[serial]
+    async fn grok_switch_to_official_leaves_an_already_official_live_untouched() {
+        let _home = Home::new();
+        let user_live = "# mine\n[ui]\ntheme = \"dark\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
+        seed_grok(user_live);
+        let state = state_with(AppType::GrokBuild, &[grok_official()], "grok-official").await;
+
+        ProviderService::switch(&state, AppType::GrokBuild, "grok-official").expect("to official");
+
+        assert_eq!(
+            grok_text(),
+            user_live,
+            "an official switch without anything to change must not touch the file"
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn grok_table_keys_follow_the_provider_and_renames_replace_the_old_table() {
