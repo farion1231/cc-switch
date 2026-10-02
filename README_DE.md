@@ -191,11 +191,6 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>Danke an ETok.ai für die Unterstützung dieses Projekts! ETok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://etok.ai">hier</a>, um sich zu registrieren!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://cubence.com/signup?code=CCSWITCH&source=ccs"><img src="assets/partners/logos/cubence.png" alt="Cubence" width="150"></a></td>
 <td>Danke an Cubence für die Unterstützung dieses Projekts! Cubence ist ein zuverlässiger und effizienter API-Relay-Anbieter, der Relay-Dienste für Claude Code, Codex, Gemini und mehr mit flexiblen Abrechnungsoptionen einschließlich nutzungsbasierter und monatlicher Pläne bereitstellt. Cubence bietet Sonderrabatte für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://cubence.com/signup?code=CCSWITCH&source=ccs">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode „CCSWITCH" ein, um bei jeder Aufladung 10 % Rabatt zu erhalten!</td>
 </tr>
