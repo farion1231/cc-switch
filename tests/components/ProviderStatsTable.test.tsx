@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   ProviderStatsTable,
+  getProviderEstimatedSpeed,
   getProviderSpeed,
 } from "@/components/usage/ProviderStatsTable";
 import type { ProviderStats } from "@/types/usage";
@@ -42,6 +43,47 @@ describe("ProviderStatsTable", () => {
     ).toBeNull();
     // 老后端没有这两个字段
     expect(getProviderSpeed(stat({}))).toBeNull();
+  });
+
+  it("falls back to the estimated speed, marked with ≈, when there is no exact one", () => {
+    expect(
+      getProviderEstimatedSpeed(
+        stat({ estSpeedOutputTokens: 2_500, estSpeedDurationMs: 25_000 }),
+      ),
+    ).toBe("100");
+    expect(getProviderEstimatedSpeed(stat({}))).toBeNull();
+
+    useProviderStatsMock.mockReturnValue({
+      isLoading: false,
+      data: [
+        stat({
+          providerId: "_session",
+          providerName: "Claude session",
+          requestCount: 9,
+          estSpeedOutputTokens: 2_500,
+          estSpeedDurationMs: 25_000,
+        }),
+        // 两种都有时用精确的，不带 ≈
+        stat({
+          providerId: "mixed",
+          providerName: "Mixed",
+          requestCount: 3,
+          speedOutputTokens: 9_200,
+          speedGenerationMs: 100_000,
+          estSpeedOutputTokens: 2_500,
+          estSpeedDurationMs: 25_000,
+        }),
+      ],
+    });
+
+    render(
+      <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
+    );
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows[0].lastElementChild).toHaveTextContent("≈100tok/s");
+    expect(rows[1].lastElementChild).toHaveTextContent("92tok/s");
+    expect(rows[1].lastElementChild).not.toHaveTextContent("≈");
   });
 
   it("sorts by requests and replaces average latency with speed", () => {

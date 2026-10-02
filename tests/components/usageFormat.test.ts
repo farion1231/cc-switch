@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
+  formatEstimatedTokensPerSecond,
   formatOutputTokensPerSecond,
   formatTokensCompact,
   formatTokensPerSecond,
   formatTokensShort,
   getAggregateTokensPerSecond,
+  getEstimatedTokensPerSecond,
   getOutputTokensPerSecond,
   getLocaleFromLanguage,
   sumSpeedTotals,
@@ -126,6 +129,50 @@ describe("usage format helpers", () => {
     ).toBe("12");
     expect(formatTokensPerSecond(0.25)).toBe("0.3");
     expect(formatTokensPerSecond(null)).toBeNull();
+  });
+
+  it("estimates speed for session-log requests from the whole duration", () => {
+    expect(SPEED_ESTIMATE_MIN_OUTPUT_TOKENS).toBe(200);
+    const session = {
+      outputTokens: 1_800,
+      latencyMs: 20_000,
+      dataSource: "session_log",
+    };
+    // 1800 token / 20 s，等首字的时间也算在内
+    expect(getEstimatedTokensPerSecond(session)).toBe(90);
+    expect(formatEstimatedTokensPerSecond(session)).toBe("90");
+    // 估算的不算精确速度
+    expect(getOutputTokensPerSecond(session)).toBeNull();
+    expect(
+      getEstimatedTokensPerSecond({ ...session, dataSource: "codex_session" }),
+    ).toBe(90);
+  });
+
+  it("does not estimate speed for routed, short, or untimed requests", () => {
+    const session = {
+      outputTokens: 1_800,
+      latencyMs: 20_000,
+      dataSource: "session_log",
+    };
+    // 路由服务的请求：非流式没有首字，也不估
+    expect(
+      getEstimatedTokensPerSecond({ ...session, dataSource: "proxy" }),
+    ).toBeNull();
+    expect(
+      getEstimatedTokensPerSecond({ ...session, dataSource: undefined }),
+    ).toBeNull();
+    // 输出不到 200
+    expect(
+      getEstimatedTokensPerSecond({ ...session, outputTokens: 199 }),
+    ).toBeNull();
+    // 没估出耗时
+    expect(
+      getEstimatedTokensPerSecond({ ...session, latencyMs: 0 }),
+    ).toBeNull();
+    // 耗时不到 1 秒
+    expect(
+      getEstimatedTokensPerSecond({ ...session, latencyMs: 999 }),
+    ).toBeNull();
   });
 
   it("aggregates speed as total output over total generation time, not a mean of rates", () => {

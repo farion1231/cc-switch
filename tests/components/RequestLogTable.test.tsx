@@ -132,7 +132,7 @@ describe("RequestLogTable", () => {
     });
   });
 
-  it("shows speed only for routed requests with at least 100 output tokens", () => {
+  it("shows exact speed for routed requests and an estimate for timed session logs", () => {
     const base = {
       providerId: "p1",
       providerName: "DeepSeek",
@@ -170,7 +170,7 @@ describe("RequestLogTable", () => {
             latencyMs: 2_400,
             firstTokenMs: 1_900,
           },
-          // 会话日志：没有首字
+          // 会话日志：没有首字，也没估出耗时
           {
             ...base,
             requestId: "session",
@@ -178,8 +178,16 @@ describe("RequestLogTable", () => {
             latencyMs: 0,
             dataSource: "codex_session",
           },
+          // 会话日志：按估算耗时算，900 token / 10 s = 90 tok/s，带 ≈
+          {
+            ...base,
+            requestId: "session-estimated",
+            outputTokens: 900,
+            latencyMs: 10_000,
+            dataSource: "codex_session",
+          },
         ],
-        total: 3,
+        total: 4,
         page: 0,
         pageSize: 20,
       },
@@ -196,7 +204,7 @@ describe("RequestLogTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     expect(rows[0].lastElementChild).toHaveTextContent("99tok/s");
     expect(rows[0].lastElementChild).toHaveAttribute(
       "title",
@@ -204,6 +212,11 @@ describe("RequestLogTable", () => {
     );
     expect(rows[1].lastElementChild).toHaveTextContent("—");
     expect(rows[2].lastElementChild).toHaveTextContent("—");
+    expect(rows[3].lastElementChild).toHaveTextContent("≈90tok/s");
+    expect(rows[3].lastElementChild).toHaveAttribute(
+      "title",
+      "usage.estimatedTimingTip",
+    );
     expect(
       screen.getByRole("columnheader", { name: /usage.speed/ }),
     ).toBeInTheDocument();
