@@ -220,6 +220,16 @@ export const providersApi = {
   },
 
   /**
+   * 获取 OpenCode live 配置中单个供应商的节点片段
+   * 契约与 openclaw 相同：节点缺失返回 null（含 live 文件尚未写出）
+   */
+  async getOpenCodeLiveProvider(
+    providerId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return await invoke("get_opencode_live_provider", { providerId });
+  },
+
+  /**
    * 获取 OpenClaw live 配置中的供应商 ID 列表
    * 用于前端判断供应商是否已添加到 openclaw.json
    */

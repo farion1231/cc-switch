@@ -163,9 +163,39 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode, while Pi's shared models.json is owned by
-      // the catalog coordinator. Neither has a per-provider generic live
-      // snapshot that may replace the DB aggregate in this form.
+      // OpenCode 普通供应商的 live 节点就是 DB settingsConfig 的原文（import
+      // 时 verbatim 存、保存时 verbatim 写回），可以用它替换 DB 聚合做表单初值，
+      // 避免"手改 live → 打开编辑 → 保存"被 DB 快照静默覆盖。契约与 openclaw
+      // 相同：命中 → 替换初值；节点缺失(null，含 live 文件尚未写出) → 回退
+      // DB 且允许保存；读取失败 → 静默回退 DB（不打断编辑流程）。
+      // OMO/OMO-Slim 的节点不在 opencode.json 的 provider 对象下，走下方豁免。
+      if (
+        appId === "opencode" &&
+        provider.category !== "omo" &&
+        provider.category !== "omo-slim"
+      ) {
+        try {
+          const live = await providersApi.getOpenCodeLiveProvider(provider.id);
+          if (!cancelled && live && typeof live === "object") {
+            setLiveSettings(live);
+          } else if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } catch {
+          if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setHasLoadedLive(true);
+          }
+        }
+        return;
+      }
+
+      // Pi 的共享 models.json 由 catalog 协调器持有；mcode 没有可替换 DB
+      // 聚合的 per-provider live 快照；OpenCode 走到这里的只剩 omo/omo-slim
+      // （其节点不在 opencode.json 的 provider 对象下）。
       if (appId === "opencode" || appId === "pi" || appId === "mcode") {
         if (!cancelled) {
           setLiveSettings(null);
@@ -309,7 +339,15 @@ export function EditProviderDialog({
     return null;
   }
 
-  const waitingForEditorView = usesEditorView(appId) && !hasLoadedLive;
+  // OpenCode 普通供应商与 editor-view 应用一样，等 live 读取落地再挂表单：
+  // 结构化字段（useOpencodeFormState）只在挂载时初始化，live 后到会造成
+  // "JSON 编辑器是 live、结构化字段还是 DB"的混合态。
+  const isOpencodePlain =
+    appId === "opencode" &&
+    provider?.category !== "omo" &&
+    provider?.category !== "omo-slim";
+  const waitingForLive =
+    (usesEditorView(appId) || isOpencodePlain) && !hasLoadedLive;
 
   return (
     <FullScreenPanel
@@ -329,7 +367,7 @@ export function EditProviderDialog({
         </Button>
       }
     >
-      {waitingForEditorView ? (
+      {waitingForLive ? (
         <div className="py-12 text-center text-sm text-muted-foreground">
           {t("common.loading")}
         </div>
