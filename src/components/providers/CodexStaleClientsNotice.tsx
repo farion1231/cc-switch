@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useRestartCodexAppServerDaemon } from "@/lib/query/proxy";
 import type { CodexStaleClients } from "@/types/proxy";
 
 interface CodexStaleClientsNoticeProps {
   staleClients: CodexStaleClients;
+  onDismiss?: () => void;
 }
 
 /**
@@ -17,42 +19,46 @@ interface CodexStaleClientsNoticeProps {
  */
 export function CodexStaleClientsNotice({
   staleClients,
+  onDismiss,
 }: CodexStaleClientsNoticeProps) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const restart = useRestartCodexAppServerDaemon();
 
   return (
-    <div
-      role="alert"
-      className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
-    >
-      <div className="flex items-center gap-2 font-medium">
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        {t("proxy.stackMode.codexStale.title")}
-      </div>
-      <ul className="mt-2 space-y-1 text-xs leading-relaxed">
+    <>
+      <Notice
+        tone="warning"
+        title={t("proxy.stackMode.codexStale.title")}
+        onDismiss={onDismiss}
+        dismissLabel={t("common.close")}
+        actions={
+          staleClients.daemon ? (
+            <Button
+              variant="neutral"
+              size="compact"
+              disabled={restart.isPending}
+              onClick={() => setConfirming(true)}
+            >
+              <RotateCw
+                className={`h-3.5 w-3.5 ${restart.isPending ? "animate-spin" : ""}`}
+              />
+              {t("proxy.stackMode.codexStale.restart")}
+            </Button>
+          ) : undefined
+        }
+      >
         {staleClients.daemon && (
-          <li>{t("proxy.stackMode.codexStale.daemon")}</li>
+          <span className="block">
+            {t("proxy.stackMode.codexStale.daemon")}
+          </span>
         )}
         {staleClients.others && (
-          <li>{t("proxy.stackMode.codexStale.others")}</li>
+          <span className="block">
+            {t("proxy.stackMode.codexStale.others")}
+          </span>
         )}
-      </ul>
-      {staleClients.daemon && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-3 gap-1.5"
-          disabled={restart.isPending}
-          onClick={() => setConfirming(true)}
-        >
-          <RotateCw
-            className={`h-3.5 w-3.5 ${restart.isPending ? "animate-spin" : ""}`}
-          />
-          {t("proxy.stackMode.codexStale.restart")}
-        </Button>
-      )}
+      </Notice>
       <ConfirmDialog
         isOpen={confirming}
         title={t("proxy.stackMode.codexStale.confirmTitle")}
@@ -66,6 +72,6 @@ export function CodexStaleClientsNotice({
         }
         onCancel={() => setConfirming(false)}
       />
-    </div>
+    </>
   );
 }

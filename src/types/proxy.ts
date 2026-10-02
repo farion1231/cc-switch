@@ -52,6 +52,27 @@ export interface ProxyTakeoverStatus {
   hermes: boolean;
 }
 
+/** 应用当前的连接方式。 */
+export type AppMode = "direct" | "route" | "stack";
+
+/** 应用页模式行用的状态（后端 `get_app_mode`）。 */
+export interface AppModeView {
+  mode: AppMode;
+  /** 客户端文件指着代理（CC Switch 运行时为真） */
+  attached: boolean;
+  /** 路由目标；直连模式下是上次路由的那家 */
+  routeProviderId: string | null;
+  /** 直连那家：直连时写进客户端的、回到直连时写回的 */
+  directProviderId: string | null;
+}
+
+/** 启动时没能接上代理、已退回直连的应用。 */
+export interface StartupAttachFailure {
+  appType: string;
+  stack: boolean;
+  error: string;
+}
+
 /** Stack 模型：名单里的一家和它发布给客户端的模型 id。 */
 export interface ProxyStackMember {
   providerId: string;

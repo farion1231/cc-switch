@@ -89,7 +89,12 @@ const renderDialog = (
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
-        <SettingsPage section="data" onOpenApps={() => {}} {...props} />
+        <SettingsPage
+          section="data"
+          onOpenApps={() => {}}
+          onOpenApp={() => {}}
+          {...props}
+        />
       </Suspense>
     </QueryClientProvider>,
   );

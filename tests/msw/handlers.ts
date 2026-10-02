@@ -386,6 +386,20 @@ export const handlers = [
     success(false),
   ),
   http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () => success([])),
+
+  // 模式行：默认都在直连，直连那家就是当前供应商
+  http.post(`${TAURI_ENDPOINT}/get_app_mode`, async ({ request }) => {
+    const { appType } = await withJson<{ appType: AppId }>(request);
+    return success({
+      mode: "direct",
+      attached: false,
+      routeProviderId: null,
+      directProviderId: getCurrentProviderId(appType) || null,
+    });
+  }),
+  http.post(`${TAURI_ENDPOINT}/take_startup_attach_failures`, () =>
+    success([]),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_available_providers_for_failover`, () =>
     success([]),
   ),
