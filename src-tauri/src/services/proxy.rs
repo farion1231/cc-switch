@@ -64,8 +64,28 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
-    /// 启动代理服务器
+    /// 启动代理服务器。成功、失败都让托盘比对一次（图标圆点、问题区、「退出」的后果跟着变）。
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
+        let result = self.start_server().await;
+        self.notify_tray().await;
+        result
+    }
+
+    /// 停止代理服务器。同 [`Self::start`]，结束后让托盘比对一次。
+    pub async fn stop(&self) -> Result<(), String> {
+        let result = self.stop_server().await;
+        self.notify_tray().await;
+        result
+    }
+
+    /// 托盘在后台线程比对、变了才重建，这里不等它。
+    async fn notify_tray(&self) {
+        if let Some(handle) = self.app_handle.read().await.as_ref() {
+            crate::tray::schedule_tray_status_check(handle);
+        }
+    }
+
+    async fn start_server(&self) -> Result<ProxyServerInfo, String> {
         // 1. 启动时自动设置 proxy_enabled = true
         let mut global_config = self
             .db
@@ -180,8 +200,7 @@ impl ProxyService {
         }
     }
 
-    /// 停止代理服务器
-    pub async fn stop(&self) -> Result<(), String> {
+    async fn stop_server(&self) -> Result<(), String> {
         if let Some(server) = self.server.write().await.take() {
             server
                 .stop()

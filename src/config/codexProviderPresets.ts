@@ -9,13 +9,14 @@ import type {
   PromptCacheRoutingMode,
 } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
+import type { PresetFamilyFields } from "./presetFamilies";
 
 // MiMo 官方 Codex 目录的系统提示词。
 // https://mimo.mi.com/docs/tokenplan/integration/codex-configuration
 const MIMO_CODEX_BASE_INSTRUCTIONS =
   "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.";
 
-export interface CodexProviderPreset {
+export interface CodexProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -149,6 +150,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
   {
     name: "Kimi",
+    family: "kimi",
+    versionKey: "paygCn",
     primePartner: true,
     websiteUrl:
       "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
@@ -213,6 +216,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   // 接入形态与国内版一致（原生 Responses 直连），依据见上方国内版注释
   {
     name: "Kimi Global",
+    family: "kimi",
+    versionKey: "paygIntl",
     websiteUrl:
       "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
@@ -247,6 +252,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
+    family: "kimi",
+    versionKey: "codingCn",
     primePartner: true,
     websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     apiKeyUrl: "https://www.kimi.com/code/?aff=cc-switch",
@@ -313,6 +320,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   //（原生 Responses 直连，wire_api = "responses"），依据见上方国内版注释
   {
     name: "Kimi For Coding Global",
+    family: "kimi",
+    versionKey: "codingIntl",
     websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
     apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
@@ -788,6 +797,8 @@ requires_openai_auth = true`,
   },
   {
     name: "火山 Agent Plan",
+    family: "volcengine",
+    versionKey: "agentPlan",
     websiteUrl:
       "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
@@ -825,6 +836,8 @@ requires_openai_auth = true`,
   },
   {
     name: "火山 Coding Plan",
+    family: "volcengine",
+    versionKey: "codingPlan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -897,6 +910,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Volcengine Doubao",
+    family: "volcengine",
+    versionKey: "payg",
     nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
@@ -932,6 +947,8 @@ requires_openai_auth = true`,
   },
   {
     name: "SiliconFlow",
+    family: "siliconflow",
+    versionKey: "cn",
     websiteUrl: "https://siliconflow.cn",
     apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     auth: generateThirdPartyAuth(""),
@@ -972,6 +989,8 @@ requires_openai_auth = true`,
   },
   {
     name: "SiliconFlow en",
+    family: "siliconflow",
+    versionKey: "intl",
     websiteUrl: "https://siliconflow.com",
     apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     auth: generateThirdPartyAuth(""),
@@ -1017,6 +1036,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Compshare",
+    family: "compshare",
+    versionKey: "payg",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -1036,6 +1057,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Compshare Coding Plan",
+    family: "compshare",
+    versionKey: "codingPlan",
     nameKey: "providerForm.presets.ucloudCoding",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -1193,6 +1216,7 @@ requires_openai_auth = true`,
   },
   {
     name: "SudoCode.chat",
+    family: "sudocode",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
@@ -1220,6 +1244,7 @@ requires_openai_auth = true`,
   },
   {
     name: "SudoCode.us",
+    family: "sudocode",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
     category: "third_party",
@@ -1400,6 +1425,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Zhipu GLM",
+    family: "zhipu",
+    versionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     auth: generateThirdPartyAuth(""),
@@ -1463,6 +1490,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Zhipu GLM en",
+    family: "zhipu",
+    versionKey: "intl",
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     auth: generateThirdPartyAuth(""),
@@ -1503,6 +1532,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Baidu Qianfan",
+    family: "baidu-qianfan",
+    versionKey: "payg",
     websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
     apiKeyUrl:
       "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
@@ -1541,6 +1572,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Baidu Qianfan Coding Plan",
+    family: "baidu-qianfan",
+    versionKey: "codingPlan",
     websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
     apiKeyUrl:
       "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
@@ -1583,6 +1616,8 @@ requires_openai_auth = true`,
     // 指定真实模型 id；官方 Codex 接入指南 wire_api 省略=chat 默认，与
     // Coding Plan 同走本地路由。API Key 是订阅页专属 Key（非通用应用 Key）
     name: "Baidu Qianfan Token Plan",
+    family: "baidu-qianfan",
+    versionKey: "tokenPlan",
     websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
     apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
     auth: generateThirdPartyAuth(""),
@@ -1666,6 +1701,8 @@ requires_openai_auth = true`,
   },
   {
     name: "千问AI平台",
+    family: "qianwen",
+    versionKey: "payg",
     websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
@@ -1720,6 +1757,8 @@ requires_openai_auth = true`,
   },
   {
     name: "千问AI平台 Token Plan",
+    family: "qianwen",
+    versionKey: "tokenPlan",
     websiteUrl:
       "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
     apiKeyUrl:
@@ -1763,6 +1802,8 @@ requires_openai_auth = true`,
   // 按量付费与 Token Plan 走 /compatible-mode/v1 原生 Responses。
   {
     name: "QwenCloud",
+    family: "qwencloud",
+    versionKey: "payg",
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     auth: generateThirdPartyAuth(""),
@@ -1830,6 +1871,8 @@ requires_openai_auth = true`,
   },
   {
     name: "QwenCloud For Coding",
+    family: "qwencloud",
+    versionKey: "coding",
     websiteUrl: "https://www.qwencloud.com",
     apiKeyUrl: "https://home.qwencloud.com/api-keys",
     auth: generateThirdPartyAuth(""),
@@ -1864,6 +1907,8 @@ requires_openai_auth = true`,
   },
   {
     name: "QwenCloud Token Plan",
+    family: "qwencloud",
+    versionKey: "tokenPlan",
     websiteUrl:
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
@@ -1909,6 +1954,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Tencent Hunyuan",
+    family: "tencent",
+    versionKey: "paygCn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
     auth: generateThirdPartyAuth(""),
@@ -1976,6 +2023,8 @@ requires_openai_auth = true`,
     // 注意与 TokenHub 按量 API 市场（1823 线，Hunyuan 预设的 /v1 端点）是
     // 两条产品线：订阅 Key 只能走 /plan 端点，TokenHub Key 对 /plan 不通
     name: "Tencent Token Plan",
+    family: "tencent",
+    versionKey: "tokenPlanCn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
     auth: generateThirdPartyAuth(""),
@@ -2077,6 +2126,8 @@ requires_openai_auth = true`,
     // 地域给的是 tokenhub-intl.tencentmaas.com，Key 按站独立不跨站通用，
     // 故互不作候选
     name: "Tencent Token Plan (Intl)",
+    family: "tencent",
+    versionKey: "tokenPlanIntl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
     auth: generateThirdPartyAuth(""),
@@ -2147,6 +2198,8 @@ requires_openai_auth = true`,
     // 但真 Key 实测仍可用（2026-08-31），照实收录。新加坡地域阵容不同且
     // Key 不跨站，见 (Intl) 预设
     name: "Tencent Token Plan Enterprise Pro",
+    family: "tencent",
+    versionKey: "enterpriseProCn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
     auth: generateThirdPartyAuth(""),
@@ -2308,6 +2361,8 @@ requires_openai_auth = true`,
     // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
     // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
     name: "Tencent Token Plan Enterprise Pro (Intl)",
+    family: "tencent",
+    versionKey: "enterpriseProIntl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
     auth: generateThirdPartyAuth(""),
@@ -2435,6 +2490,8 @@ requires_openai_auth = true`,
     // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型。
     // 国内 auto 关思考被静默忽略（真 Key 实测 2026-08-31），只列 high
     name: "Tencent Token Plan Enterprise Lite",
+    family: "tencent",
+    versionKey: "enterpriseLiteCn",
     websiteUrl: "https://cloud.tencent.com/product/tokenhub",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
     auth: generateThirdPartyAuth(""),
@@ -2480,6 +2537,8 @@ requires_openai_auth = true`,
     // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
     // Global），仅 Auto 模型。INTL auto 关思考真实生效（真 Key 实测）
     name: "Tencent Token Plan Enterprise Lite (Intl)",
+    family: "tencent",
+    versionKey: "enterpriseLiteIntl",
     websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
     apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
     auth: generateThirdPartyAuth(""),
@@ -2523,6 +2582,8 @@ requires_openai_auth = true`,
   },
   {
     name: "StepFun API",
+    family: "stepfun",
+    versionKey: "paygCn",
     websiteUrl: "https://platform.stepfun.com",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
     auth: generateThirdPartyAuth(""),
@@ -2552,6 +2613,8 @@ requires_openai_auth = true`,
   },
   {
     name: "StepFun API en",
+    family: "stepfun",
+    versionKey: "paygIntl",
     websiteUrl: "https://platform.stepfun.ai",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
     auth: generateThirdPartyAuth(""),
@@ -2579,6 +2642,8 @@ requires_openai_auth = true`,
   },
   {
     name: "StepFun",
+    family: "stepfun",
+    versionKey: "stepPlanCn",
     websiteUrl: "https://platform.stepfun.com/step-plan",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
     auth: generateThirdPartyAuth(""),
@@ -2619,6 +2684,8 @@ requires_openai_auth = true`,
   },
   {
     name: "StepFun en",
+    family: "stepfun",
+    versionKey: "stepPlanIntl",
     websiteUrl: "https://platform.stepfun.ai/step-plan",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
     auth: generateThirdPartyAuth(""),
@@ -2727,6 +2794,8 @@ requires_openai_auth = true`,
   },
   {
     name: "MiniMax",
+    family: "minimax",
+    versionKey: "cn",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     auth: generateThirdPartyAuth(""),
@@ -2765,6 +2834,8 @@ requires_openai_auth = true`,
   },
   {
     name: "MiniMax en",
+    family: "minimax",
+    versionKey: "intl",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
     auth: generateThirdPartyAuth(""),
@@ -2851,6 +2922,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Xiaomi MiMo",
+    family: "xiaomi-mimo",
+    versionKey: "payg",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     auth: generateThirdPartyAuth(""),
@@ -2923,6 +2996,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Xiaomi MiMo Token Plan (China)",
+    family: "xiaomi-mimo",
+    versionKey: "tokenPlan",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     auth: generateThirdPartyAuth(""),

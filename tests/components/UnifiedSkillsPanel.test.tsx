@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
+import { skillsApi } from "@/lib/api";
 import type {
   InstalledSkill,
   SkillBackupEntry,
+  SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
 
@@ -28,6 +30,7 @@ const m = vi.hoisted(() => ({
   installed: [] as InstalledSkill[],
   backups: [] as SkillBackupEntry[],
   updates: [] as SkillUpdateInfo[],
+  repoFailures: [] as SkillRepoFailure[],
   checking: false,
   visibleApps: ["claude", "codex", "pi"] as string[],
 }));
@@ -97,7 +100,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isPending: false,
   }),
   useCheckSkillUpdates: () => ({
-    data: m.updates,
+    data: { updates: m.updates, failures: m.repoFailures },
     refetch: m.checkUpdates,
     isFetching: m.checking,
     dataUpdatedAt: 0,
@@ -107,6 +110,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isPending: false,
   }),
   useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
@@ -160,6 +164,7 @@ describe("UnifiedSkillsPanel", () => {
     m.installed = [];
     m.backups = [];
     m.updates = [];
+    m.repoFailures = [];
     m.checking = false;
     m.visibleApps = ["claude", "codex", "pi"];
     m.scanUnmanaged.mockReset().mockResolvedValue({
@@ -181,7 +186,10 @@ describe("UnifiedSkillsPanel", () => {
     m.deleteBackup.mockReset();
     m.restoreBackup.mockReset();
     m.refetchBackups.mockReset().mockResolvedValue({ data: [] });
-    m.checkUpdates.mockReset().mockResolvedValue({ data: [] });
+    m.checkUpdates
+      .mockReset()
+      .mockResolvedValue({ data: { updates: [], failures: [] } });
+    m.installFromZip.mockReset();
     m.updateSkill
       .mockReset()
       .mockImplementation(async (id: string) => makeSkill({ id }));
@@ -371,7 +379,9 @@ describe("UnifiedSkillsPanel", () => {
 
   it("ignores a second check-update click while one is running", async () => {
     m.installed = [makeSkill()];
-    let resolve!: (value: { data: never[] }) => void;
+    let resolve!: (value: {
+      data: { updates: never[]; failures: never[] };
+    }) => void;
     m.checkUpdates.mockReturnValue(
       new Promise((r) => {
         resolve = r;
@@ -383,8 +393,88 @@ describe("UnifiedSkillsPanel", () => {
     await userEvent.click(button);
     expect(m.checkUpdates).toHaveBeenCalledTimes(1);
     await act(async () => {
-      resolve({ data: [] });
+      resolve({ data: { updates: [], failures: [] } });
     });
+  });
+
+  it("does not call everything up to date when a repository could not be read", async () => {
+    m.installed = [makeSkill()];
+    const failure = {
+      owner: "owner",
+      name: "repo",
+      branch: "main",
+      error: "network down",
+    };
+    m.checkUpdates.mockResolvedValueOnce({
+      data: { updates: [], failures: [failure] },
+    });
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.checkUpdates" }),
+    );
+
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skills.updatesIncomplete",
+        expect.anything(),
+      ),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalledWith(
+      "skills.noUpdates",
+      expect.anything(),
+    );
+  });
+
+  it("shows which repositories the update check could not read", () => {
+    m.installed = [makeSkill()];
+    m.repoFailures = [
+      { owner: "owner", name: "repo", branch: "main", error: "network down" },
+    ];
+    renderPanel();
+    expect(screen.getByText("skillsPage.repoFail.title")).toBeInTheDocument();
+    expect(
+      screen.getByText("skillsPage.repoFail.updatesBody"),
+    ).toBeInTheDocument();
+  });
+
+  it("says which ZIP Skills were skipped because the folder name is taken", async () => {
+    m.installed = [makeSkill()];
+    const dialog = vi
+      .spyOn(skillsApi, "openZipFileDialog")
+      .mockResolvedValue("/tmp/team.zip");
+    m.installFromZip.mockResolvedValueOnce({
+      installed: [],
+      skipped: [
+        {
+          directory: "my-helper",
+          existingId: "local:my-helper",
+          existingName: "My Helper",
+        },
+      ],
+    });
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.add/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "skillsPage.addMenu.zip" }),
+    );
+
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skills.installFromZip.allSkipped",
+        expect.objectContaining({
+          description: "skills.installFromZip.skippedBody",
+        }),
+      ),
+    );
+    expect(m.toastInfo).not.toHaveBeenCalledWith(
+      "skills.installFromZip.noSkillsFound",
+      expect.anything(),
+    );
+    dialog.mockRestore();
   });
 
   it("blocks actions but not navigation while checking updates", async () => {

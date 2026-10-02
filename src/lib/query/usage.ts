@@ -339,6 +339,19 @@ export function useRequestDetail(requestId: string) {
   });
 }
 
+/**
+ * 会话日志扫描（后台定时或手动同步）最近一次完成的时间（毫秒）。
+ * 后台每 60 秒扫一次，这里 30 秒问一次；挂在 usage 下，同步后跟着失效重取。
+ */
+export function useSessionUsageLastSync() {
+  return useQuery({
+    queryKey: [...usageKeys.all, "session-last-sync"] as const,
+    queryFn: () => usageApi.getSessionUsageLastSync(),
+    refetchInterval: DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
 export function useModelPricing() {
   return useQuery({
     queryKey: usageKeys.pricing(),

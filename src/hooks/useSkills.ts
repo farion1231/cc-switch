@@ -10,6 +10,8 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillDiscoveryResult,
+  type SkillUpdateCheckResult,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -67,6 +69,24 @@ export function useDiscoverableSkills() {
     queryFn: () => skillsApi.discoverAvailable(),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
+    select: selectDiscoveredSkills,
+  });
+}
+
+const selectDiscoveredSkills = (result: SkillDiscoveryResult) => result.skills;
+const selectDiscoveryFailures = (result: SkillDiscoveryResult) =>
+  result.failures;
+
+/**
+ * 发现时没读到的仓库（和 useDiscoverableSkills 共用一次请求）
+ */
+export function useDiscoverableSkillsFailures() {
+  return useQuery({
+    queryKey: ["skills", "discoverable"],
+    queryFn: () => skillsApi.discoverAvailable(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+    select: selectDiscoveryFailures,
   });
 }
 
@@ -120,9 +140,13 @@ export function useUninstallSkill() {
 
       // A completed update check may still contain this Skill. Remove it so
       // Update All cannot target an ID that was just uninstalled.
-      queryClient.setQueryData<SkillUpdateInfo[]>(
+      queryClient.setQueryData<SkillUpdateCheckResult>(
         ["skills", "updates"],
-        (oldData) => oldData?.filter((update) => update.id !== id),
+        (oldData) =>
+          oldData && {
+            ...oldData,
+            updates: oldData.updates.filter((update) => update.id !== id),
+          },
       );
     },
     // Uninstall creates a backup before removing SSOT/DB state. It may reject
@@ -295,10 +319,10 @@ export function useInstallSkillsFromZip() {
       filePath: string;
       currentApp: AppId;
     }) => skillsApi.installFromZip(filePath, currentApp),
-    onSuccess: (installedSkills) => {
+    onSuccess: (result) => {
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],
-        (oldData) => mergeImportedSkills(oldData, installedSkills),
+        (oldData) => mergeImportedSkills(oldData, result.installed),
       );
     },
     // A ZIP can install multiple Skills before a later item or config sync
@@ -314,7 +338,7 @@ export function useInstallSkillsFromZip() {
 // ========== 更新检测 ==========
 
 /**
- * 检查 Skills 更新（手动触发）
+ * 检查 Skills 更新（手动触发）；结果里带着没读到的仓库
  */
 export function useCheckSkillUpdates() {
   return useQuery({
@@ -342,11 +366,14 @@ export function useUpdateSkill() {
           );
         },
       );
-      queryClient.setQueryData<SkillUpdateInfo[]>(
+      queryClient.setQueryData<SkillUpdateCheckResult>(
         ["skills", "updates"],
         (oldData) => {
           if (!oldData) return oldData;
-          return oldData.filter((u) => u.id !== updatedSkill.id);
+          return {
+            ...oldData,
+            updates: oldData.updates.filter((u) => u.id !== updatedSkill.id),
+          };
         },
       );
     },
@@ -388,3 +415,15 @@ export type {
   SkillsShSearchResult,
   AppId,
 };
+
+/**
+ * 立即重新同步：按开关和当前同步方式把 Skill 重新投影到各应用目录
+ */
+export function useResyncSkillsToApps() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => skillsApi.resyncToApps(),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+  });
+}

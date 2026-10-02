@@ -1,5 +1,10 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
+import {
+  PRESET_FAMILIES,
+  type PresetFamilyId,
+  type PresetFamilyInfo,
+} from "@/config/presetFamilies";
 import { PRESET_SEARCH_ALIASES } from "@/config/presetSearchAliases";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import type { AnyPreset, PresetEntry } from "./ProviderPresetSelector";
@@ -75,24 +80,156 @@ export function presetDisplayName(preset: AnyPreset, t: Translate): string {
   return preset.nameKey ? String(t(preset.nameKey)) : preset.name;
 }
 
+/**
+ * 每个词都要出现在 `texts` 里；带点的词（「kimi.ai」「z.ai」）也可以命中完整域名。
+ * 域名平时只比主体，免得「com」「api」全命中。
+ */
+function fieldsMatch(
+  query: string,
+  texts: string[],
+  domains: string[] = [],
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const haystack = texts.join(" ").toLowerCase();
+  const hosts = domains.filter(Boolean).map((domain) => domain.toLowerCase());
+  return needle
+    .split(/\s+/)
+    .every(
+      (part) =>
+        part.length > 0 &&
+        (haystack.includes(part) ||
+          (part.includes(".") && hosts.some((host) => host.includes(part)))),
+    );
+}
+
 export function presetMatches(
   entry: PresetEntry,
   query: string,
   t: Translate,
 ): boolean {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
-  const haystack = [
-    presetDisplayName(entry.preset, t),
-    entry.preset.name,
-    domainBody(presetDomain(entry.preset)),
-    PRESET_SEARCH_ALIASES[entry.preset.name] ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
-  return needle
-    .split(/\s+/)
-    .every((part) => part.length > 0 && haystack.includes(part));
+  const domain = presetDomain(entry.preset);
+  return fieldsMatch(
+    query,
+    [
+      presetDisplayName(entry.preset, t),
+      entry.preset.name,
+      domainBody(domain),
+      PRESET_SEARCH_ALIASES[entry.preset.name] ?? "",
+    ],
+    [domain],
+  );
+}
+
+// ─── 厂商 / 版本：同一家的多个版本在第 1 步合成一行 ────────────────────────────
+
+/** 第 1 步的一行：一个预设，或者同一家的几个版本（按预设文件里的顺序） */
+export interface PresetRowItem {
+  key: string;
+  /** 只有真有多个版本时才有 */
+  family?: PresetFamilyId;
+  versions: PresetEntry[];
+}
+
+/** 把同一 `family` 的预设合成一行；只剩一个版本的照旧单独一行 */
+export function groupPresetRows(entries: PresetEntry[]): PresetRowItem[] {
+  const byFamily = new Map<PresetFamilyId, PresetEntry[]>();
+  for (const entry of entries) {
+    const family = entry.preset.family;
+    if (family) byFamily.set(family, [...(byFamily.get(family) ?? []), entry]);
+  }
+  const rows: PresetRowItem[] = [];
+  const done = new Set<PresetFamilyId>();
+  for (const entry of entries) {
+    const family = entry.preset.family;
+    const versions = family ? byFamily.get(family) : undefined;
+    if (family && versions && versions.length > 1) {
+      if (done.has(family)) continue;
+      done.add(family);
+      rows.push({ key: `family:${family}`, family, versions });
+    } else {
+      rows.push({ key: entry.id, versions: [entry] });
+    }
+  }
+  return rows;
+}
+
+/** 选中的预设所在的那一家（含它自己）；没有别的版本时只有它自己 */
+export function presetVersions(
+  entries: PresetEntry[],
+  entry: PresetEntry,
+): PresetEntry[] {
+  const family = entry.preset.family;
+  if (!family) return [entry];
+  const versions = entries.filter((item) => item.preset.family === family);
+  return versions.length > 1 ? versions : [entry];
+}
+
+export function familyDisplayName(family: PresetFamilyId, t: Translate) {
+  const info: PresetFamilyInfo = PRESET_FAMILIES[family];
+  return info.nameKey ? String(t(info.nameKey)) : info.name;
+}
+
+export function presetRowName(row: PresetRowItem, t: Translate): string {
+  return row.family
+    ? familyDisplayName(row.family, t)
+    : presetDisplayName(row.versions[0].preset, t);
+}
+
+/** 版本标签（「编程订阅 · 国内」）；没写 versionKey 的用域名 */
+export function presetVersionLabel(entry: PresetEntry, t: Translate): string {
+  const key = entry.preset.versionKey;
+  if (key) return String(t(`providerPreset.version.${key}`));
+  return presetDomain(entry.preset) || presetDisplayName(entry.preset, t);
+}
+
+/**
+ * 搜索一行。返回 null 表示不匹配；`versions` 是命中的版本下标，空数组表示整家命中。
+ * 顺序照画板：家名 / 主域名命中算整家；否则逐个版本比版本名、版本标签和它自己的域名
+ * （kimi.ai、z.ai 这类只属于海外站的域名落到那个版本上）；都没中再看别名，算整家。
+ */
+export function matchPresetRow(
+  row: PresetRowItem,
+  query: string,
+  t: Translate,
+): { versions: number[] } | null {
+  if (!query.trim()) return { versions: [] };
+  if (!row.family) {
+    return presetMatches(row.versions[0], query, t) ? { versions: [] } : null;
+  }
+  const mainDomain = presetDomain(row.versions[0].preset);
+  if (
+    fieldsMatch(
+      query,
+      [familyDisplayName(row.family, t), domainBody(mainDomain)],
+      [mainDomain],
+    )
+  ) {
+    return { versions: [] };
+  }
+  const hits: number[] = [];
+  row.versions.forEach((entry, index) => {
+    const domain = presetDomain(entry.preset);
+    const ownDomain = domain && domain !== mainDomain ? domain : "";
+    if (
+      fieldsMatch(
+        query,
+        [
+          presetDisplayName(entry.preset, t),
+          entry.preset.name,
+          presetVersionLabel(entry, t),
+          domainBody(ownDomain),
+        ],
+        [ownDomain],
+      )
+    ) {
+      hits.push(index);
+    }
+  });
+  if (hits.length > 0) return { versions: hits };
+  return row.versions.some((entry) => presetMatches(entry, query, t))
+    ? { versions: [] }
+    : null;
 }
 
 // ─── 按名称排：中文名按拼音首字母插进字母序（火山引擎排在 H）────────────────────
@@ -118,17 +255,25 @@ function sortKey(name: string): string {
   return `${letter}${name}`;
 }
 
+function sortByName<T>(items: T[], nameOf: (item: T) => string): T[] {
+  return items
+    .map((item) => ({ item, key: sortKey(nameOf(item)) }))
+    .sort((a, b) => collator.compare(a.key, b.key))
+    .map(({ item }) => item);
+}
+
 export function sortPresetsByName(
   entries: PresetEntry[],
   t: Translate,
 ): PresetEntry[] {
-  return entries
-    .map((entry) => ({
-      entry,
-      key: sortKey(presetDisplayName(entry.preset, t)),
-    }))
-    .sort((a, b) => collator.compare(a.key, b.key))
-    .map(({ entry }) => entry);
+  return sortByName(entries, (entry) => presetDisplayName(entry.preset, t));
+}
+
+export function sortPresetRowsByName<T extends { row: PresetRowItem }>(
+  items: T[],
+  t: Translate,
+): T[] {
+  return sortByName(items, (item) => presetRowName(item.row, t));
 }
 
 /** 预设需要经过路由才能用（托管 OAuth、要转换格式的） */
@@ -154,6 +299,14 @@ export function presetNeedsRouting(
   } catch {
     return false;
   }
+}
+
+/** 合成的一行只有所有版本都要路由时才挂「需要路由」 */
+export function presetRowNeedsRouting(
+  appId: AppId | undefined,
+  row: PresetRowItem,
+): boolean {
+  return row.versions.every((entry) => presetNeedsRouting(appId, entry));
 }
 
 /** 账号登录类的副行：用哪家的账号登录 */

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Search, SlidersHorizontal, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,16 +24,27 @@ import {
 } from "@/config/universalProviderPresets";
 import { cn } from "@/lib/utils";
 import { usePresetStep } from "./presetStep";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   PRESET_GROUP_ORDER,
+  familyDisplayName,
+  groupPresetRows,
   loginAccountKey,
+  matchPresetRow,
   presetDisplayName,
   presetDomain,
   presetGroup,
   presetMatches,
   presetNeedsRouting,
+  presetRowName,
+  presetRowNeedsRouting,
+  presetVersionLabel,
+  presetVersions,
+  sortPresetRowsByName,
   sortPresetsByName,
   type PresetGroup,
+  type PresetRowItem,
 } from "./presetGroups";
 
 type PresetTranslator = (key: string) => unknown;
@@ -76,6 +88,24 @@ export function getVisiblePresetEntries(
   { query, t }: { query: string; t: PresetTranslator },
 ): PresetEntry[] {
   return sortPresetsByName(filterPresetEntries(entries, query, t), t);
+}
+
+/** 第 1 步的一行和搜索命中的版本下标（空 = 整家命中） */
+export interface VisiblePresetRow {
+  row: PresetRowItem;
+  hits: number[];
+}
+
+/** 同一家的多个版本合成一行，再按名称排 */
+export function getVisiblePresetRows(
+  entries: PresetEntry[],
+  { query, t }: { query: string; t: PresetTranslator },
+): VisiblePresetRow[] {
+  const found = groupPresetRows(entries).flatMap((row) => {
+    const match = matchPresetRow(row, query, t);
+    return match ? [{ row, hits: match.versions }] : [];
+  });
+  return sortPresetRowsByName(found, t);
 }
 
 type PickerCategory = "all" | PresetGroup | "universal";
@@ -124,26 +154,46 @@ export function ProviderPresetSelector({
     );
   }
 
-  if (!step) {
-    // 没有两步外壳（单独渲染的表单）：就地显示选择列表
-    return (
-      <div className="h-[420px] overflow-hidden rounded-panel border border-border">
-        <PresetPicker
-          entries={presetEntries}
-          onPick={onPresetChange}
-          selectedPresetId={selectedPresetId}
-          onUniversalPresetSelect={onUniversalPresetSelect}
-          onManageUniversalProviders={onManageUniversalProviders}
-        />
-      </div>
-    );
-  }
-
   const entry =
     selectedPresetId && selectedPresetId !== "custom"
       ? presetEntries.find((item) => item.id === selectedPresetId)
       : undefined;
-  return <PresetBar entry={entry} onChange={() => step.setStep("pick")} />;
+
+  if (!step) {
+    // 没有两步外壳（单独渲染的表单）：就地显示选择列表，选中多版本的那一家时下面跟版本切换
+    const versions = entry ? presetVersions(presetEntries, entry) : [];
+    return (
+      <div className="space-y-3" data-preset-selector="">
+        <div className="h-[420px] overflow-hidden rounded-panel border border-border">
+          <PresetPicker
+            entries={presetEntries}
+            onPick={onPresetChange}
+            selectedPresetId={selectedPresetId}
+            onUniversalPresetSelect={onUniversalPresetSelect}
+            onManageUniversalProviders={onManageUniversalProviders}
+          />
+        </div>
+        {entry && versions.length > 1 && (
+          <VersionSwitch
+            entry={entry}
+            versions={versions}
+            onVersionChange={onPresetChange}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <PresetBar
+      appId={step.appId}
+      entry={entry}
+      versions={entry ? presetVersions(presetEntries, entry) : []}
+      onChange={() => step.setStep("pick")}
+      // 换版本 = 选了同一家的另一个预设，表单按它重填
+      onVersionChange={onPresetChange}
+    />
+  );
 }
 
 // ─── 图标块 ─────────────────────────────────────────────────────────────────
@@ -193,38 +243,176 @@ function PresetIconBox({ preset }: { preset?: AnyPreset }) {
 // ─── 第 2 步：预设条 ────────────────────────────────────────────────────────
 
 function PresetBar({
+  appId,
   entry,
+  versions,
   onChange,
+  onVersionChange,
 }: {
+  appId: AppId;
   entry?: PresetEntry;
+  /** 同一家的所有版本（含选中的这个）；只有一个时不显示「版本」 */
+  versions: PresetEntry[];
   onChange: () => void;
+  onVersionChange: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const family = versions.length > 1 ? entry?.preset.family : undefined;
+  const name = entry
+    ? family
+      ? familyDisplayName(family, t)
+      : presetDisplayName(entry.preset, t)
+    : "";
+  const domain = entry ? presetDomain(entry.preset) : "";
   return (
-    <div className="flex items-center gap-3 rounded-panel bg-subtle px-3.5 py-3">
-      <PresetIconBox preset={entry?.preset} />
-      <div className="min-w-0 flex-1">
-        {entry ? (
-          <>
-            <div className="truncate text-strong text-fg-1">
-              {presetDisplayName(entry.preset, t)}
-            </div>
-            {presetDomain(entry.preset) && (
-              <div className="truncate text-caption text-fg-2">
-                {presetDomain(entry.preset)}
+    <div
+      data-preset-selector=""
+      className="flex flex-col gap-3 rounded-panel bg-subtle px-3.5 py-3"
+    >
+      <div className="flex items-center gap-3">
+        <PresetIconBox preset={entry?.preset} />
+        <div className="min-w-0 flex-1">
+          {entry ? (
+            <>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-strong text-fg-1" title={name}>
+                  {name}
+                </span>
+                {presetNeedsRouting(appId, entry) && <NeedsRouteBadge />}
               </div>
-            )}
-          </>
-        ) : (
-          <div className="truncate text-strong text-fg-1">
-            {t("providerPreset.customBar")}
-          </div>
-        )}
+              {domain && (
+                <div className="truncate text-caption text-fg-2">{domain}</div>
+              )}
+            </>
+          ) : (
+            <div className="truncate text-strong text-fg-1">
+              {t("providerPreset.customBar")}
+            </div>
+          )}
+        </div>
+        <Button type="button" variant="quiet" size="compact" onClick={onChange}>
+          {t("providerPreset.change")}
+        </Button>
       </div>
-      <Button type="button" variant="quiet" size="compact" onClick={onChange}>
-        {t("providerPreset.change")}
-      </Button>
+      {entry && family && (
+        <VersionSwitch
+          entry={entry}
+          versions={versions}
+          onVersionChange={onVersionChange}
+        />
+      )}
     </div>
+  );
+}
+
+/** 「版本」分段控件：按钮文字是版本标签，多了自动换行；换版本 = 选同一家的另一个预设 */
+/**
+ * 用户在表单里手动改过东西没有：只认表单里的 input / change 事件。预设填充是程序改值，
+ * 不发这些事件；Radix Select / Checkbox / Switch 跟着值同步的隐藏控件（aria-hidden）会发，
+ * 要排除；预设选择器自己（搜索框、版本按钮）也不算。`resetKey` 变了（换了预设）就重新算。
+ */
+function useFormEditedSince(
+  anchor: React.RefObject<HTMLElement | null>,
+  resetKey: string,
+) {
+  const edited = useRef(false);
+  useEffect(() => {
+    edited.current = false;
+  }, [resetKey]);
+  useEffect(() => {
+    const node = anchor.current;
+    const root = node?.closest("form") ?? node?.ownerDocument.body;
+    if (!root) return;
+    const onEdit = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-preset-selector]")) return;
+      if (target.closest('[aria-hidden="true"]')) return;
+      edited.current = true;
+    };
+    root.addEventListener("input", onEdit);
+    root.addEventListener("change", onEdit);
+    return () => {
+      root.removeEventListener("input", onEdit);
+      root.removeEventListener("change", onEdit);
+    };
+  }, [anchor]);
+  return edited;
+}
+
+/**
+ * 「版本」分段控件：按钮文字是版本标签，多了自动换行；换版本 = 选同一家的另一个预设，
+ * 表单按它重填。用户已经手动改过表单时先确认（后果写在确认框里），没改过直接切。
+ */
+function VersionSwitch({
+  entry,
+  versions,
+  onVersionChange,
+}: {
+  entry: PresetEntry;
+  versions: PresetEntry[];
+  onVersionChange: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLDivElement>(null);
+  const edited = useFormEditedSince(ref, entry.id);
+  const [pending, setPending] = useState<PresetEntry | null>(null);
+
+  const request = (id: string) => {
+    if (id === entry.id) return;
+    const next = versions.find((version) => version.id === id);
+    if (!next) return;
+    if (edited.current) {
+      setPending(next);
+    } else {
+      onVersionChange(id);
+    }
+  };
+
+  return (
+    <div ref={ref} className="flex items-start gap-3">
+      <span
+        aria-hidden="true"
+        className="min-w-8 shrink-0 whitespace-nowrap text-center text-caption leading-[36px] text-fg-2"
+      >
+        {t("providerPreset.versionLabel")}
+      </span>
+      <SegmentedControl
+        aria-label={t("providerPreset.versionLabel")}
+        value={entry.id}
+        onValueChange={request}
+        items={versions.map((version) => ({
+          value: version.id,
+          label: presetVersionLabel(version, t),
+          className: "h-[30px]",
+        }))}
+        className="h-auto min-w-0 flex-wrap gap-0.5 border border-border-strong bg-transparent p-0.5"
+      />
+      <ConfirmDialog
+        isOpen={pending !== null}
+        title={t("providerPreset.switchVersionTitle", {
+          version: pending ? presetVersionLabel(pending, t) : "",
+        })}
+        message={t("providerPreset.switchVersionMessage")}
+        confirmText={t("providerPreset.switchVersionConfirm")}
+        variant="info"
+        onConfirm={() => {
+          const next = pending;
+          setPending(null);
+          if (next) onVersionChange(next.id);
+        }}
+        onCancel={() => setPending(null)}
+      />
+    </div>
+  );
+}
+
+function NeedsRouteBadge() {
+  const { t } = useTranslation();
+  return (
+    <span className="inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
+      {t("providerCard.chip.needsRoute")}
+    </span>
   );
 }
 
@@ -279,8 +467,9 @@ function PresetPicker({
     return byGroup;
   }, [entries]);
 
+  // 同一家的多个版本合成一行，数量也按行数算
   const matching = useMemo(
-    () => getVisiblePresetEntries(entries, { query, t }),
+    () => getVisiblePresetRows(entries, { query, t }),
     [entries, query, t],
   );
   const matchingUniversal = useMemo(
@@ -295,8 +484,9 @@ function PresetPicker({
 
   const countFor = (key: PickerCategory) => {
     if (key === "universal") return matchingUniversal.length;
-    if (key === "all") return matching.length + 1;
-    return matching.filter((entry) => presetGroup(entry.preset) === key).length;
+    // 「自定义配置」固定在第一行，不计入数量
+    if (key === "all") return matching.length;
+    return matching.filter((item) => rowGroup(item.row) === key).length;
   };
 
   const shown =
@@ -304,7 +494,7 @@ function PresetPicker({
       ? matching
       : category === "universal"
         ? []
-        : matching.filter((entry) => presetGroup(entry.preset) === category);
+        : matching.filter((item) => rowGroup(item.row) === category);
 
   const navItems: PickerCategory[] = [
     "all",
@@ -454,23 +644,21 @@ function PresetPicker({
                 selected={selectedPresetId === "custom"}
                 onClick={() => onPick("custom")}
               />
-              {shown.map((entry) => {
-                const group = presetGroup(entry.preset);
+              {shown.map(({ row, hits }) => {
+                const first = row.versions[0];
+                // 搜索命中某个版本时选中那个版本，否则选第一个
+                const target = row.versions[hits[0] ?? 0];
                 return (
                   <PresetRow
-                    key={entry.id}
-                    icon={<PresetIconBox preset={entry.preset} />}
-                    name={presetDisplayName(entry.preset, t)}
-                    detail={
-                      group === "login"
-                        ? t(
-                            `providerPreset.loginWith.${loginAccountKey(appId, entry.preset)}`,
-                          )
-                        : presetDomain(entry.preset)
-                    }
-                    needsRoute={presetNeedsRouting(appId, entry)}
-                    selected={selectedPresetId === entry.id}
-                    onClick={() => onPick(entry.id)}
+                    key={row.key}
+                    icon={<PresetIconBox preset={first.preset} />}
+                    name={presetRowName(row, t)}
+                    detail={presetRowDetail(appId, row, hits, t)}
+                    needsRoute={presetRowNeedsRouting(appId, row)}
+                    selected={row.versions.some(
+                      (entry) => entry.id === selectedPresetId,
+                    )}
+                    onClick={() => onPick(target.id)}
                   />
                 );
               })}
@@ -480,6 +668,45 @@ function PresetPicker({
       </div>
     </div>
   );
+}
+
+function rowGroup(row: PresetRowItem): PresetGroup {
+  return presetGroup(row.versions[0].preset);
+}
+
+/**
+ * 副行：搜索命中某个版本时写「匹配：火山 Coding Plan」；账号登录类写登录说明；
+ * 有多个版本的写「kimi.com · 4 个版本」；其余写域名。
+ */
+function presetRowDetail(
+  appId: AppId | undefined,
+  row: PresetRowItem,
+  hits: number[],
+  t: TFunction,
+): string {
+  const first = row.versions[0];
+  if (hits.length > 0) {
+    const name = presetDisplayName(row.versions[hits[0]].preset, t);
+    return hits.length > 1
+      ? t("providerPreset.matchedVersions", {
+          name,
+          n: hits.length,
+          more: hits.length - 1,
+        })
+      : t("providerPreset.matchedVersion", { name });
+  }
+  if (rowGroup(row) === "login") {
+    return t(
+      `providerPreset.loginWith.${loginAccountKey(appId, first.preset)}`,
+    );
+  }
+  if (row.family) {
+    return t("providerPreset.versionCount", {
+      domain: presetDomain(first.preset),
+      n: row.versions.length,
+    });
+  }
+  return presetDomain(first.preset);
 }
 
 function CategoryButton({
@@ -529,7 +756,6 @@ function PresetRow({
   selected?: boolean;
   onClick: () => void;
 }) {
-  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -559,11 +785,7 @@ function PresetRow({
           </span>
         )}
       </span>
-      {needsRoute && (
-        <span className="inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
-          {t("providerCard.chip.needsRoute")}
-        </span>
-      )}
+      {needsRoute && <NeedsRouteBadge />}
     </button>
   );
 }

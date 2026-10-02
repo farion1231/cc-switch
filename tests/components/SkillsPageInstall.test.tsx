@@ -7,6 +7,7 @@ import type {
   DiscoverableSkill,
   InstalledSkill,
   SkillRepo,
+  SkillRepoFailure,
   SkillsShDiscoverableSkill,
   SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -17,6 +18,7 @@ const m = vi.hoisted(() => ({
   addRepo: vi.fn(),
   refetchDiscoverable: vi.fn(),
   discoverable: [] as DiscoverableSkill[],
+  failures: [] as SkillRepoFailure[],
   installed: [] as InstalledSkill[],
   repos: [] as SkillRepo[],
 }));
@@ -58,6 +60,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isError: false,
     refetch: m.refetchDiscoverable,
   }),
+  useDiscoverableSkillsFailures: () => ({ data: m.failures }),
   useInstalledSkills: () => ({ data: m.installed, isLoading: false }),
   useInstallSkill: () => ({ mutateAsync: m.install }),
   useSkillRepos: () => ({ data: m.repos, isLoading: false, refetch: vi.fn() }),
@@ -140,6 +143,7 @@ describe("SkillsPage (Discover)", () => {
     m.addRepo.mockReset().mockResolvedValue(true);
     m.refetchDiscoverable.mockReset();
     m.discoverable = [];
+    m.failures = [];
     m.installed = [];
     m.repos = [];
     searchCache.clear();
@@ -216,6 +220,59 @@ describe("SkillsPage (Discover)", () => {
     expect(
       screen.getByText("skillsPage.discover.noneRead"),
     ).toBeInTheDocument();
+  });
+
+  it("says which repositories could not be read when only some failed", async () => {
+    m.repos = [makeRepo(), makeRepo({ owner: "composio", name: "awesome" })];
+    m.discoverable = [makeDiscoverable()];
+    m.failures = [
+      {
+        owner: "composio",
+        name: "awesome",
+        branch: "main",
+        error: JSON.stringify({
+          code: "DOWNLOAD_FAILED",
+          context: { status: "403" },
+          suggestion: "http403",
+        }),
+      },
+    ];
+    renderPage();
+
+    // 读到的照常列出，横幅说哪些没读到
+    expect(screen.getByText("repo-skill")).toBeInTheDocument();
+    expect(screen.getByText("skillsPage.repoFail.title")).toBeInTheDocument();
+    expect(
+      screen.getByText("skillsPage.repoFail.discoverBody"),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(m.refetchDiscoverable).toHaveBeenCalled();
+
+    // 仓库弹层里那一行写「读取失败」
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.repos.buttonAll/ }),
+    );
+    expect(
+      await screen.findByText("skillsPage.repos.readFailed"),
+    ).toBeInTheDocument();
+  });
+
+  it("calls it a read failure, not an empty repository, when every repository failed", () => {
+    m.repos = [makeRepo()];
+    m.failures = [
+      { owner: "owner-a", name: "repo-a", branch: "main", error: "timeout" },
+    ];
+    renderPage();
+    expect(
+      screen.getByText("skillsPage.discover.loadFailed"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("skillsPage.discover.noneRead"),
+    ).not.toBeInTheDocument();
+    // 全部没读到时由空状态说明，不再叠一条横幅
+    expect(
+      screen.queryByText("skillsPage.repoFail.discoverBody"),
+    ).not.toBeInTheDocument();
   });
 
   it("links an installed result to its row instead of offering uninstall", async () => {

@@ -20,10 +20,12 @@ import {
   useBulkToggleMcpApp,
   useDeleteMcpServer,
   useImportMcpFromApps,
+  useResyncMcpToApps,
   useToggleMcpApp,
 } from "@/hooks/useMcp";
 import type { McpServer } from "@/types";
-import { MCP_APP_IDS, type McpAppId } from "@/config/appConfig";
+import type { McpAppSyncOutcome } from "@/lib/api/mcp";
+import { MCP_APP_IDS, isMcpAppId, type McpAppId } from "@/config/appConfig";
 import { mcpPresets } from "@/config/mcpPresets";
 import { settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
@@ -117,6 +119,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const [importFilesOpen, setImportFilesOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
+  /** 整个应用重新同步失败（「重新同步到各应用」或通知条「重试」），不对应某一行 */
+  const [appFails, setAppFails] = useState<Partial<Record<McpAppId, string>>>(
+    {},
+  );
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = useRef(false);
 
@@ -131,12 +137,14 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const bulkToggleAppMutation = useBulkToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
   const importMutation = useImportMcpFromApps();
+  const resyncMutation = useResyncMcpToApps();
 
   const mutationPending =
     toggleAppMutation.isPending ||
     bulkToggleAppMutation.isPending ||
     deleteServerMutation.isPending ||
-    importMutation.isPending;
+    importMutation.isPending ||
+    resyncMutation.isPending;
   const dialogOpen =
     drawer !== null || deleteId !== null || importReport !== null;
   const interactionBlocked = writePending || mutationPending || dialogOpen;
@@ -260,17 +268,61 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     void writeOne(id, app, !server.apps[app]);
   };
 
+  /**
+   * 记下重新同步的逐应用结果。成功的应用清掉它的失败记录——数据库里的开关已经写进去了；
+   * MiniMax Code 例外：它写失败时开关没有入库，重新同步补不上，行上的失败要留着按想要的值重试。
+   */
+  const applyResyncOutcomes = (outcomes: McpAppSyncOutcome[]) => {
+    const okApps = new Set<McpAppId>();
+    const failedApps: Partial<Record<McpAppId, string>> = {};
+    for (const outcome of outcomes) {
+      if (!isMcpAppId(outcome.app)) continue;
+      if (outcome.ok) okApps.add(outcome.app);
+      else failedApps[outcome.app] = outcome.error || t("common.error");
+    }
+    setAppFails((prev) => {
+      const next = { ...prev, ...failedApps };
+      for (const app of okApps) delete next[app];
+      return next;
+    });
+    setFails((prev) => {
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        const app = key.split("\u0000")[1] as McpAppId;
+        if (okApps.has(app) && app !== "mcode") delete next[key];
+      }
+      return next;
+    });
+    return outcomes.filter((outcome) => !outcome.ok);
+  };
+
+  const rowFailsFor = (app: McpAppId) =>
+    Object.entries(fails).filter(([key]) => key.endsWith(`\u0000${app}`));
+
   const retryApp = async (app: McpAppId) => {
     if (!beginWrite()) return;
     try {
-      const entries = Object.entries(fails).filter(([key]) =>
-        key.endsWith(`\u0000${app}`),
-      );
+      const entries = rowFailsFor(app);
       let ok = true;
-      for (const [key, failure] of entries) {
-        const id = key.split("\u0000")[0];
-        const { failed } = await writeMany([{ id, app }], failure.desired);
-        if (failed) ok = false;
+      if (app === "mcode" && entries.length > 0) {
+        // MiniMax Code 写失败时开关没入库：按每行想要的值再写一次
+        for (const [key, failure] of entries) {
+          const id = key.split("\u0000")[0];
+          const { failed } = await writeMany([{ id, app }], failure.desired);
+          if (failed) ok = false;
+        }
+      } else {
+        // 其余应用的开关已经入库：按这里的开关把这个应用整个重写一遍
+        try {
+          const outcomes = await resyncMutation.mutateAsync([app]);
+          ok = applyResyncOutcomes(outcomes).length === 0;
+        } catch (error) {
+          ok = false;
+          setAppFails((prev) => ({
+            ...prev,
+            [app]: extractErrorMessage(error) || String(error),
+          }));
+        }
       }
       if (ok) {
         toast.success(
@@ -278,6 +330,39 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           { closeButton: true },
         );
       }
+    } finally {
+      endWrite();
+    }
+  };
+
+  const handleResyncAll = async () => {
+    if (!beginWrite()) return;
+    try {
+      const outcomes = await resyncMutation.mutateAsync(undefined);
+      const failed = applyResyncOutcomes(outcomes);
+      if (failed.length === 0) {
+        toast.success(t("mcpPage.toast.resynced", { count: outcomes.length }), {
+          closeButton: true,
+        });
+      } else {
+        toast.warning(
+          t("mcpPage.toast.resyncPartial", {
+            count: failed.length,
+            apps: failed
+              .map((outcome) =>
+                isMcpAppId(outcome.app)
+                  ? APP_DISPLAY_NAME[outcome.app]
+                  : outcome.app,
+              )
+              .join(t("mcpPage.listSeparator")),
+          }),
+          { closeButton: true },
+        );
+      }
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: extractErrorMessage(error) || String(error),
+      });
     } finally {
       endWrite();
     }
@@ -429,15 +514,20 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   };
 
   // ─── 派生显示 ───────────────────────────────────────────────────────
+  /** 有写入失败的应用 → 通知条里显示的错误（整个应用的失败优先） */
   const failedApps = useMemo(() => {
-    const map = new Map<McpAppId, WriteFailure[]>();
+    const map = new Map<McpAppId, string>();
     for (const [key, failure] of Object.entries(fails)) {
       const app = key.split("\u0000")[1] as McpAppId;
       if (!serversMap?.[key.split("\u0000")[0]]) continue;
-      map.set(app, [...(map.get(app) ?? []), failure]);
+      if (!map.has(app)) map.set(app, failure.error);
+    }
+    for (const app of MCP_APP_IDS) {
+      const error = appFails[app];
+      if (error !== undefined) map.set(app, error);
     }
     return map;
-  }, [fails, serversMap]);
+  }, [fails, appFails, serversMap]);
 
   const enabledNames = (server: McpServer) =>
     MCP_APP_IDS.filter((app) => server.apps[app]).map(
@@ -496,6 +586,12 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[240px]">
                 <DropdownMenuItem
+                  disabled={interactionBlocked}
+                  onSelect={() => void handleResyncAll()}
+                >
+                  {t("mcpPage.resync")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   disabled={!hasServers}
                   onSelect={() =>
                     void copyJson(
@@ -546,7 +642,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         )}
 
         <NoticeSlot className={cn(failedApps.size > 0 && "px-6 pb-3")}>
-          {Array.from(failedApps.entries()).map(([app, list]) => (
+          {Array.from(failedApps.entries()).map(([app, error]) => (
             <Notice
               key={app}
               tone="warning"
@@ -565,7 +661,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                 </Button>
               }
             >
-              {t("mcpPage.failNoticeBody", { error: list[0].error })}
+              {t("mcpPage.failNoticeBody", { error })}
             </Notice>
           ))}
         </NoticeSlot>

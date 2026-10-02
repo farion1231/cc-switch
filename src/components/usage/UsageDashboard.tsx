@@ -39,6 +39,7 @@ import {
   usageKeys,
   useModelStats,
   useProviderStats,
+  useSessionUsageLastSync,
   useUsageSummaryByApp,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
@@ -73,7 +74,10 @@ const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 type UsageTab = "logs" | "providers" | "models" | "pricing";
 const TABS: UsageTab[] = ["logs", "providers", "models", "pricing"];
 
-/** 手动「立即同步」的时间，离开页面再回来也还在（后端没有上次扫描时间的接口）。 */
+/**
+ * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
+ * 手动都算）完成的时间，页头取两者中较新的；这里留着是为了点完同步立刻显示「刚刚」。
+ */
 let lastManualSessionSyncAt: number | null = null;
 
 /** 测试用：重置模块级的上次同步时间。 */
@@ -171,7 +175,11 @@ export function UsageDashboard({
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [rebuildingCodex, setRebuildingCodex] = useState(false);
   const [syncingSession, setSyncingSession] = useState(false);
-  const [lastSyncAt, setLastSyncAt] = useState(lastManualSessionSyncAt);
+  const [lastManualSyncAt, setLastManualSyncAt] = useState(
+    lastManualSessionSyncAt,
+  );
+  const { data: lastScanAt } = useSessionUsageLastSync();
+  const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
   const tabRefs = useRef<Record<UsageTab, HTMLButtonElement | null>>({
     logs: null,
     providers: null,
@@ -274,7 +282,7 @@ export function UsageDashboard({
       const result = await usageApi.syncSessionUsage();
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
       lastManualSessionSyncAt = Date.now();
-      setLastSyncAt(lastManualSessionSyncAt);
+      setLastManualSyncAt(lastManualSessionSyncAt);
       const message = t("usage.sessionSync.syncCompleted", {
         imported: result.imported,
         files: result.filesScanned,

@@ -1794,7 +1794,7 @@
     "crossApp": "Across apps",
     "groupHint": {
       "login": "No API key: sign in with an existing account. Everything except Claude goes through routing.",
-      "vendor": "The vendors' own APIs and coding plans.",
+      "vendor": "The vendors' own APIs and coding plans. A vendor's China site, global site and plans share one row; pick the version in the next step.",
       "thirdparty": "Platforms that aggregate many models, or relays reselling official models.",
       "cloud": "Call models with a cloud provider account.",
       "plugin": "Model assignment configs for OpenCode plugins.",
@@ -1815,7 +1815,40 @@
       "github": "Sign in with a GitHub account",
       "xai": "Sign in with an xAI account",
       "google": "Sign in with a Google account"
-    }
+    },
+    "versionCount": "{{domain}} · {{n}} versions",
+    "matchedVersion": "Matches {{name}}",
+    "matchedVersions": "Matches {{name}} and {{more}} more",
+    "versionLabel": "Version",
+    "family": {
+      "volcengine": "Volcengine"
+    },
+    "version": {
+      "payg": "Pay-as-you-go",
+      "paygCn": "Pay-as-you-go · China",
+      "paygIntl": "Pay-as-you-go · Global",
+      "coding": "Coding subscription",
+      "codingCn": "Coding subscription · China",
+      "codingIntl": "Coding subscription · Global",
+      "cn": "China",
+      "intl": "Global",
+      "agentPlan": "Agent Plan",
+      "codingPlan": "Coding Plan",
+      "tokenPlan": "Token Plan",
+      "tokenPlanCn": "Token Plan · China",
+      "tokenPlanIntl": "Token Plan · Global",
+      "enterpriseLiteCn": "Enterprise Lite · China",
+      "enterpriseLiteIntl": "Enterprise Lite · Global",
+      "enterpriseProCn": "Enterprise Pro · China",
+      "enterpriseProIntl": "Enterprise Pro · Global",
+      "stepPlanCn": "Step Plan · China",
+      "stepPlanIntl": "Step Plan · Global",
+      "aksk": "AKSK",
+      "apiKey": "API Key"
+    },
+    "switchVersionTitle": "Switch to {{version}}?",
+    "switchVersionMessage": "The form will be refilled for the new version. The API key you entered and any other changes will be cleared.",
+    "switchVersionConfirm": "Switch"
   },
   "usage": {
     "title": "Usage Statistics",
@@ -2123,7 +2156,7 @@
       "off": "Off",
       "editLogging": "Change “Record request usage”",
       "codexHelpTitle": "What does Codex usage maintenance do?",
-      "lastSynced": "last manual sync: {{time}}"
+      "lastSynced": "last synced: {{time}}"
     },
     "empty": {
       "title": "No usage data yet",
@@ -3003,14 +3036,25 @@
       "installing": "Installing...",
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
-      "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+      "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)",
+      "skippedTitle": "Skipped {{count}} Skills: folder name already in use",
+      "allSkipped": "Nothing installed: all {{count}} Skills in the ZIP use folder names that are already taken",
+      "skippedItem": "{{directory}} (used by {{name}})",
+      "skippedBody": "{{list}}. To use the version in the ZIP, uninstall the Skill with the same name first."
     },
     "backToInstalled": "Back to installed",
     "moreActions": "More Skills actions",
     "storageSheet": {
       "title": "Storage and sync",
-      "open": "Storage and sync…"
-    }
+      "open": "Storage and sync…",
+      "resync": "Resync now",
+      "resyncing": "Resyncing…",
+      "resyncHint": "Changes only apply to Skills you enable or update afterwards. Resync now to put enabled Skills back into each app's Skills folder using the current method.",
+      "resyncDone": "Resynced Skills to every app using the current method",
+      "resyncPartial": "{{count}} apps didn't fully sync: {{apps}}",
+      "resyncSkillItem": "{{directory}}: {{error}}"
+    },
+    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",
@@ -3996,7 +4040,9 @@
       "added": "Added {{id}}",
       "saved": "Saved {{id}}",
       "batchAdded": "Added {{count}} MCP servers",
-      "batchAddedReplaced": "Added {{count}} MCP servers, replaced {{replaced}}"
+      "batchAddedReplaced": "Added {{count}} MCP servers, replaced {{replaced}}",
+      "resynced": "Rewrote the config of {{count}} apps from these switches",
+      "resyncPartial": "Couldn't write {{count}} apps: {{apps}}"
     },
     "import": {
       "title": "Import finished",
@@ -4104,7 +4150,8 @@
       "homepage": "Homepage",
       "docs": "Docs",
       "delete": "Delete…"
-    }
+    },
+    "resync": "Rewrite every app's config from these switches"
   },
   "skillsPage": {
     "noun": "Skills",
@@ -4244,7 +4291,8 @@
       "disabled": "Turned off, not used by Discover",
       "manage": "Add or manage repositories…",
       "openAria": "Open {{repo}} on GitHub",
-      "removeAria": "Remove repository {{repo}}"
+      "removeAria": "Remove repository {{repo}}",
+      "readFailed": "Read failed"
     },
     "import": {
       "title": "Import Skills from this computer",
@@ -4264,6 +4312,12 @@
     },
     "restore": {
       "lead": "Pick a backup to restore its files and add it back to the list, enabled in {{apps}} (set by “Install to” in Discover)."
+    },
+    "repoFail": {
+      "title": "Couldn't read {{count}} repositories: {{repos}}",
+      "item": "{{repo}} ({{reason}})",
+      "discoverBody": "The list may be incomplete.",
+      "updatesBody": "Skills from these repositories weren't checked, so the results may be incomplete."
     }
   }
 }

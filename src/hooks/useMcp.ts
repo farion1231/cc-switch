@@ -86,6 +86,18 @@ export function useDeleteMcpServer() {
 }
 
 /**
+ * 按这里的开关把 MCP 重新写进各应用的配置（不传 apps＝全部受管应用），逐应用返回结果
+ */
+export function useResyncMcpToApps() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (apps?: AppId[]) => mcpApi.resyncToApps(apps),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+  });
+}
+
+/**
  * 从所有应用导入 MCP 服务器
  */
 export function useImportMcpFromApps() {

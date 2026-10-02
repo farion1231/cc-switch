@@ -66,6 +66,8 @@ import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
+import { describeRepoFailures } from "./repoFailures";
+import type { ZipSkippedSkill } from "@/lib/api/skills";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
@@ -134,6 +136,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     null,
   );
   const [dismissedUpdates, setDismissedUpdates] = useState<number | null>(null);
+  /** 关掉的是哪一次检查的「仓库没读到」横幅（按检查时间记） */
+  const [dismissedRepoFailAt, setDismissedRepoFailAt] = useState<number | null>(
+    null,
+  );
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [writePending, setWritePending] = useState(false);
   const [isUpdatingMany, setIsUpdatingMany] = useState(false);
@@ -163,11 +169,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
-    data: skillUpdates,
+    data: updateCheck,
     refetch: checkUpdates,
     isFetching: isCheckingUpdates,
     dataUpdatedAt: updatesCheckedAt,
   } = useCheckSkillUpdates();
+  const skillUpdates = updateCheck?.updates;
+  const updateRepoFailures = updateCheck?.failures ?? [];
   const updateSkillMutation = useUpdateSkill();
 
   const mutationPending =
@@ -575,9 +583,17 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     checkUpdatesLockRef.current = true;
     try {
       const result = await checkUpdates();
-      const updates = result.data || [];
+      const updates = result.data?.updates ?? [];
+      const failures = result.data?.failures ?? [];
       setDismissedUpdates(null);
-      if (updates.length === 0) {
+      setDismissedRepoFailAt(null);
+      if (updates.length === 0 && failures.length > 0) {
+        // 有仓库没读到时不能说「全部最新」；哪些仓库、为什么写在横幅里
+        toast.warning(
+          t("skills.updatesIncomplete", { count: failures.length }),
+          { closeButton: true },
+        );
+      } else if (updates.length === 0) {
         toast.success(t("skills.noUpdates"), { closeButton: true });
       } else {
         toast.info(t("skills.updatesFound", { count: updates.length }), {
@@ -641,13 +657,43 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     try {
       const filePath = await skillsApi.openZipFileDialog();
       if (!filePath) return;
-      const { installed, failures } = await installTo((firstApp) =>
-        installFromZipMutation.mutateAsync({ filePath, currentApp: firstApp }),
-      );
-      if (installed.length === 0) {
-        toast.info(t("skills.installFromZip.noSkillsFound"), {
-          closeButton: true,
+      let skipped: ZipSkippedSkill[] = [];
+      const { installed, failures } = await installTo(async (firstApp) => {
+        const result = await installFromZipMutation.mutateAsync({
+          filePath,
+          currentApp: firstApp,
         });
+        skipped = result.skipped;
+        return result.installed;
+      });
+      if (skipped.length > 0) {
+        // #3749：同名被跳过要说清楚跳过了哪些、被谁占用，不能说成「ZIP 里没有技能」
+        const list = skipped
+          .map((item) =>
+            t("skills.installFromZip.skippedItem", {
+              directory: item.directory,
+              name: item.existingName,
+            }),
+          )
+          .join(listSeparator);
+        toast.warning(
+          installed.length === 0
+            ? t("skills.installFromZip.allSkipped", { count: skipped.length })
+            : t("skills.installFromZip.skippedTitle", {
+                count: skipped.length,
+              }),
+          {
+            description: t("skills.installFromZip.skippedBody", { list }),
+            closeButton: true,
+          },
+        );
+      }
+      if (installed.length === 0) {
+        if (skipped.length === 0) {
+          toast.info(t("skills.installFromZip.noSkillsFound"), {
+            closeButton: true,
+          });
+        }
       } else if (installed.length === 1) {
         toast.success(
           t("skillsPage.toast.installed", {
@@ -1269,6 +1315,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const showUnmanagedBanner =
     nUnmanaged > 0 && dismissedUnmanaged !== nUnmanaged && nInstalled > 0;
   const showUpdatesBanner = nUpdates > 0 && dismissedUpdates !== nUpdates;
+  const showUpdateRepoFailBanner =
+    updateRepoFailures.length > 0 && dismissedRepoFailAt !== updatesCheckedAt;
 
   const uninstallTargets =
     confirm?.kind === "uninstall"
@@ -1339,9 +1387,36 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
             <NoticeSlot
               className={cn(
-                (showUnmanagedBanner || showUpdatesBanner) && "px-6 pb-3",
+                (showUnmanagedBanner ||
+                  showUpdatesBanner ||
+                  showUpdateRepoFailBanner) &&
+                  "px-6 pb-3",
               )}
             >
+              {showUpdateRepoFailBanner && (
+                <Notice
+                  tone="warning"
+                  title={t("skillsPage.repoFail.title", {
+                    count: updateRepoFailures.length,
+                    repos: describeRepoFailures(updateRepoFailures, t),
+                  })}
+                  actions={
+                    <Button
+                      type="button"
+                      variant="neutral"
+                      size="compact"
+                      disabled={interactionBlocked}
+                      onClick={() => void handleCheckUpdates()}
+                    >
+                      {t("common.retry")}
+                    </Button>
+                  }
+                  onDismiss={() => setDismissedRepoFailAt(updatesCheckedAt)}
+                  dismissLabel={t("skillsPage.banner.close")}
+                >
+                  {t("skillsPage.repoFail.updatesBody")}
+                </Notice>
+              )}
               {showUnmanagedBanner && (
                 <Notice
                   title={t("skillsPage.banner.unmanaged", {
