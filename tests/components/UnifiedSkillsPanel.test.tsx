@@ -2,10 +2,12 @@ import { createRef } from "react";
 import { render, screen, waitFor, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import i18n from "i18next";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
+import zh from "@/i18n/locales/zh.json";
 import type {
   InstalledSkill,
   SkillBackupEntry,
@@ -149,8 +151,27 @@ const makeInstalledSkill = (
 const renderPanel = () =>
   render(<UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />);
 
+const bulkConfirmButton = (enabled: boolean) =>
+  screen.getByRole("button", {
+    name: enabled
+      ? "skills.bulkToggleConfirmEnable"
+      : "skills.bulkToggleConfirmDisable",
+  });
+
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    i18n.addResource(
+      "zh",
+      "translation",
+      "skills.bulkToggleConfirmEnableMessage",
+      zh.skills.bulkToggleConfirmEnableMessage,
+    );
+    i18n.addResource(
+      "zh",
+      "translation",
+      "skills.bulkToggleConfirmDisableMessage",
+      zh.skills.bulkToggleConfirmDisableMessage,
+    );
     installedSkillsMock = [];
     skillBackupsMock = [];
     skillUpdatesMock = [];
@@ -373,7 +394,7 @@ describe("UnifiedSkillsPanel", () => {
     expect(viewport).not.toContainElement(searchInput);
   });
 
-  it("enables only disabled Skills from the full list when the app state is mixed", async () => {
+  it("confirms the full-list target when the app state is mixed", async () => {
     installedSkillsMock = [
       makeInstalledSkill({
         id: "enabled-id",
@@ -398,10 +419,151 @@ describe("UnifiedSkillsPanel", () => {
     );
     await user.click(screen.getByText("Claude:").closest("button")!);
 
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "skills.bulkToggleConfirmHidden",
+    );
+    await user.click(bulkConfirmButton(true));
+
     await waitFor(() => {
       expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
         ids: ["disabled-id-1", "disabled-id-2"],
         app: "claude",
+        enabled: true,
+      });
+    });
+  });
+
+  it("shows interpolated counts when enabling partially enabled Codex Skills", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "codex-enabled-1",
+        apps: { codex: true },
+      }),
+      makeInstalledSkill({
+        id: "codex-enabled-2",
+        apps: { codex: true },
+      }),
+      makeInstalledSkill({ id: "codex-disabled" }),
+    ];
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="codex" />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Codex:").closest("button")!);
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Codex 已启用技能：2 → 3 个。");
+    expect(dialog).toHaveTextContent(
+      "将新增启用 1 个，操作后全部 3 个已安装技能均会启用。",
+    );
+    expect(dialog).toHaveTextContent("此操作不受当前搜索结果限制。");
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+
+    await user.click(bulkConfirmButton(true));
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["codex-disabled"],
+        app: "codex",
+        enabled: true,
+      });
+    });
+  });
+
+  it("shows interpolated counts when enabling all Codex Skills", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "codex-first" }),
+      makeInstalledSkill({ id: "codex-second" }),
+      makeInstalledSkill({ id: "codex-third" }),
+    ];
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="codex" />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Codex:").closest("button")!);
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Codex 已启用技能：0 → 3 个。",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "将新增启用 3 个，操作后全部 3 个已安装技能均会启用。",
+    );
+
+    await user.click(bulkConfirmButton(true));
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["codex-first", "codex-second", "codex-third"],
+        app: "codex",
+        enabled: true,
+      });
+    });
+  });
+
+  it("shows interpolated counts when disabling all Codex Skills", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "codex-first", apps: { codex: true } }),
+      makeInstalledSkill({ id: "codex-second", apps: { codex: true } }),
+      makeInstalledSkill({ id: "codex-third", apps: { codex: true } }),
+    ];
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="codex" />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Codex:").closest("button")!);
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("Codex 已启用技能：3 → 0 个。");
+    expect(dialog).toHaveTextContent(
+      "将停用 3 个，操作后全部 3 个已安装技能均会停用。",
+    );
+
+    await user.click(bulkConfirmButton(false));
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["codex-first", "codex-second", "codex-third"],
+        app: "codex",
+        enabled: false,
+      });
+    });
+  });
+
+  it("requires reconfirmation when total count increases but target IDs stay the same", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "codex-disabled" }),
+      makeInstalledSkill({ id: "codex-enabled", apps: { codex: true } }),
+    ];
+    const { rerender } = render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="codex" />,
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText("Codex:").closest("button")!);
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "codex-disabled" }),
+      makeInstalledSkill({ id: "codex-enabled", apps: { codex: true } }),
+      makeInstalledSkill({
+        id: "codex-already-enabled",
+        apps: { codex: true },
+      }),
+    ];
+    rerender(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="codex" />,
+    );
+
+    await user.click(bulkConfirmButton(true));
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Codex 已启用技能：2 → 3 个。",
+    );
+
+    await user.click(bulkConfirmButton(true));
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["codex-disabled"],
+        app: "codex",
         enabled: true,
       });
     });
@@ -416,6 +578,11 @@ describe("UnifiedSkillsPanel", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByText("Claude:").closest("button")!);
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("skills.bulkToggleConfirmTitle"),
+    ).toBeInTheDocument();
+    await user.click(bulkConfirmButton(true));
 
     await waitFor(() => {
       expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
@@ -435,6 +602,11 @@ describe("UnifiedSkillsPanel", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByText("Claude:").closest("button")!);
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("skills.bulkToggleConfirmTitle"),
+    ).toBeInTheDocument();
+    await user.click(bulkConfirmButton(false));
 
     await waitFor(() => {
       expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
@@ -458,11 +630,87 @@ describe("UnifiedSkillsPanel", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByText("Claude:").closest("button")!);
+    await user.click(bulkConfirmButton(true));
 
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith("common.bulkToggleFailed", {
         description: "Error: permission denied",
       });
+    });
+  });
+
+  it("does not write when bulk confirmation is cancelled or dismissed with Escape", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "first-id" })];
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    await user.keyboard("{Escape}");
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a new confirmation when the target set changes while open", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "first-id" }),
+      makeInstalledSkill({ id: "second-id" }),
+    ];
+    const { rerender } = renderPanel();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    installedSkillsMock = [
+      makeInstalledSkill({ id: "first-id" }),
+      makeInstalledSkill({ id: "second-id" }),
+      makeInstalledSkill({ id: "new-id" }),
+    ];
+    rerender(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    await user.click(bulkConfirmButton(true));
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("skills.bulkToggleConfirmTitle"),
+    ).toBeInTheDocument();
+
+    await user.click(bulkConfirmButton(true));
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["first-id", "second-id", "new-id"],
+        app: "claude",
+        enabled: true,
+      });
+    });
+  });
+
+  it("ignores a repeated confirmation click while the bulk write is pending", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "first-id" })];
+    let resolveBulk!: (value: { succeeded: string[]; failed: never[] }) => void;
+    bulkToggleSkillAppMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBulk = resolve;
+      }),
+    );
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Claude:").closest("button")!);
+    const confirmButton = bulkConfirmButton(true);
+    await act(async () => {
+      confirmButton.click();
+      confirmButton.click();
+    });
+
+    expect(bulkToggleSkillAppMock).toHaveBeenCalledTimes(1);
+    resolveBulk({ succeeded: ["first-id"], failed: [] });
+    await waitFor(() => {
+      expect(
+        screen.queryByText("skills.bulkToggleConfirmTitle"),
+      ).not.toBeInTheDocument();
     });
   });
 
