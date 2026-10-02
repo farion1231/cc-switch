@@ -71,6 +71,16 @@ pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
     unsupported
 }
 
+/// `CC_SWITCH_TEST_HOME` 是否被显式设置（测试/调试用的 home 覆盖）。
+///
+/// 有值时就应当完全以它为准——任何基于“库里有没有 db”的启发式回退都不该再介入，
+/// 否则测试会被引导到真实用户数据上。
+fn is_test_home_overridden() -> bool {
+    std::env::var("CC_SWITCH_TEST_HOME")
+        .map(|home| !home.trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_claude_override_dir() {
@@ -305,6 +315,16 @@ pub fn get_app_config_dir() -> PathBuf {
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
     // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+    //
+    // `CC_SWITCH_TEST_HOME` 是测试用的显式 home 覆盖，必须在这里短路：测试的临时
+    // 目录本来就不带 cc-switch.db，若不先返回，下面的 HOME 回退会把测试指向真实
+    // 用户库（Windows 上 runner 的 HOME 下常常确实有该 db），既污染用户数据，又让
+    // 隔离测试读到别人写的状态而失败。
+    #[cfg(windows)]
+    if is_test_home_overridden() {
+        return default_dir;
+    }
+
     #[cfg(windows)]
     {
         let default_db = default_dir.join("cc-switch.db");
@@ -954,6 +974,51 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
+        );
+    }
+
+    /// 回归：`CC_SWITCH_TEST_HOME` 必须盖过 v3.10.3 的 `HOME` 兼容回退。
+    ///
+    /// Windows 上回退只看"默认位置有没有 cc-switch.db"，而测试临时目录里通常没有，
+    /// 于是会被引向 `HOME/.cc-switch`——runner 的 HOME 下往往真有一份 db，测试就此
+    /// 读写到真实用户数据（既污染用户库，又让断言读到别人写下的状态）。
+    #[cfg(windows)]
+    #[test]
+    fn test_home_short_circuits_the_home_legacy_fallback() {
+        use std::sync::Mutex;
+
+        // 与其他同样改进程级环境变量的测试互斥
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
+        let legacy_home = tempfile::tempdir().expect("tempdir");
+        let legacy_dir = legacy_home.path().join(".cc-switch");
+        std::fs::create_dir_all(&legacy_dir).expect("create legacy dir");
+        std::fs::write(legacy_dir.join("cc-switch.db"), b"legacy").expect("seed legacy db");
+
+        let test_home = tempfile::tempdir().expect("tempdir");
+        let saved_home = std::env::var_os("HOME");
+        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+        std::env::set_var("HOME", legacy_home.path());
+        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+
+        let dir = get_app_config_dir();
+
+        match saved_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match saved_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        let expected = test_home.path().join(".cc-switch");
+        assert_eq!(
+            dir, expected,
+            "测试 home 优先：不得回退到 HOME 下的旧库目录"
         );
     }
 }
