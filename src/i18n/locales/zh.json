@@ -1980,6 +1980,7 @@
     "withMultiplier": "含倍率",
     "requestDetail": "请求详情",
     "requestNotFound": "请求未找到",
+    "requestLoadFailed": "请求详情加载失败",
     "basicInfo": "基本信息",
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "缓存写入成本",

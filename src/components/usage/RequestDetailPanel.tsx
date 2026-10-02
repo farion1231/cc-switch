@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import {
   Sheet,
   SheetBody,
@@ -15,6 +17,7 @@ import {
   type RequestLog,
 } from "@/types/usage";
 import { cn } from "@/lib/utils";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
@@ -342,7 +345,12 @@ export function RequestDetailPanel({
   onClose,
 }: RequestDetailPanelProps) {
   const { t } = useTranslation();
-  const { data: request, isLoading } = useRequestDetail(requestId ?? "");
+  const {
+    data: request,
+    isLoading,
+    error,
+    refetch,
+  } = useRequestDetail(requestId ?? "");
 
   const subtitle = request
     ? [
@@ -371,6 +379,23 @@ export function RequestDetailPanel({
             <div className="h-[320px] animate-pulse rounded-panel bg-subtle" />
           ) : request ? (
             <RequestDetailBody request={request} />
+          ) : error ? (
+            // 查询失败和「没有这条记录」分开说：前者能重试，也要让人看到原因
+            <Notice
+              tone="danger"
+              title={t("usage.requestLoadFailed")}
+              actions={
+                <Button
+                  variant="neutral"
+                  size="compact"
+                  onClick={() => refetch()}
+                >
+                  {t("common.retry")}
+                </Button>
+              }
+            >
+              {extractErrorMessage(error) || String(error)}
+            </Notice>
           ) : (
             <p className="py-10 text-center text-body text-fg-3">
               {t("usage.requestNotFound")}

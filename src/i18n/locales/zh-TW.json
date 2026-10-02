@@ -1981,6 +1981,7 @@
     "withMultiplier": "含倍率",
     "requestDetail": "請求詳情",
     "requestNotFound": "請求未找到",
+    "requestLoadFailed": "請求詳情載入失敗",
     "basicInfo": "基本資訊",
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "快取寫入成本",
