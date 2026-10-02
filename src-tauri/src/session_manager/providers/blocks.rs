@@ -652,10 +652,42 @@ pub fn assign_turn_ids(messages: &mut [SessionMessage]) {
     }
 }
 
+// ─── diff 统计 ───────────────────────────────────────────────────────────
+
+/// 由替换前后的文本估算 `(+added, -removed)` 行数：去掉首尾相同的行后，
+/// 剩余的旧行算删除、新行算新增。没有结构化 patch 时（如 Claude Edit 的参数）用。
+pub fn line_change_counts(old: &str, new: &str) -> (u32, u32) {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let prefix = old_lines
+        .iter()
+        .zip(&new_lines)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = old_lines[prefix..]
+        .iter()
+        .rev()
+        .zip(new_lines[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    (
+        saturating_u32(new_lines.len() - prefix - suffix),
+        saturating_u32(old_lines.len() - prefix - suffix),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn line_change_counts_ignores_shared_context() {
+        assert_eq!(line_change_counts("a\nb\nc", "a\nb\nx\nc"), (1, 0));
+        assert_eq!(line_change_counts("a\nb", "a\nc\nd"), (2, 1));
+        assert_eq!(line_change_counts("", "x\ny"), (2, 0));
+        assert_eq!(line_change_counts("same", "same"), (0, 0));
+    }
 
     fn kind(source: ToolSource, name: &str) -> ToolKind {
         normalize_tool(source, name, None).kind

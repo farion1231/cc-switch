@@ -222,6 +222,60 @@ pub fn truncate_summary(text: &str, max_chars: usize) -> String {
     result
 }
 
+/// JSONL 的一行及其在文件中的字节区间（`ContentRef::Jsonl` 的 offset / len）。
+pub struct LineSpan<'a> {
+    /// 行首的字节偏移
+    pub offset: u64,
+    /// 整行字节数，含行尾 `\n`（文件最后一行可能没有）
+    pub len: u64,
+    /// 行内容，已去掉行尾 `\r\n` / `\n`
+    pub bytes: &'a [u8],
+}
+
+/// 用 `read_until(b'\n')` 逐行读取并累计字节偏移，供需要回溯原文的解析器使用。
+///
+/// 复用同一块缓冲区，不做 UTF-8 校验（交给 `serde_json::from_slice`），
+/// 所以比 `BufRead::lines()` 少一次分配和一次校验。
+pub struct LineSpans<R> {
+    reader: R,
+    buf: Vec<u8>,
+    offset: u64,
+}
+
+impl<R: BufRead> LineSpans<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            buf: Vec::with_capacity(64 * 1024),
+            offset: 0,
+        }
+    }
+
+    /// 读取下一行；到文件末尾返回 `Ok(None)`。
+    pub fn next_line(&mut self) -> io::Result<Option<LineSpan<'_>>> {
+        self.buf.clear();
+        let read = self.reader.read_until(b'\n', &mut self.buf)?;
+        if read == 0 {
+            return Ok(None);
+        }
+        let offset = self.offset;
+        self.offset += read as u64;
+
+        let mut end = self.buf.len();
+        if end > 0 && self.buf[end - 1] == b'\n' {
+            end -= 1;
+            if end > 0 && self.buf[end - 1] == b'\r' {
+                end -= 1;
+            }
+        }
+        Ok(Some(LineSpan {
+            offset,
+            len: read as u64,
+            bytes: &self.buf[..end],
+        }))
+    }
+}
+
 pub fn path_basename(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -317,6 +371,31 @@ mod tests {
             parse_timestamp_to_ms(&json!("1970-01-01T00:00:01Z")),
             Some(1_000)
         );
+    }
+
+    #[test]
+    fn line_spans_report_byte_offsets() {
+        let data = "{\"a\":1}\r\n\n{\"b\":\"字\"}\n{\"c\":3}";
+        let mut spans = LineSpans::new(io::Cursor::new(data.as_bytes()));
+        let mut got = Vec::new();
+        while let Some(span) = spans.next_line().unwrap() {
+            got.push((
+                span.offset,
+                span.len,
+                String::from_utf8(span.bytes.to_vec()).unwrap(),
+            ));
+        }
+        assert_eq!(
+            got,
+            [
+                (0, 9, "{\"a\":1}".to_string()),
+                (9, 1, String::new()),
+                (10, 12, "{\"b\":\"字\"}".to_string()),
+                (22, 7, "{\"c\":3}".to_string()),
+            ]
+        );
+        // 偏移 + 长度能切回原行
+        assert_eq!(&data.as_bytes()[10..10 + 12], "{\"b\":\"字\"}\n".as_bytes());
     }
 
     #[test]
