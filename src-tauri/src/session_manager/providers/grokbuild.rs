@@ -5,8 +5,12 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::session_manager::model::{SessionBlock, ToolStatus};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
+use super::blocks::{
+    assign_turn_ids, parse_arguments, tool_call_block, tool_result_block, ToolSource,
+};
 use super::utils::{extract_text, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS};
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +54,11 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         .collect()
 }
 
+/// `chat_history.jsonl`：`type ∈ {system, user, assistant, tool}`。
+///
+/// 会话的 sourcePath 是同目录的 `summary.json`，按需取全文的 Jsonl 引用无法指向
+/// chat_history.jsonl，所以这里只给预览。`tool` 记录的配对字段与 assistant 的
+/// `tool_calls` 都是按 OpenAI 形状推断（待核实），缺失时 `callId` 为空串。
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let session_dir = path
         .parent()
@@ -71,17 +80,67 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             // conversation messages shown by Grok's own history view.
             _ => continue,
         };
-        let content = value.get("content").map(extract_text).unwrap_or_default();
-        if content.trim().is_empty() {
-            continue;
-        }
+        let text = value.get("content").map(extract_text).unwrap_or_default();
+        let blocks = match role {
+            "tool" => vec![tool_result_block(
+                value
+                    .get("tool_call_id")
+                    .or_else(|| value.get("call_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                ToolStatus::Unknown,
+                &text,
+                || None,
+            )],
+            "assistant" => {
+                let mut blocks = Vec::new();
+                if !text.trim().is_empty() {
+                    blocks.push(SessionBlock::Text { text });
+                }
+                for call in value
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let name = call
+                        .pointer("/function/name")
+                        .or_else(|| call.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let input = call
+                        .pointer("/function/arguments")
+                        .or_else(|| call.get("arguments"))
+                        .map(parse_arguments)
+                        .unwrap_or(Value::Null);
+                    let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
+                    blocks.push(tool_call_block(
+                        ToolSource::Generic,
+                        id,
+                        name,
+                        &input,
+                        || None,
+                    ));
+                }
+                blocks
+            }
+            _ if text.trim().is_empty() => Vec::new(),
+            _ => vec![SessionBlock::Text { text }],
+        };
         let ts = value
             .get("timestamp")
             .or_else(|| value.get("ts"))
             .and_then(parse_timestamp_to_ms);
-        messages.push(SessionMessage::legacy(role.to_string(), content, ts));
+        let mut message = SessionMessage::from_blocks(role, ts, blocks);
+        if message.is_empty() {
+            continue;
+        }
+        // system prompt 属于注入内容，默认隐藏
+        message.injected = role == "system";
+        messages.push(message);
     }
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
 }
 
@@ -288,5 +347,43 @@ mod tests {
 
         assert!(error.contains("outside the session root"));
         assert!(outside_dir.exists());
+    }
+
+    #[test]
+    fn grokbuild_tool_records_become_results() {
+        let temp = tempdir().expect("tempdir");
+        let summary_path = temp.path().join("summary.json");
+        std::fs::write(&summary_path, "{}").expect("write summary placeholder");
+        std::fs::write(
+            temp.path().join("chat_history.jsonl"),
+            concat!(
+                "{\"type\":\"system\",\"content\":\"You are Grok.\"}\n",
+                "{\"type\":\"user\",\"content\":\"clean journal\"}\n",
+                "{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"run_terminal_cmd\",\"arguments\":\"{\\\"command\\\":\\\"journalctl --vacuum-time=3d\\\"}\"}}]}\n",
+                "{\"type\":\"tool\",\"tool_call_id\":\"call_1\",\"content\":\"Vacuuming done\"}\n",
+                "{\"type\":\"tool\",\"content\":\"unpaired output\"}\n",
+                "{\"type\":\"assistant\",\"content\":\"freed 2.1G\"}\n"
+            ),
+        )
+        .expect("write chat history");
+
+        let messages = load_messages(&summary_path).expect("load messages");
+        assert_eq!(messages.len(), 6);
+        assert!(messages[0].injected);
+        assert_eq!(messages[0].turn_id.as_deref(), Some("t0"));
+        assert_eq!(
+            messages[2].content,
+            "[Tool: run_terminal_cmd] journalctl --vacuum-time=3d"
+        );
+        let result = |i: usize| match &messages[i].blocks[0] {
+            SessionBlock::ToolResult {
+                call_id, status, ..
+            } => (call_id.clone(), *status),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(result(3), ("call_1".into(), ToolStatus::Unknown));
+        assert_eq!(result(4), (String::new(), ToolStatus::Unknown));
+        assert_eq!(messages[4].role, "tool");
+        assert_eq!(messages[5].turn_id.as_deref(), Some("t1"));
     }
 }

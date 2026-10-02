@@ -1,4 +1,6 @@
 //! MCode TUI and desktop share the local runtime database.
+use super::blocks::assign_turn_ids;
+use crate::session_manager::model::SessionBlock;
 use crate::session_manager::{SessionMessage, SessionMeta};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
@@ -105,17 +107,27 @@ fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMes
                 .filter(|time| time.is_finite())
                 .map(|time| time.floor() as i64)
         });
-        Ok(SessionMessage::legacy(
-            row.get(0)?,
-            super::utils::extract_text(&value["msg_content"]),
+        // 只暴露展示行，没有执行过程：只有 Text
+        let text = super::utils::extract_text(&value["msg_content"]);
+        let blocks = if text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![SessionBlock::Text { text }]
+        };
+        Ok(SessionMessage::from_blocks(
+            row.get::<_, String>(0)?,
             ts,
+            blocks,
         ))
     })?;
-    rows.filter_map(|r| match r {
-        Ok(m) if m.content.trim().is_empty() => None,
-        other => Some(other),
-    })
-    .collect()
+    let mut messages = rows
+        .filter_map(|r| match r {
+            Ok(m) if m.is_empty() => None,
+            other => Some(other),
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assign_turn_ids(&mut messages);
+    Ok(messages)
 }
 
 #[cfg(test)]
@@ -172,6 +184,13 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].content, "Tests passed");
         assert_eq!(messages[1].ts, Some(200));
+        assert_eq!(
+            messages[1].blocks,
+            vec![SessionBlock::Text {
+                text: "Tests passed".into()
+            }]
+        );
+        assert_eq!(messages[1].turn_id.as_deref(), Some("t1"));
 
         let legacy = serde_json::json!([
             {"role":"user", "msg_content":"Legacy question", "timestamp":"100"},
