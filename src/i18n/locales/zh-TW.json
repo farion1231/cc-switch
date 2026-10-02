@@ -1900,9 +1900,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "more": "更多",
-      "label": "依應用程式篩選",
-      "moreApps": "更多應用程式"
+      "label": "依應用程式篩選"
     },
     "rawInputLabel": "原始",
     "sessionSync": {

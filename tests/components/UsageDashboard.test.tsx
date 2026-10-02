@@ -189,14 +189,11 @@ describe("UsageDashboard", () => {
     );
   });
 
-  it("filters usage queries to an app from the overflow menu", async () => {
+  it("filters usage queries to an app from its icon chip", async () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    await user.click(
-      screen.getByRole("button", { name: /usage.appFilter.more/ }),
-    );
-    await user.click(await screen.findByRole("menuitem", { name: /^Pi/ }));
+    await user.click(screen.getByRole("button", { name: "Pi" }));
 
     await waitFor(() =>
       expect(useProviderStatsMock).toHaveBeenLastCalledWith(
@@ -213,9 +210,9 @@ describe("UsageDashboard", () => {
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ appType: "pi" }),
     );
-    // 选中的溢出应用顶替「更多」
+    // 芯片只有图标，名字由 aria-label 提供
     expect(
-      screen.getByRole("button", { name: /Pi/, pressed: true }),
+      screen.getByRole("button", { name: "Pi", pressed: true }),
     ).toBeInTheDocument();
   });
 

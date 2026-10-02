@@ -1899,9 +1899,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "more": "その他",
-      "label": "アプリで絞り込み",
-      "moreApps": "その他のアプリ"
+      "label": "アプリで絞り込み"
     },
     "rawInputLabel": "原始",
     "sessionSync": {
