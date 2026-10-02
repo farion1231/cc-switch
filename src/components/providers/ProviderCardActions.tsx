@@ -1,14 +1,29 @@
+import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDown,
+  ArrowLeftRight,
   ArrowUp,
   ChevronDown,
+  CircleDot,
+  Layers,
+  ListMinus,
+  ListPlus,
   Loader2,
+  Minus,
   MoreHorizontal,
   Pencil,
+  Plug,
+  Plus,
+  Power,
+  PowerOff,
+  Route,
+  Star,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DisabledReason } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +43,23 @@ const DOT: Record<CardTone | "muted", string> = {
   muted: "bg-fg-3",
 };
 
+/** 主操作位只放图标，名字由 HoverTip 悬停即显（key 见 presentation.ts）。 */
+const BUTTON_ICON: Record<string, LucideIcon> = {
+  switch: ArrowLeftRight,
+  exitAndUse: Plug,
+  routeHere: Route,
+  startRouteFrom: Route,
+  queueAdd: ListPlus,
+  queueRemove: ListMinus,
+  setDefault: Star,
+  startStackFrom: Layers,
+  add: Plus,
+  remove: Minus,
+  enable: Power,
+  use: Power,
+  disable: PowerOff,
+};
+
 interface ProviderCardActionsProps {
   providerName: string;
   presentation: CardPresentation;
@@ -43,6 +75,7 @@ interface ProviderCardActionsProps {
 /**
  * 卡片右侧（v7）：主操作位（状态文字或按钮）→ 上移 / 下移（故障转移队列）→ 编辑 → ⋯。
  * 次要操作都在 ⋯ 里：复制、检测连通、配置用量查询、打开终端、删除。
+ * 按钮一律纯图标 + HoverTip；有禁用原因时改由 DisabledReason 的说明卡报原因。
  */
 export function ProviderCardActions({
   providerName,
@@ -60,7 +93,7 @@ export function ProviderCardActions({
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <div className="flex min-w-[92px] items-center justify-end gap-1.5">
+      <div className="flex items-center justify-end gap-1">
         {status && (
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-1 text-body font-medium text-fg-1">
             <span
@@ -77,54 +110,67 @@ export function ProviderCardActions({
 
       {move && (
         <div className="flex items-center">
-          <Button
-            variant="quiet"
-            size="icon-compact"
-            aria-label={t("providerCard.action.moveUp", { name: providerName })}
-            title={t("providerCard.action.moveUp", { name: providerName })}
-            disabled={!move.onUp}
-            onClick={move.onUp}
+          <HoverTip
+            content={t("providerCard.action.moveUp", { name: providerName })}
           >
-            <ArrowUp className="h-4 w-4" strokeWidth={1.5} />
-          </Button>
-          <Button
-            variant="quiet"
-            size="icon-compact"
-            aria-label={t("providerCard.action.moveDown", {
-              name: providerName,
-            })}
-            title={t("providerCard.action.moveDown", { name: providerName })}
-            disabled={!move.onDown}
-            onClick={move.onDown}
+            <Button
+              variant="quiet"
+              size="icon-compact"
+              aria-label={t("providerCard.action.moveUp", {
+                name: providerName,
+              })}
+              disabled={!move.onUp}
+              onClick={move.onUp}
+            >
+              <ArrowUp className="h-4 w-4" strokeWidth={1.5} />
+            </Button>
+          </HoverTip>
+          <HoverTip
+            content={t("providerCard.action.moveDown", { name: providerName })}
           >
-            <ArrowDown className="h-4 w-4" strokeWidth={1.5} />
-          </Button>
+            <Button
+              variant="quiet"
+              size="icon-compact"
+              aria-label={t("providerCard.action.moveDown", {
+                name: providerName,
+              })}
+              disabled={!move.onDown}
+              onClick={move.onDown}
+            >
+              <ArrowDown className="h-4 w-4" strokeWidth={1.5} />
+            </Button>
+          </HoverTip>
         </div>
       )}
 
-      <DisabledReason reason={presentation.editDisabledReason} align="end">
+      <IconAction
+        tip={t("common.edit")}
+        disabledReason={presentation.editDisabledReason}
+      >
         <Button
           variant="quiet"
           size="icon-compact"
           aria-label={t("providerCard.action.edit", { name: providerName })}
-          title={t("common.edit")}
           onClick={onEdit}
         >
           <Pencil className="h-4 w-4" strokeWidth={1.5} />
         </Button>
-      </DisabledReason>
+      </IconAction>
 
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="quiet"
-            size="icon-compact"
-            aria-label={t("providerCard.action.more", { name: providerName })}
-            title={t("common.more")}
-          >
-            <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-          </Button>
-        </DropdownMenuTrigger>
+        <HoverTip content={t("common.more")}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="quiet"
+              size="icon-compact"
+              aria-label={t("providerCard.action.more", {
+                name: providerName,
+              })}
+            >
+              <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+            </Button>
+          </DropdownMenuTrigger>
+        </HoverTip>
         <DropdownMenuContent align="end" className="min-w-[180px]">
           {onDuplicate && (
             <DropdownMenuItem onSelect={onDuplicate}>
@@ -168,16 +214,45 @@ export function ProviderCardActions({
   );
 }
 
+/** 有禁用原因时只挂说明卡（报原因），否则挂 HoverTip（报名字），两者不叠。 */
+function IconAction({
+  tip,
+  disabledReason,
+  children,
+}: {
+  tip: string;
+  disabledReason?: string;
+  children: React.ReactElement;
+}) {
+  if (disabledReason) {
+    return (
+      <DisabledReason reason={disabledReason} align="end">
+        {children}
+      </DisabledReason>
+    );
+  }
+  return <HoverTip content={tip}>{children}</HoverTip>;
+}
+
 function PrimaryButton({ button }: { button: CardButton }) {
+  const Icon = BUTTON_ICON[button.key] ?? CircleDot;
+  const icon = <Icon className="h-4 w-4" strokeWidth={1.5} />;
   if (button.menu && !button.disabledReason) {
     return (
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="neutral" size="compact">
-            {button.label}
-            <ChevronDown className="h-3.5 w-3.5 opacity-70" />
-          </Button>
-        </DropdownMenuTrigger>
+        <HoverTip content={button.label}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="quiet"
+              size="compact"
+              aria-label={button.label}
+              className="w-auto gap-0.5 px-1.5 text-fg-2 hover:text-fg-1"
+            >
+              {icon}
+              <ChevronDown className="h-3 w-3 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+        </HoverTip>
         <DropdownMenuContent
           align="end"
           className="max-h-72 min-w-64 overflow-y-auto"
@@ -202,10 +277,15 @@ function PrimaryButton({ button }: { button: CardButton }) {
     );
   }
   return (
-    <DisabledReason reason={button.disabledReason} align="end">
-      <Button variant="neutral" size="compact" onClick={button.onClick}>
-        {button.label}
+    <IconAction tip={button.label} disabledReason={button.disabledReason}>
+      <Button
+        variant="quiet"
+        size="icon-compact"
+        aria-label={button.label}
+        onClick={button.onClick}
+      >
+        {icon}
       </Button>
-    </DisabledReason>
+    </IconAction>
   );
 }

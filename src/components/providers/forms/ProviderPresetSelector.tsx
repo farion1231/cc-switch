@@ -650,7 +650,7 @@ function PresetPicker({
             }}
             placeholder={t("providerPreset.searchPlaceholder")}
             aria-label={t("providerPreset.searchAriaLabel")}
-            className="h-9 pe-9 ps-9"
+            className="pe-9 ps-9"
           />
           {query && (
             <button

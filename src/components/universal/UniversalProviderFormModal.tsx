@@ -371,7 +371,7 @@ requires_openai_auth = true`;
                   onClick={() => handlePresetSelect(preset)}
                   className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                     selectedPreset?.providerType === preset.providerType
-                      ? "bg-primary text-primary-foreground"
+                      ? "bg-surface text-fg-1 shadow-v7-sm ring-1 ring-border-strong"
                       : "bg-subtle text-fg-2 hover:bg-subtle"
                   }`}
                 >

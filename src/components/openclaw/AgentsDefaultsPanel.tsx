@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Save, Plus, Trash2, TriangleAlert } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   useOpenClawAgentsDefaults,
   useSaveOpenClawAgentsDefaults,
 } from "@/hooks/useOpenClaw";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -303,14 +304,17 @@ const AgentsDefaultsPanel: React.FC = () => {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
-                      onClick={() => handleRemoveFallback(index)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    <HoverTip content={t("common.delete")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t("common.delete")}
+                        className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                        onClick={() => handleRemoveFallback(index)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </HoverTip>
                   </div>
                 );
               })}

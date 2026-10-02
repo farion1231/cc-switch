@@ -1,7 +1,7 @@
 import React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { settingsApi, type AppId } from "@/lib/api";
 import { promptKeys, usePromptFileLocationQuery } from "@/lib/query/prompts";
 import { extractErrorMessage } from "@/utils/errorUtils";

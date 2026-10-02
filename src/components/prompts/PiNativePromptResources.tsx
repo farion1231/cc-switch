@@ -16,7 +16,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -33,6 +33,7 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   promptsApi,
   type PiPromptFileKind,
@@ -953,35 +954,37 @@ export const PiPromptTemplates = forwardRef<
                 ) : null}
               </div>
               <div className="flex shrink-0 gap-1">
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("prompts.editAria", {
-                    name: `/${template.slug}`,
-                  })}
-                  title={t("common.edit")}
-                  onClick={() => setEditor({ mode: "edit", template })}
-                >
-                  <Pencil className="h-[15px] w-[15px]" strokeWidth={1.5} />
-                </Button>
+                <HoverTip content={t("common.edit")}>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="icon-compact"
+                    aria-label={t("prompts.editAria", {
+                      name: `/${template.slug}`,
+                    })}
+                    onClick={() => setEditor({ mode: "edit", template })}
+                  >
+                    <Pencil className="h-[15px] w-[15px]" strokeWidth={1.5} />
+                  </Button>
+                </HoverTip>
                 <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="icon-compact"
-                      aria-label={t("prompts.rowMoreActions", {
-                        name: `/${template.slug}`,
-                      })}
-                      title={t("common.more")}
-                    >
-                      <MoreHorizontal
-                        className="h-[15px] w-[15px]"
-                        strokeWidth={1.5}
-                      />
-                    </Button>
-                  </DropdownMenuTrigger>
+                  <HoverTip content={t("common.more")}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="icon-compact"
+                        aria-label={t("prompts.rowMoreActions", {
+                          name: `/${template.slug}`,
+                        })}
+                      >
+                        <MoreHorizontal
+                          className="h-[15px] w-[15px]"
+                          strokeWidth={1.5}
+                        />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </HoverTip>
                   <DropdownMenuContent
                     align="end"
                     className={cn(promptMenuContentClass, "w-[240px]")}

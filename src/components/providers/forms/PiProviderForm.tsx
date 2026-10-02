@@ -10,8 +10,9 @@ import {
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Form,
   FormField,
@@ -1716,16 +1717,18 @@ export function PiProviderForm({
                             required={!isEdit || model.hasName}
                             className="min-w-0 flex-1"
                           />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => removeModel(model.key)}
-                            aria-label={t("pi.form.removeModel")}
-                            className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <HoverTip content={t("pi.form.removeModel")}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => removeModel(model.key)}
+                              aria-label={t("pi.form.removeModel")}
+                              className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </HoverTip>
                         </div>
 
                         {isExpanded && (
@@ -1985,7 +1988,7 @@ export function PiProviderForm({
                                                       "default",
                                                     )
                                                   }
-                                                  className="h-4 w-4 accent-primary"
+                                                  className="ui-radio"
                                                 />
                                                 {t(
                                                   "pi.form.thinkingLevelFollowDefault",
@@ -2007,7 +2010,7 @@ export function PiProviderForm({
                                                       "value",
                                                     )
                                                   }
-                                                  className="h-4 w-4 accent-primary"
+                                                  className="ui-radio"
                                                 />
                                                 <label
                                                   htmlFor={`pi-thinking-level-value-${model.key}-${level}`}
@@ -2067,7 +2070,7 @@ export function PiProviderForm({
                                                       "unsupported",
                                                     )
                                                   }
-                                                  className="h-4 w-4 accent-primary"
+                                                  className="ui-radio"
                                                 />
                                                 {t(
                                                   "pi.form.thinkingLevelMarkUnavailable",

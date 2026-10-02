@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useSettings } from "@/hooks/useSettings";
 import {
   useCcSwitchSkillsDir,
@@ -11,7 +11,7 @@ import {
 import { DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
-  CHECKBOX_CLASS,
+  RADIO_CLASS,
   V7ConfirmDialog,
   V7Dialog,
 } from "@/components/mcp/formBits";
@@ -209,7 +209,7 @@ export function SkillsStorageSheet({
                   <input
                     type="radio"
                     name="skills-storage-location"
-                    className={CHECKBOX_CLASS}
+                    className={RADIO_CLASS}
                     checked={pendingLocation === "cc_switch"}
                     disabled={isMigrating}
                     aria-describedby="skills-storage-cc-path"
@@ -242,7 +242,7 @@ export function SkillsStorageSheet({
                   <input
                     type="radio"
                     name="skills-storage-location"
-                    className={CHECKBOX_CLASS}
+                    className={RADIO_CLASS}
                     checked={pendingLocation === "unified"}
                     disabled={isMigrating}
                     aria-describedby="skills-storage-unified-warn"
@@ -298,7 +298,7 @@ export function SkillsStorageSheet({
                     type="radio"
                     name="skills-sync-method"
                     value={option.id}
-                    className={CHECKBOX_CLASS}
+                    className={RADIO_CLASS}
                     checked={syncMethod === option.id}
                     onChange={() => handleSyncMethod(option.id)}
                   />

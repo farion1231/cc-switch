@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
 import {
   useGlobalProxyUrl,
@@ -164,48 +165,54 @@ export function GlobalProxySettings() {
           onKeyDown={handleKeyDown}
           className="font-mono text-sm flex-1"
         />
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={scanMutation.isPending}
-          onClick={handleScan}
-          title={t("settings.globalProxy.scan")}
-        >
-          {scanMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Search className="h-4 w-4" />
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!fullUrl || testMutation.isPending}
-          onClick={handleTest}
-          title={t("settings.globalProxy.test")}
-        >
-          {testMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <TestTube2 className="h-4 w-4" />
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!url && !username && !password}
-          onClick={handleClear}
-          title={t("settings.globalProxy.clear")}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        <HoverTip content={t("settings.globalProxy.scan")}>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={scanMutation.isPending}
+            onClick={handleScan}
+            aria-label={t("settings.globalProxy.scan")}
+          >
+            {scanMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+          </Button>
+        </HoverTip>
+        <HoverTip content={t("settings.globalProxy.test")}>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={!fullUrl || testMutation.isPending}
+            onClick={handleTest}
+            aria-label={t("settings.globalProxy.test")}
+          >
+            {testMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <TestTube2 className="h-4 w-4" />
+            )}
+          </Button>
+        </HoverTip>
+        <HoverTip content={t("settings.globalProxy.clear")}>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={!url && !username && !password}
+            onClick={handleClear}
+            aria-label={t("settings.globalProxy.clear")}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </HoverTip>
         <Button
           onClick={handleSave}
           disabled={!dirty || setMutation.isPending}
           size="sm"
         >
           {setMutation.isPending && (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
           )}
           {t("common.save")}
         </Button>

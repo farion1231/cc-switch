@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Check,
   FolderOpen,
@@ -11,6 +11,7 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Dialog,
@@ -636,17 +637,18 @@ export function ModelsDevAutoSyncPanel() {
               {t("usage.modelsDevAutoSync.syncNow")}
             </Button>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("usage.pricing.moreActions")}
-                  title={t("common.more")}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="icon-compact"
+                    aria-label={t("usage.pricing.moreActions")}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
               <DropdownMenuContent
                 align="end"
                 className="min-w-[220px] max-w-[320px] rounded-panel border-border bg-surface shadow-v7-md"

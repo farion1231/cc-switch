@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -25,8 +33,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type { SessionMessage, SessionMeta } from "@/types";
@@ -76,6 +86,8 @@ interface SessionReaderProps {
   onDelete: () => void;
 }
 
+const NO_MESSAGES: SessionMessage[] = [];
+
 export function SessionReader({
   session,
   appName,
@@ -113,9 +125,25 @@ export function SessionReader({
   const failed = Boolean(error);
   const deletable = canDeleteSession(session);
 
+  // 点进来先把阅读页框架画出来，消息的整理和渲染放到低优先级慢慢来：
+  // 挂载时先当没有消息（React 18 的 useDeferredValue 首次渲染不延迟），下一帧再以 transition 交进来；
+  // 之后换会话 / 刷新也走 useDeferredValue，不挡点击和绘制。
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() =>
+      startTransition(() => setContentReady(true)),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const deferredMessages = useDeferredValue(
+    contentReady ? messages : NO_MESSAGES,
+  );
+  const contentPending =
+    messages.length > 0 && (!contentReady || deferredMessages !== messages);
+
   const allItems = useMemo(
-    () => buildSessionDisplayItems(messages),
-    [messages],
+    () => buildSessionDisplayItems(deferredMessages),
+    [deferredMessages],
   );
   const items = useMemo(
     () => (onlyChat ? allItems.filter(isChatItem) : allItems),
@@ -124,7 +152,7 @@ export function SessionReader({
 
   const questions = useMemo<SessionTocItem[]>(
     () =>
-      messages
+      deferredMessages
         .map((msg, index) => ({ msg, index }))
         .filter(({ msg }) => {
           if (msg.role.toLowerCase() !== "user") return false;
@@ -140,7 +168,7 @@ export function SessionReader({
           ),
           ts: msg.ts,
         })),
-    [isCodex, messages],
+    [isCodex, deferredMessages],
   );
 
   const roleLabel = useCallback(
@@ -442,20 +470,21 @@ export function SessionReader({
 
   const moreMenu = (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          id="session-reader-more"
-          aria-label={t("sessionManager.moreFor", {
-            defaultValue: "{{title}} 的更多操作",
-            title,
-          })}
-          title={t("common.more", { defaultValue: "更多" })}
-          className={cn(iconButton, "h-8 w-8")}
-        >
-          <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-        </button>
-      </DropdownMenuTrigger>
+      <HoverTip content={t("common.more", { defaultValue: "更多" })}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            id="session-reader-more"
+            aria-label={t("sessionManager.moreFor", {
+              defaultValue: "{{title}} 的更多操作",
+              title,
+            })}
+            className={cn(iconButton, "h-8 w-8")}
+          >
+            <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+          </button>
+        </DropdownMenuTrigger>
+      </HoverTip>
       <DropdownMenuContent
         align="end"
         className="w-[210px] rounded-panel p-1 shadow-v7-md"
@@ -535,18 +564,21 @@ export function SessionReader({
         variant="app"
         truncateTitle
         leading={
-          <button
-            type="button"
-            id="session-reader-back"
-            aria-label={t("sessionManager.backToList", {
-              defaultValue: "返回会话列表",
-            })}
-            title={t("sessionManager.back", { defaultValue: "返回" })}
-            onClick={onBack}
-            className={iconButton}
+          <HoverTip
+            content={t("sessionManager.back", { defaultValue: "返回" })}
           >
-            <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
-          </button>
+            <button
+              type="button"
+              id="session-reader-back"
+              aria-label={t("sessionManager.backToList", {
+                defaultValue: "返回会话列表",
+              })}
+              onClick={onBack}
+              className={iconButton}
+            >
+              <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
+            </button>
+          </HoverTip>
         }
         icon={
           appId ? (
@@ -572,34 +604,40 @@ export function SessionReader({
         actions={
           <>
             <div className="flex shrink-0 items-center">
-              <button
-                type="button"
-                aria-label={t("sessionManager.prevSession", {
-                  defaultValue: "上一个会话",
-                })}
-                title={t("sessionManager.prevShort", {
+              <HoverTip
+                content={t("sessionManager.prevShort", {
                   defaultValue: "上一个",
                 })}
-                disabled={!hasPrev}
-                onClick={onPrev}
-                className={cn(iconButton, "h-8 w-8")}
               >
-                <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
-              </button>
-              <button
-                type="button"
-                aria-label={t("sessionManager.nextSession", {
-                  defaultValue: "下一个会话",
-                })}
-                title={t("sessionManager.nextShort", {
+                <button
+                  type="button"
+                  aria-label={t("sessionManager.prevSession", {
+                    defaultValue: "上一个会话",
+                  })}
+                  disabled={!hasPrev}
+                  onClick={onPrev}
+                  className={cn(iconButton, "h-8 w-8")}
+                >
+                  <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
+                </button>
+              </HoverTip>
+              <HoverTip
+                content={t("sessionManager.nextShort", {
                   defaultValue: "下一个",
                 })}
-                disabled={!hasNext}
-                onClick={onNext}
-                className={cn(iconButton, "h-8 w-8")}
               >
-                <ChevronRight className="h-4 w-4" strokeWidth={1.5} />
-              </button>
+                <button
+                  type="button"
+                  aria-label={t("sessionManager.nextSession", {
+                    defaultValue: "下一个会话",
+                  })}
+                  disabled={!hasNext}
+                  onClick={onNext}
+                  className={cn(iconButton, "h-8 w-8")}
+                >
+                  <ChevronRight className="h-4 w-4" strokeWidth={1.5} />
+                </button>
+              </HoverTip>
             </div>
             {renderResume()}
             {moreMenu}
@@ -611,28 +649,31 @@ export function SessionReader({
         <div className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1">
           <div className="flex min-w-0 flex-1 basis-60 items-center gap-1.5 whitespace-nowrap text-caption tabular-nums text-fg-2">
             {session.projectDir ? (
-              <button
-                type="button"
-                aria-label={t("sessionManager.copyPathAria", {
-                  defaultValue: "复制路径 {{path}}",
-                  path: session.projectDir,
-                })}
-                title={t("sessionManager.copyPathTitle", {
+              <HoverTip
+                content={t("sessionManager.copyPathTitle", {
                   defaultValue: "复制路径",
                 })}
-                onClick={() =>
-                  onCopy(
-                    session.projectDir!,
-                    t("sessionManager.pathCopied", {
-                      defaultValue: "已复制路径 {{path}}",
-                      path: session.projectDir,
-                    }),
-                  )
-                }
-                className="min-w-0 truncate font-mono decoration-border-strong underline-offset-[3px] hover:text-fg-1 hover:underline"
               >
-                {shortenHomePath(session.projectDir)}
-              </button>
+                <button
+                  type="button"
+                  aria-label={t("sessionManager.copyPathAria", {
+                    defaultValue: "复制路径 {{path}}",
+                    path: session.projectDir,
+                  })}
+                  onClick={() =>
+                    onCopy(
+                      session.projectDir!,
+                      t("sessionManager.pathCopied", {
+                        defaultValue: "已复制路径 {{path}}",
+                        path: session.projectDir,
+                      }),
+                    )
+                  }
+                  className="min-w-0 truncate font-mono decoration-border-strong underline-offset-[3px] hover:text-fg-1 hover:underline"
+                >
+                  {shortenHomePath(session.projectDir)}
+                </button>
+              </HoverTip>
             ) : (
               <span>
                 {t("sessionManager.unknownDirectory", {
@@ -646,7 +687,7 @@ export function SessionReader({
                 <span className="shrink-0">{range}</span>
               </>
             )}
-            {!failed && !isLoading && (
+            {!failed && !isLoading && !contentPending && (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="shrink-0">
@@ -670,21 +711,24 @@ export function SessionReader({
                 onItemClick={scrollToMessage}
               />
               {!findOpen && (
-                <button
-                  ref={findButtonRef}
-                  type="button"
-                  aria-label={t("sessionManager.findInSession", {
-                    defaultValue: "在会话中查找",
-                  })}
-                  aria-expanded={false}
-                  title={t("sessionManager.findShort", {
+                <HoverTip
+                  content={t("sessionManager.findShort", {
                     defaultValue: "查找",
                   })}
-                  onClick={openFind}
-                  className={cn(iconButton, "h-8 w-8")}
                 >
-                  <Search className="h-4 w-4" strokeWidth={1.5} />
-                </button>
+                  <button
+                    ref={findButtonRef}
+                    type="button"
+                    aria-label={t("sessionManager.findInSession", {
+                      defaultValue: "在会话中查找",
+                    })}
+                    aria-expanded={false}
+                    onClick={openFind}
+                    className={cn(iconButton, "h-8 w-8")}
+                  >
+                    <Search className="h-4 w-4" strokeWidth={1.5} />
+                  </button>
+                </HoverTip>
               )}
             </>
           )}
@@ -708,7 +752,7 @@ export function SessionReader({
               <div className="relative w-[136px]">
                 <Search
                   aria-hidden="true"
-                  className="pointer-events-none absolute start-2 top-[7px] h-3.5 w-3.5 text-fg-2"
+                  className="pointer-events-none absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-3"
                   strokeWidth={1.5}
                 />
                 <input
@@ -727,7 +771,7 @@ export function SessionReader({
                   })}
                   autoComplete="off"
                   spellCheck={false}
-                  className="h-7 w-full rounded-[8px] border border-border-strong bg-surface pe-2 ps-7 text-caption text-fg-1 placeholder:text-fg-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cn(fieldClass, "h-7 pe-2 ps-7 text-caption")}
                 />
               </div>
               <span
@@ -817,7 +861,7 @@ export function SessionReader({
               )}
             </div>
           </div>
-        ) : isLoading ? (
+        ) : isLoading || contentPending ? (
           <div className="flex flex-1 items-center justify-center text-body text-fg-2">
             {t("sessionManager.loadingMessages", {
               defaultValue: "加载会话内容中...",

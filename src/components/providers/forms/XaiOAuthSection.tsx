@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -342,19 +343,21 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                         {t("xaiOauth.setAsDefault", "设为默认")}
                       </Button>
                     )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-fg-2 hover:text-danger-text"
-                    disabled={isRemovingAccount}
-                    onClick={(event) =>
-                      remove(account.id, account.login, event)
-                    }
-                    title={t("xaiOauth.removeAccount", "移除账号")}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <HoverTip content={t("xaiOauth.removeAccount", "移除账号")}>
+                    <Button
+                      aria-label={t("xaiOauth.removeAccount", "移除账号")}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-fg-2 hover:text-danger-text"
+                      disabled={isRemovingAccount}
+                      onClick={(event) =>
+                        remove(account.id, account.login, event)
+                      }
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
                 </div>
               </div>
             ))}
@@ -371,9 +374,9 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           onClick={addAccount}
         >
           {hasAnyAccount ? (
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="h-4 w-4" />
           ) : (
-            <Sparkles className="mr-2 h-4 w-4" />
+            <Sparkles className="h-4 w-4" />
           )}
           {hasAnyAccount
             ? t("xaiOauth.addOrReauth", "添加账号或重新登录")
@@ -395,18 +398,21 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
               <code className="rounded border bg-surface px-4 py-2 font-mono text-2xl font-bold tracking-wider">
                 {deviceCode.user_code}
               </code>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={copyUserCode}
-              >
-                {copied ? (
-                  <Check className="h-4 w-4 text-success-text" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </Button>
+              <HoverTip content={t("common.copy")}>
+                <Button
+                  aria-label={t("common.copy")}
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={copyUserCode}
+                >
+                  {copied ? (
+                    <Check className="h-4 w-4 text-success-text" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </HoverTip>
             </div>
           </div>
           <div className="text-center">
@@ -469,7 +475,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
             })
           }
         >
-          <LogOut className="mr-2 h-4 w-4" />
+          <LogOut className="h-4 w-4" />
           {t("xaiOauth.logoutAll", "删除全部 xAI 账号…")}
         </Button>
       )}

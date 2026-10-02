@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { TabUnderline, useSlidingIndicator } from "./sliding-indicator";
 
 /**
  * 下划线页签：页面级导航（换的是整块内容，例如用量页的「请求日志 / 供应商 / …」、
@@ -45,6 +46,10 @@ export function PageTabs<T extends string>({
   const small = size === "sm";
   const refs = React.useRef<Partial<Record<T, HTMLButtonElement | null>>>({});
   const enabled = items.filter((item) => !item.disabled);
+  const indicator = useSlidingIndicator<HTMLDivElement>(
+    '[aria-selected="true"]',
+    value,
+  );
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     const index = enabled.findIndex((item) => item.value === value);
@@ -71,10 +76,20 @@ export function PageTabs<T extends string>({
       )}
     >
       <div
+        ref={indicator.ref}
         role="tablist"
         aria-label={rest["aria-label"]}
-        className={cn("flex h-full items-end", small ? "gap-3" : "gap-4")}
+        className={cn(
+          "relative flex h-full items-end",
+          small ? "gap-3" : "gap-4",
+        )}
       >
+        {/* 下划线单独一条，切换时滑过去；一级页签压住整行底线 */}
+        <TabUnderline
+          rect={indicator.rect}
+          animate={indicator.animate}
+          className={small ? undefined : "-bottom-px"}
+        />
         {items.map((item) => {
           const selected = item.value === value;
           return (
@@ -97,9 +112,10 @@ export function PageTabs<T extends string>({
                 small
                   ? "inline-flex items-center gap-1.5 text-caption"
                   : "-mb-px text-body",
+                "border-transparent",
                 selected
-                  ? "border-fg-1 font-semibold text-fg-1"
-                  : "border-transparent font-medium text-fg-2 hover:text-fg-1",
+                  ? "font-semibold text-fg-1"
+                  : "font-medium text-fg-2 hover:text-fg-1",
               )}
             >
               {item.label}

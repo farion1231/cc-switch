@@ -501,7 +501,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                 onChange={(event) => {
                   onAutoSelectChange(event.target.checked);
                 }}
-                className="h-3.5 w-3.5 rounded border-border bg-surface text-primary focus:ring-2 focus:ring-primary/20"
+                className="ui-checkbox"
               />
               {t("endpointTest.autoSelect")}
             </label>
@@ -509,8 +509,9 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
               type="button"
               onClick={runSpeedTest}
               disabled={isTesting || !hasEndpoints}
-              size="sm"
-              className="h-7 w-24 gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+              variant="neutral"
+              size="compact"
+              className="w-24 gap-1.5"
             >
               {isTesting ? (
                 <>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Globe, Info, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import {
@@ -287,7 +288,7 @@ function BillingDefaultsRow() {
         </div>
         <Button
           type="button"
-          variant="quiet"
+          variant="solid"
           size="compact"
           disabled={isLoading}
           onClick={() => setDialogOpen(true)}
@@ -437,30 +438,38 @@ export function PricingConfigPanel() {
                         {formatUnitPrice(model.cacheCreationCostPerMillion)}
                       </td>
                       <td className="whitespace-nowrap pe-1 text-end">
-                        <Button
-                          type="button"
-                          variant="quiet"
-                          size="icon-compact"
-                          aria-label={t("usage.pricing.editAria", { name })}
-                          title={t("common.edit")}
-                          onClick={() => {
-                            setIsAddingNew(false);
-                            setEditingModel(model);
-                          }}
-                        >
-                          <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="quiet"
-                          size="icon-compact"
-                          aria-label={t("usage.pricing.deleteAria", { name })}
-                          title={t("common.delete")}
-                          className="hover:text-danger-text"
-                          onClick={() => setDeleteTarget(model)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                        </Button>
+                        <HoverTip content={t("common.edit")}>
+                          <Button
+                            type="button"
+                            variant="quiet"
+                            size="icon-compact"
+                            aria-label={t("usage.pricing.editAria", { name })}
+                            onClick={() => {
+                              setIsAddingNew(false);
+                              setEditingModel(model);
+                            }}
+                          >
+                            <Pencil
+                              className="h-3.5 w-3.5"
+                              strokeWidth={1.75}
+                            />
+                          </Button>
+                        </HoverTip>
+                        <HoverTip content={t("common.delete")}>
+                          <Button
+                            type="button"
+                            variant="quiet"
+                            size="icon-compact"
+                            aria-label={t("usage.pricing.deleteAria", { name })}
+                            className="hover:text-danger-text"
+                            onClick={() => setDeleteTarget(model)}
+                          >
+                            <Trash2
+                              className="h-3.5 w-3.5"
+                              strokeWidth={1.75}
+                            />
+                          </Button>
+                        </HoverTip>
                       </td>
                     </tr>
                   );

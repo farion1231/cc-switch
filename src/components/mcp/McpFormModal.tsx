@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Check, Eye, EyeOff, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -13,6 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { McpServer, McpServerSpec } from "@/types";
 import type { McpAppId } from "@/config/appConfig";
@@ -535,45 +536,51 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   )
                 }
               />
-              <Button
-                type="button"
-                variant="quiet"
-                size="icon-compact"
-                aria-pressed={shown}
-                aria-label={t("mcpPage.drawer.revealValue", { name: rowName })}
-                title={
+              <HoverTip
+                content={
                   shown
                     ? t("mcpPage.drawer.hideValueTip")
                     : t("mcpPage.drawer.showValueTip")
                 }
-                onClick={() =>
-                  setRevealed((prev) => ({ ...prev, [revealKey]: !shown }))
-                }
               >
-                {shown ? (
-                  <EyeOff className="h-4 w-4" strokeWidth={1.5} />
-                ) : (
-                  <Eye className="h-4 w-4" strokeWidth={1.5} />
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="quiet"
-                size="icon-compact"
-                aria-label={t("mcpPage.drawer.removeRow", {
-                  label,
-                  name: rowName,
-                })}
-                title={t("common.delete")}
-                onClick={() => {
-                  updateRows(field, (list) =>
-                    list.filter((_, i) => i !== index),
-                  );
-                  setRevealed({});
-                }}
-              >
-                <X className="h-3.5 w-3.5" strokeWidth={1.5} />
-              </Button>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-pressed={shown}
+                  aria-label={t("mcpPage.drawer.revealValue", {
+                    name: rowName,
+                  })}
+                  onClick={() =>
+                    setRevealed((prev) => ({ ...prev, [revealKey]: !shown }))
+                  }
+                >
+                  {shown ? (
+                    <EyeOff className="h-4 w-4" strokeWidth={1.5} />
+                  ) : (
+                    <Eye className="h-4 w-4" strokeWidth={1.5} />
+                  )}
+                </Button>
+              </HoverTip>
+              <HoverTip content={t("common.delete")}>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-label={t("mcpPage.drawer.removeRow", {
+                    label,
+                    name: rowName,
+                  })}
+                  onClick={() => {
+                    updateRows(field, (list) =>
+                      list.filter((_, i) => i !== index),
+                    );
+                    setRevealed({});
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+                </Button>
+              </HoverTip>
             </div>
           );
         })}
@@ -624,18 +631,21 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   className="flex flex-wrap gap-2"
                 >
                   {mcpPresets.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      aria-pressed={template === preset.id}
-                      title={t(`mcp.presets.${preset.id}.description`)}
-                      onClick={() => pickTemplate(preset.id)}
-                      className="h-7 whitespace-nowrap rounded-full border border-border-strong bg-surface px-3 text-body transition-colors hover:bg-subtle aria-pressed:bg-selected aria-pressed:font-medium"
+                    <HoverTip
+                      content={t(`mcp.presets.${preset.id}.description`)}
                     >
-                      {t(`mcpPage.templateLabels.${preset.id}`, {
-                        defaultValue: preset.id,
-                      })}
-                    </button>
+                      <button
+                        key={preset.id}
+                        type="button"
+                        aria-pressed={template === preset.id}
+                        onClick={() => pickTemplate(preset.id)}
+                        className="h-7 whitespace-nowrap rounded-full border border-border-strong bg-surface px-3 text-body transition-colors hover:bg-subtle aria-pressed:bg-selected aria-pressed:font-medium"
+                      >
+                        {t(`mcpPage.templateLabels.${preset.id}`, {
+                          defaultValue: preset.id,
+                        })}
+                      </button>
+                    </HoverTip>
                   ))}
                 </div>
               </div>
@@ -974,24 +984,28 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                                   })
                                 }
                               />
-                              <Button
-                                type="button"
-                                variant="quiet"
-                                size="icon-compact"
-                                aria-label={t("mcpPage.drawer.removeArg", {
-                                  index: index + 1,
-                                })}
-                                title={t("common.delete")}
-                                onClick={() =>
-                                  patchConn({
-                                    args: conn.args.filter(
-                                      (_, i) => i !== index,
-                                    ),
-                                  })
-                                }
-                              >
-                                <X className="h-3.5 w-3.5" strokeWidth={1.5} />
-                              </Button>
+                              <HoverTip content={t("common.delete")}>
+                                <Button
+                                  type="button"
+                                  variant="quiet"
+                                  size="icon-compact"
+                                  aria-label={t("mcpPage.drawer.removeArg", {
+                                    index: index + 1,
+                                  })}
+                                  onClick={() =>
+                                    patchConn({
+                                      args: conn.args.filter(
+                                        (_, i) => i !== index,
+                                      ),
+                                    })
+                                  }
+                                >
+                                  <X
+                                    className="h-3.5 w-3.5"
+                                    strokeWidth={1.5}
+                                  />
+                                </Button>
+                              </HoverTip>
                             </div>
                           ))}
                           <AddRowButton

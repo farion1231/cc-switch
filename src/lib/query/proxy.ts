@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { proxyApi } from "@/lib/api/proxy";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import type {
   AppModeView,

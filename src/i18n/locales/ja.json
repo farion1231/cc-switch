@@ -1065,10 +1065,10 @@
       "saveToLibrary": "ライブラリに保存",
       "reloadAfterDelete": "開いている Pi ではアイドル時に /reload すると反映されます。",
       "configuredSize": "設定済み · {{size}}",
-      "create": "作成…",
+      "create": "作成",
       "createFile": "{{filename}} を作成",
       "editFile": "{{filename}} を編集",
-      "saveAndConfigureEllipsis": "保存して設定…",
+      "saveAndConfigureEllipsis": "保存して設定",
       "deleteFile": "ファイルを削除",
       "appendDeleted": "APPEND_SYSTEM.md を削除しました。Pi はこの内容を追加しなくなります",
       "overrideDeleted": "SYSTEM.md を削除しました。Pi は組み込みの基本プロンプトに戻ります",
@@ -1141,9 +1141,9 @@
     "moreActions": "セッションのその他の操作",
     "refreshList": "一覧を更新",
     "listRefreshed": "セッション一覧を更新しました",
-    "selectMany": "複数選択…",
-    "preferredTerminal": "優先ターミナル…",
-    "whereMenu": "セッションの保存場所…",
+    "selectMany": "複数選択",
+    "preferredTerminal": "優先ターミナル",
+    "whereMenu": "セッションの保存場所",
     "whereTitle": "セッションの保存場所",
     "whereLead": "CC Switch は次の場所からセッションを読み取ります。Claude Desktop には独自のセッション記録はありません。",
     "whereNote": "設定で構成ディレクトリを変更したアプリは、変更後のディレクトリから読み取ります。",
@@ -1165,9 +1165,9 @@
     "selectedSessions": "{{count}} 件を選択中",
     "noneSelected": "セッションが選択されていません",
     "hiddenSelected": " ・うち {{count}} 件は現在の結果に含まれていません",
-    "deleteCountEllipsis": "{{count}} 件のセッションを削除…",
-    "deleteSessionEllipsis": "セッションを削除…",
-    "deleteEllipsis": "削除…",
+    "deleteCountEllipsis": "{{count}} 件のセッションを削除",
+    "deleteSessionEllipsis": "セッションを削除",
+    "deleteEllipsis": "削除",
     "selectSessionLabel": "{{title}} を選択",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
@@ -1205,7 +1205,7 @@
     "moreResumeOptions": "その他の再開方法",
     "copyCdResume": "「ディレクトリに移動して再開」コマンドをコピー",
     "cdResumeCopied": "「ディレクトリに移動して再開」コマンドをコピーしました",
-    "changeTerminal": "優先ターミナルを変更…",
+    "changeTerminal": "優先ターミナルを変更",
     "changeTerminalAction": "ターミナルを変更",
     "codexResumeNote": "プロバイダーを切り替えた後は、古いセッションを再開できない場合があります。Codex は履歴をプロバイダーごとに保存します。",
     "noResumeOpenclaw": "OpenClaw のセッションはゲートウェイが管理しているため、ターミナルで再開できません",
@@ -1527,7 +1527,7 @@
     "manageAccounts": "アカウント管理",
     "selectAccountPlaceholder": "ChatGPT アカウントを選択",
     "officialAccountPlaceholder": "ログイン方法を選択",
-    "addOrManageAccounts": "ChatGPT アカウントを追加または管理…",
+    "addOrManageAccounts": "ChatGPT アカウントを追加または管理",
     "explicitSelectionRequired": "ログイン方法を選択してください",
     "useDefaultAccount": "デフォルトアカウントを使用",
     "noneOptionLabel": "Codex のログインに追従",
@@ -1567,7 +1567,7 @@
     "waitingForAuth": "xAI の認証を待っています…",
     "enterCode": "ブラウザに自動入力されていない場合は、次を入力してください：",
     "retry": "再試行",
-    "logoutAll": "すべての xAI アカウントを削除…",
+    "logoutAll": "すべての xAI アカウントを削除",
     "loginRequired": "先に xAI アカウントへログインしてください"
   },
   "managedAuth": {
@@ -1919,7 +1919,7 @@
       "confirmAction": "バックアップして再構築",
       "completed": "再構築完了：{{imported}} 件インポート、{{errors}} 件エラー、重複候補 {{suspected}} 件、保留ファイル {{deferred}} 件",
       "failed": "Codex 使用量の再構築に失敗しました：{{error}}",
-      "actionEllipsis": "Codex 使用量を再構築…"
+      "actionEllipsis": "Codex 使用量を再構築"
     },
     "totalRecords": "全 {{total}} 件",
     "goToPage": "移動",
@@ -2166,7 +2166,7 @@
       "billingHelp": "ルーティングサービス経由のリクエストにのみ適用されます。セッションログから取り込んだ使用量は、ログに記録されたモデルで計算します。",
       "byResponse": "応答モデルで計算",
       "byRequest": "リクエストモデルで計算",
-      "edit": "変更…",
+      "edit": "変更",
       "tableTitle": "モデル料金 · {{count}}",
       "costHelpTitle": "コストの計算方法",
       "costHelp": "各リクエストのコストはモデル料金で計算します。新規入力・出力・キャッシュヒット・キャッシュ書き込みにそれぞれの単価を掛けて合計します。",
@@ -2174,7 +2174,9 @@
       "editAria": "{{name}} の料金を編集",
       "deleteAria": "{{name}} の料金を削除",
       "cacheWrite": "キャッシュ書き込み"
-    }
+    },
+    "prevMonth": "前月",
+    "nextMonth": "翌月"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -2524,7 +2526,7 @@
     "updatedToday": "今日 {{time}} に更新",
     "updatedOn": "{{month}}月{{day}}日に更新",
     "emptyContent": "（空）",
-    "copyToApps": "ほかのアプリにコピー…",
+    "copyToApps": "ほかのアプリにコピー",
     "copyContent": "本文をコピー",
     "copiedContent": "「{{name}}」の本文をコピーしました",
     "deleteBlocked": "有効なものは削除できません。先に無効にしてください",
@@ -2578,10 +2580,7 @@
       "imported": "{{path}} の内容を取り込みました。ファイルは変更していません",
       "importedPi": "AGENTS.md をライブラリに保存しました。ファイルは変更していません",
       "copied": "「{{name}}」を {{apps}} にコピーしました"
-    },
-    "entryLabel": "プロンプト: {{name}}",
-    "entryNone": "未設定",
-    "entryAria": "プロンプト: {{name}}。プロンプトページへ"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "プロジェクト：{{name}}",
@@ -2599,7 +2598,7 @@
       "claude-desktop": "Claude Desktop の現在のプロバイダーをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
       "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。"
     },
-    "manage": "プロジェクトを管理…",
+    "manage": "プロジェクトを管理",
     "manageTitle": "プロジェクト管理",
     "manageDescription": "プロジェクトは設定のスナップショットです。プロジェクトを切り替えると、現在の設定は元のプロジェクトに自動的に保存されます。",
     "namePlaceholder": "例：開発、イラスト",
@@ -3050,7 +3049,7 @@
     "moreActions": "Skills のその他の操作",
     "storageSheet": {
       "title": "保存と同期",
-      "open": "保存と同期…",
+      "open": "保存と同期",
       "resync": "今すぐ再同期",
       "resyncing": "再同期中…",
       "resyncHint": "変更はこの後に有効化または更新した Skill にのみ適用されます。有効な Skill も現在の方式に切り替えるには「今すぐ再同期」を押してください。",
@@ -3063,7 +3062,7 @@
       "openFolder": "開く",
       "openFolderAria": "{{path}} を開く",
       "unifiedWarning": "Codex、Gemini CLI、OpenCode などはこのフォルダを直接読むため、アプリごとのスイッチが完全には効かなくなります。",
-      "move": "移動して切り替え…",
+      "move": "移動して切り替え",
       "moving": "移動中…",
       "moveConfirmTitle": "{{count}} 個の Skill を {{path}} に移動しますか？",
       "moveConfirmBody": "マスターコピーを 1 つずつ移動し、各アプリのリンクを新しい場所に向け直します。移動が終わるまで CC Switch を終了しないでください。",
@@ -3739,7 +3738,7 @@
     "checking": "確認中…",
     "checkUpdates": "更新を確認",
     "moreActions": "その他の操作",
-    "manualCommands": "手動インストールコマンド…",
+    "manualCommands": "手動インストールコマンド",
     "columnApp": "アプリ",
     "columnVersion": "バージョン",
     "columnVisible": "表示",
@@ -3768,7 +3767,7 @@
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
     "viewSessions": "セッションを見る",
-    "configDirectory": "設定ディレクトリ…",
+    "configDirectory": "設定ディレクトリ",
     "installAndUpgrade": "インストールとアップグレード",
     "hideFromSidebar": "サイドバーから隠す",
     "providers": "プロバイダー",
@@ -3802,8 +3801,8 @@
     },
     "activate": {
       "viewing": "「{{view}}」を表示中です。{{app}} は現在{{active}}です。",
-      "route": "ルーティングを開始…",
-      "stack": "Stack に切り替え…",
+      "route": "ルーティングを開始",
+      "stack": "Stack に切り替え",
       "direct": "直接接続に戻す"
     },
     "notice": {
@@ -3877,7 +3876,7 @@
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
       "moveDown": "{{name}} を下へ",
-      "startStackFrom": "ここを既定にして Stack を開始…"
+      "startStackFrom": "ここを既定にして Stack を開始"
     },
     "chip": {
       "official": "公式",
@@ -3926,7 +3925,7 @@
     "service": "ルーティングサービス",
     "running": "実行中",
     "notRunning": "ルーティングサービスを起動できませんでした",
-    "changePort": "ポートを変更…",
+    "changePort": "ポートを変更",
     "notNeeded": "ルーティングサービス：現在のプロバイダーには不要"
   },
   "routingSettings": {
@@ -3957,7 +3956,7 @@
     "desktopMode": "モデルマッピング · 自動で稼働を維持",
     "desktopDetail": "現在のプロバイダー {{name}}",
     "goTo": "開く",
-    "exitAll": "すべて直接接続に戻す…",
+    "exitAll": "すべて直接接続に戻す",
     "exitAllTitle": "すべてのアプリを直接接続に戻しますか？",
     "exitAllMessage": "ルーティング・Stack モードのアプリに直接接続の設定を書き戻し、ルーティングサービスを停止します。転送先・キュー・Stack のリストは保持されます。",
     "exitAllConfirm": "すべて直接接続に戻す",
@@ -3978,15 +3977,6 @@
     },
     "updatedAt": "{{time}}に更新",
     "clickToRefresh": "クリックで再取得"
-  },
-  "commandPalette": {
-    "title": "移動",
-    "open": "検索して移動（{{shortcut}}）",
-    "placeholder": "アプリ・ページ・設定の名前を入力",
-    "empty": "一致する項目がありません",
-    "apps": "アプリ",
-    "pages": "ページ",
-    "settings": "設定"
   },
   "appMatrix": {
     "clearSearch": "検索をクリア",
@@ -4049,7 +4039,7 @@
     "openDocs": "ドキュメントを開く",
     "enableEverywhere": "すべてのアプリで有効化",
     "disableEverywhere": "すべてオフ",
-    "deleteEllipsis": "削除…",
+    "deleteEllipsis": "削除",
     "deleteTitle": "{{id}} を削除しますか？",
     "deleteBodyApps": "CC Switch と {{apps}} の設定ファイルからこの項目を削除します。元に戻せません。",
     "deleteBody": "CC Switch からこの項目を削除します。元に戻せません。",
@@ -4172,7 +4162,7 @@
       "tagsPlaceholder": "カンマ区切り（例：docs, web）",
       "homepage": "ホームページ",
       "docs": "ドキュメント",
-      "delete": "削除…"
+      "delete": "削除"
     },
     "resync": "ここのスイッチで各アプリの設定を書き直す"
   },
@@ -4183,12 +4173,12 @@
     "add": "Skill を追加",
     "addMenu": {
       "discover": "「見つける」で探す",
-      "zip": "ZIP からインストール…",
-      "import": "このコンピューターから取り込む…"
+      "zip": "ZIP からインストール",
+      "import": "このコンピューターから取り込む"
     },
     "moreMenu": {
-      "restore": "バックアップから復元…",
-      "repos": "リポジトリの管理…"
+      "restore": "バックアップから復元",
+      "repos": "リポジトリの管理"
     },
     "viewAria": "Skills の表示",
     "viewInstalled": "インストール済み",
@@ -4219,7 +4209,7 @@
       "enableToAria": "選択した {{count}} 件の Skill を有効にする先",
       "disable": "オフにする",
       "disableAria": "選択した {{count}} 件の Skill をこのアプリでオフ",
-      "uninstall": "アンインストール…"
+      "uninstall": "アンインストール"
     },
     "piColumnTitle": "Pi は ~/.pi/agent/skills にそのフォルダーがあるかで判定します",
     "piHelpTitle": "Pi の有効の判定",
@@ -4233,7 +4223,7 @@
     "fixSync": "同期方法を変更",
     "rowMoreAria": "{{name}} のその他の操作",
     "copyDir": "フォルダー名をコピー",
-    "uninstallEllipsis": "アンインストール…",
+    "uninstallEllipsis": "アンインストール",
     "listLabel": "インストール済みの Skill",
     "noMatch": "「{{query}}」に一致する Skill はありません",
     "noFilterMatch": "絞り込み条件に合う Skill はありません",
@@ -4307,7 +4297,7 @@
       "enableAria": "「見つける」で {{repo}} を使う",
       "disabledShort": "停止中",
       "disabled": "停止中（「見つける」では使いません）",
-      "manage": "リポジトリの追加・管理…",
+      "manage": "リポジトリの追加・管理",
       "openAria": "GitHub で {{repo}} を開く",
       "removeAria": "リポジトリ {{repo}} を削除",
       "readFailed": "読み込み失敗"
@@ -4340,7 +4330,7 @@
     "headerUpdates": "{{count}} 件の更新",
     "headerUpdatesShow": "更新がある Skill だけを表示",
     "headerUpdatesClear": "すべての Skill を表示",
-    "updateAllCount": "すべて更新（{{count}} 件）…"
+    "updateAllCount": "すべて更新（{{count}} 件）"
   },
   "coach": {
     "newLayout": "画面が新しくなりました：モードは各アプリのページ上部に、使用量とアカウントはサイドバーにあります。"
@@ -4356,8 +4346,8 @@
     "addAccount": "アカウントを追加",
     "groupMenu": "{{service}} のその他の操作",
     "accountMenu": "{{login}} のその他の操作",
-    "removeAll": "すべてのアカウントを削除…",
-    "removeAccount": "アカウントを削除…",
+    "removeAll": "すべてのアカウントを削除",
+    "removeAccount": "アカウントを削除",
     "setDefault": "デフォルトに設定",
     "reauth": "再ログイン",
     "busyHint": "進行中のログインを完了するかキャンセルしてください",

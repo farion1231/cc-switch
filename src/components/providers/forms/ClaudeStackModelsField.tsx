@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Download, Loader2, Plus, Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
@@ -225,25 +226,26 @@ export function ClaudeStackModelsField({
                 key={row.rowId}
                 className="grid grid-cols-1 gap-2 md:grid-cols-[36px_1fr_minmax(0,1fr)_64px_36px]"
               >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => makeDefault(row.rowId)}
-                  disabled={isDefault}
-                  aria-label={defaultLabel}
-                  aria-pressed={isDefault}
-                  title={defaultLabel}
-                  className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
-                >
-                  <Star
-                    className={
-                      isDefault
-                        ? "h-4 w-4 fill-warning text-warning-text"
-                        : "h-4 w-4"
-                    }
-                  />
-                </Button>
+                <HoverTip content={defaultLabel}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => makeDefault(row.rowId)}
+                    disabled={isDefault}
+                    aria-label={defaultLabel}
+                    aria-pressed={isDefault}
+                    className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
+                  >
+                    <Star
+                      className={
+                        isDefault
+                          ? "h-4 w-4 fill-warning text-warning-text"
+                          : "h-4 w-4"
+                      }
+                    />
+                  </Button>
+                </HoverTip>
                 <ImeSafeInput
                   value={row.displayName ?? ""}
                   onValueChange={(value) =>
@@ -296,20 +298,22 @@ export function ClaudeStackModelsField({
                   />
                   {t("providerForm.modelOneMLabel", { defaultValue: "1M" })}
                 </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() =>
-                    onRowsChange(
-                      rows.filter((other) => other.rowId !== row.rowId),
-                    )
-                  }
-                  aria-label={t("common.delete")}
-                  className="h-9 w-9 text-fg-2 hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <HoverTip content={t("common.delete")}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() =>
+                      onRowsChange(
+                        rows.filter((other) => other.rowId !== row.rowId),
+                      )
+                    }
+                    aria-label={t("common.delete")}
+                    className="h-9 w-9 text-fg-2 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </HoverTip>
               </div>
             );
           })}

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { promptsApi, type AppId, type Prompt } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";

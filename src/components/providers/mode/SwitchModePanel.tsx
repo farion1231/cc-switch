@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import type { ProxyAppId } from "@/config/appConfig";
@@ -503,7 +503,7 @@ export function SwitchModePanel({
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-3"
       >
         {notices.length > 0 && (
-          <div role="status" className="mb-3 flex max-w-content flex-col gap-2">
+          <div role="status" className="mb-3 flex flex-col gap-2">
             {notices}
           </div>
         )}

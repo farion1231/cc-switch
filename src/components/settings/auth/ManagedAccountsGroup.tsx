@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   CircleAlert,
   Copy,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Notice } from "@/components/ui/notice";
 import {
   DropdownMenu,
@@ -240,20 +241,21 @@ export function ManagedAccountsGroup({
         )}
         {ready && accounts.length > 1 && (
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="quiet"
-                size="icon-compact"
-                aria-label={t("authCenter.groupMenu", {
-                  defaultValue: "{{service}} 的更多操作",
-                  service: name,
-                })}
-                title={t("common.more", { defaultValue: "更多" })}
-              >
-                <MoreHorizontal className="h-[15px] w-[15px]" />
-              </Button>
-            </DropdownMenuTrigger>
+            <HoverTip content={t("common.more", { defaultValue: "更多" })}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-label={t("authCenter.groupMenu", {
+                    defaultValue: "{{service}} 的更多操作",
+                    service: name,
+                  })}
+                >
+                  <MoreHorizontal className="h-[15px] w-[15px]" />
+                </Button>
+              </DropdownMenuTrigger>
+            </HoverTip>
             <DropdownMenuContent
               align="end"
               className="w-[168px] rounded-panel bg-surface p-1 shadow-v7-md"
@@ -377,32 +379,40 @@ export function ManagedAccountsGroup({
                   <code className="inline-flex h-7 items-center rounded-control border border-border-strong bg-surface px-2.5 font-mono text-section tracking-[1px] text-fg-1">
                     {login.deviceCode.user_code}
                   </code>
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="icon-compact"
-                    aria-label={t("authCenter.pending.copy", {
+                  <HoverTip
+                    content={t("authCenter.pending.copy", {
                       defaultValue: "复制验证码",
                     })}
-                    title={t("authCenter.pending.copy", {
-                      defaultValue: "复制验证码",
-                    })}
-                    onClick={() => void copyCode()}
                   >
-                    <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="icon-compact"
-                    aria-label={t("authCenter.pending.open", {
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="icon-compact"
+                      aria-label={t("authCenter.pending.copy", {
+                        defaultValue: "复制验证码",
+                      })}
+                      onClick={() => void copyCode()}
+                    >
+                      <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </Button>
+                  </HoverTip>
+                  <HoverTip
+                    content={t("authCenter.pending.open", {
                       defaultValue: "打开授权页面",
                     })}
-                    title={login.deviceCode.verification_uri}
-                    onClick={openPage}
                   >
-                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  </Button>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="icon-compact"
+                      aria-label={t("authCenter.pending.open", {
+                        defaultValue: "打开授权页面",
+                      })}
+                      onClick={openPage}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </Button>
+                  </HoverTip>
                 </div>
                 <span className="text-caption text-fg-2">
                   {t("authCenter.pending.note", {
@@ -568,20 +578,21 @@ function AccountRow({
       )}
 
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="quiet"
-            size="icon-compact"
-            aria-label={t("authCenter.accountMenu", {
-              defaultValue: "{{login}} 的更多操作",
-              login: account.login,
-            })}
-            title={t("common.more", { defaultValue: "更多" })}
-          >
-            <MoreHorizontal className="h-[15px] w-[15px]" />
-          </Button>
-        </DropdownMenuTrigger>
+        <HoverTip content={t("common.more", { defaultValue: "更多" })}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="quiet"
+              size="icon-compact"
+              aria-label={t("authCenter.accountMenu", {
+                defaultValue: "{{login}} 的更多操作",
+                login: account.login,
+              })}
+            >
+              <MoreHorizontal className="h-[15px] w-[15px]" />
+            </Button>
+          </DropdownMenuTrigger>
+        </HoverTip>
         <DropdownMenuContent
           align="end"
           className="min-w-[148px] rounded-panel bg-surface p-1 shadow-v7-md"

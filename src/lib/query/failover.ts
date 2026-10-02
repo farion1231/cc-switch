@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { failoverApi } from "@/lib/api/failover";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { proxyKeys } from "@/lib/query/proxy";

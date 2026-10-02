@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import type { TFunction } from "i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { AppId } from "@/lib/api";
 import { extractErrorMessage } from "@/utils/errorUtils";
 

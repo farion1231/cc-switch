@@ -1065,10 +1065,10 @@
       "saveToLibrary": "存进提示库",
       "reloadAfterDelete": "已打开的 Pi 空闲时运行 /reload 后生效。",
       "configuredSize": "已配置 · {{size}}",
-      "create": "创建…",
+      "create": "创建",
       "createFile": "创建 {{filename}}",
       "editFile": "编辑 {{filename}}",
-      "saveAndConfigureEllipsis": "保存并配置…",
+      "saveAndConfigureEllipsis": "保存并配置",
       "deleteFile": "删除文件",
       "appendDeleted": "已删除 APPEND_SYSTEM.md，Pi 不再追加这段内容",
       "overrideDeleted": "已删除 SYSTEM.md，Pi 改回使用内置的基础提示",
@@ -1141,9 +1141,9 @@
     "moreActions": "会话的更多操作",
     "refreshList": "刷新列表",
     "listRefreshed": "已刷新会话列表",
-    "selectMany": "选择多个…",
-    "preferredTerminal": "首选终端…",
-    "whereMenu": "会话记录在哪里…",
+    "selectMany": "选择多个",
+    "preferredTerminal": "首选终端",
+    "whereMenu": "会话记录在哪里",
     "whereTitle": "会话记录在哪里",
     "whereLead": "CC Switch 从这些位置读取会话。Claude Desktop 没有单独的会话记录。",
     "whereNote": "在设置里改过配置目录的应用，按改过的目录读取。",
@@ -1165,9 +1165,9 @@
     "selectedSessions": "已选 {{count}} 个会话",
     "noneSelected": "还没有选择会话",
     "hiddenSelected": " · 其中 {{count}} 个不在当前结果里",
-    "deleteCountEllipsis": "删除 {{count}} 个会话…",
-    "deleteSessionEllipsis": "删除会话…",
-    "deleteEllipsis": "删除…",
+    "deleteCountEllipsis": "删除 {{count}} 个会话",
+    "deleteSessionEllipsis": "删除会话",
+    "deleteEllipsis": "删除",
     "selectSessionLabel": "选择 {{title}}",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
     "groupMeta": "{{count}} 个会话 · {{time}}",
@@ -1205,7 +1205,7 @@
     "moreResumeOptions": "更多恢复方式",
     "copyCdResume": "复制「进入目录并恢复」命令",
     "cdResumeCopied": "已复制「进入目录并恢复」命令",
-    "changeTerminal": "更换首选终端…",
+    "changeTerminal": "更换首选终端",
     "changeTerminalAction": "更换终端",
     "codexResumeNote": "切换过供应商后，旧会话可能无法继续：Codex 按供应商分开保存历史。",
     "noResumeOpenclaw": "OpenClaw 会话由网关管理，不能在终端恢复",
@@ -1527,7 +1527,7 @@
     "manageAccounts": "管理账号",
     "selectAccountPlaceholder": "选择一个 ChatGPT 账号",
     "officialAccountPlaceholder": "请选择登录方式",
-    "addOrManageAccounts": "添加或管理 ChatGPT 账号…",
+    "addOrManageAccounts": "添加或管理 ChatGPT 账号",
     "explicitSelectionRequired": "请先选择登录方式",
     "useDefaultAccount": "使用默认账号",
     "noneOptionLabel": "跟随 Codex 登录",
@@ -1567,7 +1567,7 @@
     "waitingForAuth": "等待 xAI 授权中…",
     "enterCode": "若浏览器未自动填入，请输入：",
     "retry": "重试",
-    "logoutAll": "删除全部 xAI 账号…",
+    "logoutAll": "删除全部 xAI 账号",
     "loginRequired": "请先登录 xAI 账号"
   },
   "managedAuth": {
@@ -1919,7 +1919,7 @@
       "confirmAction": "备份并重建",
       "completed": "重建完成：导入 {{imported}} 条，错误 {{errors}}，疑似重复 {{suspected}}，暂缓文件 {{deferred}}",
       "failed": "Codex 用量重建失败：{{error}}",
-      "actionEllipsis": "重建 Codex 用量…"
+      "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 条记录",
     "goToPage": "跳转",
@@ -2166,7 +2166,7 @@
       "billingHelp": "只对经路由服务的请求生效。会话日志导入的用量按日志里的模型计价。",
       "byResponse": "按返回模型计价",
       "byRequest": "按请求模型计价",
-      "edit": "修改…",
+      "edit": "修改",
       "tableTitle": "模型定价 · {{count}}",
       "costHelpTitle": "成本怎么算",
       "costHelp": "每条请求按模型定价算成本：新增输入、输出、缓存命中、缓存写入各乘对应单价，再相加。",
@@ -2174,7 +2174,9 @@
       "editAria": "编辑 {{name}} 的定价",
       "deleteAria": "删除 {{name}} 的定价",
       "cacheWrite": "缓存写入"
-    }
+    },
+    "prevMonth": "上个月",
+    "nextMonth": "下个月"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -2524,7 +2526,7 @@
     "updatedToday": "今天 {{time}} 更新",
     "updatedOn": "{{month}} 月 {{day}} 日更新",
     "emptyContent": "（空）",
-    "copyToApps": "复制到其他应用…",
+    "copyToApps": "复制到其他应用",
     "copyContent": "复制正文",
     "copiedContent": "已复制「{{name}}」的正文",
     "deleteBlocked": "启用中的不能删除，先停用",
@@ -2578,10 +2580,7 @@
       "imported": "已导入 {{path}} 的内容，文件没有改动",
       "importedPi": "已把 AGENTS.md 存进提示库，文件没有改动",
       "copied": "已把「{{name}}」复制到 {{apps}}"
-    },
-    "entryLabel": "提示词：{{name}}",
-    "entryNone": "未启用",
-    "entryAria": "提示词：{{name}}，前往提示词页"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "项目：{{name}}",
@@ -2599,7 +2598,7 @@
       "claude-desktop": "把 Claude Desktop 当前的供应商保存为一个项目，之后可一键切换。",
       "codex": "把 Codex 当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。"
     },
-    "manage": "管理项目…",
+    "manage": "管理项目",
     "manageTitle": "管理项目",
     "manageDescription": "项目是配置快照。切换项目时，当前配置会自动保存回原项目。",
     "namePlaceholder": "例如：开发、绘图",
@@ -3050,7 +3049,7 @@
     "moreActions": "Skills 的更多操作",
     "storageSheet": {
       "title": "存储与同步",
-      "open": "存储与同步…",
+      "open": "存储与同步",
       "resync": "立即重新同步",
       "resyncing": "正在重新同步…",
       "resyncHint": "修改只对之后启用或更新的 Skill 生效。要让已启用的 Skill 也换成当前方式，点「立即重新同步」。",
@@ -3063,7 +3062,7 @@
       "openFolder": "打开",
       "openFolderAria": "打开 {{path}}",
       "unifiedWarning": "Codex、Gemini CLI、OpenCode 等会直接读这个目录，各应用的开关对它们不再完全生效。",
-      "move": "移动并切换…",
+      "move": "移动并切换",
       "moving": "正在移动…",
       "moveConfirmTitle": "把 {{count}} 个 Skill 移到 {{path}}？",
       "moveConfirmBody": "会逐个移动主副本，再让各应用里的链接指向新位置。移动完成前请不要退出 CC Switch。",
@@ -3739,7 +3738,7 @@
     "checking": "检查中…",
     "checkUpdates": "检查更新",
     "moreActions": "更多操作",
-    "manualCommands": "手动安装命令…",
+    "manualCommands": "手动安装命令",
     "columnApp": "应用",
     "columnVersion": "版本",
     "columnVisible": "显示",
@@ -3768,7 +3767,7 @@
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
     "viewSessions": "查看会话",
-    "configDirectory": "配置目录…",
+    "configDirectory": "配置目录",
     "installAndUpgrade": "安装与升级",
     "hideFromSidebar": "在侧栏隐藏",
     "providers": "供应商",
@@ -3802,8 +3801,8 @@
     },
     "activate": {
       "viewing": "你在查看「{{view}}」，{{app}} 目前是{{active}}。",
-      "route": "开始路由…",
-      "stack": "切换到叠加模式…",
+      "route": "开始路由",
+      "stack": "切换到叠加模式",
       "direct": "回到直连"
     },
     "notice": {
@@ -3877,7 +3876,7 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "startStackFrom": "以这家为默认开始叠加…"
+      "startStackFrom": "以这家为默认开始叠加"
     },
     "chip": {
       "official": "官方",
@@ -3926,7 +3925,7 @@
     "service": "路由服务",
     "running": "运行中",
     "notRunning": "路由服务没能启动",
-    "changePort": "更改端口…",
+    "changePort": "更改端口",
     "notNeeded": "路由服务：当前供应商不需要"
   },
   "routingSettings": {
@@ -3957,7 +3956,7 @@
     "desktopMode": "模型映射 · 自动保持运行",
     "desktopDetail": "当前供应商 {{name}}",
     "goTo": "前往",
-    "exitAll": "全部回到直连…",
+    "exitAll": "全部回到直连",
     "exitAllTitle": "让所有应用回到直连？",
     "exitAllMessage": "在路由和叠加模式下的应用都会写回直连配置，然后停止路由服务。路由目标、队列和叠加名单会保留。",
     "exitAllConfirm": "全部回到直连",
@@ -3978,15 +3977,6 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "点击重新查询"
-  },
-  "commandPalette": {
-    "title": "跳转",
-    "open": "搜索并跳转（{{shortcut}}）",
-    "placeholder": "输入应用、页面或设置的名字",
-    "empty": "没有匹配的项",
-    "apps": "应用",
-    "pages": "页面",
-    "settings": "设置"
   },
   "appMatrix": {
     "clearSearch": "清空搜索",
@@ -4049,7 +4039,7 @@
     "openDocs": "打开文档",
     "enableEverywhere": "在所有应用启用",
     "disableEverywhere": "全部关闭",
-    "deleteEllipsis": "删除…",
+    "deleteEllipsis": "删除",
     "deleteTitle": "删除 {{id}}？",
     "deleteBodyApps": "会从 CC Switch 以及 {{apps}} 的配置文件里删除这一项，无法撤销。",
     "deleteBody": "会从 CC Switch 里删除这一项，无法撤销。",
@@ -4172,7 +4162,7 @@
       "tagsPlaceholder": "用逗号分隔，例如 docs, web",
       "homepage": "主页",
       "docs": "文档",
-      "delete": "删除…"
+      "delete": "删除"
     },
     "resync": "按这里的开关重写各应用配置"
   },
@@ -4183,12 +4173,12 @@
     "add": "添加 Skill",
     "addMenu": {
       "discover": "在发现里浏览",
-      "zip": "从 ZIP 安装…",
-      "import": "导入本机已有…"
+      "zip": "从 ZIP 安装",
+      "import": "导入本机已有"
     },
     "moreMenu": {
-      "restore": "从备份恢复…",
-      "repos": "仓库管理…"
+      "restore": "从备份恢复",
+      "repos": "仓库管理"
     },
     "viewAria": "Skills 视图",
     "viewInstalled": "已安装",
@@ -4219,7 +4209,7 @@
       "enableToAria": "把选中的 {{count}} 个 Skill 启用到",
       "disable": "停用",
       "disableAria": "在这个应用里停用选中的 {{count}} 个 Skill",
-      "uninstall": "卸载…"
+      "uninstall": "卸载"
     },
     "piColumnTitle": "Pi 按 ~/.pi/agent/skills 里有没有这个目录来判断",
     "piHelpTitle": "Pi 怎么算启用",
@@ -4233,7 +4223,7 @@
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",
     "copyDir": "复制目录名",
-    "uninstallEllipsis": "卸载…",
+    "uninstallEllipsis": "卸载",
     "listLabel": "已安装的 Skill",
     "noMatch": "没有匹配“{{query}}”的 Skill",
     "noFilterMatch": "没有符合筛选条件的 Skill",
@@ -4307,7 +4297,7 @@
       "enableAria": "在发现里使用 {{repo}}",
       "disabledShort": "停用",
       "disabled": "已停用，不参与发现",
-      "manage": "添加或管理仓库…",
+      "manage": "添加或管理仓库",
       "openAria": "在 GitHub 打开 {{repo}}",
       "removeAria": "删除仓库 {{repo}}",
       "readFailed": "读取失败"
@@ -4340,7 +4330,7 @@
     "headerUpdates": "{{count}} 个可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "显示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 个）…"
+    "updateAllCount": "全部更新（{{count}} 个）"
   },
   "coach": {
     "newLayout": "界面改版了：模式移到了每个应用页的顶部，用量统计和授权中心在左侧边栏。"
@@ -4356,8 +4346,8 @@
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",
     "accountMenu": "{{login}} 的更多操作",
-    "removeAll": "删除全部账号…",
-    "removeAccount": "删除账号…",
+    "removeAll": "删除全部账号",
+    "removeAccount": "删除账号",
     "setDefault": "设为默认",
     "reauth": "重新登录",
     "busyHint": "先完成或取消正在进行的登录",

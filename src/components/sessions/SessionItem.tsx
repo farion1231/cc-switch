@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { cn } from "@/lib/utils";
 import type { SessionMeta } from "@/types";
@@ -246,56 +247,63 @@ export function SessionItem({
             )}
           >
             {launchTerminal && hasCommand && (
-              <button
-                type="button"
-                aria-label={t("sessionManager.resumeInFor", {
-                  defaultValue: "在 {{terminal}} 中恢复 {{title}}",
-                  terminal: launchTerminal,
-                  title,
-                })}
-                title={t("sessionManager.resumeIn", {
+              <HoverTip
+                content={t("sessionManager.resumeIn", {
                   defaultValue: "在 {{terminal}} 中恢复",
                   terminal: launchTerminal,
                 })}
-                onClick={onLaunch}
-                className={rowIconButton}
               >
-                <Play className="h-[15px] w-[15px]" strokeWidth={1.5} />
-              </button>
-            )}
-            {hasCommand && (
-              <button
-                type="button"
-                aria-label={t("sessionManager.copyResumeFor", {
-                  defaultValue: "复制「{{title}}」的恢复命令",
-                  title,
-                })}
-                title={t("sessionManager.copyResumeCommand", {
-                  defaultValue: "复制恢复命令",
-                })}
-                onClick={onCopyResume}
-                className={rowIconButton}
-              >
-                <Copy className="h-[15px] w-[15px]" strokeWidth={1.5} />
-              </button>
-            )}
-            <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-              <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  aria-label={t("sessionManager.moreFor", {
-                    defaultValue: "{{title}} 的更多操作",
+                  aria-label={t("sessionManager.resumeInFor", {
+                    defaultValue: "在 {{terminal}} 中恢复 {{title}}",
+                    terminal: launchTerminal,
                     title,
                   })}
-                  title={t("common.more", { defaultValue: "更多" })}
+                  onClick={onLaunch}
                   className={rowIconButton}
                 >
-                  <MoreHorizontal
-                    className="h-[15px] w-[15px]"
-                    strokeWidth={1.5}
-                  />
+                  <Play className="h-[15px] w-[15px]" strokeWidth={1.5} />
                 </button>
-              </DropdownMenuTrigger>
+              </HoverTip>
+            )}
+            {hasCommand && (
+              <HoverTip
+                content={t("sessionManager.copyResumeCommand", {
+                  defaultValue: "复制恢复命令",
+                })}
+              >
+                <button
+                  type="button"
+                  aria-label={t("sessionManager.copyResumeFor", {
+                    defaultValue: "复制「{{title}}」的恢复命令",
+                    title,
+                  })}
+                  onClick={onCopyResume}
+                  className={rowIconButton}
+                >
+                  <Copy className="h-[15px] w-[15px]" strokeWidth={1.5} />
+                </button>
+              </HoverTip>
+            )}
+            <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+              <HoverTip content={t("common.more", { defaultValue: "更多" })}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t("sessionManager.moreFor", {
+                      defaultValue: "{{title}} 的更多操作",
+                      title,
+                    })}
+                    className={rowIconButton}
+                  >
+                    <MoreHorizontal
+                      className="h-[15px] w-[15px]"
+                      strokeWidth={1.5}
+                    />
+                  </button>
+                </DropdownMenuTrigger>
+              </HoverTip>
               <DropdownMenuContent
                 align="end"
                 className="w-[210px] rounded-panel p-1 shadow-v7-md"

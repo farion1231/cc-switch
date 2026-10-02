@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { Prompt, AppId } from "@/lib/api";
+import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   MCODE_PROMPT_LIMIT,
@@ -30,8 +31,8 @@ interface PromptFormPanelProps {
   onDelete?: (id: string) => void;
 }
 
-export const promptFieldClass =
-  "w-full rounded-[8px] border border-border-strong bg-surface px-2.5 text-body text-fg-1 outline-none placeholder:text-fg-3 focus-visible:ring-1 focus-visible:ring-ring aria-[invalid=true]:border-danger disabled:opacity-60";
+/** 和 Input / Textarea 同一套外观（ui/input.tsx 的 fieldClass） */
+export const promptFieldClass = fieldClass;
 
 export function FieldError({ id, children }: { id: string; children: string }) {
   return (

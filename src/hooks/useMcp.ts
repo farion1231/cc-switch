@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { mcpApi } from "@/lib/api/mcp";
-import type { McpServer } from "@/types";
+import type { McpServer, McpServersMap } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
 
@@ -64,6 +64,24 @@ export function useToggleMcpApp() {
       app: AppId;
       enabled: boolean;
     }) => mcpApi.toggleApp(serverId, app, enabled),
+    // 乐观更新：点了格子立刻翻过来，不等写完再刷新；失败时回滚
+    onMutate: async ({ serverId, app, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: ["mcp", "all"] });
+      const previous = queryClient.getQueryData<McpServersMap>(["mcp", "all"]);
+      const server = previous?.[serverId];
+      if (previous && server) {
+        queryClient.setQueryData<McpServersMap>(["mcp", "all"], {
+          ...previous,
+          [serverId]: { ...server, apps: { ...server.apps, [app]: enabled } },
+        });
+      }
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["mcp", "all"], context.previous);
+      }
+    },
     // The backend may update the database before a live-config write fails.
     // Always refresh so the UI reflects the persisted state after an error.
     onSettled: () =>

@@ -8,6 +8,7 @@ import "./index.css";
 import i18n from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { MotionConfig } from "framer-motion";
 import { queryClient } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
@@ -25,6 +26,7 @@ import {
   syncModelsDevPricingOnStartup,
 } from "./lib/modelsDevAutoSync";
 import { initializeWindowActivity } from "@/lib/windowActivity";
+import { initializeInputModality } from "@/lib/inputModality";
 
 installGlobalErrorHandlers();
 
@@ -117,6 +119,7 @@ async function bootstrap() {
   }
 
   initializeWindowActivity();
+  initializeInputModality();
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -126,7 +129,10 @@ async function bootstrap() {
             <UpdateProvider>
               {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
               <MotionConfig reducedMotion="user">
-                <App />
+                {/* 全局悬停提示：移上去立即出现（HoverTip） */}
+                <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                  <App />
+                </TooltipProvider>
               </MotionConfig>
               <Toaster />
             </UpdateProvider>
