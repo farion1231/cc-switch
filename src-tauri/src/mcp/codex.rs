@@ -616,6 +616,25 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
     }
 }
 
+/// 写出侧的传输类型，与导入侧 [`codex_entry_transport_type`] 对称。
+///
+/// 规范里可能没有 `type`（面板 JSON 模式粘贴 `{"url": …}`、deeplink 都不补），
+/// 此时不能一律当 stdio：那样会写出 `command = ""` 再带上 `url`，Codex 对这种
+/// 条目报 `url is not supported for stdio`，整份 config.toml 加载失败，其它
+/// 正常的 MCP 也跟着失效。显式写了 stdio 却只有 `url` 的规范同理。
+fn spec_transport_type(spec: &Value) -> &str {
+    let has = |key: &str| {
+        spec.get(key)
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty())
+    };
+    let explicit = spec.get("type").and_then(|v| v.as_str());
+    if matches!(explicit, None | Some("stdio")) && !has("command") && has("url") {
+        return "http";
+    }
+    explicit.unwrap_or("stdio")
+}
+
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
 ///
 /// 策略：
@@ -632,13 +651,42 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
     use toml_edit::{Array, Item, Table};
 
     let mut t = Table::new();
-    let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+    let typ = spec_transport_type(spec);
 
-    // 定义核心字段（已在下方处理，跳过通用转换；`type` 仅为兼容 DB 规范而跳过）
-    let core_fields = match typ {
-        "stdio" => vec!["type", "command", "args", "env", "cwd"],
-        "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
-        _ => vec!["type"],
+    // 不走通用转换的字段：本传输方式里已在下方强类型处理的（`type` 仅为兼容 DB
+    // 规范而跳过），加上另一种传输方式专属的。Codex 先按 `command` / `url` 定下
+    // 传输方式，再逐个检查对面的专属字段，命中任何一个就拒绝加载整份配置
+    // （`<field> is not supported for stdio|streamable_http`），所以只能写所选
+    // 传输的字段。两份名单按 Codex 0.160 实测；`scopes` 两边都接受，不在其中。
+    let skipped_fields: &[&str] = match typ {
+        "stdio" => &[
+            "type",
+            "command",
+            "args",
+            "env",
+            "cwd",
+            // 只属于 url 条目
+            "url",
+            "headers",
+            "http_headers",
+            "env_http_headers",
+            "http_headers_helper",
+            "bearer_token_env_var",
+            "oauth_resource",
+        ],
+        "http" | "sse" => &[
+            "type",
+            "url",
+            "headers",
+            "http_headers",
+            // 只属于 stdio 条目
+            "command",
+            "args",
+            "env",
+            "env_vars",
+            "cwd",
+        ],
+        _ => &["type"],
     };
 
     // 定义扩展字段白名单（Codex 常见可选字段）
@@ -725,8 +773,8 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
     // 2. 处理扩展字段和其他未知字段
     if let Some(obj) = spec.as_object() {
         for (key, value) in obj {
-            // 跳过已处理的核心字段
-            if core_fields.contains(&key.as_str()) {
+            // 跳过已处理的字段和另一种传输方式专属的字段
+            if skipped_fields.contains(&key.as_str()) {
                 continue;
             }
 
@@ -879,6 +927,130 @@ mod tests {
                 "Codex MCP table must not contain a `type` field"
             );
         }
+    }
+
+    #[test]
+    fn spec_without_type_is_written_by_its_url_or_command() {
+        // 面板 JSON 模式粘贴的 `{"url": …}` 不带 type：必须按 url 写，
+        // 不能写成 `command = ""` + `url`（Codex 会拒绝加载整份配置）。
+        let remote = json_server_to_toml_table(&json!({
+            "url": "https://mcp.example.com/mcp",
+            "headers": { "Authorization": "Bearer t" }
+        }))
+        .unwrap();
+        assert_eq!(
+            remote.get("url").and_then(|item| item.as_str()),
+            Some("https://mcp.example.com/mcp")
+        );
+        assert!(remote.get("command").is_none());
+        assert!(remote.get("http_headers").is_some());
+        assert!(remote.get("headers").is_none());
+
+        // 显式 stdio 却只有 url：同样按 url 写。
+        let mislabeled = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "",
+            "url": "https://mcp.example.com/mcp"
+        }))
+        .unwrap();
+        assert!(mislabeled.get("command").is_none());
+        assert!(mislabeled.get("url").is_some());
+
+        // 没有 type、只有 command：仍是 stdio。
+        let local =
+            json_server_to_toml_table(&json!({ "command": "npx", "args": ["-y", "x"] })).unwrap();
+        assert_eq!(
+            local.get("command").and_then(|item| item.as_str()),
+            Some("npx")
+        );
+        assert!(local.get("url").is_none());
+    }
+
+    #[test]
+    fn codex_mcp_table_only_carries_the_chosen_transports_fields() {
+        // Codex 对同时带 command 和 url 的条目、带 args/env 的 url 条目都拒绝加载。
+        let stdio = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx",
+            "url": "https://stray.example.com",
+            "headers": { "X": "y" }
+        }))
+        .unwrap();
+        assert!(stdio.get("url").is_none());
+        assert!(stdio.get("headers").is_none());
+        assert!(stdio.get("http_headers").is_none());
+
+        let remote = json_server_to_toml_table(&json!({
+            "type": "http",
+            "url": "https://mcp.example.com/mcp",
+            "command": "stray",
+            "args": ["a"],
+            "env": { "A": "b" },
+            "cwd": "/tmp"
+        }))
+        .unwrap();
+        for key in ["command", "args", "env", "cwd"] {
+            assert!(remote.get(key).is_none(), "{key} must not be written");
+        }
+    }
+
+    #[test]
+    fn codex_only_fields_follow_their_transport() {
+        // 从 Codex 导入的专属字段原样存在规范里。传输方式被手改之后留下的那些，
+        // Codex 同样会拒绝加载整份配置；放在适用的传输方式下则必须照常写出。
+        let stdio_only = json!({ "env_vars": ["TOKEN"] });
+        let url_only = json!({
+            "env_http_headers": { "X-Key": "TOKEN" },
+            "http_headers_helper": "helper",
+            "bearer_token_env_var": "TOKEN",
+            "oauth_resource": "https://mcp.example.com"
+        });
+        let spec = |base: Value| {
+            let mut spec = base;
+            for extra in [&stdio_only, &url_only] {
+                for (key, value) in extra.as_object().unwrap() {
+                    spec[key] = value.clone();
+                }
+            }
+            spec["scopes"] = json!(["read"]);
+            spec
+        };
+        let keys = |fields: &Value| {
+            fields
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        let stdio =
+            json_server_to_toml_table(&spec(json!({ "type": "stdio", "command": "npx" }))).unwrap();
+        for key in keys(&stdio_only) {
+            assert!(stdio.get(&key).is_some(), "{key} belongs to stdio entries");
+        }
+        for key in keys(&url_only) {
+            assert!(
+                stdio.get(&key).is_none(),
+                "{key} must not reach a stdio entry"
+            );
+        }
+        assert!(stdio.get("scopes").is_some());
+
+        let remote = json_server_to_toml_table(&spec(
+            json!({ "type": "http", "url": "https://mcp.example.com/mcp" }),
+        ))
+        .unwrap();
+        for key in keys(&url_only) {
+            assert!(remote.get(&key).is_some(), "{key} belongs to url entries");
+        }
+        for key in keys(&stdio_only) {
+            assert!(
+                remote.get(&key).is_none(),
+                "{key} must not reach a url entry"
+            );
+        }
+        assert!(remote.get("scopes").is_some());
     }
 
     #[test]
