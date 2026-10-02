@@ -264,17 +264,41 @@ impl McpService {
             return Ok(());
         }
 
+        // 逐条容错：一条写不进去（规范不是对象、这个应用不认的类型）不该让排在
+        // 它后面的服务器全都停在旧状态。全部跑完后聚合上报，调用方照旧能看到
+        // 失败。错误相同的条目归并成一项：live 文件本身损坏时每一条都报同一句。
+        let mut failures: IndexMap<String, Vec<&str>> = IndexMap::new();
         for server in servers.values() {
-            if server.apps.is_enabled_for(app) {
-                Self::sync_server_to_app(state, server, app)?;
+            let result = if server.apps.is_enabled_for(app) {
+                Self::sync_server_to_app(state, server, app)
             } else if !matches!(app, AppType::Mcode) {
-                Self::remove_server_from_app(state, &server.id, app)?;
+                Self::remove_server_from_app(state, &server.id, app)
+            } else {
+                // MCode's false flag also covers pre-existing, unmanaged servers.
+                // Only explicit disable/delete operations may remove those entries.
+                Ok(())
+            };
+            if let Err(err) = result {
+                log::warn!("同步 MCP 服务器 '{}' 到 {app:?} 失败: {err}", server.id);
+                failures
+                    .entry(err.to_string())
+                    .or_default()
+                    .push(&server.id);
             }
-            // MCode's false flag also covers pre-existing, unmanaged servers.
-            // Only explicit disable/delete operations may remove those entries.
         }
 
-        Ok(())
+        if failures.is_empty() {
+            return Ok(());
+        }
+        let detail = failures
+            .iter()
+            .map(|(error, ids)| format!("{}: {error}", ids.join(", ")))
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(AppError::Message(format!(
+            "部分 MCP 服务器同步到 {} 失败: {detail}",
+            app.as_str()
+        )))
     }
 
     // ========================================================================

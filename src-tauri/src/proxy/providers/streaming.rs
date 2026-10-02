@@ -2,6 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use super::inline_think::InlineThinkSplitter;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -145,6 +146,64 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
     })
 }
 
+fn sse_event_string(event: Value) -> String {
+    format!(
+        "event: {}\ndata: {}\n\n",
+        event.get("type").and_then(|v| v.as_str()).unwrap_or(""),
+        serde_json::to_string(&event).unwrap_or_default()
+    )
+}
+
+/// 生成一个 thinking/text 增量所需的 Anthropic SSE 事件序列
+/// （必要时先关闭当前块：content_block_stop? + content_block_start + content_block_delta）。
+fn non_tool_block_events(
+    block_type: &'static str,
+    delta: &str,
+    next_content_index: &mut u32,
+    current_type: &mut Option<&'static str>,
+    current_index: &mut Option<u32>,
+) -> Vec<String> {
+    let mut events = Vec::new();
+
+    if *current_type != Some(block_type) {
+        if let Some(index) = current_index.take() {
+            events.push(sse_event_string(json!({
+                "type": "content_block_stop",
+                "index": index
+            })));
+        }
+        let index = *next_content_index;
+        *next_content_index += 1;
+        let content_block = if block_type == "thinking" {
+            json!({"type": "thinking", "thinking": ""})
+        } else {
+            json!({"type": "text", "text": ""})
+        };
+        events.push(sse_event_string(json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": content_block
+        })));
+        *current_type = Some(block_type);
+        *current_index = Some(index);
+    }
+
+    if let Some(index) = *current_index {
+        let delta_payload = if block_type == "thinking" {
+            json!({"type": "thinking_delta", "thinking": delta})
+        } else {
+            json!({"type": "text_delta", "text": delta})
+        };
+        events.push(sse_event_string(json!({
+            "type": "content_block_delta",
+            "index": index,
+            "delta": delta_payload
+        })));
+    }
+
+    events
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -168,6 +227,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
+        let mut inline_think = InlineThinkSplitter::default();
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
@@ -187,6 +247,25 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                             if let Some(data) = strip_sse_field(l, "data") {
                                 if data.trim() == "[DONE]" {
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
+
+                                    // 流结束边界：冲刷 inline think 残留（幂等，通常已在前面的
+                                    // finish_reason 边界冲刷过）。
+                                    let (thinking, text) = inline_think.flush();
+                                    for (block_type, delta) in
+                                        [("thinking", thinking), ("text", text)]
+                                    {
+                                        if let Some(delta) = &delta {
+                                            for sse_data in non_tool_block_events(
+                                                block_type,
+                                                delta,
+                                                &mut next_content_index,
+                                                &mut current_non_tool_block_type,
+                                                &mut current_non_tool_block_index,
+                                            ) {
+                                                yield Ok(Bytes::from(sse_data));
+                                            }
+                                        }
+                                    }
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
@@ -278,91 +357,37 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             .as_ref()
                                             .filter(|r| !r.is_empty())
                                         {
-                                            if current_non_tool_block_type != Some("thinking") {
-                                                if let Some(index) = current_non_tool_block_index.take() {
-                                                    let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
-                                                    });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                let event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {
-                                                        "type": "thinking",
-                                                        "thinking": ""
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                                current_non_tool_block_type = Some("thinking");
-                                                current_non_tool_block_index = Some(index);
-                                            }
-
-                                            if let Some(index) = current_non_tool_block_index {
-                                                let event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {
-                                                        "type": "thinking_delta",
-                                                        "thinking": reasoning
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
+                                            for sse_data in non_tool_block_events(
+                                                "thinking",
+                                                reasoning,
+                                                &mut next_content_index,
+                                                &mut current_non_tool_block_type,
+                                                &mut current_non_tool_block_index,
+                                            ) {
                                                 yield Ok(Bytes::from(sse_data));
                                             }
                                         }
 
-                                        // 处理文本内容
+                                        // 处理文本内容。content 里流首内联的 <think>/<thinking>
+                                        // 块（DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
+                                        // thinking，剩余正文按原逻辑下发。
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
-                                                if current_non_tool_block_type != Some("text") {
-                                                    if let Some(index) = current_non_tool_block_index.take() {
-                                                        let event = json!({
-                                                            "type": "content_block_stop",
-                                                            "index": index
-                                                        });
-                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                            serde_json::to_string(&event).unwrap_or_default());
-                                                        yield Ok(Bytes::from(sse_data));
+                                                let (thinking, text) = inline_think.push(content);
+                                                for (block_type, delta) in
+                                                    [("thinking", thinking), ("text", text)]
+                                                {
+                                                    if let Some(delta) = &delta {
+                                                        for sse_data in non_tool_block_events(
+                                                            block_type,
+                                                            delta,
+                                                            &mut next_content_index,
+                                                            &mut current_non_tool_block_type,
+                                                            &mut current_non_tool_block_index,
+                                                        ) {
+                                                            yield Ok(Bytes::from(sse_data));
+                                                        }
                                                     }
-
-                                                    let index = next_content_index;
-                                                    next_content_index += 1;
-                                                    let event = json!({
-                                                        "type": "content_block_start",
-                                                        "index": index,
-                                                        "content_block": {
-                                                            "type": "text",
-                                                            "text": ""
-                                                        }
-                                                    });
-                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                    current_non_tool_block_type = Some("text");
-                                                    current_non_tool_block_index = Some(index);
-                                                }
-
-                                                if let Some(index) = current_non_tool_block_index {
-                                                    let event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": index,
-                                                        "delta": {
-                                                            "type": "text_delta",
-                                                            "text": content
-                                                        }
-                                                    });
-                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
                                                 }
                                             }
                                         }
@@ -370,6 +395,26 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             if !tool_calls.is_empty() {
+                                                // 工具调用边界：先冲刷 inline think 残留再关块。
+                                                // 拖到 finish_reason 才下发的话，这些内容会在
+                                                // 工具块打开之后才开块，顺序颠倒且块交叠。
+                                                let (thinking, text) = inline_think.flush();
+                                                for (block_type, delta) in
+                                                    [("thinking", thinking), ("text", text)]
+                                                {
+                                                    if let Some(delta) = &delta {
+                                                        for sse_data in non_tool_block_events(
+                                                            block_type,
+                                                            delta,
+                                                            &mut next_content_index,
+                                                            &mut current_non_tool_block_type,
+                                                            &mut current_non_tool_block_index,
+                                                        ) {
+                                                            yield Ok(Bytes::from(sse_data));
+                                                        }
+                                                    }
+                                                }
+
                                                 if let Some(index) = current_non_tool_block_index.take() {
                                                     let event = json!({
                                                         "type": "content_block_stop",
@@ -538,6 +583,25 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                             has_emitted_message_delta = true;
 
+                                            // finish_reason 边界：冲刷 inline think 残留
+                                            // （未闭合的 think 块按思考内容下发），再统一关块。
+                                            let (thinking, text) = inline_think.flush();
+                                            for (block_type, delta) in
+                                                [("thinking", thinking), ("text", text)]
+                                            {
+                                                if let Some(delta) = &delta {
+                                                    for sse_data in non_tool_block_events(
+                                                        block_type,
+                                                        delta,
+                                                        &mut next_content_index,
+                                                        &mut current_non_tool_block_type,
+                                                        &mut current_non_tool_block_index,
+                                                    ) {
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                }
+                                            }
+
                                             if let Some(index) = current_non_tool_block_index.take() {
                                                 let event = json!({
                                                     "type": "content_block_stop",
@@ -639,6 +703,22 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                 Err(e) => {
                     log::error!("Stream error: {e}");
                     stream_ended_with_error = true;
+                    // 错误路径同样冲刷 inline think 残留：先下发已收到的载荷，
+                    // 再以 error 事件收尾，不伪造成功终止事件。
+                    let (thinking, text) = inline_think.flush();
+                    for (block_type, delta) in [("thinking", thinking), ("text", text)] {
+                        if let Some(delta) = &delta {
+                            for sse_data in non_tool_block_events(
+                                block_type,
+                                delta,
+                                &mut next_content_index,
+                                &mut current_non_tool_block_type,
+                                &mut current_non_tool_block_index,
+                            ) {
+                                yield Ok(Bytes::from(sse_data));
+                            }
+                        }
+                    }
                     let error_event = json!({
                         "type": "error",
                         "error": {
@@ -650,6 +730,23 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                         serde_json::to_string(&error_event).unwrap_or_default());
                     yield Ok(Bytes::from(sse_data));
                     break;
+                }
+            }
+        }
+
+        // 流自然结束（含上游截断、无 finish_reason/[DONE]）也冲刷 inline think
+        // 残留：已收到的内容必须下发，不得整段留在缓冲区丢弃。
+        let (thinking, text) = inline_think.flush();
+        for (block_type, delta) in [("thinking", thinking), ("text", text)] {
+            if let Some(delta) = &delta {
+                for sse_data in non_tool_block_events(
+                    block_type,
+                    delta,
+                    &mut next_content_index,
+                    &mut current_non_tool_block_type,
+                    &mut current_non_tool_block_index,
+                ) {
+                    yield Ok(Bytes::from(sse_data));
                 }
             }
         }
@@ -1366,5 +1463,377 @@ mod tests {
             collect_delta_text(&events, "text_delta", "/delta/text"),
             "答案是 42"
         );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_inline_thinking_split_across_chunks() {
+        // 回归（#7722）：DeepSeek 系 openai_chat 上游把思考内容以 <thinking>...</thinking>
+        // 内联进 content，且开闭标签会被 SSE chunk 边界任意切开。修复前整段连同标签
+        // 一起当正文（text 块）泄漏；修复后思考进 thinking 块，正文进 text 块。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"nking>tool call</thin\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"king>\\n日志很大。我先看当前配置。\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "tool call"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "日志很大。我先看当前配置。"
+        );
+
+        // 块顺序：thinking 块在前、text 块在后，各恰好一个
+        let block_types: Vec<&str> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .filter_map(|event| {
+                event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+            })
+            .collect();
+        assert_eq!(block_types, vec!["thinking", "text"]);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_inline_think_block_single_chunk() {
+        // <think> 变体（MiniMax M3 等）在单个 content 增量内完整出现时同样剥离。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>the ball costs 0.05</think>The ball is $0.05\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "the ball costs 0.05"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "The ball is $0.05"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_unclosed_thinking_flushed_as_thinking() {
+        // 流结束时 <thinking> 未闭合：缓冲内容按思考内容下发，不再泄漏标签本体。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thinking>partial reasoning\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "partial reasoning"
+        );
+        assert_eq!(collect_delta_text(&events, "text_delta", "/delta/text"), "");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_prose_containing_thinking_tag_not_stripped() {
+        // 流首不是 <thinking> 的正文里出现 "<thinking>" 字样，保持原样不剥离
+        //（只识别流首块，与 Codex Chat 路径语义一致）。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a <thinking> looks like \"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a tag in prose\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "a <thinking> looks like a tag in prose"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_mismatched_think_tag_pairs_still_split() {
+        // 上游偶尔用不配对的标签收尾（<think> 开、</thinking> 闭）。
+        // 只认配对闭合会让整段连正文一起被当推理吞掉；取最早出现的任一闭合标签。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<think>checking</thinking>Done\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "checking"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "Done"
+        );
+    }
+
+    fn content_chunk(id: &str, content: &str) -> String {
+        format!(
+            "data: {{\"id\":\"{id}\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n\n",
+            serde_json::to_string(content).unwrap()
+        )
+    }
+
+    /// 转换流的单个 yield 即一条完整 SSE 事件，解析出 data JSON。
+    fn parse_event(chunk: &Bytes) -> Value {
+        let text = String::from_utf8_lossy(chunk.as_ref());
+        let data = text
+            .lines()
+            .find_map(|line| strip_sse_field(line, "data"))
+            .unwrap_or_default();
+        serde_json::from_str(data).expect("valid SSE data JSON")
+    }
+
+    async fn collect_events(parts: Vec<String>) -> Vec<Value> {
+        let upstream = stream::iter(
+            parts
+                .into_iter()
+                .map(|part| Ok::<_, std::io::Error>(Bytes::from(part))),
+        );
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        chunks
+            .into_iter()
+            .map(|chunk| parse_event(&chunk.unwrap()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn review_progress_during_continuous_reasoning() {
+        // P1 回归：Reasoning 态必须逐增量下发思考内容。闭合标签迟迟未到时，
+        // 上游持续推送的每一条增量都应让转换流立即产生输出；修复前整段缓冲，
+        // 外层 failover 对转换后的 next() 计时会误判空闲并中断活跃流。
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
+        let upstream = async_stream::stream! {
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
+        };
+        let converted = create_anthropic_sse_stream(upstream);
+        tokio::pin!(converted);
+
+        // 流首开标签：确立 Reasoning 态，本身不产生输出。
+        tx.send(Ok(Bytes::from(content_chunk("progress", "<think>"))))
+            .await
+            .unwrap();
+
+        // 上游只发推理增量，闭合标签始终不到（模拟远超空闲阈值的长推理）。
+        for i in 0..20u32 {
+            let expected = format!("step {i} ");
+            tx.send(Ok(Bytes::from(content_chunk("progress", &expected))))
+                .await
+                .unwrap();
+
+            // 每个增量都必须在宽裕时限内产生 thinking 输出：只验证"有进展"，
+            // 不测量时延，避免 Windows 定时器粒度导致的抖动。
+            loop {
+                let item =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), converted.next())
+                        .await
+                        .unwrap_or_else(|_| {
+                            panic!("上游持续推送时转换流在第 {i} 条增量处停摆（假空闲）")
+                        })
+                        .expect("converted stream ended unexpectedly");
+                let event = parse_event(&item.unwrap());
+                if event_type(&event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str())
+                        == Some("thinking_delta")
+                {
+                    assert_eq!(
+                        event.pointer("/delta/thinking").and_then(|v| v.as_str()),
+                        Some(expected.as_str())
+                    );
+                    break;
+                }
+            }
+        }
+
+        // 上游此后不再发送（闭合标签仍未来），转换流不得伪造成功终止事件。
+        drop(tx);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .map(|chunk| parse_event(&chunk.unwrap()))
+            .collect();
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn review_answer_independent_of_content_chunk_partition() {
+        // P2 回归：同一逻辑响应无论 SSE 怎么分块，正文输出必须逐字节一致。
+        // 修复前闭合标签与正文同增量时 trim_start_matches 会剥掉正文缩进，
+        // 闭合标签在增量末尾时却原样保留，答案随分块方式变化。
+        let thinking_expect = "reason";
+        let answer_expect = "    return 42\n";
+        let partitions: Vec<Vec<&str>> = vec![
+            vec!["<think>reason</think>    return 42\n"], // 旧实现在此剥掉缩进
+            vec!["<think>reason</think>", "    return 42\n"], // 旧实现在此保留缩进
+            vec!["<think>", "reason", "</th", "ink>", "    return 42\n"], // 闭合标签跨增量
+            vec!["<think>reason</think>    ", "return 42\n"],
+        ];
+
+        for parts in partitions {
+            let events = collect_events(
+                parts
+                    .iter()
+                    .map(|content| content_chunk("partition", content))
+                    .collect(),
+            )
+            .await;
+            assert_eq!(
+                collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+                thinking_expect,
+                "thinking differs under partition {parts:?}"
+            );
+            assert_eq!(
+                collect_delta_text(&events, "text_delta", "/delta/text"),
+                answer_expect,
+                "answer whitespace must not depend on chunk partition {parts:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn review_eof_keeps_received_partial_payload() {
+        // P1 回归：未闭合推理在上游截断（无 finish_reason、无 [DONE]）直接 EOF 时，
+        // 已收到的内容必须下发。修复前缓冲整段丢弃，客户端只剩 message_start。
+        let events = collect_events(vec![content_chunk("eof", "<think>partial reas</th")]).await;
+
+        // 已收到的载荷全部下发（含扣住待定的闭合标签短尾），分类为思考内容。
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "partial reas</th"
+        );
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_start")));
+        // 截断流不得伪造成功终止事件。
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_stream_error_keeps_received_partial_payload() {
+        // 错误路径同样冲刷残留：先下发已收到的载荷，再以 error 事件收尾，
+        // 不伪造成功终止事件。
+        let upstream = stream::iter(vec![
+            Ok::<_, std::io::Error>(Bytes::from(content_chunk("err", "<think>partial reas</th"))),
+            Err(std::io::Error::other("upstream disconnected")),
+        ]);
+        let converted = create_anthropic_sse_stream(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .map(|chunk| parse_event(&chunk.unwrap()))
+            .collect();
+
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "partial reas</th"
+        );
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("error")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    /// content_block_start / content_block_stop 的先后顺序，形如 "start:0:text"。
+    fn block_boundaries(events: &[Value]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|event| {
+                let index = event.get("index").and_then(|v| v.as_u64())?;
+                match event_type(event)? {
+                    "content_block_start" => Some(format!(
+                        "start:{index}:{}",
+                        event
+                            .pointer("/content_block/type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                    )),
+                    "content_block_stop" => Some(format!("stop:{index}")),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_flushes_held_content_before_the_tool_block_opens() {
+        // 状态机扣住的内容（纯空白、半截开标签、闭合标签短尾）必须在工具块打开之前
+        // 下发并关块。拖到 finish_reason 才冲刷的话，文本块会在工具块未关时开出，
+        // 而且排到工具块之后。
+        let tool_call = "data: {\"id\":\"tool\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{}\"}}]}}]}\n\n";
+        let finish = "data: {\"id\":\"tool\",\"model\":\"m\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
+
+        let cases = [
+            ("\n\n", "text_delta", "/delta/text", "\n\n", "text"),
+            ("<thi", "text_delta", "/delta/text", "<thi", "text"),
+            (
+                "<thinking>plan</thin",
+                "thinking_delta",
+                "/delta/thinking",
+                "plan</thin",
+                "thinking",
+            ),
+        ];
+
+        for (content, delta_type, field, expected, block_type) in cases {
+            let events = collect_events(vec![
+                content_chunk("tool", content),
+                tool_call.to_string(),
+                finish.to_string(),
+            ])
+            .await;
+
+            assert_eq!(
+                collect_delta_text(&events, delta_type, field),
+                expected,
+                "content {content:?}"
+            );
+            assert_eq!(
+                block_boundaries(&events),
+                vec![
+                    format!("start:0:{block_type}"),
+                    "stop:0".to_string(),
+                    "start:1:tool_use".to_string(),
+                    "stop:1".to_string(),
+                ],
+                "content {content:?}"
+            );
+        }
     }
 }

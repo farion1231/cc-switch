@@ -971,24 +971,14 @@ fn windows_cmd_double_quote_arg(value: &str) -> String {
 }
 
 /// 获取单个工具的版本信息（内部实现）
-async fn get_single_tool_version_impl(
+/// 本机工具的版本（只探测本地，不联网）。
+fn probe_local_version(
     tool: &str,
+    wsl_distro: Option<&str>,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
-) -> ToolVersion {
-    debug_assert!(
-        VALID_TOOLS.contains(&tool),
-        "unexpected tool name in get_single_tool_version_impl: {tool}"
-    );
-
-    // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
-
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
-
-    // 1. 获取本地版本
-    let probe = if let Some(distro) = wsl_distro.as_deref() {
+) -> ShellProbe {
+    if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
         #[cfg(target_os = "windows")]
@@ -1019,7 +1009,36 @@ async fn get_single_tool_version_impl(
                 found => found,
             }
         }
-    };
+    }
+}
+
+/// 本机实际安装的工具版本（和「关于」页探测的是同一个）；拿不到为 `None`。
+pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
+    let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+    match probe_local_version(tool, wsl_distro.as_deref(), None, None) {
+        ShellProbe::Found(version) => Some(version),
+        _ => None,
+    }
+}
+
+async fn get_single_tool_version_impl(
+    tool: &str,
+    wsl_shell: Option<&str>,
+    wsl_shell_flag: Option<&str>,
+) -> ToolVersion {
+    debug_assert!(
+        VALID_TOOLS.contains(&tool),
+        "unexpected tool name in get_single_tool_version_impl: {tool}"
+    );
+
+    // 判断该工具的运行环境 & WSL distro（如有）
+    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+
+    // 使用全局 HTTP 客户端（已包含代理配置）
+    let client = crate::proxy::http_client::get();
+
+    // 1. 获取本地版本
+    let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),

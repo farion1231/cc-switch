@@ -915,6 +915,53 @@ mod tests {
     }
 
     #[test]
+    fn native_compaction_strips_tools_after_tool_search_history_is_promoted() {
+        let mut body = json!({
+            "model": "grok-4.1-fast",
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "input": [{
+                "type": "tool_search_call",
+                "call_id": "search-1",
+                "arguments": { "query": "docs" }
+            }, {
+                "type": "tool_search_output",
+                "call_id": "search-1",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "docs",
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "parameters": { "type": "object" }
+                    }]
+                }]
+            }, {
+                "type": "compaction_trigger"
+            }]
+        });
+        super::super::transform_codex_chat::ensure_responses_tool_search_shim(&mut body, true);
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        assert!(body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "docs__search"));
+        super::super::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+            &mut body,
+        );
+        assert!(super::super::codex_compaction::prepare_native_third_party_request(&mut body));
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+        assert!(body.get("parallel_tool_calls").is_none());
+        assert_eq!(body["input"][0]["type"], "function_call");
+        assert_eq!(body["input"][1]["type"], "function_call_output");
+        assert!(serde_json::to_string(&body["input"][2])
+            .unwrap()
+            .contains("CONTEXT CHECKPOINT COMPACTION"));
+    }
+
+    #[test]
     fn native_followup_promotes_discovered_namespace_tools_and_restores_identity() {
         let mut body = json!({
             "model": "gpt-5.6-sol",

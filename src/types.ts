@@ -232,6 +232,18 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
+  stackModels?: ClaudeStackModel[];
+}
+
+// Stack 模式下 Claude Code 供应商发布的一个模型
+export interface ClaudeStackModel {
+  // 发往上游的模型名（不带 1M 标记）
+  model: string;
+  // 选择器里的显示名，没有时用模型名
+  displayName?: string;
+  // 上游是 1M 窗口
+  oneM?: boolean;
 }
 
 // Skill 同步方式
@@ -369,6 +381,8 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 是否在主页面显示 Stack 模式开关（默认关闭）。和 enableLocalProxy 二选一，只影响 Claude Code、Codex
+  enableStackMode?: boolean;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
