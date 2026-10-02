@@ -136,6 +136,28 @@ export function useUninstallSkill() {
   });
 }
 
+/**
+ * 批量卸载 Skill
+ *
+ * 复用单条卸载的缓存收敛逻辑（移除 installed 条目、清理 updates、收敛
+ * backups/unmanaged），因此逐条调用 useUninstallSkill 的缓存分支即可；用
+ * 串行执行是因为每条卸载都会写应用配置文件与本地备份。
+ */
+export function useBulkUninstallSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      runSequentialBulkAction(ids, (id) => skillsApi.uninstallUnified(id)),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "updates"] }),
+      ]),
+  });
+}
+
 export function useRestoreSkillBackup() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -23,6 +23,7 @@ import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
+import { usePagedList } from "@/hooks/usePagedList";
 
 function getMcpSearchText(id: string, server: McpServer): string {
   const spec = server.server ?? {};
@@ -54,6 +55,9 @@ interface UnifiedMcpPanelProps {
   onOpenChange: (open: boolean) => void;
   onInteractionBlockedChange?: (blocked: boolean) => void;
 }
+
+/** 每页渲染多少行 server。 */
+const SERVER_PAGE_SIZE = 60;
 
 export interface UnifiedMcpPanelHandle {
   openAdd: () => void;
@@ -131,6 +135,18 @@ const UnifiedMcpPanel = React.forwardRef<
       getMcpSearchText(id, server).includes(normalizedSearchQuery),
     );
   }, [normalizedSearchQuery, serverEntries]);
+
+  // 一次渲染一页：server 多了之后全量挂载会让首屏和每次按键都为全部行付
+  // 建树成本，而视口只看得到几十行。
+  const {
+    page: pagedServerEntries,
+    hasMore: hasMoreServers,
+    showMore: showMoreServers,
+  } = usePagedList(
+    filteredServerEntries,
+    SERVER_PAGE_SIZE,
+    normalizedSearchQuery,
+  );
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -319,7 +335,7 @@ const UnifiedMcpPanel = React.forwardRef<
           ) : (
             <TooltipProvider delayDuration={300}>
               <div className="rounded-xl border border-border-default overflow-hidden">
-                {filteredServerEntries.map(([id, server], index) => (
+                {pagedServerEntries.map(([id, server], index) => (
                   <UnifiedMcpListItem
                     key={id}
                     id={id}
@@ -328,10 +344,25 @@ const UnifiedMcpPanel = React.forwardRef<
                     onEdit={handleEdit}
                     onDelete={handleDelete}
                     disabled={interactionBlocked}
-                    isLast={index === filteredServerEntries.length - 1}
+                    isLast={index === pagedServerEntries.length - 1}
                   />
                 ))}
               </div>
+              {hasMoreServers && (
+                <div className="mt-3 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={interactionBlocked}
+                    onClick={showMoreServers}
+                  >
+                    {t("mcp.unifiedPanel.loadMore", {
+                      defaultValue: "Load more",
+                    })}
+                  </Button>
+                </div>
+              )}
             </TooltipProvider>
           )}
         </div>
@@ -379,100 +410,102 @@ interface UnifiedMcpListItemProps {
   isLast?: boolean;
 }
 
-const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
-  id,
-  server,
-  onToggleApp,
-  onEdit,
-  onDelete,
-  disabled,
-  isLast,
-}) => {
-  const { t } = useTranslation();
-  const name = server.name || id;
-  const description = server.description || "";
+/**
+ * MCP server 行。
+ *
+ * React.memo：父组件每 2 秒轮询一次代理状态、键入搜索词还会让整表重筛，
+ * 不记忆化的话每一行都会在每次按键时重建。父组件用 useCallback 稳定住回调，
+ * 因此只有自身相关字段变化时才重渲染。
+ */
+const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = React.memo(
+  ({ id, server, onToggleApp, onEdit, onDelete, disabled, isLast }) => {
+    const { t } = useTranslation();
+    const name = server.name || id;
+    const description = server.description || "";
 
-  const meta = mcpPresets.find((p) => p.id === id);
-  const docsUrl = server.docs || meta?.docs;
-  const homepageUrl = server.homepage || meta?.homepage;
-  const tags = server.tags || meta?.tags;
+    const meta = mcpPresets.find((p) => p.id === id);
+    const docsUrl = server.docs || meta?.docs;
+    const homepageUrl = server.homepage || meta?.homepage;
+    const tags = server.tags || meta?.tags;
 
-  const openDocs = async () => {
-    const url = docsUrl || homepageUrl;
-    if (!url) return;
-    try {
-      await settingsApi.openExternal(url);
-    } catch {
-      // ignore
-    }
-  };
+    const openDocs = async () => {
+      const url = docsUrl || homepageUrl;
+      if (!url) return;
+      try {
+        await settingsApi.openExternal(url);
+      } catch {
+        // ignore
+      }
+    };
 
-  return (
-    <ListItemRow isLast={isLast}>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm text-foreground truncate">
-            {name}
-          </span>
-          {docsUrl && (
-            <button
-              type="button"
-              onClick={openDocs}
-              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
-              title={t("mcp.presets.docs")}
+    return (
+      <ListItemRow isLast={isLast}>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium text-sm text-foreground truncate">
+              {name}
+            </span>
+            {docsUrl && (
+              <button
+                type="button"
+                onClick={openDocs}
+                className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+                title={t("mcp.presets.docs")}
+              >
+                <ExternalLink size={12} />
+              </button>
+            )}
+          </div>
+          {description && (
+            <p
+              className="text-xs text-muted-foreground truncate"
+              title={description}
             >
-              <ExternalLink size={12} />
-            </button>
+              {description}
+            </p>
+          )}
+          {!description && tags && tags.length > 0 && (
+            <p className="text-xs text-muted-foreground/60 truncate">
+              {tags.join(", ")}
+            </p>
           )}
         </div>
-        {description && (
-          <p
-            className="text-xs text-muted-foreground truncate"
-            title={description}
+
+        <AppToggleGroup
+          apps={server.apps}
+          onToggle={(app, enabled) => onToggleApp(id, app, enabled)}
+          appIds={MCP_APP_IDS}
+          disabled={disabled}
+        />
+
+        <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 disabled:opacity-100"
+            onClick={() => onEdit(id)}
+            disabled={disabled}
+            title={t("common.edit")}
           >
-            {description}
-          </p>
-        )}
-        {!description && tags && tags.length > 0 && (
-          <p className="text-xs text-muted-foreground/60 truncate">
-            {tags.join(", ")}
-          </p>
-        )}
-      </div>
-
-      <AppToggleGroup
-        apps={server.apps}
-        onToggle={(app, enabled) => onToggleApp(id, app, enabled)}
-        appIds={MCP_APP_IDS}
-        disabled={disabled}
-      />
-
-      <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 disabled:opacity-100"
-          onClick={() => onEdit(id)}
-          disabled={disabled}
-          title={t("common.edit")}
-        >
-          <Edit3 size={14} />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-          onClick={() => onDelete(id)}
-          disabled={disabled}
-          title={t("common.delete")}
-        >
-          <Trash2 size={14} />
-        </Button>
-      </div>
-    </ListItemRow>
-  );
-};
+            <Edit3 size={14} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+            onClick={() => onDelete(id)}
+            disabled={disabled}
+            title={t("common.delete")}
+          >
+            <Trash2 size={14} />
+          </Button>
+        </div>
+      </ListItemRow>
+    );
+  },
+);
+UnifiedMcpListItem.displayName = "UnifiedMcpListItem";
 
 export default UnifiedMcpPanel;

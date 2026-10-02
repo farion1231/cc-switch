@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import { render, screen, waitFor, act, within } from "@testing-library/react";
+import { fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -15,6 +16,7 @@ import type {
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
 const uninstallSkillMock = vi.fn();
+const bulkUninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
@@ -82,6 +84,10 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useUninstallSkill: () => ({
     mutateAsync: uninstallSkillMock,
+  }),
+  useBulkUninstallSkill: () => ({
+    mutateAsync: bulkUninstallSkillMock,
+    isPending: false,
   }),
   useScanUnmanagedSkills: () => ({
     data: [
@@ -179,6 +185,8 @@ describe("UnifiedSkillsPanel", () => {
     toastSuccessMock.mockReset();
     toastWarningMock.mockReset();
     uninstallSkillMock.mockReset();
+    bulkUninstallSkillMock.mockReset();
+    bulkUninstallSkillMock.mockResolvedValue({ succeeded: [], failed: [] });
     importSkillsMock.mockReset();
     installFromZipMock.mockReset();
     deleteSkillBackupMock.mockReset();
@@ -209,10 +217,11 @@ describe("UnifiedSkillsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("skills.import")).toBeInTheDocument();
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+    // The overlay is hand-rolled (no role="dialog"); the heading carries the key.
+    expect(screen.getByRole("heading", { name: "skills.import" })).toBeTruthy();
 
     await act(async () => {
       screen.getByText("skills.importSelected").click();
@@ -858,5 +867,196 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByRole("button", { name: "Pi" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
+  });
+
+  describe("management filters and bulk selection", () => {
+    const bulkCountText = () => {
+      const toolbar = screen.getByRole("toolbar");
+      return toolbar.querySelector("span")?.textContent?.trim() ?? "";
+    };
+
+    /**
+     * Row checkboxes only. AppCountBar renders its app counters with
+     * role="checkbox" too, so a bare getAllByRole("checkbox") picks those up first.
+     */
+    const rowCheckboxes = () =>
+      Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          'input[type="checkbox"][aria-label="skills.manage.selectSkill"]',
+        ),
+      );
+
+    const threeSkills = () => {
+      installedSkillsMock = [
+        makeInstalledSkill({
+          id: "repo/enabled-claude",
+          name: "Repo Claude Skill",
+          description: "from a repo",
+          repoOwner: "owner",
+          repoName: "one",
+          apps: { claude: true },
+        }),
+        makeInstalledSkill({
+          id: "repo/local-only",
+          name: "Local Only Skill",
+          description: "imported manually",
+          repoOwner: undefined,
+          repoName: undefined,
+        }),
+        makeInstalledSkill({
+          id: "repo/updated",
+          name: "Updatable Skill",
+          description: "has a pending update",
+          repoOwner: "owner",
+          repoName: "two",
+          apps: { claude: true, codex: true },
+        }),
+      ];
+      skillUpdatesMock = [
+        { id: "repo/updated", name: "Updatable Skill", remoteHash: "next" },
+      ];
+    };
+
+    it("narrows the list with app chips and switches any/all matching", () => {
+      threeSkills();
+      renderPanel();
+
+      // Chip text is the raw app id: the test i18n catalog is empty, so
+      // t("skills.apps.codex") falls back to the key's last segment.
+      const chipButton = (label: string) =>
+        screen
+          .getAllByRole("button")
+          .find((button) => button.textContent?.includes(label))!;
+
+      // "any" (default): Claude OR Codex → both app-enabled skills, not local-only.
+      fireEvent.click(chipButton("claude"));
+      fireEvent.click(chipButton("codex"));
+      expect(screen.getByText("Repo Claude Skill")).toBeInTheDocument();
+      expect(screen.getByText("Updatable Skill")).toBeInTheDocument();
+      expect(screen.queryByText("Local Only Skill")).not.toBeInTheDocument();
+
+      // Selecting two apps reveals the mode switch; "all" keeps only the
+      // skill enabled for both.
+      fireEvent.click(screen.getByText("skills.manage.filterAppModeAll"));
+      expect(screen.queryByText("Repo Claude Skill")).not.toBeInTheDocument();
+      expect(screen.getByText("Updatable Skill")).toBeInTheDocument();
+      expect(screen.queryByText("Local Only Skill")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByText("skills.manage.filterAppModeAny"));
+      expect(screen.getByText("Repo Claude Skill")).toBeInTheDocument();
+    });
+
+    it("combines source and update filters with the search text", () => {
+      threeSkills();
+      renderPanel();
+
+      const chipButton = (label: string) =>
+        screen
+          .getAllByRole("button")
+          .find((button) => button.textContent?.includes(label))!;
+
+      fireEvent.click(chipButton("skills.manage.sourceLocal"));
+      expect(screen.getByText("Local Only Skill")).toBeInTheDocument();
+      expect(screen.queryByText("Repo Claude Skill")).not.toBeInTheDocument();
+
+      fireEvent.click(chipButton("skills.manage.updatedAvailable"));
+      expect(
+        screen.getByText("skills.noInstalledSearchResults"),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByText("skills.manage.sourceRepo"));
+      expect(screen.getByText("Updatable Skill")).toBeInTheDocument();
+      expect(screen.queryByText("Local Only Skill")).not.toBeInTheDocument();
+
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Updatable" } },
+      );
+      expect(screen.getByText("Updatable Skill")).toBeInTheDocument();
+      // The real key with its interpolation stripped by the empty test catalog.
+      expect(
+        screen.getByText("skills.manage.visibleCount"),
+      ).toBeInTheDocument();
+    });
+
+    it("uninstalls exactly the selected rows through the bulk action", async () => {
+      threeSkills();
+      bulkUninstallSkillMock.mockResolvedValue({
+        succeeded: ["repo/enabled-claude", "repo/local-only"],
+        failed: [],
+      });
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[0]);
+      await user.click(rowCheckboxes()[1]);
+
+      // The bulk bar renders a plain "selected / total" figure across three
+      // text nodes, so compare the normalized span text.
+      await waitFor(() => expect(bulkCountText()).toBe("2 / 3"));
+
+      await user.click(screen.getByText("skills.manage.bulkUninstall"));
+      // The confirm dialog carries the bulk label as its confirm text.
+      await user.click(
+        screen.getByRole("button", { name: "skills.manage.bulkUninstall" }),
+      );
+
+      await waitFor(() => {
+        expect(bulkUninstallSkillMock).toHaveBeenCalledWith([
+          "repo/enabled-claude",
+          "repo/local-only",
+        ]);
+      });
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "skills.manage.bulkUninstallSuccess",
+        { closeButton: true },
+      );
+    });
+
+    it("keeps the selection valid when the filtered set changes", async () => {
+      threeSkills();
+      renderPanel();
+
+      const user = userEvent.setup();
+      await user.click(rowCheckboxes()[1]);
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+
+      // Narrowing the list narrows the bar's denominator too: one selected row,
+      // shown against the one row that still matches. The stale selection
+      // survives, which is the point — clearing the search brings it back.
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "Repo Claude" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 1"));
+
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        { target: { value: "" } },
+      );
+      await waitFor(() => expect(bulkCountText()).toBe("1 / 3"));
+    });
+
+    it("shows a Load more control once the list exceeds one page", () => {
+      installedSkillsMock = Array.from({ length: 65 }, (_, index) =>
+        makeInstalledSkill({
+          id: `page/skill-${index}`,
+          name: `Paged Skill ${index}`,
+        }),
+      );
+      renderPanel();
+
+      // First page only: 60 rows rendered, the rest waits behind Load more.
+      expect(screen.getAllByText(/Paged Skill \d+/).length).toBe(60);
+
+      fireEvent.click(screen.getByText("skills.manage.loadMore"));
+      expect(screen.getAllByText(/Paged Skill \d+/).length).toBe(65);
+    });
   });
 });

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -19,6 +19,7 @@ import {
   useSkillBackups,
   useRestoreSkillBackup,
   useBulkToggleSkillApp,
+  useBulkUninstallSkill,
   useToggleSkillApp,
   useUninstallSkill,
   useScanUnmanagedSkills,
@@ -35,10 +36,16 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { usePagedList } from "@/hooks/usePagedList";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
+import {
+  ManagementFilterChips,
+  type ManagementFilterOption,
+} from "@/components/common/ManagementFilterChips";
+import { ManagementBulkBar } from "@/components/common/ManagementBulkBar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
@@ -50,6 +57,18 @@ import {
 } from "@/components/ui/dialog";
 
 const IMPORT_SKILLS_APP_IDS = SKILLS_APP_IDS.filter((app) => app !== "pi");
+
+/**
+ * 涓€娆℃覆鏌撳灏戣銆傚垪琛ㄥ彲鑳借涓嬪嚑鐧炬潯 skill锛屽叏閲忔寕杞戒細鎶婇灞忔椂闂? * 鍏ㄩ儴鑺卞湪 DOM 涓婏紱鍒嗛〉鍚庢瘡椤典粛鏄父鏁版垚鏈€? */
+const SKILLS_PAGE_SIZE = 60;
+
+type SkillAppFilter = AppId;
+type SkillSourceFilter = "repo" | "local";
+type SkillUpdateFilter = "updated";
+
+/** ManagementFilterChips 鐨勯€夐」绫诲瀷鍒悕锛堣缁勪欢鏄?app 鏃犲叧鐨勶級銆?*/
+type SourceFilterOption = ManagementFilterOption;
+type UpdateFilterOption = ManagementFilterOption;
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -102,6 +121,11 @@ const UnifiedSkillsPanel = React.forwardRef<
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterApps, setFilterApps] = useState<SkillAppFilter[]>([]);
+  const [filterAppMode, setFilterAppMode] = useState<"any" | "all">("any");
+  const [filterSources, setFilterSources] = useState<SkillSourceFilter[]>([]);
+  const [filterUpdates, setFilterUpdates] = useState<SkillUpdateFilter[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = React.useRef(false);
   const checkUpdatesLockRef = React.useRef(false);
@@ -115,9 +139,10 @@ const UnifiedSkillsPanel = React.forwardRef<
   const deleteBackupMutation = useDeleteSkillBackup();
   const toggleAppMutation = useToggleSkillApp();
   const bulkToggleAppMutation = useBulkToggleSkillApp();
+  const bulkUninstallMutation = useBulkUninstallSkill();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
-  // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
+  // enabled: true — 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
@@ -136,6 +161,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     deleteBackupMutation.isPending ||
     toggleAppMutation.isPending ||
     bulkToggleAppMutation.isPending ||
+    bulkUninstallMutation.isPending ||
     uninstallMutation.isPending ||
     restoreBackupMutation.isPending ||
     importMutation.isPending ||
@@ -235,13 +261,74 @@ const UnifiedSkillsPanel = React.forwardRef<
     return counts;
   }, [skills]);
 
+  // 已安装 skill 的可筛选维度（app / 来源 / 有更新）与其计数。
+  const appFilterOptions = useMemo(() => {
+    if (!skills) return [];
+    return visibleSkillAppIds.map((app) => ({
+      value: app,
+      label: t("skills.apps." + app, app),
+      count: skills.filter((skill) => skill.apps[app]).length,
+    }));
+  }, [skills, visibleSkillAppIds, t]);
+
+  const sourceFilterOptions = useMemo<SourceFilterOption[]>(() => {
+    if (!skills) return [];
+    const repoCount = skills.filter(
+      (skill) => skill.repoOwner && skill.repoName,
+    ).length;
+    return [
+      { value: "repo", label: t("skills.manage.sourceRepo"), count: repoCount },
+      {
+        value: "local",
+        label: t("skills.manage.sourceLocal"),
+        count: skills.length - repoCount,
+      },
+    ];
+  }, [skills, t]);
+
+  const updateFilterOptions = useMemo<UpdateFilterOption[]>(() => {
+    if (!applicableSkillUpdates.length) return [];
+    return [
+      {
+        value: "updated",
+        label: t("skills.manage.updatedAvailable"),
+        count: applicableSkillUpdates.length,
+      },
+    ];
+  }, [applicableSkillUpdates, t]);
+
+  const hasActiveFilters =
+    filterApps.length > 0 ||
+    filterSources.length > 0 ||
+    filterUpdates.length > 0 ||
+    searchQuery.trim() !== "";
+
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
 
     const query = searchQuery.trim().toLocaleLowerCase();
-    if (!query) return skills;
+    const updatesMatch = filterUpdates.includes("updated");
+    const sourcesMatch = filterSources.map(String);
 
     return skills.filter((skill) => {
+      if (
+        filterApps.length > 0 &&
+        !(filterAppMode === "any"
+          ? filterApps.some((app) => skill.apps[app])
+          : filterApps.every((app) => skill.apps[app]))
+      ) {
+        return false;
+      }
+
+      if (filterSources.length > 0) {
+        const isRepo = Boolean(skill.repoOwner && skill.repoName);
+        if (!sourcesMatch.includes(isRepo ? "repo" : "local")) return false;
+      }
+
+      if (updatesMatch && !updatesMap[skill.id]) return false;
+
+      if (!query) return true;
+
       const searchableValues = [
         skill.name,
         skill.id,
@@ -258,7 +345,66 @@ const UnifiedSkillsPanel = React.forwardRef<
         value?.toLocaleLowerCase().includes(query),
       );
     });
-  }, [searchQuery, skills]);
+  }, [
+    skills,
+    searchQuery,
+    filterApps,
+    filterAppMode,
+    filterSources,
+    filterUpdates,
+    updatesMap,
+  ]);
+
+  // 筛选签名：任一维度变化都让分页回到第一页。
+  const activeFilterKey = useMemo(
+    () =>
+      [
+        searchQuery.trim().toLocaleLowerCase(),
+        filterAppMode,
+        [...filterApps].sort().join(","),
+        [...filterSources].sort().join(","),
+        [...filterUpdates].sort().join(","),
+      ].join("|"),
+    [searchQuery, filterAppMode, filterApps, filterSources, filterUpdates],
+  );
+
+  // 筛选变化时分页回到第一页（filterKey 变了就是结果集换了）。
+  const {
+    page: pagedSkills,
+    total: filteredTotal,
+    hasMore,
+    showMore: loadMoreSkills,
+  } = usePagedList(filteredSkills, SKILLS_PAGE_SIZE, activeFilterKey);
+
+  // 选择集跟随可选项收敛：列表刷新或筛选后，已不存在的 id 不应留在选中态里。
+  useEffect(() => {
+    setSelectedIds((previous) => {
+      const available = new Set((skills ?? []).map((skill) => skill.id));
+      const next = previous.filter((id) => available.has(id));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [skills]);
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((previous) =>
+      previous.includes(id)
+        ? previous.filter((item) => item !== id)
+        : [...previous, id],
+    );
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
+
+  const selectAllFiltered = useCallback(() => {
+    setSelectedIds(filteredSkills.map((skill) => skill.id));
+  }, [filteredSkills]);
+
+  const resetFilters = useCallback(() => {
+    setFilterApps([]);
+    setFilterSources([]);
+    setFilterUpdates([]);
+    setSearchQuery("");
+  }, []);
 
   const pendingApp = bulkToggleAppMutation.isPending
     ? bulkToggleAppMutation.variables?.app
@@ -354,6 +500,62 @@ const UnifiedSkillsPanel = React.forwardRef<
           }
         } catch (error) {
           toast.error(t("common.error"), { description: String(error) });
+        } finally {
+          endWrite();
+        }
+      },
+    });
+  };
+
+  const handleBulkUninstall = () => {
+    if (selectedIds.length === 0) return;
+    if (
+      checkUpdatesLockRef.current ||
+      writeLockRef.current ||
+      interactionBlocked
+    ) {
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.uninstall"),
+      message: t("skills.manage.bulkUninstallConfirm", {
+        count: selectedIds.length,
+      }),
+      confirmText: t("skills.manage.bulkUninstall", {
+        count: selectedIds.length,
+      }),
+      variant: "destructive",
+      onConfirm: async () => {
+        if (!beginWrite(true)) return;
+        const ids = [...selectedIds];
+        try {
+          const result = await bulkUninstallMutation.mutateAsync(ids);
+          setConfirmDialog(null);
+          if (result.failed.length === 0) {
+            toast.success(
+              t("skills.manage.bulkUninstallSuccess", {
+                count: result.succeeded.length,
+              }),
+              { closeButton: true },
+            );
+          } else {
+            toast.warning(
+              t("skills.manage.bulkUninstallPartial", {
+                succeeded: result.succeeded.length,
+                failed: result.failed.length,
+              }),
+              {
+                description: String(result.failed[0].error),
+                closeButton: true,
+              },
+            );
+          }
+          clearSelection();
+        } catch (error) {
+          toast.error(t("skills.manage.bulkUninstallFailed"), {
+            description: String(error),
+          });
         } finally {
           endWrite();
         }
@@ -671,6 +873,108 @@ const UnifiedSkillsPanel = React.forwardRef<
         clearLabel={t("common.clear")}
       />
 
+      {/* 绛涢€夎姱鐗囪锛歛pp / 鏉ユ簮 / 鏈夋洿鏂?*/}
+      {skills && skills.length > 0 && (
+        <div className="mb-3 space-y-2">
+          <ManagementFilterChips
+            label={t("skills.manage.filterApp")}
+            options={appFilterOptions}
+            selected={filterApps}
+            onSelectionChange={(next) =>
+              setFilterApps(next as SkillAppFilter[])
+            }
+            disabled={interactionBlocked}
+          />
+          {filterApps.length > 1 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{t("skills.manage.filterAppMode")}</span>
+              {(["any", "all"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={filterAppMode === mode}
+                  onClick={() => setFilterAppMode(mode)}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                    filterAppMode === mode
+                      ? "border-primary/40 bg-primary/10 text-foreground"
+                      : "border-border-default hover:bg-muted",
+                  )}
+                >
+                  {t(
+                    mode === "any"
+                      ? "skills.manage.filterAppModeAny"
+                      : "skills.manage.filterAppModeAll",
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <ManagementFilterChips
+              label={t("skills.manage.filterSource")}
+              options={sourceFilterOptions}
+              selected={filterSources}
+              onSelectionChange={(next) =>
+                setFilterSources(next as SkillSourceFilter[])
+              }
+              disabled={interactionBlocked}
+            />
+            {updateFilterOptions.length > 0 && (
+              <ManagementFilterChips
+                label={t("skills.manage.filterUpdated")}
+                options={updateFilterOptions}
+                selected={filterUpdates}
+                onSelectionChange={(next) =>
+                  setFilterUpdates(next as SkillUpdateFilter[])
+                }
+                disabled={interactionBlocked}
+              />
+            )}
+            {hasActiveFilters && (
+              <div className="flex items-center gap-2 pl-1 text-xs text-muted-foreground">
+                <span>
+                  {t("skills.manage.visibleCount", {
+                    visible: pagedSkills.length,
+                    total: filteredTotal,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="underline hover:text-foreground"
+                  onClick={resetFilters}
+                >
+                  {t("common.reset")}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <ManagementBulkBar
+        selectedCount={selectedIds.length}
+        totalCount={filteredTotal}
+        onSelectAll={selectAllFiltered}
+        onClear={clearSelection}
+        selectAllLabel={t("skills.manage.selectAll")}
+        clearLabel={t("skills.manage.clearSelection")}
+        toolbarLabel={t("skills.manage.bulkActions")}
+        disabled={interactionBlocked}
+      >
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          className="h-7 text-xs"
+          disabled={interactionBlocked}
+          onClick={handleBulkUninstall}
+        >
+          <Trash2 size={12} className="mr-1" />
+          {t("skills.manage.bulkUninstall", { count: selectedIds.length })}
+        </Button>
+      </ManagementBulkBar>
+
       <ScrollArea className="-mr-3 flex-1 min-h-0" type="auto">
         <div className="pb-24 pr-3">
           {isLoading ? (
@@ -697,10 +1001,12 @@ const UnifiedSkillsPanel = React.forwardRef<
           ) : (
             <TooltipProvider delayDuration={300}>
               <div className="rounded-xl border border-border-default overflow-hidden">
-                {filteredSkills.map((skill, index) => (
+                {pagedSkills.map((skill, index) => (
                   <InstalledSkillListItem
                     key={skill.id}
                     skill={skill}
+                    selected={selectedIds.includes(skill.id)}
+                    onSelectedChange={() => toggleSelected(skill.id)}
                     hasUpdate={!!updatesMap[skill.id]}
                     isUpdating={
                       updateSkillMutation.isPending &&
@@ -711,10 +1017,23 @@ const UnifiedSkillsPanel = React.forwardRef<
                     onToggleApp={handleToggleApp}
                     onUninstall={() => handleUninstall(skill)}
                     onUpdate={() => handleUpdateSkill(skill)}
-                    isLast={index === filteredSkills.length - 1}
+                    isLast={index === pagedSkills.length - 1 && !hasMore}
                   />
                 ))}
               </div>
+              {hasMore && (
+                <div className="mt-3 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={interactionBlocked}
+                    onClick={loadMoreSkills}
+                  >
+                    {t("skills.manage.loadMore")}
+                  </Button>
+                </div>
+              )}
             </TooltipProvider>
           )}
         </div>
@@ -765,125 +1084,144 @@ interface InstalledSkillListItemProps {
   hasUpdate?: boolean;
   isUpdating?: boolean;
   actionsDisabled?: boolean;
+  selected?: boolean;
+  onSelectedChange?: () => void;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
   isLast?: boolean;
 }
 
-const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
-  skill,
-  appIds,
-  hasUpdate,
-  isUpdating,
-  actionsDisabled,
-  onToggleApp,
-  onUninstall,
-  onUpdate,
-  isLast,
-}) => {
-  const { t } = useTranslation();
+/**
+ * 宸插畨瑁?skill 鐨勮銆? *
+ * 鐢?React.memo 鍖呬綇锛氱埗缁勪欢姣?2 绉掕疆璇竴娆′唬鐞嗙姸鎬併€侀敭鍏ユ悳绱㈣瘝杩樹細璁╂暣琛? * 閲嶇瓫锛岃嫢涓嶈蹇嗗寲锛屽嚑鐧捐閮戒細鍦ㄦ瘡娆℃寜閿椂閲嶅缓銆傚洖璋?props 鐢辩埗缁勪欢鐢? * useCallback 绋冲畾浣忥紝鍥犳鍙湁鑷韩鐩稿叧瀛楁鍙樺寲鏃舵墠閲嶆覆鏌撱€? */
+const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> =
+  React.memo(
+    ({
+      skill,
+      appIds,
+      hasUpdate,
+      isUpdating,
+      actionsDisabled,
+      selected = false,
+      onSelectedChange,
+      onToggleApp,
+      onUninstall,
+      onUpdate,
+      isLast,
+    }) => {
+      const { t } = useTranslation();
 
-  const openDocs = async () => {
-    if (!skill.readmeUrl) return;
-    try {
-      await settingsApi.openExternal(skill.readmeUrl);
-    } catch {
-      // ignore
-    }
-  };
+      const openDocs = async () => {
+        if (!skill.readmeUrl) return;
+        try {
+          await settingsApi.openExternal(skill.readmeUrl);
+        } catch {
+          // ignore
+        }
+      };
 
-  const sourceLabel = useMemo(() => {
-    if (skill.repoOwner && skill.repoName) {
-      return `${skill.repoOwner}/${skill.repoName}`;
-    }
-    return t("skills.local");
-  }, [skill.repoOwner, skill.repoName, t]);
+      const sourceLabel = useMemo(() => {
+        if (skill.repoOwner && skill.repoName) {
+          return `${skill.repoOwner}/${skill.repoName}`;
+        }
+        return t("skills.local");
+      }, [skill.repoOwner, skill.repoName, t]);
 
-  return (
-    <ListItemRow isLast={isLast}>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm text-foreground truncate">
-            {skill.name}
-          </span>
-          {skill.readmeUrl && (
-            <button
+      return (
+        <ListItemRow isLast={isLast}>
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 flex-shrink-0 accent-primary"
+            checked={selected}
+            disabled={actionsDisabled}
+            onChange={() => onSelectedChange?.()}
+            aria-label={t("skills.manage.selectSkill", { name: skill.name })}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="font-medium text-sm text-foreground truncate">
+                {skill.name}
+              </span>
+              {skill.readmeUrl && (
+                <button
+                  type="button"
+                  onClick={openDocs}
+                  className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+                >
+                  <ExternalLink size={12} />
+                </button>
+              )}
+              <span className="text-xs text-muted-foreground/50 flex-shrink-0">
+                {sourceLabel}
+              </span>
+              {hasUpdate && (
+                <Badge
+                  variant="outline"
+                  className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-amber-500 text-amber-600 dark:text-amber-400"
+                >
+                  {t("skills.updateAvailable")}
+                </Badge>
+              )}
+            </div>
+            {skill.description && (
+              <p
+                className="text-xs text-muted-foreground truncate"
+                title={skill.description}
+              >
+                {skill.description}
+              </p>
+            )}
+          </div>
+
+          <AppToggleGroup
+            apps={skill.apps}
+            onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+            appIds={appIds}
+            disabled={actionsDisabled}
+          />
+
+          <div
+            className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            style={hasUpdate ? { opacity: 1 } : undefined}
+          >
+            {hasUpdate && onUpdate && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10",
+                  actionsDisabled && !isUpdating && "disabled:opacity-100",
+                )}
+                onClick={onUpdate}
+                disabled={actionsDisabled || isUpdating}
+                title={t("skills.update")}
+              >
+                {isUpdating ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+              </Button>
+            )}
+            <Button
               type="button"
-              onClick={openDocs}
-              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+              onClick={onUninstall}
+              disabled={actionsDisabled}
+              title={t("skills.uninstall")}
             >
-              <ExternalLink size={12} />
-            </button>
-          )}
-          <span className="text-xs text-muted-foreground/50 flex-shrink-0">
-            {sourceLabel}
-          </span>
-          {hasUpdate && (
-            <Badge
-              variant="outline"
-              className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-amber-500 text-amber-600 dark:text-amber-400"
-            >
-              {t("skills.updateAvailable")}
-            </Badge>
-          )}
-        </div>
-        {skill.description && (
-          <p
-            className="text-xs text-muted-foreground truncate"
-            title={skill.description}
-          >
-            {skill.description}
-          </p>
-        )}
-      </div>
-
-      <AppToggleGroup
-        apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={appIds}
-        disabled={actionsDisabled}
-      />
-
-      <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={hasUpdate ? { opacity: 1 } : undefined}
-      >
-        {hasUpdate && onUpdate && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10",
-              actionsDisabled && !isUpdating && "disabled:opacity-100",
-            )}
-            onClick={onUpdate}
-            disabled={actionsDisabled || isUpdating}
-            title={t("skills.update")}
-          >
-            {isUpdating ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-          </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-          onClick={onUninstall}
-          disabled={actionsDisabled}
-          title={t("skills.uninstall")}
-        >
-          <Trash2 size={14} />
-        </Button>
-      </div>
-    </ListItemRow>
+              <Trash2 size={14} />
+            </Button>
+          </div>
+        </ListItemRow>
+      );
+    },
   );
-};
+InstalledSkillListItem.displayName = "InstalledSkillListItem";
 
 interface ImportSkillsDialogProps {
   skills: Array<{

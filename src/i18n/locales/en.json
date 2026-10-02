@@ -2030,6 +2030,7 @@
       "searchPlaceholder": "Search MCP name, description, tag, or command...",
       "searchAriaLabel": "Search managed MCP servers",
       "noSearchResults": "No MCP servers match your search",
+      "loadMore": "Load more",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -2661,6 +2662,31 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "manage": {
+      "filterApp": "Filter by app",
+      "filterAppAny": "Showing skills enabled for any selected app",
+      "filterAppAll": "Showing skills enabled for every selected app",
+      "filterAppMode": "Match mode",
+      "filterAppModeAny": "Any",
+      "filterAppModeAll": "All",
+      "filterSource": "Filter by source",
+      "sourceRepo": "Repository",
+      "sourceLocal": "Local",
+      "filterUpdated": "Filter by update",
+      "updatedAvailable": "Update available",
+      "selectSkill": "Select {{name}}",
+      "selectAll": "Select all",
+      "clearSelection": "Clear selection",
+      "bulkActions": "Bulk actions",
+      "selectedCount": "{{count}} selected",
+      "bulkUninstall": "Uninstall ({{count}})",
+      "bulkUninstallConfirm": "Uninstall {{count}} selected skills? Each one is backed up locally first.",
+      "bulkUninstallSuccess": "Uninstalled {{count}} skills",
+      "bulkUninstallPartial": "{{succeeded}} uninstalled, {{failed}} failed",
+      "bulkUninstallFailed": "Failed to uninstall skills",
+      "visibleCount": "{{visible}} of {{total}} shown",
+      "loadMore": "Load more"
     }
   },
   "deeplink": {
