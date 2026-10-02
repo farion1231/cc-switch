@@ -224,6 +224,11 @@ export interface ProviderMeta {
   maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
+  // Per-provider rectifier image cap: keep the first N images, replace the rest
+  // with an [Unsupported Image] marker. Undefined/0 = no cap. Per-provider because
+  // the upstream limit differs (StepFun caps at 70) and only the provider pointed
+  // at that upstream needs it.
+  mediaMaxImages?: number;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // Whether this provider is currently projected into an additive app's live config.

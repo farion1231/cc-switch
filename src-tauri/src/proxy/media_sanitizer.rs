@@ -10,6 +10,81 @@ use serde_json::{json, Value};
 
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 
+/// 图片预算模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageBudgetMode {
+    /// 能力降级（text-only 模型）：无条件剥离一切图片，包括工具输出里经
+    /// `strip_media_from_tool_value` 识别的附件化媒体。
+    Capability,
+    /// 数量上限（per-provider）：只按预算剥离会话图片，**不动**工具输出的
+    /// 附件化媒体——那里的剥离是能力语义（"这个模型根本看不了图"），
+    /// 与"这个请求图太多了"是两件事。数量限制把预算内的工具图片一起删掉
+    /// 会让模型读不到工具截图，是过度删除（PR #7793 审查意见）。
+    Count,
+}
+
+/// 图片预算：按文档顺序保留前 N 张，其余的标记替换。
+///
+/// 用于「请求整流：图片数量上限」——部分上游（如阶跃星辰）对单次请求的图片
+/// 张数有硬上限，超限直接 400，而长会话里累积的截图很容易越过上限。
+///
+/// [`ImageBudget::keep`] 只在**遇到**图片时调用（而非替换时），因此计数与
+/// 「这段对话里出现过多少张图」一致，与遍历路径无关。
+struct ImageBudget {
+    remaining: usize,
+    mode: ImageBudgetMode,
+}
+
+impl ImageBudget {
+    /// 「全部替换」预算（能力降级等既有路径用）。
+    ///
+    /// `remaining` 数的是**还允许保留几张**，因此"一张都不保留"是 `0` 而不是
+    /// `usize::MAX`——写成 MAX 会让既有路径变成完全 no-op（所有图片都保留），
+    /// 这是本改动第一版踩过的坑，`replace_all_budget_replaces_every_image_like_before`
+    /// 用例专门守住这一点。
+    fn replace_all() -> Self {
+        Self {
+            remaining: 0,
+            mode: ImageBudgetMode::Capability,
+        }
+    }
+
+    /// 保留前 `keep` 张的数量上限预算。
+    fn keep_first(keep: usize) -> Self {
+        Self {
+            remaining: keep,
+            mode: ImageBudgetMode::Count,
+        }
+    }
+
+    /// 是否该走工具媒体的无条件清理（仅能力降级模式）。
+    fn strips_tool_media(&self) -> bool {
+        self.mode == ImageBudgetMode::Capability
+    }
+
+    /// 消耗一次额度：仍有余量返回 true（保留该图片），否则 false（应替换）。
+    fn keep(&mut self) -> bool {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// 剥离「前 `keep` 张以外」的图片：保留前 `keep` 张，把第 `keep + 1` 张及之后
+/// 的图片块替换为 [`UNSUPPORTED_IMAGE_MARKER`]，返回剥离张数。
+///
+/// 覆盖 Anthropic `messages`、OpenAI Responses `input`、Gemini `contents`
+/// 三处会话图片。`keep == 0` 表示全部剥离。
+///
+/// **不处理**工具输出里经 `strip_media_from_tool_value` 识别的附件化媒体：那类
+/// 剥离属于能力语义（模型看不了图），数量上限不该把预算内的工具截图也删掉。
+pub fn strip_images_beyond_first(body: &mut Value, keep: usize) -> usize {
+    replace_images_in_body_with_budget(body, &mut ImageBudget::keep_first(keep))
+}
+
 /// Replace image blocks before sending when the routed model is text-only.
 ///
 /// Two paths, both reached only when the caller's media-fallback switch is on:
@@ -133,21 +208,30 @@ fn content_has_image_blocks(content: &Value) -> bool {
 }
 
 fn replace_images_in_body(body: &mut Value) -> usize {
+    replace_images_in_body_with_budget(body, &mut ImageBudget::replace_all())
+}
+
+fn replace_images_in_body_with_budget(body: &mut Value, budget: &mut ImageBudget) -> usize {
     let message_replacements = body
         .get_mut("messages")
         .and_then(Value::as_array_mut)
-        .map(|messages| messages.iter_mut().map(replace_images_in_message).sum())
+        .map(|messages| {
+            messages
+                .iter_mut()
+                .map(|message| replace_images_in_message(message, budget))
+                .sum()
+        })
         .unwrap_or(0);
 
     message_replacements
         + body
             .get_mut("input")
-            .map(replace_images_in_responses_input)
+            .map(|input| replace_images_in_responses_input(input, budget))
             .unwrap_or(0)
-        + replace_images_in_gemini_contents(body)
+        + replace_images_in_gemini_contents(body, budget)
 }
 
-fn replace_images_in_message(message: &mut Value) -> usize {
+fn replace_images_in_message(message: &mut Value, budget: &mut ImageBudget) -> usize {
     let is_tool_message = message.get("role").and_then(Value::as_str) == Some("tool");
     let Some(content) = message.get_mut("content") else {
         return 0;
@@ -158,30 +242,39 @@ fn replace_images_in_message(message: &mut Value) -> usize {
         // including Anthropic cache_control on the replacement text block.
         // The shared traversal then handles JSON strings, MCP wrappers, and
         // loose data-URL shapes that the legacy recursion does not recognize.
-        let mut replaced = replace_images_in_content(content);
-        let replacement_block = json!({
-            "type":"text",
-            "text":UNSUPPORTED_IMAGE_MARKER
-        });
-        let mut discarded_media = Vec::new();
-        replaced += strip_media_from_tool_value(
-            content,
-            &mut discarded_media,
-            ToolMediaScope::ImagesOnly,
-            &replacement_block,
-            UNSUPPORTED_IMAGE_MARKER,
-        );
+        //
+        // 工具媒体的无条件清理只发生在能力降级模式下；数量上限模式到此为止，
+        // 否则预算内的工具截图会被一并删掉（PR #7793 审查意见）。
+        let mut replaced = replace_images_in_content(content, budget);
+        if budget.strips_tool_media() {
+            let replacement_block = json!({
+                "type":"text",
+                "text":UNSUPPORTED_IMAGE_MARKER
+            });
+            let mut discarded_media = Vec::new();
+            replaced += strip_media_from_tool_value(
+                content,
+                &mut discarded_media,
+                ToolMediaScope::ImagesOnly,
+                &replacement_block,
+                UNSUPPORTED_IMAGE_MARKER,
+            );
+        }
         replaced
     } else {
-        replace_images_in_content(content)
+        replace_images_in_content(content, budget)
     }
 }
 
-fn replace_images_in_content(content: &mut Value) -> usize {
-    replace_images_in_content_with_text_type(content, "text")
+fn replace_images_in_content(content: &mut Value, budget: &mut ImageBudget) -> usize {
+    replace_images_in_content_with_text_type(content, "text", budget)
 }
 
-fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str) -> usize {
+fn replace_images_in_content_with_text_type(
+    content: &mut Value,
+    text_type: &str,
+    budget: &mut ImageBudget,
+) -> usize {
     let Some(blocks) = content.as_array_mut() else {
         return 0;
     };
@@ -189,7 +282,7 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
     let mut replaced = 0usize;
     for block in blocks {
         let block_type = block.get("type").and_then(Value::as_str);
-        if is_image_block_type(block_type) {
+        if is_image_block_type(block_type) && !budget.keep() {
             replace_image_block_with_text_marker(block, text_type);
             replaced += 1;
             continue;
@@ -202,21 +295,27 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                 // payload-aware traversal. This makes replacement a superset
                 // of detection and preserves cache_control on Anthropic image
                 // blocks, while the second pass covers alternate tool shapes.
-                replaced += replace_images_in_content_with_text_type(nested_content, text_type);
-                let replacement_block = json!({
-                    "type":text_type,
-                    "text":UNSUPPORTED_IMAGE_MARKER
-                });
-                let mut discarded_media = Vec::new();
-                replaced += strip_media_from_tool_value(
-                    nested_content,
-                    &mut discarded_media,
-                    ToolMediaScope::ImagesOnly,
-                    &replacement_block,
-                    UNSUPPORTED_IMAGE_MARKER,
-                );
+                //
+                // 工具媒体清理同样只发生在能力降级模式下。
+                replaced +=
+                    replace_images_in_content_with_text_type(nested_content, text_type, budget);
+                if budget.strips_tool_media() {
+                    let replacement_block = json!({
+                        "type":text_type,
+                        "text":UNSUPPORTED_IMAGE_MARKER
+                    });
+                    let mut discarded_media = Vec::new();
+                    replaced += strip_media_from_tool_value(
+                        nested_content,
+                        &mut discarded_media,
+                        ToolMediaScope::ImagesOnly,
+                        &replacement_block,
+                        UNSUPPORTED_IMAGE_MARKER,
+                    );
+                }
             } else {
-                replaced += replace_images_in_content_with_text_type(nested_content, text_type);
+                replaced +=
+                    replace_images_in_content_with_text_type(nested_content, text_type, budget);
             }
         }
     }
@@ -274,7 +373,7 @@ fn gemini_media_payload_is_image(payload: Option<&Value>) -> bool {
         })
 }
 
-fn replace_images_in_gemini_contents(body: &mut Value) -> usize {
+fn replace_images_in_gemini_contents(body: &mut Value, budget: &mut ImageBudget) -> usize {
     body.get_mut("contents")
         .and_then(Value::as_array_mut)
         .map(|contents| {
@@ -284,7 +383,7 @@ fn replace_images_in_gemini_contents(body: &mut Value) -> usize {
                 .map(|parts| {
                     parts
                         .iter_mut()
-                        .map(replace_images_in_gemini_part)
+                        .map(|part| replace_images_in_gemini_part(part, budget))
                         .sum::<usize>()
                 })
                 .sum()
@@ -292,9 +391,10 @@ fn replace_images_in_gemini_contents(body: &mut Value) -> usize {
         .unwrap_or(0)
 }
 
-fn replace_images_in_gemini_part(part: &mut Value) -> usize {
-    if gemini_media_payload_is_image(part.get("inlineData").or_else(|| part.get("inline_data")))
-        || gemini_media_payload_is_image(part.get("fileData").or_else(|| part.get("file_data")))
+fn replace_images_in_gemini_part(part: &mut Value, budget: &mut ImageBudget) -> usize {
+    if (gemini_media_payload_is_image(part.get("inlineData").or_else(|| part.get("inline_data")))
+        || gemini_media_payload_is_image(part.get("fileData").or_else(|| part.get("file_data"))))
+        && !budget.keep()
     {
         *part = json!({"text":UNSUPPORTED_IMAGE_MARKER});
         return 1;
@@ -314,6 +414,12 @@ fn replace_images_in_gemini_part(part: &mut Value) -> usize {
     else {
         return 0;
     };
+
+    // Count-cap mode leaves functionResponse media alone, same reasoning as the
+    // other tool-output branches (PR #7793 review).
+    if !budget.strips_tool_media() {
+        return 0;
+    }
 
     let before = media_parts.len();
     media_parts.retain(|media_part| !gemini_part_has_image(media_part));
@@ -351,44 +457,48 @@ fn responses_input_item_has_image_blocks(item: &Value) -> bool {
             .is_some_and(|output| tool_output_contains_media(output, ToolMediaScope::ImagesOnly))
 }
 
-fn replace_images_in_responses_input(input: &mut Value) -> usize {
+fn replace_images_in_responses_input(input: &mut Value, budget: &mut ImageBudget) -> usize {
     match input {
         Value::Array(items) => items
             .iter_mut()
-            .map(replace_images_in_responses_input_item)
+            .map(|item| replace_images_in_responses_input_item(item, budget))
             .sum(),
-        Value::Object(_) => replace_images_in_responses_input_item(input),
+        Value::Object(_) => replace_images_in_responses_input_item(input, budget),
         _ => 0,
     }
 }
 
-fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
+fn replace_images_in_responses_input_item(item: &mut Value, budget: &mut ImageBudget) -> usize {
     let mut replaced = 0usize;
 
-    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+    if item.get("type").and_then(Value::as_str) == Some("input_image") && !budget.keep() {
         replace_image_block_with_text_marker(item, "input_text");
         replaced += 1;
     }
 
     if let Some(content) = item.get_mut("content") {
-        replaced += replace_images_in_content_with_text_type(content, "input_text");
+        replaced += replace_images_in_content_with_text_type(content, "input_text", budget);
     }
 
     if let Some(output) = item.get_mut("output") {
         // The image-capability fallback deliberately strips images only.
         // Tool-output files/audio remain a known unsupported-modality gap.
-        let replacement_block = json!({
-            "type": "input_text",
-            "text": UNSUPPORTED_IMAGE_MARKER
-        });
-        let mut discarded_media = Vec::new();
-        replaced += strip_media_from_tool_value(
-            output,
-            &mut discarded_media,
-            ToolMediaScope::ImagesOnly,
-            &replacement_block,
-            UNSUPPORTED_IMAGE_MARKER,
-        );
+        // Count-cap mode skips this: an over-budget request should not also
+        // delete an in-budget tool screenshot (PR #7793 review).
+        if budget.strips_tool_media() {
+            let replacement_block = json!({
+                "type": "input_text",
+                "text": UNSUPPORTED_IMAGE_MARKER
+            });
+            let mut discarded_media = Vec::new();
+            replaced += strip_media_from_tool_value(
+                output,
+                &mut discarded_media,
+                ToolMediaScope::ImagesOnly,
+                &replacement_block,
+                UNSUPPORTED_IMAGE_MARKER,
+            );
+        }
     }
 
     replaced
@@ -461,6 +571,203 @@ mod tests {
             "data:image/png;base64,{}",
             "SANITIZER_TOOL_MEDIA_SENTINEL".repeat(400)
         )
+    }
+
+    fn image_block(tag: &str) -> Value {
+        json!({"type": "image", "source": {"tag": tag}})
+    }
+
+    fn remaining_image_tags(body: &Value) -> Vec<String> {
+        body.get("messages")
+            .and_then(Value::as_array)
+            .map(|messages| {
+                messages
+                    .iter()
+                    .filter_map(|message| message.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+                    .filter_map(|block| {
+                        block
+                            .pointer("/source/tag")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn budget_keeps_first_n_images_strips_the_rest() {
+        let mut body = json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [image_block("a"), image_block("b"), image_block("c"), image_block("d")]
+            }]
+        });
+
+        let stripped = strip_images_beyond_first(&mut body, 2);
+
+        assert_eq!(stripped, 2);
+        assert_eq!(remaining_image_tags(&body), vec!["a", "b"]);
+        // 被剥离的位置替换成统一标记，文本内容不变
+        let blocks = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[2]["text"], UNSUPPORTED_IMAGE_MARKER);
+        assert_eq!(blocks[3]["text"], UNSUPPORTED_IMAGE_MARKER);
+    }
+
+    #[test]
+    fn budget_zero_strips_all_images() {
+        let mut body = json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [image_block("a"), image_block("b")]
+            }]
+        });
+
+        let stripped = strip_images_beyond_first(&mut body, 0);
+
+        assert_eq!(stripped, 2);
+        assert!(remaining_image_tags(&body).is_empty());
+    }
+
+    #[test]
+    fn budget_larger_than_available_is_a_noop() {
+        let original = json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [image_block("a"), image_block("b")]
+            }]
+        });
+        let mut body = original.clone();
+
+        let stripped = strip_images_beyond_first(&mut body, 70);
+
+        assert_eq!(stripped, 0);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn budget_counts_across_messages_in_document_order() {
+        // 通常要守住的是「当前轮次」的图片：跨消息按文档顺序累计，
+        // 保留最前面的若干张。
+        let mut body = json!({
+            "model": "step-3",
+            "messages": [
+                {"role": "user", "content": [image_block("first")]},
+                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+                {"role": "user", "content": [image_block("second"), image_block("third")]}
+            ]
+        });
+
+        let stripped = strip_images_beyond_first(&mut body, 1);
+
+        assert_eq!(stripped, 2);
+        assert_eq!(remaining_image_tags(&body), vec!["first"]);
+    }
+
+    #[test]
+    fn budget_applies_to_responses_input_and_gemini_parts() {
+        let mut responses = json!({
+            "model": "step-3",
+            "input": [
+                {"type": "input_image", "tag": "r1"},
+                {"type": "input_image", "tag": "r2"},
+                {"type": "input_image", "tag": "r3"}
+            ]
+        });
+        assert_eq!(strip_images_beyond_first(&mut responses, 1), 2);
+
+        let mut gemini = json!({
+            "model": "step-3",
+            "contents": [{
+                "parts": [
+                    {"inlineData": {"mimeType": "image/png", "data": "a"}},
+                    {"inlineData": {"mimeType": "image/png", "data": "b"}}
+                ]
+            }]
+        });
+        assert_eq!(strip_images_beyond_first(&mut gemini, 1), 1);
+        assert_eq!(gemini["contents"][0]["parts"][0]["inlineData"]["data"], "a");
+        assert_eq!(
+            gemini["contents"][0]["parts"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn replace_all_budget_replaces_every_image_like_before() {
+        // 既有路径（能力降级）必须保持原语义：全部替换。
+        // remaining 若被误设为"无上限"，这里会返回 0 而不是 3。
+        let mut body = json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [image_block("a"), image_block("b"), image_block("c")]
+            }]
+        });
+
+        let count = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(count, 3);
+        assert!(remaining_image_tags(&body).is_empty());
+    }
+
+    /// role=tool 的单张附件化图片（Anthropic tool_result 形态）。
+    fn tool_role_image_body() -> Value {
+        json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "tool_use", "id": "t1", "name": "Bash", "input": {} }]
+            }, {
+                "role": "tool",
+                "tool_use_id": "t1",
+                "content": [{
+                    "type": "image",
+                    "source": { "type": "base64", "media_type": "image/png", "data": "abc" }
+                }]
+            }]
+        })
+    }
+
+    #[test]
+    fn count_cap_leaves_a_single_tool_image_alone() {
+        // PR #7793 审查意见：budget=70、整笔请求只有 1 张工具截图时，它不该被
+        // 数量上限路径删掉。工具媒体的剥离是能力语义，与"图太多了"是两件事。
+        let mut body = tool_role_image_body();
+        let original = body.clone();
+
+        assert_eq!(strip_images_beyond_first(&mut body, 70), 0);
+        assert_eq!(body, original, "预算内的工具截图必须原样保留");
+    }
+
+    #[test]
+    fn count_cap_still_keeps_user_images_before_the_budget() {
+        // 普通用户图片仍受预算约束（与工具图片同文档顺序）。
+        let mut body = json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [image_block("a"), image_block("b"), image_block("c")]
+            }]
+        });
+
+        assert_eq!(strip_images_beyond_first(&mut body, 2), 1);
+        assert_eq!(remaining_image_tags(&body), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn capability_mode_still_strips_tool_media() {
+        // 能力降级（"模型看不了图"）必须保持原语义：连工具截图一起剥。
+        let mut body = tool_role_image_body();
+
+        assert_eq!(replace_image_blocks_with_marker(&mut body), 1);
+        assert!(!contains_image_blocks(&body));
     }
 
     #[test]

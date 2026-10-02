@@ -629,6 +629,12 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  /** 图片数量上限（per-provider 整流器）。0 与未设置等价 = 不限制。 */
+  const [mediaMaxImages, setMediaMaxImages] = useState<string>(() =>
+    initialData?.meta?.mediaMaxImages && initialData.meta.mediaMaxImages > 0
+      ? String(initialData.meta.mediaMaxImages)
+      : "",
+  );
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -1824,6 +1830,15 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      // 图片数量上限：对所有 app 的第三方供应商生效（上限属于上游，与 app 无关），
+      // 留空/0 = 不限制（不写入 meta）。
+      mediaMaxImages:
+        category !== "official"
+          ? (() => {
+              const parsed = Number.parseInt(mediaMaxImages, 10);
+              return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+            })()
+          : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
@@ -2509,6 +2524,8 @@ function ProviderFormFull({
               onFullUrlChange={setLocalIsFullUrl}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              mediaMaxImages={mediaMaxImages}
+              onMediaMaxImagesChange={setMediaMaxImages}
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
