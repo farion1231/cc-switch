@@ -173,7 +173,7 @@ fn bench_parse_env_file() {
             .collect::<Vec<_>>()
     );
     let mut rows: Vec<_> = field_breakdown(&value).into_iter().collect();
-    rows.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.1 .1));
     for (key, (count, bytes)) in rows.into_iter().filter(|r| r.1 .1 >= 5_000) {
         eprintln!("  {key:<32} {count:>6} × {:>9.1} KB", bytes as f64 / 1e3);
     }
