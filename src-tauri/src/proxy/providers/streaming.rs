@@ -2,6 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use super::inline_think::InlineThinkSplitter;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -145,247 +146,6 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
     })
 }
 
-/// openai_chat 类上游会把思考内容以内联标签混进 content 文本：
-/// `<think>`（MiniMax M3 等）与 `<thinking>`（DeepSeek 系等）。两种都剥离。
-const INLINE_THINK_TAG_PAIRS: [(&str, &str); 2] =
-    [("<think>", "</think>"), ("<thinking>", "</thinking>")];
-
-/// 流式 content 里流首 inline think 块剥离状态机所处阶段。
-/// 只识别流首的块（与 Codex Chat 路径语义一致）。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum InlineThinkMode {
-    #[default]
-    Detecting,
-    Reasoning,
-    Text,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ThinkPrefixDecision {
-    NeedMore,
-    Reasoning,
-    Text,
-}
-
-/// 判断缓冲区开头是否最终会构成某个 think 开标签。
-fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
-    let trimmed = buffer.trim_start();
-    if trimmed.is_empty() {
-        return ThinkPrefixDecision::NeedMore;
-    }
-
-    if INLINE_THINK_TAG_PAIRS
-        .iter()
-        .any(|(open_tag, _)| trimmed.starts_with(open_tag))
-    {
-        return ThinkPrefixDecision::Reasoning;
-    }
-
-    if INLINE_THINK_TAG_PAIRS
-        .iter()
-        .any(|(open_tag, _)| open_tag.starts_with(trimmed))
-    {
-        return ThinkPrefixDecision::NeedMore;
-    }
-
-    ThinkPrefixDecision::Text
-}
-
-/// 在文本里找最早出现的闭合标签。容忍开闭不配对（如 `<think>` 开、`</thinking>` 闭）：
-/// 只认配对闭合会让整段连正文一起被当成推理吞掉。
-fn find_think_close_tag(text: &str) -> Option<(usize, &'static str)> {
-    INLINE_THINK_TAG_PAIRS
-        .iter()
-        .filter_map(|(_, close_tag)| text.find(close_tag).map(|index| (index, *close_tag)))
-        .min_by_key(|(index, _)| *index)
-}
-
-/// 闭合标签之后的换行分隔符处理结果。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SeparatorDecision {
-    /// 已剥掉一个换行分隔符
-    Stripped,
-    /// 首字符不是换行，无需剥离
-    NotPresent,
-    /// 只剩一个 "\r"，可能是被 chunk 边界切开的 "\r\n" 前半，需看后续增量再判定
-    NeedMore,
-}
-
-/// 剥掉紧随闭合标签的一个换行分隔符（"\r\n"、"\n" 或 "\r"）。
-/// 只动这一个分隔符：标签后正文的其余空白（缩进等）原样保留；
-/// 判定由调用方跨增量状态化，保证同一响应不随 SSE 分块方式产生不同输出。
-fn strip_one_newline(text: &str) -> (SeparatorDecision, &str) {
-    if let Some(rest) = text.strip_prefix("\r\n") {
-        (SeparatorDecision::Stripped, rest)
-    } else if let Some(rest) = text.strip_prefix('\n') {
-        (SeparatorDecision::Stripped, rest)
-    } else if let Some(rest) = text.strip_prefix('\r') {
-        if rest.is_empty() {
-            (SeparatorDecision::NeedMore, text)
-        } else {
-            (SeparatorDecision::Stripped, rest)
-        }
-    } else {
-        (SeparatorDecision::NotPresent, text)
-    }
-}
-
-/// Reasoning 态下需扣住不下发的尾部长度：buffer 末尾可能是某个闭合标签
-/// 真前缀的最长后缀（扣住等后续增量补全闭合标签再判定）。
-fn close_tag_holdback_len(buffer: &str) -> usize {
-    INLINE_THINK_TAG_PAIRS
-        .iter()
-        .filter_map(|(_, close_tag)| {
-            (1..close_tag.len())
-                .rev()
-                .find(|len| buffer.ends_with(&close_tag[..*len]))
-        })
-        .max()
-        .unwrap_or(0)
-}
-
-/// Detecting→Reasoning 转换：剥掉缓冲开头的空白与开标签，返回剩余内容。
-fn strip_leading_think_open_tag_prefix(buffer: &str) -> &str {
-    let after_ws = buffer.trim_start();
-    INLINE_THINK_TAG_PAIRS
-        .iter()
-        .find_map(|(open_tag, _)| after_ws.strip_prefix(open_tag))
-        .unwrap_or(after_ws)
-}
-
-fn non_empty(text: &str) -> Option<String> {
-    if text.is_empty() {
-        None
-    } else {
-        Some(text.to_string())
-    }
-}
-
-/// 流式 content 里流首 inline think 块的剥离状态（跨 chunk 状态化）：
-/// Detecting 扣住可能构成开标签的前缀；Reasoning 即时下发思考内容、只扣住
-/// 可能是闭合标签前缀的短尾；Text 透传正文（闭合后跨增量剥一个换行分隔符）。
-#[derive(Debug, Default)]
-struct InlineThinkSseState {
-    mode: InlineThinkMode,
-    /// Detecting: 流首前缀缓冲；Reasoning: 闭合标签前缀短尾；
-    /// Text: strip_separator 期间扣住待判定的 "\r"。
-    buffer: String,
-    /// Text 态：闭合标签刚结束，待从后续增量中判定并剥掉紧随的一个换行分隔符。
-    strip_separator: bool,
-}
-
-impl InlineThinkSseState {
-    /// 喂入一个 content 增量，返回 (thinking 增量, 正文增量)。
-    fn push(&mut self, delta: &str) -> (Option<String>, Option<String>) {
-        match self.mode {
-            InlineThinkMode::Text => (None, self.push_text(delta)),
-            InlineThinkMode::Detecting => {
-                self.buffer.push_str(delta);
-                match leading_think_prefix_decision(&self.buffer) {
-                    ThinkPrefixDecision::NeedMore => (None, None),
-                    ThinkPrefixDecision::Reasoning => {
-                        self.mode = InlineThinkMode::Reasoning;
-                        let rest = strip_leading_think_open_tag_prefix(&self.buffer);
-                        self.buffer = rest.to_string();
-                        self.drain_reasoning()
-                    }
-                    ThinkPrefixDecision::Text => {
-                        self.mode = InlineThinkMode::Text;
-                        let text = std::mem::take(&mut self.buffer);
-                        (None, non_empty(&text))
-                    }
-                }
-            }
-            InlineThinkMode::Reasoning => {
-                self.buffer.push_str(delta);
-                self.drain_reasoning()
-            }
-        }
-    }
-
-    /// Text 态正文透传；刚闭合时先判定并剥掉紧随闭合标签的一个换行分隔符
-    /// （分隔符被 chunk 边界切开时跨增量扣住 "\r"，其余空白原样保留）。
-    fn push_text(&mut self, delta: &str) -> Option<String> {
-        if !self.strip_separator {
-            return non_empty(delta);
-        }
-        self.buffer.push_str(delta);
-        let held = std::mem::take(&mut self.buffer);
-        let (decision, rest) = strip_one_newline(&held);
-        match decision {
-            SeparatorDecision::NeedMore => {
-                // 继续扣住 "\r"，等下一增量判定是否 "\r\n"
-                self.buffer.push_str(rest);
-                None
-            }
-            SeparatorDecision::Stripped | SeparatorDecision::NotPresent => {
-                self.strip_separator = false;
-                non_empty(rest)
-            }
-        }
-    }
-
-    /// Reasoning 态推进：闭合标签完整出现 → 立即拆块转 Text；
-    /// 否则除可能是闭合标签前缀的短尾外，思考内容全部即时下发，
-    /// 避免活跃推送期间转换流长时间无输出被外层误判空闲。
-    fn drain_reasoning(&mut self) -> (Option<String>, Option<String>) {
-        if let Some((close_start, close_tag)) = find_think_close_tag(&self.buffer) {
-            let buffered = std::mem::take(&mut self.buffer);
-            self.mode = InlineThinkMode::Text;
-            let thinking = non_empty(&buffered[..close_start]);
-            let answer = &buffered[close_start + close_tag.len()..];
-            if answer.is_empty() {
-                // 闭合标签恰好收尾：分隔符可能还没到，留给下一增量判定
-                self.strip_separator = true;
-                return (thinking, None);
-            }
-            let (decision, rest) = strip_one_newline(answer);
-            match decision {
-                SeparatorDecision::NeedMore => {
-                    self.strip_separator = true;
-                    self.buffer.push_str(rest);
-                    (thinking, None)
-                }
-                SeparatorDecision::Stripped | SeparatorDecision::NotPresent => {
-                    self.strip_separator = false;
-                    (thinking, non_empty(rest))
-                }
-            }
-        } else {
-            let holdback = close_tag_holdback_len(&self.buffer);
-            let split_at = self.buffer.len() - holdback;
-            let thinking = self.buffer[..split_at].to_string();
-            self.buffer.drain(..split_at);
-            (non_empty(&thinking), None)
-        }
-    }
-
-    /// 流边界（finish_reason / [DONE] / 截断 EOF / 错误）冲刷残留，幂等：
-    /// 未闭合的 think 块按思考内容原样下发（保住已收到的载荷），
-    /// Detecting 缓冲与待定分隔符按正文下发。是否伪造成功终止事件由调用方决定。
-    fn flush(&mut self) -> (Option<String>, Option<String>) {
-        match self.mode {
-            InlineThinkMode::Text => {
-                self.strip_separator = false;
-                let held = std::mem::take(&mut self.buffer);
-                (None, non_empty(&held))
-            }
-            InlineThinkMode::Detecting => {
-                self.mode = InlineThinkMode::Text;
-                let text = std::mem::take(&mut self.buffer);
-                (None, non_empty(&text))
-            }
-            InlineThinkMode::Reasoning => {
-                let buffered = std::mem::take(&mut self.buffer);
-                self.mode = InlineThinkMode::Text;
-                self.strip_separator = false;
-                // push 已即时拆块，此处残留不含完整闭合标签
-                (non_empty(&buffered), None)
-            }
-        }
-    }
-}
-
 fn sse_event_string(event: Value) -> String {
     format!(
         "event: {}\ndata: {}\n\n",
@@ -467,7 +227,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
-        let mut inline_think = InlineThinkSseState::default();
+        let mut inline_think = InlineThinkSplitter::default();
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
@@ -635,6 +395,26 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             if !tool_calls.is_empty() {
+                                                // 工具调用边界：先冲刷 inline think 残留再关块。
+                                                // 拖到 finish_reason 才下发的话，这些内容会在
+                                                // 工具块打开之后才开块，顺序颠倒且块交叠。
+                                                let (thinking, text) = inline_think.flush();
+                                                for (block_type, delta) in
+                                                    [("thinking", thinking), ("text", text)]
+                                                {
+                                                    if let Some(delta) = &delta {
+                                                        for sse_data in non_tool_block_events(
+                                                            block_type,
+                                                            delta,
+                                                            &mut next_content_index,
+                                                            &mut current_non_tool_block_type,
+                                                            &mut current_non_tool_block_index,
+                                                        ) {
+                                                            yield Ok(Bytes::from(sse_data));
+                                                        }
+                                                    }
+                                                }
+
                                                 if let Some(index) = current_non_tool_block_index.take() {
                                                     let event = json!({
                                                         "type": "content_block_stop",
@@ -1988,5 +1768,72 @@ mod tests {
         assert!(!events
             .iter()
             .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    /// content_block_start / content_block_stop 的先后顺序，形如 "start:0:text"。
+    fn block_boundaries(events: &[Value]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|event| {
+                let index = event.get("index").and_then(|v| v.as_u64())?;
+                match event_type(event)? {
+                    "content_block_start" => Some(format!(
+                        "start:{index}:{}",
+                        event
+                            .pointer("/content_block/type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                    )),
+                    "content_block_stop" => Some(format!("stop:{index}")),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_flushes_held_content_before_the_tool_block_opens() {
+        // 状态机扣住的内容（纯空白、半截开标签、闭合标签短尾）必须在工具块打开之前
+        // 下发并关块。拖到 finish_reason 才冲刷的话，文本块会在工具块未关时开出，
+        // 而且排到工具块之后。
+        let tool_call = "data: {\"id\":\"tool\",\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{}\"}}]}}]}\n\n";
+        let finish = "data: {\"id\":\"tool\",\"model\":\"m\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n";
+
+        let cases = [
+            ("\n\n", "text_delta", "/delta/text", "\n\n", "text"),
+            ("<thi", "text_delta", "/delta/text", "<thi", "text"),
+            (
+                "<thinking>plan</thin",
+                "thinking_delta",
+                "/delta/thinking",
+                "plan</thin",
+                "thinking",
+            ),
+        ];
+
+        for (content, delta_type, field, expected, block_type) in cases {
+            let events = collect_events(vec![
+                content_chunk("tool", content),
+                tool_call.to_string(),
+                finish.to_string(),
+            ])
+            .await;
+
+            assert_eq!(
+                collect_delta_text(&events, delta_type, field),
+                expected,
+                "content {content:?}"
+            );
+            assert_eq!(
+                block_boundaries(&events),
+                vec![
+                    format!("start:0:{block_type}"),
+                    "stop:0".to_string(),
+                    "start:1:tool_use".to_string(),
+                    "stop:1".to_string(),
+                ],
+                "content {content:?}"
+            );
+        }
     }
 }
