@@ -495,6 +495,12 @@ impl ProxyService {
         self.server.read().await.is_some()
     }
 
+    /// 同 [`Self::is_running`]，但不等锁：托盘菜单这种同步路径用。正在启动 / 停止、拿不到锁时
+    /// 为 `None`（按「不知道」处理，不报问题）。
+    pub fn running_now(&self) -> Option<bool> {
+        self.server.try_read().ok().map(|server| server.is_some())
+    }
+
     /// 热更新熔断器配置
     ///
     /// 如果代理服务器正在运行，将新配置应用到所有已创建的熔断器实例

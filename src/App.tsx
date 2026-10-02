@@ -24,6 +24,7 @@ import { hermesApi } from "@/lib/api/hermes";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
+import { useTrayNavigation } from "@/hooks/useTrayNavigation";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
@@ -143,6 +144,12 @@ function App() {
   const { collapsed: sidebarCollapsed, toggle: toggleSidebar } =
     useSidebarCollapsed();
   const [isAddOpen, setIsAddOpen] = useState(false);
+  // 托盘里点了直连下需要路由的那家：打开应用页后弹「需要路由」对话框
+  const [trayNeedsRoute, setTrayNeedsRoute] = useState<{
+    app: AppId;
+    providerId: string;
+    nonce: number;
+  } | null>(null);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
@@ -592,6 +599,22 @@ function App() {
     }
     setCurrentView(page);
   };
+  useTrayNavigation((navigation) => {
+    if (navigation.section) {
+      openSettings(navigation.section);
+      return;
+    }
+    if (!navigation.app) return;
+    selectApp(navigation.app);
+    if (navigation.intent === "add") setIsAddOpen(true);
+    if (navigation.intent === "needsRoute" && navigation.providerId) {
+      setTrayNeedsRoute({
+        app: navigation.app,
+        providerId: navigation.providerId,
+        nonce: Date.now(),
+      });
+    }
+  });
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
@@ -1148,6 +1171,10 @@ function App() {
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
+          needsRouteRequest={
+            trayNeedsRoute?.app === proxyAppId ? trayNeedsRoute : undefined
+          }
+          onNeedsRouteHandled={() => setTrayNeedsRoute(null)}
           startupFailure={startupFailure}
           onDismissStartupFailure={() =>
             setStartupFailures((list) =>

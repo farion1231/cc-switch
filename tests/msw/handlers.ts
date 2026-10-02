@@ -400,6 +400,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/take_startup_attach_failures`, () =>
     success([]),
   ),
+  http.post(`${TAURI_ENDPOINT}/take_tray_navigation`, () => success(null)),
   http.post(`${TAURI_ENDPOINT}/get_available_providers_for_failover`, () =>
     success([]),
   ),

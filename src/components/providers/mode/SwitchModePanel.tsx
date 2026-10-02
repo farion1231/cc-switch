@@ -63,6 +63,9 @@ interface SwitchModePanelProps extends ListCallbacks {
   onOpenRoutingSettings: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
+  /** 托盘里点了直连下需要路由的那家：到这页后弹同一个「需要路由」对话框 */
+  needsRouteRequest?: { providerId: string; nonce: number };
+  onNeedsRouteHandled?: () => void;
 }
 
 /** Gemini CLI、Grok Build 没有叠加模式（Q6）：那一格隐藏，前两格位置不变。 */
@@ -83,6 +86,8 @@ export function SwitchModePanel({
   onOpenRoutingSettings,
   startupFailure,
   onDismissStartupFailure,
+  needsRouteRequest,
+  onNeedsRouteHandled,
   ...listCallbacks
 }: SwitchModePanelProps) {
   const { t } = useTranslation();
@@ -126,6 +131,20 @@ export function SwitchModePanel({
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
   const [staleDismissed, setStaleDismissed] = useState(false);
+
+  // 供应商还没加载完时先等着，到了再弹
+  useEffect(() => {
+    if (!needsRouteRequest) return;
+    const provider = providers[needsRouteRequest.providerId];
+    if (!provider) return;
+    setDialog({
+      kind: "needsRoute",
+      providerId: provider.id,
+      reason: getRoutingReason(app, provider, t) ?? "",
+    });
+    onNeedsRouteHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsRouteRequest?.nonce, providers]);
 
   const providerList = useMemo(() => Object.values(providers), [providers]);
   const nameOf = (id: string | null) =>
