@@ -33,7 +33,7 @@ import { fmtUsd } from "@/components/usage/format";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
-import ccswitchLogo from "@/assets/ccswitch-logo.svg";
+import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
@@ -187,9 +187,9 @@ function SidebarTopBar({
             src={ccswitchLogo}
             alt=""
             draggable={false}
-            className="h-[18px] w-[18px] shrink-0"
+            className="h-[22px] w-[22px] shrink-0"
           />
-          <span className="truncate text-body font-semibold text-fg-1">
+          <span className="truncate text-strong font-semibold text-fg-1">
             CC Switch
           </span>
         </span>
