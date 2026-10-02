@@ -26,25 +26,9 @@ use super::blocks::{
     kind_from_codex_parsed_cmd, one_line_title, preview, preview_chars, refine_shell_kind,
     title_mcp, title_path, title_shell, title_web, Preview, INPUT_PREVIEW_CHARS,
 };
+use super::utils::JsonlSpan;
 
 // ─── 行位置与 ContentRef ─────────────────────────────────────────────────
-
-/// 一行 JSONL 在文件里的字节区间（含行尾 `\n`）。
-#[derive(Debug, Clone, Copy, Default)]
-pub(super) struct LineSpan {
-    pub offset: u64,
-    pub len: u32,
-}
-
-impl LineSpan {
-    pub fn content_ref(&self, pointer: impl Into<String>) -> ContentRef {
-        ContentRef::Jsonl {
-            offset: self.offset,
-            len: self.len,
-            pointer: pointer.into(),
-        }
-    }
-}
 
 /// RFC 6901：`~` → `~0`，`/` → `~1`
 pub(super) fn escape_pointer_token(token: &str) -> String {
@@ -348,7 +332,7 @@ pub(super) fn status_from_str(status: &str) -> ToolStatus {
 impl RawItem<'_> {
     /// 转成 [`ItemRecord`]；Reasoning / AgentMessage / UserMessage 等由 response_item
     /// 承担的类型返回 `None`。
-    pub fn into_record(self, span: LineSpan) -> Option<ItemRecord> {
+    pub fn into_record(self, span: JsonlSpan) -> Option<ItemRecord> {
         let id = opt_str(&self.id).unwrap_or_default().to_string();
         match self.ty.as_str() {
             "CommandExecution" => Some(ItemRecord::Command(self.command_info(id, span))),
@@ -369,7 +353,7 @@ impl RawItem<'_> {
         }
     }
 
-    fn command_info(&self, id: String, span: LineSpan) -> CommandInfo {
+    fn command_info(&self, id: String, span: JsonlSpan) -> CommandInfo {
         let command = self
             .command
             .as_ref()
@@ -413,7 +397,7 @@ impl RawItem<'_> {
         }
     }
 
-    fn file_change_info(&self, id: String, span: LineSpan) -> Option<FileChangeInfo> {
+    fn file_change_info(&self, id: String, span: JsonlSpan) -> Option<FileChangeInfo> {
         let changes = self.changes.as_ref()?;
         let mut files = Vec::new();
         let mut single_diff_pointer = None;
@@ -477,7 +461,7 @@ impl RawItem<'_> {
         })
     }
 
-    fn mcp_info(&self, id: String, span: LineSpan) -> McpInfo {
+    fn mcp_info(&self, id: String, span: JsonlSpan) -> McpInfo {
         let server = opt_str(&self.server).unwrap_or("mcp").to_string();
         let tool = opt_str(&self.tool).unwrap_or_default().to_string();
         let detail = self
@@ -920,7 +904,7 @@ pub(super) fn diff_title(diff: &DiffSummary) -> String {
 // ─── 图片 ────────────────────────────────────────────────────────────────
 
 /// `data:image/png;base64,…` → 内联图片引用；不是 data URL 时：本地路径 → LocalFile，其余忽略。
-pub(super) fn image_from_url(url: &str, span: LineSpan, pointer: String) -> Option<ImageRef> {
+pub(super) fn image_from_url(url: &str, span: JsonlSpan, pointer: String) -> Option<ImageRef> {
     if let Some(rest) = url.strip_prefix("data:") {
         let (meta, data) = rest.split_once(',')?;
         let media_type = meta.split(';').next().filter(|m| !m.is_empty());
@@ -1208,7 +1192,7 @@ mod tests {
 
     #[test]
     fn data_url_becomes_inline_image() {
-        let span = LineSpan {
+        let span = JsonlSpan {
             offset: 10,
             len: 20,
         };

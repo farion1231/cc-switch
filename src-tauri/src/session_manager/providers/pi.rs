@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::pi_blocks::{for_each_jsonl_value, PiTranscript};
+use super::pi_blocks::PiTranscript;
+use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
 };

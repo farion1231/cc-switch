@@ -5,9 +5,6 @@
 //! 生成 [`ContentRef::Jsonl`] 引用。
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::Path;
 
 use serde_json::Value;
 
@@ -21,59 +18,7 @@ use super::blocks::{
     single_file_diff, summary_event_block, thinking_block, title_shell, tool_call_block,
     tool_result_block, ToolSource,
 };
-use super::utils::{extract_text, parse_timestamp_to_ms};
-
-/// JSONL 一行在文件里的字节区间（`len` 含行尾换行符）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct LineSpan {
-    pub offset: u64,
-    pub len: u32,
-}
-
-impl LineSpan {
-    pub fn content_ref(&self, pointer: impl Into<String>) -> ContentRef {
-        ContentRef::Jsonl {
-            offset: self.offset,
-            len: self.len,
-            pointer: pointer.into(),
-        }
-    }
-}
-
-/// 逐行读取 JSONL，跳过空行和无法解析的行，回调拿到 (字节区间, JSON)。
-/// 回调返回 `Err` 时立即停止并向上传递。
-pub(super) fn for_each_jsonl_value(
-    path: &Path,
-    mut f: impl FnMut(LineSpan, Value) -> Result<(), String>,
-) -> Result<(), String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
-    let mut reader = BufReader::new(file);
-    let mut buf = Vec::new();
-    let mut offset = 0u64;
-    loop {
-        buf.clear();
-        let read = reader
-            .read_until(b'\n', &mut buf)
-            .map_err(|e| format!("Failed to read session file: {e}"))?;
-        if read == 0 {
-            break;
-        }
-        let span = LineSpan {
-            offset,
-            len: u32::try_from(read).unwrap_or(u32::MAX),
-        };
-        offset += read as u64;
-        let line = buf.trim_ascii();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        f(span, value)?;
-    }
-    Ok(())
-}
+use super::utils::{extract_text, parse_timestamp_to_ms, JsonlSpan};
 
 /// 逐条累积 Pi / OpenClaw 记录，最后统一分配 turn。
 #[derive(Default)]
@@ -89,7 +34,7 @@ impl PiTranscript {
     }
 
     /// 处理一条记录。`entry_id` 为记录自身的 id（Pi v2+ / OpenClaw 有则传）。
-    pub fn push_entry(&mut self, value: &Value, span: LineSpan, entry_id: Option<String>) {
+    pub fn push_entry(&mut self, value: &Value, span: JsonlSpan, entry_id: Option<String>) {
         let entry_ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
         let message = match value.get("type").and_then(Value::as_str) {
             Some("message") => {
@@ -149,7 +94,7 @@ impl PiTranscript {
     fn message_entry(
         &mut self,
         msg: &Value,
-        span: LineSpan,
+        span: JsonlSpan,
         entry_id: Option<&str>,
         ts: Option<i64>,
     ) -> Option<SessionMessage> {
@@ -173,7 +118,7 @@ impl PiTranscript {
     fn assistant_message(
         &mut self,
         msg: &Value,
-        span: LineSpan,
+        span: JsonlSpan,
         ts: Option<i64>,
     ) -> SessionMessage {
         let mut blocks = Vec::new();
@@ -264,7 +209,7 @@ impl PiTranscript {
     fn tool_result_message(
         &mut self,
         msg: &Value,
-        span: LineSpan,
+        span: JsonlSpan,
         ts: Option<i64>,
     ) -> SessionMessage {
         let call_id = msg
@@ -375,7 +320,7 @@ impl PiTranscript {
 }
 
 /// user / custom 内容：字符串或 `[{text}|{image}]`。
-fn content_blocks(content: Option<&Value>, span: LineSpan) -> Vec<SessionBlock> {
+fn content_blocks(content: Option<&Value>, span: JsonlSpan) -> Vec<SessionBlock> {
     let mut blocks = Vec::new();
     match content {
         Some(Value::String(text)) if !text.trim().is_empty() => {
@@ -408,7 +353,7 @@ fn content_blocks(content: Option<&Value>, span: LineSpan) -> Vec<SessionBlock> 
 }
 
 /// `{type: image, data: <base64>, mimeType}` → 内联图片引用。
-fn inline_image(item: &Value, span: LineSpan, index: usize) -> Option<ImageRef> {
+fn inline_image(item: &Value, span: JsonlSpan, index: usize) -> Option<ImageRef> {
     let data = item.get("data").and_then(Value::as_str)?;
     let media_type = item
         .get("mimeType")
@@ -428,7 +373,7 @@ fn inline_image(item: &Value, span: LineSpan, index: usize) -> Option<ImageRef> 
 /// 用户 `!cmd`：ToolCall（by_user）+ ToolResult，归在 user 消息里。
 fn bash_execution_message(
     msg: &Value,
-    span: LineSpan,
+    span: JsonlSpan,
     entry_id: Option<&str>,
     ts: Option<i64>,
 ) -> SessionMessage {
@@ -499,7 +444,7 @@ fn event_message(kind: EventKind, text: String, ts: Option<i64>) -> Option<Sessi
 fn summary_event(
     value: &Value,
     ts: Option<i64>,
-    span: LineSpan,
+    span: JsonlSpan,
     pointer: &str,
 ) -> Option<SessionMessage> {
     let summary = value.get("summary").and_then(Value::as_str)?;
@@ -563,8 +508,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn span(offset: u64) -> LineSpan {
-        LineSpan { offset, len: 10 }
+    fn span(offset: u64) -> JsonlSpan {
+        JsonlSpan { offset, len: 10 }
     }
 
     fn push(t: &mut PiTranscript, value: Value, offset: u64, id: &str) {
@@ -675,10 +620,11 @@ mod tests {
                 ("tool", "t1"),
                 ("tool", "t1"),
                 ("tool", "t1"),
-                ("user", "t2"),
-                ("assistant", "t2"),
-                ("system", "t2"),
-                ("assistant", "t2"),
+                // bashExecution 是用户自己跑的命令，不开新轮
+                ("user", "t1"),
+                ("assistant", "t1"),
+                ("system", "t1"),
+                ("assistant", "t1"),
             ]
         );
         assert_eq!(messages[0].content, "anthropic/claude-sonnet-4-5");
@@ -863,29 +809,5 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-    }
-
-    #[test]
-    fn jsonl_reader_reports_byte_spans() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("s.jsonl");
-        std::fs::write(&path, "{\"a\":1}\n\n{bad\n{\"b\":\"字\"}").unwrap();
-        let mut seen = Vec::new();
-        for_each_jsonl_value(&path, |span, value| {
-            seen.push((span, value));
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(seen.len(), 2);
-        assert_eq!(seen[0].0, LineSpan { offset: 0, len: 8 });
-        // 第二条：前面有 8 + 1 + 5 字节，末行无换行
-        assert_eq!(
-            seen[1].0,
-            LineSpan {
-                offset: 14,
-                len: 11
-            }
-        );
-        assert_eq!(seen[1].1, json!({"b":"字"}));
     }
 }

@@ -19,15 +19,15 @@ use crate::session_manager::model::{
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::{
-    estimate_base64_size, first_string_field, large_text_block, line_change_counts, normalize_tool,
-    one_line_title, preview, preview_chars, refine_shell_kind, split_mcp_name, summary_event_block,
-    title_agent, title_ask, title_mcp, title_other, title_path, title_read, title_search,
-    title_shell, title_todo, title_web, NormalizedTool, ToolSource, INPUT_PREVIEW_CHARS,
-    THINKING_PREVIEW_CHARS,
+    assign_turn_ids, estimate_base64_size, first_string_field, large_text_block,
+    line_change_counts, normalize_tool, one_line_title, preview, preview_chars, refine_shell_kind,
+    split_mcp_name, summary_event_block, title_agent, title_ask, title_mcp, title_other,
+    title_path, title_read, title_search, title_shell, title_todo, title_web, NormalizedTool,
+    ToolSource, INPUT_PREVIEW_CHARS, THINKING_PREVIEW_CHARS,
 };
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    FileParseCache, LineSpans, TITLE_MAX_CHARS,
+    FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -277,33 +277,10 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             Ok(record) => record,
             Err(_) => continue,
         };
-        builder.push(
-            record,
-            LineRef {
-                offset: span.offset,
-                len: u32::try_from(span.len).unwrap_or(u32::MAX),
-            },
-        );
+        builder.push(record, span.span);
     }
 
     Ok(builder.finish())
-}
-
-/// 当前记录所在行的字节区间，用来生成 `ContentRef::Jsonl`。
-#[derive(Clone, Copy)]
-struct LineRef {
-    offset: u64,
-    len: u32,
-}
-
-impl LineRef {
-    fn at(self, pointer: String) -> ContentRef {
-        ContentRef::Jsonl {
-            offset: self.offset,
-            len: self.len,
-            pointer,
-        }
-    }
 }
 
 /// 解析中的消息；全部记录处理完后再统一投影出 `content`（结果记录会回填前面的 ToolCall）。
@@ -311,7 +288,6 @@ struct Draft {
     role: String,
     ts: Option<i64>,
     id: Option<String>,
-    turn: u32,
     injected: bool,
     blocks: Vec<SessionBlock>,
     meta: Option<MessageMeta>,
@@ -332,8 +308,6 @@ struct TranscriptBuilder {
     /// 会话附属目录 `<sessionId>/`（tool-results 等落盘文件）
     sidecar_dir: PathBuf,
     drafts: Vec<Draft>,
-    /// 当前轮次：每条非注入的用户提问 +1，首条提问之前为 0
-    turn: u32,
     calls: HashMap<String, CallSlot>,
     /// pr-link 会在每轮结束时重复写入，同一个 URL 只出一次
     pr_urls: HashSet<String>,
@@ -344,28 +318,29 @@ impl TranscriptBuilder {
         Self {
             sidecar_dir,
             drafts: Vec::new(),
-            turn: 0,
             calls: HashMap::new(),
             pr_urls: HashSet::new(),
         }
     }
 
     fn finish(self) -> Vec<SessionMessage> {
-        self.drafts
+        let mut messages: Vec<SessionMessage> = self
+            .drafts
             .into_iter()
             .map(|draft| {
                 let mut message = SessionMessage::from_blocks(draft.role, draft.ts, draft.blocks);
                 message.id = draft.id;
-                message.turn_id = Some(format!("t{}", draft.turn));
                 message.injected = draft.injected;
                 message.meta = draft.meta;
                 message
             })
             .filter(|message| !message.is_empty())
-            .collect()
+            .collect();
+        assign_turn_ids(&mut messages);
+        messages
     }
 
-    fn push(&mut self, record: RawRecord<'_>, line: LineRef) {
+    fn push(&mut self, record: RawRecord<'_>, line: JsonlSpan) {
         if is_true(&record.is_sidechain) || is_true(&record.is_meta) {
             return;
         }
@@ -413,7 +388,6 @@ impl TranscriptBuilder {
             role: role.to_string(),
             ts,
             id,
-            turn: self.turn,
             injected: false,
             blocks,
             meta: None,
@@ -443,7 +417,7 @@ impl TranscriptBuilder {
 
     // ── system / pr-link ──
 
-    fn push_system(&mut self, record: &RawRecord<'_>, ts: Option<i64>, line: LineRef) {
+    fn push_system(&mut self, record: &RawRecord<'_>, ts: Option<i64>, line: JsonlSpan) {
         match record.subtype.as_str() {
             Some("stop_hook_summary") => {
                 let errors: Vec<String> = match &record.hook_errors {
@@ -475,7 +449,7 @@ impl TranscriptBuilder {
                 if let Some(content) = record.content.as_str() {
                     let uuid = record.uuid.as_str().map(str::to_string);
                     self.push_user_texts(
-                        vec![(Cow::Borrowed(content), line.at("/content".to_string()))],
+                        vec![(Cow::Borrowed(content), line.content_ref("/content"))],
                         Vec::new(),
                         Vec::new(),
                         uuid,
@@ -505,13 +479,13 @@ impl TranscriptBuilder {
 
     /// `/compact` 之后的摘要记录：并入紧邻的 compact_boundary 事件，没有则单独成一条。
     /// 摘要通常有数 KB，只放预览，全文按 `/message/content` 引用取。
-    fn push_compact_summary(&mut self, content: RawContent<'_>, ts: Option<i64>, line: LineRef) {
+    fn push_compact_summary(&mut self, content: RawContent<'_>, ts: Option<i64>, line: JsonlSpan) {
         let summary = content_text(&content);
         if summary.trim().is_empty() {
             return;
         }
         let block = summary_event_block(EventKind::Compaction, &summary, || {
-            Some(line.at("/message/content".to_string()))
+            Some(line.content_ref("/message/content"))
         });
         if let Some(last) = self.drafts.last_mut() {
             if let [event @ SessionBlock::Event {
@@ -535,7 +509,7 @@ impl TranscriptBuilder {
         uuid: Option<String>,
         thinking_ms: Option<u64>,
         ts: Option<i64>,
-        line: LineRef,
+        line: JsonlSpan,
     ) {
         let mut blocks = Vec::new();
         // (块下标, tool_use id, 工具名)
@@ -596,7 +570,6 @@ impl TranscriptBuilder {
                 role,
                 ts,
                 id: uuid,
-                turn: self.turn,
                 injected: false,
                 blocks,
                 meta,
@@ -625,13 +598,13 @@ impl TranscriptBuilder {
         tool_use_result: Option<ToolUseResult>,
         uuid: Option<String>,
         ts: Option<i64>,
-        line: LineRef,
+        line: JsonlSpan,
     ) {
         let mut results = Vec::new();
         let mut texts = Vec::new();
         let mut images = Vec::new();
         match content {
-            RawContent::Text(text) => texts.push((text, line.at("/message/content".to_string()))),
+            RawContent::Text(text) => texts.push((text, line.content_ref("/message/content"))),
             RawContent::Items(items) => {
                 let result_count = items
                     .iter()
@@ -655,7 +628,10 @@ impl TranscriptBuilder {
                         )),
                         "text" => {
                             if let Some(text) = item.text.0 {
-                                texts.push((text, line.at(format!("/message/content/{i}/text"))));
+                                texts.push((
+                                    text,
+                                    line.content_ref(format!("/message/content/{i}/text")),
+                                ));
                             }
                         }
                         "image" => {
@@ -688,7 +664,6 @@ impl TranscriptBuilder {
     ) {
         let has_results = !blocks.is_empty();
         let mut injected = false;
-        let mut new_turn = false;
 
         let injected_blocks = |texts: &[(Cow<'_, str>, ContentRef)]| -> Vec<SessionBlock> {
             texts
@@ -711,7 +686,6 @@ impl TranscriptBuilder {
                     url: None,
                     full: None,
                 });
-                new_turn = true;
             } else if first.starts_with("<bash-input>") {
                 blocks.extend(user_bash_blocks(first, uuid.as_deref()));
             } else if is_injected_text(first) {
@@ -727,8 +701,7 @@ impl TranscriptBuilder {
                     .filter(|t| !t.trim().is_empty())
                     .collect();
                 if !stripped.is_empty() {
-                    blocks.extend(stripped.into_iter().map(|text| SessionBlock::text(text)));
-                    new_turn = true;
+                    blocks.extend(stripped.into_iter().map(SessionBlock::text));
                 } else if !has_results && images.is_empty() {
                     // 全是 <system-reminder>：整条注入，保留原文
                     injected = true;
@@ -736,10 +709,7 @@ impl TranscriptBuilder {
                 }
             }
         }
-        if !images.is_empty() {
-            new_turn = !injected;
-            blocks.extend(images);
-        }
+        blocks.extend(images);
         if blocks.is_empty() {
             return;
         }
@@ -747,9 +717,6 @@ impl TranscriptBuilder {
         let all_results = blocks
             .iter()
             .all(|b| matches!(b, SessionBlock::ToolResult { .. }));
-        if new_turn && !injected {
-            self.turn += 1;
-        }
         let role = if all_results { "tool" } else { "user" };
         self.push_draft(role, ts, uuid, blocks);
         if let Some(last) = self.drafts.last_mut() {
@@ -763,7 +730,7 @@ impl TranscriptBuilder {
         index: usize,
         tool_use_result: Option<&ToolUseResult>,
         ts: Option<i64>,
-        line: LineRef,
+        line: JsonlSpan,
     ) -> SessionBlock {
         let call_id = item.tool_use_id.as_str().unwrap_or_default().to_string();
         let base = format!("/message/content/{index}/content");
@@ -853,7 +820,7 @@ impl TranscriptBuilder {
                 .as_deref()
                 .and_then(|path| self.sidecar_rel_path(path))
                 .map(|rel_path| ContentRef::Sidecar { rel_path })
-                .or_else(|| pointer.map(|ptr| line.at(ptr)))
+                .or_else(|| pointer.map(|ptr| line.content_ref(ptr)))
         } else {
             None
         };
@@ -972,7 +939,7 @@ fn thinking_block(
     kind: &str,
     index: usize,
     duration_ms: Option<u64>,
-    line: LineRef,
+    line: JsonlSpan,
 ) -> Option<SessionBlock> {
     let text = item.thinking.as_str().unwrap_or_default();
     let has_signature = item.signature.as_str().is_some_and(|s| !s.is_empty());
@@ -988,11 +955,11 @@ fn thinking_block(
         duration_ms,
         full: p
             .truncated
-            .then(|| line.at(format!("/message/content/{index}/thinking"))),
+            .then(|| line.content_ref(format!("/message/content/{index}/thinking"))),
     })
 }
 
-fn tool_call_block(item: RawItem<'_>, index: usize, line: LineRef) -> SessionBlock {
+fn tool_call_block(item: RawItem<'_>, index: usize, line: JsonlSpan) -> SessionBlock {
     let id = item.id.as_str().unwrap_or_default().to_string();
     let raw_name = item.name.as_str().unwrap_or("unknown").to_string();
     let input = item.input.unwrap_or(Value::Null);
@@ -1018,7 +985,7 @@ fn tool_call_block(item: RawItem<'_>, index: usize, line: LineRef) -> SessionBlo
         // 指向参数对象（不是字符串），取全文时由命令层序列化
         input_full: p
             .truncated
-            .then(|| line.at(format!("/message/content/{index}/input"))),
+            .then(|| line.content_ref(format!("/message/content/{index}/input"))),
         diff,
         by_user: false,
     }
@@ -1162,7 +1129,7 @@ fn input_diff(raw_name: &str, input: &Value) -> Option<DiffSummary> {
     })
 }
 
-fn image_ref(source: Option<&RawSource<'_>>, pointer: String, line: LineRef) -> Option<ImageRef> {
+fn image_ref(source: Option<&RawSource<'_>>, pointer: String, line: JsonlSpan) -> Option<ImageRef> {
     let source = source?;
     if source.kind.as_str() != Some("base64") {
         return None;
@@ -1170,7 +1137,7 @@ fn image_ref(source: Option<&RawSource<'_>>, pointer: String, line: LineRef) -> 
     let data = source.data.as_str()?;
     Some(ImageRef {
         source: ImageSource::Inline {
-            content: line.at(pointer),
+            content: line.content_ref(pointer),
         },
         media_type: source
             .media_type

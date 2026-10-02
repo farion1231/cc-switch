@@ -13,7 +13,7 @@ use super::blocks::{
     assign_turn_ids, parse_arguments, thinking_block, tool_call_block, tool_result_block,
     ToolSource,
 };
-use super::pi_blocks::for_each_jsonl_value;
+use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
 };

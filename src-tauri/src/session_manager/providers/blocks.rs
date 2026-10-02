@@ -4,9 +4,6 @@
 //! apply_patch 的增删、Claude structuredPatch 等）由各解析器在拿到
 //! [`normalize_tool`] 的结果后自行修正。
 
-// P1 各解析器接入前，部分函数还没有调用方
-#![allow(dead_code)]
-
 use serde_json::Value;
 
 use crate::session_manager::model::ToolKind;
@@ -685,12 +682,30 @@ pub fn summary_event_block(
     }
 }
 
-/// 按「非 injected 的 user 消息」递增生成 `t{n}`（§4）；首条 user 之前的内容归 `t0`。
-/// 已有 `turn_id` 的消息保持不变。
+/// 这条消息是否开启新一轮：非注入的 user 消息，且带真人输入——非空文本、图片或斜杠命令。
+/// 只有中断事件、用户自己跑的命令（Claude `!cmd`、Pi bashExecution）或工具结果的
+/// user 消息不开新轮，归入当前轮。旧格式消息（无 blocks）看 `content` 是否非空。
+pub fn starts_turn(message: &SessionMessage) -> bool {
+    if message.role != "user" || message.injected {
+        return false;
+    }
+    if message.blocks.is_empty() {
+        return !message.content.trim().is_empty();
+    }
+    message.blocks.iter().any(|block| match block {
+        SessionBlock::Text { text, .. } => !text.trim().is_empty(),
+        SessionBlock::Image { .. } => true,
+        SessionBlock::Event { kind, .. } => *kind == EventKind::SlashCommand,
+        _ => false,
+    })
+}
+
+/// 没有原生轮次概念的解析器共用（§4）：按 [`starts_turn`] 递增生成 `t{n}`，
+/// 首条提问之前的内容归 `t0`。已有 `turn_id` 的消息保持不变。
 pub fn assign_turn_ids(messages: &mut [SessionMessage]) {
     let mut turn = 0u32;
     for message in messages {
-        if message.role == "user" && !message.injected {
+        if starts_turn(message) {
             turn += 1;
         }
         if message.turn_id.is_none() {
@@ -1042,23 +1057,42 @@ mod tests {
         assert_eq!(parse_arguments(&json!("not json")), json!("not json"));
         assert_eq!(parse_arguments(&json!("42")), json!("42"));
 
-        let msg = |role: &str, injected: bool| SessionMessage {
+        let msg = |role: &str, injected: bool, blocks: Vec<SessionBlock>| SessionMessage {
             role: role.into(),
             injected,
+            blocks,
             ..SessionMessage::default()
         };
+        let q = || vec![SessionBlock::text("q")];
+        let by_user = tool_call_block(ToolSource::Pi, "u1", "bash", &json!({}), || None);
         let mut messages = vec![
-            msg("system", false),
-            msg("user", false),
-            msg("assistant", false),
-            msg("user", true),
-            msg("user", false),
+            msg("system", false, q()),
+            msg("user", false, q()),
+            msg("assistant", false, q()),
+            msg("user", true, q()),
+            // 中断、用户自己跑的命令不开新轮
+            msg(
+                "user",
+                false,
+                vec![SessionBlock::event(EventKind::Aborted, None, None)],
+            ),
+            msg("user", false, vec![by_user]),
+            msg("user", false, q()),
+            msg(
+                "user",
+                false,
+                vec![SessionBlock::event(
+                    EventKind::SlashCommand,
+                    Some("/compact".into()),
+                    None,
+                )],
+            ),
         ];
         assign_turn_ids(&mut messages);
         let turns: Vec<_> = messages
             .iter()
             .map(|m| m.turn_id.clone().unwrap())
             .collect();
-        assert_eq!(turns, ["t0", "t1", "t1", "t1", "t2"]);
+        assert_eq!(turns, ["t0", "t1", "t1", "t1", "t1", "t1", "t2", "t3"]);
     }
 }

@@ -8,6 +8,7 @@ use std::time::SystemTime;
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
 
+use crate::session_manager::model::ContentRef;
 use crate::session_manager::SessionMeta;
 
 /// Maximum number of characters for session titles (shared across providers).
@@ -222,17 +223,35 @@ pub fn truncate_summary(text: &str, max_chars: usize) -> String {
     result
 }
 
-/// JSONL 的一行及其在文件中的字节区间（`ContentRef::Jsonl` 的 offset / len）。
-pub struct LineSpan<'a> {
+/// 一行 JSONL 在文件里的字节区间（含行尾 `\n`），生成 [`ContentRef::Jsonl`] 用。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JsonlSpan {
     /// 行首的字节偏移
     pub offset: u64,
     /// 整行字节数，含行尾 `\n`（文件最后一行可能没有）
-    pub len: u64,
+    pub len: u32,
+}
+
+impl JsonlSpan {
+    /// 指向本行内 `pointer`（RFC 6901）处内容的引用
+    pub fn content_ref(&self, pointer: impl Into<String>) -> ContentRef {
+        ContentRef::Jsonl {
+            offset: self.offset,
+            len: self.len,
+            pointer: pointer.into(),
+        }
+    }
+}
+
+/// JSONL 的一行及其字节区间。
+pub struct LineSpan<'a> {
+    pub span: JsonlSpan,
     /// 行内容，已去掉行尾 `\r\n` / `\n`
     pub bytes: &'a [u8],
 }
 
-/// 用 `read_until(b'\n')` 逐行读取并累计字节偏移，供需要回溯原文的解析器使用。
+/// 用 `read_until(b'\n')` 逐行读取并累计字节偏移，供需要回溯原文的解析器使用
+/// （所有 JSONL 解析器共用这一份，`ContentRef::Jsonl` 的区间口径因此一致）。
 ///
 /// 复用同一块缓冲区，不做 UTF-8 校验（交给 `serde_json::from_slice`），
 /// 所以比 `BufRead::lines()` 少一次分配和一次校验。
@@ -269,11 +288,37 @@ impl<R: BufRead> LineSpans<R> {
             }
         }
         Ok(Some(LineSpan {
-            offset,
-            len: read as u64,
+            span: JsonlSpan {
+                offset,
+                len: u32::try_from(read).unwrap_or(u32::MAX),
+            },
             bytes: &self.buf[..end],
         }))
     }
+}
+
+/// 逐行读取 JSONL，跳过空行和无法解析的行，回调拿到 (字节区间, JSON)。
+/// 回调返回 `Err` 时立即停止并向上传递。
+pub fn for_each_jsonl_value(
+    path: &Path,
+    mut f: impl FnMut(JsonlSpan, Value) -> Result<(), String>,
+) -> Result<(), String> {
+    let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
+    let mut lines = LineSpans::new(BufReader::new(file));
+    while let Some(line) = lines
+        .next_line()
+        .map_err(|e| format!("Failed to read session file: {e}"))?
+    {
+        let bytes = line.bytes.trim_ascii();
+        if bytes.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+            continue;
+        };
+        f(line.span, value)?;
+    }
+    Ok(())
 }
 
 pub fn path_basename(value: &str) -> Option<String> {
@@ -380,8 +425,8 @@ mod tests {
         let mut got = Vec::new();
         while let Some(span) = spans.next_line().unwrap() {
             got.push((
-                span.offset,
-                span.len,
+                span.span.offset,
+                span.span.len,
                 String::from_utf8(span.bytes.to_vec()).unwrap(),
             ));
         }
@@ -396,6 +441,30 @@ mod tests {
         );
         // 偏移 + 长度能切回原行
         assert_eq!(&data.as_bytes()[10..10 + 12], "{\"b\":\"字\"}\n".as_bytes());
+    }
+
+    #[test]
+    fn jsonl_reader_reports_byte_spans() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, "{\"a\":1}\n\n{bad\n{\"b\":\"字\"}").unwrap();
+        let mut seen = Vec::new();
+        for_each_jsonl_value(&path, |span, value| {
+            seen.push((span, value));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, JsonlSpan { offset: 0, len: 8 });
+        // 第二条：前面有 8 + 1 + 5 字节，末行无换行
+        assert_eq!(
+            seen[1].0,
+            JsonlSpan {
+                offset: 14,
+                len: 11
+            }
+        );
+        assert_eq!(seen[1].1, json!({"b":"字"}));
     }
 
     #[test]

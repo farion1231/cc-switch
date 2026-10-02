@@ -28,12 +28,12 @@ use super::codex_items::{
     command_from_value, diff_kind, diff_summary, diff_title, exec_title, image_from_url,
     local_image, opt_str, parse_apply_patch, parse_exec_script, parse_legacy_shell_output,
     same_command, status_from_str, strip_output_header, web_action_title, CallSpec, CommandInfo,
-    Contents, FileChangeInfo, ItemRecord, LineSpan, RawItem, ResultSpec, Str,
+    Contents, FileChangeInfo, ItemRecord, RawItem, ResultSpec, Str,
 };
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    FileParseCache, TITLE_MAX_CHARS,
+    FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -241,29 +241,18 @@ const INJECTED_USER_PREFIXES: [&str; 4] = [
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
-    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut lines = LineSpans::new(BufReader::with_capacity(1 << 20, file));
     let mut parser = RolloutParser::default();
-    let mut buf = Vec::with_capacity(64 * 1024);
-    let mut offset = 0u64;
-    loop {
-        buf.clear();
-        let read = reader
-            .read_until(b'\n', &mut buf)
-            .map_err(|e| format!("Failed to read session file: {e}"))?;
-        if read == 0 {
-            break;
+    while let Some(line) = lines
+        .next_line()
+        .map_err(|e| format!("Failed to read session file: {e}"))?
+    {
+        let mut bytes = line.bytes;
+        while let [rest @ .., b'\n' | b'\r'] = bytes {
+            bytes = rest;
         }
-        let span = LineSpan {
-            offset,
-            len: u32::try_from(read).unwrap_or(u32::MAX),
-        };
-        offset += read as u64;
-        let mut line = buf.as_slice();
-        while let [rest @ .., b'\n' | b'\r'] = line {
-            line = rest;
-        }
-        if !line.is_empty() {
-            parser.process_line(line, span);
+        if !bytes.is_empty() {
+            parser.process_line(bytes, line.span);
         }
     }
     Ok(parser.finish())
@@ -526,7 +515,7 @@ struct OutputInfo {
 }
 
 impl OutputInfo {
-    fn from_contents(contents: Option<&Contents<'_>>, span: LineSpan) -> Self {
+    fn from_contents(contents: Option<&Contents<'_>>, span: JsonlSpan) -> Self {
         let mut info = OutputInfo {
             text: String::new(),
             full: None,
@@ -612,7 +601,7 @@ struct RolloutParser {
 }
 
 impl RolloutParser {
-    fn process_line(&mut self, line: &[u8], span: LineSpan) {
+    fn process_line(&mut self, line: &[u8], span: JsonlSpan) {
         let (top, sub): (Cow<str>, Option<Cow<str>>) = match sniff_types(line) {
             Some((top, Some(sub))) => (Cow::Borrowed(top), Some(Cow::Borrowed(sub))),
             Some((top, None)) if !matches!(top, "response_item" | "event_msg") => {
@@ -671,7 +660,7 @@ impl RolloutParser {
         }
     }
 
-    fn response_item(&mut self, sub: &str, line: &[u8], span: LineSpan) {
+    fn response_item(&mut self, sub: &str, line: &[u8], span: JsonlSpan) {
         match sub {
             "message" => {
                 if let Some((ts, p)) = parse_line::<MessagePayload>(line) {
@@ -722,7 +711,7 @@ impl RolloutParser {
         }
     }
 
-    fn event_msg(&mut self, sub: &str, line: &[u8], span: LineSpan) {
+    fn event_msg(&mut self, sub: &str, line: &[u8], span: JsonlSpan) {
         if sub == "item_completed" {
             if let Some((ts, p)) = parse_line::<ItemCompletedPayload>(line) {
                 self.on_item(p.item, ts, span);
@@ -907,7 +896,7 @@ impl RolloutParser {
         (self.push("assistant", ts, id, blocks, false), 0)
     }
 
-    fn on_message(&mut self, p: MessagePayload<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_message(&mut self, p: MessagePayload<'_>, ts: Option<i64>, span: JsonlSpan) {
         let id = owned(&p.id);
         let Some(contents) = p.content.as_ref() else {
             return;
@@ -945,7 +934,7 @@ impl RolloutParser {
         contents: &Contents<'_>,
         id: Option<String>,
         ts: Option<i64>,
-        span: LineSpan,
+        span: JsonlSpan,
     ) {
         let mut blocks = Vec::new();
         // (注入文本, 在行内的 JSON Pointer)
@@ -1018,7 +1007,7 @@ impl RolloutParser {
         }
     }
 
-    fn on_reasoning(&mut self, p: ReasoningPayload<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_reasoning(&mut self, p: ReasoningPayload<'_>, ts: Option<i64>, span: JsonlSpan) {
         let summary = p
             .summary
             .as_ref()
@@ -1151,7 +1140,7 @@ impl RolloutParser {
         );
     }
 
-    fn on_function_call(&mut self, p: FunctionCallPayload<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_function_call(&mut self, p: FunctionCallPayload<'_>, ts: Option<i64>, span: JsonlSpan) {
         let name = opt_str(&p.name).unwrap_or("unknown");
         let namespace = opt_str(&p.namespace);
         let arguments = opt_str(&p.arguments).unwrap_or_default();
@@ -1266,7 +1255,7 @@ impl RolloutParser {
         self.register_call(ts, owned(&p.id), call_id, block, flavor, cmds);
     }
 
-    fn on_custom_call(&mut self, p: CustomCallPayload<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_custom_call(&mut self, p: CustomCallPayload<'_>, ts: Option<i64>, span: JsonlSpan) {
         let name = opt_str(&p.name).unwrap_or("unknown");
         let input = opt_str(&p.input).unwrap_or_default();
         let call_id = owned(&p.call_id)
@@ -1317,7 +1306,7 @@ impl RolloutParser {
         self.register_call(ts, owned(&p.id), call_id, block, flavor, cmds);
     }
 
-    fn on_local_shell(&mut self, p: ActionPayload<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_local_shell(&mut self, p: ActionPayload<'_>, ts: Option<i64>, span: JsonlSpan) {
         let action = p.action.unwrap_or(Value::Null);
         let cmd = action
             .get("command")
@@ -1353,7 +1342,7 @@ impl RolloutParser {
 
     // ─── 结构化项 ────────────────────────────────────────────────────
 
-    fn on_item(&mut self, item: RawItem<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_item(&mut self, item: RawItem<'_>, ts: Option<i64>, span: JsonlSpan) {
         match item.ty.as_str() {
             "AgentMessage" => {
                 if let (Some(id), Some(phase)) = (owned(&item.id), owned(&item.phase)) {
@@ -1547,7 +1536,7 @@ impl RolloutParser {
 
     // ─── 输出与回填 ──────────────────────────────────────────────────
 
-    fn on_output(&mut self, p: OutputPayload<'_>, ts: Option<i64>, span: LineSpan) {
+    fn on_output(&mut self, p: OutputPayload<'_>, ts: Option<i64>, span: JsonlSpan) {
         let call_id = owned(&p.call_id).unwrap_or_default();
         let out = OutputInfo::from_contents(p.output.as_ref(), span);
         let id = owned(&p.id);
