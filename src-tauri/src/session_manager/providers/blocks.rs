@@ -341,6 +341,317 @@ pub fn first_string_field(input: &Value) -> Option<String> {
         .map(one_line_title)
 }
 
+// ─── 由 JSON 参数构造 block（Gemini / OpenCode / Pi / OpenClaw / Hermes / Grok 共用）────
+
+use crate::session_manager::model::{
+    ContentRef, DiffFile, DiffOp, DiffSummary, SessionBlock, SessionMessage, ToolStatus,
+};
+
+/// 参数里第一个存在的非空字符串字段。
+pub fn str_field<'a>(input: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_str))
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// 参数里第一个存在的非负整数字段（兼容写成字符串的数字）。
+fn u64_field(input: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        let value = input.get(*key)?;
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+    })
+}
+
+/// OpenAI 形状的 `arguments` 是 JSON 字符串：能解析成对象/数组就解析，否则保持原样。
+pub fn parse_arguments(raw: &Value) -> Value {
+    match raw {
+        Value::String(text) => match serde_json::from_str::<Value>(text) {
+            Ok(parsed @ (Value::Object(_) | Value::Array(_))) => parsed,
+            _ => raw.clone(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// 工具参数预览：字符串原样，其余序列化为紧凑 JSON；空参数为空串。
+pub fn input_preview(input: &Value) -> Preview {
+    match input {
+        Value::Null => preview_chars("", INPUT_PREVIEW_CHARS),
+        Value::String(text) => preview_chars(text, INPUT_PREVIEW_CHARS),
+        other => preview_chars(&other.to_string(), INPUT_PREVIEW_CHARS),
+    }
+}
+
+const PATH_KEYS: &[&str] = &[
+    "file_path",
+    "filePath",
+    "path",
+    "absolute_path",
+    "file",
+    "filename",
+    "dir_path",
+];
+
+/// 按 kind 从参数里提炼 `(title, detail)`（§3.3）。找不到对应字段时 title 为空，
+/// 投影退化为 `[Tool: name]`。
+pub fn title_from_input(
+    kind: ToolKind,
+    raw_name: &str,
+    server: Option<&str>,
+    input: &Value,
+) -> (String, Option<String>) {
+    let detail_of = |keys: &[&str]| str_field(input, keys).map(one_line_title);
+    match kind {
+        ToolKind::Shell => (
+            str_field(input, &["command", "cmd", "script"])
+                .map(title_shell)
+                .unwrap_or_default(),
+            detail_of(&["description"]),
+        ),
+        ToolKind::Read => {
+            if let Some(path) = str_field(input, PATH_KEYS) {
+                title_read(
+                    path,
+                    u64_field(input, &["offset", "start_line"]),
+                    u64_field(input, &["limit"]),
+                )
+            } else {
+                let paths: Vec<&str> = input
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                (title_web(&paths), None)
+            }
+        }
+        ToolKind::Search => {
+            let path = str_field(input, &["path", "dir_path", "directory", "cwd"]);
+            match str_field(input, &["pattern", "query", "regex", "glob", "include"]) {
+                Some(pattern) => (title_search(pattern, path), None),
+                None => (path.map(title_path).unwrap_or_default(), None),
+            }
+        }
+        ToolKind::Edit | ToolKind::Write => (
+            str_field(input, PATH_KEYS)
+                .map(title_path)
+                .unwrap_or_default(),
+            None,
+        ),
+        ToolKind::Web => {
+            let mut items: Vec<&str> = ["urls", "queries"]
+                .iter()
+                .filter_map(|key| input.get(*key).and_then(Value::as_array))
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            if items.is_empty() {
+                items.extend(str_field(input, &["url", "query", "prompt"]));
+            }
+            (title_web(&items), None)
+        }
+        ToolKind::Mcp => {
+            let server = server.unwrap_or_default();
+            let tool = split_mcp_name(raw_name)
+                .map(|(_, tool)| tool)
+                .or_else(|| {
+                    raw_name
+                        .strip_prefix(server)
+                        .map(|rest| rest.trim_start_matches(['_', '/', '.']))
+                })
+                .filter(|tool| !tool.is_empty())
+                .unwrap_or(raw_name);
+            (title_mcp(server, tool), first_string_field(input))
+        }
+        ToolKind::Agent => (
+            str_field(input, &["description", "task_name", "prompt", "message"])
+                .map(title_agent)
+                .unwrap_or_default(),
+            detail_of(&["subagent_type", "agent", "model"]),
+        ),
+        ToolKind::Ask => {
+            let question = input
+                .get("questions")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|first| {
+                    first
+                        .get("question")
+                        .and_then(Value::as_str)
+                        .or_else(|| first.as_str())
+                })
+                .or_else(|| str_field(input, &["question", "prompt"]));
+            (question.map(title_ask).unwrap_or_default(), None)
+        }
+        ToolKind::Todo => {
+            let count = input.get("todos").and_then(Value::as_array).map(Vec::len);
+            (count.map(title_todo).unwrap_or_default(), None)
+        }
+        ToolKind::Other => (title_other(raw_name), first_string_field(input)),
+    }
+}
+
+/// 文本行数（空文本为 0）。
+fn text_lines(text: &str) -> u32 {
+    saturating_u32(text.lines().count())
+}
+
+/// 统计 unified diff（或带行号的 `+12 xxx` 形式）里的增删行数，跳过 `+++`/`---` 文件头。
+pub fn count_diff_lines(diff: &str) -> (u32, u32) {
+    let (mut added, mut removed) = (0u32, 0u32);
+    for line in diff.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            added = added.saturating_add(1);
+        } else if line.starts_with('-') {
+            removed = removed.saturating_add(1);
+        }
+    }
+    (added, removed)
+}
+
+/// 单文件改动摘要。
+pub fn single_file_diff(path: &str, op: DiffOp, added: u32, removed: u32) -> DiffSummary {
+    DiffSummary {
+        files: vec![DiffFile {
+            path: path.to_string(),
+            op,
+            added,
+            removed,
+        }],
+        added,
+        removed,
+        full: None,
+    }
+}
+
+/// 只凭参数估算 Edit/Write 的改动（`old/new` 字符串按行数计、`edits[]` 求和、`content` 视为新增）。
+/// 拿到工具自己给的 diff 时应以那个为准。
+pub fn diff_from_input(kind: ToolKind, input: &Value) -> Option<DiffSummary> {
+    let path = str_field(input, PATH_KEYS)?;
+    let pair = |item: &Value| -> Option<(u32, u32)> {
+        let old = str_field_allow_empty(item, &["old_string", "oldString", "old_str", "oldText"])?;
+        let new = str_field_allow_empty(item, &["new_string", "newString", "new_str", "newText"])?;
+        Some((text_lines(new), text_lines(old)))
+    };
+    match kind {
+        ToolKind::Edit => {
+            let (added, removed) = if let Some(edits) = input.get("edits").and_then(Value::as_array)
+            {
+                edits
+                    .iter()
+                    .filter_map(pair)
+                    .fold((0u32, 0u32), |(a, r), (x, y)| {
+                        (a.saturating_add(x), r.saturating_add(y))
+                    })
+            } else {
+                pair(input)?
+            };
+            Some(single_file_diff(path, DiffOp::Update, added, removed))
+        }
+        ToolKind::Write => {
+            let content = str_field_allow_empty(input, &["content", "contents", "text"])?;
+            Some(single_file_diff(path, DiffOp::Add, text_lines(content), 0))
+        }
+        _ => None,
+    }
+}
+
+fn str_field_allow_empty<'a>(input: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_str))
+}
+
+/// 由参数构造 `ToolCall`：归一化 kind、提炼标题、参数预览；参数超长时调用 `input_full` 生成引用。
+/// Edit/Write 先按参数估算 diff，解析器拿到更准的数据再覆盖。
+pub fn tool_call_block(
+    source: ToolSource,
+    id: impl Into<String>,
+    raw_name: &str,
+    input: &Value,
+    input_full: impl FnOnce() -> Option<ContentRef>,
+) -> SessionBlock {
+    let NormalizedTool { kind, server } = normalize_tool(source, raw_name, None);
+    let (title, detail) = title_from_input(kind, raw_name, server.as_deref(), input);
+    let preview = input_preview(input);
+    SessionBlock::ToolCall {
+        id: id.into(),
+        raw_name: raw_name.to_string(),
+        kind,
+        title,
+        detail,
+        server,
+        input_preview: preview.text,
+        input_total_len: preview.total_len,
+        input_full: if preview.truncated {
+            input_full()
+        } else {
+            None
+        },
+        diff: diff_from_input(kind, input),
+        by_user: false,
+    }
+}
+
+/// 构造 `ToolResult`：预览 12 行 / 1200 字，超出时调用 `full` 生成引用。
+/// `exit_code` / `duration_ms` / `images` / `saved_path` 由解析器按需补上。
+pub fn tool_result_block(
+    call_id: impl Into<String>,
+    status: ToolStatus,
+    text: &str,
+    full: impl FnOnce() -> Option<ContentRef>,
+) -> SessionBlock {
+    let p = preview(text);
+    SessionBlock::ToolResult {
+        call_id: call_id.into(),
+        status,
+        preview: p.text,
+        total_len: p.total_len,
+        line_count: p.line_count,
+        truncated: p.truncated,
+        full: if p.truncated { full() } else { None },
+        exit_code: None,
+        duration_ms: None,
+        images: Vec::new(),
+        saved_path: None,
+    }
+}
+
+/// 构造 `Thinking`：正文按 [`THINKING_PREVIEW_CHARS`] 截断，超出时调用 `full` 生成引用；
+/// 正文为空视为不可见（redacted）。
+pub fn thinking_block(
+    text: &str,
+    summary: Option<String>,
+    duration_ms: Option<u64>,
+    full: impl FnOnce() -> Option<ContentRef>,
+) -> SessionBlock {
+    let p = preview_chars(text.trim_end(), THINKING_PREVIEW_CHARS);
+    SessionBlock::Thinking {
+        redacted: text.trim().is_empty(),
+        text: p.text,
+        summary,
+        duration_ms,
+        full: if p.truncated { full() } else { None },
+    }
+}
+
+/// 按「非 injected 的 user 消息」递增生成 `t{n}`（§4）；首条 user 之前的内容归 `t0`。
+/// 已有 `turn_id` 的消息保持不变。
+pub fn assign_turn_ids(messages: &mut [SessionMessage]) {
+    let mut turn = 0u32;
+    for message in messages {
+        if message.role == "user" && !message.injected {
+            turn += 1;
+        }
+        if message.turn_id.is_none() {
+            message.turn_id = Some(format!("t{turn}"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,5 +857,129 @@ mod tests {
             Some("https://x".to_string())
         );
         assert_eq!(estimate_base64_size(8), 6);
+    }
+
+    #[test]
+    fn title_from_input_covers_each_kind() {
+        use ToolKind::*;
+        let t = |kind, name: &str, input: Value| title_from_input(kind, name, None, &input);
+        assert_eq!(
+            t(
+                Shell,
+                "bash",
+                json!({"command": "ls -la", "description": "List"})
+            ),
+            ("ls -la".into(), Some("List".into()))
+        );
+        assert_eq!(
+            t(
+                Read,
+                "read",
+                json!({"filePath": "/a.rs", "offset": 10, "limit": 31})
+            ),
+            ("/a.rs".into(), Some(":10-40".into()))
+        );
+        assert_eq!(
+            t(Read, "read_many_files", json!({"paths": ["a", "b"]})).0,
+            "a, b"
+        );
+        assert_eq!(
+            t(Search, "grep", json!({"pattern": "foo", "path": "src"})).0,
+            "foo in src"
+        );
+        assert_eq!(
+            t(Search, "list_directory", json!({"dir_path": "/p"})).0,
+            "/p"
+        );
+        assert_eq!(t(Edit, "edit", json!({"file_path": "/p/a"})).0, "/p/a");
+        assert_eq!(
+            t(Web, "webfetch", json!({"url": "https://x"})).0,
+            "https://x"
+        );
+        assert_eq!(
+            t(
+                Agent,
+                "task",
+                json!({"description": "Find", "subagent_type": "explore"})
+            ),
+            ("Find".into(), Some("explore".into()))
+        );
+        assert_eq!(
+            t(
+                Ask,
+                "question",
+                json!({"questions": [{"question": "删吗？"}]})
+            )
+            .0,
+            "删吗？"
+        );
+        assert_eq!(t(Todo, "todowrite", json!({"todos": [1, 2]})).0, "2 项");
+        assert_eq!(
+            t(Other, "skill", json!({"name": "commit"})),
+            ("skill".into(), Some("commit".into()))
+        );
+        assert_eq!(t(Shell, "bash", json!({})).0, "");
+        assert_eq!(
+            title_from_input(
+                Mcp,
+                "context7_resolve-library-id",
+                Some("context7"),
+                &json!({})
+            )
+            .0,
+            "context7.resolve-library-id"
+        );
+    }
+
+    #[test]
+    fn diff_helpers_count_lines() {
+        assert_eq!(
+            count_diff_lines("--- a\n+++ b\n@@\n-x\n+y\n+z\n ctx"),
+            (2, 1)
+        );
+        assert_eq!(count_diff_lines(" 10 a\n-11 x\n+11 y"), (1, 1));
+
+        let edit = diff_from_input(
+            ToolKind::Edit,
+            &json!({"path": "/a", "edits": [{"oldText": "a\nb", "newText": "c"}, {"oldText": "d", "newText": "e\nf"}]}),
+        )
+        .unwrap();
+        assert_eq!((edit.added, edit.removed), (3, 3));
+        let write = diff_from_input(
+            ToolKind::Write,
+            &json!({"file_path": "/a", "content": "1\n2\n"}),
+        )
+        .unwrap();
+        assert_eq!(
+            (write.added, write.removed, write.files[0].op),
+            (2, 0, DiffOp::Add)
+        );
+        assert!(diff_from_input(ToolKind::Edit, &json!({"path": "/a"})).is_none());
+    }
+
+    #[test]
+    fn arguments_and_turns() {
+        assert_eq!(parse_arguments(&json!("{\"a\":1}")), json!({"a": 1}));
+        assert_eq!(parse_arguments(&json!("not json")), json!("not json"));
+        assert_eq!(parse_arguments(&json!("42")), json!("42"));
+
+        let msg = |role: &str, injected: bool| SessionMessage {
+            role: role.into(),
+            injected,
+            ..SessionMessage::default()
+        };
+        let mut messages = vec![
+            msg("system", false),
+            msg("user", false),
+            msg("assistant", false),
+            msg("user", true),
+            msg("user", false),
+        ];
+        assign_turn_ids(&mut messages);
+        let turns: Vec<_> = messages
+            .iter()
+            .map(|m| m.turn_id.clone().unwrap())
+            .collect();
+        assert_eq!(turns, ["t0", "t1", "t1", "t1", "t2"]);
     }
 }
