@@ -44,7 +44,7 @@ arboard = "3.6"
 flate2 = "1"
 brotli = "7"
 zstd = "0.13"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "signal"] }
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"
@@ -100,6 +100,7 @@ winreg = "0.52"
 windows-sys = { version = "0.61", features = [
     "Win32_Globalization",
     "Win32_Storage_FileSystem",
+    "Win32_System_Console",
     "Win32_UI_Shell",
 ] }
 

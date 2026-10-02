@@ -354,6 +354,43 @@ describe("VpsPanel", () => {
   );
 
   it.each([
+    ["en", en],
+    ["zh", zh],
+    ["zh-TW", zhTW],
+    ["ja", ja],
+  ] as const)(
+    "shows localized password reuse guidance without an extra control in %s",
+    async (language, locale) => {
+      const translations = createInstance();
+      await translations.init({
+        lng: language,
+        resources: { [language]: { translation: locale } },
+        interpolation: { escapeValue: false },
+      });
+      const { ref } = renderPanel(translations);
+      await screen.findByText(host.name);
+      await act(async () => ref.current?.openAdd());
+      const form = screen.getByRole("form", { name: locale.vps.add });
+      const authentication = within(form).getByRole("group", {
+        name: locale.vps.sections.authentication,
+      });
+      expect(
+        within(authentication).getByText(locale.vps.auth.passwordHelp),
+      ).toBeInTheDocument();
+      expect(
+        within(authentication).getByLabelText(locale.vps.auth.password),
+      ).toHaveAttribute("type", "password");
+      expect(within(authentication).queryByRole("checkbox")).toBeNull();
+      expect(within(form).queryByRole("switch")).toBeNull();
+      expect(within(form).getAllByRole("checkbox")).toHaveLength(
+        SKILLS_APP_IDS.length,
+      );
+      expect(mocks.saveServer).not.toHaveBeenCalled();
+      expect(mocks.testConnection).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     "SSH fingerprint confirmation expired or was cancelled; test the connection again",
     "SSH trust could not be saved",
   ])(

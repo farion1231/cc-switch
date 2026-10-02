@@ -45,7 +45,7 @@
       "legacy": "保持原有认证方式",
       "passwordPlaceholder": "输入 SSH 登录密码",
       "keepPassword": "留空保留已保存的密码",
-      "passwordHelp": "保存到系统凭据库，供 CC Switch 测试使用，不写入配置或 Skill；系统漫游遵循操作系统策略。客户端仍需在终端输入密码，请勿发给模型。",
+      "passwordHelp": "密码保存在本机系统凭据库，已绑定的同机客户端通过 CC Switch 本机 SSH 执行入口自动使用。不写入配置或 Skill，不交给模型。密码缺失或主机指纹变化时，请回 VPS 页面处理。WSL 和容器不自动支持；Windows 凭据漫游遵循操作系统策略。",
       "certificateFile": "SSH 证书文件路径",
       "certificatePlaceholder": "证书文件的绝对路径，通常以 -cert.pub 结尾",
       "certificateHelp": "使用 OpenSSH 用户证书及其对应私钥，不是网站的 TLS/SSL 证书。"
@@ -70,6 +70,22 @@
       "timeout": "连接测试超时",
       "cancelled": "连接测试已取消",
       "failed": "连接测试失败"
+    },
+    "cli": {
+      "usage": "cc-switch vps exec --root <VPS-directory> --app <client> --server <UUID> [--timeout <seconds>] -- <remote-command>\n在 -- 后传入恰好一个远端 shell 命令字符串。不分配 TTY，默认超时为 300 秒，支持通过 stdin 输入脚本。主机指纹须先在 VPS 页面测试连接并核对确认。",
+      "invalidArguments": "参数不正确。请运行 cc-switch vps --help 查看用法。",
+      "dataInvalid": "主机文件缺失、损坏或被修改，或 VPS 目录不正确。请回 VPS 页面检查配置。",
+      "hostUnavailable": "主机不存在或未绑定给此客户端。请在 VPS 页面检查主机及客户端选择。",
+      "trustRequired": "尚未确认主机指纹。请在 VPS 页面测试连接，核对指纹后再确认。",
+      "trustInvalid": "本机信任记录异常或恢复尚未完成。请回 VPS 页面重新测试连接。",
+      "targetChanged": "配置在准备执行期间发生变化。请刷新 VPS 页面，核对主机后重试。",
+      "passwordRequired": "没有可用的已保存密码。请先在 VPS 页面保存主机密码，再重试。",
+      "credentialsUnavailable": "无法读取系统凭据库，不回退到明文。请检查系统凭据服务，再回 VPS 页面重试。",
+      "prepareFailed": "无法为本次执行准备私有 SSH 配置。请检查本机目录权限，再回 VPS 页面重试。",
+      "sshNotFound": "找不到系统 OpenSSH。请安装或启用 OpenSSH，并确认 PATH 中可找到 ssh。",
+      "executionFailed": "本机 SSH 执行失败。请检查本机 SSH 环境后重试。远端错误会原样传递 stderr 和退出码。",
+      "timeout": "执行超时，已停止本机 SSH。远端命令可能已产生效果，请检查远端状态后再重试。",
+      "cancelled": "执行已取消，已停止本机 SSH。远端命令可能已产生效果，请检查远端状态后再重试。"
     },
     "hostKey": {
       "title": "确认主机指纹",

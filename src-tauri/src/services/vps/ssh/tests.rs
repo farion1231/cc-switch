@@ -105,6 +105,15 @@ fn first_confirmation(
 }
 
 #[test]
+fn client_execution_dispatch_precedes_gui_startup() {
+    let source = include_str!("../../../main.rs");
+    let helper = source.find("vps::ssh::askpass::dispatch()").unwrap();
+    let cli = source.find("vps::cli::dispatch()").expect("VPS CLI entry");
+    let gui = source.find("cc_switch_lib::run()").unwrap();
+    assert!(helper < cli && cli < gui);
+}
+
+#[test]
 fn scan_uses_arguments_and_the_requested_port_without_shell_interpolation() {
     let server = server();
     let spec = scan_command(&server);

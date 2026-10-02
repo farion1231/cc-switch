@@ -45,7 +45,7 @@
       "legacy": "保留原有驗證方式",
       "passwordPlaceholder": "輸入 SSH 登入密碼",
       "keepPassword": "留空以保留已儲存的密碼",
-      "passwordHelp": "儲存到系統認證資料庫，供 CC Switch 測試使用，不寫入設定或 Skill；系統漫遊依作業系統政策執行。用戶端仍須在終端輸入密碼，請勿傳送給模型。",
+      "passwordHelp": "密碼儲存在本機系統認證資料庫，已綁定的同機用戶端透過 CC Switch 本機 SSH 執行入口自動使用。不寫入設定或 Skill，也不會交給模型。密碼遺失或主機指紋變更時，請回 VPS 頁面處理。WSL 和容器不自動支援；Windows 認證資料漫遊依作業系統政策執行。",
       "certificateFile": "SSH 憑證檔案路徑",
       "certificatePlaceholder": "憑證檔案的絕對路徑，通常以 -cert.pub 結尾",
       "certificateHelp": "使用 OpenSSH 使用者憑證及其對應私密金鑰，而非網站的 TLS/SSL 憑證。"
@@ -70,6 +70,22 @@
       "timeout": "連線測試逾時",
       "cancelled": "連線測試已取消",
       "failed": "連線測試失敗"
+    },
+    "cli": {
+      "usage": "cc-switch vps exec --root <VPS-directory> --app <client> --server <UUID> [--timeout <seconds>] -- <remote-command>\n在 -- 後傳入恰好一個遠端 shell 命令字串。不配置 TTY，預設逾時為 300 秒，支援透過 stdin 輸入指令碼。主機指紋須先在 VPS 頁面測試連線並核對確認。",
+      "invalidArguments": "參數不正確。請執行 cc-switch vps --help 查看用法。",
+      "dataInvalid": "主機檔案遺失、損毀或被修改，或 VPS 目錄不正確。請回 VPS 頁面檢查設定。",
+      "hostUnavailable": "主機不存在或未綁定給此用戶端。請在 VPS 頁面檢查主機及用戶端選擇。",
+      "trustRequired": "尚未確認主機指紋。請在 VPS 頁面測試連線，核對指紋後再確認。",
+      "trustInvalid": "本機信任記錄異常或復原尚未完成。請回 VPS 頁面重新測試連線。",
+      "targetChanged": "設定在準備執行期間發生變更。請重新整理 VPS 頁面，核對主機後重試。",
+      "passwordRequired": "沒有可用的已儲存密碼。請先在 VPS 頁面儲存主機密碼，再重試。",
+      "credentialsUnavailable": "無法讀取系統認證資料庫，不會退回明文。請檢查系統認證服務，再回 VPS 頁面重試。",
+      "prepareFailed": "無法為本次執行準備私有 SSH 設定。請檢查本機目錄權限，再回 VPS 頁面重試。",
+      "sshNotFound": "找不到系統 OpenSSH。請安裝或啟用 OpenSSH，並確認 PATH 中可找到 ssh。",
+      "executionFailed": "本機 SSH 執行失敗。請檢查本機 SSH 環境後重試。遠端錯誤會原樣傳遞 stderr 和結束代碼。",
+      "timeout": "執行逾時，已停止本機 SSH。遠端命令可能已產生效果，請檢查遠端狀態後再重試。",
+      "cancelled": "執行已取消，已停止本機 SSH。遠端命令可能已產生效果，請檢查遠端狀態後再重試。"
     },
     "hostKey": {
       "title": "確認主機指紋",

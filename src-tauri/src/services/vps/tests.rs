@@ -31,6 +31,64 @@ fn catalog(service: &VpsService, app: &str) -> Value {
 }
 
 #[test]
+fn client_execution_catalog_includes_a_scoped_native_entry() {
+    let (_home, service) = service();
+    let host = server(&[AppType::Claude, AppType::Codex]);
+    service.save_server(host.clone()).unwrap();
+    for app in ["claude", "codex"] {
+        let data = catalog(&service, app);
+        assert_eq!(data["version"], 2);
+        assert!(Path::new(data["execution"]["program"].as_str().unwrap()).is_absolute());
+        assert_eq!(
+            data["execution"]["args"],
+            json!(["vps", "exec", "--root", service.root(), "--app", app])
+        );
+        assert_eq!(data["servers"][0]["id"], host.id);
+        assert!(data["execution"].get("password").is_none());
+    }
+}
+
+#[test]
+fn client_execution_upgrades_owned_v1_catalog_and_refreshes_relocated_entry() {
+    let (_home, service) = service();
+    service.save_server(server(&[AppType::Claude])).unwrap();
+    let path = service.root.join("clients/claude.json");
+    for legacy in [true, false] {
+        let mut data = catalog(&service, "claude");
+        if legacy {
+            data["version"] = json!(1);
+            data.as_object_mut().unwrap().remove("execution");
+        } else {
+            data["execution"]["program"] =
+                json!(service.root.join("previous-installation/cc-switch"));
+        }
+        let bytes = sorted_json_bytes(&data).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let (mut document, _) = service.read_document().unwrap();
+        document.generated_files.insert(
+            "clients/claude.json".into(),
+            BTreeSet::from([content_hash(&bytes)]),
+        );
+        fs::write(
+            service.root.join("servers.json"),
+            sorted_json_bytes(&document).unwrap(),
+        )
+        .unwrap();
+        service.reconcile().unwrap();
+        let updated = catalog(&service, "claude");
+        assert_eq!(updated["version"], 2);
+        assert_eq!(
+            updated["execution"],
+            serde_json::to_value(cli::execution_entry(service.root(), &AppType::Claude).unwrap())
+                .unwrap()
+        );
+        let complete = fs::read(&path).unwrap();
+        service.reconcile().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), complete);
+    }
+}
+
+#[test]
 fn server_identity_and_alias_are_generated_once_and_survive_edits() {
     let mut one = server(&[]);
     let two = server(&[]);

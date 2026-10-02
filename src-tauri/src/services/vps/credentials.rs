@@ -115,7 +115,7 @@ fn server_namespace(root: &Path, id: &str) -> Result<String> {
     Ok(format!("{}.{}", namespace(root)?, id))
 }
 
-fn password_from_document(
+pub(super) fn password_from_document(
     root: &Path,
     document: &VpsDocument,
     id: &str,

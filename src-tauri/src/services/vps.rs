@@ -267,7 +267,7 @@ pub fn render_ssh_config(servers: &[VpsServer]) -> Result<String> {
         ));
         config.push_str("    StrictHostKeyChecking yes\n    KbdInteractiveAuthentication no\n");
         if server.auth_method == Some(VpsAuthMethod::Password) {
-            // Clients prompt in their own terminal; only CC Switch probes use its OS vault.
+            // The native execution entry supplies passwords through one-shot ASKPASS.
             config.push_str("    BatchMode no\n    PasswordAuthentication yes\n    PubkeyAuthentication no\n    PreferredAuthentications password\n    NumberOfPasswordPrompts 1\n    IdentityAgent none\n    IdentityFile none\n");
         } else {
             config.push_str("    BatchMode yes\n    PasswordAuthentication no\n    PubkeyAuthentication yes\n    PreferredAuthentications publickey\n    NumberOfPasswordPrompts 0\n");
@@ -374,6 +374,7 @@ struct ClientCatalog<'a> {
     version: u32,
     app: &'a str,
     ssh_config: PathBuf,
+    execution: cli::ExecutionEntry,
     servers: Vec<ClientServer<'a>>,
 }
 
@@ -398,9 +399,10 @@ fn generated_files(root: &Path, servers: &[VpsServer]) -> Result<BTreeMap<String
             continue;
         }
         let catalog = ClientCatalog {
-            version: 1,
+            version: 2,
             app: app.as_str(),
             ssh_config: root.join("ssh_config"),
+            execution: cli::execution_entry(root, &app)?,
             servers: selected
                 .into_iter()
                 .map(|server| ClientServer {
@@ -671,6 +673,7 @@ impl VpsService {
     }
 }
 
+pub mod cli;
 pub mod credentials;
 mod managed;
 pub mod ssh;

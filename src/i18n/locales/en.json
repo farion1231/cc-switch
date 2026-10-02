@@ -45,7 +45,7 @@
       "legacy": "Keep existing authentication",
       "passwordPlaceholder": "Enter the SSH login password",
       "keepPassword": "Leave blank to keep the saved password",
-      "passwordHelp": "Saved in the system credential store for CC Switch tests, not in configuration files or Skills. OS credential roaming follows system policy. Clients still need terminal password entry; never send passwords to a model.",
+      "passwordHelp": "Saved in this machine's system credential store. Bound clients on the same machine reuse it automatically through CC Switch's local SSH execution entry point. Not written to configuration files or Skills; not shared with models. If the password is missing or the fingerprint changes, return to the VPS page. WSL and containers are not supported automatically. Windows credential roaming follows OS policy.",
       "certificateFile": "SSH certificate file path",
       "certificatePlaceholder": "Absolute certificate path, usually ending in -cert.pub",
       "certificateHelp": "Use an OpenSSH user certificate and its matching private key, not a website's TLS/SSL certificate."
@@ -70,6 +70,22 @@
       "timeout": "Connection test timed out",
       "cancelled": "Connection test cancelled",
       "failed": "Connection test failed"
+    },
+    "cli": {
+      "usage": "cc-switch vps exec --root <VPS-directory> --app <client> --server <UUID> [--timeout <seconds>] -- <remote-command>\nPass exactly one remote shell command string after --. No TTY is allocated; the default timeout is 300 seconds. stdin accepts scripts. Verify and confirm the host fingerprint using Test connection on the VPS page first.",
+      "invalidArguments": "Invalid arguments. Run cc-switch vps --help for usage.",
+      "dataInvalid": "The host file is missing, damaged or modified, or the VPS directory is incorrect. Return to the VPS page to check the configuration.",
+      "hostUnavailable": "The host does not exist or is not bound to this client. Check the host and client selection on the VPS page.",
+      "trustRequired": "The host fingerprint has not been confirmed. Test the connection on the VPS page and verify the fingerprint before confirming it.",
+      "trustInvalid": "The local trust records are invalid or recovery is incomplete. Return to the VPS page and test the connection again.",
+      "targetChanged": "The configuration changed while preparing execution. Refresh the VPS page, check the host and retry.",
+      "passwordRequired": "No saved password is available. Save the host password on the VPS page before retrying.",
+      "credentialsUnavailable": "The system credential store cannot be read; there is no plaintext fallback. Check the system credential service, then return to the VPS page to retry.",
+      "prepareFailed": "Could not prepare the private SSH configuration for this execution. Check local directory permissions, then return to the VPS page to retry.",
+      "sshNotFound": "System OpenSSH was not found. Install or enable OpenSSH and make sure ssh is available on PATH.",
+      "executionFailed": "Local SSH execution failed. Check the local SSH environment and retry. Remote errors are passed through unchanged on stderr with their exit status.",
+      "timeout": "Execution timed out and local SSH was stopped. The remote command may already have had effects; check the remote state before retrying.",
+      "cancelled": "Execution was cancelled and local SSH was stopped. The remote command may already have had effects; check the remote state before retrying."
     },
     "hostKey": {
       "title": "Confirm host fingerprint",

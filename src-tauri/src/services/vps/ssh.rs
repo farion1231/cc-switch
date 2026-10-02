@@ -7,6 +7,7 @@ use super::{
     VpsServer, VpsService,
 };
 pub mod askpass;
+pub(super) mod exec;
 use crate::config::{atomic_write_private, sorted_json_bytes};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{
@@ -537,7 +538,7 @@ impl TrustStore {
         atomic_write_private(&self.root.join(name), bytes).context("Write VPS SSH trust file")
     }
 
-    fn load_unlocked(&self) -> Result<LoadedTrust> {
+    fn read_validated(&self) -> Result<LoadedTrust> {
         let source = self.read("ssh-trust.json")?;
         let known = self.read("known_hosts")?;
         let Some(source_bytes) = source.as_deref() else {
@@ -546,7 +547,7 @@ impl TrustStore {
             }
             return Ok((TrustDocument::empty(), None, None));
         };
-        let mut document: TrustDocument =
+        let document: TrustDocument =
             serde_json::from_slice(source_bytes).context("Parse VPS SSH trust data")?;
         document.validate()?;
         let expected = document.known_hosts();
@@ -558,6 +559,27 @@ impl TrustStore {
                 bail!("VPS known_hosts was modified; not overwritten");
             }
         }
+        Ok((document, source, known))
+    }
+
+    /// A separate CLI process must never perform GUI trust-journal recovery writes.
+    fn read_only(&self) -> Result<LoadedTrust> {
+        let loaded = self.read_validated()?;
+        let (document, source, known) = &loaded;
+        if document.previous_known_hosts_hash.is_some()
+            || (source.is_some() && known.as_deref() != Some(document.known_hosts().as_slice()))
+        {
+            bail!("VPS SSH trust recovery must be completed in CC Switch before execution");
+        }
+        Ok(loaded)
+    }
+
+    fn load_unlocked(&self) -> Result<LoadedTrust> {
+        let (mut document, source, known) = self.read_validated()?;
+        let Some(source_bytes) = source.as_deref() else {
+            return Ok((document, source, known));
+        };
+        let expected = document.known_hosts();
         if known.as_deref() != Some(expected.as_slice())
             || document.previous_known_hosts_hash.is_some()
         {

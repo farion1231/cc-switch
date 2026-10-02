@@ -5,6 +5,9 @@ fn main() {
     if let Some(code) = cc_switch_lib::vps::ssh::askpass::dispatch() {
         std::process::exit(code);
     }
+    if let Some(code) = cc_switch_lib::vps::cli::dispatch() {
+        std::process::exit(code);
+    }
     // 在 Linux 上设置 WebKit 环境变量以解决 DMA-BUF 渲染问题
     // 某些 Linux 系统（如 Debian 13.2、Nvidia GPU）上 WebKitGTK 的 DMA-BUF 渲染器可能导致白屏/黑屏
     // 参考: https://github.com/tauri-apps/tauri/issues/9394

@@ -41,8 +41,8 @@ impl Broker {
     }
 
     pub(super) fn configure(&self, command: &mut Command) -> io::Result<()> {
+        configure_helper(command, &std::env::current_exe()?)?;
         command
-            .env("SSH_ASKPASS", std::env::current_exe()?)
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("DISPLAY", "cc-switch-askpass")
             .env(MARKER, "1")
@@ -93,6 +93,28 @@ impl Broker {
             .and_then(|_| connection.write_all(bytes));
         Ok(())
     }
+}
+
+fn configure_helper(command: &mut Command, executable: &std::path::Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        // Windows OpenSSH 9.5 reads SSH_ASKPASS through the narrow CRT environment, then
+        // interprets it as UTF-8. Non-ASCII installation directories are corrupted there.
+        // Keep the packaged executable's ASCII name in the environment and pass its parent
+        // directory through CreateProcessW's Unicode cwd instead. No shell or copied binary.
+        let parent = executable.parent().ok_or(io::ErrorKind::InvalidInput)?;
+        let name = executable
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| name.is_ascii())
+            .ok_or(io::ErrorKind::InvalidInput)?;
+        command
+            .current_dir(parent)
+            .env("SSH_ASKPASS", format!("./{name}"));
+    }
+    #[cfg(not(windows))]
+    command.env("SSH_ASKPASS", executable);
+    Ok(())
 }
 
 pub(super) fn clear_environment(command: &mut Command) {
@@ -192,6 +214,29 @@ mod tests {
         assert_eq!(dispatch(), None);
         std::env::set_var(MARKER, "malformed");
         assert_eq!(dispatch(), Some(1));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn helper_uses_unicode_cwd_without_a_non_ascii_askpass_environment_path() {
+        let home = tempfile::tempdir().unwrap();
+        let directory = home.path().join("CC Switch 日本語 with spaces");
+        let executable = directory.join("cc-switch.exe");
+        let mut command = Command::new("ssh");
+        configure_helper(&mut command, &executable).unwrap();
+        assert_eq!(command.get_current_dir(), Some(directory.as_path()));
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("SSH_ASKPASS"))
+                .unwrap()
+                .1,
+            Some(std::ffi::OsStr::new("./cc-switch.exe"))
+        );
+        assert!(
+            !executable.exists(),
+            "configuring the helper does not copy or create a binary"
+        );
     }
 
     #[test]
