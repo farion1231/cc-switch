@@ -1117,6 +1117,17 @@ async fn handle_responses_for_app(
             .await;
     }
 
+    // Copilot's native Responses transport can change encrypted IDs between
+    // lifecycle events. Keep this after conversion/compaction dispatch so no
+    // other wire format or synthetic compaction stream is affected.
+    if should_stabilize_copilot_responses_ids(
+        codex_upstream_format,
+        ctx.provider.is_github_copilot(),
+    ) {
+        return handle_codex_copilot_native_responses(response, &ctx, &state, connection_guard)
+            .await;
+    }
+
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
@@ -1151,6 +1162,42 @@ async fn handle_responses_for_app(
         connection_guard,
     )
     .await
+}
+
+async fn handle_codex_copilot_native_responses(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    if !status.is_success() || !response.is_sse() {
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    let builder = rewritten_sse_response_builder(status, response.headers());
+    let compat_stream =
+        super::providers::copilot_responses_compat::create_copilot_responses_sse_stream(
+            response.bytes_stream(),
+        );
+    let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+    let logged_stream = create_logged_passthrough_stream(
+        compat_stream,
+        ctx.tag,
+        usage_collector,
+        ctx.streaming_timeout_config(),
+        connection_guard,
+    );
+
+    builder
+        .body(axum::body::Body::from_stream(logged_stream))
+        .map_err(|error| {
+            log::error!("[{}] 构建 Copilot Responses 兼容流失败: {error}", ctx.tag);
+            ProxyError::Internal(format!(
+                "Failed to build Copilot Responses compatibility stream: {error}"
+            ))
+        })
 }
 
 /// 在上游 SSE 里补发或改写事件的流式响应：响应体和上游的不一样长了，除了逐跳头还要去掉
@@ -1660,6 +1707,17 @@ async fn handle_codex_xai_native_responses_rewrite(
             log::error!("[{}] 构建 namespace 还原响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
+}
+
+fn should_stabilize_copilot_responses_ids(
+    upstream_format: Option<super::forwarder::CodexUpstreamFormat>,
+    is_github_copilot: bool,
+) -> bool {
+    is_github_copilot
+        && matches!(
+            upstream_format,
+            Some(super::forwarder::CodexUpstreamFormat::NativeResponses)
+        )
 }
 
 async fn handle_codex_chat_to_responses_transform(
@@ -3232,9 +3290,10 @@ mod tests {
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
         responses_sse_to_response_value, rewritten_sse_response_builder,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        should_stabilize_copilot_responses_ids, should_use_claude_transform_streaming, transform,
+        upstream_body_parse_error,
     };
-    use crate::proxy::ProxyError;
+    use crate::proxy::{forwarder::CodexUpstreamFormat, ProxyError};
     use bytes::Bytes;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -3264,6 +3323,27 @@ mod tests {
         assert!(headers.get(header::CONNECTION).is_none());
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
         assert_eq!(headers["x-request-id"], "req_1");
+    }
+
+    #[test]
+    fn copilot_id_stabilization_only_runs_for_native_responses() {
+        assert!(should_stabilize_copilot_responses_ids(
+            Some(CodexUpstreamFormat::NativeResponses),
+            true
+        ));
+        assert!(!should_stabilize_copilot_responses_ids(
+            Some(CodexUpstreamFormat::ChatCompletions),
+            true
+        ));
+        assert!(!should_stabilize_copilot_responses_ids(
+            Some(CodexUpstreamFormat::Anthropic),
+            true
+        ));
+        assert!(!should_stabilize_copilot_responses_ids(None, true));
+        assert!(!should_stabilize_copilot_responses_ids(
+            Some(CodexUpstreamFormat::NativeResponses),
+            false
+        ));
     }
 
     #[test]
