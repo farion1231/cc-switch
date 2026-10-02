@@ -16,6 +16,8 @@ import {
   setCodexRemoteCompaction,
   setCodexTopLevelInt,
 } from "@/utils/providerConfigUtils";
+import { fieldClass } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface CodexAuthSectionProps {
   value: string;
@@ -259,7 +261,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
                 type="checkbox"
                 checked={remoteCompactionEnabled}
                 onChange={(e) => handleRemoteCompactionToggle(e.target.checked)}
-                className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+                className="ui-checkbox"
               />
               {t("codexConfig.enableRemoteCompaction")}
             </label>
@@ -280,7 +282,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             type="checkbox"
             checked={toggleStates.contextWindow1M}
             onChange={(e) => handleContextWindowToggle(e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("codexConfig.contextWindow1M")}</span>
         </label>
@@ -294,7 +296,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             defaultValue={toggleStates.compactLimit}
             disabled={!toggleStates.contextWindow1M}
             onChange={(e) => handleCompactLimitChange(e.target.value)}
-            className="w-28 h-7 px-2 text-sm rounded border border-border bg-surface text-fg-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={cn(fieldClass, "h-7 w-28 px-2")}
           />
         </label>
       </div>

@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
@@ -7,12 +8,13 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
   useAddSkillRepo,
@@ -43,6 +45,8 @@ import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
 import { countRepoSkills } from "./RepoManagerPanel";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
 
+/** 发现列表每行高度（h-14），虚拟化按这个算 */
+const ROW_HEIGHT = 56;
 export type SkillsPageSource = "repos" | "skillssh";
 
 type InstallRunner = <T extends { id: string }>(
@@ -55,7 +59,7 @@ type InstallRunner = <T extends { id: string }>(
 
 const SKILLSSH_PAGE_SIZE = 20;
 const POPOVER_CLASS =
-  "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none";
+  "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2";
 
 /** 仓库的增删和停用（发现段的「仓库」弹层和仓库管理抽屉共用） */
 export function useSkillRepoActions() {
@@ -323,6 +327,16 @@ export function SkillsPage({
         ].some((value) => value?.toLowerCase().includes(normalizedQuery));
       });
 
+  // 列表虚拟化：几个仓库加起来上千行，只渲染可视区域和前后各几行（每行固定 56）
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => listScrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    getItemKey: (index) => visibleRows[index]?.key ?? index,
+    overscan: 8,
+  });
+
   // ─── 安装 ───────────────────────────────────────────────────────────
   const names = (apps: AppId[]) =>
     apps.map((app) => APP_DISPLAY_NAME[app]).join(t("mcpPage.listSeparator"));
@@ -492,43 +506,42 @@ export function SkillsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 px-6 pt-1">
-        {renderViewTabs(
-          <div className="flex min-w-0 items-center gap-2">
-            <InstallToPopover
-              label={installToLabel}
-              fullLabel={t("skillsPage.installTo.button", {
-                apps: names(installTargets),
-              })}
-              visibleAppIds={visibleAppIds}
-              targets={installTargets}
-              onChange={onInstallTargetsChange}
-            />
-            <MatrixSearch
-              className="w-[240px] min-w-[160px] shrink"
-              inputId="sk-discover-search"
-              value={query}
-              onValueChange={setQuery}
-              onEnter={isSkillsSh ? submitSkillsSh : undefined}
-              placeholder={
-                isSkillsSh
-                  ? t("skillsPage.discover.skillsShPlaceholder")
-                  : t("skillsPage.discover.searchPlaceholder")
-              }
-              ariaLabel={
-                isSkillsSh
-                  ? t("skillsPage.discover.skillsShAria")
-                  : t("skillsPage.discover.searchAria")
-              }
-              status={
-                normalizedQuery && !isSkillsSh
-                  ? t("appMatrix.found", { count: visibleRows.length })
-                  : ""
-              }
-            />
-          </div>,
-        )}
-      </div>
+      {/* 页签行在外层（UnifiedSkillsPanel），这里只把右侧控件交出去 */}
+      {renderViewTabs(
+        <div className="flex min-w-0 items-center gap-2">
+          <InstallToPopover
+            label={installToLabel}
+            fullLabel={t("skillsPage.installTo.button", {
+              apps: names(installTargets),
+            })}
+            visibleAppIds={visibleAppIds}
+            targets={installTargets}
+            onChange={onInstallTargetsChange}
+          />
+          <MatrixSearch
+            className="w-[240px] min-w-[160px] shrink"
+            inputId="sk-discover-search"
+            value={query}
+            onValueChange={setQuery}
+            onEnter={isSkillsSh ? submitSkillsSh : undefined}
+            placeholder={
+              isSkillsSh
+                ? t("skillsPage.discover.skillsShPlaceholder")
+                : t("skillsPage.discover.searchPlaceholder")
+            }
+            ariaLabel={
+              isSkillsSh
+                ? t("skillsPage.discover.skillsShAria")
+                : t("skillsPage.discover.searchAria")
+            }
+            status={
+              normalizedQuery && !isSkillsSh
+                ? t("appMatrix.found", { count: visibleRows.length })
+                : ""
+            }
+          />
+        </div>,
+      )}
 
       {/* 页签下面一行：来源是发现里的模式（分段控件），其余是页内筛选（更轻的样式） */}
       <div className="flex h-12 shrink-0 items-center gap-2 px-6">
@@ -571,23 +584,24 @@ export function SkillsPage({
               {t("skillsPage.discover.onlyUninstalled")}
             </label>
             <div className="flex-1" />
-            <Button
-              type="button"
-              variant="quiet"
-              size="icon-compact"
-              aria-label={t("skillsPage.discover.reload")}
-              title={t("skillsPage.discover.reload")}
-              disabled={fetchingDiscoverable}
-              onClick={reload}
-            >
-              <RefreshCw
-                className={cn(
-                  "h-4 w-4",
-                  fetchingDiscoverable && "animate-spin",
-                )}
-                strokeWidth={1.5}
-              />
-            </Button>
+            <HoverTip content={t("skillsPage.discover.reload")}>
+              <Button
+                type="button"
+                variant="quiet"
+                size="icon-compact"
+                aria-label={t("skillsPage.discover.reload")}
+                disabled={fetchingDiscoverable}
+                onClick={reload}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-4 w-4",
+                    fetchingDiscoverable && "animate-spin",
+                  )}
+                  strokeWidth={1.5}
+                />
+              </Button>
+            </HoverTip>
           </>
         )}
       </div>
@@ -619,7 +633,10 @@ export function SkillsPage({
       )}
 
       <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
-        <div className="min-h-0 overflow-auto rounded-panel border border-border bg-surface">
+        <div
+          ref={listScrollRef}
+          className="min-h-0 overflow-auto rounded-panel border border-border bg-surface"
+        >
           {loadingList ? (
             <div className="flex items-center justify-center gap-2 py-16 text-body text-fg-2">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -630,9 +647,12 @@ export function SkillsPage({
           ) : (
             <ul
               aria-label={t("skillsPage.discover.listLabel")}
-              className="m-0 min-w-[520px] list-none p-0"
+              className="relative m-0 min-w-[520px] list-none p-0"
+              style={{ height: rowVirtualizer.getTotalSize() }}
             >
-              {visibleRows.map((row, index) => {
+              {rowVirtualizer.getVirtualItems().map((item) => {
+                const index = item.index;
+                const row = visibleRows[index];
                 const status = statusOf(row);
                 const isInstalling = installing.has(row.key);
                 const failure = failed[row.key];
@@ -644,11 +664,14 @@ export function SkillsPage({
                     row.name.trim().toLowerCase();
                 return (
                   <li
-                    key={row.key}
+                    key={item.key}
+                    aria-setsize={visibleRows.length}
+                    aria-posinset={index + 1}
                     className={cn(
-                      "flex h-14 items-center gap-3 pe-3 ps-4",
+                      "absolute inset-x-0 top-0 flex h-14 items-center gap-3 pe-3 ps-4",
                       index > 0 && "border-t border-border",
                     )}
+                    style={{ transform: `translateY(${item.start}px)` }}
                   >
                     <div className="flex min-w-0 flex-1 flex-col">
                       <div className="flex min-w-0 items-center gap-1.5">

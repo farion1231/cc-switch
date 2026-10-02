@@ -4,6 +4,7 @@ import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
   SelectContent,
@@ -11,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
 import { ApiKeySection, ModelDropdown } from "./shared";
 import {
@@ -691,15 +692,18 @@ export function OpenCodeFormFields({
                     })}
                     className="flex-1"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveExtraOption(key)}
-                    className="h-9 w-9 text-fg-2 hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <HoverTip content={t("common.delete")}>
+                    <Button
+                      aria-label={t("common.delete")}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveExtraOption(key)}
+                      className="h-9 w-9 text-fg-2 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
                 </div>
               ))}
             </div>
@@ -815,15 +819,18 @@ export function OpenCodeFormFields({
                     })}
                     className="flex-1"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveModel(key)}
-                    className="h-9 w-9 text-fg-2 hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <HoverTip content={t("common.delete")}>
+                    <Button
+                      aria-label={t("common.delete")}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveModel(key)}
+                      className="h-9 w-9 text-fg-2 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
                 </div>
 
                 {/* Expanded model details */}
@@ -952,17 +959,20 @@ export function OpenCodeFormFields({
                                 )}
                                 className="flex-1"
                               />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() =>
-                                  handleRemoveModelExtraField(key, fKey)
-                                }
-                                className="h-9 w-9 text-fg-2 hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <HoverTip content={t("common.delete")}>
+                                <Button
+                                  aria-label={t("common.delete")}
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() =>
+                                    handleRemoveModelExtraField(key, fKey)
+                                  }
+                                  className="h-9 w-9 text-fg-2 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </HoverTip>
                             </div>
                           ),
                         )
@@ -1037,17 +1047,20 @@ export function OpenCodeFormFields({
                                 )}
                                 className="flex-1"
                               />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() =>
-                                  handleRemoveModelOption(key, optKey)
-                                }
-                                className="h-9 w-9 text-fg-2 hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <HoverTip content={t("common.delete")}>
+                                <Button
+                                  aria-label={t("common.delete")}
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() =>
+                                    handleRemoveModelOption(key, optKey)
+                                  }
+                                  className="h-9 w-9 text-fg-2 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </HoverTip>
                             </div>
                           ),
                         )

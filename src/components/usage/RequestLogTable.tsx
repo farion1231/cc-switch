@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRequestLogs } from "@/lib/query/usage";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
@@ -358,22 +359,23 @@ export function RequestLogTable({
           {t("usage.totalRecords", { total })}
         </span>
         <div className="flex-1" />
-        <button
-          type="button"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
-          aria-label={t("usage.prevPage")}
-          title={t("usage.prevPage")}
-          disabled={page === 0}
-          onClick={() => setPage((p) => Math.max(0, p - 1))}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
+        <HoverTip content={t("usage.prevPage")}>
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
+            aria-label={t("usage.prevPage")}
+            disabled={page === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        </HoverTip>
         <span className="flex items-center gap-1 tabular-nums text-fg-2">
           <input
             type="text"
             inputMode="numeric"
             aria-label={t("usage.pageInputPlaceholder")}
-            className="h-6 w-9 rounded-[4px] border border-transparent bg-transparent text-center text-caption text-fg-1 hover:border-border focus:border-border-strong focus:outline-none"
+            className="h-6 w-9 rounded-[4px] border border-transparent bg-transparent text-center text-caption text-fg-1 transition-[border-color,box-shadow] hover:border-border-strong focus:border-ring focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-ring/20"
             value={pageDraft ?? String(page + 1)}
             onChange={(event) => setPageDraft(event.target.value)}
             onFocus={(event) => event.target.select()}
@@ -385,16 +387,17 @@ export function RequestLogTable({
           />
           <span>/ {fmtInt(totalPages, locale)}</span>
         </span>
-        <button
-          type="button"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
-          aria-label={t("usage.nextPage")}
-          title={t("usage.nextPage")}
-          disabled={page >= totalPages - 1}
-          onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+        <HoverTip content={t("usage.nextPage")}>
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45"
+            aria-label={t("usage.nextPage")}
+            disabled={page >= totalPages - 1}
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </HoverTip>
       </div>
     </div>
   );

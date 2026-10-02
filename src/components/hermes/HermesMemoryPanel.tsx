@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { AlertTriangle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -16,6 +16,7 @@ import {
 } from "@/hooks/useHermes";
 import { shortenHomePath } from "@/components/sessions/utils";
 import type { HermesMemoryKind } from "@/types";
+import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   hermesMemoryDrafts,
@@ -206,7 +207,10 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
           }
           placeholder={loaded ? t(meta.placeholderKey) : t("prompts.loading")}
           spellCheck={false}
-          className="min-h-[200px] w-full flex-1 resize-none rounded-panel border border-border bg-surface px-3.5 py-3 font-mono text-body leading-[21px] text-fg-1 placeholder:text-fg-3 focus-visible:border-border-strong focus-visible:outline-none disabled:opacity-60"
+          className={cn(
+            fieldClass,
+            "min-h-[200px] flex-1 resize-none px-3.5 py-3 font-mono leading-[21px]",
+          )}
         />
       )}
 

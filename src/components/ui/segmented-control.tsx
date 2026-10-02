@@ -1,9 +1,11 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { SegmentThumb, useSlidingIndicator } from "./sliding-indicator";
 
 /**
  * 分段控件（v7 AUTHORING「分段控件」+ R1）：按钮组 + aria-pressed，不是 tablist。
  * 轨道 --bg-subtle，内衬 3px；选中项 --bg-card + 小阴影。内圆角 = 外圆角 − 内衬。
+ * 选中块是一块单独的滑块（SegmentThumb），切换时从上一项滑过去。
  */
 export interface SegmentedItem<T extends string> {
   value: T;
@@ -37,16 +39,26 @@ export function SegmentedControl<T extends string>({
   className,
   ...rest
 }: SegmentedControlProps<T>) {
+  const indicator = useSlidingIndicator<HTMLDivElement>(
+    '[aria-pressed="true"]',
+    value,
+  );
   return (
     <div
+      ref={indicator.ref}
       role="group"
       aria-label={rest["aria-label"]}
       className={cn(
-        "inline-flex items-stretch bg-subtle p-[3px]",
+        "relative inline-flex items-stretch bg-subtle p-[3px]",
         size === "md" ? "h-9 rounded-[10px]" : "h-7 rounded-[8px]",
         className,
       )}
     >
+      <SegmentThumb
+        rect={indicator.rect}
+        animate={indicator.animate}
+        className={size === "md" ? "rounded-[7px]" : "rounded-[5px]"}
+      />
       {items.map((item) => {
         const pressed = item.value === value;
         const Icon = item.icon;
@@ -58,12 +70,12 @@ export function SegmentedControl<T extends string>({
             disabled={item.disabled}
             onClick={() => onValueChange(item.value)}
             className={cn(
-              "inline-flex items-center justify-center gap-1.5 whitespace-nowrap font-medium text-fg-2 transition-[background-color,color,box-shadow] duration-150 hover:text-fg-1 disabled:cursor-not-allowed disabled:opacity-45",
+              "relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap font-medium text-fg-2 transition-colors duration-150 hover:text-fg-1 disabled:cursor-not-allowed disabled:opacity-45",
               size === "md"
                 ? "rounded-[7px] px-3.5 text-body"
                 : "rounded-[5px] px-2.5 text-caption",
               item.className,
-              pressed && "bg-surface text-fg-1 shadow-v7-sm",
+              pressed && "text-fg-1",
             )}
           >
             {Icon ? (

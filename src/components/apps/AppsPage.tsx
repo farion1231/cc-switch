@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Dialog,
   DialogContent,
@@ -205,17 +206,18 @@ export function AppsPage() {
                 : t("appsPage.checkUpdates")}
             </Button>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  className="h-8 w-8"
-                  aria-label={t("appsPage.moreActions")}
-                  title={t("common.more")}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="quiet"
+                    size="icon-compact"
+                    className="h-8 w-8"
+                    aria-label={t("appsPage.moreActions")}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   disabled={

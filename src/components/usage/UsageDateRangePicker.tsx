@@ -7,6 +7,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
@@ -111,6 +112,8 @@ export function UsageDateRangePicker({
 }: UsageDateRangePickerProps) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
+  const prevMonthLabel = t("usage.prevMonth", { defaultValue: "上个月" });
+  const nextMonthLabel = t("usage.nextMonth", { defaultValue: "下个月" });
   const [activeField, setActiveField] = useState<DraftField>("start");
   const resolvedRange = useMemo(
     () => resolveUsageRange(selection),
@@ -415,49 +418,59 @@ export function UsageDateRangePicker({
           <div className="usage-range-calendar rounded-panel border border-border bg-subtle p-2.5">
             {/* Month navigation */}
             <div className="flex items-center justify-between mb-1.5">
-              <Button
-                type="button"
-                size="icon-compact"
-                variant="quiet"
-                onClick={() =>
-                  setDisplayMonth(
-                    new Date(
-                      displayMonth.getFullYear(),
-                      displayMonth.getMonth() - 1,
-                      1,
-                    ),
-                  )
-                }
+              <HoverTip content={prevMonthLabel}>
+                <Button
+                  type="button"
+                  size="icon-compact"
+                  variant="quiet"
+                  aria-label={prevMonthLabel}
+                  onClick={() =>
+                    setDisplayMonth(
+                      new Date(
+                        displayMonth.getFullYear(),
+                        displayMonth.getMonth() - 1,
+                        1,
+                      ),
+                    )
+                  }
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+              </HoverTip>
+              {/* 点月份标题跳回本月：动作不在字面上，用 HoverTip 说明 */}
+              <HoverTip
+                content={t("usage.presetToday", { defaultValue: "当天" })}
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </Button>
-              <button
-                type="button"
-                className="text-body font-medium text-fg-1 transition-colors hover:text-fg-2"
-                onClick={goToToday}
-                title={t("usage.presetToday", { defaultValue: "当天" })}
-              >
-                {displayMonth.toLocaleDateString(locale, {
-                  year: "numeric",
-                  month: "long",
-                })}
-              </button>
-              <Button
-                type="button"
-                size="icon-compact"
-                variant="quiet"
-                onClick={() =>
-                  setDisplayMonth(
-                    new Date(
-                      displayMonth.getFullYear(),
-                      displayMonth.getMonth() + 1,
-                      1,
-                    ),
-                  )
-                }
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
+                <button
+                  type="button"
+                  className="text-body font-medium text-fg-1 transition-colors hover:text-fg-2"
+                  onClick={goToToday}
+                >
+                  {displayMonth.toLocaleDateString(locale, {
+                    year: "numeric",
+                    month: "long",
+                  })}
+                </button>
+              </HoverTip>
+              <HoverTip content={nextMonthLabel}>
+                <Button
+                  type="button"
+                  size="icon-compact"
+                  variant="quiet"
+                  aria-label={nextMonthLabel}
+                  onClick={() =>
+                    setDisplayMonth(
+                      new Date(
+                        displayMonth.getFullYear(),
+                        displayMonth.getMonth() + 1,
+                        1,
+                      ),
+                    )
+                  }
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </HoverTip>
             </div>
 
             {/* Weekday headers */}

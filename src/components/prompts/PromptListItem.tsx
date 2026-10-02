@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HoverTip } from "@/components/ui/hover-tip";
 import type { Prompt } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { promptMenuContentClass, promptMenuItemClass } from "./PromptPageFrame";
@@ -100,30 +101,35 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
       </Button>
 
       <div className="flex shrink-0 gap-1">
-        <Button
-          type="button"
-          variant="quiet"
-          size="icon-compact"
-          disabled={disabled}
-          aria-label={t("prompts.editAria", { name: prompt.name })}
-          title={t("common.edit")}
-          onClick={() => onEdit(id)}
-        >
-          <Pencil className="h-[15px] w-[15px]" strokeWidth={1.5} />
-        </Button>
+        <HoverTip content={t("common.edit")}>
+          <Button
+            type="button"
+            variant="quiet"
+            size="icon-compact"
+            disabled={disabled}
+            aria-label={t("prompts.editAria", { name: prompt.name })}
+            onClick={() => onEdit(id)}
+          >
+            <Pencil className="h-[15px] w-[15px]" strokeWidth={1.5} />
+          </Button>
+        </HoverTip>
         <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="quiet"
-              size="icon-compact"
-              disabled={disabled}
-              aria-label={t("prompts.rowMoreActions", { name: prompt.name })}
-              title={t("common.more")}
-            >
-              <MoreHorizontal className="h-[15px] w-[15px]" strokeWidth={1.5} />
-            </Button>
-          </DropdownMenuTrigger>
+          <HoverTip content={t("common.more")}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="quiet"
+                size="icon-compact"
+                disabled={disabled}
+                aria-label={t("prompts.rowMoreActions", { name: prompt.name })}
+              >
+                <MoreHorizontal
+                  className="h-[15px] w-[15px]"
+                  strokeWidth={1.5}
+                />
+              </Button>
+            </DropdownMenuTrigger>
+          </HoverTip>
           <DropdownMenuContent
             align="end"
             className={cn(promptMenuContentClass, "w-[240px]")}

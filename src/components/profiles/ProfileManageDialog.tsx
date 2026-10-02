@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
@@ -112,54 +113,64 @@ export function ProfileManageDialog({
                         if (e.key === "Escape") cancelRename();
                       }}
                     />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title={t("common.confirm")}
-                      onClick={saveRename}
-                      disabled={!editingName.trim() || updateMutation.isPending}
-                    >
-                      <Check className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title={t("common.cancel")}
-                      onClick={cancelRename}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
+                    <HoverTip content={t("common.confirm")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        aria-label={t("common.confirm")}
+                        onClick={saveRename}
+                        disabled={
+                          !editingName.trim() || updateMutation.isPending
+                        }
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
+                    </HoverTip>
+                    <HoverTip content={t("common.cancel")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        aria-label={t("common.cancel")}
+                        onClick={cancelRename}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </HoverTip>
                   </>
                 ) : (
                   <>
                     <span className="flex-1 truncate text-sm">
                       {profile.name}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title={t("profiles.rename")}
-                      onClick={() => startRename(profile.id, profile.name)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title={t("profiles.delete")}
-                      onClick={() =>
-                        setConfirm({
-                          id: profile.id,
-                          name: profile.name,
-                        })
-                      }
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
+                    <HoverTip content={t("profiles.rename")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        aria-label={t("profiles.rename")}
+                        onClick={() => startRename(profile.id, profile.name)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </HoverTip>
+                    <HoverTip content={t("profiles.delete")}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        aria-label={t("profiles.delete")}
+                        onClick={() =>
+                          setConfirm({
+                            id: profile.id,
+                            name: profile.name,
+                          })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </HoverTip>
                   </>
                 )}
               </div>

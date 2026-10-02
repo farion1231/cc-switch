@@ -209,7 +209,13 @@ describe("UnifiedSkillsPanel", () => {
     m.installed = [makeSkill({ apps: { claude: true, pi: true } })];
     renderPanel();
     expect(columns()).toHaveLength(3);
-    expect(columns()[2]).toHaveAttribute("title", "skillsPage.piColumnTitle");
+    // Pi 列头的说明走 HoverTip（悬停即显），不再用原生 title
+    expect(columns()[2]).not.toHaveAttribute("title");
+    await userEvent.hover(columns()[2]);
+    expect(
+      (await screen.findAllByText("skillsPage.piColumnTitle")).length,
+    ).toBeGreaterThan(0);
+    await userEvent.unhover(columns()[2]);
 
     const cells = screen.getAllByRole("button", { name: /appMatrix.cell/ });
     expect(cells[2]).toHaveAttribute("aria-pressed", "true");
@@ -567,9 +573,12 @@ describe("UnifiedSkillsPanel", () => {
       expect(onInteraction).toHaveBeenLastCalledWith(true);
       expect(onNavigation).toHaveBeenLastCalledWith(false);
     });
-    expect(
-      screen.getAllByRole("button", { name: /appMatrix.cell/ })[0],
-    ).toBeDisabled();
+    // 外观上的禁用晚 300ms 出现（useDelayedFlag），拦截本身是立即的
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: /appMatrix.cell/ })[0],
+      ).toBeDisabled(),
+    );
   });
 
   it("imports with apps chosen from where each Skill was found", async () => {

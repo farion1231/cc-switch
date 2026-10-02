@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import { HoverTip } from "@/components/ui/hover-tip";
 
 const BUTTON =
   "flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1";
@@ -51,49 +52,52 @@ export function WindowControls() {
     }
   };
 
+  const maximizeLabel = maximized
+    ? t("header.windowRestore")
+    : t("header.windowMaximize");
+
   return (
     <>
-      <button
-        type="button"
-        className={BUTTON}
-        title={t("header.windowMinimize")}
-        aria-label={t("header.windowMinimize")}
-        onClick={() => void run(() => getCurrentWindow().minimize())}
-      >
-        <Minus className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        className={BUTTON}
-        title={
-          maximized ? t("header.windowRestore") : t("header.windowMaximize")
-        }
-        aria-label={
-          maximized ? t("header.windowRestore") : t("header.windowMaximize")
-        }
-        onClick={() =>
-          void run(async () => {
-            const win = getCurrentWindow();
-            await win.toggleMaximize();
-            setMaximized(await win.isMaximized());
-          })
-        }
-      >
-        {maximized ? (
-          <Minimize2 className="h-4 w-4" />
-        ) : (
-          <Maximize2 className="h-4 w-4" />
-        )}
-      </button>
-      <button
-        type="button"
-        className={cn(BUTTON, "hover:bg-danger-soft hover:text-danger-text")}
-        title={t("header.windowClose")}
-        aria-label={t("header.windowClose")}
-        onClick={() => void run(() => getCurrentWindow().close())}
-      >
-        <X className="h-4 w-4" />
-      </button>
+      <HoverTip content={t("header.windowMinimize")}>
+        <button
+          type="button"
+          className={BUTTON}
+          aria-label={t("header.windowMinimize")}
+          onClick={() => void run(() => getCurrentWindow().minimize())}
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+      </HoverTip>
+      <HoverTip content={maximizeLabel}>
+        <button
+          type="button"
+          className={BUTTON}
+          aria-label={maximizeLabel}
+          onClick={() =>
+            void run(async () => {
+              const win = getCurrentWindow();
+              await win.toggleMaximize();
+              setMaximized(await win.isMaximized());
+            })
+          }
+        >
+          {maximized ? (
+            <Minimize2 className="h-4 w-4" />
+          ) : (
+            <Maximize2 className="h-4 w-4" />
+          )}
+        </button>
+      </HoverTip>
+      <HoverTip content={t("header.windowClose")}>
+        <button
+          type="button"
+          className={cn(BUTTON, "hover:bg-danger-soft hover:text-danger-text")}
+          aria-label={t("header.windowClose")}
+          onClick={() => void run(() => getCurrentWindow().close())}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </HoverTip>
     </>
   );
 }

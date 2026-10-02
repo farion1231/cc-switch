@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueries } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ChevronRight, Loader2 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { proxyApi } from "@/lib/api/proxy";
@@ -247,7 +247,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                     value={address}
                     onChange={(event) => setAddress(event.target.value)}
                     aria-invalid={addressError ? true : undefined}
-                    className="h-9 w-[150px]"
+                    className="w-[150px]"
                   />
                   <span
                     className={cn(
@@ -267,7 +267,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                     inputMode="numeric"
                     onChange={(event) => setPort(event.target.value)}
                     aria-invalid={portError ? true : undefined}
-                    className="h-9 w-[96px]"
+                    className="w-[96px]"
                   />
                   <span
                     className={cn(
@@ -281,7 +281,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                 <Button
                   variant="neutral"
                   size="regular"
-                  className="mt-5"
+                  // 和输入框顶边对齐：上面的小标题 18 + 间距 4
+                  className="mt-[22px]"
                   disabled={!listenDirty || updateConfig.isPending}
                   onClick={() => void saveListen()}
                 >

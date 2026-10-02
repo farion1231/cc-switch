@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { FolderSearch, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
@@ -65,24 +66,28 @@ export function DirectorySettings({
             className="text-xs"
             onChange={(event) => onAppConfigChange(event.target.value)}
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={onBrowseAppConfig}
-            title={t("settings.browseDirectory")}
-          >
-            <FolderSearch className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={onResetAppConfig}
-            title={t("settings.resetDefault")}
-          >
-            <Undo2 className="h-4 w-4" />
-          </Button>
+          <HoverTip content={t("settings.browseDirectory")}>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={onBrowseAppConfig}
+              aria-label={t("settings.browseDirectory")}
+            >
+              <FolderSearch className="h-4 w-4" />
+            </Button>
+          </HoverTip>
+          <HoverTip content={t("settings.resetDefault")}>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={onResetAppConfig}
+              aria-label={t("settings.resetDefault")}
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+          </HoverTip>
         </div>
       </section>
 
@@ -235,24 +240,28 @@ export function DirectoryInput({
           className="text-xs"
           onChange={(event) => onChange(event.target.value)}
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={onBrowse}
-          title={t("settings.browseDirectory")}
-        >
-          <FolderSearch className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={onReset}
-          title={t("settings.resetDefault")}
-        >
-          <Undo2 className="h-4 w-4" />
-        </Button>
+        <HoverTip content={t("settings.browseDirectory")}>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onBrowse}
+            aria-label={t("settings.browseDirectory")}
+          >
+            <FolderSearch className="h-4 w-4" />
+          </Button>
+        </HoverTip>
+        <HoverTip content={t("settings.resetDefault")}>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onReset}
+            aria-label={t("settings.resetDefault")}
+          >
+            <Undo2 className="h-4 w-4" />
+          </Button>
+        </HoverTip>
       </div>
     </div>
   );

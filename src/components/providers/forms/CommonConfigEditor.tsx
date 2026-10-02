@@ -219,7 +219,7 @@ export function CommonConfigEditor({
             type="checkbox"
             checked={toggleStates.hideAttribution}
             onChange={(e) => handleToggle("hideAttribution", e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.hideAttribution")}</span>
         </label>
@@ -228,7 +228,7 @@ export function CommonConfigEditor({
             type="checkbox"
             checked={toggleStates.teammates}
             onChange={(e) => handleToggle("teammates", e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.enableTeammates")}</span>
         </label>
@@ -237,7 +237,7 @@ export function CommonConfigEditor({
             type="checkbox"
             checked={toggleStates.enableToolSearch}
             onChange={(e) => handleToggle("enableToolSearch", e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.enableToolSearch")}</span>
         </label>
@@ -246,7 +246,7 @@ export function CommonConfigEditor({
             type="checkbox"
             checked={toggleStates.effortMax}
             onChange={(e) => handleToggle("effortMax", e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.effortMax")}</span>
         </label>
@@ -257,7 +257,7 @@ export function CommonConfigEditor({
             onChange={(e) =>
               handleToggle("disableAutoUpgrade", e.target.checked)
             }
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.disableAutoUpgrade")}</span>
         </label>
@@ -266,7 +266,7 @@ export function CommonConfigEditor({
             type="checkbox"
             checked={toggleStates.disableArtifact}
             onChange={(e) => handleToggle("disableArtifact", e.target.checked)}
-            className="w-4 h-4 text-fg-1 bg-surface border-border rounded focus:ring-border focus:ring-2"
+            className="ui-checkbox"
           />
           <span>{t("claudeConfig.disableArtifact")}</span>
         </label>

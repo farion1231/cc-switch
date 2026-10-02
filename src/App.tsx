@@ -1,6 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
@@ -51,7 +58,6 @@ import {
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { NewLayoutNotice } from "@/components/shell/NewLayoutNotice";
-import { CommandPalette } from "@/components/shell/CommandPalette";
 import {
   AppPageHeader,
   WindowControlsContext,
@@ -86,6 +92,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import {
@@ -634,7 +641,14 @@ function App() {
   openSettingsRef.current = openSettings;
   const toggleSidebarRef = useRef(toggleSidebar);
   toggleSidebarRef.current = toggleSidebar;
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  // ⌘K / 收起时的搜索图标：侧栏收起就先展开，再把焦点放进侧栏搜索框
+  const [searchFocusSignal, setSearchFocusSignal] = useState(0);
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
+  sidebarCollapsedRef.current = sidebarCollapsed;
+  const focusSidebarSearch = useCallback(() => {
+    if (sidebarCollapsedRef.current) toggleSidebarRef.current();
+    setSearchFocusSignal((n) => n + 1);
+  }, []);
   const [usageAppFilter, setUsageAppFilter] = useState<AppTypeFilter>("all");
 
   useEffect(() => {
@@ -654,7 +668,7 @@ function App() {
 
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen((open) => !open);
+        focusSidebarSearch();
         return;
       }
 
@@ -1017,19 +1031,20 @@ function App() {
 
   const appMenu = (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="quiet"
-          size="icon-compact"
-          className="h-8 w-8"
-          aria-label={t("appPage.moreActions", {
-            name: APP_DISPLAY_NAME[activeApp],
-          })}
-          title={t("common.more")}
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
+      <HoverTip content={t("common.more")}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="quiet"
+            size="icon-compact"
+            className="h-8 w-8"
+            aria-label={t("appPage.moreActions", {
+              name: APP_DISPLAY_NAME[activeApp],
+            })}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+      </HoverTip>
       <DropdownMenuContent align="end" className="min-w-[180px]">
         <DropdownMenuItem onSelect={() => openPage("sessions")}>
           {t("appPage.viewSessions")}
@@ -1418,7 +1433,7 @@ function App() {
     <WindowControlsContext.Provider
       value={useAppWindowControls ? <WindowControls /> : null}
     >
-      <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-primary/30">
+      <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-action/25">
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggleCollapsed={toggleSidebar}
@@ -1433,14 +1448,8 @@ function App() {
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }
-          onOpenSearch={() => setPaletteOpen(true)}
-        />
-        <CommandPalette
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          visibleApps={visibleApps}
-          onSelectApp={selectApp}
-          onSelectPage={openPageFromNav}
+          onOpenSearch={focusSidebarSearch}
+          searchFocusSignal={searchFocusSignal}
           onOpenSettings={openSettings}
         />
         <main

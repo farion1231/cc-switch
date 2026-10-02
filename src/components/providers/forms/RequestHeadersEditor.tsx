@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -174,18 +175,24 @@ export function RequestHeadersEditor({
                   })}
                   className="min-w-0 flex-1"
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeHeader(key)}
-                  aria-label={t("opencode.removeHeader", {
+                <HoverTip
+                  content={t("opencode.removeHeader", {
                     defaultValue: "Remove header",
                   })}
-                  className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
                 >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeHeader(key)}
+                    aria-label={t("opencode.removeHeader", {
+                      defaultValue: "Remove header",
+                    })}
+                    className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </HoverTip>
               </div>
             ))}
           </div>

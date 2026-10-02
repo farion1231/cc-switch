@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { ArrowLeft } from "lucide-react";
 import {
   Dialog,
@@ -57,29 +58,32 @@ export function BasicFormFields({
 
   const iconButton = (
     <Dialog open={iconDialogOpen} onOpenChange={setIconDialogOpen}>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          aria-label={t("providerIcon.change", { defaultValue: "更换图标" })}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-surface transition-colors hover:bg-subtle"
-          title={
-            currentIcon
-              ? t("providerIcon.clickToChange", {
-                  defaultValue: "点击更换图标",
-                })
-              : t("providerIcon.clickToSelect", {
-                  defaultValue: "点击选择图标",
-                })
-          }
-        >
-          <ProviderIcon
-            icon={currentIcon}
-            name={providerName}
-            color={effectiveIconColor}
-            size={18}
-          />
-        </button>
-      </DialogTrigger>
+      <HoverTip
+        content={
+          currentIcon
+            ? t("providerIcon.clickToChange", {
+                defaultValue: "点击更换图标",
+              })
+            : t("providerIcon.clickToSelect", {
+                defaultValue: "点击选择图标",
+              })
+        }
+      >
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            aria-label={t("providerIcon.change", { defaultValue: "更换图标" })}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-surface transition-colors hover:bg-subtle"
+          >
+            <ProviderIcon
+              icon={currentIcon}
+              name={providerName}
+              color={effectiveIconColor}
+              size={18}
+            />
+          </button>
+        </DialogTrigger>
+      </HoverTip>
       <DialogContent
         variant="fullscreen"
         zIndex="top"

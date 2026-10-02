@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
@@ -866,7 +866,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             !script.enabled ||
             NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")
           }
-          title={t("usageScript.format")}
         >
           <Wand2 size={14} className="mr-1" />
           {t("usageScript.format")}
@@ -881,10 +880,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         >
           {t("common.cancel")}
         </Button>
-        <Button
-          onClick={handleSave}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
+        <Button onClick={handleSave}>
           <Save size={16} className="mr-2" />
           {t("usageScript.saveConfig")}
         </Button>

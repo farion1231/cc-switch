@@ -315,7 +315,9 @@ describe("Pi native prompt resources", () => {
     });
     renderWithQueryClient(<TemplateHarness />);
 
-    const edit = await screen.findByTitle("common.edit");
+    const edit = await screen.findByRole("button", {
+      name: "prompts.editAria",
+    });
     fireEvent.click(edit);
     const slug = screen.getByPlaceholderText("pi.prompts.templateSlug");
     fireEvent.change(slug, { target: { value: "renamed" } });
@@ -351,7 +353,7 @@ describe("Pi native prompt resources", () => {
 
     expect(await screen.findByText("Existing note")).toBeInTheDocument();
     expect(screen.getByText("<target>")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("common.edit"));
+    fireEvent.click(screen.getByRole("button", { name: "prompts.editAria" }));
 
     const notes = screen.getByPlaceholderText(
       "pi.prompts.templateDescriptionPlaceholder",

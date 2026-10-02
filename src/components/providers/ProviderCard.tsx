@@ -16,6 +16,7 @@ import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
@@ -310,6 +311,9 @@ export function ProviderCard({
     usage.data.length > 1;
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const expandLabel = isExpanded
+    ? t("usage.collapse", { defaultValue: "收起" })
+    : t("usage.expand", { defaultValue: "展开" });
 
   useEffect(() => {
     if (hasMultiplePlans) {
@@ -440,7 +444,7 @@ export function ProviderCard({
                   </span>
                   <button
                     type="button"
-                    className="shrink-0 text-sm font-medium text-primary hover:underline"
+                    className="shrink-0 text-body font-medium text-action-text hover:underline"
                     onClick={() => onEdit(provider)}
                   >
                     {t("codex.chooseAccount", {
@@ -532,24 +536,23 @@ export function ProviderCard({
                 />
               )}
               {hasMultiplePlans && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsExpanded(!isExpanded);
-                  }}
-                  className="shrink-0 rounded-control p-1 text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1"
-                  title={
-                    isExpanded
-                      ? t("usage.collapse", { defaultValue: "收起" })
-                      : t("usage.expand", { defaultValue: "展开" })
-                  }
-                >
-                  {isExpanded ? (
-                    <ChevronUp size={14} />
-                  ) : (
-                    <ChevronDown size={14} />
-                  )}
-                </button>
+                <HoverTip content={expandLabel}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsExpanded(!isExpanded);
+                    }}
+                    className="shrink-0 rounded-control p-1 text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1"
+                    aria-label={expandLabel}
+                    aria-expanded={isExpanded}
+                  >
+                    {isExpanded ? (
+                      <ChevronUp size={14} />
+                    ) : (
+                      <ChevronDown size={14} />
+                    )}
+                  </button>
+                </HoverTip>
               )}
             </div>
           </div>

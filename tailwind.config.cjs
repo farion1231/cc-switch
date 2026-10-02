@@ -56,6 +56,8 @@ module.exports = {
           DEFAULT: "var(--action-bg)",
           fg: "var(--action-fg)",
           hover: "var(--action-hover)",
+          text: "var(--action-text)",
+          soft: "var(--action-soft)",
         },
         inverse: {
           DEFAULT: "var(--inverse-bg)",
@@ -266,5 +268,6 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  // animate-in / fade-in-0 / zoom-in-95 …：Radix 浮层（菜单、弹层、对话框、提示）的进出场动画
+  plugins: [require("tailwindcss-animate")],
 };

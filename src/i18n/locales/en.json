@@ -1065,10 +1065,10 @@
       "saveToLibrary": "Save to library",
       "reloadAfterDelete": "Open Pi sessions pick this up after /reload while idle.",
       "configuredSize": "Configured · {{size}}",
-      "create": "Create…",
+      "create": "Create",
       "createFile": "Create {{filename}}",
       "editFile": "Edit {{filename}}",
-      "saveAndConfigureEllipsis": "Save and configure…",
+      "saveAndConfigureEllipsis": "Save and configure",
       "deleteFile": "Delete file",
       "appendDeleted": "Deleted APPEND_SYSTEM.md; Pi no longer appends it",
       "overrideDeleted": "Deleted SYSTEM.md; Pi is back to its built-in base prompt",
@@ -1141,9 +1141,9 @@
     "moreActions": "More session actions",
     "refreshList": "Refresh list",
     "listRefreshed": "Session list refreshed",
-    "selectMany": "Select multiple…",
-    "preferredTerminal": "Preferred terminal…",
-    "whereMenu": "Where sessions are stored…",
+    "selectMany": "Select multiple",
+    "preferredTerminal": "Preferred terminal",
+    "whereMenu": "Where sessions are stored",
     "whereTitle": "Where sessions are stored",
     "whereLead": "CC Switch reads sessions from these locations. Claude Desktop has no session records of its own.",
     "whereNote": "Apps with a custom config directory in Settings are read from that directory.",
@@ -1165,9 +1165,9 @@
     "selectedSessions": "{{count}} sessions selected",
     "noneSelected": "No sessions selected",
     "hiddenSelected": " · {{count}} not in the current results",
-    "deleteCountEllipsis": "Delete {{count}} sessions…",
-    "deleteSessionEllipsis": "Delete sessions…",
-    "deleteEllipsis": "Delete…",
+    "deleteCountEllipsis": "Delete {{count}} sessions",
+    "deleteSessionEllipsis": "Delete sessions",
+    "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
@@ -1205,7 +1205,7 @@
     "moreResumeOptions": "More ways to resume",
     "copyCdResume": "Copy “cd and resume” command",
     "cdResumeCopied": "“cd and resume” command copied",
-    "changeTerminal": "Change preferred terminal…",
+    "changeTerminal": "Change preferred terminal",
     "changeTerminalAction": "Change terminal",
     "codexResumeNote": "Older sessions may not resume after switching providers: Codex keeps history separately per provider.",
     "noResumeOpenclaw": "OpenClaw sessions are managed by its gateway and can’t be resumed in a terminal",
@@ -1527,7 +1527,7 @@
     "manageAccounts": "Manage accounts",
     "selectAccountPlaceholder": "Choose a ChatGPT account",
     "officialAccountPlaceholder": "Choose a sign-in method",
-    "addOrManageAccounts": "Add or manage ChatGPT accounts…",
+    "addOrManageAccounts": "Add or manage ChatGPT accounts",
     "explicitSelectionRequired": "Choose a sign-in method",
     "useDefaultAccount": "Use default account",
     "noneOptionLabel": "Follow Codex login",
@@ -1567,7 +1567,7 @@
     "waitingForAuth": "Waiting for xAI authorization…",
     "enterCode": "If the browser did not fill it in automatically, enter:",
     "retry": "Retry",
-    "logoutAll": "Delete all xAI accounts…",
+    "logoutAll": "Delete all xAI accounts",
     "loginRequired": "Sign in to an xAI account first"
   },
   "managedAuth": {
@@ -1919,7 +1919,7 @@
       "confirmAction": "Back Up and Rebuild",
       "completed": "Rebuild complete: {{imported}} imported, {{errors}} errors, {{suspected}} suspected duplicates, {{deferred}} deferred files",
       "failed": "Codex usage rebuild failed: {{error}}",
-      "actionEllipsis": "Rebuild Codex Usage…"
+      "actionEllipsis": "Rebuild Codex Usage"
     },
     "totalRecords": "{{total}} records total",
     "goToPage": "Go",
@@ -2162,7 +2162,7 @@
       "billingHelp": "Applies only to requests through the routing service. Usage imported from session logs is priced by the model recorded in the log.",
       "byResponse": "Priced by response model",
       "byRequest": "Priced by request model",
-      "edit": "Change…",
+      "edit": "Change",
       "tableTitle": "Model pricing · {{count}}",
       "costHelpTitle": "How cost is calculated",
       "costHelp": "Each request is priced by its model: fresh input, output, cache hits and cache writes are each multiplied by their unit price and added up.",
@@ -2170,7 +2170,9 @@
       "editAria": "Edit pricing for {{name}}",
       "deleteAria": "Delete pricing for {{name}}",
       "cacheWrite": "Cache write"
-    }
+    },
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -2520,7 +2522,7 @@
     "updatedToday": "Updated today {{time}}",
     "updatedOn": "Updated {{date}}",
     "emptyContent": "(empty)",
-    "copyToApps": "Copy to other apps…",
+    "copyToApps": "Copy to other apps",
     "copyContent": "Copy text",
     "copiedContent": "Copied the text of \"{{name}}\"",
     "deleteBlocked": "Disable it before deleting",
@@ -2595,7 +2597,7 @@
       "claude-desktop": "Save the current Claude Desktop provider as a project you can switch to later.",
       "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later."
     },
-    "manage": "Manage projects…",
+    "manage": "Manage projects",
     "manageTitle": "Manage Projects",
     "manageDescription": "Projects are configuration snapshots. When you switch projects, the current configuration is automatically saved back to the project you are leaving.",
     "namePlaceholder": "e.g. Development, Drawing",
@@ -3046,7 +3048,7 @@
     "moreActions": "More Skills actions",
     "storageSheet": {
       "title": "Storage and sync",
-      "open": "Storage and sync…",
+      "open": "Storage and sync",
       "resync": "Resync now",
       "resyncing": "Resyncing…",
       "resyncHint": "Changes only apply to Skills you enable or update afterwards. To switch Skills that are already enabled, resync now.",
@@ -3059,7 +3061,7 @@
       "openFolder": "Open",
       "openFolderAria": "Open {{path}}",
       "unifiedWarning": "Codex, Gemini CLI, OpenCode and others read this folder directly, so the per-app switches no longer fully apply to them.",
-      "move": "Move and switch…",
+      "move": "Move and switch",
       "moving": "Moving…",
       "moveConfirmTitle": "Move {{count}} Skills to {{path}}?",
       "moveConfirmBody": "Each master copy is moved, then the links in every app are pointed at the new location. Don't quit CC Switch until the move finishes.",
@@ -3735,7 +3737,7 @@
     "checking": "Checking…",
     "checkUpdates": "Check for updates",
     "moreActions": "More actions",
-    "manualCommands": "Manual install commands…",
+    "manualCommands": "Manual install commands",
     "columnApp": "App",
     "columnVersion": "Version",
     "columnVisible": "Show",
@@ -3764,7 +3766,7 @@
   "appPage": {
     "moreActions": "More actions for {{name}}",
     "viewSessions": "View sessions",
-    "configDirectory": "Config directory…",
+    "configDirectory": "Config directory",
     "installAndUpgrade": "Install and upgrade",
     "hideFromSidebar": "Hide from sidebar",
     "providers": "Providers",
@@ -3798,8 +3800,8 @@
     },
     "activate": {
       "viewing": "You're viewing “{{view}}”. {{app}} is currently on {{active}}.",
-      "route": "Start routing…",
-      "stack": "Switch to Stack…",
+      "route": "Start routing",
+      "stack": "Switch to Stack",
       "direct": "Back to direct"
     },
     "notice": {
@@ -3873,7 +3875,7 @@
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
       "moveDown": "Move {{name}} down",
-      "startStackFrom": "Start Stack with this as default…"
+      "startStackFrom": "Start Stack with this as default"
     },
     "chip": {
       "official": "Official",
@@ -3922,7 +3924,7 @@
     "service": "Routing service",
     "running": "Running",
     "notRunning": "The routing service couldn't start",
-    "changePort": "Change port…",
+    "changePort": "Change port",
     "notNeeded": "Routing service: not needed by the current provider"
   },
   "routingSettings": {
@@ -3953,7 +3955,7 @@
     "desktopMode": "Model mapping · kept running automatically",
     "desktopDetail": "Current provider {{name}}",
     "goTo": "Open",
-    "exitAll": "Switch all back to direct…",
+    "exitAll": "Switch all back to direct",
     "exitAllTitle": "Switch every app back to direct?",
     "exitAllMessage": "Apps in routing or Stack mode get their direct config written back, then the routing service stops. Route targets, queues and Stack lists are kept.",
     "exitAllConfirm": "Switch all back to direct",
@@ -3982,7 +3984,8 @@
     "empty": "No matches",
     "apps": "Apps",
     "pages": "Pages",
-    "settings": "Settings"
+    "settings": "Settings",
+    "searchField": "Search"
   },
   "appMatrix": {
     "clearSearch": "Clear search",
@@ -4045,7 +4048,7 @@
     "openDocs": "Open docs",
     "enableEverywhere": "Enable in all apps",
     "disableEverywhere": "Turn off everywhere",
-    "deleteEllipsis": "Delete…",
+    "deleteEllipsis": "Delete",
     "deleteTitle": "Delete {{id}}?",
     "deleteBodyApps": "This removes it from CC Switch and from the config files of {{apps}}. This can't be undone.",
     "deleteBody": "This removes it from CC Switch. This can't be undone.",
@@ -4168,7 +4171,7 @@
       "tagsPlaceholder": "Comma-separated, e.g. docs, web",
       "homepage": "Homepage",
       "docs": "Docs",
-      "delete": "Delete…"
+      "delete": "Delete"
     },
     "resync": "Rewrite every app's config from these switches"
   },
@@ -4179,12 +4182,12 @@
     "add": "Add Skill",
     "addMenu": {
       "discover": "Browse in Discover",
-      "zip": "Install from ZIP…",
-      "import": "Import from this computer…"
+      "zip": "Install from ZIP",
+      "import": "Import from this computer"
     },
     "moreMenu": {
-      "restore": "Restore from backup…",
-      "repos": "Manage repositories…"
+      "restore": "Restore from backup",
+      "repos": "Manage repositories"
     },
     "viewAria": "Skills view",
     "viewInstalled": "Installed",
@@ -4215,7 +4218,7 @@
       "enableToAria": "Enable the {{count}} selected Skills in",
       "disable": "Turn off in",
       "disableAria": "Turn off the {{count}} selected Skills in",
-      "uninstall": "Uninstall…"
+      "uninstall": "Uninstall"
     },
     "piColumnTitle": "Pi counts a Skill as enabled when its folder exists in ~/.pi/agent/skills",
     "piHelpTitle": "How Pi counts as enabled",
@@ -4229,7 +4232,7 @@
     "fixSync": "Change sync method",
     "rowMoreAria": "More actions for {{name}}",
     "copyDir": "Copy folder name",
-    "uninstallEllipsis": "Uninstall…",
+    "uninstallEllipsis": "Uninstall",
     "listLabel": "Installed Skills",
     "noMatch": "No Skills match “{{query}}”",
     "noFilterMatch": "No Skills match the filters",
@@ -4303,7 +4306,7 @@
       "enableAria": "Use {{repo}} in Discover",
       "disabledShort": "Off",
       "disabled": "Turned off, not used by Discover",
-      "manage": "Add or manage repositories…",
+      "manage": "Add or manage repositories",
       "openAria": "Open {{repo}} on GitHub",
       "removeAria": "Remove repository {{repo}}",
       "readFailed": "Read failed"
@@ -4336,7 +4339,7 @@
     "headerUpdates": "{{count}} updates",
     "headerUpdatesShow": "Show only Skills with updates",
     "headerUpdatesClear": "Show all Skills",
-    "updateAllCount": "Update all ({{count}})…"
+    "updateAllCount": "Update all ({{count}})"
   },
   "coach": {
     "newLayout": "New layout: modes sit at the top of each app page; Usage and Accounts are in the sidebar."
@@ -4352,8 +4355,8 @@
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",
     "accountMenu": "More actions for {{login}}",
-    "removeAll": "Delete all accounts…",
-    "removeAccount": "Delete account…",
+    "removeAll": "Delete all accounts",
+    "removeAccount": "Delete account",
     "setDefault": "Set as default",
     "reauth": "Sign in again",
     "busyHint": "Finish or cancel the sign-in in progress first",

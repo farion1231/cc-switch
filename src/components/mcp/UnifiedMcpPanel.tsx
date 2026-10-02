@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from "react";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTranslation } from "react-i18next";
 import { Download, MoreHorizontal, Pencil, Plus, Server } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice, NoticeSlot } from "@/components/ui/notice";
@@ -13,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DialogTitle } from "@/components/ui/dialog";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
@@ -149,6 +151,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const dialogOpen =
     drawer !== null || deleteId !== null || importReport !== null;
   const interactionBlocked = writePending || mutationPending || dialogOpen;
+  // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
+  // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
+  const controlsDisabled = useDelayedFlag(interactionBlocked);
 
   React.useEffect(() => {
     onInteractionBlockedChange?.(interactionBlocked);
@@ -556,7 +561,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               type="button"
               variant="quiet"
               size="regular"
-              disabled={interactionBlocked}
+              disabled={controlsDisabled}
               onClick={() => void handleImport()}
             >
               <Download className="h-4 w-4" strokeWidth={2} />
@@ -566,28 +571,29 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               type="button"
               variant="solid"
               size="regular"
-              disabled={interactionBlocked}
+              disabled={controlsDisabled}
               onClick={openAdd}
             >
               <Plus className="h-4 w-4" strokeWidth={2} />
               {t("mcpPage.add")}
             </Button>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="icon-compact"
-                  className="h-8 w-8"
-                  aria-label={t("mcpPage.moreActions")}
-                  title={t("common.more")}
-                >
-                  <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-                </Button>
-              </DropdownMenuTrigger>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="icon-compact"
+                    className="h-8 w-8"
+                    aria-label={t("mcpPage.moreActions")}
+                  >
+                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
               <DropdownMenuContent align="end" className="min-w-[240px]">
                 <DropdownMenuItem
-                  disabled={interactionBlocked}
+                  disabled={controlsDisabled}
                   onSelect={() => void handleResyncAll()}
                 >
                   {t("mcpPage.resync")}
@@ -655,7 +661,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                   type="button"
                   variant="neutral"
                   size="compact"
-                  disabled={interactionBlocked}
+                  disabled={controlsDisabled}
                   onClick={() => void retryApp(app)}
                 >
                   {t("common.retry")}
@@ -707,7 +713,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                   type="button"
                   variant="neutral"
                   size="regular"
-                  disabled={interactionBlocked}
+                  disabled={controlsDisabled}
                   onClick={() => void handleImport()}
                 >
                   <Download className="h-3.5 w-3.5" strokeWidth={2} />
@@ -717,7 +723,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                   type="button"
                   variant="neutral"
                   size="regular"
-                  disabled={interactionBlocked}
+                  disabled={controlsDisabled}
                   onClick={openAdd}
                 >
                   <Plus className="h-3.5 w-3.5" strokeWidth={2} />
@@ -758,7 +764,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             scopeFailed={scopeFailed}
                             scopeKind={scope.kind}
                             noun={noun}
-                            disabled={interactionBlocked}
+                            disabled={controlsDisabled}
                             onEnableRest={() => void handleBulk(app, true)}
                             onDisableAll={() => void handleBulk(app, false)}
                           />
@@ -849,7 +855,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                         id,
                                         apps: failedNames,
                                       })}
-                                      disabled={interactionBlocked}
+                                      disabled={controlsDisabled}
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         const app = rowFailedApps[0];
@@ -880,7 +886,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                     key={app}
                                     app={app}
                                     state={state}
-                                    disabled={interactionBlocked}
+                                    disabled={controlsDisabled}
                                     label={t(`appMatrix.cell.${state}`, {
                                       name: id,
                                       app: APP_DISPLAY_NAME[app],
@@ -896,38 +902,40 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                               className="flex w-16 shrink-0 justify-end gap-1"
                               onClick={(event) => event.stopPropagation()}
                             >
-                              <Button
-                                type="button"
-                                variant="quiet"
-                                size="icon-compact"
-                                aria-label={t("mcpPage.editAria", { id })}
-                                title={t("common.edit")}
-                                disabled={interactionBlocked}
-                                onClick={() => openEdit(id)}
-                              >
-                                <Pencil
-                                  className="h-[15px] w-[15px]"
-                                  strokeWidth={1.5}
-                                />
-                              </Button>
+                              <HoverTip content={t("common.edit")}>
+                                <Button
+                                  type="button"
+                                  variant="quiet"
+                                  size="icon-compact"
+                                  aria-label={t("mcpPage.editAria", { id })}
+                                  disabled={controlsDisabled}
+                                  onClick={() => openEdit(id)}
+                                >
+                                  <Pencil
+                                    className="h-[15px] w-[15px]"
+                                    strokeWidth={1.5}
+                                  />
+                                </Button>
+                              </HoverTip>
                               <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="quiet"
-                                    size="icon-compact"
-                                    aria-label={t("mcpPage.rowMoreAria", {
-                                      id,
-                                    })}
-                                    title={t("common.more")}
-                                    disabled={interactionBlocked}
-                                  >
-                                    <MoreHorizontal
-                                      className="h-[15px] w-[15px]"
-                                      strokeWidth={1.5}
-                                    />
-                                  </Button>
-                                </DropdownMenuTrigger>
+                                <HoverTip content={t("common.more")}>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="quiet"
+                                      size="icon-compact"
+                                      aria-label={t("mcpPage.rowMoreAria", {
+                                        id,
+                                      })}
+                                      disabled={controlsDisabled}
+                                    >
+                                      <MoreHorizontal
+                                        className="h-[15px] w-[15px]"
+                                        strokeWidth={1.5}
+                                      />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                </HoverTip>
                                 <DropdownMenuContent
                                   align="end"
                                   className="min-w-[200px]"

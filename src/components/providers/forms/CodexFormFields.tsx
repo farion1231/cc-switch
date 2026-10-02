@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -29,7 +30,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Check,
   ChevronDown,
@@ -1137,23 +1138,24 @@ export function CodexFormFields({
           defaultValue: "设为默认模型",
         });
     return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={() => handleMakeCatalogRowDefault(index)}
-        disabled={isDefault || !catalogRows[index]?.model.trim()}
-        aria-label={label}
-        aria-pressed={isDefault}
-        title={label}
-        className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
-      >
-        <Star
-          className={
-            isDefault ? "h-4 w-4 fill-warning text-warning-text" : "h-4 w-4"
-          }
-        />
-      </Button>
+      <HoverTip content={label}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => handleMakeCatalogRowDefault(index)}
+          disabled={isDefault || !catalogRows[index]?.model.trim()}
+          aria-label={label}
+          aria-pressed={isDefault}
+          className="h-9 w-9 text-fg-2 hover:text-warning-text disabled:opacity-100"
+        >
+          <Star
+            className={
+              isDefault ? "h-4 w-4 fill-warning text-warning-text" : "h-4 w-4"
+            }
+          />
+        </Button>
+      </HoverTip>
     );
   };
 
@@ -1274,16 +1276,18 @@ export function CodexFormFields({
               })
             }
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 text-fg-2 hover:text-destructive"
-            onClick={() => handleRemoveCatalogRow(index)}
-            title={t("common.delete", { defaultValue: "删除" })}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <HoverTip content={t("common.delete", { defaultValue: "删除" })}>
+            <Button
+              aria-label={t("common.delete", { defaultValue: "删除" })}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-fg-2 hover:text-destructive"
+              onClick={() => handleRemoveCatalogRow(index)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </HoverTip>
         </div>
       ))}
     </div>
@@ -1560,21 +1564,23 @@ export function CodexFormFields({
               }
               className="flex-1"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={handleFetchModels}
-              disabled={isFetchingModels}
-              className="shrink-0"
-              title={t("providerForm.fetchModels")}
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-            </Button>
+            <HoverTip content={t("providerForm.fetchModels")}>
+              <Button
+                aria-label={t("providerForm.fetchModels")}
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handleFetchModels}
+                disabled={isFetchingModels}
+                className="shrink-0"
+              >
+                {isFetchingModels ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+              </Button>
+            </HoverTip>
             {defaultModelSuggestions.length > 0 && (
               <ModelDropdown
                 models={defaultModelSuggestions}

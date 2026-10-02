@@ -193,6 +193,30 @@ export function useToggleSkillApp() {
       app: AppId;
       enabled: boolean;
     }) => skillsApi.toggleApp(id, app, enabled),
+    // 乐观更新：点了格子立刻翻过来，不等写完再刷新；失败时回滚
+    onMutate: async ({ id, app, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: ["skills", "installed"] });
+      const previous = queryClient.getQueryData<InstalledSkill[]>([
+        "skills",
+        "installed",
+      ]);
+      if (previous) {
+        queryClient.setQueryData<InstalledSkill[]>(
+          ["skills", "installed"],
+          previous.map((skill) =>
+            skill.id === id
+              ? { ...skill, apps: { ...skill.apps, [app]: enabled } }
+              : skill,
+          ),
+        );
+      }
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["skills", "installed"], context.previous);
+      }
+    },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });

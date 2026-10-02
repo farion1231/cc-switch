@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { TONE_FILL, TONE_TEXT, useNow } from "@/components/quota/QuotaLines";
 import {
   formatRelativeTime,
@@ -129,28 +130,31 @@ export function AccountQuotaColumn({
         <span id={agoId} className="truncate">
           {agoText}
         </span>
-        <button
-          type="button"
-          aria-label={t("authCenter.quota.refreshAria", {
-            defaultValue: "刷新 {{login}} 的额度",
-            login,
-          })}
-          title={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
-          aria-disabled={loading}
-          aria-describedby={loading ? agoId : undefined}
-          onClick={() => {
-            if (!loading) onRefresh();
-          }}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 aria-disabled:opacity-45 aria-disabled:hover:bg-transparent"
+        <HoverTip
+          content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
         >
-          <RefreshCw
-            className={cn(
-              "h-[13px] w-[13px]",
-              loading && "motion-safe:animate-spin",
-            )}
-            strokeWidth={1.5}
-          />
-        </button>
+          <button
+            type="button"
+            aria-label={t("authCenter.quota.refreshAria", {
+              defaultValue: "刷新 {{login}} 的额度",
+              login,
+            })}
+            aria-disabled={loading}
+            aria-describedby={loading ? agoId : undefined}
+            onClick={() => {
+              if (!loading) onRefresh();
+            }}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 aria-disabled:opacity-45 aria-disabled:hover:bg-transparent"
+          >
+            <RefreshCw
+              className={cn(
+                "h-[13px] w-[13px]",
+                loading && "motion-safe:animate-spin",
+              )}
+              strokeWidth={1.5}
+            />
+          </button>
+        </HoverTip>
       </div>
     </>
   );

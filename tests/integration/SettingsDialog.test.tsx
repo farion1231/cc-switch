@@ -168,12 +168,16 @@ describe("SettingsPage integration", () => {
     )) as HTMLInputElement;
     expect(appInput.value).toBe("/home/mock/.cc-switch");
 
-    fireEvent.click(screen.getByTitle("settings.browseDirectory"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.browseDirectory" }),
+    );
     await waitFor(() =>
       expect(appInput.value).toBe("/home/mock/.cc-switch/picked"),
     );
 
-    fireEvent.click(screen.getByTitle("settings.resetDefault"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.resetDefault" }),
+    );
     await waitFor(() => expect(appInput.value).toBe("/home/mock/.cc-switch"));
   });
 
@@ -186,8 +190,12 @@ describe("SettingsPage integration", () => {
     fireEvent.change(claudeInput, { target: { value: "/custom/claude" } });
     await waitFor(() => expect(claudeInput.value).toBe("/custom/claude"));
 
-    const browseButtons = screen.getAllByTitle("settings.browseDirectory");
-    const resetButtons = screen.getAllByTitle("settings.resetDefault");
+    const browseButtons = screen.getAllByRole("button", {
+      name: "settings.browseDirectory",
+    });
+    const resetButtons = screen.getAllByRole("button", {
+      name: "settings.resetDefault",
+    });
     fireEvent.click(browseButtons[0]);
     await waitFor(() =>
       expect(claudeInput.value).toBe("/custom/claude/picked"),
