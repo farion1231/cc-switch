@@ -598,3 +598,13 @@ PR 文案及脱敏截图说明已准备在被忽略的 `.cc-switch/contribution-
 - fetch 后 fork 的 `origin/main` 为 `b9e96202`，已经包含在功能分支中；官方 `upstream/main` 新增一个 `4e46e6b6`（Codex MCP 不再写入 `type`）。该上游提交只改 MCP Rust 模块及对应测试/快照，与本轮 VPS 文件无直接交集；合入功能分支，不改 fork 的 main。
 - 原 [PR #7804](https://github.com/farion1231/cc-switch/pull/7804) 仍为 open、非草稿，源分支仍是当前功能分支，正文使用 `Refs #7739`。推送同一源分支自动更新原 PR，无需新开 Issue/PR；当前是引用关系，不宣称合并会自动关闭 Issue。
 - 先保存已验证的功能提交，再合入上游并复验，最后非强制推送。后续结果追加于本节，不把此前门禁冒充合并后或远端 CI 结果。
+
+### 合并后复验与交付
+
+- 密码复用功能独立提交为 `f1dc9f33`，包含实现、回归和验收记录，不包含本机工具、测试主机数据或凭据。
+- `upstream/main@4e46e6b6` 无文本冲突合入；五个合并文件逐项与上游 blob 比对一致，密码复用实现没有被改写。保留现有历史，不 rebase、不强推、不改 fork 的 main。
+- 合并工作区最终门禁：Rust 库 **3224 通过、0 失败、10 项原有忽略**；全部 16 个集成目标 **182 通过**；前端 **161 文件、1855 通过**。Rust 格式、CI 标准 Clippy、TypeScript、前端格式及 renderer 构建通过。相比上一轮新增的 2 项库测试和 1 项集成测试来自此次上游 MCP 修复。
+- 前后端大套件串行运行；后端使用隔离 home/TEMP/AppData/客户端目录。前端仅重写既有 golden snapshot 的换行，经与 index 内容比对后恢复；未更新其内容或新增 ignore。保留既有测试/构建警告。
+- 用户进一步确认同步更新原 PR #7804 正文。继续保留 `Refs #7739`，补充密码复用和新的本地验证结果，移除“不包含客户端密码复用”的过时说明；不新建或合并 PR。原截图保留为既有模拟界面结构预览，不宣称是本轮原生认证证据。
+
+合并后日志：`.cc-switch/contribution-prep/vps-client-publish-merged-{rust-fmt,clippy,rust-full,typecheck,format,frontend,renderer}.log`。上述是本机结果；远端 CI 必须按最终推送 head 另查，未获维护者批准或未执行时不能写成通过。

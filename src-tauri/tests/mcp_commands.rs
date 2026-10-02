@@ -499,6 +499,49 @@ command = "echo"
 }
 
 #[test]
+fn import_mcp_from_codex_infers_http_from_url_without_type() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    // Codex 的 [mcp_servers.*] 没有 `type`：HTTP server 只带 `url`。
+    fs::write(
+        codex_dir.join("config.toml"),
+        "[mcp_servers.remote]\nurl = \"https://mcp.example.com/mcp\"\n\n\
+         [mcp_servers.remote.http_headers]\nAuthorization = \"Bearer x\"\n",
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    assert!(changed > 0, "should import the url-only server");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("remote").expect("url-only server imported");
+    assert_eq!(
+        entry.server.get("type").and_then(|v| v.as_str()),
+        Some("http"),
+        "url-only Codex server must import as http, not stdio"
+    );
+    assert_eq!(
+        entry.server.get("url").and_then(|v| v.as_str()),
+        Some("https://mcp.example.com/mcp"),
+        "url must be preserved"
+    );
+    assert_eq!(
+        entry
+            .server
+            .get("headers")
+            .and_then(|v| v.get("Authorization"))
+            .and_then(|v| v.as_str()),
+        Some("Bearer x"),
+        "http_headers must map to headers"
+    );
+}
+
+#[test]
 fn import_mcp_from_claude_does_not_sync_existing_codex_enabled_server() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
