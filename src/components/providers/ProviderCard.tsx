@@ -353,7 +353,9 @@ export function ProviderCard({
 
         <div
           className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-white",
+            // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
+            // fallback 不能继承深色模式下的浅色文字
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-white text-neutral-900",
             presentation.dim && "opacity-60",
           )}
         >
@@ -362,6 +364,7 @@ export function ProviderCard({
             name={provider.name}
             color={provider.iconColor}
             size={20}
+            fallbackClassName="bg-transparent text-neutral-600"
           />
         </div>
 
