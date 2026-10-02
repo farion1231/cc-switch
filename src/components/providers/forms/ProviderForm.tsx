@@ -143,6 +143,26 @@ function getPresetProviderType(
     : undefined;
 }
 
+/**
+ * 把一个数字输入框的值解析成 `1..=u32::MAX` 的正整数，空/0/非整数一律返回
+ * undefined（= 不写入该项）。
+ *
+ * 用 `Number` 而不是 `parseInt`：`type=number` 的输入框允许 `1e2` 这类科学
+ * 计数法，`parseInt("1e2")` 会得到 1——用户想填 100 却被静默存成 1。上限按
+ * `ProviderMeta.media_max_images` 的 Rust 类型 `u32` 收敛，否则越界值会把整次
+ * provider 保存变成一次 serde 反序列化错误。
+ */
+export function parsePositiveBoundedInt(raw: string, max: number): number | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  // 只接受十进制整数；`Number` 已能处理 "1e2"/" 42 "，随后剔除小数与越界值。
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > max) {
+    return undefined;
+  }
+  return parsed;
+}
+
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
@@ -232,6 +252,9 @@ const normalizeCodexChatReasoningForSave = (
 
 const normalizeProviderKey = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+
+/** Rust 侧 `ProviderMeta.media_max_images: Option<u32>` 的上界。 */
+const MEDIA_MAX_IMAGES_LIMIT = 4_294_967_295;
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -1743,10 +1766,7 @@ function ProviderFormFull({
       // 留空/0 = 不限制（不写入 meta）。
       mediaMaxImages:
         category !== "official"
-          ? (() => {
-              const parsed = Number.parseInt(mediaMaxImages, 10);
-              return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-            })()
+          ? parsePositiveBoundedInt(mediaMaxImages, MEDIA_MAX_IMAGES_LIMIT)
           : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides

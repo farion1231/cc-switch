@@ -226,16 +226,16 @@ impl RequestForwarder {
     /// 所以放在 provider meta 而不是全局整流器配置里。
     /// 受 `enabled && Some(n>0)` 管辖，返回剥离张数。
     fn apply_media_image_cap(&self, body: &mut Value, provider: &Provider) -> usize {
+        // 先看总开关：关闭时连 meta 都不必解引用。
+        if !self.rectifier_config.enabled {
+            return 0;
+        }
         let cap = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.media_max_images)
             .filter(|cap| *cap > 0)
             .map(|cap| cap as usize);
-
-        if !self.rectifier_config.enabled {
-            return 0;
-        }
         let Some(cap) = cap else {
             return 0;
         };

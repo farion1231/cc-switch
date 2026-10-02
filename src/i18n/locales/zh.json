@@ -1329,7 +1329,7 @@
     "fallbackModelHint": "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
     "mediaMaxImagesLabel": "图片数量上限",
     "mediaMaxImagesPlaceholder": "留空 = 不限制",
-    "mediaMaxImagesHint": "按文档顺序保留前 N 张图片，第 N+1 张及之后替换为 [Unsupported Image] 标记。0 或留空表示不限制。用于上游限制图片张数的场景（如阶跃星辰上限 70 张）——长会话累积的截图很容易越过上限，导致整个请求失败。",
+    "mediaMaxImagesHint": "按文档顺序保留前 N 张图片，第 N+1 张及之后替换为 [Unsupported Image] 标记。0 或留空表示不限制。仅在整流器总开关开启时生效。用于上游限制图片张数的场景（如阶跃星辰上限 70 张）——长会话累积的截图很容易越过上限，导致整个请求失败。",
     "quickSetModels": "一键设置",
     "quickSetSuccess": "已将模型名称应用到所有角色",
     "advancedOptionsToggle": "高级选项",

@@ -1117,6 +1117,7 @@ export function ClaudeFormFields({
                 id="claude-media-max-images"
                 type="number"
                 min={0}
+                max={4294967295}
                 step={1}
                 placeholder={t("providerForm.mediaMaxImagesPlaceholder", {
                   defaultValue: "留空 = 不限制",
