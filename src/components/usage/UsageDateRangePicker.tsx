@@ -22,7 +22,7 @@ import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 type DraftField = "start" | "end";
 
-const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d"];
+const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d", "all"];
 
 interface UsageDateRangePickerProps {
   selection: UsageRangeSelection;
@@ -105,6 +105,12 @@ function getCalendarDays(month: Date): Date[] {
 
 /* ── component ── */
 
+function resolveCalendarRange(selection: UsageRangeSelection) {
+  const r = resolveUsageRange(selection);
+  if (selection.preset !== "all") return r;
+  return { startDate: r.endDate - 30 * 24 * 60 * 60, endDate: r.endDate };
+}
+
 export function UsageDateRangePicker({
   selection,
   onApply,
@@ -115,8 +121,9 @@ export function UsageDateRangePicker({
   const prevMonthLabel = t("usage.prevMonth", { defaultValue: "上个月" });
   const nextMonthLabel = t("usage.nextMonth", { defaultValue: "下个月" });
   const [activeField, setActiveField] = useState<DraftField>("start");
+  // 「全部」的起点是 0，日历草稿改从结束日往前 30 天开始，避免跳到 1970 年
   const resolvedRange = useMemo(
-    () => resolveUsageRange(selection),
+    () => resolveCalendarRange(selection),
     [selection],
   );
   const [draftStart, setDraftStart] = useState(resolvedRange.startDate);
@@ -140,7 +147,7 @@ export function UsageDateRangePicker({
   // Reset draft when popover opens
   useEffect(() => {
     if (!open) return;
-    const r = resolveUsageRange(selection);
+    const r = resolveCalendarRange(selection);
     setDraftStart(r.startDate);
     setDraftEnd(r.endDate);
     setDraftLiveEnd(
