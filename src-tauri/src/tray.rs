@@ -64,8 +64,6 @@ const MAX_PROBLEM_ROWS: usize = 2;
 const MAX_NAME_CHARS: usize = 32;
 /// 问题区里切换失败的原因最多几个字。
 const MAX_REASON_CHARS: usize = 60;
-/// 托盘里切换失败的问题行留多久（之后多半已经在主界面处理过了）。
-const SWITCH_FAILURE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// 额度剩余不到这个百分比算「快用完」（和前端 `quotaRules.WARN_BELOW_PERCENT` 一致）。
 const WARN_BELOW_PERCENT: f64 = 10.0;
 
@@ -1243,10 +1241,11 @@ static STARTUP_SETTLED: AtomicBool = AtomicBool::new(false);
 /// 启动时没能接上、已退回直连的应用（托盘自己留一份，界面照样取走它的那份）。
 static ATTACH_FAILURES: Lazy<Mutex<Vec<(AppType, bool)>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
+/// 托盘里切换失败的应用。规格 5.5：处理掉才消失（同一应用之后切换成功、或打开过它的页面），
+/// 不按时间过期。
 struct SwitchFailure {
     app: AppType,
     reason: String,
-    at: std::time::Instant,
 }
 
 static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::new(Vec::new()));
@@ -1275,9 +1274,25 @@ pub fn mark_startup_settled(app: &tauri::AppHandle) {
     refresh_tray_menu(app);
 }
 
-fn clear_app_problems(app: &AppType) {
-    lock(&ATTACH_FAILURES).retain(|(existing, _)| existing != app);
-    lock(&SWITCH_FAILURES).retain(|failure| failure.app != *app);
+/// 清掉某个应用的问题行，返回有没有清掉东西。
+fn clear_app_problems(app: &AppType) -> bool {
+    let mut attach = lock(&ATTACH_FAILURES);
+    let mut switch = lock(&SWITCH_FAILURES);
+    let before = attach.len() + switch.len();
+    attach.retain(|(existing, _)| existing != app);
+    switch.retain(|failure| failure.app != *app);
+    attach.len() + switch.len() != before
+}
+
+/// 主界面打开了某个应用的页面：这个应用的问题行算处理过了（规格 5.5「打开过对应页面」）。
+#[tauri::command]
+pub fn tray_app_page_seen(app: tauri::AppHandle, app_type: String) {
+    let Ok(app_type) = app_type.parse::<AppType>() else {
+        return;
+    };
+    if clear_app_problems(&app_type) {
+        schedule_tray_status_check(&app);
+    }
 }
 
 fn record_switch_failure(app: &AppType, reason: String) {
@@ -1286,7 +1301,6 @@ fn record_switch_failure(app: &AppType, reason: String) {
     failures.push(SwitchFailure {
         app: app.clone(),
         reason,
-        at: std::time::Instant::now(),
     });
 }
 
@@ -1325,8 +1339,7 @@ fn collect_problems(
         }
     }
     {
-        let mut failures = lock(&SWITCH_FAILURES);
-        failures.retain(|failure| failure.at.elapsed() < SWITCH_FAILURE_TTL);
+        let failures = lock(&SWITCH_FAILURES);
         for failure in failures.iter() {
             if visible.iter().any(|(app, _)| *app == failure.app) {
                 problems.push(TrayProblem::SwitchFailed {
@@ -4153,7 +4166,8 @@ mod tests {
                 }
             ]
         );
-        clear_app_problems(&AppType::Codex);
+        assert!(clear_app_problems(&AppType::Codex));
+        assert!(!clear_app_problems(&AppType::Codex));
         assert!(collect_problems(None, &rerouted).is_empty());
     }
 }

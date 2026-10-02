@@ -741,25 +741,6 @@
       "showProfileSwitcher": "Show project switcher",
       "showProfileSwitcherDescription": "Show the project switcher in the main page header"
     },
-    "skillStorage": {
-      "title": "Skill Storage Location",
-      "description": "Choose where CC Switch stores the master copies of your skills",
-      "ccSwitch": "CC Switch",
-      "unified": "~/.agents/skills",
-      "ccSwitchHint": "Skills are stored in ~/.cc-switch/skills/ and synced to each app via symlink or copy.",
-      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (Claude Code, Codex, Gemini CLI, etc.) discover skills here natively.",
-      "confirmTitle": "Migrate Skill Storage",
-      "confirmMessage": "{{count}} skill(s) will be moved to the new location. Continue?",
-      "migrationSuccess": "Successfully migrated {{count}} skill(s)",
-      "migrationPartial": "Migrated {{migrated}} skill(s), {{errors}} error(s). Check logs for details."
-    },
-    "skillSync": {
-      "title": "Skill Sync Method",
-      "description": "Choose how to sync Skills files",
-      "symlink": "Symlink",
-      "copy": "Copy Files",
-      "symlinkHint": "Symlinks save disk space and enable real-time sync. Note: May require admin privileges or Developer Mode on Windows"
-    },
     "terminal": {
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
@@ -1821,7 +1802,8 @@
     "matchedVersions": "Matches {{name}} and {{more}} more",
     "versionLabel": "Version",
     "family": {
-      "volcengine": "Volcengine"
+      "volcengine": "Volcengine",
+      "tencent": "Tencent Cloud"
     },
     "version": {
       "payg": "Pay-as-you-go",
@@ -3049,10 +3031,30 @@
       "open": "Storage and sync…",
       "resync": "Resync now",
       "resyncing": "Resyncing…",
-      "resyncHint": "Changes only apply to Skills you enable or update afterwards. Resync now to put enabled Skills back into each app's Skills folder using the current method.",
+      "resyncHint": "Changes only apply to Skills you enable or update afterwards. To switch Skills that are already enabled, resync now.",
       "resyncDone": "Resynced Skills to every app using the current method",
       "resyncPartial": "{{count}} apps didn't fully sync: {{apps}}",
-      "resyncSkillItem": "{{directory}}: {{error}}"
+      "resyncSkillItem": "{{directory}}: {{error}}",
+      "locationTitle": "Keep the master copies in",
+      "locationCcSwitch": "CC Switch folder",
+      "locationUnified": "Shared folder",
+      "openFolder": "Open",
+      "openFolderAria": "Open {{path}}",
+      "unifiedWarning": "Codex, Gemini CLI, OpenCode and others read this folder directly, so the per-app switches no longer fully apply to them.",
+      "move": "Move and switch…",
+      "moving": "Moving…",
+      "moveConfirmTitle": "Move {{count}} Skills to {{path}}?",
+      "moveConfirmBody": "Each master copy is moved, then the links in every app are pointed at the new location. Don't quit CC Switch until the move finishes.",
+      "moveConfirmButton": "Move and switch",
+      "moveDone": "Moved {{count}} Skills to {{path}}",
+      "movePartial": "Moved {{migrated}} Skills, {{errors}} failed. Check the logs for details.",
+      "syncTitle": "How Skills reach each app",
+      "syncAuto": "Automatic: symlink first, copy if that fails (recommended)",
+      "syncSymlink": "Symlink only",
+      "syncSymlinkDesc": "Requires Developer Mode on Windows",
+      "syncCopy": "Copy only",
+      "syncCopyDesc": "Uses more disk space; copied again after each update",
+      "moveHint": "Switching moves {{count}} Skills to the new location."
     },
     "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
   },

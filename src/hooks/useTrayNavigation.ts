@@ -83,3 +83,21 @@ export function useTrayNavigation(
     };
   }, []);
 }
+
+/**
+ * 主界面正显示某个应用的供应商页：告诉托盘这个应用的问题行处理过了（规格「打开过对应页面」）。
+ * 切到这个页面、以及窗口重新拿到焦点时各报一次；`app` 为 null 表示当前不是应用页。
+ */
+export function useTrayAppPageSeen(app: AppId | null): void {
+  useEffect(() => {
+    if (!app) return;
+    const report = () => {
+      invoke("tray_app_page_seen", { appType: app }).catch((error) =>
+        console.error("Failed to report app page to tray", error),
+      );
+    };
+    report();
+    window.addEventListener("focus", report);
+    return () => window.removeEventListener("focus", report);
+  }, [app]);
+}

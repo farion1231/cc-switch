@@ -24,7 +24,10 @@ import { hermesApi } from "@/lib/api/hermes";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
-import { useTrayNavigation } from "@/hooks/useTrayNavigation";
+import {
+  useTrayAppPageSeen,
+  useTrayNavigation,
+} from "@/hooks/useTrayNavigation";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
@@ -599,6 +602,8 @@ function App() {
     }
     setCurrentView(page);
   };
+  useTrayAppPageSeen(currentView === "providers" ? activeApp : null);
+
   useTrayNavigation((navigation) => {
     if (navigation.section) {
       openSettings(navigation.section);

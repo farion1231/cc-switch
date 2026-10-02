@@ -88,7 +88,7 @@ const entries: PresetEntry[] = [
   },
 ];
 
-// 同一家的三个版本（按预设文件顺序），外加一个单独的预设
+// 同一家的三个版本（按预设文件顺序；显示时按 versionOrder 排），外加一个单独的预设
 const kimiEntries: PresetEntry[] = [
   {
     id: "kimi-cn",
@@ -152,8 +152,8 @@ describe("preset families", () => {
     const kimi = rows.find((row) => row.family === "kimi");
     expect(kimi?.versions.map((entry) => entry.id)).toEqual([
       "kimi-cn",
-      "kimi-intl",
       "kimi-coding",
+      "kimi-intl",
     ]);
   });
 
@@ -164,9 +164,9 @@ describe("preset families", () => {
         hits,
       ]);
     expect(hits("kimi")).toEqual([["family:kimi", []]]);
-    expect(hits("coding")).toEqual([["family:kimi", [2]]]);
+    expect(hits("coding")).toEqual([["family:kimi", [1]]]);
     // 带点的词可以命中某个版本自己的完整域名
-    expect(hits("kimi.ai")).toEqual([["family:kimi", [1]]]);
+    expect(hits("kimi.ai")).toEqual([["family:kimi", [2]]]);
     // 别名算整家命中
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
@@ -176,6 +176,32 @@ describe("preset families", () => {
       .filter((item) => !item.hidden)
       .map((item, index) => ({ id: `claude-${index}`, preset: item }));
     expect(groupPresetRows(claudeEntries)).toHaveLength(71);
+  });
+
+  it("orders versions as the design does where a family says so", () => {
+    const claudeEntries = providerPresets
+      .filter((item) => !item.hidden)
+      .map((item, index) => ({ id: `claude-${index}`, preset: item }));
+    const versionsOf = (family: string) =>
+      groupPresetRows(claudeEntries)
+        .find((row) => row.family === family)
+        ?.versions.map((entry) => entry.preset.versionKey);
+    expect(versionsOf("kimi")).toEqual([
+      "paygCn",
+      "codingCn",
+      "paygIntl",
+      "codingIntl",
+    ]);
+    expect(versionsOf("tencent")?.slice(2, 4)).toEqual([
+      "enterpriseLiteCn",
+      "enterpriseLiteIntl",
+    ]);
+    // 没写 versionOrder 的保持文件顺序
+    expect(versionsOf("volcengine")).toEqual([
+      "agentPlan",
+      "codingPlan",
+      "payg",
+    ]);
   });
 
   it("has every family name and version label in all four locales", () => {
@@ -321,8 +347,8 @@ describe("ProviderPresetSelector", () => {
     const buttons = within(versions).getAllByRole("button");
     expect(buttons.map((button) => button.textContent)).toEqual([
       "providerPreset.version.paygCn",
-      "providerPreset.version.paygIntl",
       "providerPreset.version.codingCn",
+      "providerPreset.version.paygIntl",
     ]);
     expect(buttons[0]).toHaveAttribute("aria-pressed", "true");
 
@@ -331,7 +357,7 @@ describe("ProviderPresetSelector", () => {
     expect(
       screen.queryByText("providerPreset.switchVersionTitle"),
     ).not.toBeInTheDocument();
-    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding");
+    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-intl");
     // 换版本留在第 2 步
     expect(screen.queryByTestId("host")).not.toBeInTheDocument();
     expect(
@@ -385,13 +411,13 @@ describe("ProviderPresetSelector", () => {
         name: "providerPreset.switchVersionConfirm",
       }),
     );
-    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-intl");
+    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding");
     expect(screen.getByLabelText("api-key")).toHaveValue("");
     await user.click(versionButtons()[2]);
     expect(
       screen.queryByText("providerPreset.switchVersionTitle"),
     ).not.toBeInTheDocument();
-    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding");
+    expect(onPresetChange).toHaveBeenLastCalledWith("kimi-intl");
   });
 
   it("selects the version a search matched", async () => {
