@@ -50,6 +50,7 @@ import {
   parseGrokBuildConfig,
   updateGrokBuildConfig,
   validateGrokBuildConfig,
+  validateGrokBuildConfigSyntax,
 } from "@/utils/grokBuildConfig";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
@@ -325,8 +326,19 @@ export function GrokBuildProviderForm({
     const name = values.name.trim();
 
     // 官方条目：config 快照原样透传（新增时为空），不做自定义模型字段校验，
-    // 也不重建 config —— 新增走 ensure seed，编辑只允许改名称/图标等元信息。
+    // 也不重建 config —— 新增走 ensure seed，编辑只允许改名称/图标等元信息和
+    // 全局设置（config.toml 编辑器，保存时后端三方比较写 live、行保持快照）。
     if (category === "official") {
+      const syntaxError = validateGrokBuildConfigSyntax(rawConfig);
+      if (syntaxError) {
+        toast.error(
+          t("grokBuild.invalidToml", {
+            error: syntaxError,
+            defaultValue: `config.toml 格式错误: ${syntaxError}`,
+          }),
+        );
+        return;
+      }
       await onSubmit({
         ...values,
         name,
@@ -439,7 +451,12 @@ export function GrokBuildProviderForm({
     await onSubmit(payload);
   };
 
-  const rawConfigError = validateGrokBuildConfig(rawConfig);
+  // 官方条目的 config 走 Grok 自带 OAuth：只要求语法合法（空文档合法），
+  // 不套自定义模型表的形状校验。
+  const rawConfigError =
+    category === "official"
+      ? validateGrokBuildConfigSyntax(rawConfig)
+      : validateGrokBuildConfig(rawConfig);
 
   return (
     <Form {...form}>
@@ -536,50 +553,55 @@ export function GrokBuildProviderForm({
                 }}
               />
             </FormItem>
+          </>
+        )}
 
-            <div className="space-y-2">
-              <FormLabel htmlFor="grokbuild-config-toml">
-                {t("grokBuild.rawConfig", { defaultValue: "config.toml" })}
-              </FormLabel>
-              <p className="text-xs text-muted-foreground">
-                {t("grokBuild.keyFieldsHint", {
-                  defaultValue:
-                    "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
+        {/* 官方条目编辑态同样给 config.toml 入口（与 Codex/Gemini 官方卡一致）：
+            显示的是切到官方后的 live 投影，改的是全局设置；新增流程走 ensure
+            seed（行内容固定为空快照），没有编辑器可给。 */}
+        {(category !== "official" || initialData) && (
+          <div className="space-y-2">
+            <FormLabel htmlFor="grokbuild-config-toml">
+              {t("grokBuild.rawConfig", { defaultValue: "config.toml" })}
+            </FormLabel>
+            <p className="text-xs text-muted-foreground">
+              {t("grokBuild.keyFieldsHint", {
+                defaultValue:
+                  "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
+              })}
+            </p>
+            <JsonEditor
+              value={rawConfig}
+              onChange={handleRawConfigChange}
+              placeholder=""
+              darkMode={isDarkMode}
+              rows={3}
+              showValidation={false}
+              language="javascript"
+            />
+            {rawConfigError && (
+              <p className="text-xs text-destructive">
+                {t("grokBuild.invalidToml", {
+                  error: rawConfigError,
+                  defaultValue: `Invalid config.toml: ${rawConfigError}`,
                 })}
               </p>
-              <JsonEditor
-                value={rawConfig}
-                onChange={handleRawConfigChange}
-                placeholder=""
-                darkMode={isDarkMode}
-                rows={3}
-                showValidation={false}
-                language="javascript"
-              />
-              {rawConfigError && (
-                <p className="text-xs text-destructive">
-                  {t("grokBuild.invalidToml", {
-                    error: rawConfigError,
-                    defaultValue: `Invalid config.toml: ${rawConfigError}`,
-                  })}
-                </p>
-              )}
-              <InactiveFieldsPanel
-                fields={inactiveFields}
-                hint={t("grokBuild.inactiveFieldsHint", {
-                  count: inactiveFields.length,
-                  defaultValue:
-                    "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
-                })}
-                action={{
-                  kind: "copy",
-                  copiedText: t("grokBuild.inactiveFieldCopied", {
-                    defaultValue: "已复制",
-                  }),
-                }}
-              />
-            </div>
-          </>
+            )}
+            <InactiveFieldsPanel
+              fields={inactiveFields}
+              hint={t("grokBuild.inactiveFieldsHint", {
+                count: inactiveFields.length,
+                defaultValue:
+                  "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击复制它的 TOML，按需粘贴到上方；供应商里保存的原值不会删除。",
+              })}
+              action={{
+                kind: "copy",
+                copiedText: t("grokBuild.inactiveFieldCopied", {
+                  defaultValue: "已复制",
+                }),
+              }}
+            />
+          </div>
         )}
 
         <FormField
