@@ -178,14 +178,14 @@ describe("UsageDashboard", () => {
     ).toBeInTheDocument();
   });
 
-  it("defaults to the last 7 days", () => {
+  it("defaults to today", () => {
     renderDashboard();
 
     expect(
-      screen.getByRole("button", { name: "usage.preset7d" }),
+      screen.getByRole("button", { name: "usage.presetToday" }),
     ).toBeInTheDocument();
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ range: { preset: "7d" } }),
+      expect.objectContaining({ range: { preset: "today" } }),
     );
   });
 
