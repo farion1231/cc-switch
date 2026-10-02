@@ -667,7 +667,12 @@ fn model_catalog_pointer_ownership() {
     switch(&state, "owned").expect("switch to owned");
     assert_eq!(
         live_config()["model_catalog_json"].as_str(),
-        Some("cc-switch-model-catalog.json")
+        Some(
+            get_codex_config_path()
+                .with_file_name("cc-switch-model-catalog.json")
+                .to_string_lossy()
+                .as_ref()
+        )
     );
     assert!(get_codex_config_path()
         .with_file_name("cc-switch-model-catalog.json")
