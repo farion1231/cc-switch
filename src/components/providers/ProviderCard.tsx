@@ -12,6 +12,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { OpenClawProviderConfig, Provider } from "@/types";
+import type { ProxyStackMember, ProxyStackNotice } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
-import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
+import { getAppLabel, isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -68,13 +69,18 @@ interface ProviderCardProps {
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
   isProxyRunning: boolean;
-  isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
+  isProxyTakeover?: boolean; // 路由模式（切换只改代理路由）
+  isDirectProvider?: boolean; // 路由模式下的直连供应商：退出路由时写回它
   dragHandleProps?: DragHandleProps;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  isStackMode?: boolean; // Stack 模式：卡片按钮是添加 / 移除 / 设为默认
+  stackMember?: ProxyStackMember; // Stack 模式：这家已添加时的名单条目
+  stackNotice?: ProxyStackNotice; // Stack 模式：客户端看不到或看不全 Stack 模型的原因
+  onToggleStack?: (enabled: boolean) => void; // Stack 模式下添加 / 移除（不能添加的为空）
   // OpenClaw: default model
   isDefaultModel?: boolean;
   isRemovalProtected?: boolean;
@@ -186,12 +192,17 @@ export function ProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
+  isDirectProvider = false,
   dragHandleProps,
   isAutoFailoverEnabled = false,
   failoverPriority,
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  isStackMode = false,
+  stackMember,
+  stackNotice,
+  onToggleStack,
   // OpenClaw: default model
   isDefaultModel,
   isRemovalProtected,
@@ -367,23 +378,32 @@ export function ProviderCard({
           ? activeProviderId === provider.id
           : isCurrent;
 
-  const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
+  // Stack 模式和累加式应用一样：已添加的常亮，用紫色（同顶栏的 Stack 图标）和路由 / 故障转移的
+  // 绿色区分；默认那家靠「当前默认」按钮区分。
+  const shouldUseViolet =
+    isStackMode && (isActiveProvider || stackMember !== undefined);
+  const shouldUseGreen =
+    !isAnyOmo && !isStackMode && isProxyTakeover && isActiveProvider;
   const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
   const shouldUseBlue =
     (isAnyOmo && isActiveProvider) ||
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
-  const hasStateHighlight = shouldUseGreen || shouldUseBlue;
+  const hasStateHighlight = shouldUseViolet || shouldUseGreen || shouldUseBlue;
 
   return (
     <div
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
         "bg-card text-card-foreground group",
-        isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
+        isStackMode
+          ? "hover:border-violet-500/50"
+          : isAutoFailoverEnabled || isProxyTakeover
+            ? "hover:border-emerald-500/50"
+            : "hover:border-border-active",
+        shouldUseViolet &&
+          "border-violet-500/60 shadow-sm shadow-violet-500/10",
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
@@ -395,6 +415,7 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
+          shouldUseViolet && "from-violet-500/10",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
           !hasStateHighlight && "from-primary/10",
@@ -483,6 +504,45 @@ export function ProviderCard({
                   })}
                 />
               )}
+
+              {isDirectProvider && (
+                <ProviderStatusBadge
+                  tone="muted"
+                  label={t("provider.directProvider", {
+                    defaultValue: "直连",
+                  })}
+                  title={t("provider.directProviderHint", {
+                    defaultValue: "退出路由后恢复为这个供应商",
+                  })}
+                />
+              )}
+
+              {/* 默认那家：Claude Code 的照常发布（第一个模型同时接住启动和后台请求）；Codex 的
+                  模型是默认路由的目录行，不带前缀发布，不标。 */}
+              {stackMember &&
+                (!stackMember.route || stackMember.modelIds.length > 0) && (
+                  <ProviderStatusBadge
+                    tone={stackNotice ? "warning" : "stack"}
+                    label={t("provider.stackBadge")}
+                    title={[
+                      stackMember.modelIds.length > 0
+                        ? t("provider.stackBadgeHint", {
+                            client: getAppLabel(appId),
+                            models: stackMember.modelIds.join(", "),
+                          })
+                        : t("provider.stackBadgeNoModels"),
+                      stackMember.route
+                        ? t("provider.stackDefaultHint", {
+                            defaultValue:
+                              "它是默认供应商：列表里的第一个模型负责 Claude Code 启动和后台任务",
+                          })
+                        : null,
+                      stackNotice ? t(`provider.${stackNotice}`) : null,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
+                  />
+                )}
 
               {appId === "claude" && provider.category === "official" && (
                 <ProviderStatusBadge
@@ -731,6 +791,9 @@ export function ProviderCard({
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
+              isStackMode={isStackMode}
+              isStackMember={stackMember !== undefined}
+              onToggleStack={onToggleStack}
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={

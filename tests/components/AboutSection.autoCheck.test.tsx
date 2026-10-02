@@ -93,10 +93,10 @@ describe("AboutSection tool version checking", () => {
     expect(getToolVersions).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "common.refresh" }));
-    await waitFor(() => expect(getToolVersions).toHaveBeenCalledTimes(8));
+    await waitFor(() => expect(getToolVersions).toHaveBeenCalledTimes(9));
     unmount();
 
     render(<AboutSection isPortable={false} />);
-    expect(getToolVersions).toHaveBeenCalledTimes(8);
+    expect(getToolVersions).toHaveBeenCalledTimes(9);
   });
 });

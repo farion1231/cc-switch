@@ -5,6 +5,7 @@ use super::{
     codex_chat_common::{
         extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
     },
+    codex_compaction,
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
         response_id_from_chat_id, response_status_from_finish_reason,
@@ -542,6 +543,10 @@ impl ChatToResponsesState {
         events.extend(self.finalize_text());
         events.extend(self.finalize_tools());
 
+        if self.tool_context.is_compaction_request() {
+            return self.finish_compaction(events);
+        }
+
         let status = response_status_from_finish_reason(self.finish_reason.as_deref());
 
         // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
@@ -569,6 +574,37 @@ impl ChatToResponsesState {
             response["incomplete_details"] = json!({ "reason": "max_output_tokens" });
         }
 
+        events.push(sse::response_completed(&response));
+        self.completed = true;
+        events
+    }
+
+    /// Codex 远程压缩回合：在 completed 之前交回唯一一个 compaction 条目（见
+    /// `codex_compaction`）。截断、内容过滤等非正常结束或没有摘要正文时报可重试的错误，
+    /// 不能让 Codex 装上半截或空的摘要。
+    fn finish_compaction(&mut self, mut events: Vec<Bytes>) -> Vec<Bytes> {
+        if let Some(reason) =
+            codex_compaction::compaction_incomplete_reason(self.finish_reason.as_deref())
+        {
+            let mut response = self.base_response("incomplete", self.completed_output_items());
+            response["incomplete_details"] = json!({ "reason": reason });
+            events.push(sse::response_incomplete(&response));
+            self.completed = true;
+            return events;
+        }
+        let summary = codex_compaction::summary_from_output_items(&self.completed_output_items());
+        if summary.is_empty() {
+            events.push(self.failed_event(
+                "Upstream returned no summary text for the compaction turn".to_string(),
+                Some("compaction_summary_empty".to_string()),
+            ));
+            return events;
+        }
+        let item = codex_compaction::compaction_output_item(&summary);
+        let output_index = self.next_output_index();
+        events.push(sse::output_item_done(output_index, &item));
+        self.output_items.push((output_index, item));
+        let response = self.base_response("completed", self.completed_output_items());
         events.push(sse::response_completed(&response));
         self.completed = true;
         events
@@ -1489,5 +1525,99 @@ mod tests {
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
+    }
+
+    fn compaction_context() -> CodexToolContext {
+        super::super::transform_codex_chat::build_codex_tool_context_from_request(&json!({
+            "input": [
+                { "type": "message", "role": "user", "content": "hi" },
+                { "type": "compaction_trigger" }
+            ]
+        }))
+    }
+
+    #[tokio::test]
+    async fn compaction_turn_emits_exactly_one_compaction_item_before_completed() {
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_c\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_c\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"Progress: done A.\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            compaction_context(),
+        )
+        .await;
+        let events = parse_sse_events(&output);
+        let compaction_items: Vec<&Value> = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .map(|event| &event["item"])
+            .filter(|item| item["type"] == "compaction")
+            .collect();
+        assert_eq!(compaction_items.len(), 1);
+        assert_eq!(
+            super::super::codex_compaction::decode_compaction_summary(
+                compaction_items[0]["encrypted_content"].as_str().unwrap()
+            )
+            .as_deref(),
+            Some("Progress: done A.")
+        );
+        let last = events.last().unwrap();
+        assert_eq!(last["type"], "response.completed");
+        assert_eq!(last["response"]["status"], "completed");
+        assert!(last["response"]["output"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["type"] == "compaction"));
+    }
+
+    #[tokio::test]
+    async fn truncated_or_empty_compaction_turn_is_reported_as_retryable() {
+        let truncated = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_c\",\"choices\":[{\"delta\":{\"content\":\"half\"},\"finish_reason\":\"length\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            compaction_context(),
+        )
+        .await;
+        assert!(truncated.contains("event: response.incomplete"));
+        assert!(!truncated.contains("event: response.completed"));
+        assert!(!truncated.contains("\"type\":\"compaction\""));
+
+        // 输出了半段摘要后被内容过滤截断：普通回合算完成，压缩回合必须报未完成，
+        // 否则 Codex 会拿半截摘要覆盖历史。
+        for reason in ["content_filter", "sensitive"] {
+            let filtered = collect_with_context(
+                vec![
+                    &format!("data: {{\"id\":\"chatcmpl_c\",\"choices\":[{{\"delta\":{{\"content\":\"Progress: half\"}},\"finish_reason\":\"{reason}\"}}]}}\n\n"),
+                    "data: [DONE]\n\n",
+                ],
+                compaction_context(),
+            )
+            .await;
+            let events = parse_sse_events(&filtered);
+            let last = events.last().unwrap();
+            assert_eq!(last["type"], "response.incomplete", "{reason}");
+            assert_eq!(
+                last["response"]["incomplete_details"]["reason"],
+                "content_filter"
+            );
+            assert!(!filtered.contains("\"type\":\"compaction\""), "{reason}");
+            assert!(!filtered.contains("event: response.completed"), "{reason}");
+        }
+
+        let empty = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_c\",\"choices\":[{\"delta\":{\"reasoning_content\":\"only thinking\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            compaction_context(),
+        )
+        .await;
+        assert!(empty.contains("event: response.failed"));
+        assert!(empty.contains("compaction_summary_empty"));
+        assert!(!empty.contains("event: response.completed"));
     }
 }

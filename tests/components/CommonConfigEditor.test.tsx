@@ -1,33 +1,7 @@
-import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CommonConfigEditor } from "@/components/providers/forms/CommonConfigEditor";
-
-vi.mock("@/components/common/FullScreenPanel", () => ({
-  FullScreenPanel: ({
-    isOpen,
-    title,
-    onClose,
-    children,
-    footer,
-  }: {
-    isOpen: boolean;
-    title: string;
-    onClose: () => void;
-    children: ReactNode;
-    footer?: ReactNode;
-  }) =>
-    isOpen ? (
-      <div data-testid="common-config-panel">
-        <button type="button" onClick={onClose}>
-          panel-close
-        </button>
-        <h2>{title}</h2>
-        <div>{children}</div>
-        <div>{footer}</div>
-      </div>
-    ) : null,
-}));
+import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -45,19 +19,16 @@ vi.mock("@/components/JsonEditor", () => ({
   ),
 }));
 
-function renderEditor(value: string, onChange = vi.fn()) {
+function renderEditor(
+  value: string,
+  onChange = vi.fn(),
+  inactiveFields: ProviderEditorInactiveField[] = [],
+) {
   render(
     <CommonConfigEditor
       value={value}
       onChange={onChange}
-      useCommonConfig={false}
-      onCommonConfigToggle={() => {}}
-      commonConfigSnippet="{}"
-      onCommonConfigSnippetChange={() => {}}
-      commonConfigError=""
-      onEditClick={() => {}}
-      isModalOpen={false}
-      onModalClose={() => {}}
+      inactiveFields={inactiveFields}
     />,
   );
   return onChange;
@@ -141,5 +112,43 @@ describe("CommonConfigEditor max effort toggle", () => {
         ENABLE_TOOL_SEARCH: "true",
       },
     });
+  });
+});
+
+describe("CommonConfigEditor inactive row fields", () => {
+  const timeout: ProviderEditorInactiveField = {
+    path: ["env", "API_TIMEOUT_MS"],
+    value: "3000000",
+  };
+
+  it("offers row fields that never reach live and adds one on click", () => {
+    const onChange = renderEditor(
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://a.example" } }),
+      vi.fn(),
+      [timeout],
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /env\.API_TIMEOUT_MS/ }),
+    );
+
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: "https://a.example",
+        API_TIMEOUT_MS: "3000000",
+      },
+    });
+  });
+
+  it("hides a field once the JSON already carries its value", () => {
+    renderEditor(
+      JSON.stringify({ env: { API_TIMEOUT_MS: "3000000" } }),
+      vi.fn(),
+      [timeout],
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /env\.API_TIMEOUT_MS/ }),
+    ).not.toBeInTheDocument();
   });
 });

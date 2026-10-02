@@ -2684,6 +2684,12 @@ mod tests {
                 ["2.000000", "10.000000", "0.200000", "2.500000", "14.700000"],
             ),
             (
+                "OpenAI/GPT-6.1-SOL@HIGH",
+                "codex",
+                3_000_000,
+                ["2.000000", "10.000000", "0.100000", "2.500000", "14.600000"],
+            ),
+            (
                 "gpt-6-luna",
                 "codex",
                 3_000_000,
@@ -2727,7 +2733,7 @@ mod tests {
             // Simulate an existing database with unpriced usage before the update.
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
-                 ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
+                 ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
                   'gpt-5.5-pro', 'gpt-4o-mini')",
                 [],
             )?;

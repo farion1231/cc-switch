@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDevPricing";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import type { McpServer, Provider, Settings } from "@/types";
 import {
   addProvider,
@@ -105,6 +105,18 @@ export const handlers = [
     addProvider(app, { ...provider, id: newId });
     return success(true);
   }),
+
+  // 编辑器显示：测试里没有真实的 live 文件，关键字段直接取这一行（等于切到它之后的
+  // 样子），不列出不生效的字段。
+  http.post(
+    `${TAURI_ENDPOINT}/get_provider_editor_view`,
+    async ({ request }) => {
+      const { settingsConfig = {} } = await withJson<{
+        settingsConfig?: Record<string, unknown>;
+      }>(request);
+      return success({ settings: settingsConfig, inactive: [] });
+    },
+  ),
 
   http.post(`${TAURI_ENDPOINT}/update_provider`, async ({ request }) => {
     const { provider, app } = await withJson<{
@@ -344,6 +356,18 @@ export const handlers = [
       failover_count: 0,
       active_targets: [],
     }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_direct_provider`, () => success(null)),
+
+  http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+    success({ active: false, members: [] }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () => success(null)),
+
+  http.post(`${TAURI_ENDPOINT}/restart_codex_app_server_daemon`, () =>
+    success("restarted"),
   ),
 
   http.post(`${TAURI_ENDPOINT}/get_proxy_takeover_status`, () =>

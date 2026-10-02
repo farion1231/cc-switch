@@ -14,7 +14,6 @@ import {
   X,
   Book,
   Brain,
-  Wrench,
   History,
   BarChart2,
   Download,
@@ -44,6 +43,7 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
+import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
@@ -93,7 +93,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
-import { McpIcon } from "@/components/BrandIcons";
+import { McpIcon, SkillsIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
@@ -110,6 +110,7 @@ import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
+  isStackAppId,
   isProxyAppId,
 } from "@/config/appConfig";
 
@@ -726,11 +727,13 @@ function App() {
   const handleEditProvider = async ({
     provider,
     originalId,
+    editorSave,
   }: {
     provider: Provider;
     originalId?: string;
+    editorSave?: ProviderEditorSave;
   }) => {
-    await updateProvider(provider, originalId);
+    await updateProvider(provider, originalId, editorSave);
     setEditingProvider(null);
   };
 
@@ -816,6 +819,25 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    if (
+      activeApp === "opencode" &&
+      provider.category !== "omo" &&
+      provider.category !== "omo-slim"
+    ) {
+      const { npm, models } = provider.settingsConfig;
+      if (
+        typeof npm !== "string" ||
+        !npm.trim() ||
+        !models ||
+        typeof models !== "object" ||
+        Array.isArray(models) ||
+        Object.keys(models).length === 0
+      ) {
+        toast.error(t("opencode.duplicateRequiresDefinition"));
+        return;
+      }
+    }
+
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
 
@@ -884,6 +906,13 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+    } else if (activeApp === "mcode") {
+      // The MCode list already includes its live custom nodes; the backend
+      // rejects a key that MCode itself owns.
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1405,14 +1434,22 @@ function App() {
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
                   ) : proxyAppId ? (
-                    <>
-                      {settingsData?.enableLocalProxy && (
-                        <ProxyToggle activeApp={proxyAppId} />
-                      )}
-                      {settingsData?.enableFailoverToggle && (
-                        <FailoverToggle activeApp={proxyAppId} />
-                      )}
-                    </>
+                    // 设置里选了 Stack 模式：Claude Code、Codex 的开关换成 Stack 模式开关（不做
+                    // 故障转移），其余应用仍显示路由开关。
+                    settingsData?.enableStackMode &&
+                    isStackAppId(proxyAppId) ? (
+                      <ProxyToggle activeApp={proxyAppId} stack />
+                    ) : (
+                      <>
+                        {(settingsData?.enableLocalProxy ||
+                          settingsData?.enableStackMode) && (
+                          <ProxyToggle activeApp={proxyAppId} />
+                        )}
+                        {settingsData?.enableFailoverToggle && (
+                          <FailoverToggle activeApp={proxyAppId} />
+                        )}
+                      </>
+                    )
                   ) : null}
                 </div>
               )}
@@ -1618,7 +1655,7 @@ function App() {
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("skills.manage")}
                               >
-                                <Wrench className="w-4 h-4" />
+                                <SkillsIcon className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1713,7 +1750,7 @@ function App() {
                                 )}
                                 title={t("skills.manage")}
                               >
-                                <Wrench className="flex-shrink-0 w-4 h-4" />
+                                <SkillsIcon className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

@@ -150,7 +150,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -212,7 +213,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   // 接入形态与国内版一致（原生 Responses 直连），依据见上方国内版注释
   {
     name: "Kimi Global",
-    websiteUrl: "https://platform.kimi.ai?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -1437,13 +1439,28 @@ requires_openai_auth = true`,
     // 档位/上下文/模态照抄官方 models.json：glm-5.3 low/high/max 默认 max；
     // glm-5-turbo 官方档位为空、默认 max——cc-switch 表达不了空档位（回落会得到
     // 模板 none/high，none 在原生直连下没有转换层兜底、会原样发给严格网关），
-    // 按官方默认收成单档 max。两模型 input_modalities=["text"]、并行工具调用 true
+    // 按官方默认收成单档 max。两模型为纯文本、并行工具调用 true。
+    // glm-5.3-flash 例外：官方 Codex models.json 尚未收录（2026-09-26 核对），
+    // 依据是模型页 docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash——原生
+    // 多模态、1M 上下文、「文本参数与 GLM-5.3 保持一致」、GLM Coding Plan 已全量
+    // 开放；档位与并行工具调用据此对齐 glm-5.3。预设自带这一行，用户就不必把
+    // glm-5.3 行改名成 flash（改名会连带继承该行隐藏的 ["text"] 声明，Codex
+    // 因此拦截图片，见 #7688）。
     modelCatalog: modelCatalog([
       {
         model: "glm-5.3",
         displayName: "GLM-5.3",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3-Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
         supportsParallelToolCalls: true,
         reasoningLevels: ["low", "high", "max"],
         defaultReasoningLevel: "max",
@@ -1467,7 +1484,9 @@ requires_openai_auth = true`,
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     auth: generateThirdPartyAuth(""),
     // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
-    // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3
+    // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3。
+    // glm-5.3-flash 同国内站：依据国际站模型页 docs.z.ai/guides/vlm/glm-5.3-flash
+    // （Coding Plan 同样全量开放），models.json 尚未收录（2026-09-26 核对）
     config: generateThirdPartyConfig(
       "zhipu_glm_en",
       "https://api.z.ai/api/v1",
@@ -1481,6 +1500,15 @@ requires_openai_auth = true`,
         displayName: "GLM-5.3",
         contextWindow: 1048576,
         inputModalities: ["text"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "max",
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3-Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
         supportsParallelToolCalls: true,
         reasoningLevels: ["low", "high", "max"],
         defaultReasoningLevel: "max",
@@ -3246,7 +3274,6 @@ requires_openai_auth = true`,
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 disable_response_storage = true
-personality = "pragmatic"
 
 [model_providers.custom]
 name = "E-FlowCode"
