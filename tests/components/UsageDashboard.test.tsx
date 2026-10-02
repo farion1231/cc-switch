@@ -169,23 +169,23 @@ describe("UsageDashboard", () => {
   });
 
   it("shows the saved refresh interval in the header menu", () => {
-    renderDashboard({ refreshIntervalMs: 5000 });
+    renderDashboard({ refreshIntervalMs: 60000 });
 
     expect(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:5",
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     ).toBeInTheDocument();
   });
 
-  it("defaults to today", () => {
+  it("defaults to the last 24 hours", () => {
     renderDashboard();
 
     expect(
-      screen.getByRole("button", { name: "usage.presetToday" }),
+      screen.getByRole("button", { name: "usage.preset1d" }),
     ).toBeInTheDocument();
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ range: { preset: "today" } }),
+      expect.objectContaining({ range: { preset: "1d" } }),
     );
   });
 
@@ -245,6 +245,16 @@ describe("UsageDashboard", () => {
     );
   });
 
+  it("falls back to 30 seconds for a retired 5-second interval", () => {
+    renderDashboard({ refreshIntervalMs: 5000 });
+
+    expect(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("persists refresh interval changes", async () => {
     const user = userEvent.setup();
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(true);
@@ -257,16 +267,16 @@ describe("UsageDashboard", () => {
     );
     await user.click(
       await screen.findByRole("menuitem", {
-        name: "usage.refreshMenu.seconds:5",
+        name: "usage.refreshMenu.seconds:60",
       }),
     );
 
     await waitFor(() =>
-      expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
+      expect(onRefreshIntervalChange).toHaveBeenCalledWith(60000),
     );
     expect(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:5",
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     ).toBeInTheDocument();
   });
@@ -283,12 +293,12 @@ describe("UsageDashboard", () => {
     );
     await user.click(
       await screen.findByRole("menuitem", {
-        name: "usage.refreshMenu.seconds:5",
+        name: "usage.refreshMenu.seconds:60",
       }),
     );
 
     await waitFor(() =>
-      expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
+      expect(onRefreshIntervalChange).toHaveBeenCalledWith(60000),
     );
     await waitFor(() =>
       expect(

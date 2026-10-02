@@ -144,19 +144,16 @@ describe("UsageDashboard (smoke)", () => {
 
     // 指标卡
     expect(await screen.findByText("$42.10")).toBeInTheDocument();
-    expect(screen.getByText("18.2M")).toBeInTheDocument();
+    // 中文按「万 / 亿」显示：18,200,000 → 1820.0 万
+    expect(screen.getByText("1820.0 万")).toBeInTheDocument();
     // 「全部」时由各应用的 token 重新算：16.6M ÷ (1M + 0.2M + 16.6M)
     expect(screen.getByText("93.3%")).toBeInTheDocument();
     expect(screen.getByText("usage.trend.title")).toBeInTheDocument();
 
-    // 更多指标
-    await user.click(
-      screen.getByRole("button", { name: "usage.metrics.more" }),
-    );
+    // 指标条直接显示缓存写入，不再需要展开
     expect(
-      screen.getByRole("button", { name: "usage.metrics.more" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("usage.cacheWrite")).toBeInTheDocument();
+      screen.getByText("usage.metrics.cacheWriteLabel"),
+    ).toBeInTheDocument();
 
     // 供应商：汇总速度 92000 / 1000 s = 92 tok/s
     await user.click(screen.getByRole("tab", { name: "usage.tabs.providers" }));

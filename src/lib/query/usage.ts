@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
@@ -8,6 +13,7 @@ import type {
 } from "@/types/usage";
 
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
+const USAGE_STALE_TIME_MS = 15000;
 
 type UsageQueryOptions = {
   refetchInterval?: number | false;
@@ -185,6 +191,10 @@ export function useUsageSummary(
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    // 切换时间范围 / 筛选时先留着上一份数据，不闪成加载态；
+    // 15 秒内重新挂载不重复查（写入事件仍会让它立刻失效）
+    placeholderData: keepPreviousData,
+    staleTime: USAGE_STALE_TIME_MS,
   });
 }
 
@@ -212,6 +222,10 @@ export function useUsageSummaryByApp(
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    // 切换时间范围 / 筛选时先留着上一份数据，不闪成加载态；
+    // 15 秒内重新挂载不重复查（写入事件仍会让它立刻失效）
+    placeholderData: keepPreviousData,
+    staleTime: USAGE_STALE_TIME_MS,
   });
 }
 
@@ -241,6 +255,10 @@ export function useUsageTrends(
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    // 切换时间范围 / 筛选时先留着上一份数据，不闪成加载态；
+    // 15 秒内重新挂载不重复查（写入事件仍会让它立刻失效）
+    placeholderData: keepPreviousData,
+    staleTime: USAGE_STALE_TIME_MS,
   });
 }
 
@@ -270,6 +288,10 @@ export function useProviderStats(
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    // 切换时间范围 / 筛选时先留着上一份数据，不闪成加载态；
+    // 15 秒内重新挂载不重复查（写入事件仍会让它立刻失效）
+    placeholderData: keepPreviousData,
+    staleTime: USAGE_STALE_TIME_MS,
   });
 }
 
@@ -299,6 +321,10 @@ export function useModelStats(
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    // 切换时间范围 / 筛选时先留着上一份数据，不闪成加载态；
+    // 15 秒内重新挂载不重复查（写入事件仍会让它立刻失效）
+    placeholderData: keepPreviousData,
+    staleTime: USAGE_STALE_TIME_MS,
   });
 }
 
@@ -328,6 +354,10 @@ export function useRequestLogs({
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+    // 切换时间范围 / 筛选时先留着上一份数据，不闪成加载态；
+    // 15 秒内重新挂载不重复查（写入事件仍会让它立刻失效）
+    placeholderData: keepPreviousData,
+    staleTime: USAGE_STALE_TIME_MS,
   });
 }
 
