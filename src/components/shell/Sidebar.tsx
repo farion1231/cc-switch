@@ -17,7 +17,6 @@ import {
   Layers,
   LayoutGrid,
   Route,
-  Search,
   Server,
   Settings,
   SlidersHorizontal,
@@ -31,8 +30,10 @@ import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { fmtUsd } from "@/components/usage/format";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
@@ -52,13 +53,13 @@ interface SidebarProps {
   onExitSettings: () => void;
   /** 打开了「启动时检查应用更新」并且查到了新版本 */
   appsUpdateAvailable?: boolean;
-  /** 顶条的搜索按钮（⌘K） */
-  onOpenSearch?: () => void;
 }
 
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
- * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨。
+ * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
+ * 展开 / 收起时宽度过渡 200ms，文字不换行、被裁掉而不是挤成两行。
+ * 收起时各行只剩图标，名字由 HoverTip 从右侧报；展开时文字可见，不再挂提示。
  */
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
@@ -69,8 +70,9 @@ export function Sidebar(props: SidebarProps) {
     <nav
       aria-label={t("nav.mainLabel")}
       className={cn(
-        "relative flex h-full shrink-0 flex-col border-e border-border bg-sidebar text-body text-fg-1",
-        collapsed ? "w-[72px]" : "w-[200px]",
+        "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1 transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        // macOS 的红绿灯（新版更大）要约 74px，收起的图标轨在 Mac 上放宽到 84
+        collapsed ? (isMac() ? "w-[84px]" : "w-[72px]") : "w-[200px]",
       )}
     >
       <a
@@ -79,11 +81,7 @@ export function Sidebar(props: SidebarProps) {
       >
         {t("nav.skipToContent")}
       </a>
-      <SidebarTopBar
-        collapsed={collapsed}
-        onToggle={onToggleCollapsed}
-        onSearch={props.onOpenSearch}
-      />
+      <SidebarTopBar collapsed={collapsed} onToggle={onToggleCollapsed} />
       {inSettings ? (
         <SettingsDirectory {...props} />
       ) : (
@@ -96,42 +94,57 @@ export function Sidebar(props: SidebarProps) {
 function SidebarTopBar({
   collapsed,
   onToggle,
-  onSearch,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  onSearch?: () => void;
 }) {
   const { t } = useTranslation();
-  const searchLabel = t("commandPalette.open", {
-    shortcut: isMac() ? "⌘K" : "Ctrl+K",
-  });
-  const searchButton = onSearch ? (
-    <button
-      type="button"
-      onClick={onSearch}
-      aria-label={searchLabel}
-      title={searchLabel}
-      style={NO_DRAG}
-      className="flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-[background-color,color,scale] hover:bg-subtle hover:text-fg-1 active:scale-[0.96]"
-    >
-      <Search className="h-4 w-4" strokeWidth={1.5} />
-    </button>
-  ) : null;
+  const tipSide = collapsed ? "right" : "bottom";
   const label = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
   const Icon = collapsed ? ChevronsRight : ChevronsLeft;
   const toggleButton = (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={label}
-      title={label}
-      style={NO_DRAG}
-      className="flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-[background-color,color,scale] hover:bg-subtle hover:text-fg-1 active:scale-[0.96]"
-    >
-      <Icon className="h-4 w-4" strokeWidth={1.5} />
-    </button>
+    <HoverTip content={label} side={tipSide}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={label}
+        style={NO_DRAG}
+        className="flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-[background-color,color,scale] hover:bg-subtle hover:text-fg-1 active:scale-[0.96]"
+      >
+        <Icon className="h-4 w-4" strokeWidth={1.5} />
+      </button>
+    </HoverTip>
   );
+
+  // macOS 展开：顶条只放红绿灯；下面一行贴近红绿灯放 logo + 名字，收起箭头放在这一行最右边
+  if (!collapsed && isMac()) {
+    return (
+      <>
+        <div
+          className="h-11 shrink-0"
+          {...DRAG_REGION_ATTR}
+          style={DRAG_REGION_STYLE as React.CSSProperties}
+        />
+        <div
+          className="-mt-[18px] flex h-9 shrink-0 items-center gap-2 pe-2 ps-4"
+          {...DRAG_REGION_ATTR}
+          style={DRAG_REGION_STYLE as React.CSSProperties}
+        >
+          <img
+            src={ccswitchLogo}
+            alt=""
+            draggable={false}
+            className="pointer-events-none h-5 w-5 shrink-0"
+          />
+          <span className="pointer-events-none me-auto min-w-0 truncate text-strong font-semibold text-fg-1">
+            CC Switch
+          </span>
+          {toggleButton}
+        </div>
+        <div className="mx-4 mb-1.5 h-px shrink-0 bg-border" />
+      </>
+    );
+  }
 
   // macOS 的红绿灯占着顶条左边约 70px：图标轨只有 72 宽，按钮挪到顶条下面一行
   if (collapsed && isMac()) {
@@ -142,14 +155,10 @@ function SidebarTopBar({
           {...DRAG_REGION_ATTR}
           style={DRAG_REGION_STYLE as React.CSSProperties}
         />
-        <div className="flex h-8 shrink-0 items-center justify-center">
+        {/* 往上贴近红绿灯，和展开时品牌行同高（中心 y≈44） */}
+        <div className="-mt-4 flex h-8 shrink-0 items-center justify-center">
           {toggleButton}
         </div>
-        {searchButton && (
-          <div className="flex h-8 shrink-0 items-center justify-center">
-            {searchButton}
-          </div>
-        )}
       </>
     );
   }
@@ -164,11 +173,20 @@ function SidebarTopBar({
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
       {!collapsed && !isMac() && (
-        <span className="me-auto ps-2 text-caption font-semibold text-fg-3">
-          CC Switch
+        // 左上角品牌（Windows / Linux）：图标 + 名字。macOS 左上角留给红绿灯，不放。
+        // 图片不接收指针事件，拖它也是在拖窗口
+        <span className="pointer-events-none me-auto flex min-w-0 items-center gap-2 ps-1.5">
+          <img
+            src={ccswitchLogo}
+            alt=""
+            draggable={false}
+            className="h-[22px] w-[22px] shrink-0"
+          />
+          <span className="truncate text-strong font-semibold text-fg-1">
+            CC Switch
+          </span>
         </span>
       )}
-      {searchButton}
       {toggleButton}
     </div>
   );
@@ -370,33 +388,34 @@ function AppNavItem({
           ? { className: "bg-route-solid text-route-on", icon: Route }
           : null;
     return (
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-label={tip}
-        aria-current={selected ? "page" : undefined}
-        title={tip}
-        className={cn(
-          "ms-3 flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
-          selected && "bg-selected hover:bg-selected",
-        )}
-      >
-        <span className="relative flex">
-          <AppGlyph app={app} size={20} badgeClassName={badgeBg} />
-          {marker && (
-            <span
-              aria-hidden="true"
-              className={cn(
-                "absolute -end-[7px] -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2",
-                selected ? "border-selected" : "border-sidebar",
-                marker.className,
-              )}
-            >
-              <marker.icon className="h-2 w-2" strokeWidth={3} />
-            </span>
+      <HoverTip content={tip} side="right">
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-label={tip}
+          aria-current={selected ? "page" : undefined}
+          className={cn(
+            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            selected && "bg-selected hover:bg-selected",
           )}
-        </span>
-      </button>
+        >
+          <span className="relative flex">
+            <AppGlyph app={app} size={20} badgeClassName={badgeBg} />
+            {marker && (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute -end-[7px] -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2",
+                  selected ? "border-selected" : "border-sidebar",
+                  marker.className,
+                )}
+              >
+                <marker.icon className="h-2 w-2" strokeWidth={3} />
+              </span>
+            )}
+          </span>
+        </button>
+      </HoverTip>
     );
   }
 
@@ -405,7 +424,6 @@ function AppNavItem({
       type="button"
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
-      title={tip}
       className={cn(
         "mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
         selected && "bg-selected font-medium hover:bg-selected",
@@ -510,56 +528,59 @@ function NavItem({
 
   if (collapsed) {
     return (
-      <button
-        type="button"
-        onClick={onClick}
-        aria-label={title ?? accessibleName}
-        aria-current={selected ? "page" : undefined}
-        title={title ?? accessibleName}
-        className={cn(
-          "ms-3 flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
-          selected && "bg-selected hover:bg-selected",
-        )}
-      >
-        {glyph(20)}
-      </button>
+      <HoverTip content={title ?? accessibleName} side="right">
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={title ?? accessibleName}
+          aria-current={selected ? "page" : undefined}
+          className={cn(
+            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            selected && "bg-selected hover:bg-selected",
+          )}
+        >
+          {glyph(20)}
+        </button>
+      </HoverTip>
     );
   }
 
+  // 展开时名字可见；只有 title 比名字多说了点什么（如「有可用更新」）才挂提示
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={selected ? "page" : undefined}
-      title={title}
-      className={cn(
-        "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
-        compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
-        selected && "bg-selected font-medium hover:bg-selected",
-      )}
-    >
-      {glyph(18)}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing && (
-        <span className="shrink-0 text-caption tabular-nums text-fg-3">
-          {trailing}
-        </span>
-      )}
-      {alert && (
-        <span
-          role="img"
-          aria-label={alert}
-          title={alert}
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
-        />
-      )}
-      {dot && endDot && (
-        <span
-          aria-hidden="true"
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-fg-1"
-        />
-      )}
-    </button>
+    <HoverTip content={title !== label ? title : undefined} side="right">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={selected ? "page" : undefined}
+        className={cn(
+          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
+          selected && "bg-selected font-medium hover:bg-selected",
+        )}
+      >
+        {glyph(18)}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {trailing && (
+          <span className="shrink-0 text-caption tabular-nums text-fg-3">
+            {trailing}
+          </span>
+        )}
+        {alert && (
+          <span
+            role="img"
+            aria-label={alert}
+            title={alert}
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
+          />
+        )}
+        {dot && endDot && (
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-fg-1"
+          />
+        )}
+      </button>
+    </HoverTip>
   );
 }
 

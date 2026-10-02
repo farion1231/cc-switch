@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import {
+  defaultRangeExtractor,
+  useVirtualizer,
+  type Range,
+} from "@tanstack/react-virtual";
+import { toast } from "@/lib/toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -8,8 +13,6 @@ import {
   History,
   LayoutGrid,
   MoreHorizontal,
-  Search,
-  X,
 } from "lucide-react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import {
@@ -33,10 +36,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
+import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import { SessionItem, sessionMenuItemClass } from "./SessionItem";
 import { SessionReader } from "./SessionReader";
@@ -100,6 +105,19 @@ const focusSoon = (ids: string[]) => {
     }
   }, 0);
 };
+
+type SessionListRow =
+  | { kind: "time"; key: string; bucket: SessionTimeBucket; first: boolean }
+  | {
+      kind: "project";
+      key: string;
+      group: ReturnType<typeof groupSessionsByProject>[number];
+      first: boolean;
+    }
+  | { kind: "session"; key: string; session: SessionMeta; bordered: boolean };
+
+/** 虚拟列表每种行的固定高度：时间分组标题 h-7、项目分组标题 h-9、会话行 h-14 */
+const LIST_ROW_HEIGHT = { time: 28, project: 36, session: 56 } as const;
 
 const linkButton =
   "h-[22px] rounded-[4px] px-0.5 text-caption text-fg-1 underline decoration-border-strong underline-offset-[3px] hover:decoration-fg-2";
@@ -367,7 +385,16 @@ export function SessionManagerPage({
   const backToList = () => {
     const key = readerKey;
     setReaderKey(null);
-    focusSoon([key ? openButtonId(key) : "", "session-search"]);
+    // 阅读页里翻过上一个 / 下一个时，原来那行可能已经滚出虚拟列表：先滚回去再把焦点放回去
+    window.setTimeout(() => {
+      const index = key
+        ? listRows.findIndex((row) => row.kind === "session" && row.key === key)
+        : -1;
+      if (index >= 0) listVirtualizer.scrollToIndex(index, { align: "auto" });
+      requestAnimationFrame(() =>
+        focusSoon([key ? openButtonId(key) : "", "session-search"]),
+      );
+    }, 0);
   };
 
   const enterSelection = (session?: SessionMeta) => {
@@ -647,101 +674,189 @@ export function SessionManagerPage({
       earlier: t("sessionManager.bucketEarlier", { defaultValue: "更早" }),
     })[bucket];
 
-  const renderList = () => {
+  // 列表虚拟化：几千个会话也只渲染可视区域和前后几行。分组标题和会话行拍平成一列，
+  // 项目分组的标题用 rangeExtractor 留在渲染范围里并吸顶（原来的 sticky 效果）。
+  const listRows = useMemo<SessionListRow[]>(() => {
+    const rows: SessionListRow[] = [];
     if (groupMode === "time") {
-      return timeGroups.map((group, groupIndex) => (
-        <section key={group.bucket}>
-          <h3
-            className={cn(
-              "m-0 flex h-7 items-end px-4 pb-0.5 text-caption font-semibold text-fg-2",
-              groupIndex > 0 && "border-t border-border",
-            )}
-          >
-            {bucketLabel(group.bucket)}
-          </h3>
-          {group.sessions.map((session, index) =>
-            renderRow(session, index > 0),
-          )}
-        </section>
-      ));
-    }
-
-    return projectGroups.map((group, groupIndex) => {
-      const open = !collapsed.has(group.key);
-      const fullPath = group.projectDir
-        ? shortenHomePath(group.projectDir)
-        : "";
-      const pathHead = fullPath.endsWith(group.label)
-        ? fullPath.slice(0, fullPath.length - group.label.length)
-        : fullPath;
-      const pathTail = fullPath.endsWith(group.label) ? group.label : "";
-      let meta: string;
-      if (appFilter === "all") {
-        const perApp = new Map<string, number>();
-        group.sessions.forEach((session) =>
-          perApp.set(
-            session.providerId,
-            (perApp.get(session.providerId) ?? 0) + 1,
-          ),
-        );
-        meta = Array.from(perApp.entries())
-          .sort((a, b) => b[1] - a[1])
-          .map(([app, count]) => `${appName(app)} ${count}`)
-          .join(" · ");
-      } else {
-        meta = t("sessionManager.groupMeta", {
-          defaultValue: "{{count}} 个会话 · {{time}}",
-          count: group.sessions.length,
-          time: formatRelativeTime(group.latest, t),
+      timeGroups.forEach((group, groupIndex) => {
+        rows.push({
+          kind: "time",
+          key: `time:${group.bucket}`,
+          bucket: group.bucket,
+          first: groupIndex === 0,
         });
-      }
-      return (
-        <section key={group.key}>
-          <div
-            className={cn(
-              "sticky -top-px z-[2] flex h-9 items-center gap-3 bg-subtle pe-3 ps-2.5",
-              groupIndex > 0 && "border-t border-border",
-            )}
-          >
-            <h3 className="m-0 flex min-w-0 flex-1 text-body font-semibold text-fg-1">
-              <button
-                type="button"
-                aria-expanded={open}
-                onClick={() => toggleGroup(group.key)}
-                title={group.projectDir ?? undefined}
-                className="flex h-7 min-w-0 max-w-full items-center gap-2.5 rounded-control pe-2 ps-1.5 text-left font-semibold transition-colors hover:bg-selected"
-              >
-                <ChevronDown
-                  aria-hidden="true"
-                  strokeWidth={2}
-                  className={cn(
-                    "h-4 w-4 shrink-0 text-fg-2 transition-transform duration-150",
-                    !open && "-rotate-90",
-                  )}
-                />
-                <span className="shrink-0 whitespace-nowrap">
-                  {group.label}
-                </span>
-                {fullPath && (
-                  <span className="flex min-w-0 whitespace-nowrap text-caption font-normal text-fg-3">
-                    <span className="min-w-0 truncate">{pathHead}</span>
-                    <span className="shrink-0">{pathTail}</span>
-                  </span>
-                )}
-              </button>
-            </h3>
-            <span
-              className="min-w-0 max-w-[55%] truncate whitespace-nowrap text-caption tabular-nums text-fg-2"
-              title={meta}
-            >
-              {meta}
-            </span>
-          </div>
-          {open && group.sessions.map((session) => renderRow(session, true))}
-        </section>
+        group.sessions.forEach((session, index) =>
+          rows.push({
+            kind: "session",
+            key: getSessionKey(session),
+            session,
+            bordered: index > 0,
+          }),
+        );
+      });
+    } else {
+      projectGroups.forEach((group, groupIndex) => {
+        rows.push({
+          kind: "project",
+          key: `project:${group.key}`,
+          group,
+          first: groupIndex === 0,
+        });
+        if (collapsed.has(group.key)) return;
+        group.sessions.forEach((session) =>
+          rows.push({
+            kind: "session",
+            key: getSessionKey(session),
+            session,
+            bordered: true,
+          }),
+        );
+      });
+    }
+    return rows;
+  }, [groupMode, timeGroups, projectGroups, collapsed]);
+
+  const stickyIndexes = useMemo(
+    () =>
+      listRows.flatMap((row, index) => (row.kind === "project" ? [index] : [])),
+    [listRows],
+  );
+  const activeStickyRef = useRef<number | null>(null);
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const active = [...stickyIndexes]
+        .reverse()
+        .find((index) => range.startIndex >= index);
+      activeStickyRef.current = active ?? null;
+      const next = new Set(defaultRangeExtractor(range));
+      if (active !== undefined) next.add(active);
+      return [...next].sort((x, y) => x - y);
+    },
+    [stickyIndexes],
+  );
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const listVirtualizer = useVirtualizer({
+    count: listRows.length,
+    getScrollElement: () => listScrollRef.current,
+    estimateSize: (index) =>
+      LIST_ROW_HEIGHT[listRows[index]?.kind ?? "session"],
+    getItemKey: (index) => listRows[index]?.key ?? index,
+    overscan: 10,
+    rangeExtractor,
+  });
+
+  const renderProjectHeader = (
+    group: (typeof projectGroups)[number],
+    first: boolean,
+  ) => {
+    const open = !collapsed.has(group.key);
+    const fullPath = group.projectDir ? shortenHomePath(group.projectDir) : "";
+    const pathHead = fullPath.endsWith(group.label)
+      ? fullPath.slice(0, fullPath.length - group.label.length)
+      : fullPath;
+    const pathTail = fullPath.endsWith(group.label) ? group.label : "";
+    let meta: string;
+    if (appFilter === "all") {
+      const perApp = new Map<string, number>();
+      group.sessions.forEach((session) =>
+        perApp.set(
+          session.providerId,
+          (perApp.get(session.providerId) ?? 0) + 1,
+        ),
       );
-    });
+      meta = Array.from(perApp.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([app, count]) => `${appName(app)} ${count}`)
+        .join(" · ");
+    } else {
+      meta = t("sessionManager.groupMeta", {
+        defaultValue: "{{count}} 个会话 · {{time}}",
+        count: group.sessions.length,
+        time: formatRelativeTime(group.latest, t),
+      });
+    }
+    return (
+      <div
+        className={cn(
+          "flex h-9 items-center gap-3 bg-subtle pe-3 ps-2.5",
+          !first && "border-t border-border",
+        )}
+      >
+        <h3 className="m-0 flex min-w-0 flex-1 text-body font-semibold text-fg-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => toggleGroup(group.key)}
+            title={group.projectDir ?? undefined}
+            className="flex h-7 min-w-0 max-w-full items-center gap-2.5 rounded-control pe-2 ps-1.5 text-left font-semibold transition-colors hover:bg-selected"
+          >
+            <ChevronDown
+              aria-hidden="true"
+              strokeWidth={2}
+              className={cn(
+                "h-4 w-4 shrink-0 text-fg-2 transition-transform duration-150",
+                !open && "-rotate-90",
+              )}
+            />
+            <span className="shrink-0 whitespace-nowrap">{group.label}</span>
+            {fullPath && (
+              <span className="flex min-w-0 whitespace-nowrap text-caption font-normal text-fg-3">
+                <span className="min-w-0 truncate">{pathHead}</span>
+                <span className="shrink-0">{pathTail}</span>
+              </span>
+            )}
+          </button>
+        </h3>
+        <span
+          className="min-w-0 max-w-[55%] truncate whitespace-nowrap text-caption tabular-nums text-fg-2"
+          title={meta}
+        >
+          {meta}
+        </span>
+      </div>
+    );
   };
+
+  const renderList = () => (
+    <div
+      className="relative w-full"
+      style={{ height: listVirtualizer.getTotalSize() }}
+    >
+      {listVirtualizer.getVirtualItems().map((item) => {
+        const row = listRows[item.index];
+        if (!row) return null;
+        const sticky = activeStickyRef.current === item.index;
+        return (
+          <div
+            key={item.key}
+            className={cn(
+              "inset-x-0 top-0",
+              sticky ? "sticky z-[2]" : "absolute",
+            )}
+            style={
+              sticky ? undefined : { transform: `translateY(${item.start}px)` }
+            }
+          >
+            {row.kind === "time" ? (
+              <h3
+                className={cn(
+                  "m-0 flex h-7 items-end px-4 pb-0.5 text-caption font-semibold text-fg-2",
+                  !row.first && "border-t border-border",
+                )}
+              >
+                {bucketLabel(row.bucket)}
+              </h3>
+            ) : row.kind === "project" ? (
+              renderProjectHeader(row.group, row.first)
+            ) : (
+              renderRow(row.session, row.bordered)
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   // ─── 空状态 ────────────────────────────────────────────────────────────
   const renderEmpty = () => {
@@ -815,19 +930,20 @@ export function SessionManagerPage({
           }
           actions={
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  className="h-8 w-8"
-                  aria-label={t("sessionManager.moreActions", {
-                    defaultValue: "会话的更多操作",
-                  })}
-                  title={t("common.more", { defaultValue: "更多" })}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
+              <HoverTip content={t("common.more", { defaultValue: "更多" })}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="quiet"
+                    size="icon-compact"
+                    className="h-8 w-8"
+                    aria-label={t("sessionManager.moreActions", {
+                      defaultValue: "会话的更多操作",
+                    })}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
               <DropdownMenuContent
                 align="end"
                 className="w-[196px] rounded-panel p-1 shadow-v7-md"
@@ -1007,23 +1123,14 @@ export function SessionManagerPage({
             </DropdownMenu>
 
             <div className="relative min-w-0 flex-1">
-              <Search
-                aria-hidden="true"
-                className="pointer-events-none absolute start-2.5 top-2 h-4 w-4 text-fg-2"
-                strokeWidth={1.5}
-              />
-              <input
+              <SearchField
                 id="session-search"
                 ref={searchRef}
-                type="text"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && query) {
-                    event.stopPropagation();
-                    setQuery("");
-                  }
-                }}
+                onValueChange={setQuery}
+                clearLabel={t("sessionManager.clearSearch", {
+                  defaultValue: "清空搜索",
+                })}
                 aria-label={t("sessionManager.searchSessions", {
                   defaultValue: "搜索会话",
                 })}
@@ -1031,24 +1138,7 @@ export function SessionManagerPage({
                   defaultValue: "搜索标题、目录、首末消息或会话 ID",
                 })}
                 autoComplete="off"
-                spellCheck={false}
-                className="h-8 w-full rounded-[8px] border border-border-strong bg-surface pe-9 ps-[34px] text-body text-fg-1 placeholder:text-fg-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
-              {query && (
-                <button
-                  type="button"
-                  aria-label={t("sessionManager.clearSearch", {
-                    defaultValue: "清空搜索",
-                  })}
-                  onClick={() => {
-                    setQuery("");
-                    searchRef.current?.focus();
-                  }}
-                  className="absolute end-0.5 top-0.5 inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-                >
-                  <X className="h-3.5 w-3.5" strokeWidth={1.5} />
-                </button>
-              )}
               <span role="status" className="sr-only">
                 {trimmedQuery
                   ? t("sessionManager.foundCount", {
@@ -1194,6 +1284,7 @@ export function SessionManagerPage({
                 aria-label={t("sessionManager.sessionList", {
                   defaultValue: "会话列表",
                 })}
+                ref={listScrollRef}
                 className="mx-6 mt-3 min-h-0 shrink overflow-y-auto overscroll-contain rounded-panel border border-border bg-surface"
                 style={{ scrollPaddingTop: groupMode === "project" ? 44 : 8 }}
               >

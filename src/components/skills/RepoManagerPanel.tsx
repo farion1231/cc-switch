@@ -9,6 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { settingsApi } from "@/lib/api";
 import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
@@ -221,33 +222,35 @@ export function RepoManagerPanel({
                             : t("skillsPage.repos.disabled")}
                         </span>
                       </div>
-                      <Button
-                        type="button"
-                        variant="quiet"
-                        size="icon-compact"
-                        aria-label={t("skillsPage.repos.openAria", {
-                          repo: id,
-                        })}
-                        title={t("common.view")}
-                        onClick={() =>
-                          void handleOpenRepo(repo.owner, repo.name)
-                        }
-                      >
-                        <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="quiet"
-                        size="icon-compact"
-                        aria-label={t("skillsPage.repos.removeAria", {
-                          repo: id,
-                        })}
-                        title={t("common.delete")}
-                        className="hover:text-danger-text"
-                        onClick={() => void onRemove(repo.owner, repo.name)}
-                      >
-                        <Trash2 className="h-4 w-4" strokeWidth={1.5} />
-                      </Button>
+                      <HoverTip content={t("common.view")}>
+                        <Button
+                          type="button"
+                          variant="quiet"
+                          size="icon-compact"
+                          aria-label={t("skillsPage.repos.openAria", {
+                            repo: id,
+                          })}
+                          onClick={() =>
+                            void handleOpenRepo(repo.owner, repo.name)
+                          }
+                        >
+                          <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
+                        </Button>
+                      </HoverTip>
+                      <HoverTip content={t("common.delete")}>
+                        <Button
+                          type="button"
+                          variant="quiet"
+                          size="icon-compact"
+                          aria-label={t("skillsPage.repos.removeAria", {
+                            repo: id,
+                          })}
+                          className="hover:text-danger-text"
+                          onClick={() => void onRemove(repo.owner, repo.name)}
+                        >
+                          <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                        </Button>
+                      </HoverTip>
                     </li>
                   );
                 })}

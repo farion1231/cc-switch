@@ -8,6 +8,11 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  SegmentThumb,
+  useSlidingIndicator,
+} from "@/components/ui/sliding-indicator";
+import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /** v7 对话框外壳：宽 480（或传入）、padding 24、圆角 14。 */
@@ -109,13 +114,17 @@ export function V7ConfirmDialog({
 
 /** MCP / Skills 抽屉和对话框里共用的小件（v7 表单字段：高 32、圆角 8、出错描边 --danger）。 */
 
-export const FIELD_CLASS =
-  "h-8 w-full min-w-0 rounded-[8px] border border-border-strong bg-surface px-2.5 text-body text-fg-1 outline-none placeholder:text-fg-3 focus-visible:ring-1 focus-visible:ring-ring aria-[invalid=true]:border-danger read-only:bg-subtle read-only:text-fg-2 dark:[color-scheme:dark]";
+/** 和 Input 同一套外观（ui/input.tsx 的 fieldClass），只读时换浅底 */
+export const FIELD_CLASS = cn(
+  fieldClass,
+  "h-8 min-w-0 read-only:bg-subtle read-only:text-fg-2 dark:[color-scheme:dark]",
+);
 
 export const MONO_FIELD_CLASS = cn(FIELD_CLASS, "font-mono text-caption");
 
-export const CHECKBOX_CLASS =
-  "h-4 w-4 shrink-0 cursor-pointer accent-[var(--action-bg)] dark:[color-scheme:dark] disabled:cursor-not-allowed";
+/** 原生勾选框 / 单选框的统一外观（index.css 的 ui-checkbox / ui-radio） */
+export const CHECKBOX_CLASS = "ui-checkbox";
+export const RADIO_CLASS = "ui-radio";
 
 export const LABEL_CLASS = "text-body font-medium text-fg-1";
 
@@ -196,12 +205,22 @@ export function MiniSegmented<T extends string>({
   onValueChange: (value: T) => void;
   label: string;
 }) {
+  const indicator = useSlidingIndicator<HTMLDivElement>(
+    '[aria-pressed="true"]',
+    value,
+  );
   return (
     <div
       role="group"
       aria-label={label}
-      className="flex h-7 shrink-0 gap-0.5 rounded-[7px] bg-subtle p-0.5"
+      ref={indicator.ref}
+      className="relative flex h-7 shrink-0 gap-0.5 rounded-[7px] bg-subtle p-0.5"
     >
+      <SegmentThumb
+        rect={indicator.rect}
+        animate={indicator.animate}
+        className="rounded-[5px]"
+      />
       {items.map((item) => {
         const pressed = item.value === value;
         return (
@@ -211,8 +230,8 @@ export function MiniSegmented<T extends string>({
             aria-pressed={pressed}
             onClick={() => onValueChange(item.value)}
             className={cn(
-              "h-6 rounded-[5px] px-2.5 text-caption font-medium text-fg-2 transition-colors",
-              pressed && "bg-surface font-semibold text-fg-1 shadow-v7-sm",
+              "relative h-6 rounded-[5px] px-2.5 text-caption font-medium text-fg-2 transition-colors",
+              pressed && "font-semibold text-fg-1",
             )}
           >
             {item.label}

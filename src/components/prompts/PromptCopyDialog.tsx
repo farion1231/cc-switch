@@ -128,7 +128,7 @@ export function PromptCopyDialog({
                         }));
                       }}
                       aria-describedby={note ? noteId : undefined}
-                      className="h-4 w-4 shrink-0 accent-[var(--action-bg)]"
+                      className="ui-checkbox"
                     />
                     <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
                     <span className="text-body">{APP_DISPLAY_NAME[app]}</span>

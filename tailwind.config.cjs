@@ -56,6 +56,8 @@ module.exports = {
           DEFAULT: "var(--action-bg)",
           fg: "var(--action-fg)",
           hover: "var(--action-hover)",
+          text: "var(--action-text)",
+          soft: "var(--action-soft)",
         },
         inverse: {
           DEFAULT: "var(--inverse-bg)",
@@ -70,6 +72,7 @@ module.exports = {
           soft: "var(--direct-soft)",
           solid: "var(--direct-solid)",
           on: "var(--direct-on)",
+          border: "var(--direct-border)",
         },
         route: {
           DEFAULT: "var(--route-fill)",
@@ -77,6 +80,7 @@ module.exports = {
           soft: "var(--route-soft)",
           solid: "var(--route-solid)",
           on: "var(--route-on)",
+          border: "var(--route-border)",
         },
         stack: {
           DEFAULT: "var(--stack-fill)",
@@ -84,6 +88,7 @@ module.exports = {
           soft: "var(--stack-soft)",
           solid: "var(--stack-solid)",
           on: "var(--stack-on)",
+          border: "var(--stack-border)",
         },
         success: {
           DEFAULT: "var(--success)",
@@ -145,6 +150,10 @@ module.exports = {
         "v7-md": "var(--shadow-md)",
         "v7-lg": "var(--shadow-lg)",
       },
+      // 只写 border / divide 不带颜色时用主题边框色；不设的话 Tailwind 默认是浅灰 #e4e4e7，深色下成了白线
+      borderColor: {
+        DEFAULT: "hsl(var(--border))",
+      },
       borderRadius: {
         sm: "0.375rem",
         md: "0.5rem",
@@ -154,11 +163,6 @@ module.exports = {
         control: "6px",
         panel: "10px",
         dialog: "14px",
-      },
-      maxWidth: {
-        // 宽窗口下卡片列表的最大宽度：靠左、和页头左边缘对齐，不居中。
-        // 侧栏 200 + 左右留白 48 + 1040 ≈ 1288，窗口比这窄时不起作用。
-        content: "1040px",
       },
       fontSize: {
         // v7 字体角色（AUTHORING.md「颜色与字体」）
@@ -266,5 +270,6 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  // animate-in / fade-in-0 / zoom-in-95 …：Radix 浮层（菜单、弹层、对话框、提示）的进出场动画
+  plugins: [require("tailwindcss-animate")],
 };

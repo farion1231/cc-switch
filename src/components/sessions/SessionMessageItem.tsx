@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import { ChevronDown, ChevronRight, Copy, Wrench } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   formatCharCount,
   formatClock,
@@ -144,30 +145,33 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           </span>
         ) : null}
         <div className="flex-1" />
-        <button
-          type="button"
-          aria-label={
-            isUser
-              ? t("sessionManager.copyQuestion", {
-                  defaultValue: "复制这条提问",
-                })
-              : t("sessionManager.copyReply", {
-                  defaultValue: "复制这条回复",
-                })
-          }
-          title={t("sessionManager.copyShort", { defaultValue: "复制" })}
-          onClick={() =>
-            onCopy(
-              item.content,
-              t("sessionManager.messageCopied", {
-                defaultValue: "已复制这条消息",
-              }),
-            )
-          }
-          className={cn(iconButton, "-me-1")}
+        <HoverTip
+          content={t("sessionManager.copyShort", { defaultValue: "复制" })}
         >
-          <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
-        </button>
+          <button
+            type="button"
+            aria-label={
+              isUser
+                ? t("sessionManager.copyQuestion", {
+                    defaultValue: "复制这条提问",
+                  })
+                : t("sessionManager.copyReply", {
+                    defaultValue: "复制这条回复",
+                  })
+            }
+            onClick={() =>
+              onCopy(
+                item.content,
+                t("sessionManager.messageCopied", {
+                  defaultValue: "已复制这条消息",
+                }),
+              )
+            }
+            className={cn(iconButton, "-me-1")}
+          >
+            <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+          </button>
+        </HoverTip>
       </div>
       <div
         className={cn(

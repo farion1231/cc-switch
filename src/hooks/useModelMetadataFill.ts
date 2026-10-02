@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { modelsDevQueryOptions, type ModelsDevResponse } from "@/lib/modelsDev";
 import {
   resolveModelMetadata,

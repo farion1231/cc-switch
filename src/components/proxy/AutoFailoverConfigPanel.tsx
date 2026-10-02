@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
 
 export interface AutoFailoverConfigPanelProps {
@@ -495,19 +495,29 @@ export function AutoFailoverConfigPanel({
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex justify-end gap-3 pt-2">
-          <Button variant="outline" onClick={handleReset} disabled={isDisabled}>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button
+            variant="neutral"
+            size="regular"
+            onClick={handleReset}
+            disabled={isDisabled}
+          >
             {t("common.reset", "重置")}
           </Button>
-          <Button onClick={handleSave} disabled={isDisabled}>
+          <Button
+            variant="solid"
+            size="regular"
+            onClick={handleSave}
+            disabled={isDisabled}
+          >
             {updateConfig.isPending ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 {t("common.saving", "保存中...")}
               </>
             ) : (
               <>
-                <Save className="mr-2 h-4 w-4" />
+                <Save className="h-4 w-4" />
                 {t("common.save", "保存")}
               </>
             )}

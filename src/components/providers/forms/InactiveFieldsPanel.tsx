@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 
 /** 点一个字段做什么：加入上方的编辑框，或复制它的值（可以照抄的 TOML）。 */

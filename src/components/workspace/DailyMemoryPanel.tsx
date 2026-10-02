@@ -6,10 +6,11 @@ import React, {
   useMemo,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Calendar, Trash2, Plus, Search, X, FolderOpen } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -352,24 +353,28 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
         <div className="space-y-4">
           {/* Header with path, search, and create button */}
           <div className="flex items-center justify-between gap-2">
-            <p
-              className="text-sm text-fg-2 shrink-0 cursor-pointer hover:text-fg-1 transition-colors inline-flex items-center gap-1"
-              onClick={() => workspaceApi.openDirectory("memory")}
-              title={t("workspace.openDirectory")}
-            >
-              ~/.openclaw/workspace/memory/
-              <FolderOpen className="w-3.5 h-3.5" />
-            </p>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={isSearchOpen ? closeSearch : openSearch}
-                title={t("workspace.dailyMemory.searchScopeHint")}
+            <HoverTip content={t("workspace.openDirectory")}>
+              <p
+                className="text-sm text-fg-2 shrink-0 cursor-pointer hover:text-fg-1 transition-colors inline-flex items-center gap-1"
+                onClick={() => workspaceApi.openDirectory("memory")}
               >
-                <Search className="w-4 h-4" />
-              </Button>
+                ~/.openclaw/workspace/memory/
+                <FolderOpen className="w-3.5 h-3.5" />
+              </p>
+            </HoverTip>
+            <div className="flex items-center gap-1.5">
+              <HoverTip content={t("workspace.dailyMemory.searchScopeHint")}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label={t("workspace.dailyMemory.searchScopeHint")}
+                  aria-expanded={isSearchOpen}
+                  onClick={isSearchOpen ? closeSearch : openSearch}
+                >
+                  <Search className="w-4 h-4" />
+                </Button>
+              </HoverTip>
               <Button
                 variant="outline"
                 size="sm"

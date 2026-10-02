@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
@@ -37,7 +37,7 @@ import {
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -51,7 +51,6 @@ import {
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { NewLayoutNotice } from "@/components/shell/NewLayoutNotice";
-import { CommandPalette } from "@/components/shell/CommandPalette";
 import {
   AppPageHeader,
   WindowControlsContext,
@@ -79,13 +78,13 @@ import type { StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
-import { PromptEntryButton } from "@/components/prompts/PromptEntryButton";
 import { PROMPT_APP_IDS } from "@/lib/query/prompts";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import {
@@ -165,8 +164,9 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
-    isLinux() && (settingsData?.useAppWindowControls ?? false);
+    isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
   const visibleApps = useMemo<VisibleApps>(
     () => ({
       ...DEFAULT_VISIBLE_APPS,
@@ -634,7 +634,6 @@ function App() {
   openSettingsRef.current = openSettings;
   const toggleSidebarRef = useRef(toggleSidebar);
   toggleSidebarRef.current = toggleSidebar;
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [usageAppFilter, setUsageAppFilter] = useState<AppTypeFilter>("all");
 
   useEffect(() => {
@@ -649,12 +648,6 @@ function App() {
       if (mod && event.key === "\\") {
         event.preventDefault();
         toggleSidebarRef.current();
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
         return;
       }
 
@@ -1017,19 +1010,20 @@ function App() {
 
   const appMenu = (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="quiet"
-          size="icon-compact"
-          className="h-8 w-8"
-          aria-label={t("appPage.moreActions", {
-            name: APP_DISPLAY_NAME[activeApp],
-          })}
-          title={t("common.more")}
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
+      <HoverTip content={t("common.more")}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="quiet"
+            size="icon-compact"
+            className="h-8 w-8"
+            aria-label={t("appPage.moreActions", {
+              name: APP_DISPLAY_NAME[activeApp],
+            })}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+      </HoverTip>
       <DropdownMenuContent align="end" className="min-w-[180px]">
         <DropdownMenuItem onSelect={() => openPage("sessions")}>
           {t("appPage.viewSessions")}
@@ -1087,10 +1081,6 @@ function App() {
             (settingsData?.showProfileSwitcher ?? true) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
-          <PromptEntryButton
-            app={activeApp}
-            onOpen={() => openPage("prompts")}
-          />
           {activeApp === "hermes" && (
             <Button
               variant="quiet"
@@ -1204,7 +1194,7 @@ function App() {
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-4"
       >
-        <div className="max-w-content space-y-4">
+        <div className="space-y-4">
           {activeApp === "claude-desktop" && (
             <DesktopAccessBar
               current={providers[currentProviderId]}
@@ -1418,7 +1408,7 @@ function App() {
     <WindowControlsContext.Provider
       value={useAppWindowControls ? <WindowControls /> : null}
     >
-      <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-primary/30">
+      <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-action/25">
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggleCollapsed={toggleSidebar}
@@ -1433,15 +1423,6 @@ function App() {
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }
-          onOpenSearch={() => setPaletteOpen(true)}
-        />
-        <CommandPalette
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          visibleApps={visibleApps}
-          onSelectApp={selectApp}
-          onSelectPage={openPageFromNav}
-          onOpenSettings={openSettings}
         />
         <main
           ref={mainScrollRef}

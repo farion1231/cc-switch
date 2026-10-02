@@ -29,7 +29,7 @@ import {
   showPromptToast,
   utf8Bytes,
 } from "./promptUtils";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 export type PiPromptTab = "global" | "system" | "templates";
 

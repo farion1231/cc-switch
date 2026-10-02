@@ -1066,10 +1066,10 @@
       "saveToLibrary": "存進提示庫",
       "reloadAfterDelete": "已開啟的 Pi 閒置時執行 /reload 後生效。",
       "configuredSize": "已設定 · {{size}}",
-      "create": "建立…",
+      "create": "建立",
       "createFile": "建立 {{filename}}",
       "editFile": "編輯 {{filename}}",
-      "saveAndConfigureEllipsis": "儲存並設定…",
+      "saveAndConfigureEllipsis": "儲存並設定",
       "deleteFile": "刪除檔案",
       "appendDeleted": "已刪除 APPEND_SYSTEM.md，Pi 不再附加這段內容",
       "overrideDeleted": "已刪除 SYSTEM.md，Pi 改回使用內建的基礎提示",
@@ -1142,9 +1142,9 @@
     "moreActions": "工作階段的更多操作",
     "refreshList": "重新整理列表",
     "listRefreshed": "已重新整理工作階段列表",
-    "selectMany": "選擇多個…",
-    "preferredTerminal": "偏好終端機…",
-    "whereMenu": "工作階段記錄在哪裡…",
+    "selectMany": "選擇多個",
+    "preferredTerminal": "偏好終端機",
+    "whereMenu": "工作階段記錄在哪裡",
     "whereTitle": "工作階段記錄在哪裡",
     "whereLead": "CC Switch 從這些位置讀取工作階段。Claude Desktop 沒有單獨的工作階段記錄。",
     "whereNote": "在設定裡改過設定目錄的應用，按改過的目錄讀取。",
@@ -1166,9 +1166,9 @@
     "selectedSessions": "已選 {{count}} 個工作階段",
     "noneSelected": "還沒有選擇工作階段",
     "hiddenSelected": " · 其中 {{count}} 個不在目前結果裡",
-    "deleteCountEllipsis": "刪除 {{count}} 個工作階段…",
-    "deleteSessionEllipsis": "刪除工作階段…",
-    "deleteEllipsis": "刪除…",
+    "deleteCountEllipsis": "刪除 {{count}} 個工作階段",
+    "deleteSessionEllipsis": "刪除工作階段",
+    "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
@@ -1206,7 +1206,7 @@
     "moreResumeOptions": "更多繼續方式",
     "copyCdResume": "複製「進入目錄並繼續」指令",
     "cdResumeCopied": "已複製「進入目錄並繼續」指令",
-    "changeTerminal": "更換偏好終端機…",
+    "changeTerminal": "更換偏好終端機",
     "changeTerminalAction": "更換終端機",
     "codexResumeNote": "切換過供應商後，舊工作階段可能無法繼續：Codex 按供應商分開保存歷史。",
     "noResumeOpenclaw": "OpenClaw 工作階段由閘道管理，不能在終端機繼續",
@@ -1528,7 +1528,7 @@
     "manageAccounts": "管理帳號",
     "selectAccountPlaceholder": "選擇一個 ChatGPT 帳號",
     "officialAccountPlaceholder": "請選擇登入方式",
-    "addOrManageAccounts": "新增或管理 ChatGPT 帳號…",
+    "addOrManageAccounts": "新增或管理 ChatGPT 帳號",
     "explicitSelectionRequired": "請先選擇登入方式",
     "useDefaultAccount": "使用預設帳號",
     "noneOptionLabel": "跟隨 Codex 登入",
@@ -1568,7 +1568,7 @@
     "waitingForAuth": "正在等待 xAI 授權…",
     "enterCode": "若瀏覽器未自動填入，請輸入：",
     "retry": "重試",
-    "logoutAll": "刪除全部 xAI 帳號…",
+    "logoutAll": "刪除全部 xAI 帳號",
     "loginRequired": "請先登入 xAI 帳號"
   },
   "managedAuth": {
@@ -1920,7 +1920,7 @@
       "confirmAction": "備份並重建",
       "completed": "重建完成：匯入 {{imported}} 筆，錯誤 {{errors}}，疑似重複 {{suspected}}，暫緩檔案 {{deferred}}",
       "failed": "Codex 用量重建失敗：{{error}}",
-      "actionEllipsis": "重建 Codex 用量…"
+      "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
     "goToPage": "跳轉",
@@ -2167,7 +2167,7 @@
       "billingHelp": "只對經路由服務的請求生效。工作階段日誌匯入的用量按日誌裡的模型計價。",
       "byResponse": "按回傳模型計價",
       "byRequest": "按請求模型計價",
-      "edit": "修改…",
+      "edit": "修改",
       "tableTitle": "模型定價 · {{count}}",
       "costHelpTitle": "成本怎麼算",
       "costHelp": "每筆請求按模型定價算成本：新增輸入、輸出、快取命中、快取寫入各乘對應單價，再相加。",
@@ -2175,7 +2175,9 @@
       "editAria": "編輯 {{name}} 的定價",
       "deleteAria": "刪除 {{name}} 的定價",
       "cacheWrite": "快取寫入"
-    }
+    },
+    "prevMonth": "上個月",
+    "nextMonth": "下個月"
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -2525,7 +2527,7 @@
     "updatedToday": "今天 {{time}} 更新",
     "updatedOn": "{{month}} 月 {{day}} 日更新",
     "emptyContent": "（空）",
-    "copyToApps": "複製到其他應用…",
+    "copyToApps": "複製到其他應用",
     "copyContent": "複製正文",
     "copiedContent": "已複製「{{name}}」的正文",
     "deleteBlocked": "啟用中的不能刪除，先停用",
@@ -2579,10 +2581,7 @@
       "imported": "已匯入 {{path}} 的內容，檔案沒有改動",
       "importedPi": "已把 AGENTS.md 存進提示庫，檔案沒有改動",
       "copied": "已把「{{name}}」複製到 {{apps}}"
-    },
-    "entryLabel": "提示詞：{{name}}",
-    "entryNone": "未啟用",
-    "entryAria": "提示詞：{{name}}，前往提示詞頁"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "專案：{{name}}",
@@ -2600,7 +2599,7 @@
       "claude-desktop": "把 Claude Desktop 目前的供應商儲存為一個專案，之後可一鍵切換。",
       "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
     },
-    "manage": "管理專案…",
+    "manage": "管理專案",
     "manageTitle": "管理專案",
     "manageDescription": "專案是設定快照。切換專案時，目前設定會自動儲存回原專案。",
     "namePlaceholder": "例如：開發、繪圖",
@@ -3051,7 +3050,7 @@
     "moreActions": "Skills 的更多操作",
     "storageSheet": {
       "title": "儲存與同步",
-      "open": "儲存與同步…",
+      "open": "儲存與同步",
       "resync": "立即重新同步",
       "resyncing": "正在重新同步…",
       "resyncHint": "修改只對之後啟用或更新的 Skill 生效。要讓已啟用的 Skill 也換成目前方式，點「立即重新同步」。",
@@ -3064,7 +3063,7 @@
       "openFolder": "打開",
       "openFolderAria": "打開 {{path}}",
       "unifiedWarning": "Codex、Gemini CLI、OpenCode 等會直接讀這個目錄，各應用的開關對它們不再完全生效。",
-      "move": "移動並切換…",
+      "move": "移動並切換",
       "moving": "正在移動…",
       "moveConfirmTitle": "把 {{count}} 個 Skill 移到 {{path}}？",
       "moveConfirmBody": "會逐個移動主副本，再讓各應用裡的連結指向新位置。移動完成前請不要退出 CC Switch。",
@@ -3740,7 +3739,7 @@
     "checking": "檢查中…",
     "checkUpdates": "檢查更新",
     "moreActions": "更多操作",
-    "manualCommands": "手動安裝指令…",
+    "manualCommands": "手動安裝指令",
     "columnApp": "應用",
     "columnVersion": "版本",
     "columnVisible": "顯示",
@@ -3769,7 +3768,7 @@
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
     "viewSessions": "查看工作階段",
-    "configDirectory": "設定目錄…",
+    "configDirectory": "設定目錄",
     "installAndUpgrade": "安裝與升級",
     "hideFromSidebar": "在側欄隱藏",
     "providers": "供應商",
@@ -3803,8 +3802,8 @@
     },
     "activate": {
       "viewing": "你在查看「{{view}}」，{{app}} 目前是{{active}}。",
-      "route": "開始路由…",
-      "stack": "切換到疊加模式…",
+      "route": "開始路由",
+      "stack": "切換到疊加模式",
       "direct": "回到直連"
     },
     "notice": {
@@ -3878,7 +3877,7 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "startStackFrom": "以這家為預設開始疊加…"
+      "startStackFrom": "以這家為預設開始疊加"
     },
     "chip": {
       "official": "官方",
@@ -3927,7 +3926,7 @@
     "service": "路由服務",
     "running": "執行中",
     "notRunning": "路由服務沒能啟動",
-    "changePort": "更改連接埠…",
+    "changePort": "更改連接埠",
     "notNeeded": "路由服務：目前供應商不需要"
   },
   "routingSettings": {
@@ -3958,7 +3957,7 @@
     "desktopMode": "模型映射 · 自動保持執行",
     "desktopDetail": "目前供應商 {{name}}",
     "goTo": "前往",
-    "exitAll": "全部回到直連…",
+    "exitAll": "全部回到直連",
     "exitAllTitle": "讓所有應用回到直連？",
     "exitAllMessage": "在路由和疊加模式下的應用都會寫回直連設定，然後停止路由服務。路由目標、佇列和疊加名單會保留。",
     "exitAllConfirm": "全部回到直連",
@@ -3979,15 +3978,6 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "點擊重新查詢"
-  },
-  "commandPalette": {
-    "title": "跳轉",
-    "open": "搜尋並跳轉（{{shortcut}}）",
-    "placeholder": "輸入應用、頁面或設定的名字",
-    "empty": "沒有符合的項目",
-    "apps": "應用",
-    "pages": "頁面",
-    "settings": "設定"
   },
   "appMatrix": {
     "clearSearch": "清除搜尋",
@@ -4050,7 +4040,7 @@
     "openDocs": "開啟文件",
     "enableEverywhere": "在所有應用啟用",
     "disableEverywhere": "全部關閉",
-    "deleteEllipsis": "刪除…",
+    "deleteEllipsis": "刪除",
     "deleteTitle": "刪除 {{id}}？",
     "deleteBodyApps": "會從 CC Switch 以及 {{apps}} 的設定檔裡刪除這一項，無法復原。",
     "deleteBody": "會從 CC Switch 裡刪除這一項，無法復原。",
@@ -4173,7 +4163,7 @@
       "tagsPlaceholder": "用逗號分隔，例如 docs, web",
       "homepage": "首頁",
       "docs": "文件",
-      "delete": "刪除…"
+      "delete": "刪除"
     },
     "resync": "按這裡的開關重寫各應用設定"
   },
@@ -4184,12 +4174,12 @@
     "add": "新增 Skill",
     "addMenu": {
       "discover": "在探索裡瀏覽",
-      "zip": "從 ZIP 安裝…",
-      "import": "匯入本機已有…"
+      "zip": "從 ZIP 安裝",
+      "import": "匯入本機已有"
     },
     "moreMenu": {
-      "restore": "從備份還原…",
-      "repos": "倉庫管理…"
+      "restore": "從備份還原",
+      "repos": "倉庫管理"
     },
     "viewAria": "Skills 檢視",
     "viewInstalled": "已安裝",
@@ -4220,7 +4210,7 @@
       "enableToAria": "把選中的 {{count}} 個 Skill 啟用到",
       "disable": "停用",
       "disableAria": "在這個應用裡停用選中的 {{count}} 個 Skill",
-      "uninstall": "解除安裝…"
+      "uninstall": "解除安裝"
     },
     "piColumnTitle": "Pi 按 ~/.pi/agent/skills 裡有沒有這個目錄來判斷",
     "piHelpTitle": "Pi 怎麼算啟用",
@@ -4234,7 +4224,7 @@
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",
     "copyDir": "複製目錄名稱",
-    "uninstallEllipsis": "解除安裝…",
+    "uninstallEllipsis": "解除安裝",
     "listLabel": "已安裝的 Skill",
     "noMatch": "沒有符合「{{query}}」的 Skill",
     "noFilterMatch": "沒有符合篩選條件的 Skill",
@@ -4308,7 +4298,7 @@
       "enableAria": "在探索裡使用 {{repo}}",
       "disabledShort": "停用",
       "disabled": "已停用，不參與探索",
-      "manage": "新增或管理倉庫…",
+      "manage": "新增或管理倉庫",
       "openAria": "在 GitHub 開啟 {{repo}}",
       "removeAria": "刪除倉庫 {{repo}}",
       "readFailed": "讀取失敗"
@@ -4341,7 +4331,7 @@
     "headerUpdates": "{{count}} 個可更新",
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "顯示全部 Skill",
-    "updateAllCount": "全部更新（{{count}} 個）…"
+    "updateAllCount": "全部更新（{{count}} 個）"
   },
   "coach": {
     "newLayout": "介面改版了：模式移到了每個應用頁的頂部，用量統計和授權中心在左側邊欄。"
@@ -4357,8 +4347,8 @@
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
     "accountMenu": "{{login}} 的更多操作",
-    "removeAll": "刪除全部帳號…",
-    "removeAccount": "刪除帳號…",
+    "removeAll": "刪除全部帳號",
+    "removeAccount": "刪除帳號",
     "setDefault": "設為預設",
     "reauth": "重新登入",
     "busyHint": "先完成或取消進行中的登入",

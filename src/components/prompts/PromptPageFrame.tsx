@@ -7,8 +7,6 @@ import {
   ChevronDown,
   MoreHorizontal,
   Plus,
-  Search,
-  X,
 } from "lucide-react";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
@@ -25,8 +23,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { promptsApi, type AppId } from "@/lib/api";
 import { promptKeys } from "@/lib/query/prompts";
+import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import { renderSegs } from "./promptUtils";
 
@@ -110,17 +110,18 @@ export function PromptPageFrame({
               </Button>
             ) : null}
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  className="h-8 w-8"
-                  aria-label={t("prompts.moreActions")}
-                  title={t("common.more")}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="quiet"
+                    size="icon-compact"
+                    className="h-8 w-8"
+                    aria-label={t("prompts.moreActions")}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
               <DropdownMenuContent
                 align="end"
                 className={cn(promptMenuContentClass, "w-[300px]")}
@@ -200,32 +201,14 @@ function PromptSearch({
   const hasQuery = value.trim().length > 0;
   return (
     <div className="relative shrink-0" style={{ width }}>
-      <Search
-        aria-hidden="true"
-        strokeWidth={1.5}
-        className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-fg-2"
-      />
-      <input
-        type="text"
+      <SearchField
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onValueChange={onChange}
+        clearLabel={t("prompts.clearSearch")}
         aria-label={ariaLabel}
         placeholder={placeholder}
         autoComplete="off"
-        spellCheck={false}
-        className="h-8 w-full rounded-[8px] border border-border-strong bg-surface px-[34px] text-body text-fg-1 outline-none placeholder:text-fg-3 focus-visible:ring-1 focus-visible:ring-ring"
       />
-      {hasQuery ? (
-        <button
-          type="button"
-          aria-label={t("prompts.clearSearch")}
-          title={t("prompts.clearSearch")}
-          onClick={() => onChange("")}
-          className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-control text-fg-2 hover:bg-subtle hover:text-fg-1"
-        >
-          <X className="h-3.5 w-3.5" strokeWidth={1.5} />
-        </button>
-      ) : null}
       <span role="status" className="sr-only">
         {hasQuery && resultCount !== undefined
           ? t("prompts.searchFound", { count: resultCount })

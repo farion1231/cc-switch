@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -39,7 +40,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useReadOmoLocalFile, useReadOmoSlimLocalFile } from "@/lib/query/omo";
 import {
   OMO_BUILTIN_AGENTS,
@@ -931,16 +932,22 @@ export function OmoFormFields({
           {renderVariantSelect(currentModel, currentVariant, (value) =>
             handleVariantChange(key, value, store, setter),
           )}
-          <Button
-            type="button"
-            variant={isExpanded ? "secondary" : "ghost"}
-            size="icon"
-            className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
-            onClick={() => toggleAdvancedEditor(scope, key, advStr, isExpanded)}
-            title={t("omo.advancedLabel", { defaultValue: "Advanced" })}
+          <HoverTip
+            content={t("omo.advancedLabel", { defaultValue: "Advanced" })}
           >
-            <Settings className="h-3.5 w-3.5" />
-          </Button>
+            <Button
+              aria-label={t("omo.advancedLabel", { defaultValue: "Advanced" })}
+              type="button"
+              variant={isExpanded ? "secondary" : "ghost"}
+              size="icon"
+              className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
+              onClick={() =>
+                toggleAdvancedEditor(scope, key, advStr, isExpanded)
+              }
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </Button>
+          </HoverTip>
         </div>
         {isExpanded &&
           renderAdvancedEditor({
@@ -1017,30 +1024,39 @@ export function OmoFormFields({
             if (!item.key) return;
             handleVariantChange(item.key, value, store, setter);
           })}
-          <Button
-            type="button"
-            variant={isExpanded ? "secondary" : "ghost"}
-            size="icon"
-            className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
-            onClick={() => toggleAdvancedEditor(scope, key, advStr, isExpanded)}
-            title={t("omo.advancedLabel", { defaultValue: "Advanced" })}
+          <HoverTip
+            content={t("omo.advancedLabel", { defaultValue: "Advanced" })}
           >
-            <Settings className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 text-destructive"
-            onClick={() => {
-              const next = customs.filter((_, idx) => idx !== index);
-              setCustoms(next);
-              syncCustoms(next);
-              removeAdvancedDraft(scope, key);
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+            <Button
+              aria-label={t("omo.advancedLabel", { defaultValue: "Advanced" })}
+              type="button"
+              variant={isExpanded ? "secondary" : "ghost"}
+              size="icon"
+              className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
+              onClick={() =>
+                toggleAdvancedEditor(scope, key, advStr, isExpanded)
+              }
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </Button>
+          </HoverTip>
+          <HoverTip content={t("common.delete")}>
+            <Button
+              aria-label={t("common.delete")}
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 text-destructive"
+              onClick={() => {
+                const next = customs.filter((_, idx) => idx !== index);
+                setCustoms(next);
+                syncCustoms(next);
+                removeAdvancedDraft(scope, key);
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </HoverTip>
         </div>
         {isExpanded &&
           item.key &&

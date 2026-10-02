@@ -2,6 +2,7 @@ import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fieldClass } from "./input";
 
 const Select = SelectPrimitive.Root;
 
@@ -16,7 +17,9 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-border bg-surface px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-fg-2 focus:outline-none focus:border-border-active disabled:cursor-not-allowed disabled:opacity-50",
+      // 和 Input 同一套外观（fieldClass）；展开时也保持聚焦态
+      fieldClass,
+      "flex h-8 items-center justify-between whitespace-nowrap text-start data-[placeholder]:text-fg-3 data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20 [&>span]:truncate",
       className,
     )}
     {...props}

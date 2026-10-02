@@ -105,7 +105,7 @@ export function ImportExportSection({
               className="w-full h-full py-3 px-4 bg-action hover:bg-action-hover text-action-fg items-center"
               onClick={onExport}
             >
-              <Save className="mr-2 h-4 w-4" />
+              <Save className="h-4 w-4" />
               {t("settings.exportConfig")}
             </Button>
           </div>

@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ChevronDown, ChevronUp, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { EnvConflict } from "@/types/env";
 import { deleteEnvVars } from "@/lib/api/env";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Dialog,
   DialogContent,
@@ -147,14 +148,17 @@ export function EnvWarningBanner({
                     )}
                   </Button>
 
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onDismiss}
-                    className="text-warning-text hover:bg-warning-soft"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <HoverTip content={t("common.close")}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("common.close")}
+                      onClick={onDismiss}
+                      className="text-warning-text hover:bg-warning-soft"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
                 </div>
               </div>
 

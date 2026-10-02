@@ -72,7 +72,9 @@ export function Notice({
   return (
     <div
       className={cn(
-        "flex items-start gap-2.5 rounded-panel py-2.5 pe-3.5 ps-[19px] text-body text-fg-1",
+        "flex gap-2.5 rounded-panel py-2.5 pe-3.5 ps-[19px] text-body text-fg-1",
+        // 只有一行时整行上下居中；有第二行时图标对齐第一行
+        children ? "items-start" : "items-center",
         style.box,
         className,
       )}
@@ -80,7 +82,7 @@ export function Notice({
       <Icon
         aria-hidden="true"
         strokeWidth={1.5}
-        className={cn("mt-0.5 h-4 w-4 shrink-0", style.icon)}
+        className={cn("h-4 w-4 shrink-0", children && "mt-0.5", style.icon)}
       />
       <div className="min-w-0 flex-1">
         <div>{title}</div>

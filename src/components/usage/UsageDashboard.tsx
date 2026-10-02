@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Check,
   ChartColumn,
@@ -15,6 +15,11 @@ import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { HelpTip } from "@/components/ui/help-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  SegmentThumb,
+  useSlidingIndicator,
+} from "@/components/ui/sliding-indicator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -387,22 +392,23 @@ export function UsageDashboard({
           {syncText}
         </span>
       )}
-      <Button
-        type="button"
-        variant="neutral"
-        size="regular"
-        className="shrink-0 gap-1.5 ps-2.5"
-        disabled={syncingSession}
-        title={showSyncText ? syncTip : `${syncText} · ${syncTip}`}
-        onClick={() => void runManualSessionSync()}
-      >
-        {syncingSession ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <RefreshCw className="h-3.5 w-3.5" />
-        )}
-        {t("usage.sessionSync.syncNow")}
-      </Button>
+      <HoverTip content={showSyncText ? syncTip : `${syncText} · ${syncTip}`}>
+        <Button
+          type="button"
+          variant="neutral"
+          size="regular"
+          className="shrink-0 gap-1.5 ps-2.5"
+          disabled={syncingSession}
+          onClick={() => void runManualSessionSync()}
+        >
+          {syncingSession ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          {t("usage.sessionSync.syncNow")}
+        </Button>
+      </HoverTip>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -449,21 +455,32 @@ export function UsageDashboard({
   );
 
   // ── 筛选行 ───────────────────────────────────────────────────────────
+  // 选中块是单独的滑块（SegmentThumb），切换应用时滑过去
+  const appFilterIndicator = useSlidingIndicator<HTMLDivElement>(
+    '[aria-pressed="true"]',
+    appType,
+  );
   const chipClass = (pressed: boolean) =>
     cn(
-      "inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2 text-body transition-[background-color,color,box-shadow] duration-150",
+      "relative inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2 text-body transition-colors duration-150",
       pressed
-        ? "bg-surface font-semibold text-fg-1 shadow-v7-sm"
+        ? "font-semibold text-fg-1"
         : "font-medium text-fg-2 hover:text-fg-1",
     );
 
   const filterRow = (
     <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-1.5 px-6 py-2">
       <div
+        ref={appFilterIndicator.ref}
         role="group"
         aria-label={t("usage.appFilter.label")}
-        className="flex h-8 shrink-0 items-center gap-0.5 rounded-[8px] bg-subtle p-[3px]"
+        className="relative flex h-8 shrink-0 items-center gap-0.5 rounded-[8px] bg-subtle p-[3px]"
       >
+        <SegmentThumb
+          rect={appFilterIndicator.rect}
+          animate={appFilterIndicator.animate}
+          className="rounded-[5px]"
+        />
         <button
           type="button"
           aria-pressed={appType === "all"}
@@ -474,24 +491,24 @@ export function UsageDashboard({
         </button>
         {/* 应用只露图标，名字放悬停提示和 aria-label */}
         {KNOWN_APP_TYPES.map((app) => (
-          <button
-            key={app}
-            type="button"
-            aria-pressed={appType === app}
-            aria-label={APP_DISPLAY_NAME[app]}
-            title={APP_DISPLAY_NAME[app]}
-            className={cn(
-              chipClass(appType === app),
-              "w-[30px] justify-center px-0",
-            )}
-            onClick={() => changeAppType(app)}
-          >
-            <AppGlyph
-              app={app}
-              size={16}
-              badgeClassName={appType === app ? "bg-surface" : "bg-subtle"}
-            />
-          </button>
+          <HoverTip key={app} content={APP_DISPLAY_NAME[app]}>
+            <button
+              type="button"
+              aria-pressed={appType === app}
+              aria-label={APP_DISPLAY_NAME[app]}
+              className={cn(
+                chipClass(appType === app),
+                "w-[30px] justify-center px-0",
+              )}
+              onClick={() => changeAppType(app)}
+            >
+              <AppGlyph
+                app={app}
+                size={16}
+                badgeClassName={appType === app ? "bg-surface" : "bg-subtle"}
+              />
+            </button>
+          </HoverTip>
         ))}
       </div>
       <div className="min-w-2 flex-1" />

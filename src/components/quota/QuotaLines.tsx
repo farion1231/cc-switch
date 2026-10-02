@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   formatRelativeTime,
   pickLines,
@@ -149,18 +150,19 @@ export function QuotaBars({
                 })
               : null}
             {onRefresh && (
-              <button
-                type="button"
-                onClick={onRefresh}
-                disabled={loading}
-                className="rounded-control p-1 text-fg-3 hover:bg-subtle hover:text-fg-1 disabled:opacity-50"
-                aria-label={t("subscription.refresh")}
-                title={t("subscription.refresh")}
-              >
-                <RefreshCw
-                  className={cn("h-3 w-3", loading && "animate-spin")}
-                />
-              </button>
+              <HoverTip content={t("subscription.refresh")}>
+                <button
+                  type="button"
+                  onClick={onRefresh}
+                  disabled={loading}
+                  className="rounded-control p-1 text-fg-3 hover:bg-subtle hover:text-fg-1 disabled:opacity-50"
+                  aria-label={t("subscription.refresh")}
+                >
+                  <RefreshCw
+                    className={cn("h-3 w-3", loading && "animate-spin")}
+                  />
+                </button>
+              </HoverTip>
             )}
           </span>
         </div>

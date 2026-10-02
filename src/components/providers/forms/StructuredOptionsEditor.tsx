@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -212,16 +213,18 @@ export function StructuredOptionsEditor({
                   placeholder={valuePlaceholder}
                   className="min-w-0 flex-1 font-mono"
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeOption(key)}
-                  aria-label={removeLabel}
-                  className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <HoverTip content={removeLabel}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeOption(key)}
+                    aria-label={removeLabel}
+                    className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </HoverTip>
               </div>
             ))}
 
@@ -270,16 +273,18 @@ export function StructuredOptionsEditor({
                   placeholder={valuePlaceholder}
                   className="min-w-0 flex-1 font-mono"
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeDraft(draft.id)}
-                  aria-label={removeLabel}
-                  className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <HoverTip content={removeLabel}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeDraft(draft.id)}
+                    aria-label={removeLabel}
+                    className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </HoverTip>
               </div>
             ))}
           </div>

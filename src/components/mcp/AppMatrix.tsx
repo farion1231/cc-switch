@@ -1,12 +1,14 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Check, Search, X } from "lucide-react";
-import { toast } from "sonner";
+import { AlertTriangle, Check } from "lucide-react";
+import { toast } from "@/lib/toast";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import type { AppId } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 
 /**
@@ -111,37 +113,46 @@ export function MatrixCell({
   const tracking = useColumnTracking(app);
   return (
     <span className="flex w-9 shrink-0 justify-center" {...tracking}>
-      <button
-        type="button"
-        aria-pressed={state === "on"}
-        aria-label={label}
-        title={label}
-        disabled={disabled}
-        data-state={state}
-        onClick={(event) => {
-          event.stopPropagation();
-          onClick();
-        }}
-        className="group/cell flex h-7 w-7 items-center justify-center rounded-control outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        <span
-          aria-hidden="true"
-          className={cn(
-            "flex h-4 w-4 items-center justify-center rounded-[4px] border transition-colors duration-150",
-            state === "on" &&
-              "border-transparent bg-action text-action-fg group-hover/cell:bg-action-hover",
-            state === "off" &&
-              "border-border-strong bg-transparent group-hover/cell:border-fg-3",
-            state === "fail" &&
-              "border-warning bg-warning-soft text-warning-text",
-          )}
+      <HoverTip content={label}>
+        <button
+          type="button"
+          aria-pressed={state === "on"}
+          aria-label={label}
+          disabled={disabled}
+          data-state={state}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClick();
+          }}
+          className="group/cell flex h-7 w-7 items-center justify-center rounded-control outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45"
         >
-          {state === "on" && <Check className="h-3 w-3" strokeWidth={2.5} />}
-          {state === "fail" && (
-            <AlertTriangle className="h-3 w-3" strokeWidth={2.25} />
-          )}
-        </span>
-      </button>
+          <span
+            aria-hidden="true"
+            className={cn(
+              // 和 ui-checkbox 同一个外观：1.5px 描边、白底；开 = 主题色底 + 勾（勾从中心放大出来）
+              "flex h-4 w-4 items-center justify-center rounded-[4px] border-[1.5px] transition-colors duration-150",
+              state === "on" &&
+                "border-action bg-action text-action-fg group-hover/cell:border-action-hover group-hover/cell:bg-action-hover",
+              state === "off" &&
+                "border-border-strong bg-surface group-hover/cell:border-fg-3",
+              state === "fail" &&
+                "border-warning bg-warning-soft text-warning-text",
+            )}
+          >
+            {state === "fail" ? (
+              <AlertTriangle className="h-3 w-3" strokeWidth={2.25} />
+            ) : (
+              <Check
+                className={cn(
+                  "h-3 w-3 transition-transform duration-[120ms] ease-out motion-reduce:transition-none",
+                  state === "on" ? "scale-100" : "scale-0",
+                )}
+                strokeWidth={3}
+              />
+            )}
+          </span>
+        </button>
+      </HoverTip>
     </span>
   );
 }
@@ -212,38 +223,39 @@ export function MatrixColumnHeader({
         data-column={app}
         {...tracking}
       >
-        <PopoverPrimitive.Trigger asChild>
-          <button
-            type="button"
-            disabled={disabled}
-            aria-label={t("appMatrix.columnAria", {
-              app: name,
-              on: enabledCount,
-              total: totalCount,
-              noun,
-            })}
-            title={title}
-            data-highlighted={highlighted ? "" : undefined}
-            className={cn(
-              "flex h-10 w-[34px] flex-col items-center justify-center gap-0.5 rounded-control text-fg-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
-              highlighted && "bg-selected text-fg-1",
-            )}
-          >
-            <AppGlyph
-              app={app}
-              size={16}
-              badgeClassName={highlighted ? "bg-selected" : "bg-subtle"}
-            />
-            <span
+        <HoverTip content={title} side="top">
+          <PopoverPrimitive.Trigger asChild>
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label={t("appMatrix.columnAria", {
+                app: name,
+                on: enabledCount,
+                total: totalCount,
+                noun,
+              })}
+              data-highlighted={highlighted ? "" : undefined}
               className={cn(
-                "text-badge tabular-nums",
-                highlighted ? "font-semibold" : "font-medium",
+                "flex h-10 w-[34px] flex-col items-center justify-center gap-0.5 rounded-control text-fg-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+                highlighted && "bg-selected text-fg-1",
               )}
             >
-              {enabledCount}
-            </span>
-          </button>
-        </PopoverPrimitive.Trigger>
+              <AppGlyph
+                app={app}
+                size={16}
+                badgeClassName={highlighted ? "bg-selected" : "bg-subtle"}
+              />
+              <span
+                className={cn(
+                  "text-badge tabular-nums",
+                  highlighted ? "font-semibold" : "font-medium",
+                )}
+              >
+                {enabledCount}
+              </span>
+            </button>
+          </PopoverPrimitive.Trigger>
+        </HoverTip>
         {showName && (
           // 名字已在列头的无障碍名称里，这里只给眼睛看
           <span
@@ -260,7 +272,7 @@ export function MatrixColumnHeader({
           align="end"
           sideOffset={4}
           collisionPadding={8}
-          className="z-[110] flex w-[260px] flex-col gap-2.5 rounded-panel border border-border bg-surface px-3.5 pb-3.5 pt-3 text-fg-1 shadow-v7-md outline-none"
+          className="z-[110] flex w-[260px] flex-col gap-2.5 rounded-panel border border-border bg-surface px-3.5 pb-3.5 pt-3 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
         >
           <div className="flex items-center gap-2">
             <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
@@ -360,48 +372,27 @@ export function MatrixSearch({
 }: MatrixSearchProps) {
   const { t } = useTranslation();
   return (
-    <div role="search" className={cn("relative min-w-0", className)}>
-      <Search
-        aria-hidden="true"
-        strokeWidth={1.5}
-        className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-fg-3"
-      />
-      <input
+    <>
+      <SearchField
         id={inputId}
-        type="text"
         value={value}
-        onChange={(event) => onValueChange(event.target.value)}
+        onValueChange={onValueChange}
+        clearLabel={t("appMatrix.clearSearch")}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        autoComplete="off"
+        containerClassName={className}
         onKeyDown={(event) => {
-          if (event.key === "Escape" && value) {
-            event.stopPropagation();
-            event.preventDefault();
-            onValueChange("");
-          } else if (event.key === "Enter" && onEnter) {
+          if (event.key === "Enter" && onEnter) {
             event.preventDefault();
             onEnter();
           }
         }}
-        placeholder={placeholder}
-        aria-label={ariaLabel}
-        autoComplete="off"
-        spellCheck={false}
-        className="h-8 w-full rounded-[8px] border border-border-strong bg-surface pe-[34px] ps-[34px] text-body text-fg-1 outline-none placeholder:text-fg-3 focus-visible:ring-1 focus-visible:ring-ring"
       />
-      {value && (
-        <button
-          type="button"
-          onClick={() => onValueChange("")}
-          aria-label={t("appMatrix.clearSearch")}
-          title={t("appMatrix.clearSearch")}
-          className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-        >
-          <X aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={1.5} />
-        </button>
-      )}
       <span role="status" className="sr-only">
         {status}
       </span>
-    </div>
+    </>
   );
 }
 

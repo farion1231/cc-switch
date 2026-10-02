@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
  * 说明卡（v7 第八轮「?」，规格见 docs/research/2026-09-30-ui-design-v7/HELP_BRIEF.md）。
  *
  * - 悬停 300ms 打开，移开 200ms 关闭（移进卡片不关）；键盘聚焦立即打开。
+ *   只认键盘聚焦（:focus-visible）：弹层打开时 Radix 会把焦点自动放到里面第一个可聚焦元素，
+ *   「?」常常就是那个，鼠标点开弹层不该顺带弹出说明卡。
  * - 点一下固定，Escape 或点别处关闭。
  * - 不抢焦点（modal=false），卡片里不放按钮、表单、链接。
  * - 只放规则和术语解释；会丢东西、要重启这类后果写在按钮、确认框或 toast 里，不进这里。
@@ -16,6 +18,15 @@ import { cn } from "@/lib/utils";
 
 const OPEN_DELAY = 300;
 const CLOSE_DELAY = 200;
+
+/** 焦点是不是键盘带来的（Tab / 方向键）；浏览器不认 :focus-visible 时按键盘处理 */
+function isKeyboardFocus(element: HTMLElement) {
+  try {
+    return element.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
 
 function useHoverCard() {
   const [open, setOpen] = React.useState(false);
@@ -45,7 +56,8 @@ function useHoverCard() {
     onPointerLeave: () => {
       if (!pinned) schedule(false, CLOSE_DELAY);
     },
-    onFocus: () => {
+    onFocus: (event: React.FocusEvent<HTMLElement>) => {
+      if (!isKeyboardFocus(event.currentTarget)) return;
       clear();
       setOpen(true);
     },
@@ -104,7 +116,7 @@ function HelpCard({
         onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
-        className="z-[120] w-max max-w-[300px] rounded-[8px] border border-border bg-surface px-3 pb-2.5 pt-[9px] text-caption text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
+        className="z-[120] w-max max-w-[300px] rounded-[8px] border border-border bg-surface px-3 pb-2.5 pt-[9px] text-caption text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
       >
         {title ? (
           <span className="mb-0.5 block font-semibold">{title}</span>

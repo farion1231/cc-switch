@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { REQUIRED_LABEL } from "./BasicFormFields";
 
@@ -55,10 +56,9 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
           aria-required={required || undefined}
           autoComplete="off"
           className={cn(
-            "h-8 w-full rounded-control border px-3 pe-10 text-body transition-colors",
-            disabled
-              ? "cursor-not-allowed border-border bg-subtle text-fg-3"
-              : "border-border-strong bg-surface text-fg-1 focus:outline-none focus:ring-2 focus:ring-ring",
+            fieldClass,
+            "h-8 pe-10",
+            disabled && "border-border bg-subtle text-fg-3 opacity-100",
           )}
         />
         {!disabled && value && (

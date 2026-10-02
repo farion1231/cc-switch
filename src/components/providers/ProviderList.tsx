@@ -17,7 +17,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -349,7 +349,7 @@ export function ProviderList({
 
   if (isLoading) {
     return (
-      <div className="max-w-content space-y-2">
+      <div className="space-y-2">
         {[0, 1, 2].map((index) => (
           <div
             key={index}
@@ -362,7 +362,7 @@ export function ProviderList({
 
   if (sortedProviders.length === 0) {
     return (
-      <div className="max-w-content space-y-4">
+      <div className="space-y-4">
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
@@ -408,9 +408,9 @@ export function ProviderList({
     />
   );
 
-  // 宽窗口下卡片列表限宽（max-w-content = 1040px），靠左和页头左边缘对齐
+  // 卡片列表铺满主区域，和页头同宽
   return (
-    <div className="max-w-content space-y-4">
+    <div className="space-y-4">
       {piStateErrorNotice}
       <AnimatePresence>
         {isSearchOpen && (
