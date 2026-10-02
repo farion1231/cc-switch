@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { piApi } from "@/lib/api/pi";
 import { sessionsApi } from "@/lib/api/sessions";
@@ -76,12 +77,19 @@ const openRow = (title: string) =>
 const openAppMenu = async () =>
   userEvent.click(screen.getByRole("button", { name: /^应用：/ }));
 
+const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
+
 describe("SessionManagerPage", () => {
   beforeEach(() => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     platform.mac = false;
     window.localStorage.clear();
+    // 项目分组默认收起；其余用例要直接看到会话，先把模拟项目都记成已展开
+    window.localStorage.setItem(
+      EXPANDED_KEY,
+      JSON.stringify(["/mock/codex", "/mock/claude", UNKNOWN_PROJECT_DIR_KEY]),
+    );
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
@@ -208,9 +216,37 @@ describe("SessionManagerPage", () => {
 
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
-    expect(
-      window.localStorage.getItem("cc-switch.sessionManager.collapsedProjects"),
-    ).toContain("/mock/codex");
+    expect(window.localStorage.getItem(EXPANDED_KEY)).not.toContain(
+      "/mock/codex",
+    );
+  });
+
+  it("starts with project groups collapsed and remembers expanded ones", async () => {
+    window.localStorage.removeItem(EXPANDED_KEY);
+    renderPage("codex");
+
+    const toggle = await screen.findByRole("button", { name: /^codex/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Alpha Session")).toBeInTheDocument();
+    expect(window.localStorage.getItem(EXPANDED_KEY)).toContain("/mock/codex");
+  });
+
+  it("opens collapsed groups while searching", async () => {
+    window.localStorage.removeItem(EXPANDED_KEY);
+    renderPage("codex");
+
+    await screen.findByRole("button", { name: /^codex/ });
+    expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "Alpha" },
+    });
+    // 标题里的匹配部分会被高亮拆开，按高亮的那段找
+    expect(await screen.findByText("Alpha")).toBeInTheDocument();
   });
 
   it("switches to all apps and to time buckets", async () => {
