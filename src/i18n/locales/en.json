@@ -2576,10 +2576,7 @@
       "imported": "Imported the content of {{path}}; the file is unchanged",
       "importedPi": "Saved AGENTS.md to the library; the file is unchanged",
       "copied": "Copied \"{{name}}\" to {{apps}}"
-    },
-    "entryLabel": "Prompt: {{name}}",
-    "entryNone": "None enabled",
-    "entryAria": "Prompt: {{name}}. Go to Prompts"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "Project: {{name}}",
@@ -3976,16 +3973,6 @@
     },
     "updatedAt": "Updated {{time}}",
     "clickToRefresh": "Click to check again"
-  },
-  "commandPalette": {
-    "title": "Go to",
-    "open": "Search and go ({{shortcut}})",
-    "placeholder": "Type an app, page or settings name",
-    "empty": "No matches",
-    "apps": "Apps",
-    "pages": "Pages",
-    "settings": "Settings",
-    "searchField": "Search"
   },
   "appMatrix": {
     "clearSearch": "Clear search",

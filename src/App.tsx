@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
@@ -44,7 +37,7 @@ import {
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -85,7 +78,6 @@ import type { StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
-import { PromptEntryButton } from "@/components/prompts/PromptEntryButton";
 import { PROMPT_APP_IDS } from "@/lib/query/prompts";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
@@ -172,8 +164,9 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
-    isLinux() && (settingsData?.useAppWindowControls ?? false);
+    isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
   const visibleApps = useMemo<VisibleApps>(
     () => ({
       ...DEFAULT_VISIBLE_APPS,
@@ -641,14 +634,6 @@ function App() {
   openSettingsRef.current = openSettings;
   const toggleSidebarRef = useRef(toggleSidebar);
   toggleSidebarRef.current = toggleSidebar;
-  // ⌘K / 收起时的搜索图标：侧栏收起就先展开，再把焦点放进侧栏搜索框
-  const [searchFocusSignal, setSearchFocusSignal] = useState(0);
-  const sidebarCollapsedRef = useRef(sidebarCollapsed);
-  sidebarCollapsedRef.current = sidebarCollapsed;
-  const focusSidebarSearch = useCallback(() => {
-    if (sidebarCollapsedRef.current) toggleSidebarRef.current();
-    setSearchFocusSignal((n) => n + 1);
-  }, []);
   const [usageAppFilter, setUsageAppFilter] = useState<AppTypeFilter>("all");
 
   useEffect(() => {
@@ -663,12 +648,6 @@ function App() {
       if (mod && event.key === "\\") {
         event.preventDefault();
         toggleSidebarRef.current();
-        return;
-      }
-
-      if (mod && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        focusSidebarSearch();
         return;
       }
 
@@ -1102,10 +1081,6 @@ function App() {
             (settingsData?.showProfileSwitcher ?? true) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
-          <PromptEntryButton
-            app={activeApp}
-            onOpen={() => openPage("prompts")}
-          />
           {activeApp === "hermes" && (
             <Button
               variant="quiet"
@@ -1219,7 +1194,7 @@ function App() {
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-4"
       >
-        <div className="max-w-content space-y-4">
+        <div className="space-y-4">
           {activeApp === "claude-desktop" && (
             <DesktopAccessBar
               current={providers[currentProviderId]}
@@ -1448,9 +1423,6 @@ function App() {
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }
-          onOpenSearch={focusSidebarSearch}
-          searchFocusSignal={searchFocusSignal}
-          onOpenSettings={openSettings}
         />
         <main
           ref={mainScrollRef}

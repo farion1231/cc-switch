@@ -87,23 +87,24 @@
     --overlay: rgba(9, 9, 11, 0.36);
     --control-off: #888890;
 
-    --direct-fill: #0a84ff;
-    --direct-text: #0063c7;
-    --direct-soft: #eaf3ff;
-    --direct-solid: #0066cc;
-    --direct-on: #ffffff;
-
-    --route-fill: #0d9488;
-    --route-text: #06726b;
-    --route-soft: #e7f6f4;
-    --route-solid: #0f766e;
-    --route-on: #ffffff;
-
-    --stack-fill: #7c3aed;
-    --stack-text: #6d28d9;
-    --stack-soft: #f2ecfe;
-    --stack-solid: #6d28d9;
-    --stack-on: #ffffff;
+    /* 模式色（直连 / 路由 / 叠加）统一用主题色：三组变量都指向 --action-*，
+       深色主题跟着 --action-* 一起切换，所以 .dark 里不再单独定义。
+       模式文字也直接用主题色本身（不用更深的 --action-text），和实心按钮同色 */
+    --direct-fill: var(--action-bg);
+    --direct-text: var(--action-bg);
+    --direct-soft: var(--action-soft);
+    --direct-solid: var(--action-bg);
+    --direct-on: var(--action-fg);
+    --route-fill: var(--action-bg);
+    --route-text: var(--action-bg);
+    --route-soft: var(--action-soft);
+    --route-solid: var(--action-bg);
+    --route-on: var(--action-fg);
+    --stack-fill: var(--action-bg);
+    --stack-text: var(--action-bg);
+    --stack-soft: var(--action-soft);
+    --stack-solid: var(--action-bg);
+    --stack-on: var(--action-fg);
 
     --success: #16a34a;
     --success-text: #007634;
@@ -145,24 +146,6 @@
     --inverse-hover: #e4e4e7;
     --overlay: rgba(0, 0, 0, 0.55);
     --control-off: #6f6f77;
-
-    --direct-fill: #409cff;
-    --direct-text: #7cbbff;
-    --direct-soft: #102a45;
-    --direct-solid: #0f77d7;
-    --direct-on: #ffffff;
-
-    --route-fill: #2dd4bf;
-    --route-text: #5eead4;
-    --route-soft: #0c302c;
-    --route-solid: #2dd4bf;
-    --route-on: #062522;
-
-    --stack-fill: #a78bfa;
-    --stack-text: #c4b5fd;
-    --stack-soft: #271e45;
-    --stack-solid: #845be5;
-    --stack-on: #ffffff;
 
     --success: #4ade80;
     --success-text: #4ade80;
@@ -445,6 +428,19 @@ html[data-window-active="false"] .status-heartbeat {
 *:focus-visible {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
+}
+
+/* 焦点框只给键盘用户（src/lib/inputModality.ts 在按导航键时给 <html> 加 data-keyboard）。
+   鼠标点过的按钮、页签不画主题色描边，也关掉 Tailwind 的 focus-visible:ring-*。
+   输入框 / 文本域聚焦时的主题色光晕不在这条规则里（它们点进去也算 :focus-visible），照常显示。 */
+html:not([data-keyboard])
+  :is(*:not(input, textarea, select, [contenteditable="true"])):focus-visible,
+html:not([data-keyboard]) button:focus,
+html:not([data-keyboard]) [role="tab"]:focus,
+html:not([data-keyboard]) [tabindex]:focus {
+  outline: none;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
 }
 
 @layer utilities {

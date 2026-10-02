@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import PromptPanel from "@/components/prompts/PromptPanel";
-import { PromptEntryButton } from "@/components/prompts/PromptEntryButton";
 import { promptsApi, type Prompt } from "@/lib/api";
 
 const mocks = vi.hoisted(() => ({
@@ -162,43 +161,5 @@ describe("Pi prompts page", () => {
         }),
       ),
     );
-  });
-});
-
-describe("PromptEntryButton", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("shows the enabled prompt of the app and opens the prompts page", async () => {
-    vi.spyOn(promptsApi, "getPrompts").mockResolvedValue({
-      a: { id: "a", name: "Partner", content: "", enabled: true },
-    });
-    const onOpen = vi.fn();
-    renderWithClient(<PromptEntryButton app="hermes" onOpen={onOpen} />);
-
-    const button = await screen.findByRole("button", {
-      name: "prompts.entryAria:Partner",
-    });
-    fireEvent.click(button);
-    expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(promptsApi.getPrompts).toHaveBeenCalledWith("hermes");
-  });
-
-  it("uses Claude Code's prompts on Claude Desktop and hides on OpenClaw", async () => {
-    const getPrompts = vi.spyOn(promptsApi, "getPrompts").mockResolvedValue({});
-    const view = renderWithClient(
-      <PromptEntryButton app="claude-desktop" onOpen={vi.fn()} />,
-    );
-    expect(
-      await screen.findByRole("button", {
-        name: "prompts.entryAria:prompts.entryNone",
-      }),
-    ).toBeInTheDocument();
-    expect(getPrompts).toHaveBeenCalledWith("claude");
-    view.unmount();
-
-    renderWithClient(<PromptEntryButton app="openclaw" onOpen={vi.fn()} />);
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

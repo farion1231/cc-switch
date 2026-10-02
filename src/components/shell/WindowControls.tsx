@@ -10,7 +10,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 const BUTTON =
   "flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1";
 
-/** Linux 上打开「使用应用内窗口按钮」后，接在页头最右端的最小化 / 最大化 / 关闭。 */
+/** 接在页头最右端的最小化 / 最大化 / 关闭：Windows 一律用它，Linux 打开「使用应用内窗口按钮」后用它。 */
 export function WindowControls() {
   const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);

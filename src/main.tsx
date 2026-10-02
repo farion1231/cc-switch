@@ -26,6 +26,7 @@ import {
   syncModelsDevPricingOnStartup,
 } from "./lib/modelsDevAutoSync";
 import { initializeWindowActivity } from "@/lib/windowActivity";
+import { initializeInputModality } from "@/lib/inputModality";
 
 installGlobalErrorHandlers();
 
@@ -118,6 +119,7 @@ async function bootstrap() {
   }
 
   initializeWindowActivity();
+  initializeInputModality();
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

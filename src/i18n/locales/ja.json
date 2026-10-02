@@ -2576,10 +2576,7 @@
       "imported": "{{path}} の内容を取り込みました。ファイルは変更していません",
       "importedPi": "AGENTS.md をライブラリに保存しました。ファイルは変更していません",
       "copied": "「{{name}}」を {{apps}} にコピーしました"
-    },
-    "entryLabel": "プロンプト: {{name}}",
-    "entryNone": "未設定",
-    "entryAria": "プロンプト: {{name}}。プロンプトページへ"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "プロジェクト：{{name}}",
@@ -3976,16 +3973,6 @@
     },
     "updatedAt": "{{time}}に更新",
     "clickToRefresh": "クリックで再取得"
-  },
-  "commandPalette": {
-    "title": "移動",
-    "open": "検索して移動（{{shortcut}}）",
-    "placeholder": "アプリ・ページ・設定の名前を入力",
-    "empty": "一致する項目がありません",
-    "apps": "アプリ",
-    "pages": "ページ",
-    "settings": "設定",
-    "searchField": "検索"
   },
   "appMatrix": {
     "clearSearch": "検索をクリア",

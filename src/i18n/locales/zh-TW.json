@@ -2577,10 +2577,7 @@
       "imported": "已匯入 {{path}} 的內容，檔案沒有改動",
       "importedPi": "已把 AGENTS.md 存進提示庫，檔案沒有改動",
       "copied": "已把「{{name}}」複製到 {{apps}}"
-    },
-    "entryLabel": "提示詞：{{name}}",
-    "entryNone": "未啟用",
-    "entryAria": "提示詞：{{name}}，前往提示詞頁"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "專案：{{name}}",
@@ -3977,16 +3974,6 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "點擊重新查詢"
-  },
-  "commandPalette": {
-    "title": "跳轉",
-    "open": "搜尋並跳轉（{{shortcut}}）",
-    "placeholder": "輸入應用、頁面或設定的名字",
-    "empty": "沒有符合的項目",
-    "apps": "應用",
-    "pages": "頁面",
-    "settings": "設定",
-    "searchField": "搜尋"
   },
   "appMatrix": {
     "clearSearch": "清除搜尋",

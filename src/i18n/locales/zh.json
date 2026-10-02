@@ -2576,10 +2576,7 @@
       "imported": "已导入 {{path}} 的内容，文件没有改动",
       "importedPi": "已把 AGENTS.md 存进提示库，文件没有改动",
       "copied": "已把「{{name}}」复制到 {{apps}}"
-    },
-    "entryLabel": "提示词：{{name}}",
-    "entryNone": "未启用",
-    "entryAria": "提示词：{{name}}，前往提示词页"
+    }
   },
   "profiles": {
     "switcherAriaLabel": "项目：{{name}}",
@@ -3976,16 +3973,6 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "点击重新查询"
-  },
-  "commandPalette": {
-    "title": "跳转",
-    "open": "搜索并跳转（{{shortcut}}）",
-    "placeholder": "输入应用、页面或设置的名字",
-    "empty": "没有匹配的项",
-    "apps": "应用",
-    "pages": "页面",
-    "settings": "设置",
-    "searchField": "搜索"
   },
   "appMatrix": {
     "clearSearch": "清空搜索",

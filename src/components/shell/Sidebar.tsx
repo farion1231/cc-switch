@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ComponentType } from "react";
+import type { ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -17,7 +17,6 @@ import {
   Layers,
   LayoutGrid,
   Route,
-  Search,
   Server,
   Settings,
   SlidersHorizontal,
@@ -34,12 +33,8 @@ import { fmtUsd } from "@/components/usage/format";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import ccswitchLogo from "@/assets/ccswitch-logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
-import {
-  SidebarSearchInput,
-  SidebarSearchResults,
-  useSidebarSearch,
-} from "./SidebarSearch";
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 
@@ -58,18 +53,11 @@ interface SidebarProps {
   onExitSettings: () => void;
   /** 打开了「启动时检查应用更新」并且查到了新版本 */
   appsUpdateAvailable?: boolean;
-  /** 收起时顶条的搜索图标（⌘K）：展开侧栏并聚焦搜索框 */
-  onOpenSearch?: () => void;
-  /** 每次变化都把焦点放进搜索框（App 的 ⌘K） */
-  searchFocusSignal?: number;
-  /** 搜索结果里的设置分组 */
-  onOpenSettings?: (section: SettingsSection) => void;
 }
 
 /**
- * 主导航（v7）：顶条 44 → 搜索框 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
- * 进入设置后整条侧栏换成设置目录。搜索框有字时，下面整块换成匹配结果（SidebarSearch）。
- * 收起时是 72px 的图标轨，搜索框缩回顶条的图标（点了展开并聚焦）；
+ * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
+ * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
  * 展开 / 收起时宽度过渡 200ms，文字不换行、被裁掉而不是挤成两行。
  * 收起时各行只剩图标，名字由 HoverTip 从右侧报；展开时文字可见，不再挂提示。
  */
@@ -77,27 +65,14 @@ export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
   const { collapsed, onToggleCollapsed, view } = props;
   const inSettings = view === "settings";
-  const search = useSidebarSearch({
-    visibleApps: props.visibleApps,
-    onSelectApp: props.onSelectApp,
-    onSelectPage: props.onSelectPage,
-    onOpenSettings: props.onOpenSettings,
-  });
-  const searchRef = useRef<HTMLInputElement>(null);
-  const listId = useId();
-
-  useEffect(() => {
-    if (!props.searchFocusSignal) return;
-    searchRef.current?.focus();
-    searchRef.current?.select();
-  }, [props.searchFocusSignal]);
 
   return (
     <nav
       aria-label={t("nav.mainLabel")}
       className={cn(
         "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1 transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        collapsed ? "w-[72px]" : "w-[200px]",
+        // macOS 的红绿灯（新版更大）要约 74px，收起的图标轨在 Mac 上放宽到 84
+        collapsed ? (isMac() ? "w-[84px]" : "w-[72px]") : "w-[200px]",
       )}
     >
       <a
@@ -106,17 +81,9 @@ export function Sidebar(props: SidebarProps) {
       >
         {t("nav.skipToContent")}
       </a>
-      <SidebarTopBar
-        collapsed={collapsed}
-        onToggle={onToggleCollapsed}
-        onSearch={props.onOpenSearch}
-      />
-      {!collapsed && (
-        <SidebarSearchInput ref={searchRef} search={search} listId={listId} />
-      )}
-      {!collapsed && search.searching ? (
-        <SidebarSearchResults search={search} listId={listId} />
-      ) : inSettings ? (
+      <SidebarTopBar collapsed={collapsed} onToggle={onToggleCollapsed} />
+      {!collapsed && isMac() && <MacBrandRow />}
+      {inSettings ? (
         <SettingsDirectory {...props} />
       ) : (
         <MainDirectory {...props} />
@@ -125,35 +92,52 @@ export function Sidebar(props: SidebarProps) {
   );
 }
 
+/**
+ * macOS 的品牌行：红绿灯下面单独一行（顶条左边被红绿灯占着放不下）。
+ * 20px 图标 + 名字 + 版本号，往上贴近红绿灯（-mt-[18px]），下面一条分隔线和应用列表分开。整行可以拖动窗口。
+ */
+function MacBrandRow() {
+  const { data: version } = useQuery({
+    queryKey: ["app-version"],
+    queryFn: () => getVersion(),
+    staleTime: Infinity,
+  });
+  return (
+    <>
+      <div
+        className="-mt-[18px] flex h-9 shrink-0 items-center gap-2 px-4"
+        {...DRAG_REGION_ATTR}
+        style={DRAG_REGION_STYLE as React.CSSProperties}
+      >
+        <img
+          src={ccswitchLogo}
+          alt=""
+          draggable={false}
+          className="pointer-events-none h-5 w-5 shrink-0"
+        />
+        <span className="pointer-events-none min-w-0 truncate text-strong font-semibold text-fg-1">
+          CC Switch
+        </span>
+        {version && (
+          <span className="pointer-events-none ms-auto shrink-0 text-caption tabular-nums text-fg-3">
+            v{version}
+          </span>
+        )}
+      </div>
+      <div className="mx-4 mb-1.5 h-px shrink-0 bg-border" />
+    </>
+  );
+}
+
 function SidebarTopBar({
   collapsed,
   onToggle,
-  onSearch,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  onSearch?: () => void;
 }) {
   const { t } = useTranslation();
-  const searchLabel = t("commandPalette.open", {
-    shortcut: isMac() ? "⌘K" : "Ctrl+K",
-  });
   const tipSide = collapsed ? "right" : "bottom";
-  // 展开时搜索是列表上方的搜索框（SidebarSearchField），顶条只在收起时放图标
-  const searchButton =
-    collapsed && onSearch ? (
-      <HoverTip content={searchLabel} side={tipSide}>
-        <button
-          type="button"
-          onClick={onSearch}
-          aria-label={searchLabel}
-          style={NO_DRAG}
-          className="flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-[background-color,color,scale] hover:bg-subtle hover:text-fg-1 active:scale-[0.96]"
-        >
-          <Search className="h-4 w-4" strokeWidth={1.5} />
-        </button>
-      </HoverTip>
-    ) : null;
   const label = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
   const Icon = collapsed ? ChevronsRight : ChevronsLeft;
   const toggleButton = (
@@ -182,11 +166,6 @@ function SidebarTopBar({
         <div className="flex h-8 shrink-0 items-center justify-center">
           {toggleButton}
         </div>
-        {searchButton && (
-          <div className="flex h-8 shrink-0 items-center justify-center">
-            {searchButton}
-          </div>
-        )}
       </>
     );
   }
@@ -201,11 +180,20 @@ function SidebarTopBar({
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
       {!collapsed && !isMac() && (
-        <span className="me-auto ps-2 text-caption font-semibold text-fg-3">
-          CC Switch
+        // 左上角品牌（Windows / Linux）：图标 + 名字。macOS 左上角留给红绿灯，不放。
+        // 图片不接收指针事件，拖它也是在拖窗口
+        <span className="pointer-events-none me-auto flex min-w-0 items-center gap-2 ps-1.5">
+          <img
+            src={ccswitchLogo}
+            alt=""
+            draggable={false}
+            className="h-[18px] w-[18px] shrink-0"
+          />
+          <span className="truncate text-body font-semibold text-fg-1">
+            CC Switch
+          </span>
         </span>
       )}
-      {searchButton}
       {toggleButton}
     </div>
   );
@@ -414,7 +402,7 @@ function AppNavItem({
           aria-label={tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "ms-3 flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >
@@ -554,7 +542,7 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "ms-3 flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >

@@ -503,7 +503,7 @@ export function SwitchModePanel({
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-3"
       >
         {notices.length > 0 && (
-          <div role="status" className="mb-3 flex max-w-content flex-col gap-2">
+          <div role="status" className="mb-3 flex flex-col gap-2">
             {notices}
           </div>
         )}

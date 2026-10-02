@@ -157,11 +157,6 @@ module.exports = {
         panel: "10px",
         dialog: "14px",
       },
-      maxWidth: {
-        // 宽窗口下卡片列表的最大宽度：靠左、和页头左边缘对齐，不居中。
-        // 侧栏 200 + 左右留白 48 + 1040 ≈ 1288，窗口比这窄时不起作用。
-        content: "1040px",
-      },
       fontSize: {
         // v7 字体角色（AUTHORING.md「颜色与字体」）
         badge: ["11px", { lineHeight: "16px", fontWeight: "500" }],
