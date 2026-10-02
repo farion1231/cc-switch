@@ -9,6 +9,7 @@ import {
   Loader2,
   Zap,
   Power,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -32,6 +33,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   getAppLabel,
+  isStackAppId,
   PROXY_APP_IDS,
   type ProxyAppId,
 } from "@/config/appConfig";
@@ -39,6 +41,9 @@ import {
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
   onEnableLocalProxyChange: (checked: boolean) => void;
+  /** 主页面显示 Stack 模式开关（和路由开关二选一，只影响 Claude Code、Codex）。 */
+  enableStackMode: boolean;
+  onEnableStackModeChange: (checked: boolean) => void;
   onToggleProxy: (checked: boolean) => Promise<void>;
   isProxyPending: boolean;
 }
@@ -46,6 +51,8 @@ interface ProxyPanelProps {
 export function ProxyPanel({
   enableLocalProxy,
   onEnableLocalProxyChange,
+  enableStackMode,
+  onEnableStackModeChange,
   onToggleProxy,
   isProxyPending,
 }: ProxyPanelProps) {
@@ -82,7 +89,12 @@ export function ProxyPanel({
 
   const handleTakeoverChange = async (appType: string, enabled: boolean) => {
     try {
-      await setTakeoverForApp.mutateAsync({ appType, enabled });
+      // 选了 Stack 模式时，Claude Code、Codex 进入的是 Stack 模式。
+      await setTakeoverForApp.mutateAsync({
+        appType,
+        enabled,
+        stack: enableStackMode && isStackAppId(appType),
+      });
       toast.success(
         enabled
           ? t("proxy.takeover.enabled", {
@@ -235,6 +247,15 @@ export function ProxyPanel({
           description={t("settings.advanced.proxy.enableFeatureDescription")}
           checked={enableLocalProxy}
           onCheckedChange={onEnableLocalProxyChange}
+        />
+
+        {/* [1b] Stack mode switch on main page — one of the two */}
+        <ToggleRow
+          icon={<Layers className="h-4 w-4 text-violet-500" />}
+          title={t("settings.advanced.proxy.enableStackMode")}
+          description={t("settings.advanced.proxy.enableStackModeDescription")}
+          checked={enableStackMode}
+          onCheckedChange={onEnableStackModeChange}
         />
 
         {/* [2] Proxy service toggle — always visible */}

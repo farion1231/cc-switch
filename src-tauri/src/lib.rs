@@ -1246,6 +1246,10 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
+                crate::services::provider::codex_official_models::start_background_checks(
+                    state.inner().clone(),
+                );
 
                 // Periodic backup check (on startup)
                 if let Err(e) = state.db.periodic_backup_if_needed() {
@@ -1565,6 +1569,7 @@ pub fn run() {
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
+            commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,
             commands::get_proxy_status,
             commands::get_proxy_config,
@@ -1579,6 +1584,9 @@ pub fn run() {
             commands::is_proxy_running,
             commands::is_live_takeover_active,
             commands::switch_proxy_provider,
+            commands::get_proxy_stack,
+            commands::set_proxy_stack_member,
+            commands::restart_codex_app_server_daemon,
             // Proxy failover commands
             commands::get_provider_health,
             commands::reset_circuit_breaker,

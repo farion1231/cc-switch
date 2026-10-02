@@ -4,9 +4,11 @@
 
 pub(crate) mod claude_direct;
 mod claude_editor;
+pub(crate) mod codex_client_catalog;
 pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
+pub(crate) mod codex_official_models;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -373,22 +375,34 @@ mod tests {
             }
 
             let cleared_meta = ProviderMeta::default();
-            assert!(
-                ProviderService::editor_view_with_meta(
-                    state,
-                    AppType::Codex,
-                    &settings,
-                    None,
-                    Some(&stored.id),
-                    Some(&cleared_meta),
-                )
-                .is_err(),
-                "explicit draft metadata must not fall back to the stored Copilot type"
-            );
-            assert!(
-                ProviderService::editor_view(state, AppType::Codex, &settings, None).is_err(),
-                "the compatibility wrapper must not infer managed auth from the URL"
-            );
+            let cleared = ProviderService::editor_view_with_meta(
+                state,
+                AppType::Codex,
+                &settings,
+                None,
+                Some(&stored.id),
+                Some(&cleared_meta),
+            )
+            .expect("generic keyless preview with explicitly cleared metadata");
+            let generic = ProviderService::editor_view(state, AppType::Codex, &settings, None)
+                .expect("generic keyless preview without managed metadata");
+            // 普通空 Key 草稿也允许预览，不能再用报错区分身份；检查 Copilot 专属策略。
+            for (view, reason) in [
+                (
+                    cleared,
+                    "explicit draft metadata must not fall back to the stored Copilot type",
+                ),
+                (
+                    generic,
+                    "the compatibility wrapper must not infer managed auth from the URL",
+                ),
+            ] {
+                let text = view.settings["config"].as_str().expect("config text");
+                let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
+                assert!(parsed.get("web_search").is_none(), "{reason}");
+                assert_eq!(view.settings["auth"], json!({}));
+                assert!(!text.contains("cc-switch-editor-pending-key"));
+            }
             assert!(!crate::codex_config::get_codex_config_path().exists());
             assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
         });
@@ -2111,7 +2125,7 @@ command = "legacy-cmd"
         })
         .await
         .expect("update proxy config");
-        crate::mode::controller::enter(&state, &AppType::Claude)
+        crate::mode::controller::enter(&state, &AppType::Claude, false)
             .await
             .expect("enter routing mode");
         let proxy_url = state
@@ -2203,7 +2217,7 @@ requires_openai_auth = true
         })
         .await
         .expect("update proxy config");
-        crate::mode::controller::enter(&state, &AppType::Codex)
+        crate::mode::controller::enter(&state, &AppType::Codex, false)
             .await
             .expect("enter routing mode");
         assert!(
@@ -3225,7 +3239,11 @@ wire_api = "responses"
                     ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
                     if mode == "proxy" {
                         runtime
-                            .block_on(crate::mode::controller::enter(state, &AppType::Codex))
+                            .block_on(crate::mode::controller::enter(
+                                state,
+                                &AppType::Codex,
+                                false,
+                            ))
                             .unwrap();
                     }
                     runtime
@@ -3266,7 +3284,11 @@ wire_api = "responses"
                     // 绑定已失效：直连下进入路由要报错让用户重新绑定，客户端文件不动。
                     if mode == "direct" {
                         let error = runtime
-                            .block_on(crate::mode::controller::enter(state, &AppType::Codex))
+                            .block_on(crate::mode::controller::enter(
+                                state,
+                                &AppType::Codex,
+                                false,
+                            ))
                             .unwrap_err();
                         assert!(error.contains("选择账号"), "{error}");
                         assert!(!crate::mode::current::is_proxy(&AppType::Codex));
@@ -3316,7 +3338,7 @@ wire_api = "responses"
                     }
                     runtime.block_on(async {
                         if mode == "direct" {
-                            crate::mode::controller::enter(state, &AppType::Codex)
+                            crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
                         }
@@ -3365,7 +3387,7 @@ wire_api = "responses"
             state.db.save_provider("codex", &current).unwrap();
             ProviderService::switch(&state, AppType::Codex, "current").unwrap();
             runtime.block_on(async {
-                crate::mode::controller::enter(&state, &AppType::Codex)
+                crate::mode::controller::enter(&state, &AppType::Codex, false)
                     .await
                     .unwrap();
                 crate::commands::remove_codex_oauth_account_with_switch_lock(
@@ -3469,7 +3491,7 @@ wire_api = "responses"
             let target = managed_codex_provider("current", "new-local-id");
             ProviderService::update(&restarted, AppType::Codex, None, target).unwrap();
             runtime.block_on(async {
-                crate::mode::controller::enter(&restarted, &AppType::Codex)
+                crate::mode::controller::enter(&restarted, &AppType::Codex, false)
                     .await
                     .unwrap();
                 assert!(
@@ -4452,7 +4474,7 @@ wire_api = "responses"
                             let mut config = state.db.get_proxy_config().await.unwrap();
                             config.listen_port = 0;
                             state.db.update_proxy_config(config).await.unwrap();
-                            crate::mode::controller::enter(state, &AppType::Codex)
+                            crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
                         });
@@ -5344,7 +5366,6 @@ impl ProviderService {
 
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
-        let is_route = mode.routes_to(&provider.id);
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = if key_fields {
@@ -5365,7 +5386,7 @@ impl ProviderService {
                 &plan.edits,
                 codex_editor::KeyFields::None,
             )
-            .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider))
+            .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider))
         };
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
@@ -5420,7 +5441,6 @@ impl ProviderService {
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let set_pointer = kind == EditorSaveKind::Add;
-        let is_route = mode.routes_to(&provider.id);
 
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written = match &edits {
@@ -5437,7 +5457,7 @@ impl ProviderService {
                 set_pointer,
             ),
         }
-        .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider));
+        .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider));
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
@@ -5470,18 +5490,15 @@ impl ProviderService {
         Err(error)
     }
 
-    /// 代理模式下保存的是路由那家（`is_route`）：按新行重写代理契约，契约没变就不碰客户端
-    /// 文件。调用方持有这个应用的切换锁。
-    fn rewrite_route_if(
-        is_route: bool,
+    /// 代理模式下存好了这一行：它是代理路由或在 Stack 名单里时按新行重写代理契约，契约没变
+    /// 就不碰客户端文件（见 [`crate::mode::controller::resync_saved_row_locked`]）。调用方
+    /// 持有这个应用的切换锁。
+    fn resync_proxy_for_saved_row(
         state: &AppState,
         app_type: &AppType,
         provider: &Provider,
     ) -> Result<(), AppError> {
-        if !is_route {
-            return Ok(());
-        }
-        futures::executor::block_on(crate::mode::controller::switch_route_locked(
+        futures::executor::block_on(crate::mode::controller::resync_saved_row_locked(
             state, app_type, provider,
         ))
         .map_err(AppError::Message)
@@ -5547,9 +5564,9 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         let mode = crate::mode::current::mode_state(&app_type);
-        let is_route = mode.routes_to(&provider.id);
         // 代理模式下 live 的关键字段是代理契约，这里只写全局改动；编辑的是代理路由那家
-        // 时，写完按新行重写契约（契约没变就不动）。直连指针那家在退出代理时写回。
+        // 或 Stack 名单里的一家时，写完按新行重写契约（契约没变就不动）。直连指针那家在
+        // 退出代理时写回。
         let key_fields = EditorSaveKind::Update
             .writes_key_fields(state, &app_type, &mode, &provider.id)?
             .then_some(claude_editor::KeyFieldWrite {
@@ -5561,7 +5578,7 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
-                .and_then(|()| Self::rewrite_route_if(is_route, state, &app_type, &provider));
+                .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider));
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
     }
 
@@ -5732,7 +5749,8 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // For other apps: 是否是直连指针那家，或代理模式下的代理路由那家。
+        // For other apps: 是否是直连指针那家。代理模式下是不是代理路由或 Stack 名单里的一家，
+        // 由同步 live 的那一步判断。
         let mode = crate::mode::current::mode_state(&app_type);
         let is_direct_current = crate::mode::current::provider_for(
             &state.db,
@@ -5741,8 +5759,6 @@ impl ProviderService {
         )?
         .as_deref()
             == Some(provider.id.as_str());
-        let is_route = mode.routes_to(&provider.id);
-        let is_current = is_direct_current || is_route;
 
         if matches!(app_type, AppType::Codex) {
             return Self::update_codex(
@@ -5750,14 +5766,13 @@ impl ProviderService {
                 &provider,
                 existing_provider.as_ref(),
                 is_direct_current,
-                is_route,
             );
         }
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
-        if is_current {
+        if is_direct_current || mode.is_proxy() {
             let outcome = live::sync_live_for_provider_respecting_mode(
                 state,
                 &app_type,
@@ -5783,23 +5798,18 @@ impl ProviderService {
     ///
     /// - 直连模式下编辑直连那家：先存行，再只替换 live 里的关键字段和独有字段（换托管
     ///   账号时先采纳、再清掉旧账号的登录）；写 live 失败就把行恢复原样。
-    /// - 代理模式下编辑路由那家：按新行重写代理契约（契约没变就不碰客户端文件）。
+    /// - 代理模式下先存行，编辑的是路由那家或 Stack 名单里的一家时按新行重写代理契约（见
+    ///   [`Self::resync_proxy_for_saved_row`]），写失败同样把行恢复原样。
     /// - 其余只存行。
     fn update_codex(
         state: &AppState,
         provider: &Provider,
         existing: Option<&Provider>,
         is_direct_current: bool,
-        is_route: bool,
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         let mode = crate::mode::current::mode_state(&app_type);
-        let writes_live = if mode.is_proxy() {
-            is_route
-        } else {
-            is_direct_current
-        };
-        if !writes_live {
+        if !mode.is_proxy() && !is_direct_current {
             state.db.save_provider(app_type.as_str(), provider)?;
             return Ok(true);
         }
@@ -5809,7 +5819,7 @@ impl ProviderService {
 
         state.db.save_provider(app_type.as_str(), provider)?;
         let written = if mode.is_proxy() {
-            Self::rewrite_route_if(true, state, &app_type, provider)
+            Self::resync_proxy_for_saved_row(state, &app_type, provider)
         } else {
             codex_direct::write_direct(
                 state.db.as_ref(),
@@ -5908,6 +5918,15 @@ impl ProviderService {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
+        }
+
+        // Stack 名单里的先移出（和客户端文件同一个操作提交，key 留在登记簿里），成功了再删行。
+        // 删行失败时它已经不在名单里，重新加入即可。
+        if crate::mode::stack::is_member(&app_type, id)? {
+            futures::executor::block_on(crate::mode::controller::set_stack_member(
+                state, &app_type, id, false,
+            ))
+            .map_err(|error| AppError::Message(error.message))?;
         }
 
         state.db.delete_provider(app_type.as_str(), id)

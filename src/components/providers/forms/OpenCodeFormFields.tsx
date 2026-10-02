@@ -29,6 +29,11 @@ import {
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { FetchedModelPicker } from "./FetchedModelPicker";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
+import { useCommittableRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import type { PresetModelSource } from "@/lib/modelMetadata";
+import { opencodePresetModelSources } from "@/config/presetModelMetadata";
+import { fillOpenCodeModel, metadataFilledAnything } from "./modelMetadataFill";
 
 /**
  * Model ID input with local state to prevent focus loss.
@@ -156,6 +161,8 @@ function ModelOptionKeyInput({
 
 interface OpenCodeFormFieldsProps {
   allowBuiltinDefaults?: boolean;
+  /** 选中拉取到的模型时补参数所查的预设（MiniMax Code 传自己的）。 */
+  presetModelSources?: () => readonly PresetModelSource[];
   apiFormats?: ReadonlyArray<{ value: string; label: string }>;
   // NPM Package
   npm: string;
@@ -189,6 +196,7 @@ interface OpenCodeFormFieldsProps {
 
 export function OpenCodeFormFields({
   allowBuiltinDefaults = false,
+  presetModelSources = opencodePresetModelSources,
   apiFormats = opencodeNpmPackages,
   npm,
   onNpmChange,
@@ -283,13 +291,32 @@ export function OpenCodeFormFields({
     });
   };
 
+  // 选中拉取到的模型时补上它已知的 limit 和模态（只补空着的）。
+  // 补全可能晚到，要用最新的列表和回调提交。
+  const [modelsRef, commitModels] = useCommittableRef(models, onModelsChange);
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: presetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  const fillModelMetadataFor = (id: string) =>
+    fillModelMetadata(id, (metadata) => {
+      const current = modelsRef.current;
+      if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
+      const filled = fillOpenCodeModel(current[id], metadata);
+      if (!metadataFilledAnything(current[id], filled)) return false;
+      commitModels({ ...current, [id]: filled });
+      return true;
+    });
+
   const handleAddFetchedModels = (modelIds: string[]) => {
     const additions = Object.fromEntries(
       modelIds
         .filter((id) => !Object.prototype.hasOwnProperty.call(models, id))
         .map((id) => [id, { name: id }]),
     );
-    onModelsChange({ ...models, ...additions });
+    commitModels({ ...models, ...additions });
+    Object.keys(additions).forEach(fillModelMetadataFor);
   };
 
   // Remove a model entry
@@ -316,7 +343,7 @@ export function OpenCodeFormFields({
         newModels[k] = v;
       }
     }
-    onModelsChange(newModels);
+    commitModels(newModels);
     // Update expanded set if this model was expanded
     if (expandedModels.has(oldKey)) {
       setExpandedModels((prev) => {
@@ -773,7 +800,10 @@ export function OpenCodeFormFields({
                     {fetchedModels.length > 0 && (
                       <ModelDropdown
                         models={fetchedModels}
-                        onSelect={(id) => handleModelIdChange(key, id)}
+                        onSelect={(id) => {
+                          handleModelIdChange(key, id);
+                          fillModelMetadataFor(id);
+                        }}
                       />
                     )}
                   </div>

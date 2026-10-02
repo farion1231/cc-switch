@@ -2,13 +2,13 @@ import type { ComponentProps } from "react";
 import {
   act,
   fireEvent,
-  render,
   screen,
   waitFor,
 } from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { CodexFormFields } from "@/components/providers/forms/CodexFormFields";
 import {
   copilotGetModels,

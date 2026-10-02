@@ -26,6 +26,10 @@ import {
   type HermesModel,
 } from "@/config/hermesProviderPresets";
 import type { ProviderCategory } from "@/types";
+import { useCommittableRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import { hermesPresetModelSources } from "@/config/presetModelMetadata";
+import { fillHermesModel, metadataFilledAnything } from "./modelMetadataFill";
 
 interface HermesFormFieldsProps {
   baseUrl: string;
@@ -183,6 +187,35 @@ export function HermesFormFields({
     const next = [...models];
     next[index] = { ...next[index], [field]: value };
     onModelsChange(next);
+  };
+
+  // 选中拉取到的模型：改 ID，再补上它已知的上下文长度。
+  // 补全可能晚到，要用最新的列表和回调提交。
+  const [modelsRef, commitModels] = useCommittableRef(models, onModelsChange);
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: hermesPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  const handleSelectFetchedModel = (index: number, id: string) => {
+    commitModels(
+      modelsRef.current.map((model, i) =>
+        i === index ? { ...model, id } : model,
+      ),
+    );
+    // 补全晚到时这一行可能已经挪了位置（删了上面的行），按行 key 重新找。
+    const rowKey = modelKeysRef.current[index];
+    fillModelMetadata(id, (metadata) => {
+      const at = modelKeysRef.current.indexOf(rowKey);
+      const current = modelsRef.current[at];
+      if (at < 0 || current?.id !== id) return false;
+      const filled = fillHermesModel(current, metadata);
+      if (!metadataFilledAnything(current, filled)) return false;
+      commitModels(
+        modelsRef.current.map((model, i) => (i === at ? filled : model)),
+      );
+      return true;
+    });
   };
 
   return (
@@ -348,7 +381,7 @@ export function HermesFormFields({
                       {fetchedModels.length > 0 && (
                         <ModelDropdown
                           models={fetchedModels}
-                          onSelect={(id) => handleModelChange(index, "id", id)}
+                          onSelect={(id) => handleSelectFetchedModel(index, id)}
                         />
                       )}
                     </div>
