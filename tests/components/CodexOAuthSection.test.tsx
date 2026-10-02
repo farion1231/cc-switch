@@ -172,7 +172,13 @@ describe("CodexOAuthSection", () => {
     );
     render(<CodexOAuthSection />);
 
-    await user.click(screen.getAllByTitle("移除账号")[0]);
+    // 删除收进账号行的 ⋯
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "删除账号…" }),
+    );
     expect(authResult.removeAccount).not.toHaveBeenCalled();
 
     const dialog = await screen.findByRole("alertdialog");
@@ -198,7 +204,16 @@ describe("CodexOAuthSection", () => {
     const authResult = mocks.useCodexOauth();
     render(<CodexOAuthSection />);
 
-    await user.click(screen.getByRole("button", { name: "注销所有账号" }));
+    // 「删除全部账号…」收进服务标题行的 ⋯，触发项本身不是红色实心按钮
+    expect(
+      screen.queryByRole("button", { name: /注销所有账号|删除全部/ }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "ChatGPT 的更多操作" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "删除全部账号…" }),
+    );
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("删除全部 ChatGPT 账号？");
     expect(dialog).toHaveTextContent("没有供应商在用这些账号。");
@@ -224,6 +239,9 @@ describe("CodexOAuthSection", () => {
     });
 
     render(<CodexOAuthSection />);
+    // 需要重新登录的账号：徽标 + 原因写在第二行，额度不显示
+    expect(screen.getByText("需要重新登录")).toBeInTheDocument();
+    expect(screen.getByText("id_token")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新登录" }));
 
     expect(reauthAccount).toHaveBeenCalledWith("account-1");
@@ -241,9 +259,65 @@ describe("CodexOAuthSection", () => {
     });
 
     render(<CodexOAuthSection />);
-    await user.click(screen.getByRole("button", { name: "重新登录" }));
+    // 正常账号的「重新登录」在 ⋯ 里
+    expect(
+      screen.queryByRole("button", { name: "重新登录" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "重新登录" }));
 
     expect(reauthAccount).toHaveBeenCalledWith("account-1");
+  });
+
+  it("sets another account as default from its menu", async () => {
+    const user = userEvent.setup();
+    const authResult = mocks.useCodexOauth();
+    render(<CodexOAuthSection />);
+
+    // 默认账号的 ⋯ 里没有「设为默认」
+    await user.click(
+      screen.getByRole("button", { name: "user@example.com 的更多操作" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "设为默认" }),
+    ).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      screen.getByRole("button", { name: "second@example.com 的更多操作" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "设为默认" }));
+    expect(authResult.setDefaultAccount).toHaveBeenCalledWith("account-2");
+  });
+
+  it("shows the device code while waiting for authorization", () => {
+    const authResult = mocks.useCodexOauth();
+    mocks.useCodexOauth.mockReturnValue({
+      ...authResult,
+      pollingState: "polling",
+      isPolling: true,
+      isAddingAccount: true,
+      deviceCode: {
+        provider: "codex_oauth",
+        device_code: "dc",
+        user_code: "7KQP-3XRD",
+        verification_uri: "https://auth.openai.com/codex/device",
+        expires_in: 900,
+        interval: 5,
+      },
+    });
+    render(<CodexOAuthSection />);
+
+    expect(
+      screen.getByText("添加 ChatGPT 账号 · 等待授权中…"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("7KQP-3XRD")).toBeInTheDocument();
+    // 同一组正在登录时，「添加账号」不能再点，原因指向等待块
+    const add = screen.getByRole("button", { name: "添加账号" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAttribute("aria-describedby", "auth-pending-chatgpt");
   });
 
   it("selects a specific account when multiple accounts are managed", async () => {

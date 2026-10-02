@@ -367,8 +367,7 @@
     "tabAdvanced": "進階",
     "tabProxy": "路由",
     "authCenter": {
-      "title": "OAuth 驗證中心",
-      "description": "用 GitHub Copilot、ChatGPT、xAI 訂閱作為供應商。憑證由路由服務注入，用到它們的供應商需要路由模式（Codex 官方登入除外）。請注意各服務的使用條款。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號",
@@ -1502,7 +1501,6 @@
     "removeAccount": "移除帳號",
     "setAsDefault": "設為預設",
     "addAnotherAccount": "新增其他帳號",
-    "logoutAll": "登出所有帳號",
     "retry": "重試",
     "copyCode": "複製程式碼",
     "migrationFailed": "舊驗證資料遷移失敗：{{error}}",
@@ -1534,7 +1532,6 @@
     "explicitSelectionRequired": "請先選擇登入方式",
     "useDefaultAccount": "使用預設帳號",
     "noneOptionLabel": "跟隨 Codex 登入",
-    "reauthTitle": "部分帳號需要重新登入",
     "reauthDescription": "為與瀏覽器登入行為保持一致，這些帳號需要重新登入以補全所需的登入憑證（id_token）。重新登入後即可正常用於託管綁定。",
     "reauthBadge": "需要重新登入",
     "reauthLogin": "重新登入",
@@ -1571,11 +1568,11 @@
     "waitingForAuth": "正在等待 xAI 授權…",
     "enterCode": "若瀏覽器未自動填入，請輸入：",
     "retry": "重試",
-    "logoutAll": "移除所有 xAI 帳號",
+    "logoutAll": "刪除全部 xAI 帳號…",
     "loginRequired": "請先登入 xAI 帳號"
   },
   "managedAuth": {
-    "accountRemoved": "帳號已移除",
+    "accountRemoved": "帳號已刪除",
     "selectedAccountNeedsReauth": "已綁定的帳號不存在或需要重新登入",
     "selectedAccountUnavailable": "已綁定的帳號不存在或需要重新登入，請重新選擇帳號",
     "usedBy": "{{count}} 個供應商在用",
@@ -2810,20 +2807,31 @@
       "launchFailed": "開啟終端機失敗"
     },
     "memory": {
-      "title": "記憶管理",
-      "agentTab": "Agent 記憶 (MEMORY.md)",
-      "userTab": "使用者畫像 (USER.md)",
-      "usage": "已用 {{current}} / {{limit}} 字元",
-      "overLimit": "已超過上限，Hermes 下次載入時會截斷",
-      "enableOn": "已啟用",
-      "enableOff": "已停用",
       "disabledHint": "在重新啟用前 Hermes 會跳過此記憶",
       "toggleFailed": "切換記憶狀態失敗",
-      "saveSuccess": "記憶已儲存",
+      "saveSuccess": "記憶已儲存，Hermes 下次啟動或建立新工作階段時生效。",
       "saveFailed": "儲存記憶失敗",
       "loadFailed": "讀取記憶檔案失敗",
       "openConfig": "在 Hermes Web UI 調整上限",
-      "runtimeNote": "變更將在 Hermes 下次啟動或建立新工作階段時生效。"
+      "fileTabs": "記憶檔案",
+      "agentName": "Agent 記憶",
+      "userName": "使用者畫像",
+      "agentDesc": "Hermes 自己記下的筆記，會帶進它的系統提示",
+      "userDesc": "關於你的資訊，會帶進 Hermes 的系統提示",
+      "separatorRule": "每條之間用單獨一行的 § 分隔",
+      "helpTitle": "{{name}}是什麼",
+      "helpBody": "{{desc}}。{{rule}}。",
+      "enableLabel": "啟用 {{name}}",
+      "agentPlaceholder": "專案 acme-web 用 pnpm 和 Node 22。\n§\n部署走 GitHub Actions。",
+      "userPlaceholder": "稱呼：octocat。\n§\n用中文交流，程式碼註解用英文。",
+      "editorLabel": "{{name}}（{{file}}）內容",
+      "unsaved": "有未儲存的修改",
+      "noChanges": "沒有未儲存的修改",
+      "meterLabel": "剩餘字元",
+      "remaining": "剩餘 {{remaining}} / {{limit}} 字元",
+      "overLimitBy": "超出上限 {{over}} 字元，Hermes 下次載入時會截斷",
+      "toggledOn": "已啟用 {{name}}，Hermes 下次啟動或建立新工作階段時生效。",
+      "toggledOff": "已停用 {{name}}，Hermes 下次啟動或建立新工作階段時生效。"
     }
   },
   "env": {
@@ -4334,5 +4342,55 @@
   },
   "coach": {
     "newLayout": "介面改版了：模式移到了每個應用頁的頂部，用量統計和授權中心在左側邊欄。"
+  },
+  "authCenter": {
+    "helpTitle": "授權中心是什麼",
+    "group": {
+      "helpTitle": "{{service}} 帳號怎麼用",
+      "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
+      "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
+      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。"
+    },
+    "addAccount": "新增帳號",
+    "groupMenu": "{{service}} 的更多操作",
+    "accountMenu": "{{login}} 的更多操作",
+    "removeAll": "刪除全部帳號…",
+    "removeAccount": "刪除帳號…",
+    "setDefault": "設為預設",
+    "reauth": "重新登入",
+    "busyHint": "先完成或取消進行中的登入",
+    "default": "預設",
+    "needsReauth": "需要重新登入",
+    "empty": "還沒有登入 {{service}} 帳號。",
+    "signedInOn": "{{date}}登入",
+    "enterpriseServer": "Enterprise Server",
+    "enterpriseDomain": "企業網域",
+    "enterpriseDomainRequired": "先填企業網域，例如 company.ghe.com",
+    "codexReauthNote": "缺少登入憑證（id_token），無法用於 Codex 託管綁定",
+    "xaiReauthNote": "登入憑證已失效，用到它的供應商無法使用",
+    "statusLoading": "正在載入帳號…",
+    "xaiStatusLoadFailed": "無法載入 xAI 帳號狀態，請重試。",
+    "retry": "重試",
+    "loginFailed": "登入沒有完成",
+    "pending": {
+      "add": "新增 {{service}} 帳號 · 等待授權中…",
+      "login": "登入 {{service}} · 等待授權中…",
+      "reauth": "重新登入 {{login}} · 等待授權中…",
+      "enterCode": "在瀏覽器中輸入驗證碼：",
+      "copy": "複製驗證碼",
+      "copied": "驗證碼已複製。",
+      "open": "開啟授權頁面",
+      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
+    },
+    "toast": {
+      "added": "已新增 {{service}} 帳號。",
+      "reauthed": "{{login}} 已重新登入。"
+    },
+    "quota": {
+      "updating": "更新中…",
+      "loading": "正在查詢額度…",
+      "refresh": "重新整理額度",
+      "refreshAria": "重新整理 {{login}} 的額度"
+    }
   }
 }

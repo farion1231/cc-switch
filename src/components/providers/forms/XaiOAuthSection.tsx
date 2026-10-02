@@ -30,25 +30,42 @@ import {
   type ManagedAccountRemoveTarget,
 } from "./ManagedAccountRemoveDialog";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
+import {
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
+import { XaiAccountQuota } from "@/components/settings/auth/AccountQuota";
+import { signedInDate } from "@/components/settings/auth/accountDetails";
 
 interface XaiOAuthSectionProps {
   className?: string;
+  /**
+   * select：供应商表单里（选账号 + 登录）；manage：授权中心里的 xAI 账号区。
+   * 不传时按有没有 onAccountSelect 判断（表单都会传）。
+   */
+  mode?: "manage" | "select";
   selectedAccountId?: string | null;
   onAccountSelect?: (accountId: string | null) => void;
+  /** 授权中心里最后一组的「?」向上弹 */
+  helpSide?: "top" | "bottom";
 }
 
 export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
   className,
+  mode,
   selectedAccountId,
   onAccountSelect,
+  helpSide,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const {
     accounts,
     defaultAccountId,
     hasAnyAccount,
     isAuthenticated,
+    isStatusSuccess,
+    isStatusError,
     pollingState,
     deviceCode,
     error,
@@ -61,10 +78,12 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     logout,
+    refetchStatus,
   } = useXaiOauth();
   const accountUsers = useManagedAccountUsers("xai_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
+  const resolvedMode = mode ?? (onAccountSelect ? "select" : "manage");
 
   const usableAccounts = accounts.filter((account) => !account.requires_reauth);
 
@@ -97,6 +116,108 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     removeAccount(target.accountId);
     if (selectedAccountId === target.accountId) onAccountSelect?.(null);
   };
+
+  const removeDialog = (
+    <ManagedAccountRemoveDialog
+      target={removeTarget}
+      serviceName="xAI"
+      users={
+        removeTarget
+          ? accountUsers(
+              removeTarget.kind === "one"
+                ? [removeTarget.accountId]
+                : removeTarget.accountIds,
+            )
+          : []
+      }
+      othersRemain={accounts.length > 1}
+      pending={isRemovingAccount}
+      onConfirm={confirmRemove}
+      onCancel={() => setRemoveTarget(null)}
+    />
+  );
+
+  if (resolvedMode === "manage") {
+    const rows: GroupAccountRow[] = accounts.map((account) => {
+      const date = signedInDate(account.authenticated_at, i18n.language);
+      const needsReauth = account.requires_reauth;
+      return {
+        id: account.id,
+        login: account.login,
+        details: needsReauth
+          ? [
+              t("authCenter.xaiReauthNote", {
+                defaultValue: "登录凭据已失效，用到它的供应商无法使用",
+              }),
+            ]
+          : date
+            ? [
+                t("authCenter.signedInOn", {
+                  defaultValue: "{{date}}登录",
+                  date,
+                }),
+              ]
+            : [],
+        isDefault: defaultAccountId === account.id,
+        needsReauth,
+        users: accountUsers([account.id]),
+        quota: needsReauth ? undefined : (
+          <XaiAccountQuota accountId={account.id} login={account.login} />
+        ),
+      };
+    });
+
+    return (
+      <ManagedAccountsGroup
+        slug="xai"
+        name="xAI"
+        iconName="xai"
+        help={t("authCenter.group.xaiHelp", {
+          defaultValue:
+            "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
+        })}
+        helpSide={helpSide}
+        accounts={rows}
+        status={isStatusError ? "error" : isStatusSuccess ? "ready" : "loading"}
+        statusErrorText={t("authCenter.xaiStatusLoadFailed", {
+          defaultValue: "无法加载 xAI 账号状态，请重试。",
+        })}
+        onRetryStatus={() => void refetchStatus()}
+        emptyText={t("authCenter.empty", {
+          defaultValue: "还没有登录 {{service}} 账号。",
+          service: "xAI",
+        })}
+        loginLabel={t("xaiOauth.login", "使用 xAI 登录")}
+        onAdd={addAccount}
+        canReauth
+        // 后端不支持指定账号重新登录：发起一次普通登录，用同一个 xAI 账号登录会替换掉旧凭据
+        onReauth={() => addAccount()}
+        onSetDefault={setDefaultAccount}
+        settingDefault={isSettingDefaultAccount}
+        onRemove={(accountId, login) =>
+          setRemoveTarget({ kind: "one", accountId, login })
+        }
+        onRemoveAll={() =>
+          setRemoveTarget({
+            kind: "all",
+            accountIds: accounts.map((account) => account.id),
+          })
+        }
+        removing={isRemovingAccount}
+        login={{
+          starting: isAddingAccount && !isPolling,
+          polling: isPolling,
+          pollingState,
+          deviceCode,
+          error,
+          onCancel: cancelAuth,
+          onRetry: addAccount,
+        }}
+      >
+        {removeDialog}
+      </ManagedAccountsGroup>
+    );
+  }
 
   return (
     <div className={`space-y-4 ${className ?? ""}`}>
@@ -340,7 +461,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
         <Button
           type="button"
           variant="outline"
-          className="w-full text-danger-text hover:text-danger-text"
+          className="w-full"
           onClick={() =>
             setRemoveTarget({
               kind: "all",
@@ -349,27 +470,11 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           }
         >
           <LogOut className="mr-2 h-4 w-4" />
-          {t("xaiOauth.logoutAll", "移除所有 xAI 账号")}
+          {t("xaiOauth.logoutAll", "删除全部 xAI 账号…")}
         </Button>
       )}
 
-      <ManagedAccountRemoveDialog
-        target={removeTarget}
-        serviceName="xAI"
-        users={
-          removeTarget
-            ? accountUsers(
-                removeTarget.kind === "one"
-                  ? [removeTarget.accountId]
-                  : removeTarget.accountIds,
-              )
-            : []
-        }
-        othersRemain={accounts.length > 1}
-        pending={isRemovingAccount}
-        onConfirm={confirmRemove}
-        onCancel={() => setRemoveTarget(null)}
-      />
+      {removeDialog}
     </div>
   );
 };

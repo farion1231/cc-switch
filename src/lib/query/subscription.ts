@@ -176,8 +176,19 @@ export function useXaiOauthQuota(
   meta: ProviderMeta | undefined,
   options: UseCodexOauthQuotaOptions = {},
 ) {
-  const { enabled = true, autoQuery = false } = options;
   const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.XAI_OAUTH);
+  return useXaiOauthQuotaByAccountId(accountId, options);
+}
+
+/**
+ * xAI OAuth 订阅额度（按账号 ID）：授权中心逐个账号显示额度时用。
+ * Query key 与 `useXaiOauthQuota` 一致，绑定同一账号的供应商卡片共用缓存。
+ */
+export function useXaiOauthQuotaByAccountId(
+  accountId: string | null,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
   const query = useQuery({
     queryKey: ["xai_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getXaiOauthQuota(accountId),

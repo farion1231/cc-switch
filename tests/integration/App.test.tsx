@@ -679,11 +679,43 @@ describe("App integration with MSW", () => {
       name: "Hermes",
       hidden: true,
     });
+    const hermesPageTabs = within(hermesTabs).getAllByRole("tab", {
+      hidden: true,
+    });
+    expect(hermesPageTabs.map((tab) => tab.textContent)).toEqual([
+      "appPage.providers",
+      "appPage.memory",
+    ]);
+
+    // 记忆页：页头的 solid 主操作换成「保存」，两份记忆用二级页签
+    fireEvent.click(hermesPageTabs[1]);
+    const header = document.querySelector("header") as HTMLElement;
+    const save = await within(header).findByRole("button", {
+      name: "common.save",
+      hidden: true,
+    });
+    expect(save).toHaveAttribute("aria-disabled", "true");
     expect(
-      within(hermesTabs)
-        .getAllByRole("tab", { hidden: true })
-        .map((tab) => tab.textContent),
-    ).toEqual(["appPage.providers", "appPage.memory"]);
+      within(header).queryByRole("button", {
+        name: /provider.addProvider/,
+        hidden: true,
+      }),
+    ).not.toBeInTheDocument();
+    const memoryTabs = await screen.findByRole("tablist", {
+      name: "hermes.memory.fileTabs",
+      hidden: true,
+    });
+    expect(
+      within(memoryTabs).getAllByRole("tab", { hidden: true }),
+    ).toHaveLength(2);
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("textbox", {
+          name: "hermes.memory.editorLabel",
+          hidden: true,
+        })[0],
+      ).toHaveValue("agent notes"),
+    );
   });
 
   it("opens the old skillsDiscovery view as the Discover segment", async () => {

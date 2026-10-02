@@ -9,14 +9,14 @@ import {
   type QuotaTone,
 } from "./quotaRules";
 
-const TONE_TEXT: Record<QuotaTone, string> = {
+export const TONE_TEXT: Record<QuotaTone, string> = {
   normal: "text-fg-2",
   muted: "text-fg-3",
   warning: "font-medium text-warning-text",
   danger: "font-medium text-danger-text",
 };
 
-const TONE_FILL: Record<QuotaTone, string> = {
+export const TONE_FILL: Record<QuotaTone, string> = {
   normal: "bg-chart-1",
   muted: "bg-chart-1",
   warning: "bg-warning",
@@ -24,7 +24,7 @@ const TONE_FILL: Record<QuotaTone, string> = {
 };
 
 /** 每 30 秒刷新一次「x 分钟前」 */
-function useNow(active: boolean) {
+export function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!active) return;
