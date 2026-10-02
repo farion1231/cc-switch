@@ -44,6 +44,8 @@ export interface SessionMarkdownProps {
   onRevealPath?: (path: string) => void;
   /** 远程图片是否直接加载；默认 false，需用户点击后才发请求 */
   autoLoadRemoteImages?: boolean;
+  /** 本地图片（`![](/abs/path.png)`）的渲染；不传时显示为路径 chip */
+  renderLocalImage?: (path: string, alt: string) => ReactNode;
   className?: string;
 }
 
@@ -587,6 +589,7 @@ interface MarkdownActions {
   openLink: (url: string) => void;
   revealPath?: (path: string) => void;
   autoLoadRemoteImages: boolean;
+  renderLocalImage?: (path: string, alt: string) => ReactNode;
 }
 
 const defaultOpenLink = (url: string) => {
@@ -651,6 +654,24 @@ const MarkdownPathChip = (props: {
 }) => {
   const { revealPath } = useContext(MarkdownActionsContext);
   return <PathChip {...props} onReveal={revealPath} />;
+};
+
+/** 本地图片：调用方提供渲染器（阅读页用 SessionImage）时显示图片，否则退回路径 chip */
+const MarkdownLocalImage = (props: {
+  path: string;
+  alt: string;
+  projectDir?: string;
+  searchQuery?: string;
+}) => {
+  const { renderLocalImage } = useContext(MarkdownActionsContext);
+  if (renderLocalImage) return <>{renderLocalImage(props.path, props.alt)}</>;
+  return (
+    <MarkdownPathChip
+      path={props.path}
+      projectDir={props.projectDir}
+      searchQuery={props.searchQuery}
+    />
+  );
 };
 
 interface RemoteImageProps {
@@ -845,8 +866,9 @@ const renderImage = (
 
   if (target.kind === "path") {
     return (
-      <MarkdownPathChip
+      <MarkdownLocalImage
         path={target.path}
+        alt={getLinkLabelSource(node, source)}
         projectDir={ctx.projectDir}
         searchQuery={ctx.searchQuery}
       />
@@ -1084,6 +1106,7 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   onOpenLink,
   onRevealPath,
   autoLoadRemoteImages = false,
+  renderLocalImage,
   className,
 }: SessionMarkdownProps) {
   const actions = useMemo<MarkdownActions>(
@@ -1091,8 +1114,9 @@ export const SessionMarkdown = memo(function SessionMarkdown({
       openLink: onOpenLink ?? defaultOpenLink,
       revealPath: onRevealPath,
       autoLoadRemoteImages,
+      renderLocalImage,
     }),
-    [autoLoadRemoteImages, onOpenLink, onRevealPath],
+    [autoLoadRemoteImages, onOpenLink, onRevealPath, renderLocalImage],
   );
 
   if (content.length > MARKDOWN_PARSE_LIMIT) {
