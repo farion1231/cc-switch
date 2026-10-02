@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   ProviderForm,
   type ProviderFormProps,
@@ -12,15 +20,35 @@ import type { CodexCopilotApiFormat, ProviderMeta } from "@/types";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
+const copilotAuthState = vi.hoisted(() => ({
+  isStatusSuccess: true,
+  isStatusError: false,
+}));
+const toastError = vi.hoisted(() => vi.fn());
+
+vi.mock("sonner", () => ({
+  toast: { error: toastError, success: vi.fn() },
+}));
+
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: ({
+    selectedAccountId,
     onAccountSelect,
   }: {
+    selectedAccountId?: string | null;
     onAccountSelect?: (accountId: string | null) => void;
   }) => (
-    <button type="button" onClick={() => onAccountSelect?.("copilot-account")}>
-      select-copilot-account
-    </button>
+    <>
+      <output data-testid="selected-copilot-account">
+        {selectedAccountId ?? "default"}
+      </output>
+      <button
+        type="button"
+        onClick={() => onAccountSelect?.("copilot-account")}
+      >
+        select-copilot-account
+      </button>
+    </>
   ),
 }));
 vi.mock("@/components/JsonEditor", () => ({
@@ -45,14 +73,18 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     ...actual,
     useCopilotAuth: () => ({
       isAuthenticated: true,
-      isStatusSuccess: true,
-      isStatusError: false,
+      ...copilotAuthState,
       defaultAccountId: "copilot-account",
       accounts: [
         {
           id: "copilot-account",
           login: "copilot-user",
           is_default: true,
+        },
+        {
+          id: "copilot-secondary",
+          login: "copilot-secondary-user",
+          is_default: false,
         },
       ],
     }),
@@ -149,6 +181,12 @@ async function selectFormat(format: CodexCopilotApiFormat) {
 }
 
 describe("Codex Copilot provider form", () => {
+  beforeEach(() => {
+    copilotAuthState.isStatusSuccess = true;
+    copilotAuthState.isStatusError = false;
+    toastError.mockReset();
+  });
+
   const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
     HTMLElement.prototype,
     "scrollIntoView",
@@ -330,6 +368,128 @@ describe("Codex Copilot provider form", () => {
     });
     expect(requests.at(-1)).not.toHaveProperty("meta");
     expect(requests.at(-1)).not.toHaveProperty("providerId");
+  });
+
+  it.each<{ name: string; meta: ProviderMeta; accountId: string | null }>([
+    {
+      name: "a non-default managed account",
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "github_copilot",
+          accountId: "copilot-secondary",
+        },
+      },
+      accountId: "copilot-secondary",
+    },
+    {
+      name: "a legacy GitHub account binding",
+      meta: { githubAccountId: "copilot-secondary" },
+      accountId: "copilot-secondary",
+    },
+    {
+      name: "a managed binding ahead of a conflicting legacy account",
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "github_copilot",
+          accountId: "copilot-secondary",
+        },
+        githubAccountId: "copilot-account",
+      },
+      accountId: "copilot-secondary",
+    },
+    {
+      name: "an explicit default binding ahead of a stale legacy account",
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "github_copilot",
+        },
+        githubAccountId: "copilot-secondary",
+      },
+      accountId: null,
+    },
+  ])("preserves $name when editing and saving", async ({ meta, accountId }) => {
+    const onSubmit = renderForm({
+      ...meta,
+      providerType: "github_copilot",
+      apiFormat: "openai_responses",
+      codexCopilotApiFormat: "openai_responses",
+    });
+    expect(screen.getByTestId("selected-copilot-account")).toHaveTextContent(
+      accountId ?? "default",
+    );
+    fireEvent.change(screen.getByLabelText("默认模型"), {
+      target: { value: "gpt-5.6-luna" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const saved = onSubmit.mock.calls[0][0];
+    expect(saved.meta?.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "github_copilot",
+      ...(accountId ? { accountId } : {}),
+    });
+    expect(saved.meta?.githubAccountId).toBe(accountId ?? undefined);
+    expect(saved.meta?.providerType).toBe("github_copilot");
+    expect(saved.meta?.codexCopilotApiFormat).toBe("openai_responses");
+    expect(saved.meta?.apiFormat).toBe("openai_responses");
+    const settings = JSON.parse(saved.settingsConfig);
+    expect(settings.auth).toEqual({});
+    expect(settings.config).toContain('wire_api = "responses"');
+    expect(settings.config).toContain('model = "gpt-5.6-luna"');
+  });
+
+  it.each([
+    {
+      name: "loading",
+      isStatusError: false,
+      message: "正在加载 GitHub Copilot 账号状态，请稍后再试。",
+    },
+    {
+      name: "failed",
+      isStatusError: true,
+      message: "无法加载 GitHub Copilot 账号状态，请重试。",
+    },
+  ])("blocks saving while account status is $name", async (status) => {
+    copilotAuthState.isStatusSuccess = false;
+    copilotAuthState.isStatusError = status.isStatusError;
+    const onSubmit = renderForm({
+      providerType: "github_copilot",
+      githubAccountId: "copilot-secondary",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(status.message),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("selected-copilot-account")).toHaveTextContent(
+      "copilot-secondary",
+    );
+  });
+
+  // The mocked section retains the ID so this exercises only the form's guard,
+  // not the real account selector's cleanup when an account disappears.
+  it("blocks submission while the form still holds an unavailable account ID", async () => {
+    const onSubmit = renderForm({
+      providerType: "github_copilot",
+      authBinding: {
+        source: "managed_account",
+        authProvider: "github_copilot",
+        accountId: "copilot-deleted",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "已绑定账号不存在，请重新选择账号",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("keeps legacy cards automatic and shows mapping even with an empty catalog", () => {
