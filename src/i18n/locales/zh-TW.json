@@ -3972,7 +3972,8 @@
     "planExpired": "方案已過期",
     "failed": "額度沒查到",
     "reason": {
-      "loginExpired": "登入已過期"
+      "loginExpired": "登入已過期",
+      "tokenRefreshPending": "權杖待重新整理"
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "點擊重新查詢"

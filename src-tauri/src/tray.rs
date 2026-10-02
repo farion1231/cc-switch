@@ -136,6 +136,7 @@ pub struct TrayTexts {
     pub used_amount: &'static str,
     pub quota_failed: &'static str,
     pub quota_failed_login_expired: &'static str,
+    pub quota_failed_token_refresh_pending: &'static str,
     pub reset_on_date: &'static str,
     pub reset_at_time: &'static str,
     /// chrono 格式串：重置日期
@@ -234,6 +235,7 @@ impl TrayTexts {
                 used_amount: "Used {value}",
                 quota_failed: "Quota unavailable",
                 quota_failed_login_expired: "Quota unavailable: sign-in expired",
+                quota_failed_token_refresh_pending: "Quota unavailable: token refresh pending",
                 reset_on_date: "{label} quota resets {when}",
                 reset_at_time: "{label} quota resets at {when}",
                 date_format: "%b %-d",
@@ -292,6 +294,7 @@ impl TrayTexts {
                 used_amount: "使用 {value}",
                 quota_failed: "残量を取得できません",
                 quota_failed_login_expired: "残量を取得できません：ログインの期限切れ",
+                quota_failed_token_refresh_pending: "残量を取得できません：トークンの更新待ち",
                 reset_on_date: "{label}の枠は {when} にリセット",
                 reset_at_time: "{label}の枠は {when} にリセット",
                 date_format: "%-m月%-d日",
@@ -347,6 +350,7 @@ impl TrayTexts {
                 used_amount: "已使用 {value}",
                 quota_failed: "額度沒查到",
                 quota_failed_login_expired: "額度沒查到：登入已過期",
+                quota_failed_token_refresh_pending: "額度沒查到：權杖待重新整理",
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -402,6 +406,7 @@ impl TrayTexts {
                 used_amount: "已使用 {value}",
                 quota_failed: "额度没查到",
                 quota_failed_login_expired: "额度没查到：登录已过期",
+                quota_failed_token_refresh_pending: "额度没查到：令牌待刷新",
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -518,10 +523,19 @@ struct QuotaLine {
     resets_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuotaFailure {
+    /// 没有更具体的原因（脚本结果只有成功 / 失败）。
+    Other,
+    LoginExpired,
+    /// 访问令牌过期、刷新令牌还在：客户端下次运行时自己会换新的。
+    TokenRefreshPending,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum QuotaView {
     Lines(Vec<QuotaLine>),
-    Failed { login_expired: bool },
+    Failed(QuotaFailure),
 }
 
 struct TierEntry<'a> {
@@ -588,12 +602,11 @@ fn format_subscription_quota(
         // 没有凭据 / 凭据读不懂时不说话（和卡片一致）。
         return match quota.credential_status {
             CredentialStatus::NotFound | CredentialStatus::ParseError => None,
-            CredentialStatus::Expired => Some(QuotaView::Failed {
-                login_expired: true,
-            }),
-            CredentialStatus::Valid => Some(QuotaView::Failed {
-                login_expired: false,
-            }),
+            CredentialStatus::Expired => Some(QuotaView::Failed(QuotaFailure::LoginExpired)),
+            CredentialStatus::RefreshPending => {
+                Some(QuotaView::Failed(QuotaFailure::TokenRefreshPending))
+            }
+            CredentialStatus::Valid => Some(QuotaView::Failed(QuotaFailure::Other)),
         };
     }
     let entries: Vec<TierEntry<'_>> = quota
@@ -692,9 +705,7 @@ fn format_script_result(
     result: &crate::provider::UsageResult,
 ) -> Option<QuotaView> {
     if !result.success {
-        return Some(QuotaView::Failed {
-            login_expired: false,
-        });
+        return Some(QuotaView::Failed(QuotaFailure::Other));
     }
     let data = result.data.as_ref()?;
     // commands::provider 的 token_plan / official_subscription 分支把每档扁平化成一条
@@ -767,12 +778,15 @@ fn quota_note(
     now: chrono::DateTime<chrono::Local>,
 ) -> Option<String> {
     let lines = match view {
-        QuotaView::Failed { login_expired } => {
-            return Some(if *login_expired {
-                texts.quota_failed_login_expired.to_string()
-            } else {
-                texts.quota_failed.to_string()
-            })
+        QuotaView::Failed(reason) => {
+            return Some(
+                match reason {
+                    QuotaFailure::LoginExpired => texts.quota_failed_login_expired,
+                    QuotaFailure::TokenRefreshPending => texts.quota_failed_token_refresh_pending,
+                    QuotaFailure::Other => texts.quota_failed,
+                }
+                .to_string(),
+            )
         }
         QuotaView::Lines(lines) => lines,
     };
@@ -833,6 +847,8 @@ fn provider_uses_official_subscription(provider: &Provider) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 enum TrayUsageSource {
     ManagedCodex(String),
+    /// 客户端自己登录的官方订阅：和供应商卡片读写同一份应用级订阅缓存。
+    Subscription,
     Script,
 }
 
@@ -850,6 +866,10 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
                 .unwrap_or(true);
             return enabled.then_some(TrayUsageSource::ManagedCodex(account_id));
         }
+    }
+    // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
+    if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
+        return Some(TrayUsageSource::Subscription);
     }
     (provider.has_usage_script_enabled()
         && (provider.category.as_deref() != Some("official")
@@ -876,28 +896,24 @@ fn usage_view(
             .with_codex_oauth(account_id, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
-    if source.is_some() {
-        // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
-        if let Some(Some(view)) = usage_cache.with_script(app_type, provider_id, |result| {
-            format_script_result(texts, result)
-        }) {
-            return Some(view);
-        }
-        if provider_uses_official_subscription(provider) {
-            if let Some(Some(view)) = usage_cache
-                .with_subscription(app_type, |quota| format_subscription_quota(texts, quota))
-            {
-                return Some(view);
-            }
-        }
-    } else {
+    if source == Some(TrayUsageSource::Subscription) {
+        // 只读订阅缓存：卡片查到的和托盘悬停查到的都写在这里，两边不会各说各的。
+        return usage_cache
+            .with_subscription(app_type, |quota| format_subscription_quota(texts, quota))
+            .flatten();
+    }
+    // 在用的不是客户端自己的订阅：应用级订阅缓存是别家留下的，不能沿用。
+    usage_cache.invalidate_subscription(app_type);
+    if source.is_none() {
         usage_cache.invalidate_script(app_type, provider_id);
+        return None;
     }
-
-    if !provider_uses_official_subscription(provider) {
-        usage_cache.invalidate_subscription(app_type);
-    }
-    None
+    // 脚本缓存（Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
+    usage_cache
+        .with_script(app_type, provider_id, |result| {
+            format_script_result(texts, result)
+        })
+        .flatten()
 }
 
 // ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────
@@ -2787,6 +2803,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                         .await
                         .map(|_| ())
                     }
+                    TrayUsageSource::Subscription => {
+                        crate::commands::get_subscription_quota(app_clone, state, app_str)
+                            .await
+                            .map(|_| ())
+                    }
                     TrayUsageSource::Script => crate::commands::queryProviderUsage(
                         app_clone,
                         state,
@@ -3178,12 +3199,7 @@ mod tests {
         );
 
         let failed = format_script_result(&zh(), &usage_result(false, vec![]));
-        assert_eq!(
-            failed,
-            Some(QuotaView::Failed {
-                login_expired: false
-            })
-        );
+        assert_eq!(failed, Some(QuotaView::Failed(QuotaFailure::Other)));
         // 查询失败时标题不写额度，原因写在子菜单里。
         assert_eq!(title(failed.clone()), None);
         assert_eq!(
@@ -3197,6 +3213,16 @@ mod tests {
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
             Some("额度没查到：登录已过期")
+        );
+        let pending = SubscriptionQuota::error(
+            "claude",
+            CredentialStatus::RefreshPending,
+            "pending".to_string(),
+        );
+        let view = format_subscription_quota(&zh(), &pending).unwrap();
+        assert_eq!(
+            quota_note(&zh(), &view, now()).as_deref(),
+            Some("额度没查到：令牌待刷新")
         );
         // 没有凭据时不说话。
         let missing =
@@ -3284,7 +3310,7 @@ mod tests {
         );
         assert_eq!(
             tray_usage_source(&AppType::Codex, &codex_provider(None, Some(true))),
-            Some(TrayUsageSource::Script)
+            Some(TrayUsageSource::Subscription)
         );
         let mut legacy = codex_provider(Some(" account-1 "), None);
         legacy.category = None;
@@ -3358,9 +3384,7 @@ mod tests {
         assert_eq!(label(&second), None);
         assert_eq!(
             usage_view(&cache, &texts, &AppType::Codex, &second, &second.id),
-            Some(QuotaView::Failed {
-                login_expired: true
-            })
+            Some(QuotaView::Failed(QuotaFailure::LoginExpired))
         );
         assert_eq!(label(&first).as_deref(), Some("5-hour 60% left"));
     }
@@ -3389,6 +3413,57 @@ mod tests {
             .map(|(text, _)| text)
             .as_deref(),
             Some("5-hour 75% left")
+        );
+    }
+
+    #[test]
+    fn cli_subscription_tray_reads_the_cache_the_card_writes() {
+        let cache = UsageCache::new();
+        let native = codex_provider(None, Some(true));
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &native),
+            Some(TrayUsageSource::Subscription)
+        );
+        let view = || usage_view(&cache, &en(), &AppType::Claude, &native, &native.id);
+
+        // 脚本缓存里的同供应商结果不能盖住订阅缓存。
+        cache.put_script(
+            AppType::Claude,
+            native.id.clone(),
+            usage_result(true, vec![usage_data(Some(TIER_FIVE_HOUR), 99.0)]),
+        );
+        assert_eq!(view(), None);
+        cache.put_subscription(
+            AppType::Claude,
+            SubscriptionQuota::error(
+                "claude",
+                CredentialStatus::RefreshPending,
+                "pending".to_string(),
+            ),
+        );
+        assert_eq!(
+            view(),
+            Some(QuotaView::Failed(QuotaFailure::TokenRefreshPending))
+        );
+        cache.put_subscription(
+            AppType::Claude,
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
+        );
+        assert_eq!(
+            title(view()).map(|(text, _)| text).as_deref(),
+            Some("5-hour 75% left")
+        );
+
+        // xAI OAuth 的额度属于绑定的 SuperGrok 账号：仍走脚本路径，也不沿用应用级订阅缓存。
+        let mut xai = codex_provider(None, Some(true));
+        xai.meta.as_mut().unwrap().provider_type = Some("xai_oauth".to_string());
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &xai),
+            Some(TrayUsageSource::Script)
+        );
+        assert_eq!(
+            title(usage_view(&cache, &en(), &AppType::Claude, &xai, "xai")),
+            None
         );
     }
 

@@ -9,7 +9,10 @@ import {
   tierLine,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
-import { tierLines } from "@/components/SubscriptionQuotaFooter";
+import {
+  quotaFailureReason,
+  tierLines,
+} from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
 import { useXaiOauthQuotaByAccountId } from "@/lib/query/subscription";
@@ -170,10 +173,7 @@ export function subscriptionQuotaState(
   if (!quota.success) {
     return {
       kind: "failed",
-      reason:
-        quota.credentialStatus === "expired"
-          ? t("quota.reason.loginExpired")
-          : quota.error || t("subscription.queryFailed"),
+      reason: quotaFailureReason(t, quota),
     };
   }
   const rows = tierLines(t, quota.tiers || []);

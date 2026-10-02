@@ -689,7 +689,7 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
             CredentialStatus::ParseError,
             message.unwrap_or_else(|| "Failed to parse Grok credentials".to_string()),
         )),
-        CredentialStatus::Expired => {
+        CredentialStatus::Expired | CredentialStatus::RefreshPending => {
             // 即使过期也尝试调用 API（时钟偏差时 token 可能仍有效）
             if let Some(ref token) = token {
                 let result = query_grok_quota(token, "grokbuild", RELOGIN_HINT).await?;

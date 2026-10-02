@@ -74,9 +74,23 @@ export function tierLines(
     });
 }
 
+/** 额度没查到的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
+export function quotaFailureReason(
+  t: TFunction,
+  quota: SubscriptionQuota,
+): string {
+  if (quota.credentialStatus === "expired") {
+    return t("quota.reason.loginExpired");
+  }
+  if (quota.credentialStatus === "refresh_pending") {
+    return t("quota.reason.tokenRefreshPending");
+  }
+  return quota.error || t("subscription.queryFailed");
+}
+
 /**
  * 纯展示组件：渲染 SubscriptionQuota 的状态（not_found / parse_error 不显示；
- * 登录过期 / 查询失败写「额度没查到」+ 原因；成功按档写剩余），支持卡片（inline）和展开两种布局。
+ * 登录过期 / 令牌待刷新 / 查询失败写「额度没查到」+ 原因；成功按档写剩余），支持卡片（inline）和展开两种布局。
  *
  * 数据源由调用方 hook 注入，方便不同的额度后端复用同一套渲染逻辑：
  * - `SubscriptionQuotaFooter`（CLI 凭据路径，by appId）
@@ -97,9 +111,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 
   if (!quota.success) {
     const expired = quota.credentialStatus === "expired";
-    const reason = expired
-      ? t("quota.reason.loginExpired")
-      : quota.error || t("subscription.queryFailed");
+    const reason = quotaFailureReason(t, quota);
     const lines = failedLines(t, reason);
     if (inline) {
       return (
