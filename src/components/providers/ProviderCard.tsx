@@ -472,7 +472,7 @@ export function ProviderCard({
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
-          <div className="max-w-[200px] text-end">
+          <div className="max-w-[160px] text-end">
             <div className="flex items-center justify-end gap-1">
               {isCopilot ? (
                 <CopilotQuotaFooter
@@ -511,14 +511,12 @@ export function ProviderCard({
                   />
                 ) : null
               ) : hasMultiplePlans ? (
-                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">
-                    {t("usage.multiplePlans", {
-                      count: usage?.data?.length || 0,
-                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
-                    })}
-                  </span>
-                </div>
+                <span className="text-caption text-fg-2">
+                  {t("usage.multiplePlans", {
+                    count: usage?.data?.length || 0,
+                    defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                  })}
+                </span>
               ) : (
                 <UsageFooter
                   provider={provider}
@@ -536,7 +534,7 @@ export function ProviderCard({
                     e.stopPropagation();
                     setIsExpanded(!isExpanded);
                   }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  className="shrink-0 rounded-control p-1 text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1"
                   title={
                     isExpanded
                       ? t("usage.collapse", { defaultValue: "收起" })

@@ -3301,12 +3301,12 @@
   },
   "subscription": {
     "title": "Subscription Quota",
-    "fiveHour": "5-Hour",
-    "sevenDay": "7-Day",
+    "fiveHour": "5-hour",
+    "sevenDay": "Weekly",
     "sevenDayFable": "Fable",
-    "sevenDayOpus": "7-Day (Opus)",
-    "sevenDaySonnet": "7-Day (Sonnet)",
-    "thirtyDay": "30-Day",
+    "sevenDayOpus": "Weekly Opus",
+    "sevenDaySonnet": "Weekly Sonnet",
+    "thirtyDay": "30-day",
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
@@ -3581,5 +3581,20 @@
     "exitAllMessage": "Apps in routing or Stack mode get their direct config written back, then the routing service stops. Route targets, queues and Stack lists are kept.",
     "exitAllConfirm": "Switch all back to direct",
     "failoverHelp": "Tune each app's timeouts, retries and circuit breaker here. Queues are managed on each app's Routing tab."
+  },
+  "quota": {
+    "tierLeft": "{{label}} {{value}}% left",
+    "tierUsedUp": "{{label}} used up",
+    "left": "{{value}}% left",
+    "usedUp": "Used up",
+    "balance": "Balance {{value}}",
+    "balanceUsedUp": "Balance used up",
+    "planExpired": "Plan expired",
+    "failed": "Quota unavailable",
+    "reason": {
+      "loginExpired": "Sign-in expired"
+    },
+    "updatedAt": "Updated {{time}}",
+    "clickToRefresh": "Click to check again"
   }
 }

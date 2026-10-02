@@ -3303,10 +3303,10 @@
   "subscription": {
     "title": "訂閱額度",
     "fiveHour": "5 小時",
-    "sevenDay": "7 天",
-    "sevenDayOpus": "7 天 (Opus)",
+    "sevenDay": "每週",
+    "sevenDayOpus": "每週 Opus",
     "sevenDayFable": "Fable",
-    "sevenDaySonnet": "7 天 (Sonnet)",
+    "sevenDaySonnet": "每週 Sonnet",
     "thirtyDay": "30 天",
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
@@ -3582,5 +3582,20 @@
     "exitAllMessage": "在路由和疊加模式下的應用都會寫回直連設定，然後停止路由服務。路由目標、佇列和疊加名單會保留。",
     "exitAllConfirm": "全部回到直連",
     "failoverHelp": "這裡調整各應用的逾時、重試和熔斷。佇列在各應用頁的「路由」分頁裡管理。"
+  },
+  "quota": {
+    "tierLeft": "{{labelSp}}剩餘 {{value}}%",
+    "tierUsedUp": "{{labelSp}}已用完",
+    "left": "剩餘 {{value}}%",
+    "usedUp": "已用完",
+    "balance": "餘額 {{value}}",
+    "balanceUsedUp": "餘額已用完",
+    "planExpired": "方案已過期",
+    "failed": "額度沒查到",
+    "reason": {
+      "loginExpired": "登入已過期"
+    },
+    "updatedAt": "{{time}}更新",
+    "clickToRefresh": "點擊重新查詢"
   }
 }
