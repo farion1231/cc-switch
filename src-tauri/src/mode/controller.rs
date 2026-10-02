@@ -1995,6 +1995,17 @@ mod mode_tests {
         assert_eq!(keys(&live["env"]), keys(&original["env"]));
     }
 
+    /// 进入代理时为直连模型名写下的中和空串（#7808），在之后的契约重发布里会随
+    /// 关键字段清理移除（进程里已经是空串，删掉不改变热加载会话的行为）。
+    /// 比较契约形状时忽略 `env` 里值为空串的键。
+    fn without_neutral_env_blanks(value: &Value) -> Value {
+        let mut value = value.clone();
+        if let Some(env) = value.get_mut("env").and_then(Value::as_object_mut) {
+            env.retain(|_, value| value != &Value::String(String::new()));
+        }
+        value
+    }
+
     #[tokio::test]
     #[serial]
     async fn entering_and_leaving_proxy_mode_only_touches_key_and_exclusive_fields() {
@@ -2016,7 +2027,9 @@ mod mode_tests {
             live["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "claude-sonnet-5"
         );
-        assert!(live["env"].get("ANTHROPIC_MODEL").is_none());
+        // 直连那家的 ANTHROPIC_MODEL 写成空串而不是删除：热加载中的会话立即放下它，
+        // 不会带着旧模型名绕过代理契约（#7808）。
+        assert_eq!(live["env"]["ANTHROPIC_MODEL"], json!(""));
         assert_eq!(live["env"]["DISABLE_TELEMETRY"], "1");
         assert_eq!(live["hooks"], json!({ "Stop": [] }));
         let entered = mode(&AppType::Claude);
@@ -4813,7 +4826,10 @@ model_provider = "c"
 
         // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
-        assert_eq!(fs::read(settings_path()).unwrap(), only_default_bytes);
+        assert_eq!(
+            without_neutral_env_blanks(&settings()),
+            without_neutral_env_blanks(&serde_json::from_slice(&only_default_bytes).unwrap())
+        );
         assert_eq!(
             mode(&AppType::Claude).contract.unwrap(),
             only_default_contract
