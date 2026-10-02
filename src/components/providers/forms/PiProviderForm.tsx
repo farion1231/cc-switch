@@ -63,6 +63,17 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useLatestRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import type { KnownModelMetadata } from "@/lib/modelMetadata";
+import { piPresetModelSources } from "@/config/presetModelMetadata";
+import {
+  metadataFilledAnything,
+  type PiProviderProtocol,
+  piPresetThinkingFor,
+  piSendsReasoningEffort,
+  piThinkingLevelMapFromEfforts,
+} from "./modelMetadataFill";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
 import { translatePiProviderMutationError } from "@/utils/errorUtils";
@@ -285,6 +296,77 @@ function modelDraft(
     hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
   };
+}
+
+/** 这一行实际使用的协议：模型级的 `api`、`baseUrl`、`compat` 覆盖供应商级。 */
+function piModelProtocol(
+  model: PiModelDraft,
+  provider: PiProviderProtocol,
+): PiProviderProtocol {
+  const { passthrough } = model;
+  return {
+    ...provider,
+    api: optionalText(passthrough.api) || provider.api,
+    baseUrl: optionalText(passthrough.baseUrl) || provider.baseUrl,
+    compat: { ...provider.compat, ...asObject(passthrough.compat) },
+  };
+}
+
+/**
+ * 选中拉取到的模型后补上已知参数：数字只补空的，推理和图片输入只往「支持」补。
+ * `thinkingLevelMap` 只在模型还没有映射且支持推理时补：同地址 Pi 预设核对过的
+ * 映射优先，但只在协议相同、且预设依赖的 compat 不与用户已写的值冲突时采用，
+ * 缺的 compat 一并补进模型；否则仅当 Pi 会把档位原样作为 `reasoning_effort` 发出
+ * 时，按 Pi 官方规则从 effort 档位生成。
+ */
+function fillPiModelDraft(
+  model: PiModelDraft,
+  metadata: KnownModelMetadata,
+  provider: PiProviderProtocol,
+): PiModelDraft {
+  const next = { ...model };
+  if (!model.contextWindow.trim() && metadata.contextWindow) {
+    next.contextWindow = String(metadata.contextWindow);
+    next.hasContextWindow = true;
+  }
+  if (!model.maxTokens.trim() && metadata.maxOutputTokens) {
+    next.maxTokens = String(metadata.maxOutputTokens);
+    next.hasMaxTokens = true;
+  }
+  if (metadata.reasoning === true && !model.reasoning) {
+    next.reasoning = true;
+    next.hasReasoning = true;
+  }
+  if (
+    metadata.inputModalities?.includes("image") &&
+    !supportsImageInput(model.input)
+  ) {
+    next.input = withImageInput(model.input, true);
+    next.hasInput = true;
+  }
+  if (!model.hasThinkingLevelMap && next.reasoning) {
+    const effective = piModelProtocol(model, provider);
+    const preset = piPresetThinkingFor(metadata.piThinking, effective);
+    const map =
+      preset?.map ??
+      (piSendsReasoningEffort(effective)
+        ? piThinkingLevelMapFromEfforts(metadata.reasoningEfforts)
+        : undefined);
+    if (map) {
+      next.thinkingLevelMap = map;
+      next.hasThinkingLevelMap = true;
+      if (preset && Object.keys(preset.missingCompat).length > 0) {
+        next.passthrough = {
+          ...model.passthrough,
+          compat: {
+            ...asObject(model.passthrough.compat),
+            ...preset.missingCompat,
+          },
+        };
+      }
+    }
+  }
+  return next;
 }
 
 function newModel(): PiModelDraft {
@@ -857,6 +939,42 @@ export function PiProviderForm({
             }
           : model,
       ),
+    );
+  };
+
+  const commitModelsRef = useLatestRef(commitModels);
+  const protocolRef = useLatestRef<PiProviderProtocol>({
+    api,
+    baseUrl,
+    providerId: providerKey,
+    compat: providerCompat,
+  });
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: piPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+
+  // 选中拉取到的模型：改 ID，再补上它已知的窗口、输出上限、推理、图片输入和思考档位。
+  const selectFetchedModelId = (key: string, id: string) => {
+    const row = modelsRef.current.find((model) => model.key === key);
+    changeModelId(key, id);
+    // 模型单独指向别的地址时，按它实际请求的地址查参数。
+    const rowBaseUrl = row && piModelProtocol(row, protocolRef.current).baseUrl;
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const current = modelsRef.current.find((model) => model.key === key);
+        if (current?.id !== id) return false;
+        const filled = fillPiModelDraft(current, metadata, protocolRef.current);
+        if (!metadataFilledAnything(current, filled)) return false;
+        return commitModelsRef.current(
+          modelsRef.current.map((model) =>
+            model.key === key ? filled : model,
+          ),
+        );
+      },
+      rowBaseUrl,
     );
   };
 
@@ -1578,7 +1696,9 @@ export function PiProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) => changeModelId(model.key, id)}
+                                onSelect={(id) =>
+                                  selectFetchedModelId(model.key, id)
+                                }
                               />
                             )}
                           </div>

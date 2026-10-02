@@ -903,31 +903,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#E96B2C",
   },
   {
-    name: "ETok.ai",
-    providerKey: "cc-switch-etok-ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      name: "ETok",
-      baseUrl: "https://api.etok.ai",
-      api: "anthropic-messages",
-      apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5", {
-          id: "claude-opus-5",
-        }),
-        piModel("anthropic/claude-sonnet-5", {
-          id: "claude-sonnet-5",
-        }),
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
-  },
-  {
     name: "Cubence",
     providerKey: "cc-switch-cubence",
     websiteUrl: "https://cubence.com",

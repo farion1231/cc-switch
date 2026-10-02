@@ -81,6 +81,7 @@ mod tests {
             &ClaudeProjection::of(&row),
             url,
             ProxyAuth::FollowRow,
+            None,
         ))
     }
 

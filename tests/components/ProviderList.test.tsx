@@ -1,17 +1,43 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
+import {
+  QueryClient,
+  QueryClientProvider,
+  focusManager,
+} from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
 import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
 import type { Provider } from "@/types";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { server } from "../msw/server";
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+  },
+}));
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+/** 某张卡片最近一次渲染拿到的 props。 */
+const lastProps = (id: string) =>
+  providerCardRenderSpy.mock.calls
+    .map((call) => call[0])
+    .filter((props) => props.provider.id === id)
+    .at(-1);
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -297,14 +323,407 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    const lastProps = (id: string) =>
-      providerCardRenderSpy.mock.calls
-        .map((call) => call[0])
-        .filter((props) => props.provider.id === id)
-        .at(-1);
     await waitFor(() => expect(lastProps("a")?.isDirectProvider).toBe(true));
     expect(lastProps("b")?.isCurrent).toBe(true);
     expect(lastProps("b")?.isDirectProvider).toBe(false);
+  });
+
+  it("turns cards into add / remove / set-as-default in Claude Stack mode", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    const kimi = createProvider({ id: "kimi", name: "Kimi" });
+    const other = createProvider({ id: "other", name: "Other" });
+    const official = createProvider({
+      id: "official",
+      name: "Official",
+      category: "official",
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, kimi, other, official],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const setCalls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [
+            {
+              providerId: "route",
+              modelIds: ["ccs-claude-route--route-1"],
+              route: true,
+            },
+            {
+              providerId: "kimi",
+              modelIds: ["ccs-claude-kimi--kimi-k3"],
+              route: false,
+            },
+          ],
+        }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_stack_member`,
+        async ({ request }) => {
+          setCalls.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, kimi, other, official }}
+        currentProviderId="route"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(lastProps("kimi")?.isStackMode).toBe(true));
+    expect(lastProps("kimi")?.stackMember?.modelIds).toEqual([
+      "ccs-claude-kimi--kimi-k3",
+    ]);
+    expect(lastProps("other")?.stackMember).toBeUndefined();
+    expect(lastProps("other")?.onToggleStack).toBeTypeOf("function");
+    // 默认那家也在名单里（移除按钮由卡片禁用）；官方账号不能添加。
+    expect(lastProps("route")?.stackMember?.route).toBe(true);
+    expect(lastProps("route")?.onToggleStack).toBeTypeOf("function");
+    expect(lastProps("official")?.onToggleStack).toBeUndefined();
+    // Stack 模式不做故障转移。
+    expect(lastProps("kimi")?.onToggleFailover).toBeUndefined();
+    expect(lastProps("kimi")?.isAutoFailoverEnabled).toBe(false);
+
+    lastProps("kimi")?.onToggleStack(false);
+    await waitFor(() => expect(setCalls).toHaveLength(1));
+    expect(setCalls[0]).toEqual({
+      appType: "claude",
+      providerId: "kimi",
+      enabled: false,
+    });
+  });
+
+  it("reminds to restart Claude Code when Stack models change outside add / remove", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    const kimi = createProvider({ id: "kimi", name: "Kimi" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, kimi],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const routeMember = (modelIds: string[]) => ({
+      providerId: "route",
+      modelIds,
+      route: true,
+    });
+    let members = [
+      routeMember(["ccs-claude-route--route-1"]),
+      {
+        providerId: "kimi",
+        modelIds: ["ccs-claude-kimi--kimi-k3"],
+        route: false,
+      },
+    ];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: true, members }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () =>
+        HttpResponse.json(null),
+      ),
+    );
+    vi.mocked(toast.info).mockClear();
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, kimi }}
+        currentProviderId="route"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(lastProps("kimi")?.stackMember).toBeDefined());
+
+    // 移出名单：保存成功的提示已经说了要重启，不再提示。
+    members = [routeMember(["ccs-claude-route--route-1"])];
+    lastProps("kimi")?.onToggleStack(false);
+    await waitFor(() => expect(lastProps("kimi")?.stackMember).toBeUndefined());
+    expect(toast.info).not.toHaveBeenCalled();
+
+    // 别处改了默认那家的模型（编辑供应商、同步）：回到窗口时重查，提示重启。
+    members = [
+      routeMember(["ccs-claude-route--route-1", "ccs-claude-route--route-2"]),
+    ];
+    try {
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          "provider.stackModelsChanged",
+          expect.anything(),
+        ),
+      );
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+  });
+
+  it("keeps routing-mode cards when Stack mode is off", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    const kimi = createProvider({ id: "kimi", name: "Kimi" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, kimi],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [
+            {
+              providerId: "kimi",
+              modelIds: ["ccs-claude-kimi--kimi-k3"],
+              route: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, kimi }}
+        currentProviderId="route"
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    // 名单留着，但路由模式下不显示：没有添加 / 移除，照常有故障转移。
+    await waitFor(() =>
+      expect(lastProps("kimi")?.onToggleFailover).toBeTypeOf("function"),
+    );
+    expect(lastProps("kimi")?.isStackMode).toBe(false);
+    expect(lastProps("kimi")?.stackMember).toBeUndefined();
+    expect(lastProps("kimi")?.onToggleStack).toBeUndefined();
+  });
+
+  it("never lets ChatGPT accounts be added in Codex Stack mode", async () => {
+    const thirdParty = (id: string) =>
+      createProvider({
+        id,
+        name: id,
+        settingsConfig: {
+          auth: {},
+          config: `model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://${id}.example/v1"\n`,
+        },
+      });
+    const route = thirdParty("route");
+    const deepseek = thirdParty("deepseek");
+    // 早期绑定托管账号的官方卡没有 category，按身份认。
+    const managed = createProvider({
+      id: "managed",
+      name: "ChatGPT",
+      settingsConfig: { auth: {}, config: "" },
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct",
+        },
+      },
+    } as Partial<Provider>);
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route, deepseek, managed],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const setCalls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [
+            {
+              providerId: "route",
+              modelIds: ["ccs-route/gpt-route"],
+              route: true,
+            },
+            {
+              providerId: "deepseek",
+              modelIds: ["ccs-deepseek/deepseek-v4-pro"],
+              route: false,
+            },
+          ],
+          notice: "officialModelsBundled",
+        }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_stack_member`,
+        async ({ request }) => {
+          setCalls.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route, deepseek, managed }}
+        currentProviderId="route"
+        appId="codex"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(lastProps("deepseek")?.stackMember).toBeDefined(),
+    );
+    expect(lastProps("deepseek")?.onToggleStack).toBeTypeOf("function");
+    // 官方模型列表暂未取到：成员卡片带上提示。
+    expect(lastProps("deepseek")?.stackNotice).toBe("officialModelsBundled");
+    // 官方账号在 Stack 模式下只能设为默认。
+    expect(lastProps("managed")?.isStackMode).toBe(true);
+    expect(lastProps("managed")?.onToggleStack).toBeUndefined();
+
+    lastProps("deepseek")?.onToggleStack(false);
+    await waitFor(() => expect(setCalls).toHaveLength(1));
+    expect(setCalls[0]).toEqual({
+      appType: "codex",
+      providerId: "deepseek",
+      enabled: false,
+    });
+  });
+
+  it("warns when Codex clients still use an old model list in Stack mode", async () => {
+    const route = createProvider({ id: "route", name: "Route" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [route],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    let active = true;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active,
+          members: [
+            { providerId: "route", modelIds: [], route: true },
+          ],
+          staleClients: { daemon: true, others: false },
+        }),
+      ),
+    );
+
+    const view = renderWithQueryClient(
+      <ProviderList
+        providers={{ route }}
+        currentProviderId="route"
+        appId="codex"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("proxy.stackMode.codexStale.title"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "proxy.stackMode.codexStale.restart" }),
+    ).toBeInTheDocument();
+    view.unmount();
+
+    // 不在 Stack 模式：不提示。
+    active = false;
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ route }}
+        currentProviderId="route"
+        appId="codex"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(lastProps("route")?.isStackMode).toBe(false),
+    );
+    expect(
+      screen.queryByText("proxy.stackMode.codexStale.title"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides Stack mode outside proxy mode and for apps without it", async () => {
+    const provider = createProvider({ id: "a", name: "A" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    let stackReads = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () => {
+        stackReads += 1;
+        return HttpResponse.json({ active: true, members: [] });
+      }),
+    );
+
+    for (const [appId, isProxyTakeover] of [
+      ["claude", false],
+      ["codex", false],
+      ["gemini", true],
+    ] as const) {
+      providerCardRenderSpy.mockClear();
+      const { unmount } = renderWithQueryClient(
+        <ProviderList
+          providers={{ a: provider }}
+          currentProviderId="b"
+          appId={appId}
+          isProxyTakeover={isProxyTakeover}
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+      const props = providerCardRenderSpy.mock.calls.at(-1)?.[0];
+      expect(props?.isStackMode, appId).toBe(false);
+      expect(props?.onToggleStack, appId).toBeUndefined();
+      expect(props?.stackMember, appId).toBeUndefined();
+      unmount();
+    }
+    expect(stackReads).toBe(0);
   });
 
   it("filters providers with the search input", () => {

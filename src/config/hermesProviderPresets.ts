@@ -1119,30 +1119,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      name: "etok",
-      base_url: "https://api.etok.ai",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        { id: "claude-opus-5", name: "Claude Opus 5" },
-        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
-        { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
-    suggestedDefaults: {
-      model: { default: "claude-opus-5", provider: "etok" },
-    },
-  },
-  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",

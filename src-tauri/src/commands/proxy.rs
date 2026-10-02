@@ -58,19 +58,31 @@ pub async fn get_proxy_takeover_status(
     state.proxy_service.get_takeover_status().await
 }
 
-/// 为指定应用进入 / 退出代理模式
+/// 为指定应用进入 / 退出代理模式。`stack` 为真时进入的是 Stack 模式（和路由模式二选一），
+/// 退出时不看它。
 #[tauri::command]
 pub async fn set_proxy_takeover_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
     enabled: bool,
+    stack: Option<bool>,
 ) -> Result<(), String> {
     let app = require_proxy_app(&app_type)?;
     if enabled {
-        crate::mode::controller::enter(state.inner(), &app).await
+        crate::mode::controller::enter(state.inner(), &app, stack.unwrap_or(false)).await
     } else {
         crate::mode::controller::exit(state.inner(), &app).await
     }
+}
+
+/// 设置里在路由和 Stack 之间换的时候：处于另一种模式（`stack` 为真是 Stack 模式）的
+/// Claude Code、Codex 先退回直连。返回退回直连的应用。
+#[tauri::command]
+pub async fn exit_proxy_apps_in_mode(
+    state: tauri::State<'_, AppState>,
+    stack: bool,
+) -> Result<Vec<String>, String> {
+    crate::mode::controller::exit_apps_in_mode(state.inner(), stack).await
 }
 
 /// 直连指针：代理模式下退出代理时写回的供应商
@@ -81,6 +93,42 @@ pub fn get_direct_provider(
 ) -> Result<Option<String>, String> {
     let app = require_proxy_app(&app_type)?;
     crate::mode::controller::direct_provider_id(state.inner(), &app).map_err(|e| e.to_string())
+}
+
+/// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端
+#[tauri::command]
+pub async fn get_proxy_stack(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<crate::mode::stack::StackView, String> {
+    let app = require_proxy_app(&app_type)?;
+    crate::mode::controller::stack_view_with_clients(state.inner(), &app).await
+}
+
+/// 重启 Codex 的托管守护进程（`codex` TUI 连的那个），让它重读模型目录。会中断守护进程里
+/// 正在运行的任务，只在用户确认之后调。
+#[tauri::command]
+pub async fn restart_codex_app_server_daemon(
+) -> Result<crate::services::provider::codex_client_catalog::RestartOutcome, String> {
+    crate::services::provider::codex_direct::off_runtime(
+        crate::services::provider::codex_client_catalog::restart_daemon,
+    )
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Stack 模型：把一家加入或移出名单（`enabled` 是目标值）。成功时返回客户端看不到或看不全
+/// Stack 模型的提示；失败时 `partial` 为真表示已部分写入，下次操作或重启 CC Switch 时补完。
+#[tauri::command]
+pub async fn set_proxy_stack_member(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+    enabled: bool,
+) -> Result<Option<&'static str>, crate::mode::controller::StackWriteError> {
+    let app = require_proxy_app(&app_type)
+        .map_err(crate::mode::controller::StackWriteError::unchanged)?;
+    crate::mode::controller::set_stack_member(state.inner(), &app, &provider_id, enabled).await
 }
 
 /// 获取代理服务器状态

@@ -1402,36 +1402,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "ETok",
-      options: {
-        baseURL: "https://api.etok.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "claude-opus-5": { name: "Claude Opus 5" },
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
