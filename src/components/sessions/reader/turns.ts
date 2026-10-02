@@ -336,6 +336,19 @@ const buildTurn = (
 
   const steps: TimelineStep[] = [];
   const callSteps = new Map<string, ToolStep>();
+  // 本轮所有调用 id：Claude Code 偶尔先写结果、后写调用记录（异步子代理启动时），
+  // 这种「早到」的结果先挂起，等调用出现再配上，而不是当成孤儿输出
+  const laterCalls = new Set<string>();
+  for (let i = start; i <= end; i += 1) {
+    if (messages[i].injected) continue;
+    blocksOf(i).forEach((block) => {
+      if (block.type === "tool_call" && block.id) laterCalls.add(block.id);
+    });
+  }
+  const earlyResults = new Map<
+    string,
+    { block: ToolResultBlock; messageIndex: number }
+  >();
   let finalCost: StepCost | undefined;
   let segmentStart = 0;
   const finalImages: ImageRef[] = [];
@@ -402,6 +415,13 @@ const buildTurn = (
           };
           if (block.id && !callSteps.has(block.id)) {
             callSteps.set(block.id, step);
+            const early = earlyResults.get(block.id);
+            if (early) {
+              earlyResults.delete(block.id);
+              step.result = early.block;
+              step.resultMessageIndex = early.messageIndex;
+              step.status = early.block.status;
+            }
           }
           steps.push(step);
           return;
@@ -412,6 +432,14 @@ const buildTurn = (
             owner.result = block;
             owner.resultMessageIndex = i;
             owner.status = block.status;
+            return;
+          }
+          if (
+            !owner &&
+            laterCalls.has(block.callId) &&
+            !earlyResults.has(block.callId)
+          ) {
+            earlyResults.set(block.callId, { block, messageIndex: i });
             return;
           }
           steps.push({

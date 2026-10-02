@@ -30,7 +30,7 @@ export const msg = (
   role: string,
   blocks: SessionBlock[],
   extra: Partial<SessionMessage> = {},
-): SessionMessage => ({ role, content: "", blocks, ...extra });
+): SessionMessage => ({ role, blocks, ...extra });
 
 export const text = (value: string): SessionBlock => ({
   type: "text",

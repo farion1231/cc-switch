@@ -320,6 +320,60 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     ]);
   });
 
+  it("配对：结果先于调用写入（Claude 异步子代理）时等调用出现再配上", () => {
+    const [turn] = buildTurns([
+      msg("user", [text("q")]),
+      msg("assistant", [call("a")]),
+      msg("tool", [result("b", "error")]),
+      msg("tool", [result("a")]),
+      msg("assistant", [call("b")]),
+      msg("assistant", [text("done")]),
+    ]);
+    const tools = turn.steps.filter((step) => step.kind === "tool");
+    expect(
+      tools.map((step) => [
+        step.call?.id,
+        step.status,
+        step.resultMessageIndex,
+      ]),
+    ).toEqual([
+      ["a", "success", 3],
+      ["b", "error", 2],
+    ]);
+  });
+
+  it("Codex：子调用 call_id#N、同一消息内调用 + 结果、思考 + 调用", () => {
+    const [turn] = buildTurns(
+      [
+        msg("user", [text("q")]),
+        msg("assistant", [
+          thinking("plan"),
+          call("c1#1"),
+          call("c1#2"),
+          result("c1#1"),
+          result("c1#2", "error"),
+        ]),
+        msg("assistant", [call("ws"), result("ws")]),
+        msg("assistant", [text("done")]),
+      ],
+      { style: AGENT_READER_STYLES.codex },
+    );
+    const flat = turn.steps.flatMap((step) =>
+      step.kind === "merged" ? step.children : [step],
+    );
+    expect(
+      flat.map((step) =>
+        step.kind === "tool" ? [step.call?.id, step.status] : [step.kind],
+      ),
+    ).toEqual([
+      ["thinking"],
+      ["c1#1", "success"],
+      ["c1#2", "error"],
+      ["ws", "success"],
+    ]);
+    expect(turn.final?.text).toBe("done");
+  });
+
   it("思考：空且未加密、无摘要的块跳过", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),
