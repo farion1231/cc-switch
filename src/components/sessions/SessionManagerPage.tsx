@@ -62,9 +62,7 @@ import {
 } from "./utils";
 
 const GROUP_MODE_STORAGE_KEY = "cc-switch.sessionManager.groupMode";
-// 按项目分组时默认全部收起，只记住用户手动展开过的项目。
-// 换了新键：旧的 collapsedProjects 记的是「收起了哪些」，语义相反，直接弃用。
-const EXPANDED_STORAGE_KEY = "cc-switch.sessionManager.expandedProjects";
+const COLLAPSED_STORAGE_KEY = "cc-switch.sessionManager.collapsedProjects";
 
 type AppFilter = SessionAppId | "all";
 type GroupMode = "time" | "project";
@@ -79,10 +77,10 @@ const readGroupMode = (): GroupMode => {
   }
 };
 
-const readExpanded = (): Set<string> => {
+const readCollapsed = (): Set<string> => {
   try {
     const parsed = JSON.parse(
-      window.localStorage.getItem(EXPANDED_STORAGE_KEY) ?? "[]",
+      window.localStorage.getItem(COLLAPSED_STORAGE_KEY) ?? "[]",
     );
     return new Set(
       Array.isArray(parsed)
@@ -148,7 +146,7 @@ export function SessionManagerPage({
   );
   const [query, setQuery] = useState("");
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
-  const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
   const [readerKey, setReaderKey] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(
@@ -177,13 +175,13 @@ export function SessionManagerPage({
   useEffect(() => {
     try {
       window.localStorage.setItem(
-        EXPANDED_STORAGE_KEY,
-        JSON.stringify(Array.from(expanded).sort()),
+        COLLAPSED_STORAGE_KEY,
+        JSON.stringify(Array.from(collapsed).sort()),
       );
     } catch {
       // 同上
     }
-  }, [expanded]);
+  }, [collapsed]);
 
   const piSessionDiscovery = useQuery({
     queryKey: piKeys.sessionDiscovery,
@@ -233,11 +231,6 @@ export function SessionManagerPage({
     providerFilter: appFilter,
   });
   const trimmedQuery = query.trim();
-  // 搜索时全部展开，否则匹配到的会话会藏在收起的项目里
-  const isGroupOpen = useCallback(
-    (key: string) => trimmedQuery !== "" || expanded.has(key),
-    [trimmedQuery, expanded],
-  );
   const matches = useMemo(
     () => sortSessionsByTime(searchSessions(query)),
     [searchSessions, query],
@@ -567,7 +560,7 @@ export function SessionManagerPage({
   };
 
   const toggleGroup = (key: string) => {
-    setExpanded((current) => {
+    setCollapsed((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -710,7 +703,7 @@ export function SessionManagerPage({
           group,
           first: groupIndex === 0,
         });
-        if (!isGroupOpen(group.key)) return;
+        if (collapsed.has(group.key)) return;
         group.sessions.forEach((session) =>
           rows.push({
             kind: "session",
@@ -722,7 +715,7 @@ export function SessionManagerPage({
       });
     }
     return rows;
-  }, [groupMode, timeGroups, projectGroups, isGroupOpen]);
+  }, [groupMode, timeGroups, projectGroups, collapsed]);
 
   const stickyIndexes = useMemo(
     () =>
@@ -757,7 +750,7 @@ export function SessionManagerPage({
     group: (typeof projectGroups)[number],
     first: boolean,
   ) => {
-    const open = isGroupOpen(group.key);
+    const open = !collapsed.has(group.key);
     const fullPath = group.projectDir ? shortenHomePath(group.projectDir) : "";
     const pathHead = fullPath.endsWith(group.label)
       ? fullPath.slice(0, fullPath.length - group.label.length)
