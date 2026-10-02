@@ -108,11 +108,13 @@ fn bench_parse_env_file() {
         .unwrap_or(0);
     let cold_first_chunk_ms = ms(start);
 
+    // 超过缓存字节上限（96MB）的会话不进缓存，再次读取仍是冷解析
     let mut hit_runs = Vec::new();
+    let mut hit_cached = true;
     for _ in 0..3 {
         let start = Instant::now();
-        let hit = load_transcript(&provider, &file).expect("cached load");
-        assert!(hit.cached, "第二次读取应命中缓存");
+        let hit = load_transcript(&provider, &file).expect("second load");
+        hit_cached &= hit.cached;
         let _ = serde_json::to_vec(&TranscriptChunk::Header {
             total: hit.transcript.messages.len(),
             turns: hit.transcript.turns.clone(),
@@ -156,10 +158,15 @@ fn bench_parse_env_file() {
         max_message as f64 / 1e3
     );
     eprintln!(
-        "cold → first chunk {:.1} ms (header {:.1} KB + first chunk {:.1} KB); cache hit → first chunk {:?} ms",
+        "cold → first chunk {:.1} ms (header {:.1} KB + first chunk {:.1} KB); {} → first chunk {:?} ms",
         cold_first_chunk_ms,
         header_bytes as f64 / 1e3,
         first_chunk_bytes as f64 / 1e3,
+        if hit_cached {
+            "cache hit"
+        } else {
+            "NOT cached (over cache cap)"
+        },
         hit_runs
             .iter()
             .map(|v| (v * 100.0).round() / 100.0)
