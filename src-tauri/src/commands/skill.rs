@@ -37,6 +37,15 @@ pub fn get_skill_backups() -> Result<Vec<SkillBackupEntry>, String> {
     SkillService::list_backups().map_err(|e| e.to_string())
 }
 
+/// 获取指定存储位置的实际 SSOT 目录（设置页展示用；不改设置、不建目录，
+/// 遵循配置目录覆盖）
+#[tauri::command]
+pub fn get_skill_storage_dir(location: SkillStorageLocation) -> Result<String, String> {
+    Ok(SkillService::ssot_dir_for(location)
+        .to_string_lossy()
+        .into_owned())
+}
+
 #[tauri::command]
 pub fn delete_skill_backup(backup_id: String) -> Result<bool, String> {
     SkillService::delete_backup(&backup_id).map_err(|e| e.to_string())?;

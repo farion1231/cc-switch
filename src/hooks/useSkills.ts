@@ -39,6 +39,18 @@ export function useSkillBackups() {
   });
 }
 
+/**
+ * 查询指定存储位置的实际 SSOT 目录
+ * key 带上 location：切换存储位置后自动重取，设置页提示始终展示真实路径
+ */
+export function useSkillStorageDir(location: "cc_switch" | "unified") {
+  return useQuery({
+    queryKey: ["skills", "storage-dir", location],
+    queryFn: () => skillsApi.getStorageDir(location),
+    staleTime: Infinity,
+  });
+}
+
 export function useDeleteSkillBackup() {
   const queryClient = useQueryClient();
   return useMutation({
