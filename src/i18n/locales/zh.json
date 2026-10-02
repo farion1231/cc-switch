@@ -3301,12 +3301,12 @@
   },
   "subscription": {
     "title": "订阅额度",
-    "fiveHour": "5小时",
-    "sevenDay": "7天",
+    "fiveHour": "5 小时",
+    "sevenDay": "每周",
     "sevenDayFable": "Fable",
-    "sevenDayOpus": "7天(Opus)",
-    "sevenDaySonnet": "7天(Sonnet)",
-    "thirtyDay": "30天",
+    "sevenDayOpus": "每周 Opus",
+    "sevenDaySonnet": "每周 Sonnet",
+    "thirtyDay": "30 天",
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
@@ -3581,5 +3581,20 @@
     "exitAllMessage": "在路由和叠加模式下的应用都会写回直连配置，然后停止路由服务。路由目标、队列和叠加名单会保留。",
     "exitAllConfirm": "全部回到直连",
     "failoverHelp": "这里调各应用的超时、重试和熔断。队列在各应用页的「路由」页签里管理。"
+  },
+  "quota": {
+    "tierLeft": "{{labelSp}}剩余 {{value}}%",
+    "tierUsedUp": "{{labelSp}}已用完",
+    "left": "剩余 {{value}}%",
+    "usedUp": "已用完",
+    "balance": "余额 {{value}}",
+    "balanceUsedUp": "余额已用完",
+    "planExpired": "套餐已过期",
+    "failed": "额度没查到",
+    "reason": {
+      "loginExpired": "登录已过期"
+    },
+    "updatedAt": "{{time}}更新",
+    "clickToRefresh": "点击重新查询"
   }
 }

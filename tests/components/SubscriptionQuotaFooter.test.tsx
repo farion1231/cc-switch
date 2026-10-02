@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import {
@@ -70,51 +70,66 @@ function renderQuota(tiers: QuotaTier[], inline = true) {
 }
 
 describe("Claude Fable subscription quota", () => {
-  it.each([true, false])(
-    "shows the Fable limit and reset in inline=%s",
-    (inline) => {
-      renderQuota(
-        [
-          ...baseTiers,
-          {
-            name: "seven_day_fable",
-            utilization: 95,
-            resetsAt: "2026-09-12T00:00:00Z",
-          },
-        ],
-        inline,
-      );
-      expect(screen.getByText("12%")).toBeInTheDocument();
-      expect(screen.getByText("25%")).toBeInTheDocument();
-      const row = screen.getByText(/^Fable:?$/).parentElement!;
-      expect(within(row).getByText("95%")).toHaveClass("text-red-500");
-      expect(
-        within(row).getByText(inline ? "2d12h" : "2d12h后重置"),
-      ).toBeInTheDocument();
-    },
-  );
+  it("writes what is left on the card and keeps the two lowest tiers", () => {
+    renderQuota([
+      ...baseTiers,
+      {
+        name: "seven_day_fable",
+        utilization: 95,
+        resetsAt: "2026-09-12T00:00:00Z",
+      },
+    ]);
+    // 三档里留剩余最少的两档；快用完的那档橙色
+    expect(screen.queryByText("5 小时剩余 88%")).not.toBeInTheDocument();
+    expect(screen.getByText("每周剩余 75%")).toHaveClass("text-fg-2");
+    expect(screen.getByText("Fable 剩余 5%")).toHaveClass("text-warning-text");
+    // 重置时间在悬停说明里
+    expect(screen.getByRole("button").getAttribute("title")).toContain(
+      "Fable · 2d12h后重置",
+    );
+  });
 
-  it("shows an unused Fable limit without a reset countdown", () => {
+  it("shows every tier as a bar when expanded", () => {
+    renderQuota(
+      [
+        ...baseTiers,
+        {
+          name: "seven_day_fable",
+          utilization: 100,
+          resetsAt: "2026-09-12T00:00:00Z",
+        },
+      ],
+      false,
+    );
+    expect(
+      screen.getByRole("meter", { name: "5 小时: 剩余 88%" }),
+    ).toHaveAttribute("aria-valuenow", "88");
+    expect(screen.getByText("已用完")).toHaveClass("text-danger-text");
+    expect(screen.getByText("Fable").closest("div")).toHaveAttribute(
+      "title",
+      "Fable · 2d12h后重置",
+    );
+  });
+
+  it("shows an unused Fable limit in the quiet color", () => {
     renderQuota([{ name: "seven_day_fable", utilization: 0, resetsAt: null }]);
-    const row = screen.getByText("Fable:").parentElement!;
-    expect(within(row).getByText("0%")).toHaveClass("text-green-600");
-    expect(row.querySelector("svg")).toBeNull();
+    expect(screen.getByText("Fable 剩余 100%")).toHaveClass("text-fg-2");
   });
 
   it("keeps legacy quotas visible without inventing a Fable limit", () => {
     renderQuota(baseTiers);
-    expect(screen.getByText("12%")).toBeInTheDocument();
-    expect(screen.getByText("25%")).toBeInTheDocument();
+    expect(screen.getByText("5 小时剩余 88%")).toBeInTheDocument();
+    expect(screen.getByText("每周剩余 75%")).toBeInTheDocument();
     expect(screen.queryByText(/Fable/)).not.toBeInTheDocument();
   });
 
   it.each([
-    ["zh-TW", "Fable:"],
-    ["en", "Fable:"],
-    ["ja", "Fable:"],
-  ])("localizes the Fable label in %s", async (language, label) => {
+    ["zh-TW", "Fable 剩餘 63%"],
+    ["en", "Fable 63% left"],
+    ["ja", "Fable 残り 63%"],
+  ])("localizes the Fable line in %s", async (language, text) => {
     await i18n.changeLanguage(language);
     renderQuota([{ name: "seven_day_fable", utilization: 37, resetsAt: null }]);
-    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
   });
 });

@@ -3302,10 +3302,10 @@
   "subscription": {
     "title": "サブスクリプションクォータ",
     "fiveHour": "5時間",
-    "sevenDay": "7日間",
-    "sevenDayOpus": "7日間(Opus)",
+    "sevenDay": "週間",
+    "sevenDayOpus": "週間 Opus",
     "sevenDayFable": "Fable",
-    "sevenDaySonnet": "7日間(Sonnet)",
+    "sevenDaySonnet": "週間 Sonnet",
     "thirtyDay": "30日間",
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
@@ -3581,5 +3581,20 @@
     "exitAllMessage": "ルーティング・Stack モードのアプリに直接接続の設定を書き戻し、ルーティングサービスを停止します。転送先・キュー・Stack のリストは保持されます。",
     "exitAllConfirm": "すべて直接接続に戻す",
     "failoverHelp": "ここでは各アプリのタイムアウト・再試行・サーキットブレーカーを調整します。キューは各アプリページの「ルーティング」タブで管理します。"
+  },
+  "quota": {
+    "tierLeft": "{{label}} 残り {{value}}%",
+    "tierUsedUp": "{{label}} 使い切り",
+    "left": "残り {{value}}%",
+    "usedUp": "使い切り",
+    "balance": "残高 {{value}}",
+    "balanceUsedUp": "残高なし",
+    "planExpired": "プラン期限切れ",
+    "failed": "残量を取得できません",
+    "reason": {
+      "loginExpired": "ログインの期限切れ"
+    },
+    "updatedAt": "{{time}}に更新",
+    "clickToRefresh": "クリックで再取得"
   }
 }
