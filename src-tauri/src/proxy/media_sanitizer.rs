@@ -1195,6 +1195,32 @@ mod tests {
     }
 
     #[test]
+    fn glm_53_flash_preserves_multimodal_image_input() {
+        // Official GLM-5.3-Flash is natively multimodal. It must remain outside
+        // the confirmed text-only registry so proactive media fallback leaves
+        // Chat image_url blocks intact.
+        assert!(!confirmed_text_only_model("glm-5.3-flash"));
+        assert!(!confirmed_text_only_model("zhipu/GLM-5.3-Flash[1M]"));
+
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "glm-5.3-flash",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe" },
+                    { "type": "image_url", "image_url": { "url": "https://example.com/image.png" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 0);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+    }
+
+    #[test]
     fn ignores_non_image_errors() {
         let error = ProxyError::UpstreamError {
             status: 400,
