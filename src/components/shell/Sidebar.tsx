@@ -31,7 +31,7 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { fmtUsd } from "@/components/usage/format";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { DRAG_REGION_ATTR, DRAG_REGION_STYLE } from "@/lib/platform";
+import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
@@ -71,7 +71,8 @@ export function Sidebar(props: SidebarProps) {
       aria-label={t("nav.mainLabel")}
       className={cn(
         "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1 transition-[width] duration-200 ease-out motion-reduce:transition-none",
-        collapsed ? "w-[72px]" : "w-[200px]",
+        // macOS 的红绿灯（新版更大）要约 74px，收起的图标轨在 Mac 上放宽到 84
+        collapsed ? (isMac() ? "w-[84px]" : "w-[72px]") : "w-[200px]",
       )}
     >
       <a
@@ -115,6 +116,53 @@ function SidebarTopBar({
     </HoverTip>
   );
 
+  // macOS 展开：顶条只放红绿灯；下面一行贴近红绿灯放 logo + 名字，收起箭头放在这一行最右边
+  if (!collapsed && isMac()) {
+    return (
+      <>
+        <div
+          className="h-11 shrink-0"
+          {...DRAG_REGION_ATTR}
+          style={DRAG_REGION_STYLE as React.CSSProperties}
+        />
+        <div
+          className="-mt-[18px] flex h-9 shrink-0 items-center gap-2 pe-2 ps-4"
+          {...DRAG_REGION_ATTR}
+          style={DRAG_REGION_STYLE as React.CSSProperties}
+        >
+          <img
+            src={ccswitchLogo}
+            alt=""
+            draggable={false}
+            className="pointer-events-none h-5 w-5 shrink-0"
+          />
+          <span className="pointer-events-none me-auto min-w-0 truncate text-strong font-semibold text-fg-1">
+            CC Switch
+          </span>
+          {toggleButton}
+        </div>
+        <div className="mx-4 mb-1.5 h-px shrink-0 bg-border" />
+      </>
+    );
+  }
+
+  // macOS 的红绿灯占着顶条左边约 70px：图标轨只有 72 宽，按钮挪到顶条下面一行
+  if (collapsed && isMac()) {
+    return (
+      <>
+        <div
+          className="h-11 shrink-0"
+          {...DRAG_REGION_ATTR}
+          style={DRAG_REGION_STYLE as React.CSSProperties}
+        />
+        {/* 往上贴近红绿灯，和展开时品牌行同高（中心 y≈44） */}
+        <div className="-mt-4 flex h-8 shrink-0 items-center justify-center">
+          {toggleButton}
+        </div>
+      </>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -124,8 +172,8 @@ function SidebarTopBar({
       {...DRAG_REGION_ATTR}
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
-      {!collapsed && (
-        // 左上角品牌：图标 + 名字（macOS 的红绿灯已隐藏，和 Windows 一致）。
+      {!collapsed && !isMac() && (
+        // 左上角品牌（Windows / Linux）：图标 + 名字。macOS 左上角留给红绿灯，不放。
         // 图片不接收指针事件，拖它也是在拖窗口
         <span className="pointer-events-none me-auto flex min-w-0 items-center gap-2 ps-1.5">
           <img

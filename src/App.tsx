@@ -37,7 +37,7 @@ import {
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
-import { isMac, isLinux, isWindows } from "@/lib/platform";
+import { isLinux, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -164,12 +164,9 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
-  // Windows / macOS 一律用页头里的应用内窗口按钮（Windows 去掉系统标题栏，macOS 隐藏红绿灯）；
-  // Linux 由设置决定
+  // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
-    isWindows() ||
-    isMac() ||
-    (isLinux() && (settingsData?.useAppWindowControls ?? false));
+    isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
   const visibleApps = useMemo<VisibleApps>(
     () => ({
       ...DEFAULT_VISIBLE_APPS,
@@ -450,8 +447,6 @@ function App() {
 
     const syncWindowDecorations = async () => {
       try {
-        // macOS 不关系统装饰（保留圆角和阴影），红绿灯由 Rust 侧隐藏
-        if (isMac()) return;
         await getCurrentWindow().setDecorations(!useAppWindowControls);
       } catch (error) {
         console.error("[App] Failed to update window decorations", error);

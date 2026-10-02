@@ -1340,10 +1340,6 @@ pub fn run() {
                 // Linux：由设置决定（解决 Wayland 下系统窗口按钮不可用的问题）
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
-                // macOS：隐藏红绿灯，和 Windows 一样用页头里的应用内窗口按钮；
-                // 窗口本身的圆角、阴影、缩放动画都保留（不关 decorations）
-                #[cfg(target_os = "macos")]
-                hide_macos_traffic_lights(&window);
                 // Windows：一律去掉系统标题栏，用页头里的应用内窗口按钮；保留阴影和边缘缩放
                 #[cfg(target_os = "windows")]
                 {
@@ -2330,25 +2326,5 @@ mod tests {
             classify_exit_request(Some(1)),
             ExitRequestAction::CleanupAndExit
         );
-    }
-}
-
-/// 隐藏 macOS 的红绿灯（关闭 / 最小化 / 缩放），窗口控制改用页头里的应用内按钮。
-#[cfg(target_os = "macos")]
-fn hide_macos_traffic_lights(window: &tauri::WebviewWindow) {
-    use objc2_app_kit::{NSWindow, NSWindowButton};
-    let Ok(ns_window) = window.ns_window() else {
-        return;
-    };
-    // SAFETY: Tauri 返回的是这个窗口有效的 NSWindow 指针，setup 在主线程上执行
-    let ns_window: &NSWindow = unsafe { &*(ns_window as *const NSWindow) };
-    for button in [
-        NSWindowButton::NSWindowCloseButton,
-        NSWindowButton::NSWindowMiniaturizeButton,
-        NSWindowButton::NSWindowZoomButton,
-    ] {
-        if let Some(button) = ns_window.standardWindowButton(button) {
-            button.setHidden(true);
-        }
     }
 }
