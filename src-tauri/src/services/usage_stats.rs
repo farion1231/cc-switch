@@ -1905,10 +1905,10 @@ impl Database {
         let detail_sql = format!(
             "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-                    is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model,
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
                     l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
@@ -3794,6 +3794,68 @@ mod tests {
         assert_eq!(summary.total_requests, 20);
         assert_eq!(summary.total_input_tokens, 2000);
         assert_eq!(summary.total_output_tokens, 1000);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_request_detail_reads_proxy_and_session_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = local_ts(2026, 6, 10, 12, 0, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            // providers 也有 created_at / cost_multiplier 列：详情查询的列必须带表别名，
+            // 否则 SQLite 报 ambiguous column name，整个命令失败。
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, created_at) VALUES
+                 ('prov-a', 'claude', 'Packy', '{}', 1)",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "a-1",
+                "claude",
+                "prov-a",
+                "claude-sonnet-4-6",
+                "proxy",
+                ts,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "1.0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "session:msg_1",
+                "claude",
+                "_session",
+                "claude-sonnet-4-6",
+                "session_log",
+                ts,
+                999,
+                99,
+                0,
+                0,
+                200,
+                "0.5",
+            )?;
+        }
+
+        let proxy = db.get_request_detail("a-1")?.expect("proxy row");
+        assert_eq!(proxy.provider_name.as_deref(), Some("Packy"));
+        assert_eq!(proxy.created_at, ts);
+        assert_eq!(proxy.input_tokens, 100);
+
+        let session = db
+            .get_request_detail("session:msg_1")?
+            .expect("session row");
+        assert_eq!(session.provider_name.as_deref(), Some("Claude (Session)"));
+        assert_eq!(session.created_at, ts);
+
+        assert!(db.get_request_detail("missing")?.is_none());
 
         Ok(())
     }
