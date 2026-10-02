@@ -5296,7 +5296,8 @@ mod tests {
     }
 
     #[test]
-    fn prevention_skipped_when_media_fallback_off() {        // 关闭 request_media_fallback：即使名单命中也不预替换。
+    fn prevention_skipped_when_media_fallback_off() {
+        // 关闭 request_media_fallback：即使名单命中也不预替换。
         let fwd = forwarder_with_rectifier(RectifierConfig {
             request_media_fallback: false,
             ..RectifierConfig::default()

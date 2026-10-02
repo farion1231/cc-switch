@@ -10,6 +10,19 @@ use serde_json::{json, Value};
 
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 
+/// 图片预算模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageBudgetMode {
+    /// 能力降级（text-only 模型）：无条件剥离一切图片，包括工具输出里经
+    /// `strip_media_from_tool_value` 识别的附件化媒体。
+    Capability,
+    /// 数量上限（per-provider）：只按预算剥离会话图片，**不动**工具输出的
+    /// 附件化媒体——那里的剥离是能力语义（"这个模型根本看不了图"），
+    /// 与"这个请求图太多了"是两件事。数量限制把预算内的工具图片一起删掉
+    /// 会让模型读不到工具截图，是过度删除（PR #7793 审查意见）。
+    Count,
+}
+
 /// 图片预算：按文档顺序保留前 N 张，其余的标记替换。
 ///
 /// 用于「请求整流：图片数量上限」——部分上游（如阶跃星辰）对单次请求的图片
@@ -19,6 +32,7 @@ pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 /// 「这段对话里出现过多少张图」一致，与遍历路径无关。
 struct ImageBudget {
     remaining: usize,
+    mode: ImageBudgetMode,
 }
 
 impl ImageBudget {
@@ -29,7 +43,23 @@ impl ImageBudget {
     /// 这是本改动第一版踩过的坑，`replace_all_budget_replaces_every_image_like_before`
     /// 用例专门守住这一点。
     fn replace_all() -> Self {
-        Self { remaining: 0 }
+        Self {
+            remaining: 0,
+            mode: ImageBudgetMode::Capability,
+        }
+    }
+
+    /// 保留前 `keep` 张的数量上限预算。
+    fn keep_first(keep: usize) -> Self {
+        Self {
+            remaining: keep,
+            mode: ImageBudgetMode::Count,
+        }
+    }
+
+    /// 是否该走工具媒体的无条件清理（仅能力降级模式）。
+    fn strips_tool_media(&self) -> bool {
+        self.mode == ImageBudgetMode::Capability
     }
 
     /// 消耗一次额度：仍有余量返回 true（保留该图片），否则 false（应替换）。
@@ -47,12 +77,12 @@ impl ImageBudget {
 /// 的图片块替换为 [`UNSUPPORTED_IMAGE_MARKER`]，返回剥离张数。
 ///
 /// 覆盖 Anthropic `messages`、OpenAI Responses `input`、Gemini `contents`
-/// 三处会话图片（含 tool_result 内的图片）。`keep == 0` 表示全部剥离。
+/// 三处会话图片。`keep == 0` 表示全部剥离。
 ///
-/// 注意：tool output 里经 `strip_media_from_tool_value` 的附件化媒体不在
-/// 本函数的遍历内，那批图片不进此预算——见 issue（StepFun 图片上限）。
+/// **不处理**工具输出里经 `strip_media_from_tool_value` 识别的附件化媒体：那类
+/// 剥离属于能力语义（模型看不了图），数量上限不该把预算内的工具截图也删掉。
 pub fn strip_images_beyond_first(body: &mut Value, keep: usize) -> usize {
-    replace_images_in_body_with_budget(body, &mut ImageBudget { remaining: keep })
+    replace_images_in_body_with_budget(body, &mut ImageBudget::keep_first(keep))
 }
 
 /// Replace image blocks before sending when the routed model is text-only.
@@ -212,19 +242,24 @@ fn replace_images_in_message(message: &mut Value, budget: &mut ImageBudget) -> u
         // including Anthropic cache_control on the replacement text block.
         // The shared traversal then handles JSON strings, MCP wrappers, and
         // loose data-URL shapes that the legacy recursion does not recognize.
+        //
+        // 工具媒体的无条件清理只发生在能力降级模式下；数量上限模式到此为止，
+        // 否则预算内的工具截图会被一并删掉（PR #7793 审查意见）。
         let mut replaced = replace_images_in_content(content, budget);
-        let replacement_block = json!({
-            "type":"text",
-            "text":UNSUPPORTED_IMAGE_MARKER
-        });
-        let mut discarded_media = Vec::new();
-        replaced += strip_media_from_tool_value(
-            content,
-            &mut discarded_media,
-            ToolMediaScope::ImagesOnly,
-            &replacement_block,
-            UNSUPPORTED_IMAGE_MARKER,
-        );
+        if budget.strips_tool_media() {
+            let replacement_block = json!({
+                "type":"text",
+                "text":UNSUPPORTED_IMAGE_MARKER
+            });
+            let mut discarded_media = Vec::new();
+            replaced += strip_media_from_tool_value(
+                content,
+                &mut discarded_media,
+                ToolMediaScope::ImagesOnly,
+                &replacement_block,
+                UNSUPPORTED_IMAGE_MARKER,
+            );
+        }
         replaced
     } else {
         replace_images_in_content(content, budget)
@@ -260,20 +295,24 @@ fn replace_images_in_content_with_text_type(
                 // payload-aware traversal. This makes replacement a superset
                 // of detection and preserves cache_control on Anthropic image
                 // blocks, while the second pass covers alternate tool shapes.
+                //
+                // 工具媒体清理同样只发生在能力降级模式下。
                 replaced +=
                     replace_images_in_content_with_text_type(nested_content, text_type, budget);
-                let replacement_block = json!({
-                    "type":text_type,
-                    "text":UNSUPPORTED_IMAGE_MARKER
-                });
-                let mut discarded_media = Vec::new();
-                replaced += strip_media_from_tool_value(
-                    nested_content,
-                    &mut discarded_media,
-                    ToolMediaScope::ImagesOnly,
-                    &replacement_block,
-                    UNSUPPORTED_IMAGE_MARKER,
-                );
+                if budget.strips_tool_media() {
+                    let replacement_block = json!({
+                        "type":text_type,
+                        "text":UNSUPPORTED_IMAGE_MARKER
+                    });
+                    let mut discarded_media = Vec::new();
+                    replaced += strip_media_from_tool_value(
+                        nested_content,
+                        &mut discarded_media,
+                        ToolMediaScope::ImagesOnly,
+                        &replacement_block,
+                        UNSUPPORTED_IMAGE_MARKER,
+                    );
+                }
             } else {
                 replaced +=
                     replace_images_in_content_with_text_type(nested_content, text_type, budget);
@@ -376,6 +415,12 @@ fn replace_images_in_gemini_part(part: &mut Value, budget: &mut ImageBudget) -> 
         return 0;
     };
 
+    // Count-cap mode leaves functionResponse media alone, same reasoning as the
+    // other tool-output branches (PR #7793 review).
+    if !budget.strips_tool_media() {
+        return 0;
+    }
+
     let before = media_parts.len();
     media_parts.retain(|media_part| !gemini_part_has_image(media_part));
     let replaced = before.saturating_sub(media_parts.len());
@@ -438,18 +483,22 @@ fn replace_images_in_responses_input_item(item: &mut Value, budget: &mut ImageBu
     if let Some(output) = item.get_mut("output") {
         // The image-capability fallback deliberately strips images only.
         // Tool-output files/audio remain a known unsupported-modality gap.
-        let replacement_block = json!({
-            "type": "input_text",
-            "text": UNSUPPORTED_IMAGE_MARKER
-        });
-        let mut discarded_media = Vec::new();
-        replaced += strip_media_from_tool_value(
-            output,
-            &mut discarded_media,
-            ToolMediaScope::ImagesOnly,
-            &replacement_block,
-            UNSUPPORTED_IMAGE_MARKER,
-        );
+        // Count-cap mode skips this: an over-budget request should not also
+        // delete an in-budget tool screenshot (PR #7793 review).
+        if budget.strips_tool_media() {
+            let replacement_block = json!({
+                "type": "input_text",
+                "text": UNSUPPORTED_IMAGE_MARKER
+            });
+            let mut discarded_media = Vec::new();
+            replaced += strip_media_from_tool_value(
+                output,
+                &mut discarded_media,
+                ToolMediaScope::ImagesOnly,
+                &replacement_block,
+                UNSUPPORTED_IMAGE_MARKER,
+            );
+        }
     }
 
     replaced
@@ -666,6 +715,59 @@ mod tests {
 
         assert_eq!(count, 3);
         assert!(remaining_image_tags(&body).is_empty());
+    }
+
+    /// role=tool 的单张附件化图片（Anthropic tool_result 形态）。
+    fn tool_role_image_body() -> Value {
+        json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "tool_use", "id": "t1", "name": "Bash", "input": {} }]
+            }, {
+                "role": "tool",
+                "tool_use_id": "t1",
+                "content": [{
+                    "type": "image",
+                    "source": { "type": "base64", "media_type": "image/png", "data": "abc" }
+                }]
+            }]
+        })
+    }
+
+    #[test]
+    fn count_cap_leaves_a_single_tool_image_alone() {
+        // PR #7793 审查意见：budget=70、整笔请求只有 1 张工具截图时，它不该被
+        // 数量上限路径删掉。工具媒体的剥离是能力语义，与"图太多了"是两件事。
+        let mut body = tool_role_image_body();
+        let original = body.clone();
+
+        assert_eq!(strip_images_beyond_first(&mut body, 70), 0);
+        assert_eq!(body, original, "预算内的工具截图必须原样保留");
+    }
+
+    #[test]
+    fn count_cap_still_keeps_user_images_before_the_budget() {
+        // 普通用户图片仍受预算约束（与工具图片同文档顺序）。
+        let mut body = json!({
+            "model": "step-3",
+            "messages": [{
+                "role": "user",
+                "content": [image_block("a"), image_block("b"), image_block("c")]
+            }]
+        });
+
+        assert_eq!(strip_images_beyond_first(&mut body, 2), 1);
+        assert_eq!(remaining_image_tags(&body), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn capability_mode_still_strips_tool_media() {
+        // 能力降级（"模型看不了图"）必须保持原语义：连工具截图一起剥。
+        let mut body = tool_role_image_body();
+
+        assert_eq!(replace_image_blocks_with_marker(&mut body), 1);
+        assert!(!contains_image_blocks(&body));
     }
 
     #[test]
