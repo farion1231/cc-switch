@@ -1544,6 +1544,8 @@ pub fn run() {
             commands::resync_skills_to_apps,
             commands::update_skill,
             commands::migrate_skill_storage,
+            commands::get_cc_switch_skills_dir,
+            commands::open_cc_switch_skills_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
             commands::get_skills,
@@ -1568,6 +1570,7 @@ pub fn run() {
             commands::get_app_mode,
             commands::take_startup_attach_failures,
             tray::take_tray_navigation,
+            tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,
             commands::get_proxy_status,

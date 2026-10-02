@@ -14,7 +14,8 @@ use crate::services::skill::{
 use crate::store::AppState;
 use std::str::FromStr;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
@@ -176,6 +177,31 @@ pub async fn migrate_skill_storage(
     app_state: State<'_, AppState>,
 ) -> Result<MigrationResult, String> {
     SkillService::migrate_storage(&app_state.db, target).map_err(|e| e.to_string())
+}
+
+/// CC Switch 目录下放 Skill 主副本的位置（改过配置目录就是改后的）
+fn cc_switch_skills_dir() -> std::path::PathBuf {
+    crate::config::get_app_config_dir().join("skills")
+}
+
+/// 「存储与同步」里显示的 CC Switch 目录路径
+#[tauri::command]
+pub async fn get_cc_switch_skills_dir() -> Result<String, String> {
+    Ok(cc_switch_skills_dir().to_string_lossy().to_string())
+}
+
+/// 在系统文件管理器里打开 CC Switch 目录下的 Skills 目录（不存在就先建）
+#[tauri::command]
+pub async fn open_cc_switch_skills_dir(handle: AppHandle) -> Result<bool, String> {
+    let dir = cc_switch_skills_dir();
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开文件夹失败: {e}"))?;
+    Ok(true)
 }
 
 /// 搜索 skills.sh 公共目录

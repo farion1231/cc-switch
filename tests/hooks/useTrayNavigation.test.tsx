@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 import {
   parseTrayNavigation,
+  useTrayAppPageSeen,
   useTrayNavigation,
 } from "@/hooks/useTrayNavigation";
 import { server } from "../msw/server";
@@ -86,5 +87,28 @@ describe("useTrayNavigation", () => {
         providerId: "copilot",
       }),
     );
+  });
+});
+
+describe("useTrayAppPageSeen", () => {
+  it("reports the app page when shown and when the window regains focus", async () => {
+    const seen: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/tray_app_page_seen`, async ({ request }) => {
+        seen.push(await request.json());
+        return HttpResponse.json(null);
+      }),
+    );
+    const { rerender } = renderHook(
+      ({ app }: { app: "codex" | null }) => useTrayAppPageSeen(app),
+      { initialProps: { app: null as "codex" | null } },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([]);
+
+    rerender({ app: "codex" });
+    await waitFor(() => expect(seen).toEqual([{ appType: "codex" }]));
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(seen).toHaveLength(2));
   });
 });

@@ -11,20 +11,36 @@ export interface PresetFamilyInfo {
   name: string;
   /** 名称需要翻译时用的 i18n key */
   nameKey?: string;
+  /** 版本的显示顺序（设计稿顺序）；不写或没列到的版本按预设文件顺序排在后面 */
+  versionOrder?: readonly PresetVersionKey[];
 }
 
 export const PRESET_FAMILIES = {
   "aws-bedrock": { name: "AWS Bedrock" },
   "baidu-qianfan": { name: "Baidu Qianfan" },
   compshare: { name: "Compshare", nameKey: "providerForm.presets.ucloud" },
-  kimi: { name: "Kimi" },
+  kimi: {
+    name: "Kimi",
+    versionOrder: ["paygCn", "codingCn", "paygIntl", "codingIntl"],
+  },
   minimax: { name: "MiniMax" },
   qianwen: { name: "千问AI平台" },
   qwencloud: { name: "QwenCloud" },
   siliconflow: { name: "SiliconFlow" },
   stepfun: { name: "StepFun" },
   sudocode: { name: "SudoCode" },
-  tencent: { name: "Tencent Token Plan" },
+  tencent: {
+    name: "Tencent Cloud",
+    nameKey: "providerPreset.family.tencent",
+    versionOrder: [
+      "tokenPlanCn",
+      "tokenPlanIntl",
+      "enterpriseLiteCn",
+      "enterpriseLiteIntl",
+      "enterpriseProCn",
+      "enterpriseProIntl",
+    ],
+  },
   volcengine: {
     name: "Volcengine",
     nameKey: "providerPreset.family.volcengine",

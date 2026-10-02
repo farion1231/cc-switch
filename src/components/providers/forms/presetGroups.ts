@@ -146,7 +146,11 @@ export function groupPresetRows(entries: PresetEntry[]): PresetRowItem[] {
     if (family && versions && versions.length > 1) {
       if (done.has(family)) continue;
       done.add(family);
-      rows.push({ key: `family:${family}`, family, versions });
+      rows.push({
+        key: `family:${family}`,
+        family,
+        versions: sortFamilyVersions(family, versions),
+      });
     } else {
       rows.push({ key: entry.id, versions: [entry] });
     }
@@ -162,7 +166,22 @@ export function presetVersions(
   const family = entry.preset.family;
   if (!family) return [entry];
   const versions = entries.filter((item) => item.preset.family === family);
-  return versions.length > 1 ? versions : [entry];
+  return versions.length > 1 ? sortFamilyVersions(family, versions) : [entry];
+}
+
+/** 按 PRESET_FAMILIES 里的 versionOrder 排版本；没列到的保持文件顺序排在后面 */
+function sortFamilyVersions(
+  family: PresetFamilyId,
+  versions: PresetEntry[],
+): PresetEntry[] {
+  const order: readonly string[] =
+    (PRESET_FAMILIES[family] as PresetFamilyInfo).versionOrder ?? [];
+  if (order.length === 0) return versions;
+  const rank = (entry: PresetEntry) => {
+    const index = order.indexOf(entry.preset.versionKey ?? "");
+    return index === -1 ? order.length : index;
+  };
+  return [...versions].sort((a, b) => rank(a) - rank(b));
 }
 
 export function familyDisplayName(family: PresetFamilyId, t: Translate) {

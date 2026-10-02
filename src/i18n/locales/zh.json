@@ -741,25 +741,6 @@
       "showProfileSwitcher": "显示项目切换",
       "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
     },
-    "skillStorage": {
-      "title": "Skills 存储位置",
-      "description": "选择 CC Switch 存放 Skills 主副本的目录",
-      "ccSwitch": "CC Switch",
-      "unified": "~/.agents/skills",
-      "ccSwitchHint": "技能存储在 ~/.cc-switch/skills/，由 CC Switch 统一管理并同步到各应用。",
-      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（Claude Code、Codex、Gemini CLI 等）可直接发现此目录中的技能。",
-      "confirmTitle": "迁移技能存储",
-      "confirmMessage": "将移动 {{count}} 个技能到新位置，是否继续？",
-      "migrationSuccess": "已成功迁移 {{count}} 个技能",
-      "migrationPartial": "迁移了 {{migrated}} 个技能，{{errors}} 个失败，请查看日志"
-    },
-    "skillSync": {
-      "title": "Skills 同步方式",
-      "description": "选择 Skills 的文件同步策略",
-      "symlink": "软连接",
-      "copy": "文件复制",
-      "symlinkHint": "软连接节省磁盘空间并支持实时同步。注意：Windows 可能需要管理员权限或开启开发者模式"
-    },
     "terminal": {
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
@@ -1821,7 +1802,8 @@
     "matchedVersions": "匹配：{{name}} 等 {{n}} 个版本",
     "versionLabel": "版本",
     "family": {
-      "volcengine": "火山引擎"
+      "volcengine": "火山引擎",
+      "tencent": "腾讯云"
     },
     "version": {
       "payg": "按量付费",
@@ -3049,10 +3031,30 @@
       "open": "存储与同步…",
       "resync": "立即重新同步",
       "resyncing": "正在重新同步…",
-      "resyncHint": "修改只对之后启用或更新的 Skill 生效。点「立即重新同步」，已启用的 Skill 会按当前方式重新放进各应用的 Skills 目录。",
+      "resyncHint": "修改只对之后启用或更新的 Skill 生效。要让已启用的 Skill 也换成当前方式，点「立即重新同步」。",
       "resyncDone": "已按当前方式把 Skill 重新同步到各应用",
       "resyncPartial": "{{count}} 个应用没有同步完整：{{apps}}",
-      "resyncSkillItem": "{{directory}}：{{error}}"
+      "resyncSkillItem": "{{directory}}：{{error}}",
+      "locationTitle": "主副本放在",
+      "locationCcSwitch": "CC Switch 目录",
+      "locationUnified": "通用目录",
+      "openFolder": "打开",
+      "openFolderAria": "打开 {{path}}",
+      "unifiedWarning": "Codex、Gemini CLI、OpenCode 等会直接读这个目录，各应用的开关对它们不再完全生效。",
+      "move": "移动并切换…",
+      "moving": "正在移动…",
+      "moveConfirmTitle": "把 {{count}} 个 Skill 移到 {{path}}？",
+      "moveConfirmBody": "会逐个移动主副本，再让各应用里的链接指向新位置。移动完成前请不要退出 CC Switch。",
+      "moveConfirmButton": "移动并切换",
+      "moveDone": "已把 {{count}} 个 Skill 移到 {{path}}",
+      "movePartial": "移动了 {{migrated}} 个 Skill，{{errors}} 个失败，请查看日志",
+      "syncTitle": "同步到各应用的方式",
+      "syncAuto": "自动：优先用软链接，失败时复制（推荐）",
+      "syncSymlink": "只用软链接",
+      "syncSymlinkDesc": "Windows 需要开启开发者模式",
+      "syncCopy": "只用复制",
+      "syncCopyDesc": "占用更多空间，更新后会重新复制",
+      "moveHint": "切换位置会把 {{count}} 个 Skill 移动过去。"
     },
     "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
   },
