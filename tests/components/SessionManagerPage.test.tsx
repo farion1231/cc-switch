@@ -346,14 +346,18 @@ describe("SessionManagerPage", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "返回会话列表" })).toBeVisible();
     expect(await screen.findByText("alpha question")).toBeInTheDocument();
-    expect(screen.getByText("shell")).toBeInTheDocument();
     expect(screen.getByText("const a = 1;")).toBeInTheDocument();
+    // 工具调用和输出合并进执行过程，默认折叠成一行摘要；展开后能看到
+    expect(screen.queryByText("shell")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^展开执行过程/ }));
+    expect(screen.getByText("shell")).toBeInTheDocument();
     // 列表藏起来了
     expect(screen.queryByRole("region", { name: "会话列表" })).toBeNull();
 
     // 只看对话：工具调用隐藏
-    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("switch", { name: "只看对话" }));
     expect(screen.queryByText("shell")).not.toBeInTheDocument();
+    expect(screen.getByText("alpha question")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "下一个会话" }));
     expect(

@@ -18,7 +18,6 @@ import { useSessionSearch } from "@/hooks/useSessionSearch";
 import {
   piKeys,
   useDeleteSessionMutation,
-  useSessionMessagesQuery,
   useSessionsQuery,
   useSettingsQuery,
 } from "@/lib/query";
@@ -44,7 +43,8 @@ import { isMac } from "@/lib/platform";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import { SessionItem, sessionMenuItemClass } from "./SessionItem";
-import { SessionReader } from "./SessionReader";
+import { SessionReader } from "./reader/SessionReader";
+import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
 import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
 import {
   canDeleteSession,
@@ -287,7 +287,7 @@ export function SessionManagerPage({
     }
   }, [readerKey, readerSession, isLoading]);
 
-  const messagesQuery = useSessionMessagesQuery(
+  const transcript = useSessionTranscript(
     readerSession?.providerId,
     readerSession?.sourcePath,
   );
@@ -522,7 +522,16 @@ export function SessionManagerPage({
         .filter((result) => result.success)
         .forEach((result) => {
           queryClient.removeQueries({
-            queryKey: ["sessionMessages", result.providerId, result.sourcePath],
+            queryKey: sessionKeys.messages(
+              result.providerId,
+              result.sourcePath,
+            ),
+          });
+          queryClient.removeQueries({
+            queryKey: sessionKeys.transcript(
+              result.providerId,
+              result.sourcePath,
+            ),
           });
         });
 
@@ -583,7 +592,7 @@ export function SessionManagerPage({
   };
 
   const reloadMessages = async () => {
-    const result = await messagesQuery.refetch();
+    const result = (await transcript.refetch()) as { error?: unknown };
     if (!result.error) {
       toast.success(
         t("sessionManager.reloaded", { defaultValue: "已重新读取这个会话" }),
@@ -1005,9 +1014,7 @@ export function SessionManagerPage({
             key={readerKey}
             session={readerSession}
             appName={appName(readerSession.providerId)}
-            messages={messagesQuery.data ?? []}
-            isLoading={messagesQuery.isLoading}
-            error={messagesQuery.error}
+            transcript={transcript}
             listQuery={trimmedQuery}
             launchTerminal={terminalName}
             hasPrev={readerIndex > 0}
