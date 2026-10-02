@@ -159,7 +159,9 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({ preset: "7d" });
+  const [range, setRange] = useState<UsageRangeSelection>({
+    preset: "today",
+  });
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
