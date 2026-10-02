@@ -102,6 +102,9 @@ pub const CLAUDE_EXCLUSIVE_ENV: &[&str] = &[
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT",
     "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT",
+    // 向 ANTHROPIC_BASE_URL 取模型列表：网关（含代理模式下的 Stack 模型）要它，用户也可能
+    // 自己设成全局。
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
 ];
 
 pub fn claude_exclusive_env(key: &str) -> bool {

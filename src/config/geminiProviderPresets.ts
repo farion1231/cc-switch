@@ -346,26 +346,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "soleapi",
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.etok.ai/v1beta",
-        GEMINI_MODEL: "gemini-3.6-flash",
-      },
-    },
-    baseURL: "https://api.etok.ai/v1beta",
-    model: "gemini-3.6-flash",
-    description: "ETok",
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    endpointCandidates: ["https://api.etok.ai/v1beta"],
-    icon: "etok",
-    iconColor: "#000000",
-  },
-  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",

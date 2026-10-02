@@ -234,17 +234,27 @@ impl ProxyService {
     }
 
     /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
-    /// 时写的契约）。
+    /// 时写的契约）。Codex 的官方路由不带占位符，按指向本地代理的地址认。
     pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
         match app_type {
             AppType::Claude => match self.read_claude_live() {
                 Ok(config) => Self::is_claude_live_taken_over(&config),
                 Err(_) => false,
             },
-            AppType::Codex => match self.read_codex_live() {
-                Ok(config) => Self::is_codex_live_taken_over(&config),
-                Err(_) => false,
-            },
+            AppType::Codex => {
+                match self.read_codex_live() {
+                    Ok(config) => Self::is_codex_live_taken_over(&config)
+                        || config
+                            .get("config")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|text| {
+                                crate::services::provider::codex_direct::routes_official_to_proxy(
+                                    &self.db, text,
+                                )
+                            }),
+                    Err(_) => false,
+                }
+            }
             AppType::Gemini => match self.read_gemini_live() {
                 Ok(config) => Self::is_gemini_live_taken_over(&config),
                 Err(_) => false,

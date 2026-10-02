@@ -543,7 +543,7 @@ struct CodexTokens {
 }
 
 /// (access_token, account_id, status, message)
-type CodexCredentials = (
+pub(crate) type CodexCredentials = (
     Option<String>,
     Option<String>,
     CredentialStatus,
@@ -553,7 +553,7 @@ type CodexCredentials = (
 /// 读取 Codex OAuth 凭据
 ///
 /// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Codex Auth")
+/// 1. macOS Keychain (service: "Codex Auth"，账户按 Codex 配置目录区分)
 /// 2. 凭据文件 ~/.codex/auth.json
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
@@ -571,22 +571,60 @@ fn read_codex_credentials() -> CodexCredentials {
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
 fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
+    read_codex_keychain_secret()
+        .ok()
+        .flatten()
+        .map(|json_str| parse_codex_credentials_json(&json_str))
+}
+
+/// Codex 在 Keychain 里存登录用的账户名：`cli|` 加规范化后的 Codex 配置目录路径的
+/// SHA-256 十六进制前 16 位（codex-rs `login/src/auth/storage.rs` 的 `compute_store_key`）。
+/// 规范化失败时用原路径，和上游一致。
+#[cfg(target_os = "macos")]
+fn codex_keychain_account(codex_home: &std::path::Path) -> String {
+    let canonical = codex_home
+        .canonicalize()
+        .unwrap_or_else(|_| codex_home.to_path_buf());
+    let hex = crate::live::engine::sha256_hex(canonical.to_string_lossy().as_bytes());
+    format!("cli|{}", &hex[..16])
+}
+
+/// `security` 找不到条目时的退出码（errSecItemNotFound）。
+#[cfg(target_os = "macos")]
+const SECURITY_ITEM_NOT_FOUND: i32 = 44;
+
+/// Keychain 里当前 Codex 配置目录的登录 JSON。服务名所有配置目录共用，必须带上账户名：
+/// 只按服务名查，本机有别的配置目录的登录时 `security` 返回第一条匹配的。
+///
+/// `Ok(None)`：确定没有这一条。`Err`：读不出来（访问被拒、`security` 跑不起来），
+/// 不知道里面有什么。
+#[cfg(target_os = "macos")]
+fn read_codex_keychain_secret() -> Result<Option<String>, String> {
+    let account = codex_keychain_account(&crate::codex_config::get_codex_config_dir());
     let output = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "Codex Auth", "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            "Codex Auth",
+            "-a",
+            &account,
+            "-w",
+        ])
         .output()
-        .ok()?;
-
+        .map_err(|error| format!("运行 security 失败: {error}"))?;
+    if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) {
+        return Ok(None);
+    }
     if !output.status.success() {
-        return None;
+        return Err(format!(
+            "security 退出码 {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-
-    let json_str = String::from_utf8(output.stdout).ok()?;
-    let json_str = json_str.trim();
-    if json_str.is_empty() {
-        return None;
-    }
-
-    Some(parse_codex_credentials_json(json_str))
+    let secret = String::from_utf8_lossy(&output.stdout);
+    let secret = secret.trim();
+    Ok((!secret.is_empty()).then(|| secret.to_string()))
 }
 
 /// 从文件读取 Codex 凭据
@@ -612,8 +650,42 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
     parse_codex_credentials_json(&content)
 }
 
+/// 系统钥匙串里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时 Codex 存在
+/// 这里）。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CodexKeychainLogin {
+    // 只有 macOS 读得到钥匙串，其他平台的正式构建里只会出现 Unknown。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Found(serde_json::Value),
+    /// 确定没有，或者内容不是 JSON（Codex 自己也读不了，auto 模式同样退回 `auth.json`）。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Missing,
+    /// 读不出来：不是 macOS（Windows、Linux 的凭据库 CC Switch 读不了），或者 macOS 上
+    /// 访问被拒。Codex 看到的可能是另一个登录，不能拿 `auth.json` 顶替。
+    Unknown,
+}
+
+pub(crate) fn read_codex_keychain_login() -> CodexKeychainLogin {
+    #[cfg(target_os = "macos")]
+    {
+        match read_codex_keychain_secret() {
+            Ok(Some(secret)) => serde_json::from_str(&secret)
+                .map_or(CodexKeychainLogin::Missing, CodexKeychainLogin::Found),
+            Ok(None) => CodexKeychainLogin::Missing,
+            Err(error) => {
+                log::warn!("读取 Keychain 里的 Codex 登录失败: {error}");
+                CodexKeychainLogin::Unknown
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        CodexKeychainLogin::Unknown
+    }
+}
+
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
-fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+pub(crate) fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
     let auth: CodexAuthJson = match serde_json::from_str(content) {
         Ok(a) => a,
         Err(e) => {
@@ -1433,6 +1505,24 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 和 codex-rs `compute_store_key` 同一算法：路径不存在时按原样算，存在时先规范化
+    /// （符号链接和它指向的目录是同一个账户）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_keychain_account_matches_codex() {
+        assert_eq!(
+            codex_keychain_account(std::path::Path::new("/nonexistent/codex-home")),
+            "cli|b5d85b424b15c4d9"
+        );
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let real = dir.path().join("codex-home");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(codex_keychain_account(&link), codex_keychain_account(&real));
+    }
 
     fn scoped_limit(model: &str, percent: f64) -> serde_json::Value {
         serde_json::json!({
