@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::Duration,
 };
@@ -351,8 +351,7 @@ pub struct SseUsageCollector {
 
 struct SseUsageCollectorInner {
     events: Mutex<Vec<Value>>,
-    first_event_time: Mutex<Option<std::time::Instant>>,
-    first_event_set: AtomicBool,
+    first_output_time: OnceLock<std::time::Instant>,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
     should_collect: Option<StreamUsageEventFilter>,
@@ -370,8 +369,7 @@ impl SseUsageCollector {
         Self {
             inner: Arc::new(SseUsageCollectorInner {
                 events: Mutex::new(Vec::new()),
-                first_event_time: Mutex::new(None),
-                first_event_set: AtomicBool::new(false),
+                first_output_time: OnceLock::new(),
                 start_time,
                 on_complete,
                 should_collect,
@@ -387,21 +385,22 @@ impl SseUsageCollector {
             .unwrap_or(true)
     }
 
-    /// 标记首个被收集的 SSE 事件时间，沿用 `first_token_ms` 的既有近似语义。
-    async fn mark_first_collected_event_time(&self) {
-        if self.inner.first_event_set.load(Ordering::Acquire) {
+    /// 观察一行 SSE data，记下首个输出事件的时间（`first_token_ms`）。
+    ///
+    /// 必须对每一行 data 调用，不能只看 usage 过滤器收下的事件：过滤器只挑带
+    /// usage 的事件，上游的开头事件不带 usage 时，首个被收下的就是结尾的
+    /// completed，生成时长被压到几毫秒，TPS 随之虚高。
+    pub fn observe_data(&self, event_name: Option<&str>, data: &str) {
+        if self.inner.first_output_time.get().is_some() {
             return;
         }
-        let mut first_time = self.inner.first_event_time.lock().await;
-        if first_time.is_none() {
-            *first_time = Some(std::time::Instant::now());
-            self.inner.first_event_set.store(true, Ordering::Release);
+        if sse_data_starts_output(event_name, data) {
+            let _ = self.inner.first_output_time.set(std::time::Instant::now());
         }
     }
 
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
-        self.mark_first_collected_event_time().await;
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -417,13 +416,35 @@ impl SseUsageCollector {
             std::mem::take(&mut *guard)
         };
 
-        let first_token_ms = {
-            let first_time = self.inner.first_event_time.lock().await;
-            first_time.map(|t| (t - self.inner.start_time).as_millis() as u64)
-        };
+        let first_token_ms = self
+            .inner
+            .first_output_time
+            .get()
+            .map(|t| (*t - self.inner.start_time).as_millis() as u64);
 
         (self.inner.on_complete)(events, first_token_ms);
     }
+}
+
+/// 判断一行 SSE data 是否标志着模型开始输出（口径同 Sub2API 的 semantic TTFT）：
+/// 跳过只宣告响应开始或保活的元数据事件，其余非空事件都算。Chat Completions /
+/// Gemini 的分块没有事件类型，一律算。
+fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return false;
+    }
+    let event_type = match event_name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => name.to_string(),
+        None => serde_json::from_str::<Value>(data)
+            .ok()
+            .and_then(|value| value.get("type")?.as_str().map(str::to_string))
+            .unwrap_or_default(),
+    };
+    !matches!(
+        event_type.as_str(),
+        "response.created" | "response.in_progress" | "ping" | "keepalive"
+    )
 }
 
 struct SseUsageFinishGuard {
@@ -749,9 +770,15 @@ pub fn create_logged_passthrough_stream(
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = take_sse_block(&mut buffer) {
                             if !event_text.trim().is_empty() {
+                                let event_name = event_text
+                                    .lines()
+                                    .find_map(|line| strip_sse_field(line, "event"));
                                 // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
+                                        if let Some(c) = &collector {
+                                            c.observe_data(event_name, data);
+                                        }
                                         if data.trim() != "[DONE]" {
                                             let collected = match &collector {
                                                 Some(c) if c.should_collect(data) => {
@@ -859,6 +886,91 @@ mod tests {
     use rust_decimal::Decimal;
     use std::str::FromStr;
     use std::sync::Arc;
+
+    #[test]
+    fn sse_data_starts_output_skips_metadata_events() {
+        assert!(!sse_data_starts_output(
+            Some("response.created"),
+            r#"{"type":"response.created"}"#
+        ));
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"type":"response.in_progress","response":{}}"#
+        ));
+        assert!(!sse_data_starts_output(Some("ping"), r#"{"type":"ping"}"#));
+        assert!(!sse_data_starts_output(None, "[DONE]"));
+        assert!(!sse_data_starts_output(None, "  "));
+
+        assert!(sse_data_starts_output(
+            Some("response.output_text.delta"),
+            r#"{"type":"response.output_text.delta","delta":"hi"}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("message_start"),
+            r#"{"type":"message_start"}"#
+        ));
+        // Chat Completions / Gemini 分块没有事件类型
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"choices":[{"delta":{"content":"hi"}}]}"#
+        ));
+    }
+
+    /// 回归：上游 response.created 不带 usage 时，首个被 usage 过滤器收下的是
+    /// 结尾的 completed；首 token 时间必须仍落在首个输出事件上。
+    #[tokio::test]
+    async fn first_token_ms_tracks_first_output_not_first_usage_event() {
+        let start = std::time::Instant::now();
+        let recorded = Arc::new(std::sync::Mutex::new(None));
+        let recorded_in_cb = recorded.clone();
+        let collector = SseUsageCollector::new(
+            start,
+            Some(super::super::handler_config::codex_stream_usage_event_filter),
+            move |events, first_token_ms| {
+                *recorded_in_cb.lock().unwrap() = Some((
+                    events.len(),
+                    first_token_ms,
+                    start.elapsed().as_millis() as u64,
+                ));
+            },
+        );
+
+        let upstream = async_stream::stream! {
+            yield Ok::<_, std::io::Error>(Bytes::from(
+                "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(Bytes::from(
+                "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(Bytes::from(
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
+            ));
+        };
+        let stream = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        futures::pin_mut!(stream);
+        while stream.next().await.is_some() {}
+
+        let (collected, first_token_ms, latency_ms) =
+            recorded.lock().unwrap().expect("collector finished");
+        assert_eq!(collected, 1, "only the completed event carries usage");
+        let first_token_ms = first_token_ms.expect("first output recorded");
+        assert!(first_token_ms >= 50, "first_token_ms={first_token_ms}");
+        assert!(
+            latency_ms >= first_token_ms + 50,
+            "first_token_ms={first_token_ms}, latency_ms={latency_ms}"
+        );
+    }
 
     #[test]
     fn format_headers_keeps_only_allowlisted_diagnostic_values() {
