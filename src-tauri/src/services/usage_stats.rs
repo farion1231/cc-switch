@@ -92,6 +92,11 @@ pub struct ProviderStats {
     pub speed_output_tokens: u64,
     /// 速度的分母：同一批请求的 (latency_ms - first_token_ms) 之和，单位毫秒。
     pub speed_generation_ms: u64,
+    /// 估算速度的分子：会话日志导入的请求里，有估算耗时、输出 >= 200 token 的那些的输出之和。
+    /// 和上面那组分开累计：估算的耗时含首字等待，口径不同，不能加在一起。
+    pub est_speed_output_tokens: u64,
+    /// 估算速度的分母：同一批请求的 latency_ms 之和，单位毫秒。
+    pub est_speed_duration_ms: u64,
 }
 
 /// 计速度的门槛：输出少于这个数的请求（工具调用这类）不算速度，避免 0.1 秒回 15 个 token 算出离谱的数。
@@ -106,6 +111,25 @@ fn speed_eligible_sql(alias: &str) -> String {
     format!(
         "{alias}.first_token_ms IS NOT NULL AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
+    )
+}
+
+/// 估算速度的输出门槛：估算的耗时含首字等待，输出越少首字占比越大、算出来越偏低，
+/// 所以比精确口径的门槛高。实测 200–300 token 的请求比长请求低约四分之一，
+/// 100–200 的低约四成；而 Codex 的请求只有四分之一超过 500，门槛再高大半行都是空的。
+pub const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS: i64 = 200;
+
+/// 估算耗时短于这个毫秒数时不估速度：输出 200 token 以上却不到 1 秒，多半是起点取晚了。
+pub const SPEED_ESTIMATE_MIN_DURATION_MS: i64 = 1000;
+
+/// 明细行能不能估速度的 SQL 条件（和前端 `isSpeedEstimateEligible` 同口径）：
+/// 会话日志导入的行（没有首字计时），耗时是导入时按日志时间戳估的。
+fn speed_estimate_eligible_sql(alias: &str) -> String {
+    let data_source = data_source_expr(alias);
+    format!(
+        "{alias}.first_token_ms IS NULL AND {data_source} <> 'proxy' \
+         AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
+         AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
 }
 
@@ -1355,6 +1379,7 @@ impl Database {
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
         let speed_ok = speed_eligible_sql("l");
+        let est_ok = speed_estimate_eligible_sql("l");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -1366,7 +1391,9 @@ impl Database {
                     THEN SUM(latency_sum) / SUM(request_count)
                     ELSE 0 END as avg_latency,
                 SUM(speed_output) as speed_output,
-                SUM(speed_gen_ms) as speed_gen_ms
+                SUM(speed_gen_ms) as speed_gen_ms,
+                SUM(est_output) as est_output,
+                SUM(est_ms) as est_ms
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
@@ -1376,7 +1403,9 @@ impl Database {
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum,
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.output_tokens ELSE 0 END), 0) as speed_output,
-                    COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms
+                    COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms,
+                    COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
+                    COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -1389,6 +1418,8 @@ impl Database {
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0),
+                    0,
+                    0,
                     0,
                     0
                 FROM usage_daily_rollups r
@@ -1423,6 +1454,8 @@ impl Database {
                 avg_latency_ms: row.get::<_, f64>(7)? as u64,
                 speed_output_tokens: row.get::<_, i64>(8)?.max(0) as u64,
                 speed_generation_ms: row.get::<_, i64>(9)?.max(0) as u64,
+                est_speed_output_tokens: row.get::<_, i64>(10)?.max(0) as u64,
+                est_speed_duration_ms: row.get::<_, i64>(11)?.max(0) as u64,
             })
         };
 
@@ -4020,6 +4053,50 @@ mod tests {
         assert_eq!(stats[0].request_count, 6);
         assert_eq!(stats[0].speed_output_tokens, 1_300);
         assert_eq!(stats[0].speed_generation_ms, 13_000);
+        // 路由服务的行没有首字（非流式）也不算估算速度
+        assert_eq!(stats[0].est_speed_output_tokens, 0);
+        assert_eq!(stats[0].est_speed_duration_ms, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_estimated_speed_sums_session_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            let insert = |id: &str, output: i64, latency: i64, source: &str| {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        id, "_session", "claude", "m", 10, output, "0", latency, 200, 1000, source
+                    ],
+                )
+            };
+            // 计入：2000 token / 20000 ms
+            insert("ok-a", 2_000, 20_000, "session_log")?;
+            // 计入：500 token / 5000 ms
+            insert("ok-b", 200, 5_000, "session_log")?;
+            // 不计：输出不到 200
+            insert("short", 199, 5_000, "session_log")?;
+            // 不计：没估出耗时
+            insert("no-timing", 3_000, 0, "session_log")?;
+            // 不计：耗时不到 1 秒
+            insert("too-fast", 800, 900, "session_log")?;
+        }
+
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].est_speed_output_tokens, 2_200);
+        assert_eq!(stats[0].est_speed_duration_ms, 25_000);
+        // 估算的不混进精确口径
+        assert_eq!(stats[0].speed_output_tokens, 0);
+        assert_eq!(stats[0].speed_generation_ms, 0);
 
         Ok(())
     }
