@@ -219,6 +219,33 @@ pub fn global() -> &'static TranscriptCache {
     &GLOBAL
 }
 
+// ── 流式分块（§5.1）──
+
+/// 单个 `Messages` 包的序列化字节上限
+pub const CHUNK_MAX_BYTES: usize = 256 * 1024;
+/// 单个 `Messages` 包的消息条数上限
+pub const CHUNK_MAX_MESSAGES: usize = 150;
+
+/// 按 ≤ 256KB 或 ≤ 150 条切包，返回每包的 `[start, end)`。单条超过字节上限时独占一包。
+pub fn chunk_ranges(message_bytes: &[usize]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0;
+    for (i, size) in message_bytes.iter().enumerate() {
+        let count = i - start;
+        if count > 0 && (count >= CHUNK_MAX_MESSAGES || bytes + size > CHUNK_MAX_BYTES) {
+            ranges.push((start, i));
+            start = i;
+            bytes = 0;
+        }
+        bytes += size;
+    }
+    if start < message_bytes.len() {
+        ranges.push((start, message_bytes.len()));
+    }
+    ranges
+}
+
 /// 由消息列表生成提问目录（§3.4 / §6.2）。
 ///
 /// - 轮次键：消息自带 `turn_id` 时直接用；否则每条非注入、有内容的 user 消息开启新一轮
@@ -366,6 +393,18 @@ mod tests {
             modified: Some(SystemTime::UNIX_EPOCH),
             len,
         }
+    }
+
+    #[test]
+    fn chunk_ranges_split_by_count_and_bytes() {
+        assert!(chunk_ranges(&[]).is_empty());
+
+        let ranges = chunk_ranges(&vec![10; 320]);
+        assert_eq!(ranges, vec![(0, 150), (150, 300), (300, 320)]);
+
+        let big = CHUNK_MAX_BYTES;
+        let ranges = chunk_ranges(&[100, big, 100, big / 2, big / 2, 1]);
+        assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 4), (4, 6)]);
     }
 
     #[test]

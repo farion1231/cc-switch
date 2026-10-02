@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod bench;
 pub mod cache;
 pub mod content;
 pub mod model;

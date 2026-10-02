@@ -3,6 +3,7 @@
 use tauri::ipc::{Channel, Response};
 
 use crate::session_manager;
+use crate::session_manager::cache::chunk_ranges;
 use crate::session_manager::content::{self, BlockContent};
 use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
 
@@ -26,31 +27,6 @@ pub async fn get_session_messages(
     })
     .await
     .map_err(|e| format!("Failed to load session messages: {e}"))?
-}
-
-/// 单个 `Messages` 包的序列化字节上限
-const CHUNK_MAX_BYTES: usize = 256 * 1024;
-/// 单个 `Messages` 包的消息条数上限
-const CHUNK_MAX_MESSAGES: usize = 150;
-
-/// 按 ≤ 256KB 或 ≤ 150 条切包，返回每包的 `[start, end)`。单条超过字节上限时独占一包。
-fn chunk_ranges(message_bytes: &[usize]) -> Vec<(usize, usize)> {
-    let mut ranges = Vec::new();
-    let mut start = 0;
-    let mut bytes = 0;
-    for (i, size) in message_bytes.iter().enumerate() {
-        let count = i - start;
-        if count > 0 && (count >= CHUNK_MAX_MESSAGES || bytes + size > CHUNK_MAX_BYTES) {
-            ranges.push((start, i));
-            start = i;
-            bytes = 0;
-        }
-        bytes += size;
-    }
-    if start < message_bytes.len() {
-        ranges.push((start, message_bytes.len()));
-    }
-    ranges
 }
 
 /// 分块流式读取会话（§5.1，决策 D1）：依次发送 `Header` → 若干 `Messages` → `Done`。
@@ -237,21 +213,4 @@ pub async fn delete_sessions(
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chunk_ranges_split_by_count_and_bytes() {
-        assert!(chunk_ranges(&[]).is_empty());
-
-        let ranges = chunk_ranges(&vec![10; 320]);
-        assert_eq!(ranges, vec![(0, 150), (150, 300), (300, 320)]);
-
-        let big = CHUNK_MAX_BYTES;
-        let ranges = chunk_ranges(&[100, big, 100, big / 2, big / 2, 1]);
-        assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 4), (4, 6)]);
-    }
 }
