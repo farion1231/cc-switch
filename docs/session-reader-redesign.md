@@ -1,6 +1,6 @@
 # 会话详情阅读页重新设计
 
-> 状态：设计稿（2026-10-03）；P0（契约与 fixture）已完成。分支 `feat/ui-redesign-v9`。
+> 状态：P0–P4 已全部完成（2026-10-03），实施结果与基准见 §10。分支 `feat/ui-redesign-v9`。
 > 范围：`src-tauri/src/session_manager/**`、`src-tauri/src/commands/session_manager.rs`、`src/components/sessions/**`、`src/lib/api/sessions.ts`、`src/lib/query/queries.ts`、`src/types.ts`、`src/i18n/locales/*.json`。不涉及数据库（`~/.cc-switch/cc-switch.db`）。
 >
 > 文中「已核实」指在本机数据或上游源码里看到了原文；「待核实」指凭常识推断、实现前要再确认。
@@ -167,7 +167,7 @@ use serde::{Deserialize, Serialize};
 pub struct SessionMessage {
     /// user | assistant | tool | system（保持旧值，前端已有 roleLabel）
     pub role: String,
-    /// 纯文本投影（规则见 3.4），旧搜索/复制/TOC 继续用它
+    /// 纯文本投影（规则见 3.4），只在后端内部用；blocks 非空时不序列化（P4，见 3.4）
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<i64>,
@@ -205,7 +205,10 @@ pub struct MessageMeta {
 #[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum SessionBlock {
     Text {
+        /// 带 full 时只是预览（> 8KB 的注入文本，P4）
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<ContentRef>,
     },
     Thinking {
         /// 可见正文（可能为空：Claude 只有 signature / Codex 只有 encrypted_content）
@@ -235,7 +238,7 @@ pub enum SessionBlock {
         /// MCP 服务器名（kind = mcp 时）
         #[serde(skip_serializing_if = "Option::is_none")]
         server: Option<String>,
-        /// 参数 JSON 的预览（≤ 1200 字符）与全文引用
+        /// 参数 JSON 的预览（≤ 400 字符，P4 由 1200 下调）与全文引用
         input_preview: String,
         input_total_len: u32,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -274,10 +277,13 @@ pub enum SessionBlock {
     },
     Event {
         kind: EventKind,
+        /// 带 full 时只是预览（压缩摘要 > 400 字符，P4）
         #[serde(skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         url: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<ContentRef>,
     },
     /// OpenCode step-start / step-finish；其他 Agent 不产生
     Step {
@@ -431,7 +437,7 @@ export interface DiffFile { path: string; op: "add" | "update" | "delete" | "ren
 export interface DiffSummary { files: DiffFile[]; added: number; removed: number; full?: ContentRef }
 
 export type SessionBlock =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; full?: ContentRef }
   | { type: "thinking"; text: string; summary?: string; redacted?: boolean; durationMs?: number; full?: ContentRef }
   | { type: "tool_call"; id: string; rawName: string; kind: ToolKind; title: string; detail?: string;
       server?: string; inputPreview: string; inputTotalLen: number; inputFull?: ContentRef;
@@ -440,7 +446,7 @@ export type SessionBlock =
       lineCount: number; truncated: boolean; full?: ContentRef; exitCode?: number; durationMs?: number;
       images?: ImageRef[]; savedPath?: string }
   | { type: "image"; image: ImageRef }
-  | { type: "event"; kind: EventKind; text?: string; url?: string }
+  | { type: "event"; kind: EventKind; text?: string; url?: string; full?: ContentRef }
   | { type: "step"; phase: "start" | "finish"; tokens?: number; costUsd?: number; reason?: string };
 
 export interface MessageMeta {
@@ -450,7 +456,7 @@ export interface MessageMeta {
 
 export interface SessionMessage {
   role: string;
-  content: string;
+  content?: string;          // 只有 blocks 缺失（旧后端）时才有；有 blocks 时前端从 blocks 推导（P4）
   ts?: number;
   id?: string;
   turnId?: string;
@@ -515,11 +521,13 @@ export type TranscriptChunk =
 
 `blocks` 为空的消息（P1 之前的旧解析器、或旧后端）`content` 保持旧格式，前端按 `content` 兜底。
 
+**P4 调整**：`content` 只在后端内部使用（目录预览、旧格式判断），序列化时 **blocks 非空就省略**（手写 `Serialize`），55MB Claude 会话因此少传约 0.97MB。前端一律从 blocks 推导：`turns.ts::effectiveBlocks` 只在 blocks 缺失时读 `content`，注入行用 `messageText()`（拼接 Text 块），查找 / 复制 / 目录本来就基于 turn 结构与 `TurnIndex`。契约 fixture 中有 blocks 的消息不再带 `content`，Rust 与 TS 两侧测试都校验这条省略规则。
+
 旧功能的落点：
 
 | 功能 | 新实现 |
 |---|---|
-| 会话内查找 / 列表搜索词高亮 | 对 `content` + 各块 `preview/title` 做 `countMatches`；命中在折叠区时自动展开该 turn / 该步骤（替代 PR #6332 的「原文中的匹配」兜底，同时保留它用于 Markdown 隐藏文本） |
+| 会话内查找 / 列表搜索词高亮 | 对 turn 结构里的提问 / 最终回复正文与各步骤 `title/detail/inputPreview/preview`、思考、事件做 `countMatches`（`turns.ts::findSearchHits`，不再读 `content`）；命中在折叠区时自动展开该 turn / 该步骤（替代 PR #6332 的「原文中的匹配」兜底，同时保留它用于 Markdown 隐藏文本） |
 | 复制单条 / 复制整段 Markdown | 从 blocks 生成：提问原文；步骤写成 `- ⏺ Bash: cmd (exit 0, 1.2s)` 列表；最终回复原文；可选包含思考（默认不含） |
 | 只看对话 | 隐藏所有 `tool_call/tool_result/thinking/event/step` 行，只留提问与最终回复 |
 | 提问目录（TOC） | 直接用 `TranscriptChunk.header.turns`（后端已排除 `injected`），不再在前端做 Codex 前缀判断 |
@@ -548,10 +556,10 @@ export type TranscriptChunk =
 
 通用约定（`providers/blocks.rs`）：
 
-- `PREVIEW_LINES = 12`、`PREVIEW_CHARS = 1200`、`INPUT_PREVIEW_CHARS = 1200`、`THINKING_PREVIEW_CHARS = 400`、`TITLE_CHARS = 200`。超出即 `truncated = true` 并带 `full: ContentRef`。
-- JSONL 解析器改用 `BufReader::read_until(b'\n')` 并累计字节偏移，给每条记录 `(offset, len)`；`pointer` 由构造块的位置生成（如 `/message/content/3/content`）。
+- `PREVIEW_LINES = 12`、`PREVIEW_CHARS = 1200`、`INPUT_PREVIEW_CHARS = 400`（P4 由 1200 下调）、`THINKING_PREVIEW_CHARS = 400`、`TITLE_CHARS = 200`；P4 新增 `INLINE_TEXT_MAX_CHARS = 8192`（超过的注入文本只放 12 行 / 1200 字预览 + `Text.full`，`blocks::large_text_block`）与 `EVENT_PREVIEW_CHARS = 400`（压缩摘要预览 + `Event.full`，`blocks::summary_event_block`）。超出即 `truncated = true` 并带 `full: ContentRef`。
+- JSONL 解析器统一用 `utils::LineSpans`（`read_until(b'\n')` 并累计字节偏移）读取，得到 `utils::JsonlSpan { offset, len }`，`span.content_ref(pointer)` 生成引用（P4 把 Claude / Codex / Pi 三份各自的实现合成这一份，`for_each_jsonl_value` 也移到 `utils`）；`pointer` 由构造块的位置生成（如 `/message/content/3/content`）。
 - 配对：解析器只负责输出 `ToolCall.id` 与 `ToolResult.call_id`；同记录内已含结果（OpenCode/Gemini）时紧跟着输出 `ToolResult`。配对与「孤儿结果」处理在前端 `turns.ts`。
-- `turn_id`：有原生 turn 概念（Codex `turn_context.turn_id`）直接用；其余按「非 `injected` 的 user 消息」递增 `t{n}`；首条 user 之前的内容归 `t0`。
+- `turn_id`：有原生 turn 概念（Codex `turn_context.turn_id`）直接用；其余统一走 `blocks::assign_turn_ids`，按 `starts_turn`（非 `injected` 的 user 消息，且带非空文本、图片或斜杠命令）递增 `t{n}`，首条提问之前的内容归 `t0`。只有中断事件、用户自己跑的命令（Claude `!cmd`、Pi bashExecution）或工具结果的 user 消息不开新轮（P4 统一；此前 Claude 自己计数、Pi bashExecution 会单独成轮）。
 
 ### 4.1 Claude
 
@@ -605,7 +613,7 @@ export type TranscriptChunk =
 | 源 | → |
 |---|---|
 | `type=user` | `user`；content string / `[{text}]` → `Text` |
-| `type=gemini` | `assistant`；`thoughts[]` → 每条 `Thinking{summary: subject, text: description}`（合并成一个块，`summary` 用 ` · ` 连接，`text` 以 `**subject**\n\ndescription` 拼接）；`content` → `Text`；`tokens/model` → `meta` |
+| `type=gemini` | `assistant`；`thoughts[]` → 每条 `Thinking{summary: subject, text: description}`（合并成一个块，`summary` 用 ` · ` 连接，`text` 以 `**subject**\n\ndescription` 拼接；`full` 指向整个 `thoughts` 数组，`resolve_content_ref` 用同一个 `gemini::format_thoughts` 格式化成文本而不是 JSON，P4）；`content` → `Text`；`tokens/model` → `meta` |
 | `toolCalls[]`（**待核实**字段） | `ToolCall{id, raw_name: name, title 按 args}` + `ToolResult{status: status∈{success,completed} ? Success : status=error ? Error : status=cancelled ? Interrupted : Unknown, preview: resultDisplay 为 string 则取之，为对象则 JSON 预览}` |
 | `type=error` | `system` 消息 `Event{Error, text}` |
 | `type=info` | `system` 消息 `Event{Info, text}`，`injected=true`（默认折叠） |
@@ -643,9 +651,9 @@ V2 `session_message.data.content[]` 结构同上（`type: reasoning|tool|text`�
 
 ### 4.6 Hermes / OpenClaw / Grok Build / MiniMax Code
 
-- Hermes SQLite：`role=assistant` 行的 `tool_calls` JSON → 每项 `ToolCall{id: call.id, raw_name: function.name, title: 按 arguments}`；`role=tool` 行 → `ToolResult{call_id: tool_call_id, status: Unknown}`；`tool_name` 用于 kind 归一化。JSONL 路径同理（**待核实**字段名）。
+- Hermes SQLite：`role=assistant` 行的 `tool_calls` JSON → 每项 `ToolCall{id: call.id, raw_name: function.name, title: 按 arguments}`（P4：长参数引用 `Sqlite{messages, id, tool_calls, /{i}/function/arguments 或扁平的 /{i}/arguments}`，长 `reasoning` 引用 `Sqlite{messages, id, reasoning, ""}`）；`role=tool` 行 → `ToolResult{call_id: tool_call_id, status: Unknown}`；`tool_name` 用于 kind 归一化。JSONL 路径同理（**待核实**字段名）。
 - OpenClaw：Pi 映射，去掉树过滤。
-- Grok Build：`type=tool` → `tool` 消息 `ToolResult{call_id: "", status: Unknown}`；前端把 `call_id` 为空的结果渲染成「工具输出」通用步骤；assistant `tool_calls`（**待核实**）存在时按 id 配对。
+- Grok Build：`type=tool` → `tool` 消息 `ToolResult{call_id: "", status: Unknown}`（P4：长输出 / 参数给 `Jsonl` 引用，行区间指 `chat_history.jsonl`，见 §5.3）；前端把 `call_id` 为空的结果渲染成「工具输出」通用步骤；assistant `tool_calls`（**待核实**）存在时按 id 配对。
 - MiniMax Code：只有 `Text`；`TurnIndex.step_count = 0`，前端隐藏执行过程区。
 
 ---
@@ -658,9 +666,9 @@ V2 `session_message.data.content[]` 结构同上（`type: reasoning|tool|text`�
 |---|---|---|
 | `get_session_messages`（保留） | `(providerId, sourcePath) -> Vec<SessionMessage>` | 走缓存；返回新结构。给测试与「复制整段」等一次性场景用 |
 | `stream_session_messages`（新） | `(providerId, sourcePath, onChunk: Channel<TranscriptChunk>) -> ()` | 走缓存；先发 `Header`，再按 **≤ 256KB 序列化字节或 ≤ 150 条** 一包发 `Messages`，最后 `Done`。前端首包到达即渲染 |
-| `get_session_block_content`（新） | `(providerId, sourcePath, ref: ContentRef, offset?: u32, limit?: u32) -> BlockContent { text, totalLen, truncated, nextOffset? }` | 取工具输出 / 参数 / 思考 / diff 全文；默认 `limit = 512KB` 字符，超出分页 |
+| `get_session_block_content`（新） | `(providerId, sourcePath, contentRef: ContentRef, offset?: u32, limit?: u32) -> BlockContent { text, totalLen, truncated, nextOffset? }` | 取工具输出 / 参数 / 思考 / diff / 注入文本 / 压缩摘要全文；`offset`、`limit`、`totalLen` 按字符计，`limit` 默认且最大 512K 字符，超出分页。参数名是 `contentRef`（`ref` 是 Rust 关键字，P2 落地时改名） |
 | `get_session_image`（新） | `(providerId, sourcePath, image: ImageRef) -> tauri::ipc::Response` | 返回原始字节（`Content-Type` 放在响应头或由前端用 `mediaType`）；前端 `invoke<ArrayBuffer>` → `Blob` → `URL.createObjectURL` |
-| `reveal_session_path`（可选，决策 D3） | `(path) -> bool` | `tauri_plugin_opener::reveal_item_in_dir`；只允许已存在的文件 |
+| `reveal_session_path`（可选，决策 D3） | `(path) -> bool` | `tauri_plugin_opener::reveal_item_in_dir`；接受绝对路径或 `file://`，只要求已存在（只在文件管理器里定位、不打开，所以不限目录） |
 | `open_external`（现有，微调） | `(url)` | 现在把非 http 的一律补 `https://`；要改成白名单 `http:`/`https:`/`mailto:`，其余拒绝（Markdown 里 `javascript:` 等已被前端过滤，这里是第二道） |
 
 `src/lib/api/sessions.ts` 对应新增 `streamMessages(providerId, sourcePath, onChunk)`、`getBlockContent(...)`、`getImage(...)`。
@@ -678,11 +686,12 @@ V2 `session_message.data.content[]` 结构同上（`type: reasoning|tool|text`�
 
 - **路径归属**：所有命令先 `validate_source(provider_id, source_path) -> ValidatedSource`：复用 `provider_roots()` + `canonicalize_existing_path()`（从 `delete_session_with_roots` 抽出），要求 `source_path` 在某个 root 之下；SQLite 源解析 `sqlite:<db>:<id>` 后对 `<db>` 做同样校验（Hermes 已有 `get_hermes_db_path` 对比，OpenCode 对比 `get_opencode_data_dir`）。MCode 只允许 `mcode:` 前缀且 db 路径固定。
 - **ContentRef 校验**：
-  - `Jsonl`：`offset + len ≤ 文件当前大小`，`len ≤ 32MB`；读出的区间必须是以 `\n` 结尾（或文件末尾）的完整行且能 `serde_json::from_slice`；`pointer` 必须解析到 string（或 string 数组 → join）；否则返回「会话已更新，请重新读取」。
-  - `Sqlite`：`table ∈ {part, message, session_message, messages}` 白名单，`column ∈ {data, content}`，`id` 用参数绑定；只读连接。
+  - `Jsonl`：`offset + len ≤ 文件当前大小`，`len ≤ 32MB`；读出的区间必须是以 `\n` 结尾（或文件末尾）的完整行（`len` 含不含结尾换行都接受）且能 `serde_json::from_slice`；`pointer` 解析到 string → 原文；数组 → 其中 string 项与 `{text}` 项按行拼接；对象或没有文本项的数组 → 格式化 JSON（工具参数 `input_full` 要用，P2 放宽）；数字 / 布尔 / null 拒绝；区间对不上返回「会话已更新，请重新读取」。Grok Build 的 sourcePath 是 `summary.json`，`Jsonl` 引用改读**同目录、固定名**的 `chat_history.jsonl`（规范化后仍须在会话根内，源文件名不是 `summary.json` 时拒绝，P4）。
+  - `Sqlite`：按 provider 白名单——OpenCode `table ∈ {part, message, session_message}`、`column ∈ {data, content}`；Hermes 只认 `messages` 表，`column ∈ {content, reasoning, tool_calls}`（P4 加入后两列）；`id` 与 `session_id` 都用参数绑定（只能读本会话的行），只读连接；单格 ≤ 32MB。`pointer` 为空时取整列原文。
   - `File`：`rel_path` 不得含 `..`，拼在该会话的 storage 根之下再 canonicalize 并 `starts_with` 校验。
-  - `Sidecar`：拼在 `<sourcePath 去扩展名>/` 之下（Claude `<sessionId>/tool-results/`），同样 canonicalize 校验；大小 ≤ 32MB。
-- **图片**：`Inline` 走上面的 ContentRef 校验，base64 解码后 ≤ 20MB；`LocalFile` 只允许：(a) 会话 `project_dir` 之下，(b) provider 自己的目录（`~/.codex/visualizations/**`、Claude sidecar），(c) 扩展名 ∈ {png,jpg,jpeg,gif,webp,bmp,svg(→ 不渲染，显示路径)}，(d) ≤ 20MB；校验失败前端显示路径 chip 而不是图。
+  - `Sidecar`：拼在 `<sourcePath 去扩展名>/` 之下（Claude `<sessionId>/tool-results/`），该目录本身也须在会话根内，同样 canonicalize 校验；大小 ≤ 32MB。
+  - Gemini：指向 `thoughts` 数组的 `File` 引用按解析器同一口径格式化（`gemini::format_thoughts`），不返回 JSON（P4）。
+- **图片**：`Inline` 走上面的 ContentRef 校验，base64 解码后 ≤ 20MB；`LocalFile` 只允许：(a) 会话 `project_dir` 之下（从该 provider 的会话列表查，按会话记住），(b) 会话根、会话附属目录与 provider 自己的目录（`~/.codex/visualizations/**`、Claude sidecar），(c) 扩展名 ∈ {png,jpg,jpeg,gif,webp,bmp}（svg 直接拒绝，前端显示路径），(d) ≤ 20MB；校验失败前端显示路径 chip 而不是图。
 - **链接**：前端白名单 `http/https/mailto`（PR #6332 的 `safeExternalUrl`），点击一律 `event.preventDefault()` 后调 `open_external`；`<a>` 不带 `href` 真实导航（防 webview 跳转）。`file://` 链接不打开，渲染为路径 chip（复制 / 可选 reveal）。
 - **文本注入**：所有块内容按文本渲染（React 转义），Markdown 渲染器不输出原生 HTML（lezer 的 `HTMLBlock/HTMLTag` 节点按字面输出，PR 已如此，需在测试里固化）。
 - **大小上限**：单 chunk ≤ 1MB；`get_session_block_content` 单次 ≤ 2MB；前端对已展开的全文超过 2MB 时提示「复制源文件路径」而不是继续加载。
@@ -978,7 +987,7 @@ Agent 原生动词（Ran / Explored / Edited / Called / Shell / Wrote / Thought�
 
 ### 7.2 验证方法
 
-- Rust：`src-tauri/src/session_manager/bench.rs` 加 `#[ignore]` 测试 `bench_parse_env_file`，读环境变量 `CC_SWITCH_BENCH_FILE` / `CC_SWITCH_BENCH_PROVIDER`，输出解析耗时、消息数、块数统计、`serde_json::to_vec` 长度、最大单条长度。用两份大文件各跑 3 次取中位数，结果写进 PR 描述。
+- Rust：`src-tauri/src/session_manager/bench.rs` 的 `#[ignore]` 测试 `bench_parse_env_file`，读环境变量 `CC_SWITCH_BENCH_PROVIDER` / `CC_SWITCH_BENCH_FILE`（可选 `CC_SWITCH_BENCH_DUMP=<path>` 导出 `get_session_messages` 的返回），输出冷解析 3 次中位数、`Transcript::new` 耗时、消息 / 轮次 / 分包数、payload 与最大单条、首包（Header + 首个 Messages）大小与产出时间、缓存命中后再读耗时，以及按「块类型.字段」的 payload 构成。命令：`CC_SWITCH_BENCH_PROVIDER=claude CC_SWITCH_BENCH_FILE=<jsonl> cargo test --release --lib session_manager::bench -- --ignored --nocapture`。结果见 §10。
 - Rust 单测：每家解析器用 fixture 验证块类型、配对 id、预览截断、`ContentRef` 可回取（`get_block_content` 对 fixture 的 ref 取出全文与原文相等）。
 - 前端：开发模式下 `performance.mark("session-reader:click")` → `"first-chunk"` → `"first-paint"`（`requestAnimationFrame` 后）→ `"done"`，`console.debug` 输出；手工对两份大文件记录。
 - 前端单测（vitest）：`turns.ts`（配对、孤儿结果、最终回复判定、合并规则、折叠自动展开条件）、`toolSummary.ts`（五家标题格式）、`SessionMarkdown`（PR 自带 453 行测试迁移 + 链接拦截 + file:// 处理）、`SessionStep`（失败常显、展开取全文的 mock）、`SessionManagerPage.test.tsx` 既有用例改为新 fixture。
@@ -1086,6 +1095,84 @@ Agent 原生动词（Ran / Explored / Edited / Called / Shell / Wrote / Thought�
 | D14 | `thinking` 是否进入「复制整段 Markdown」 | 默认不含，菜单勾选可含 | 同 |
 
 ---
+
+## 10. 实施结果（P4）
+
+### 10.1 基准（release，本机 macOS；「前」= P3 合入后的 `e31125644`，「后」= P4 完成）
+
+后端用 `session_manager::bench`（§7.2）测，冷解析取 3 次中位数；首包 = 校验 + 指纹 + 解析 + 建索引 + 序列化 Header 与首个 Messages 包。
+
+| 指标 | 55MB Claude 前 | 55MB Claude 后 | 177MB Codex 前 | 177MB Codex 后 | 预算 |
+|---|---|---|---|---|---|
+| 消息 / 轮次 / 分包 | 2024 / 58 / 15 | 2024 / 58 / 14 | 272 / 6 / 2 | 272 / 6 / 2 | — |
+| 冷解析（`load_messages`） | 50.1ms | 44.4ms | 64.6ms | 55.5ms | Claude ≤ 150ms、Codex ≤ 800ms ✅ |
+| `Transcript::new`（目录 + 逐条序列化估算） | 5.5ms | 3.6ms | 0.6ms | 0.4ms | — |
+| 冷读取到首包产出 | 56.8ms | 48.2ms | 76.7ms | 56.5ms | — |
+| 首包大小（Header + 首个 Messages） | 17.8KB + 261.8KB | 17.8KB + 170.7KB | 1.4KB + 262.1KB | 1.4KB + 127.5KB | 单包 ≤ 1MB ✅ |
+| 缓存命中到首包 | 0.33ms | 0.26ms | 0.26ms | 0.17ms | ≤ 20ms ✅ |
+| 全量 payload | 3.512MB | **2.095MB** | 0.451MB | **0.253MB** | Claude ≤ 1.5MB ❌、Codex ≤ 1MB ✅ |
+| 最大单条消息 | 63.2KB | 11.2KB | 52.6KB | 6.1KB | ≤ 8KB（Claude 超出的是一条长提问原文，见下） |
+
+前端（vitest + Node，同一份 `get_session_messages` 导出，7 次中位数）：
+
+| 步骤 | 55MB Claude | 177MB Codex |
+|---|---|---|
+| `JSON.parse`（模拟 IPC 反序列化） | 4.6ms | 0.5ms |
+| `buildTurns` | 1.3ms | 0.2ms |
+| `flattenRows`（默认折叠 / 展开全部） | 0.3ms / 0.3ms | < 0.1ms / 0.1ms |
+| `findSearchHits("error")` | 3.4ms | 0.2ms |
+
+「点击 → 首屏」没有在应用里端到端实测（需要 GUI 手工记录 §7.2 的 `performance.mark`）；按后端首包 ≈ 50ms + 前端解析与建行 < 10ms 估算，两份大文件都远在 300ms / 600ms 预算内，缓存命中后再次打开为亚毫秒级。
+
+### 10.2 payload 瘦身与未达标说明
+
+P4 做的三项：有 blocks 的消息不再序列化 `content`（−0.97MB）；工具参数预览上限 1200 → 400 字（Claude `inputPreview` 747KB → 365KB）；`Text` / `Event` 加可选 `full`，> 8KB 的注入文本（developer、AGENTS.md、task-notification）与压缩摘要只下发预览（Claude 压缩摘要 49KB → 预览；Codex developer / AGENTS.md / compacted 同理）。
+
+55MB Claude 仍是 2.095MB，超预算 0.6MB。剩余构成（序列化字节）：
+
+| 部分 | 大小 | 说明 |
+|---|---|---|
+| `tool_result` | 645KB | 其中 `preview` 441KB（931 条 × 12 行 / 1200 字）；`PREVIEW_CHARS` 降到 800 只省约 32KB（多数预览先撞 12 行上限） |
+| `tool_call` | 755KB | `inputPreview` 365KB（其中 Bash 319KB，内容是 `{"command","description"}`，与 `title` / `detail` 重复）、`title` 148KB、`detail` 46KB、`inputFull` 50KB |
+| `text` | 293KB | 提问与最终回复原文，不能截 |
+| `meta` / `id` / `ts` / `role` / `turnId` | 137 / 77 / 26 / 17 / 10KB | 每条消息的固定开销 |
+
+再往下压需要取舍：Bash 等 shell 调用的 `inputPreview` 去掉已在 `title`/`detail` 里的字段可再省约 0.3MB（到 ≈ 1.78MB），仍不到 1.5MB；要达标还得把结果预览降到 6 行左右，会削弱「展开一步就能看到输出」的体验。考虑到首包 48ms、缓存命中 0.26ms，「加载要快」已满足，**建议接受 2.1MB**，是否做 shell 参数去重另行拍板。最大单条 11.2KB 是一条约 11KB 的用户提问原文，提问要完整渲染，不截断。
+
+### 10.3 本机真实数据冒烟
+
+临时导出（未提交）本机 Claude 3 个（含 55MB）、Codex 3 个（含 177MB 与一份 776MB）、Gemini 3 个、OpenCode 4 个（含 2 个各有 45–53 次工具调用的会话）、Pi 3 个、Grok Build 1 个、MiniMax Code 1 个，喂给 `buildTurns` / `flattenRows`：全部不抛错、没有空轮；工具结果全部配上调用。冒烟中发现并修复：
+
+- Claude Code 偶尔先写 `tool_result`、后写对应的 `tool_use` 记录（异步子代理启动时），前端原来会显示一条孤儿输出 + 一条 pending 调用 → `turns.ts` 改为同一轮内先挂起早到的结果，等调用出现再配上。
+- Codex 的 `call_id#N` 子调用、同一条助手消息里同时有调用与结果、思考块后紧跟调用：真实数据与新增单测都配对正确。
+- 一份 776MB / 32.7 万条消息的 Codex 会话：后端冷解析 2.07s、`Transcript::new` 0.47s、payload 207MB，超过缓存字节上限（96MB）因此每次打开都重新解析（首包 ≈ 2.4s）；前端 `JSON.parse` 1.2s、`buildTurns` 0.39s、查找 0.51s。这类会话超出本期设计范围，需要决策 D1-B（分页 + 稀疏虚拟化）或增量解析（§5.2）才能真正可用。
+
+### 10.4 跨包遗留问题的处理
+
+| 问题 | 处理 |
+|---|---|
+| Grok Build 的 sourcePath 是 `summary.json`，Jsonl 引用读不到正文 | `resolve_content_ref` 对 grokbuild 固定改读同目录 `chat_history.jsonl`（只此一个文件名、规范化后须在会话根内、源必须是 `summary.json`）；解析器改用共享行读取器并给长输出 / 参数引用 |
+| Hermes SQLite 只能回取 `content` 列 | 白名单按 provider 拆开，Hermes `messages` 表加 `reasoning`、`tool_calls`；解析器给长推理与参数引用（参数指针按实际的嵌套 / 扁平形状生成） |
+| Gemini 多条思考的全文是格式化 JSON | 引用统一指向整个 `thoughts` 数组，解析器与 `resolve_content_ref` 共用 `gemini::format_thoughts` |
+| JSONL 带偏移读取三份实现 | 合并为 `utils::LineSpans` + `JsonlSpan` + `for_each_jsonl_value` |
+| 各解析器的 turn 分配 | 统一为 `blocks::assign_turn_ids` + `starts_turn`（§4） |
+| `model.rs`、`blocks.rs` 的 `#![allow(dead_code)]` | 已移除；删掉只剩测试在用的 `SessionMessage::legacy`，其余无死代码 |
+
+### 10.5 与原设计的偏离汇总
+
+- §3：`content` 有 blocks 时不下发（§3.4 P4 调整）；`Text`、`Event` 增加可选 `full`；`INPUT_PREVIEW_CHARS` 400。
+- §4：turn 分配统一走 `starts_turn`，用户自己跑的命令（Claude `!cmd`、Pi bashExecution）不再单独成轮。
+- §5.1：`get_session_block_content` 的参数名为 `contentRef`；`reveal_session_path` 只要求路径存在、不限目录。
+- §5.3：Jsonl 指针可解析到对象 / 无文本数组（返回格式化 JSON）；SQLite 白名单按 provider 区分并为 Hermes 加列；Sidecar 目录本身须在会话根内；Grok Build 的 Jsonl 引用改读 `chat_history.jsonl`；Gemini 思考数组按文本格式化。
+- §7.2：基准环境变量为 `CC_SWITCH_BENCH_PROVIDER` / `CC_SWITCH_BENCH_FILE` / `CC_SWITCH_BENCH_DUMP`；原各解析器内的 `bench_*_env_file` 已删除。
+
+### 10.6 仍待核实
+
+- Hermes、OpenClaw：本机没有会话样本，映射仍按上游源码与推断（§4.6 的「待核实」字段名）。
+- Grok Build：本机只有 1 个 2 条消息、无工具调用的会话，`tool_calls` / `tool_call_id` 的 OpenAI 形状与新的 `chat_history.jsonl` 引用只在单测里验证过。
+- MiniMax Code：只有 1 个 2 条消息的会话，只覆盖纯对话。
+- Gemini：本机 3 个会话都没有工具调用，`toolCalls` 字段与 MCP 名称形状（§3.3）仍待核实。
+- 端到端首屏、滚动帧率、前端内存与深浅色截图、无障碍走查需要在应用里手工完成。
 
 ## 附录 A：本机数据统计速查
 
