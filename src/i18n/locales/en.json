@@ -1899,9 +1899,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "more": "More",
-      "label": "Filter by app",
-      "moreApps": "More apps"
+      "label": "Filter by app"
     },
     "rawInputLabel": "Raw",
     "sessionSync": {

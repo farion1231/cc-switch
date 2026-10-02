@@ -1899,9 +1899,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
-      "more": "更多",
-      "label": "按应用筛选",
-      "moreApps": "更多应用"
+      "label": "按应用筛选"
     },
     "rawInputLabel": "原始",
     "sessionSync": {

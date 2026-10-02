@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -31,7 +24,6 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   KNOWN_APP_TYPES,
-  type AppType,
   type AppTypeFilter,
   type UsageRangeSelection,
 } from "@/types/usage";
@@ -40,7 +32,6 @@ import {
   useModelStats,
   useProviderStats,
   useSessionUsageLastSync,
-  useUsageSummaryByApp,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageApi } from "@/lib/api/usage";
@@ -188,16 +179,6 @@ export function UsageDashboard({
   // 测量不到（测试环境）按宽窗口排
   const width = measuredWidth || 1000;
   const compact = width < 720;
-  // 应用芯片：宽窗口 7 个全露出；画板 1000 宽时露 3 个，其余进「更多」；再窄就少露几个，
-  // 保证筛选行一行放得下（实在放不下时整行换行，页面不横向溢出）
-  const chipCount =
-    width >= 1040
-      ? KNOWN_APP_TYPES.length
-      : width >= 780
-        ? 3
-        : width >= 560
-          ? 2
-          : 1;
   const showSyncText = width >= 780;
 
   useEffect(() => {
@@ -332,12 +313,6 @@ export function UsageDashboard({
     { appType, providerName },
     refetch,
   );
-  const { data: summaryByApp } = useUsageSummaryByApp(
-    range,
-    { providerName, model },
-    refetch,
-  );
-
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
   const { data: allTimeSummary } = useQuery({
     queryKey: [...usageKeys.all, "all-time-summary"],
@@ -372,12 +347,6 @@ export function UsageDashboard({
     );
   }, [modelOptionsData, model]);
 
-  const appRequestCount = useCallback(
-    (app: AppType) =>
-      summaryByApp?.find((item) => item.appType === app)?.summary
-        .totalRequests ?? 0,
-    [summaryByApp],
-  );
   const providerTotal = providerOptions.reduce((sum, p) => sum + p.count, 0);
   const modelTotal = modelOptions.reduce((sum, m) => sum + m.count, 0);
 
@@ -480,11 +449,6 @@ export function UsageDashboard({
   );
 
   // ── 筛选行 ───────────────────────────────────────────────────────────
-  const visibleApps = KNOWN_APP_TYPES.slice(0, chipCount);
-  const overflowApps = KNOWN_APP_TYPES.slice(chipCount);
-  const overflowSelected =
-    appType !== "all" && overflowApps.includes(appType) ? appType : null;
-
   const chipClass = (pressed: boolean) =>
     cn(
       "inline-flex h-[26px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2 text-body transition-[background-color,color,box-shadow] duration-150",
@@ -508,70 +472,27 @@ export function UsageDashboard({
         >
           {t("usage.appFilter.all")}
         </button>
-        {visibleApps.map((app) => (
+        {/* 应用只露图标，名字放悬停提示和 aria-label */}
+        {KNOWN_APP_TYPES.map((app) => (
           <button
             key={app}
             type="button"
             aria-pressed={appType === app}
-            className={cn(chipClass(appType === app), "ps-1.5")}
+            aria-label={APP_DISPLAY_NAME[app]}
+            title={APP_DISPLAY_NAME[app]}
+            className={cn(
+              chipClass(appType === app),
+              "w-[30px] justify-center px-0",
+            )}
             onClick={() => changeAppType(app)}
           >
             <AppGlyph
               app={app}
-              size={14}
+              size={16}
               badgeClassName={appType === app ? "bg-surface" : "bg-subtle"}
             />
-            {APP_DISPLAY_NAME[app]}
           </button>
         ))}
-        {overflowApps.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-pressed={overflowSelected != null}
-                title={overflowApps
-                  .map((app) => APP_DISPLAY_NAME[app])
-                  .join(", ")}
-                className={cn(
-                  chipClass(overflowSelected != null),
-                  "gap-1 pe-1.5",
-                  overflowSelected && "ps-1.5",
-                )}
-              >
-                {overflowSelected && (
-                  <AppGlyph
-                    app={overflowSelected}
-                    size={14}
-                    badgeClassName="bg-surface"
-                  />
-                )}
-                {overflowSelected
-                  ? APP_DISPLAY_NAME[overflowSelected]
-                  : t("usage.appFilter.more")}
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              aria-label={t("usage.appFilter.moreApps")}
-              className={menuContentClass}
-            >
-              {overflowApps.map((app) => (
-                <DropdownMenuItem
-                  key={app}
-                  className={menuItemClass}
-                  onSelect={() => changeAppType(app)}
-                >
-                  <MenuCheck checked={appType === app} />
-                  <AppGlyph app={app} size={14} badgeClassName="bg-surface" />
-                  {APP_DISPLAY_NAME[app]}
-                  <MenuMeta>{fmtInt(appRequestCount(app), locale)}</MenuMeta>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
       </div>
       <div className="min-w-2 flex-1" />
       <DropdownMenu>
