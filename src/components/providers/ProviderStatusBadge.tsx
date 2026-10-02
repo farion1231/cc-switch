@@ -6,7 +6,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-export type ProviderStatusBadgeTone = "info" | "muted" | "success" | "warning";
+export type ProviderStatusBadgeTone =
+  | "info"
+  | "muted"
+  | "success"
+  | "warning"
+  | "stack";
 
 export interface ProviderStatusBadgeData {
   label: string;
@@ -25,6 +30,8 @@ const toneClasses: Record<ProviderStatusBadgeTone, string> = {
     "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
   warning:
     "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  stack:
+    "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
 };
 
 export function ProviderStatusBadge({

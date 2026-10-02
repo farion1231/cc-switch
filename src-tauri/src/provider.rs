@@ -476,10 +476,11 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
-    /// 成本倍数（用于计算实际成本）
+    /// 已停用：供应商级成本倍率。新版不再读取，只为与旧版设备同步时原样往返保留
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,
-    /// 计费模式来源（response/request）
+    /// 已停用：供应商级计费模式覆盖（response/request）。新版只读全局设置，
+    /// 该字段只为与旧版设备同步时原样往返保留
     #[serde(rename = "pricingModelSource", skip_serializing_if = "Option::is_none")]
     pub pricing_model_source: Option<String>,
     /// 每日消费限额（USD）
@@ -562,6 +563,28 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// Stack 模式下这家 Claude Code 供应商发布的模型（`mode::stack`）。`None` 是没配列表，
+    /// 按模型映射（`ANTHROPIC_MODEL` 和各档）发布；空列表是用户清空了，什么都不发布。
+    #[serde(
+        rename = "stackModels",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stack_models: Option<Vec<ClaudeStackModel>>,
+}
+
+/// Stack 模式下 Claude Code 供应商发布的一个模型。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeStackModel {
+    /// 发往上游的模型名。
+    pub model: String,
+    /// 选择器里的显示名，没有时用模型名。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// 上游是 1M 窗口。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub one_m: bool,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
@@ -934,6 +957,8 @@ requires_openai_auth = true"#
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeProviderConfig {
     /// AI SDK 包名，如 "@ai-sdk/openai-compatible", "@ai-sdk/anthropic"
+    /// 内置供应商可以省略，沿用 OpenCode 的包和模型定义。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub npm: String,
 
     /// 供应商名称（可选，用于显示）
@@ -985,6 +1010,7 @@ pub struct OpenCodeProviderOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeModel {
     /// 模型显示名称
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
 
     /// 模型限制（上下文和输出 token 数）

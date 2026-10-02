@@ -1,0 +1,16 @@
+[mcp_servers]
+
+[mcp_servers.http-server]
+type = "http"
+url = "https://mcp.example.com/mcp"
+
+[mcp_servers.http-server.http_headers]
+Authorization = "Bearer mcp-header"
+
+[mcp_servers.stdio-server]
+type = "stdio"
+command = "example-mcp-server"
+args = ["--stdio"]
+
+[mcp_servers.stdio-server.env]
+EXAMPLE_TOKEN = "mcp-token"

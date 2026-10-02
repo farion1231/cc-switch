@@ -1,0 +1,369 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ProviderForm 预设新增行金标 > claude > AWS Bedrock (API Key) 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.env.AWS_BEARER_TOKEN_BEDROCK",
+  ],
+  "row": {
+    "icon": "aws",
+    "iconColor": "#FF9900",
+    "meta": {
+      "apiFormat": "anthropic",
+      "endpointAutoSelect": true,
+    },
+    "name": "AWS Bedrock (API Key)",
+    "notes": "",
+    "presetCategory": "cloud_provider",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "global.anthropic.claude-opus-5",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "global.anthropic.claude-sonnet-5",
+        "ANTHROPIC_MODEL": "global.anthropic.claude-opus-5",
+        "AWS_BEARER_TOKEN_BEDROCK": "sk-golden-test",
+        "AWS_REGION": "us-east-1",
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+      },
+    },
+    "websiteUrl": "https://aws.amazon.com/bedrock/",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > claude > Claude Official 1`] = `
+{
+  "apiKeyLocations": [],
+  "row": {
+    "icon": "anthropic",
+    "iconColor": "#D4915D",
+    "meta": {
+      "endpointAutoSelect": true,
+    },
+    "name": "Claude Official",
+    "notes": "",
+    "presetCategory": "official",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {},
+    },
+    "websiteUrl": "https://www.anthropic.com/claude-code",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > claude > E-FlowCode 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.env.ANTHROPIC_AUTH_TOKEN",
+  ],
+  "row": {
+    "icon": "eflowcode",
+    "iconColor": "#000000",
+    "meta": {
+      "apiFormat": "anthropic",
+      "endpointAutoSelect": true,
+    },
+    "name": "E-FlowCode",
+    "notes": "",
+    "presetCategory": "third_party",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-golden-test",
+        "ANTHROPIC_BASE_URL": "https://e-flowcode.cc",
+        "ENABLE_TOOL_SEARCH": "true",
+      },
+    },
+    "websiteUrl": "https://e-flowcode.cc",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > claude > Kimi For Coding 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.env.ANTHROPIC_AUTH_TOKEN",
+  ],
+  "row": {
+    "icon": "kimi",
+    "iconColor": "#6366F1",
+    "meta": {
+      "apiFormat": "anthropic",
+      "endpointAutoSelect": true,
+    },
+    "name": "Kimi For Coding",
+    "notes": "",
+    "presetCategory": "cn_official",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-golden-test",
+        "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "kimi-for-coding",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-for-coding",
+        "ANTHROPIC_MODEL": "kimi-for-coding",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+      },
+    },
+    "websiteUrl": "https://www.kimi.com/code/?aff=cc-switch",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > claude > Nvidia 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.env.ANTHROPIC_AUTH_TOKEN",
+  ],
+  "row": {
+    "icon": "nvidia",
+    "iconColor": "#000000",
+    "meta": {
+      "apiFormat": "openai_chat",
+      "endpointAutoSelect": true,
+    },
+    "name": "Nvidia",
+    "notes": "",
+    "presetCategory": "aggregator",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-golden-test",
+        "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "moonshotai/kimi-k3",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "moonshotai/kimi-k3",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "moonshotai/kimi-k3",
+        "ANTHROPIC_MODEL": "moonshotai/kimi-k3",
+      },
+    },
+    "websiteUrl": "https://build.nvidia.com",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > claude > RelaxyCode 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.env.ANTHROPIC_AUTH_TOKEN",
+  ],
+  "row": {
+    "icon": "relaxcode",
+    "iconColor": "",
+    "meta": {
+      "apiFormat": "anthropic",
+      "endpointAutoSelect": true,
+    },
+    "name": "RelaxyCode",
+    "notes": "",
+    "presetCategory": "third_party",
+    "presetId": "claude-<index>",
+    "settingsConfig": {
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-golden-test",
+        "ANTHROPIC_BASE_URL": "https://www.relaxycode.com",
+      },
+    },
+    "websiteUrl": "https://www.relaxycode.com",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > codex > E-FlowCode 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.auth.OPENAI_API_KEY",
+  ],
+  "row": {
+    "icon": "eflowcode",
+    "iconColor": "#000000",
+    "meta": {
+      "apiFormat": "openai_responses",
+      "endpointAutoSelect": true,
+    },
+    "name": "E-FlowCode",
+    "notes": "",
+    "presetCategory": "third_party",
+    "presetId": "codex-<index>",
+    "settingsConfig": {
+      "auth": {
+        "OPENAI_API_KEY": "sk-golden-test",
+      },
+      "config": "model_provider = "custom"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "E-FlowCode"
+base_url = "https://e-flowcode.cc/v1"
+wire_api = "responses"
+requires_openai_auth = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 9000000",
+    },
+    "websiteUrl": "https://e-flowcode.cc",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > codex > Nvidia 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.auth.OPENAI_API_KEY",
+  ],
+  "row": {
+    "icon": "nvidia",
+    "iconColor": "#000000",
+    "meta": {
+      "apiFormat": "openai_chat",
+      "codexChatReasoning": {
+        "effortParam": "reasoning_effort",
+        "effortValueMode": "passthrough",
+        "outputFormat": "reasoning_content",
+        "supportsEffort": true,
+        "supportsThinking": true,
+        "thinkingParam": "none",
+      },
+      "endpointAutoSelect": true,
+    },
+    "name": "Nvidia",
+    "notes": "",
+    "presetCategory": "aggregator",
+    "presetId": "codex-<index>",
+    "settingsConfig": {
+      "auth": {
+        "OPENAI_API_KEY": "sk-golden-test",
+      },
+      "config": "model_provider = "custom"
+model = "moonshotai/kimi-k3"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "nvidia"
+base_url = "https://integrate.api.nvidia.com/v1"
+wire_api = "responses"
+requires_openai_auth = true",
+      "modelCatalog": {
+        "models": [
+          {
+            "contextWindow": 1048576,
+            "defaultReasoningLevel": "high",
+            "displayName": "Kimi K3",
+            "inputModalities": [
+              "text",
+              "image",
+            ],
+            "model": "moonshotai/kimi-k3",
+            "reasoningLevels": [
+              "low",
+              "high",
+              "max",
+            ],
+          },
+        ],
+      },
+    },
+    "websiteUrl": "https://build.nvidia.com",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > codex > OpenAI Official 1`] = `
+{
+  "apiKeyLocations": [],
+  "row": {
+    "icon": "openai",
+    "iconColor": "#00A67E",
+    "meta": {
+      "endpointAutoSelect": true,
+    },
+    "name": "OpenAI Official",
+    "notes": "",
+    "presetCategory": "official",
+    "presetId": "codex-<index>",
+    "settingsConfig": {
+      "auth": {},
+      "config": "",
+    },
+    "websiteUrl": "https://chatgpt.com/codex",
+  },
+}
+`;
+
+exports[`ProviderForm 预设新增行金标 > codex > xAI (Grok) 1`] = `
+{
+  "apiKeyLocations": [
+    "settingsConfig.auth.OPENAI_API_KEY",
+  ],
+  "row": {
+    "icon": "xai",
+    "iconColor": "#000000",
+    "meta": {
+      "apiFormat": "openai_responses",
+      "endpointAutoSelect": true,
+    },
+    "name": "xAI (Grok)",
+    "notes": "",
+    "presetCategory": "third_party",
+    "presetId": "codex-<index>",
+    "settingsConfig": {
+      "auth": {
+        "OPENAI_API_KEY": "sk-golden-test",
+      },
+      "config": "model_provider = "custom"
+model = "grok-4.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "xai"
+base_url = "https://api.x.ai/v1"
+wire_api = "responses"
+requires_openai_auth = true",
+      "modelCatalog": {
+        "models": [
+          {
+            "contextWindow": 500000,
+            "displayName": "Grok 4.7",
+            "inputModalities": [
+              "text",
+              "image",
+            ],
+            "model": "grok-4.7",
+            "reasoningLevels": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+            ],
+            "supportsParallelToolCalls": true,
+          },
+          {
+            "contextWindow": 500000,
+            "displayName": "Grok 4.5",
+            "inputModalities": [
+              "text",
+              "image",
+            ],
+            "model": "grok-4.5",
+            "reasoningLevels": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+            ],
+            "supportsParallelToolCalls": true,
+          },
+        ],
+      },
+    },
+    "websiteUrl": "https://x.ai/api",
+  },
+}
+`;

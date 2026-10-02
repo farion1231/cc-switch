@@ -96,6 +96,7 @@ describe("useAddProviderMutation", () => {
       }),
       "claude-desktop",
       undefined,
+      undefined,
     );
     expect(duplicatedProvider.id).toBe("generated-uuid");
     expect(duplicatedProvider.id).not.toBe("claude-desktop-official");
@@ -178,6 +179,7 @@ describe("useAddProviderMutation", () => {
       }),
       "codex",
       undefined,
+      undefined,
     );
     expect(persistedProvider).toEqual(
       expect.objectContaining({
@@ -227,6 +229,7 @@ describe("useAddProviderMutation", () => {
       }),
       "codex",
       undefined,
+      undefined,
     );
     expect(apiMocks.add).toHaveBeenNthCalledWith(
       2,
@@ -235,6 +238,7 @@ describe("useAddProviderMutation", () => {
         meta: { providerType: "codex_oauth" },
       }),
       "codex",
+      undefined,
       undefined,
     );
     expect(firstProvider.id).toBe("unbound-official-1");
@@ -264,6 +268,7 @@ describe("useAddProviderMutation", () => {
       expect.objectContaining({ id: "pi-provider" }),
       "pi",
       undefined,
+      undefined,
     );
     expect(provider.id).toBe("pi-provider");
   });
@@ -288,6 +293,7 @@ describe("useAddProviderMutation", () => {
     expect(apiMocks.add).toHaveBeenCalledWith(
       expect.objectContaining({ id: "pi-provider" }),
       "pi",
+      undefined,
       undefined,
     );
     expect(toastMocks.error).toHaveBeenCalled();

@@ -98,6 +98,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["soleapi", "sole", "aggregator", "relay", "gateway", "claude"],
     defaultColor: "currentColor",
   },
+  soshow: {
+    name: "soshow",
+    displayName: "Soshow",
+    category: "ai-provider",
+    keywords: ["soshow", "so-show", "model market", "aggregator", "claude"],
+    defaultColor: "#7966FE",
+  },
   sudocode: {
     name: "sudocode",
     displayName: "SudoCode.chat",
@@ -697,6 +704,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["shengsuanyun", "shengsuanyun"],
     defaultColor: "currentColor",
+  },
+  sub2api: {
+    name: "sub2api",
+    displayName: "Sub2API",
+    category: "ai-provider",
+    keywords: [
+      "sub2api",
+      "sub2",
+      "aggregator",
+      "relay",
+      "gateway",
+      "claude",
+      "codex",
+      "gemini",
+    ],
+    defaultColor: "#39D9E7",
   },
   lioncc: {
     name: "lioncc",

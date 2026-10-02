@@ -5,6 +5,9 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  ProxyStack,
+  ProxyStackNotice,
+  CodexDaemonRestartOutcome,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -37,12 +40,47 @@ export const proxyApi = {
     return invoke("get_proxy_takeover_status");
   },
 
-  // 为指定应用开启/关闭接管
+  // 为指定应用开启/关闭接管。stack 为真时进入的是 Stack 模式（和路由模式二选一）
   async setProxyTakeoverForApp(
     appType: string,
     enabled: boolean,
+    stack = false,
   ): Promise<void> {
-    return invoke("set_proxy_takeover_for_app", { appType, enabled });
+    return invoke("set_proxy_takeover_for_app", { appType, enabled, stack });
+  },
+
+  // 设置里在路由和 Stack 之间换时：处于另一种模式（stack 为真是 Stack 模式）的 Claude Code、
+  // Codex 先退回直连。返回退回直连的应用
+  async exitProxyAppsInMode(stack: boolean): Promise<string[]> {
+    return invoke("exit_proxy_apps_in_mode", { stack });
+  },
+
+  // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
+  async getDirectProvider(appType: string): Promise<string | null> {
+    return invoke("get_direct_provider", { appType });
+  },
+
+  // ========== Stack 模型 API ==========
+
+  // Stack 模型名单：每一家和它发布的模型 id，以及提示
+  async getProxyStack(appType: string): Promise<ProxyStack> {
+    return invoke("get_proxy_stack", { appType });
+  },
+
+  // 把一家加入或移出 Stack 模型（enabled 是目标值）。成功时返回客户端看不到或看不全 Stack 模型
+  // 的提示；失败时抛出 ProxyStackWriteError
+  async setProxyStackMember(
+    appType: string,
+    providerId: string,
+    enabled: boolean,
+  ): Promise<ProxyStackNotice | null> {
+    return invoke("set_proxy_stack_member", { appType, providerId, enabled });
+  },
+
+  // 重启 Codex 的托管守护进程（codex 命令行连的那个），让它重读模型目录。会中断正在运行的
+  // 任务，只在用户确认之后调
+  async restartCodexAppServerDaemon(): Promise<CodexDaemonRestartOutcome> {
+    return invoke("restart_codex_app_server_daemon");
   },
 
   // ========== v3+ 全局/应用级配置 API ==========
@@ -68,19 +106,6 @@ export const proxyApi = {
   },
 
   // ========== 计费默认配置 API ==========
-
-  // 获取默认成本倍率
-  async getDefaultCostMultiplier(appType: string): Promise<string> {
-    return invoke("get_default_cost_multiplier", { appType });
-  },
-
-  // 设置默认成本倍率
-  async setDefaultCostMultiplier(
-    appType: string,
-    value: string,
-  ): Promise<void> {
-    return invoke("set_default_cost_multiplier", { appType, value });
-  },
 
   // 获取计费模式来源
   async getPricingModelSource(appType: string): Promise<string> {

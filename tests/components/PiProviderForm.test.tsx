@@ -1,16 +1,13 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
+import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -801,6 +798,8 @@ describe("PiProviderForm", () => {
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
       "kimi-k2.7-code",
       "kimi-k3",
+      "kimi-k2.7-code-highspeed",
+      "kimi-k2.6",
     ]);
     expect(
       config.models.map((model: { id: string; name?: string }) => ({
@@ -810,6 +809,8 @@ describe("PiProviderForm", () => {
     ).toEqual([
       { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
+      { id: "kimi-k2.6", name: "Kimi K2.6" },
     ]);
     for (const model of config.models) {
       expect(model).toMatchObject({
@@ -1242,7 +1243,7 @@ describe("PiProviderForm", () => {
     expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("");
   });
 
-  it("uses a fetched model ID without inferring its capabilities", async () => {
+  it("leaves a fetched model unknown to presets and models.dev on Pi defaults", async () => {
     const user = userEvent.setup();
     server.use(
       http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
@@ -1304,6 +1305,155 @@ describe("PiProviderForm", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("fills the capabilities of a fetched model known to models.dev", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([{ id: "gpt-5.6-sol", ownedBy: "proxy" }]),
+      ),
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: {
+              "gpt-5.6-sol": {
+                reasoning: true,
+                reasoning_options: [
+                  {
+                    type: "effort",
+                    values: ["low", "medium", "high", "xhigh"],
+                  },
+                ],
+                modalities: { input: ["text", "image"], output: ["text"] },
+                limit: { context: 400000, output: 128000 },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "autofilled-provider" },
+    });
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: { value: "Autofilled provider" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://api.example.com/v1" },
+      },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    await user.click(
+      within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "gpt-5.6-sol" }),
+    );
+
+    const modelNameInput = screen.getByLabelText("pi.form.modelName");
+    await waitFor(() => expect(modelNameInput).toHaveValue("gpt-5.6-sol"));
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
+        400000,
+      ),
+    );
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);
+    expect(screen.getByLabelText("pi.form.reasoning")).toBeChecked();
+    expect(screen.getByLabelText("pi.form.imageInput")).toBeChecked();
+    // Chat Completions 会把档位原样作为 reasoning_effort 发出，按 Pi 官方规则生成映射。
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
+    });
+  });
+
+  it("adds the compat a preset thinking map depends on", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([{ id: "kimi-k3", ownedBy: "moonshot" }]),
+      ),
+      http.get(MODELS_DEV_API_URL, () => HttpResponse.error()),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "my-moonshot" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      { target: { value: "https://api.moonshot.cn/v1" } },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    await user.click(
+      within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+    );
+    await user.click(await screen.findByRole("option", { name: "kimi-k3" }));
+
+    // Moonshot 的地址在 Pi 里默认不发 reasoning_effort，映射要靠预设的 compat 才生效。
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(JSON.parse(configEditor.value).models[0]).toMatchObject({
+        thinkingLevelMap: piThinkingProfiles.kimi3.map,
+        compat: { supportsReasoningEffort: true, thinkingFormat: "openai" },
+      }),
+    );
+  });
+
   it("keeps a preset thinking map when the user changes the API", async () => {
     const user = userEvent.setup();
     render(
@@ -1344,22 +1494,25 @@ describe("PiProviderForm", () => {
 
   it("edits Pi thinking-map missing, null, and string states from the collapsed capability area", async () => {
     const user = userEvent.setup();
+    // Start with a model so this test exercises thinking-map interactions without
+    // repeating the separately covered preset selection and model creation flow.
     render(
       <PiProviderForm
         appId="pi"
+        providerId="custom-provider"
         submitLabel="Save custom thinking map"
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        initialData={{
+          name: "Custom reasoning provider",
+          settingsConfig: {
+            api: "openai-completions",
+            models: [completeModel("custom-reasoning-model")],
+          },
+        }}
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    fireEvent.change(screen.getByLabelText("pi.form.modelId"), {
-      target: { value: "custom-reasoning-model" },
-    });
     await user.click(
       screen.getByRole("button", { name: "展开或收起模型详情" }),
     );
