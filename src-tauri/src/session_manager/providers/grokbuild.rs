@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -11,7 +9,9 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 use super::blocks::{
     assign_turn_ids, parse_arguments, tool_call_block, tool_result_block, ToolSource,
 };
-use super::utils::{extract_text, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS};
+use super::utils::{
+    extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS,
+};
 
 #[derive(Debug, Deserialize)]
 struct GrokSessionInfo {
@@ -56,29 +56,29 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
 /// `chat_history.jsonl`：`type ∈ {system, user, assistant, tool}`。
 ///
-/// 会话的 sourcePath 是同目录的 `summary.json`，按需取全文的 Jsonl 引用无法指向
-/// chat_history.jsonl，所以这里只给预览。`tool` 记录的配对字段与 assistant 的
-/// `tool_calls` 都是按 OpenAI 形状推断（待核实），缺失时 `callId` 为空串。
+/// 会话的 sourcePath 是同目录的 `summary.json`；大内容的 Jsonl 引用指向 chat_history.jsonl
+/// 的行（`content::resolve_content_ref` 对 grokbuild 固定改读该文件）。`tool` 记录的配对字段与
+/// assistant 的 `tool_calls` 都是按 OpenAI 形状推断（待核实），缺失时 `callId` 为空串。
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let session_dir = path
         .parent()
         .ok_or_else(|| format!("Invalid Grok Build session path: {}", path.display()))?;
     let chat_path = session_dir.join("chat_history.jsonl");
-    let file = File::open(&chat_path)
-        .map_err(|e| format!("Failed to open Grok Build chat history: {e}"))?;
-    let reader = BufReader::new(file);
+    if !chat_path.is_file() {
+        return Err(format!(
+            "Failed to open Grok Build chat history: {}",
+            chat_path.display()
+        ));
+    }
     let mut messages = Vec::new();
 
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
+    for_each_jsonl_value(&chat_path, |span, value| {
         let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
         let role = match kind {
             "system" | "user" | "assistant" | "tool" => kind,
             // Reasoning records can contain encrypted/internal state and are not
             // conversation messages shown by Grok's own history view.
-            _ => continue,
+            _ => return Ok(()),
         };
         let text = value.get("content").map(extract_text).unwrap_or_default();
         let blocks = match role {
@@ -90,36 +90,37 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                     .unwrap_or_default(),
                 ToolStatus::Unknown,
                 &text,
-                || None,
+                || Some(span.content_ref("/content")),
             )],
             "assistant" => {
                 let mut blocks = Vec::new();
                 if !text.trim().is_empty() {
                     blocks.push(SessionBlock::text(text));
                 }
-                for call in value
+                for (j, call) in value
                     .get("tool_calls")
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
+                    .enumerate()
                 {
                     let name = call
                         .pointer("/function/name")
                         .or_else(|| call.get("name"))
                         .and_then(Value::as_str)
                         .unwrap_or("unknown");
-                    let input = call
-                        .pointer("/function/arguments")
-                        .or_else(|| call.get("arguments"))
-                        .map(parse_arguments)
-                        .unwrap_or(Value::Null);
+                    let (input_pointer, raw_input) = match call.pointer("/function/arguments") {
+                        Some(raw) => (format!("/tool_calls/{j}/function/arguments"), Some(raw)),
+                        None => (format!("/tool_calls/{j}/arguments"), call.get("arguments")),
+                    };
+                    let input = raw_input.map(parse_arguments).unwrap_or(Value::Null);
                     let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
                     blocks.push(tool_call_block(
                         ToolSource::Generic,
                         id,
                         name,
                         &input,
-                        || None,
+                        || Some(span.content_ref(input_pointer)),
                     ));
                 }
                 blocks
@@ -133,12 +134,13 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .and_then(parse_timestamp_to_ms);
         let mut message = SessionMessage::from_blocks(role, ts, blocks);
         if message.is_empty() {
-            continue;
+            return Ok(());
         }
         // system prompt 属于注入内容，默认隐藏
         message.injected = role == "system";
         messages.push(message);
-    }
+        Ok(())
+    })?;
 
     assign_turn_ids(&mut messages);
     Ok(messages)

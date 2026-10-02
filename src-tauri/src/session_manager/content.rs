@@ -221,10 +221,8 @@ pub fn resolve_content_ref(
             len,
             pointer,
         } => {
-            let SourceLocation::Path { path, .. } = &source.location else {
-                return Err(STALE.to_string());
-            };
-            let line = read_jsonl_line(path, *offset, *len)?;
+            let path = jsonl_path(source)?;
+            let line = read_jsonl_line(&path, *offset, *len)?;
             let value: Value = serde_json::from_slice(&line).map_err(|_| STALE.to_string())?;
             extract_text(&value, pointer)
         }
@@ -251,6 +249,15 @@ pub fn resolve_content_ref(
             let file = safe_join(root, rel_path)?;
             let bytes = read_limited(&file, MAX_TEXT_BYTES, TOO_LARGE_TEXT)?;
             let value: Value = serde_json::from_slice(&bytes).map_err(|_| STALE.to_string())?;
+            // Gemini 多条思考合并成一个块：按解析器同一口径格式化，而不是返回 JSON
+            if source.provider_id == "gemini" && pointer.ends_with("/thoughts") {
+                if let Some(thoughts) = value
+                    .pointer(pointer)
+                    .and_then(super::providers::gemini::format_thoughts)
+                {
+                    return Ok(thoughts.text);
+                }
+            }
             extract_text(&value, pointer)
         }
         ContentRef::Sidecar { rel_path } => {
@@ -268,6 +275,33 @@ pub fn resolve_content_ref(
             Ok(String::from_utf8_lossy(&bytes).into_owned())
         }
     }
+}
+
+/// Grok Build 的会话正文文件名：sourcePath 是同目录的 `summary.json`
+const GROK_CHAT_HISTORY: &str = "chat_history.jsonl";
+
+/// `ContentRef::Jsonl` 指向的文件。一般就是会话源本身；Grok Build 的源是 `summary.json`，
+/// 正文在同目录固定名的 `chat_history.jsonl`——只认这一个文件名，规范化后仍须在会话根内。
+fn jsonl_path(source: &ValidatedSource) -> Result<PathBuf, String> {
+    let SourceLocation::Path { path, root } = &source.location else {
+        return Err(STALE.to_string());
+    };
+    if source.provider_id != "grokbuild" {
+        return Ok(path.clone());
+    }
+    if path.file_name().and_then(|name| name.to_str()) != Some("summary.json") {
+        return Err(OUTSIDE.to_string());
+    }
+    let chat = path
+        .with_file_name(GROK_CHAT_HISTORY)
+        .canonicalize()
+        .map_err(|_| "会话正文文件不存在".to_string())?;
+    if !chat.starts_with(root)
+        || chat.file_name().and_then(|n| n.to_str()) != Some(GROK_CHAT_HISTORY)
+    {
+        return Err(OUTSIDE.to_string());
+    }
+    Ok(chat)
 }
 
 /// 读取 JSONL 的一行：区间必须在文件内、前一字节是换行（或文件开头）、
@@ -358,12 +392,16 @@ fn pretty_json(value: &Value) -> Result<String, String> {
 
 /// 各 provider 允许回取的 (表, 列)；id 与 session_id 用参数绑定，确保只能读本会话的行
 fn sqlite_allowed(provider_id: &str, table: &str, column: &str) -> bool {
-    let tables: &[&str] = match provider_id {
-        "opencode" => &["part", "message", "session_message"],
-        "hermes" => &["messages"],
-        _ => &[],
+    let (tables, columns): (&[&str], &[&str]) = match provider_id {
+        "opencode" => (
+            &["part", "message", "session_message"],
+            &["data", "content"],
+        ),
+        // Hermes：正文、推理全文、tool_calls JSON（参数按 pointer 取）
+        "hermes" => (&["messages"], &["content", "reasoning", "tool_calls"]),
+        _ => (&[], &[]),
     };
-    tables.contains(&table) && matches!(column, "data" | "content")
+    tables.contains(&table) && columns.contains(&column)
 }
 
 fn read_sqlite_cell(
@@ -756,6 +794,179 @@ mod tests {
             &messages,
             &[&developer, &agents, &compacted],
         );
+    }
+
+    /// Grok Build：sourcePath 是 summary.json，Jsonl 引用读同目录的 chat_history.jsonl
+    #[test]
+    fn grokbuild_jsonl_refs_read_chat_history_next_to_summary() {
+        use super::super::model::SessionBlock;
+        use super::super::providers::grokbuild;
+        use serde_json::json;
+
+        let root = tempdir().unwrap();
+        let dir = root.path().join("s1");
+        std::fs::create_dir(&dir).unwrap();
+        let summary = dir.join("summary.json");
+        std::fs::write(&summary, "{}").unwrap();
+        let output = (0..40).map(|i| format!("line {i}\n")).collect::<String>();
+        let lines = [
+            json!({ "type": "user", "content": "run it" }),
+            json!({ "type": "assistant", "content": "", "tool_calls": [{ "id": "c1", "function": { "name": "bash", "arguments": "{\"command\":\"ls\"}" } }] }),
+            json!({ "type": "tool", "tool_call_id": "c1", "content": output }),
+        ];
+        std::fs::write(
+            dir.join(GROK_CHAT_HISTORY),
+            lines.map(|l| format!("{l}\n")).concat(),
+        )
+        .unwrap();
+
+        let messages = grokbuild::load_messages(&summary).unwrap();
+        let full = messages
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .find_map(|b| match b {
+                SessionBlock::ToolResult { full, .. } => full.clone(),
+                _ => None,
+            })
+            .expect("长输出应带引用");
+        let mut source = file_source(root.path(), &summary);
+        source.provider_id = "grokbuild".into();
+        assert_eq!(resolve_content_ref(&source, &full).unwrap(), output);
+
+        // 源不是 summary.json 时不改读别的文件
+        let mut other = file_source(root.path(), &dir.join(GROK_CHAT_HISTORY));
+        other.provider_id = "grokbuild".into();
+        assert_eq!(resolve_content_ref(&other, &full).unwrap_err(), OUTSIDE);
+
+        // chat_history.jsonl 是指向会话根外的符号链接时拒绝
+        #[cfg(unix)]
+        {
+            let outside = tempdir().unwrap();
+            let target = outside.path().join(GROK_CHAT_HISTORY);
+            std::fs::rename(dir.join(GROK_CHAT_HISTORY), &target).unwrap();
+            std::os::unix::fs::symlink(&target, dir.join(GROK_CHAT_HISTORY)).unwrap();
+            assert_eq!(resolve_content_ref(&source, &full).unwrap_err(), OUTSIDE);
+        }
+    }
+
+    /// Hermes：推理全文与 tool_calls 参数按白名单列回取，仍限定本会话的行
+    #[test]
+    fn hermes_sqlite_refs_cover_reasoning_and_tool_calls() {
+        use super::super::model::SessionBlock;
+        use super::super::providers::hermes;
+
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE messages (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+                 role TEXT NOT NULL, content TEXT, tool_call_id TEXT, tool_calls TEXT,
+                 tool_name TEXT, timestamp REAL NOT NULL, reasoning TEXT);",
+        )
+        .unwrap();
+        let reasoning = "r".repeat(1000);
+        let command = "c".repeat(1000);
+        let calls = serde_json::json!([
+            { "id": "c1", "function": { "name": "terminal", "arguments": serde_json::json!({ "command": command }).to_string() } },
+            { "id": "c2", "name": "terminal", "arguments": serde_json::json!({ "command": command }).to_string() },
+        ]);
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_calls, timestamp, reasoning)
+             VALUES ('s1', 'assistant', 'ok', ?1, 1.0, ?2)",
+            rusqlite::params![calls.to_string(), reasoning],
+        )
+        .unwrap();
+        drop(conn);
+
+        let messages =
+            hermes::load_messages_sqlite(&format!("sqlite:{}#s1", db.display())).unwrap();
+        let source = ValidatedSource {
+            provider_id: "hermes".into(),
+            raw: String::new(),
+            location: SourceLocation::Sqlite {
+                db: db.canonicalize().unwrap(),
+                session_id: "s1".into(),
+            },
+        };
+        let mut seen = Vec::new();
+        for block in messages.iter().flat_map(|m| &m.blocks) {
+            let full = match block {
+                SessionBlock::Thinking { full: Some(f), .. } => f,
+                SessionBlock::ToolCall {
+                    input_full: Some(f),
+                    ..
+                } => f,
+                _ => continue,
+            };
+            seen.push(resolve_content_ref(&source, full).unwrap());
+        }
+        let args = serde_json::json!({ "command": command }).to_string();
+        assert_eq!(seen, vec![reasoning, args.clone(), args]);
+
+        // 别的会话读不到这一行；白名单外的列被拒
+        let other = ValidatedSource {
+            location: SourceLocation::Sqlite {
+                db: db.canonicalize().unwrap(),
+                session_id: "s2".into(),
+            },
+            ..source.clone()
+        };
+        let cell = |column: &str| ContentRef::Sqlite {
+            table: "messages".into(),
+            id: "1".into(),
+            column: column.into(),
+            pointer: String::new(),
+        };
+        assert_eq!(
+            resolve_content_ref(&other, &cell("reasoning")).unwrap_err(),
+            STALE
+        );
+        assert!(resolve_content_ref(&source, &cell("role")).is_err());
+    }
+
+    /// Gemini：多条思考合并成一个块，全文按同一口径格式化（不是 JSON）
+    #[test]
+    fn gemini_merged_thoughts_resolve_to_formatted_text() {
+        use super::super::model::SessionBlock;
+        use super::super::providers::gemini;
+        use serde_json::json;
+
+        let root = tempdir().unwrap();
+        let chats = root.path().join("hash").join("chats");
+        std::fs::create_dir_all(&chats).unwrap();
+        let path = chats.join("session-1.json");
+        let long = "d".repeat(500);
+        let session = json!({
+            "sessionId": "s1",
+            "messages": [
+                { "id": "1", "type": "user", "content": "hi" },
+                { "id": "2", "type": "gemini", "content": "done", "thoughts": [
+                    { "subject": "Plan", "description": long, "timestamp": "x" },
+                    { "subject": "Check", "description": "ok" }
+                ] }
+            ]
+        });
+        std::fs::write(&path, session.to_string()).unwrap();
+
+        let messages = gemini::load_messages(&path).unwrap();
+        let (preview, full) = messages
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .find_map(|b| match b {
+                SessionBlock::Thinking {
+                    text,
+                    full: Some(full),
+                    ..
+                } => Some((text.clone(), full.clone())),
+                _ => None,
+            })
+            .expect("长思考应带引用");
+        let mut source = file_source(root.path(), &path);
+        source.provider_id = "gemini".into();
+        let text = resolve_content_ref(&source, &full).unwrap();
+        assert_eq!(text, format!("**Plan**\n\n{long}\n\n**Check**\n\nok"));
+        assert!(text.starts_with(&preview));
     }
 
     #[test]

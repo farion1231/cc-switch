@@ -430,21 +430,16 @@ fn load_messages_from_conn(
                     row.tool_call_id.clone().unwrap_or_default(),
                     ToolStatus::Unknown,
                     &text,
-                    || {
-                        plain.then(|| ContentRef::Sqlite {
-                            table: "messages".into(),
-                            id: row.id.to_string(),
-                            column: "content".into(),
-                            pointer: String::new(),
-                        })
-                    },
+                    || plain.then(|| messages_cell(row.id, "content", String::new())),
                 )]
             }
             // 助手：推理 → 正文 → tool_calls（OpenAI 形状）
             "assistant" => {
                 let mut blocks = Vec::new();
                 if let Some(reasoning) = row.reasoning.as_deref().filter(|r| !r.trim().is_empty()) {
-                    blocks.push(thinking_block(reasoning, None, None, || None));
+                    blocks.push(thinking_block(reasoning, None, None, || {
+                        Some(messages_cell(row.id, "reasoning", String::new()))
+                    }));
                 }
                 if !text.trim().is_empty() {
                     blocks.push(SessionBlock::text(text));
@@ -453,7 +448,9 @@ fn load_messages_from_conn(
                     .tool_calls
                     .as_deref()
                     .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
-                blocks.extend(openai_tool_calls(calls.as_ref(), |_| None));
+                blocks.extend(openai_tool_calls(calls.as_ref(), |pointer| {
+                    Some(messages_cell(row.id, "tool_calls", pointer))
+                }));
                 blocks
             }
             _ if text.trim().is_empty() => Vec::new(),
@@ -472,10 +469,11 @@ fn load_messages_from_conn(
 }
 
 /// OpenAI 形状的 `tool_calls[]`（`{id, function{name, arguments}}`，也兼容扁平 `{id, name, arguments}`）
-/// → ToolCall。`arguments_ref(i)` 为第 i 个调用的参数全文生成引用（没有可用位置时返回 `None`）。
+/// → ToolCall。`arguments_ref(pointer)` 为参数全文生成引用，`pointer` 是参数在 `tool_calls`
+/// 数组内的 JSON Pointer（`/{i}/function/arguments` 或扁平形状的 `/{i}/arguments`）。
 fn openai_tool_calls(
     calls: Option<&Value>,
-    arguments_ref: impl Fn(usize) -> Option<ContentRef>,
+    arguments_ref: impl Fn(String) -> Option<ContentRef>,
 ) -> Vec<SessionBlock> {
     calls
         .and_then(Value::as_array)
@@ -489,14 +487,26 @@ fn openai_tool_calls(
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
             let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
-            let input = call
-                .pointer("/function/arguments")
-                .or_else(|| call.get("arguments"))
-                .map(parse_arguments)
-                .unwrap_or(Value::Null);
-            tool_call_block(ToolSource::Generic, id, name, &input, || arguments_ref(i))
+            let (pointer, raw) = match call.pointer("/function/arguments") {
+                Some(raw) => (format!("/{i}/function/arguments"), Some(raw)),
+                None => (format!("/{i}/arguments"), call.get("arguments")),
+            };
+            let input = raw.map(parse_arguments).unwrap_or(Value::Null);
+            tool_call_block(ToolSource::Generic, id, name, &input, || {
+                arguments_ref(pointer)
+            })
         })
         .collect()
+}
+
+/// `messages` 表某行某列的引用（`content::sqlite_allowed` 白名单内的列）
+fn messages_cell(id: i64, column: &str, pointer: String) -> ContentRef {
+    ContentRef::Sqlite {
+        table: "messages".into(),
+        id: id.to_string(),
+        column: column.into(),
+        pointer,
+    }
 }
 
 /// Hermes stores timestamps as Unix epoch seconds (REAL).
@@ -753,8 +763,8 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                 if !text.trim().is_empty() {
                     blocks.push(SessionBlock::text(text));
                 }
-                blocks.extend(openai_tool_calls(msg.get("tool_calls"), |i| {
-                    Some(span.content_ref(format!("{base}/tool_calls/{i}/function/arguments")))
+                blocks.extend(openai_tool_calls(msg.get("tool_calls"), |pointer| {
+                    Some(span.content_ref(format!("{base}/tool_calls{pointer}")))
                 }));
                 blocks
             }

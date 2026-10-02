@@ -135,6 +135,49 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(result)
 }
 
+/// 多条 `thoughts[{subject, description}]` 合并后的思考：`summary` 为各 subject 以 ` · ` 连接，
+/// `text` 为 `**subject**\n\ndescription` 以空行连接。
+pub(crate) struct MergedThoughts {
+    pub summary: String,
+    pub text: String,
+}
+
+/// 合并 Gemini 的 `thoughts` 数组；不是对象数组、或没有任何非空 subject/description 时返回 `None`。
+/// 解析器生成预览与按引用取全文共用这一份格式。
+pub(crate) fn format_thoughts(value: &Value) -> Option<MergedThoughts> {
+    let items = value.as_array()?;
+    let mut thoughts = Vec::new();
+    for item in items {
+        let object = item.as_object()?;
+        let field = |key: &str| object.get(key).and_then(Value::as_str).unwrap_or("").trim();
+        let (subject, description) = (field("subject"), field("description"));
+        if !subject.is_empty() || !description.is_empty() {
+            thoughts.push((subject, description));
+        }
+    }
+    if thoughts.is_empty() {
+        return None;
+    }
+    let summary = thoughts
+        .iter()
+        .map(|(subject, _)| *subject)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let text = thoughts
+        .iter()
+        .map(
+            |(subject, description)| match (subject.is_empty(), description.is_empty()) {
+                (false, false) => format!("**{subject}**\n\n{description}"),
+                (false, true) => format!("**{subject}**"),
+                _ => description.to_string(),
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(MergedThoughts { summary, text })
+}
+
 /// 会话文件相对 `tmp/` 的路径：取末尾三段 `<hash>/chats/<file>`（不足三段时取已有部分）。
 fn relative_to_tmp_root(path: &Path) -> String {
     let parts: Vec<String> = path
@@ -167,54 +210,14 @@ fn gemini_blocks(
 ) -> Vec<SessionBlock> {
     let mut blocks = Vec::new();
 
-    let thoughts: Vec<(&str, &str)> = msg
-        .get("thoughts")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|t| {
-            (
-                t.get("subject")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim(),
-                t.get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim(),
-            )
-        })
-        .filter(|(subject, description)| !subject.is_empty() || !description.is_empty())
-        .collect();
-    if !thoughts.is_empty() {
-        let summary = thoughts
-            .iter()
-            .map(|(subject, _)| *subject)
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" · ");
-        let text = thoughts
-            .iter()
-            .map(
-                |(subject, description)| match (subject.is_empty(), description.is_empty()) {
-                    (false, false) => format!("**{subject}**\n\n{description}"),
-                    (false, true) => format!("**{subject}**"),
-                    _ => description.to_string(),
-                },
-            )
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        // 只有一条时能精确指向 description；多条合并的正文只能指向整个数组（取回时为格式化 JSON）
-        let pointer = if thoughts.len() == 1 {
-            format!("{base}/thoughts/0/description")
-        } else {
-            format!("{base}/thoughts")
-        };
+    if let Some(thoughts) = msg.get("thoughts").and_then(format_thoughts) {
+        // 合并后的正文与取回的全文同一口径：引用指向整个数组，由 `content::resolve_content_ref`
+        // 按 `format_thoughts` 格式化
         blocks.push(thinking_block(
-            &text,
-            (!summary.is_empty()).then_some(summary),
+            &thoughts.text,
+            (!thoughts.summary.is_empty()).then_some(thoughts.summary),
             None,
-            || file_ref(pointer),
+            || file_ref(format!("{base}/thoughts")),
         ));
     }
 
