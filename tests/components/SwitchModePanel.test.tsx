@@ -226,3 +226,38 @@ describe("SwitchModePanel — Stack mode", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("SwitchModePanel — tray needs-route request", () => {
+  it("opens the same needs-routing dialog once the provider is there", async () => {
+    mockMode("direct", null);
+    const onHandled = vi.fn();
+    const copilot: Provider = {
+      ...provider("copilot"),
+      meta: { providerType: "github_copilot" },
+    };
+    const queryClient = createTestQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SwitchModePanel
+          app="claude"
+          providers={{ kimi: provider("kimi"), copilot }}
+          currentProviderId="kimi"
+          isLoading={false}
+          onSwitch={vi.fn()}
+          onOpenRoutingSettings={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+          needsRouteRequest={{ providerId: "copilot", nonce: 1 }}
+          onNeedsRouteHandled={onHandled}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByText("mode.dialog.needsRouteTitle"),
+    ).toBeInTheDocument();
+    expect(onHandled).toHaveBeenCalledTimes(1);
+  });
+});

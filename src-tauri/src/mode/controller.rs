@@ -1474,6 +1474,14 @@ fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailu
     FAILURES.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
+/// 看一眼启动时记下的接上失败（不清空）：托盘的问题区自己留一份，界面照样取走。
+pub fn startup_attach_failures_snapshot() -> Vec<StartupAttachFailure> {
+    startup_attach_failures()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// 取走启动时记下的接上失败（取一次就清空）。
 pub fn take_startup_attach_failures() -> Vec<StartupAttachFailure> {
     std::mem::take(

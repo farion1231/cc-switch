@@ -1104,23 +1104,42 @@ pub fn run() {
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
-                .on_tray_icon_event(|tray, event| match event {
-                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
-                    // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
-                    // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
-                        let app = tray.app_handle().clone();
-                        tauri::async_runtime::spawn(async move {
-                            crate::tray::refresh_all_usage_in_tray(&app).await;
-                        });
+                .on_tray_icon_event(|tray, event| {
+                    // Windows 的习惯是左键打开应用、右键出菜单（按平台给默认值，不加开关）；
+                    // macOS 左键仍出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
+                    #[cfg(target_os = "windows")]
+                    {
+                        if let TrayIconEvent::Click {
+                            button: tauri::tray::MouseButton::Left,
+                            button_state: tauri::tray::MouseButtonState::Up,
+                            ..
+                        } = &event
+                        {
+                            tray::show_main_window(tray.app_handle());
+                        }
                     }
-                    _ => log::debug!("unhandled event {event:?}"),
+                    match &event {
+                        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+                        // refresh_all_usage_in_tray 内部有 10 秒防抖。
+                        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                            let app = tray.app_handle().clone();
+                            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
+                            if matches!(event, TrayIconEvent::Enter { .. }) {
+                                tray::refresh_tray_if_problems_changed(&app);
+                            }
+                            tauri::async_runtime::spawn(async move {
+                                crate::tray::refresh_all_usage_in_tray(&app).await;
+                            });
+                        }
+                        _ => log::debug!("unhandled event {event:?}"),
+                    }
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(true);
+                .show_menu_on_left_click(cfg!(not(target_os = "windows")));
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]
@@ -1246,6 +1265,8 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
+                crate::tray::mark_startup_settled(&app_handle);
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
                 crate::services::provider::codex_official_models::start_background_checks(
                     state.inner().clone(),
@@ -1572,6 +1593,7 @@ pub fn run() {
             commands::set_proxy_takeover_for_app,
             commands::get_app_mode,
             commands::take_startup_attach_failures,
+            tray::take_tray_navigation,
             commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,
             commands::get_proxy_status,
