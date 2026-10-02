@@ -1980,6 +1980,7 @@
     "withMultiplier": "倍率込み",
     "requestDetail": "リクエスト詳細",
     "requestNotFound": "リクエストが見つかりません",
+    "requestLoadFailed": "リクエスト詳細を読み込めませんでした",
     "basicInfo": "基本情報",
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "キャッシュ作成コスト",

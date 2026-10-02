@@ -1980,6 +1980,7 @@
     "withMultiplier": "with multiplier",
     "requestDetail": "Request Detail",
     "requestNotFound": "Request not found",
+    "requestLoadFailed": "Couldn't load request details",
     "basicInfo": "Basic Info",
     "tokenUsage": "Token Usage",
     "cacheCreationCost": "Cache Creation Cost",

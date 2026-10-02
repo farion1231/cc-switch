@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RequestDetailPanel } from "@/components/usage/RequestDetailPanel";
 import type { RequestLog } from "@/types/usage";
@@ -118,5 +118,37 @@ describe("RequestDetailPanel", () => {
       screen.getByText("usage.detail.noTimingSession"),
     ).toBeInTheDocument();
     expect(screen.getByText("usage.detail.sourceSession")).toBeInTheDocument();
+  });
+
+  it("shows the error and a retry button when loading fails", () => {
+    const refetch = vi.fn();
+    useRequestDetailMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: "ambiguous column name: created_at",
+      refetch,
+    });
+    render(<RequestDetailPanel requestId="req_1" onClose={vi.fn()} />);
+
+    expect(screen.getByText("usage.requestLoadFailed")).toBeInTheDocument();
+    expect(
+      screen.getByText("ambiguous column name: created_at"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("usage.requestNotFound")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("says the request is not found only when the query returned nothing", () => {
+    useRequestDetailMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+    });
+    render(<RequestDetailPanel requestId="req_1" onClose={vi.fn()} />);
+
+    expect(screen.getByText("usage.requestNotFound")).toBeInTheDocument();
+    expect(screen.queryByText("usage.requestLoadFailed")).toBeNull();
   });
 });
