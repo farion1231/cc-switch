@@ -1,6 +1,10 @@
 #![allow(non_snake_case)]
 
+use tauri::ipc::{Channel, Response};
+
 use crate::session_manager;
+use crate::session_manager::content::{self, BlockContent};
+use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -10,18 +14,135 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
     Ok(sessions)
 }
 
+/// 一次性返回全部消息（兼容旧前端；「复制整段」等一次性场景也用它）。走解析缓存。
 #[tauri::command]
 pub async fn get_session_messages(
     providerId: String,
     sourcePath: String,
 ) -> Result<Vec<session_manager::SessionMessage>, String> {
-    let provider_id = providerId.clone();
-    let source_path = sourcePath.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::load_messages(&provider_id, &source_path)
+        session_manager::load_transcript(&providerId, &sourcePath)
+            .map(|loaded| loaded.transcript.messages.clone())
     })
     .await
     .map_err(|e| format!("Failed to load session messages: {e}"))?
+}
+
+/// 单个 `Messages` 包的序列化字节上限
+const CHUNK_MAX_BYTES: usize = 256 * 1024;
+/// 单个 `Messages` 包的消息条数上限
+const CHUNK_MAX_MESSAGES: usize = 150;
+
+/// 按 ≤ 256KB 或 ≤ 150 条切包，返回每包的 `[start, end)`。单条超过字节上限时独占一包。
+fn chunk_ranges(message_bytes: &[usize]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0;
+    for (i, size) in message_bytes.iter().enumerate() {
+        let count = i - start;
+        if count > 0 && (count >= CHUNK_MAX_MESSAGES || bytes + size > CHUNK_MAX_BYTES) {
+            ranges.push((start, i));
+            start = i;
+            bytes = 0;
+        }
+        bytes += size;
+    }
+    if start < message_bytes.len() {
+        ranges.push((start, message_bytes.len()));
+    }
+    ranges
+}
+
+/// 分块流式读取会话（§5.1，决策 D1）：依次发送 `Header` → 若干 `Messages` → `Done`。
+///
+/// 读取失败时先发一个 `Error` 包，再以同样的文案返回 `Err`，前端任选一处处理。
+#[tauri::command]
+pub async fn stream_session_messages(
+    providerId: String,
+    sourcePath: String,
+    onChunk: Channel<TranscriptChunk>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let loaded = match session_manager::load_transcript(&providerId, &sourcePath) {
+            Ok(loaded) => loaded,
+            Err(message) => {
+                let _ = onChunk.send(TranscriptChunk::Error {
+                    message: message.clone(),
+                });
+                return Err(message);
+            }
+        };
+        let transcript = loaded.transcript;
+        let send = |chunk: TranscriptChunk| {
+            onChunk
+                .send(chunk)
+                .map_err(|e| format!("Failed to send session chunk: {e}"))
+        };
+
+        send(TranscriptChunk::Header {
+            total: transcript.messages.len(),
+            turns: transcript.turns.clone(),
+            cached: loaded.cached,
+            parse_ms: loaded.parse_ms,
+        })?;
+        for (start, end) in chunk_ranges(&transcript.message_bytes) {
+            send(TranscriptChunk::Messages {
+                start,
+                messages: transcript.messages[start..end].to_vec(),
+            })?;
+        }
+        send(TranscriptChunk::Done {
+            payload_bytes: transcript.approx_bytes as u64,
+        })
+    })
+    .await
+    .map_err(|e| format!("Failed to stream session messages: {e}"))?
+}
+
+/// 按 [`ContentRef`] 取工具输出 / 参数 / 思考 / diff 全文，按字符分页（默认且最多 512K 字符一页）。
+#[tauri::command]
+pub async fn get_session_block_content(
+    providerId: String,
+    sourcePath: String,
+    contentRef: ContentRef,
+    offset: Option<u32>,
+    limit: Option<u32>,
+) -> Result<BlockContent, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = content::validate_source(&providerId, &sourcePath)?;
+        let full = content::resolve_content_ref(&source, &contentRef)?;
+        Ok(content::paginate(&full, offset, limit))
+    })
+    .await
+    .map_err(|e| format!("Failed to load block content: {e}"))?
+}
+
+/// 读取会话图片的原始字节（决策 D2）；前端按 `ImageRef.mediaType` 生成 Blob URL。
+#[tauri::command]
+pub async fn get_session_image(
+    providerId: String,
+    sourcePath: String,
+    image: ImageRef,
+) -> Result<Response, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = content::validate_source(&providerId, &sourcePath)?;
+        content::load_image(&source, &image).map(Response::new)
+    })
+    .await
+    .map_err(|e| format!("Failed to load session image: {e}"))?
+}
+
+/// 在文件管理器中显示某个已存在的文件或目录（决策 D3）；不提供「用默认程序打开」。
+#[tauri::command]
+pub async fn reveal_session_path(path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = content::resolve_reveal_path(&path)?;
+        tauri_plugin_opener::reveal_item_in_dir(&path)
+            .map_err(|_| "无法在文件管理器中显示该路径".to_string())?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("Failed to reveal path: {e}"))?
 }
 
 /// 在用户选定的终端里恢复一个会话。
@@ -116,4 +237,21 @@ pub async fn delete_sessions(
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_ranges_split_by_count_and_bytes() {
+        assert!(chunk_ranges(&[]).is_empty());
+
+        let ranges = chunk_ranges(&vec![10; 320]);
+        assert_eq!(ranges, vec![(0, 150), (150, 300), (300, 320)]);
+
+        let big = CHUNK_MAX_BYTES;
+        let ranges = chunk_ranges(&[100, big, 100, big / 2, big / 2, 1]);
+        assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 4), (4, 6)]);
+    }
 }
