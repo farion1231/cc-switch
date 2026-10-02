@@ -89,6 +89,13 @@ pub struct ProxyStatus {
     /// 当前活跃的代理目标列表
     #[serde(default)]
     pub active_targets: Vec<ActiveTarget>,
+    /// 每个 provider 当前活跃的推理流条数（按 provider ID 计）。
+    ///
+    /// 只统计「正在进行」的请求，不累计历史：一条推理流从上游请求发出起计，
+    /// 到响应体（含流式 SSE）结束才归还，因此流式长响应会被如实计入。
+    /// 代理重启后清零。
+    #[serde(default)]
+    pub in_flight_by_provider: std::collections::HashMap<String, usize>,
 }
 
 /// 活跃的代理目标信息

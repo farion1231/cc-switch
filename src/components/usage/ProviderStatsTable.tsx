@@ -8,6 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useProviderStats } from "@/lib/query/usage";
+import { useProxyStatusQuery } from "@/lib/query/proxy";
 import { fmtUsd } from "./format";
 import type { UsageRangeSelection } from "@/types/usage";
 
@@ -34,6 +35,13 @@ export function ProviderStatsTable({
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
   );
+  // 推理流是实时数据：useProxyStatusQuery 在代理运行时自带 2s 轮询，
+  // 因此跟随代理状态自动更新，无需本面板的刷新间隔参与。
+  const { data: proxyStatus } = useProxyStatusQuery();
+  const inFlight = proxyStatus?.in_flight_by_provider ?? {};
+  // 在飞条数按 provider 计，不区分模型；筛了模型时给个 * 提示数字覆盖全模型，
+  // 免得读者把它当成"这个模型当前有几条流"。
+  const modelFiltered = typeof model === "string" && model.trim() !== "";
 
   if (isLoading) {
     return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;
@@ -60,13 +68,16 @@ export function ProviderStatsTable({
             <TableHead className="text-right">
               {t("usage.avgLatency", "平均延迟")}
             </TableHead>
+            <TableHead className="text-right" title={t("usage.inFlightHint")}>
+              {t("usage.inFlight", "推理流")}
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {stats?.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={7}
                 className="text-center text-muted-foreground"
               >
                 {t("usage.noData", "暂无数据")}
@@ -92,6 +103,17 @@ export function ProviderStatsTable({
                 </TableCell>
                 <TableCell className="text-right">
                   {stat.avgLatencyMs}ms
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {inFlight[stat.providerId] ?? 0}
+                  {modelFiltered ? (
+                    <span
+                      className="ml-1 text-muted-foreground"
+                      title={t("usage.inFlightUnfilteredHint")}
+                    >
+                      *
+                    </span>
+                  ) : null}
                 </TableCell>
               </TableRow>
             ))

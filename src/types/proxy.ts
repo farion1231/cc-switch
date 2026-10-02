@@ -27,6 +27,8 @@ export interface ProxyStatus {
   last_error: string | null;
   failover_count: number;
   active_targets?: ActiveTarget[];
+  /** 每个 provider 当前活跃的推理流条数（provider ID → count）。 */
+  in_flight_by_provider?: Record<string, number>;
 }
 
 export interface ActiveTarget {

@@ -126,12 +126,31 @@ pub struct ForwardError {
 /// 一个异步任务执行 -1，从而支持把 guard move 进流式 body future（stream 自然结束
 /// 时 guard 与 future 一起 drop）。
 ///
+/// per-provider 的归属不在构造时确定：`acquire()` 一律以未绑定状态创建，
+/// 选定 provider 后由 [`ActiveConnectionGuard::bind_provider`] 登记。
+///
 /// 设计动机：之前在 `forward_with_retry` 出口处同步 -1，但流式响应的 body 实际
 /// 在 `create_logged_passthrough_stream` 内还会继续 yield 字节流，导致 UI 的
 /// `active_connections` 计数过早归零。RAII guard 让"减量"由 Rust 类型系统驱动，
 /// 不需要每条出口路径都手动调用。
 pub(crate) struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
+    /// 该条连接实际打到的 provider。None 表示还没选定 provider（入口处即失败）。
+    provider_id: Option<String>,
+}
+
+/// 归还某 provider 名下的一份在飞份额，归零则移除条目（避免 map 随 provider
+/// 增删无限增长）。
+///
+/// [`ActiveConnectionGuard::bind_provider`] 与 `Drop` 共用：Drop 不能 await，
+/// 只能把同一段逻辑塞进 spawn 的 future，抽出来才能保证两处语义永远一致。
+fn release_provider_share(status: &mut ProxyStatus, provider_id: &str) {
+    if let Some(count) = status.in_flight_by_provider.get_mut(provider_id) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            status.in_flight_by_provider.remove(provider_id);
+        }
+    }
 }
 
 impl ActiveConnectionGuard {
@@ -140,7 +159,30 @@ impl ActiveConnectionGuard {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
         }
-        Self { status }
+        Self {
+            status,
+            provider_id: None,
+        }
+    }
+
+    /// 在 provider 选定后调用，把这条连接登记到该 provider 名下。
+    ///
+    /// 幂等：重复调用同一 provider 不会重复计数。
+    pub(crate) async fn bind_provider(&mut self, provider_id: &str) {
+        if self.provider_id.as_deref() == Some(provider_id) {
+            return;
+        }
+        // 换 provider（故障转移）：归还旧份额与登记新份额放在同一个写锁临界区，
+        // 读方不会看到这条连接「既不在旧家也不在新家」的中间态。
+        let id = provider_id.to_string();
+        {
+            let mut s = self.status.write().await;
+            if let Some(previous) = self.provider_id.take() {
+                release_provider_share(&mut s, &previous);
+            }
+            *s.in_flight_by_provider.entry(id.clone()).or_insert(0) += 1;
+        }
+        self.provider_id = Some(id);
     }
 }
 
@@ -148,13 +190,20 @@ impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
         // Drop 不能 await：把减量操作调度到 tokio runtime
         let status = self.status.clone();
+        let provider_id = self.provider_id.take();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let mut s = status.write().await;
                 s.active_connections = s.active_connections.saturating_sub(1);
+                if let Some(provider_id) = provider_id {
+                    release_provider_share(&mut s, &provider_id);
+                }
             });
         }
-        // 没有 runtime 时静默丢失计数（仅 UI 展示用，可接受最终一致性）
+        // 没有 runtime 时静默丢失计数：全局 active_connections 会漂移，per-provider
+        // 的条目则要等到代理重启（ProxyStatus 重建）才会消失。仅 UI 展示用，可接受
+        // 最终一致性——guard 全都在代理自身的 future 里 drop，生产路径上取不到
+        // runtime 是不可达的。
     }
 }
 
@@ -559,14 +608,18 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
+        // guard 在分流之前获取：两条路径都是真实的上游连接，都该计入
+        // active_connections / in_flight_by_provider，否则关闭路由态时的
+        // 在飞流量在统计里是隐形的。
+        let mut guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         if !self.routing_state_enabled() {
             return self
                 .forward_with_retry_inner(
                     app_type, method, endpoint, body, headers, extensions, providers,
+                    &mut guard,
                 )
                 .await;
         }
-        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         {
             let mut s = self.status.write().await;
             s.total_requests = s.total_requests.saturating_add(1);
@@ -574,7 +627,7 @@ impl RequestForwarder {
         }
         let result = self
             .forward_with_retry_inner(
-                app_type, method, endpoint, body, headers, extensions, providers,
+                app_type, method, endpoint, body, headers, extensions, providers, &mut guard,
             )
             .await;
         // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
@@ -595,6 +648,8 @@ impl RequestForwarder {
     /// * `body` - 请求体
     /// * `headers` - 请求头
     /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
+    /// * `guard` - 入口处取得的活跃连接 guard；选定 provider 后由本函数登记归属，
+    ///   最终随响应流转（见 `forward_with_retry`）
     #[allow(clippy::too_many_arguments)]
     async fn forward_with_retry_inner(
         &self,
@@ -605,6 +660,7 @@ impl RequestForwarder {
         headers: axum::http::HeaderMap,
         extensions: Extensions,
         providers: Vec<Provider>,
+        guard: &mut ActiveConnectionGuard,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
@@ -665,6 +721,10 @@ impl RequestForwarder {
             if !allowed {
                 continue;
             }
+
+            // 这条连接从此刻起算在这家 provider 头上（上游请求发出前）。
+            // 故障转移到下家时会先把上家的份额还回去，保证同一时刻只计一家。
+            guard.bind_provider(&provider.id).await;
 
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
             // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
@@ -5409,6 +5469,112 @@ mod tests {
 
         assert_eq!(replaced, 1, "默认全开 + 名单内模型应预替换");
         assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+    }
+
+    // ── per-provider 推理流计数 ──
+
+    fn test_status() -> Arc<RwLock<ProxyStatus>> {
+        Arc::new(RwLock::new(ProxyStatus::default()))
+    }
+
+    #[tokio::test]
+    async fn in_flight_counts_per_provider_independently() {
+        let status = test_status();
+        let mut a = ActiveConnectionGuard::acquire(status.clone()).await;
+        let mut b = ActiveConnectionGuard::acquire(status.clone()).await;
+
+        // 两家 provider 各一条
+        a.bind_provider("p1").await;
+        b.bind_provider("p2").await;
+
+        {
+            let s = status.read().await;
+            assert_eq!(s.active_connections, 2);
+            assert_eq!(s.in_flight_by_provider.get("p1"), Some(&1));
+            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+        }
+
+        // 同一 provider 再来一条 → 只累加那一家
+        let mut c = ActiveConnectionGuard::acquire(status.clone()).await;
+        c.bind_provider("p1").await;
+        {
+            let s = status.read().await;
+            assert_eq!(s.in_flight_by_provider.get("p1"), Some(&2));
+            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+            assert_eq!(s.active_connections, 3);
+        }
+
+        drop(a);
+        // Drop 把减量调度到 runtime，让出一次调度让它跑完
+        tokio::task::yield_now().await;
+        {
+            let s = status.read().await;
+            assert_eq!(s.in_flight_by_provider.get("p1"), Some(&1));
+            assert_eq!(s.active_connections, 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn in_flight_moves_to_the_next_provider_on_failover() {
+        let status = test_status();
+        let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+
+        guard.bind_provider("p1").await;
+        // 故障转移：同一条连接改打 p2，p1 的份额必须先还回去
+        guard.bind_provider("p2").await;
+
+        {
+            let s = status.read().await;
+            assert_eq!(
+                s.in_flight_by_provider.get("p1"),
+                None,
+                "换 provider 后旧份额必须归还，否则 p1 的计数会永久虚高"
+            );
+            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+            assert_eq!(s.active_connections, 1);
+        }
+
+        // 重复绑定同一家不得重复计数
+        guard.bind_provider("p2").await;
+        {
+            let s = status.read().await;
+            assert_eq!(s.in_flight_by_provider.get("p2"), Some(&1));
+        }
+    }
+
+    #[tokio::test]
+    async fn in_flight_entry_is_removed_when_the_last_stream_ends() {
+        let status = test_status();
+        let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+        guard.bind_provider("p1").await;
+
+        drop(guard);
+        tokio::task::yield_now().await;
+
+        let s = status.read().await;
+        assert!(
+            !s.in_flight_by_provider.contains_key("p1"),
+            "归零后应移除条目，否则 map 会随 provider 增删无限增长"
+        );
+        assert_eq!(s.active_connections, 0);
+    }
+
+    #[tokio::test]
+    async fn in_flight_without_bound_provider_only_counts_the_global_total() {
+        // 入口处就失败（没选到 provider）的连接：只计全局，不进 per-provider map。
+        let status = test_status();
+        let guard = ActiveConnectionGuard::acquire(status.clone()).await;
+
+        {
+            let s = status.read().await;
+            assert_eq!(s.active_connections, 1);
+            assert!(s.in_flight_by_provider.is_empty());
+        }
+
+        drop(guard);
+        tokio::task::yield_now().await;
+        let s = status.read().await;
+        assert_eq!(s.active_connections, 0);
     }
 
     #[test]
