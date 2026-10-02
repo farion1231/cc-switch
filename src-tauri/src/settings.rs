@@ -394,6 +394,10 @@ pub struct AppSettings {
     /// Whether to show the project profile switcher on the main page header
     #[serde(default = "default_show_profile_switcher")]
     pub show_profile_switcher: bool,
+    /// Check installed CLI tools for new versions at startup (off by default:
+    /// many users do not want to chase every release).
+    #[serde(default)]
+    pub check_tool_updates_on_startup: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -543,6 +547,7 @@ impl Default for AppSettings {
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: true,
+            check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,

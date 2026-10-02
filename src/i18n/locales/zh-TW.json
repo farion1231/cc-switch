@@ -43,7 +43,8 @@
     "auto": "自動",
     "enabled": "已啟用",
     "notSet": "未設定",
-    "collapse": "收合"
+    "collapse": "收合",
+    "more": "更多"
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
@@ -342,7 +343,18 @@
   },
   "settings": {
     "title": "設定",
-    "general": "通用",
+    "general": {
+      "appearance": "外觀",
+      "sidebarAndHeader": "側欄與頁首",
+      "visibleApps": "在側欄顯示哪些應用",
+      "goToApps": "前往「應用」",
+      "updates": "應用更新",
+      "checkToolUpdates": "啟動時檢查應用更新",
+      "checkToolUpdatesHelp": "開啟後，每次啟動 CC Switch 會查一次已安裝的命令列應用有沒有新版本，查到了就在側欄「應用」上顯示一個圓點。不會自動升級。",
+      "windowAndTerminal": "視窗與終端機",
+      "minimizeToTrayHelp": "開啟時，點關閉按鈕只隱藏視窗，CC Switch 留在系統匣裡繼續執行（輕量模式在系統匣選單裡）；關閉時點關閉按鈕直接結束。",
+      "terminalHelp": "點供應商卡片上的「開啟終端機」時用哪個終端機。選的終端機無法使用時，改用系統預設終端機。"
+    },
     "tabGeneral": "通用",
     "tabAuth": "驗證",
     "tabAdvanced": "進階",
@@ -901,7 +913,24 @@
       "pricingSaveFailed": "儲存計費設定失敗：{{error}}",
       "pricingLoadFailed": "載入計費設定失敗：{{error}}"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "sections": {
+      "general": "通用",
+      "appConfig": "應用設定",
+      "routing": "本地路由",
+      "network": "網路",
+      "data": "資料",
+      "about": "關於"
+    },
+    "appConfig": {
+      "configDir": "設定目錄"
+    },
+    "routing": {
+      "service": "服務"
+    },
+    "data": {
+      "location": "儲存位置"
+    }
   },
   "apps": {
     "claude": "Claude",
@@ -2212,7 +2241,8 @@
     "confirm": {
       "deleteTitle": "確認刪除",
       "deleteMessage": "確定要刪除提示詞 \"{{name}}\" 嗎？"
-    }
+    },
+    "appSelect": "選擇應用"
   },
   "profiles": {
     "switcherAriaLabel": "專案：{{name}}",
@@ -2661,6 +2691,12 @@
       "successSingle": "技能 {{name}} 已安裝",
       "successMultiple": "成功安裝 {{count}} 個技能",
       "noSkillsFound": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）"
+    },
+    "backToInstalled": "返回已安裝",
+    "moreActions": "Skills 的更多操作",
+    "storageSheet": {
+      "title": "儲存與同步",
+      "open": "儲存與同步…"
     }
   },
   "deeplink": {
@@ -3285,5 +3321,78 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "nav": {
+    "mainLabel": "主導覽",
+    "skipToContent": "跳到主要內容",
+    "expandSidebar": "展開側欄",
+    "collapseSidebar": "收起側欄",
+    "appsGroup": "應用",
+    "todayCost": "今日 {{cost}}",
+    "usage": "用量統計",
+    "auth": "授權中心",
+    "authNeedsReauth": "有帳號需要重新登入",
+    "prompts": "提示詞",
+    "sessions": "工作階段",
+    "apps": "應用",
+    "appsTitle": "應用：安裝、升級、在側欄顯示哪些",
+    "appsHasUpdate": "應用 · 有可用更新",
+    "settings": "設定",
+    "settingsHasUpdate": "設定 · CC Switch 有新版本",
+    "mode": {
+      "route": "路由",
+      "stack": "疊加",
+      "mapping": "映射",
+      "mappingFull": "模型映射"
+    },
+    "needsAttention": "需要處理",
+    "back": "返回"
+  },
+  "appsPage": {
+    "showInSidebar": "在側欄顯示 {{name}}",
+    "lastChecked": "上次檢查 {{time}}",
+    "neverChecked": "還沒檢查過更新",
+    "helpTitle": "應用",
+    "helpBody": "在這裡安裝、升級命令列應用，並選擇在側欄顯示哪些。",
+    "checking": "檢查中…",
+    "checkUpdates": "檢查更新",
+    "moreActions": "更多操作",
+    "manualCommands": "手動安裝指令…",
+    "columnApp": "應用",
+    "columnVersion": "版本",
+    "columnVisible": "顯示",
+    "visibleHelp": "關掉後，這個應用不再出現在側欄、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。既有設定不變，照常同步。",
+    "desktopHelp": "Claude Desktop 是桌面應用，不能在這裡安裝或升級；CC Switch 透過它的設定檔接入。",
+    "desktopUnsupported": "目前系統不支援",
+    "desktopConnected": "已接入",
+    "desktopNotConnected": "未接入",
+    "newVersion": "有新版本 {{version}}",
+    "notRunnable": "無法執行",
+    "otherInstalls": "另有 {{count}} 處安裝",
+    "installsFound": "偵測到 {{count}} 處安裝",
+    "wslFlag": "旗標",
+    "installHint": {
+      "claude": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "codex": "透過 npm 安裝",
+      "gemini": "透過 npm 安裝",
+      "grok": "透過 npm 安裝",
+      "opencode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "openclaw": "透過 npm 安裝",
+      "hermes": "安裝時執行官方安裝腳本",
+      "pi": "透過 npm 安裝",
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
+    }
+  },
+  "appPage": {
+    "moreActions": "{{name}} 的更多操作",
+    "viewSessions": "查看工作階段",
+    "configDirectory": "設定目錄…",
+    "installAndUpgrade": "安裝與升級",
+    "hideFromSidebar": "在側欄隱藏",
+    "providers": "供應商",
+    "workspace": "工作區",
+    "openclawConfig": "設定",
+    "memory": "記憶",
+    "webUi": "Web UI"
   }
 }

@@ -8,7 +8,10 @@ import { cn } from "@/lib/utils";
 export interface SegmentedItem<T extends string> {
   value: T;
   label: React.ReactNode;
-  icon?: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  icon?: React.ComponentType<{
+    className?: string;
+    strokeWidth?: number | string;
+  }>;
   /** 跟在文字后面的附加内容（例如模式 tab 的「生效中」圆点） */
   trailing?: React.ReactNode;
   /** 选中项以外的附加样式（例如生效但没在看的模式格用模式 soft 底） */

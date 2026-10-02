@@ -43,7 +43,8 @@
     "auto": "Auto",
     "enabled": "Enabled",
     "notSet": "Not Set",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "more": "More"
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -342,7 +343,18 @@
   },
   "settings": {
     "title": "Settings",
-    "general": "General",
+    "general": {
+      "appearance": "Appearance",
+      "sidebarAndHeader": "Sidebar and header",
+      "visibleApps": "Apps shown in the sidebar",
+      "goToApps": "Open Apps",
+      "updates": "App updates",
+      "checkToolUpdates": "Check for app updates at startup",
+      "checkToolUpdatesHelp": "When on, CC Switch checks your installed command-line apps for new versions each time it starts, and shows a dot on Apps in the sidebar if it finds one. Nothing is upgraded automatically.",
+      "windowAndTerminal": "Window and terminal",
+      "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
+      "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
+    },
     "tabGeneral": "General",
     "tabAuth": "Auth",
     "tabAdvanced": "Advanced",
@@ -900,7 +912,24 @@
       "pricingSaveFailed": "Failed to save pricing defaults: {{error}}",
       "pricingLoadFailed": "Failed to load pricing defaults: {{error}}"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "sections": {
+      "general": "General",
+      "appConfig": "App config",
+      "routing": "Local routing",
+      "network": "Network",
+      "data": "Data",
+      "about": "About"
+    },
+    "appConfig": {
+      "configDir": "Config directory"
+    },
+    "routing": {
+      "service": "Service"
+    },
+    "data": {
+      "location": "Location"
+    }
   },
   "apps": {
     "claude": "Claude",
@@ -2211,7 +2240,8 @@
     "confirm": {
       "deleteTitle": "Confirm Delete",
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
-    }
+    },
+    "appSelect": "Choose app"
   },
   "profiles": {
     "switcherAriaLabel": "Project: {{name}}",
@@ -2660,6 +2690,12 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "backToInstalled": "Back to installed",
+    "moreActions": "More Skills actions",
+    "storageSheet": {
+      "title": "Storage and sync",
+      "open": "Storage and sync…"
     }
   },
   "deeplink": {
@@ -3284,5 +3320,78 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "nav": {
+    "mainLabel": "Main navigation",
+    "skipToContent": "Skip to main content",
+    "expandSidebar": "Expand sidebar",
+    "collapseSidebar": "Collapse sidebar",
+    "appsGroup": "Apps",
+    "todayCost": "Today {{cost}}",
+    "usage": "Usage",
+    "auth": "Accounts",
+    "authNeedsReauth": "An account needs to sign in again",
+    "prompts": "Prompts",
+    "sessions": "Sessions",
+    "apps": "Apps",
+    "appsTitle": "Apps: install, upgrade, choose which show in the sidebar",
+    "appsHasUpdate": "Apps · updates available",
+    "settings": "Settings",
+    "settingsHasUpdate": "Settings · a new CC Switch version is available",
+    "mode": {
+      "route": "Routing",
+      "stack": "Stack",
+      "mapping": "Mapping",
+      "mappingFull": "Model mapping"
+    },
+    "needsAttention": "Needs attention",
+    "back": "Back"
+  },
+  "appsPage": {
+    "showInSidebar": "Show {{name}} in the sidebar",
+    "lastChecked": "Last checked {{time}}",
+    "neverChecked": "Not checked for updates yet",
+    "helpTitle": "Apps",
+    "helpBody": "Install and upgrade command-line apps here, and choose which ones show in the sidebar.",
+    "checking": "Checking…",
+    "checkUpdates": "Check for updates",
+    "moreActions": "More actions",
+    "manualCommands": "Manual install commands…",
+    "columnApp": "App",
+    "columnVersion": "Version",
+    "columnVisible": "Show",
+    "visibleHelp": "When off, the app no longer appears in the sidebar, in the MCP / Skills app columns, or in the app pickers on Prompts and Sessions. Its existing config stays and keeps syncing.",
+    "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
+    "desktopUnsupported": "Not supported on this system",
+    "desktopConnected": "Connected",
+    "desktopNotConnected": "Not connected",
+    "newVersion": "{{version}} available",
+    "notRunnable": "Can't run",
+    "otherInstalls": "{{count}} more install(s)",
+    "installsFound": "{{count}} installs found",
+    "wslFlag": "Flag",
+    "installHint": {
+      "claude": "Installs with the official script, falls back to npm",
+      "codex": "Installs with npm",
+      "gemini": "Installs with npm",
+      "grok": "Installs with npm",
+      "opencode": "Installs with the official script, falls back to npm",
+      "openclaw": "Installs with npm",
+      "hermes": "Installs with the official script",
+      "pi": "Installs with npm",
+      "mcode": "Installs with the official script, falls back to npm"
+    }
+  },
+  "appPage": {
+    "moreActions": "More actions for {{name}}",
+    "viewSessions": "View sessions",
+    "configDirectory": "Config directory…",
+    "installAndUpgrade": "Install and upgrade",
+    "hideFromSidebar": "Hide from sidebar",
+    "providers": "Providers",
+    "workspace": "Workspace",
+    "openclawConfig": "Config",
+    "memory": "Memory",
+    "webUi": "Web UI"
   }
 }

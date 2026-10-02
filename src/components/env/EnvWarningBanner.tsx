@@ -111,8 +111,8 @@ export function EnvWarningBanner({
 
   return (
     <>
-      <div className="fixed top-0 left-0 right-0 z-[100] bg-yellow-50 dark:bg-yellow-950 border-b border-yellow-200 dark:border-yellow-900 shadow-lg animate-slide-down">
-        <div className="container mx-auto px-4 py-3">
+      <div className="shrink-0 bg-yellow-50 dark:bg-yellow-950 border-b border-yellow-200 dark:border-yellow-900">
+        <div className="px-6 py-3">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-500 flex-shrink-0 mt-0.5" />
 

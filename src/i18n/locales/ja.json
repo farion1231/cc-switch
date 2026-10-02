@@ -43,7 +43,8 @@
     "auto": "自動",
     "enabled": "有効",
     "notSet": "未設定",
-    "collapse": "折りたたむ"
+    "collapse": "折りたたむ",
+    "more": "その他"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -342,7 +343,18 @@
   },
   "settings": {
     "title": "設定",
-    "general": "一般",
+    "general": {
+      "appearance": "外観",
+      "sidebarAndHeader": "サイドバーとヘッダー",
+      "visibleApps": "サイドバーに表示するアプリ",
+      "goToApps": "「アプリ」を開く",
+      "updates": "アプリの更新",
+      "checkToolUpdates": "起動時にアプリの更新を確認",
+      "checkToolUpdatesHelp": "オンにすると、CC Switch の起動時にインストール済みのコマンドラインアプリの新しいバージョンを確認し、見つかればサイドバーの「アプリ」に点を表示します。自動でアップグレードはしません。",
+      "windowAndTerminal": "ウィンドウとターミナル",
+      "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
+      "terminalHelp": "プロバイダーカードの「ターミナルを開く」で使うターミナルです。使えない場合はシステムの既定のターミナルを使います。"
+    },
     "tabGeneral": "一般",
     "tabAuth": "認証",
     "tabAdvanced": "詳細",
@@ -900,7 +912,24 @@
       "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
       "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "sections": {
+      "general": "一般",
+      "appConfig": "アプリ設定",
+      "routing": "ローカルルーティング",
+      "network": "ネットワーク",
+      "data": "データ",
+      "about": "情報"
+    },
+    "appConfig": {
+      "configDir": "設定ディレクトリ"
+    },
+    "routing": {
+      "service": "サービス"
+    },
+    "data": {
+      "location": "保存場所"
+    }
   },
   "apps": {
     "claude": "Claude",
@@ -2211,7 +2240,8 @@
     "confirm": {
       "deleteTitle": "削除の確認",
       "deleteMessage": "プロンプト「{{name}}」を削除してもよろしいですか？"
-    }
+    },
+    "appSelect": "アプリを選択"
   },
   "profiles": {
     "switcherAriaLabel": "プロジェクト：{{name}}",
@@ -2660,6 +2690,12 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "backToInstalled": "インストール済みに戻る",
+    "moreActions": "Skills のその他の操作",
+    "storageSheet": {
+      "title": "保存と同期",
+      "open": "保存と同期…"
     }
   },
   "deeplink": {
@@ -3284,5 +3320,78 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "nav": {
+    "mainLabel": "メインナビゲーション",
+    "skipToContent": "メインコンテンツへスキップ",
+    "expandSidebar": "サイドバーを展開",
+    "collapseSidebar": "サイドバーを折りたたむ",
+    "appsGroup": "アプリ",
+    "todayCost": "今日 {{cost}}",
+    "usage": "使用量",
+    "auth": "アカウント",
+    "authNeedsReauth": "再ログインが必要なアカウントがあります",
+    "prompts": "プロンプト",
+    "sessions": "セッション",
+    "apps": "アプリ",
+    "appsTitle": "アプリ：インストール、アップグレード、サイドバーに表示するもの",
+    "appsHasUpdate": "アプリ · 更新があります",
+    "settings": "設定",
+    "settingsHasUpdate": "設定 · CC Switch の新しいバージョンがあります",
+    "mode": {
+      "route": "ルーティング",
+      "stack": "Stack",
+      "mapping": "マッピング",
+      "mappingFull": "モデルマッピング"
+    },
+    "needsAttention": "対応が必要",
+    "back": "戻る"
+  },
+  "appsPage": {
+    "showInSidebar": "{{name}} をサイドバーに表示",
+    "lastChecked": "最終確認 {{time}}",
+    "neverChecked": "まだ更新を確認していません",
+    "helpTitle": "アプリ",
+    "helpBody": "ここでコマンドラインアプリをインストール・アップグレードし、サイドバーに表示するものを選びます。",
+    "checking": "確認中…",
+    "checkUpdates": "更新を確認",
+    "moreActions": "その他の操作",
+    "manualCommands": "手動インストールコマンド…",
+    "columnApp": "アプリ",
+    "columnVersion": "バージョン",
+    "columnVisible": "表示",
+    "visibleHelp": "オフにすると、このアプリはサイドバー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。既存の設定はそのまま同期されます。",
+    "desktopHelp": "Claude Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
+    "desktopUnsupported": "このシステムには対応していません",
+    "desktopConnected": "接続済み",
+    "desktopNotConnected": "未接続",
+    "newVersion": "新しいバージョン {{version}}",
+    "notRunnable": "実行できません",
+    "otherInstalls": "ほかに {{count}} 件のインストール",
+    "installsFound": "{{count}} 件のインストールを検出",
+    "wslFlag": "フラグ",
+    "installHint": {
+      "claude": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "codex": "npm でインストール",
+      "gemini": "npm でインストール",
+      "grok": "npm でインストール",
+      "opencode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "openclaw": "npm でインストール",
+      "hermes": "公式インストールスクリプトでインストール",
+      "pi": "npm でインストール",
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
+    }
+  },
+  "appPage": {
+    "moreActions": "{{name}} のその他の操作",
+    "viewSessions": "セッションを見る",
+    "configDirectory": "設定ディレクトリ…",
+    "installAndUpgrade": "インストールとアップグレード",
+    "hideFromSidebar": "サイドバーから隠す",
+    "providers": "プロバイダー",
+    "workspace": "ワークスペース",
+    "openclawConfig": "設定",
+    "memory": "メモリ",
+    "webUi": "Web UI"
   }
 }

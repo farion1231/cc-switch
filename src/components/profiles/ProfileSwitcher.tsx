@@ -59,7 +59,7 @@ interface ProfileSwitcherProps {
  * 项目列表全应用共享（用户拥有的项目就那几个），但切换按分组进行：
  * Claude 组（Claude Code 的供应商/MCP/Skills/记忆文件 + Claude Desktop
  * 的供应商）与 Codex 组各自指向自己的当前项目、只应用组内快照。
- * 与右侧 AppSwitcher（仅切换查看的应用）语义不同。
+ * 与侧栏的应用列表（只切换查看的应用）语义不同。
  */
 export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   const { t } = useTranslation();

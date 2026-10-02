@@ -63,11 +63,7 @@ async function openProxySection() {
       onAutoSave={onAutoSave}
     />,
   );
-  await userEvent
-    .setup()
-    .click(
-      screen.getByRole("button", { name: /settings.advanced.proxy.title/ }),
-    );
+  // 设置 → 本地路由的各节常显（不再是折叠面板）
   await waitFor(() => expect(panelProps.current).toBeDefined());
   return onAutoSave;
 }
@@ -132,13 +128,11 @@ describe("ProxyTabContent failover settings", () => {
         onAutoSave={vi.fn()}
       />,
     );
-    await userEvent
-      .setup()
-      .click(
-        screen.getByRole("button", {
-          name: /settings.advanced.failover.title/,
-        }),
-      );
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: /settings.advanced.failover.title/,
+      }),
+    );
     await waitFor(() => expect(queueProps.current.claude).toBeDefined());
   }
 
