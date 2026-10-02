@@ -97,11 +97,15 @@ pub struct ProviderStats {
 /// 计速度的门槛：输出少于这个数的请求（工具调用这类）不算速度，避免 0.1 秒回 15 个 token 算出离谱的数。
 pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 
-/// 明细行能不能计速度的 SQL 条件（和前端 `getOutputTokensPerSecond` 同口径）。
+/// 生成窗口（耗时 − 首字）短于这个毫秒数时不算速度：中转站缓冲后一次性吐出、
+/// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
+pub const SPEED_MIN_GENERATION_MS: i64 = 100;
+
+/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。
 fn speed_eligible_sql(alias: &str) -> String {
     format!(
         "{alias}.first_token_ms IS NOT NULL AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
-         AND {alias}.latency_ms > {alias}.first_token_ms"
+         AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
     )
 }
 
@@ -4007,11 +4011,13 @@ mod tests {
             insert("no-ttft", 5_000, 9_000, None)?;
             // 不计：耗时不大于首字
             insert("zero-gen", 500, 1_000, Some(1_000))?;
+            // 不计：生成窗口不到 100ms，是传输突发
+            insert("burst", 500, 1_050, Some(1_000))?;
         }
 
         let stats = db.get_provider_stats(None, None, None, None, None)?;
         assert_eq!(stats.len(), 1);
-        assert_eq!(stats[0].request_count, 5);
+        assert_eq!(stats[0].request_count, 6);
         assert_eq!(stats[0].speed_output_tokens, 1_300);
         assert_eq!(stats[0].speed_generation_ms, 13_000);
 
