@@ -517,4 +517,16 @@ export const handlers = [
       gatewayTokenConfigured: false,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
+    const { kind } = await withJson<{ kind: string }>(request);
+    return success(kind === "user" ? "user profile" : "agent notes");
+  }),
+  http.post(`${TAURI_ENDPOINT}/get_hermes_memory_limits`, () =>
+    success({
+      memory: 2200,
+      user: 1375,
+      memoryEnabled: true,
+      userEnabled: true,
+    }),
+  ),
 ];

@@ -367,8 +367,7 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "title": "OAuth Authentication Center",
-      "description": "Use GitHub Copilot, ChatGPT or xAI subscriptions as providers. Credentials are injected by the routing service, so these providers need Routing mode (except Codex's official login). Mind each service's terms.",
+      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding).",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
@@ -1501,7 +1500,6 @@
     "removeAccount": "Remove account",
     "setAsDefault": "Set as default",
     "addAnotherAccount": "Add another account",
-    "logoutAll": "Logout all accounts",
     "retry": "Retry",
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
@@ -1533,7 +1531,6 @@
     "explicitSelectionRequired": "Choose a sign-in method",
     "useDefaultAccount": "Use default account",
     "noneOptionLabel": "Follow Codex login",
-    "reauthTitle": "Some accounts need to sign in again",
     "reauthDescription": "To match the browser-login behavior, these accounts must sign in again to restore the required login credential (id_token). Once re-authenticated they can be used for managed binding.",
     "reauthBadge": "Re-login required",
     "reauthLogin": "Re-login",
@@ -1570,11 +1567,11 @@
     "waitingForAuth": "Waiting for xAI authorization…",
     "enterCode": "If the browser did not fill it in automatically, enter:",
     "retry": "Retry",
-    "logoutAll": "Remove all xAI accounts",
+    "logoutAll": "Delete all xAI accounts…",
     "loginRequired": "Sign in to an xAI account first"
   },
   "managedAuth": {
-    "accountRemoved": "Account removed",
+    "accountRemoved": "Account deleted",
     "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
     "selectedAccountUnavailable": "The linked account is missing or needs you to sign in again. Select another account.",
     "usedBy": "Used by {{count}} provider(s)",
@@ -2809,20 +2806,31 @@
       "launchFailed": "Failed to open terminal"
     },
     "memory": {
-      "title": "Memory",
-      "agentTab": "Agent Memory (MEMORY.md)",
-      "userTab": "User Profile (USER.md)",
-      "usage": "{{current}} / {{limit}} characters",
-      "overLimit": "Over budget — Hermes will truncate on next load",
-      "enableOn": "Enabled",
-      "enableOff": "Disabled",
       "disabledHint": "Hermes will skip this memory until re-enabled",
       "toggleFailed": "Failed to toggle memory",
-      "saveSuccess": "Memory saved",
+      "saveSuccess": "Memory saved. Takes effect when Hermes restarts or starts a new session.",
       "saveFailed": "Failed to save memory",
       "loadFailed": "Failed to read memory file",
       "openConfig": "Adjust limits in Hermes Web UI",
-      "runtimeNote": "Changes apply on Hermes restart or new session."
+      "fileTabs": "Memory files",
+      "agentName": "Agent Memory",
+      "userName": "User Profile",
+      "agentDesc": "Notes Hermes keeps for itself; they go into its system prompt",
+      "userDesc": "What Hermes knows about you; it goes into Hermes' system prompt",
+      "separatorRule": "Separate entries with a line containing only §",
+      "helpTitle": "What is {{name}}?",
+      "helpBody": "{{desc}}. {{rule}}.",
+      "enableLabel": "Enable {{name}}",
+      "agentPlaceholder": "Project acme-web uses pnpm and Node 22.\n§\nDeploys go through GitHub Actions.",
+      "userPlaceholder": "Name: octocat.\n§\nPrefers short answers: conclusion first.",
+      "editorLabel": "{{name}} ({{file}}) content",
+      "unsaved": "Unsaved changes",
+      "noChanges": "No unsaved changes",
+      "meterLabel": "Characters remaining",
+      "remaining": "{{remaining}} of {{limit}} characters remaining",
+      "overLimitBy": "{{over}} characters over the limit — Hermes will truncate on next load",
+      "toggledOn": "{{name}} enabled. Takes effect when Hermes restarts or starts a new session.",
+      "toggledOff": "{{name}} disabled. Takes effect when Hermes restarts or starts a new session."
     }
   },
   "env": {
@@ -4333,5 +4341,55 @@
   },
   "coach": {
     "newLayout": "New layout: modes sit at the top of each app page; Usage and Accounts are in the sidebar."
+  },
+  "authCenter": {
+    "helpTitle": "What is Accounts?",
+    "group": {
+      "helpTitle": "How {{service}} accounts are used",
+      "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
+      "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
+      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one."
+    },
+    "addAccount": "Add account",
+    "groupMenu": "More actions for {{service}}",
+    "accountMenu": "More actions for {{login}}",
+    "removeAll": "Delete all accounts…",
+    "removeAccount": "Delete account…",
+    "setDefault": "Set as default",
+    "reauth": "Sign in again",
+    "busyHint": "Finish or cancel the sign-in in progress first",
+    "default": "Default",
+    "needsReauth": "Sign-in needed",
+    "empty": "No {{service}} account signed in yet.",
+    "signedInOn": "Signed in {{date}}",
+    "enterpriseServer": "Enterprise Server",
+    "enterpriseDomain": "Enterprise domain",
+    "enterpriseDomainRequired": "Enter the enterprise domain first, e.g. company.ghe.com",
+    "codexReauthNote": "Missing a sign-in credential (id_token), so it can't be used for Codex managed binding",
+    "xaiReauthNote": "Sign-in credential expired; providers using it won't work",
+    "statusLoading": "Loading accounts…",
+    "xaiStatusLoadFailed": "Couldn't load xAI accounts. Try again.",
+    "retry": "Retry",
+    "loginFailed": "Sign-in didn't finish",
+    "pending": {
+      "add": "Adding a {{service}} account · Waiting for authorization…",
+      "login": "Signing in to {{service}} · Waiting for authorization…",
+      "reauth": "Signing in again as {{login}} · Waiting for authorization…",
+      "enterCode": "Enter this code in the browser:",
+      "copy": "Copy code",
+      "copied": "Code copied.",
+      "open": "Open the authorization page",
+      "note": "The authorization page is open in your browser; this updates on its own when you finish. Mind {{service}}'s terms of use."
+    },
+    "toast": {
+      "added": "{{service}} account added.",
+      "reauthed": "Signed in again as {{login}}."
+    },
+    "quota": {
+      "updating": "Updating…",
+      "loading": "Checking quota…",
+      "refresh": "Refresh quota",
+      "refreshAria": "Refresh quota for {{login}}"
+    }
   }
 }

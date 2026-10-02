@@ -367,8 +367,7 @@
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
     "authCenter": {
-      "title": "OAuth 認証センター",
-      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーにはルーティングモードが必要です（Codex の公式ログインを除く）。各サービスの利用規約にご注意ください。",
+      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
@@ -1501,7 +1500,6 @@
     "removeAccount": "アカウントを削除",
     "setAsDefault": "デフォルトに設定",
     "addAnotherAccount": "別のアカウントを追加",
-    "logoutAll": "すべてのアカウントをログアウト",
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
@@ -1533,7 +1531,6 @@
     "explicitSelectionRequired": "ログイン方法を選択してください",
     "useDefaultAccount": "デフォルトアカウントを使用",
     "noneOptionLabel": "Codex のログインに追従",
-    "reauthTitle": "再ログインが必要なアカウントがあります",
     "reauthDescription": "ブラウザログインと同じ挙動にするため、これらのアカウントは再ログインして必要な認証情報（id_token）を補完する必要があります。再ログイン後は管理アカウントのバインドに利用できます。",
     "reauthBadge": "再ログインが必要",
     "reauthLogin": "再ログイン",
@@ -1570,7 +1567,7 @@
     "waitingForAuth": "xAI の認証を待っています…",
     "enterCode": "ブラウザに自動入力されていない場合は、次を入力してください：",
     "retry": "再試行",
-    "logoutAll": "すべての xAI アカウントを削除",
+    "logoutAll": "すべての xAI アカウントを削除…",
     "loginRequired": "先に xAI アカウントへログインしてください"
   },
   "managedAuth": {
@@ -2809,20 +2806,31 @@
       "launchFailed": "ターミナルを開けませんでした"
     },
     "memory": {
-      "title": "メモリ",
-      "agentTab": "エージェント記憶 (MEMORY.md)",
-      "userTab": "ユーザープロファイル (USER.md)",
-      "usage": "{{current}} / {{limit}} 文字",
-      "overLimit": "上限を超えました。Hermes は次回読み込み時に切り詰めます",
-      "enableOn": "有効",
-      "enableOff": "無効",
       "disabledHint": "再度有効化するまで Hermes はこの記憶をスキップします",
       "toggleFailed": "メモリの切り替えに失敗しました",
-      "saveSuccess": "記憶を保存しました",
+      "saveSuccess": "記憶を保存しました。Hermes の再起動または新規セッション時に反映されます。",
       "saveFailed": "記憶の保存に失敗しました",
       "loadFailed": "記憶ファイルの読み込みに失敗しました",
       "openConfig": "Hermes Web UI で上限を調整",
-      "runtimeNote": "変更は Hermes の再起動または新規セッション時に反映されます。"
+      "fileTabs": "メモリファイル",
+      "agentName": "エージェント記憶",
+      "userName": "ユーザープロファイル",
+      "agentDesc": "Hermes が自分で書き留めたメモで、システムプロンプトに含まれます",
+      "userDesc": "あなたに関する情報で、Hermes のシステムプロンプトに含まれます",
+      "separatorRule": "各項目の間は § だけの行で区切ります",
+      "helpTitle": "{{name}}とは",
+      "helpBody": "{{desc}}。{{rule}}。",
+      "enableLabel": "{{name}}を有効にする",
+      "agentPlaceholder": "プロジェクト acme-web は pnpm と Node 22 を使う。\n§\nデプロイは GitHub Actions 経由。",
+      "userPlaceholder": "呼び名：octocat。\n§\n日本語でやり取りし、コードコメントは英語。",
+      "editorLabel": "{{name}}（{{file}}）の内容",
+      "unsaved": "未保存の変更があります",
+      "noChanges": "未保存の変更はありません",
+      "meterLabel": "残り文字数",
+      "remaining": "残り {{remaining}} / {{limit}} 文字",
+      "overLimitBy": "上限を {{over}} 文字超えています。Hermes は次回読み込み時に切り詰めます",
+      "toggledOn": "{{name}}を有効にしました。Hermes の再起動または新規セッション時に反映されます。",
+      "toggledOff": "{{name}}を無効にしました。Hermes の再起動または新規セッション時に反映されます。"
     }
   },
   "env": {
@@ -4333,5 +4341,55 @@
   },
   "coach": {
     "newLayout": "画面が新しくなりました：モードは各アプリのページ上部に、使用量とアカウントはサイドバーにあります。"
+  },
+  "authCenter": {
+    "helpTitle": "アカウントとは",
+    "group": {
+      "helpTitle": "{{service}} アカウントの使い方",
+      "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
+      "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
+      "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。"
+    },
+    "addAccount": "アカウントを追加",
+    "groupMenu": "{{service}} のその他の操作",
+    "accountMenu": "{{login}} のその他の操作",
+    "removeAll": "すべてのアカウントを削除…",
+    "removeAccount": "アカウントを削除…",
+    "setDefault": "デフォルトに設定",
+    "reauth": "再ログイン",
+    "busyHint": "進行中のログインを完了するかキャンセルしてください",
+    "default": "デフォルト",
+    "needsReauth": "再ログインが必要",
+    "empty": "{{service}} アカウントにまだログインしていません。",
+    "signedInOn": "{{date}}にログイン",
+    "enterpriseServer": "Enterprise Server",
+    "enterpriseDomain": "企業ドメイン",
+    "enterpriseDomainRequired": "先に企業ドメインを入力してください（例：company.ghe.com）",
+    "codexReauthNote": "ログイン情報（id_token）が足りないため、Codex のマネージドバインドに使えません",
+    "xaiReauthNote": "ログイン情報が無効になり、このアカウントを使うプロバイダーは使えません",
+    "statusLoading": "アカウントを読み込み中…",
+    "xaiStatusLoadFailed": "xAI アカウントの状態を読み込めませんでした。再試行してください。",
+    "retry": "再試行",
+    "loginFailed": "ログインが完了しませんでした",
+    "pending": {
+      "add": "{{service}} アカウントを追加 · 認可を待っています…",
+      "login": "{{service}} にログイン · 認可を待っています…",
+      "reauth": "{{login}} に再ログイン · 認可を待っています…",
+      "enterCode": "ブラウザでこのコードを入力：",
+      "copy": "コードをコピー",
+      "copied": "コードをコピーしました。",
+      "open": "認可ページを開く",
+      "note": "ブラウザで認可ページを開きました。完了するとここが自動で更新されます。{{service}} の利用規約にご注意ください。"
+    },
+    "toast": {
+      "added": "{{service}} アカウントを追加しました。",
+      "reauthed": "{{login}} に再ログインしました。"
+    },
+    "quota": {
+      "updating": "更新中…",
+      "loading": "残量を確認中…",
+      "refresh": "残量を更新",
+      "refreshAria": "{{login}} の残量を更新"
+    }
   }
 }

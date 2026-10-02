@@ -106,7 +106,9 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import HermesMemoryPanel, {
+  HermesMemorySaveButton,
+} from "@/components/hermes/HermesMemoryPanel";
 import {
   APP_IDS,
   DEFAULT_VISIBLE_APPS,
@@ -1109,6 +1111,7 @@ function App() {
               {t("provider.addProvider")}
             </Button>
           )}
+          {currentView === "hermesMemory" && <HermesMemorySaveButton />}
           {appMenu}
         </>
       }
@@ -1291,7 +1294,7 @@ function App() {
         case "hermesMemory":
           return (
             <div id="main-content" className="min-h-0 flex-1 overflow-y-auto">
-              <HermesMemoryPanel />
+              <HermesMemoryPanel onOpenWebUI={openHermesWebUI} />
             </div>
           );
         default:
@@ -1330,7 +1333,7 @@ function App() {
               title={t("nav.auth")}
               titleExtra={
                 <>
-                  <HelpTip title={t("nav.auth")}>
+                  <HelpTip title={t("authCenter.helpTitle")}>
                     {t("settings.authCenter.description")}
                   </HelpTip>
                   <Badge

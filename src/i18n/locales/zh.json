@@ -367,8 +367,7 @@
     "tabAdvanced": "高级",
     "tabProxy": "路由",
     "authCenter": {
-      "title": "OAuth 认证中心",
-      "description": "用 GitHub Copilot、ChatGPT、xAI 订阅作为供应商。凭据由路由服务注入，用到它们的供应商需要路由模式（Codex 官方登录除外）。请注意各服务的使用条款。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号",
@@ -1501,7 +1500,6 @@
     "removeAccount": "移除账号",
     "setAsDefault": "设为默认",
     "addAnotherAccount": "添加其他账号",
-    "logoutAll": "注销所有账号",
     "retry": "重试",
     "copyCode": "复制代码",
     "migrationFailed": "旧认证数据迁移失败：{{error}}",
@@ -1533,7 +1531,6 @@
     "explicitSelectionRequired": "请先选择登录方式",
     "useDefaultAccount": "使用默认账号",
     "noneOptionLabel": "跟随 Codex 登录",
-    "reauthTitle": "部分账号需要重新登录",
     "reauthDescription": "为与浏览器登录行为保持一致，这些账号需要重新登录以补全所需的登录凭据（id_token）。重新登录后即可正常用于托管绑定。",
     "reauthBadge": "需要重新登录",
     "reauthLogin": "重新登录",
@@ -1570,11 +1567,11 @@
     "waitingForAuth": "等待 xAI 授权中…",
     "enterCode": "若浏览器未自动填入，请输入：",
     "retry": "重试",
-    "logoutAll": "移除所有 xAI 账号",
+    "logoutAll": "删除全部 xAI 账号…",
     "loginRequired": "请先登录 xAI 账号"
   },
   "managedAuth": {
-    "accountRemoved": "账号已移除",
+    "accountRemoved": "账号已删除",
     "selectedAccountNeedsReauth": "已绑定账号不存在或需要重新登录",
     "selectedAccountUnavailable": "已绑定账号不存在或需要重新登录，请重新选择账号",
     "usedBy": "{{count}} 个供应商在用",
@@ -2809,20 +2806,31 @@
       "launchFailed": "打开终端失败"
     },
     "memory": {
-      "title": "记忆管理",
-      "agentTab": "Agent 记忆 (MEMORY.md)",
-      "userTab": "用户画像 (USER.md)",
-      "usage": "已用 {{current}} / {{limit}} 字符",
-      "overLimit": "已超过上限，Hermes 下次加载时会截断",
-      "enableOn": "已启用",
-      "enableOff": "已禁用",
       "disabledHint": "在重新启用前 Hermes 会跳过此记忆",
       "toggleFailed": "切换记忆状态失败",
-      "saveSuccess": "记忆已保存",
+      "saveSuccess": "记忆已保存，Hermes 下次启动或新建会话时生效。",
       "saveFailed": "保存记忆失败",
       "loadFailed": "读取记忆文件失败",
       "openConfig": "在 Hermes Web UI 调整上限",
-      "runtimeNote": "更改将在 Hermes 下次启动或新建会话时生效。"
+      "fileTabs": "记忆文件",
+      "agentName": "Agent 记忆",
+      "userName": "用户画像",
+      "agentDesc": "Hermes 自己记下的笔记，会带进它的系统提示",
+      "userDesc": "关于你的信息，会带进 Hermes 的系统提示",
+      "separatorRule": "每条之间用单独一行的 § 分隔",
+      "helpTitle": "{{name}}是什么",
+      "helpBody": "{{desc}}。{{rule}}。",
+      "enableLabel": "启用 {{name}}",
+      "agentPlaceholder": "项目 acme-web 用 pnpm 和 Node 22。\n§\n部署走 GitHub Actions。",
+      "userPlaceholder": "称呼：octocat。\n§\n用中文交流，代码注释用英文。",
+      "editorLabel": "{{name}}（{{file}}）内容",
+      "unsaved": "有未保存的修改",
+      "noChanges": "没有未保存的修改",
+      "meterLabel": "剩余字符",
+      "remaining": "剩余 {{remaining}} / {{limit}} 字符",
+      "overLimitBy": "超出上限 {{over}} 字符，Hermes 下次加载时会截断",
+      "toggledOn": "已启用 {{name}}，Hermes 下次启动或新建会话时生效。",
+      "toggledOff": "已停用 {{name}}，Hermes 下次启动或新建会话时生效。"
     }
   },
   "env": {
@@ -4333,5 +4341,55 @@
   },
   "coach": {
     "newLayout": "界面改版了：模式移到了每个应用页的顶部，用量统计和授权中心在左侧边栏。"
+  },
+  "authCenter": {
+    "helpTitle": "授权中心是什么",
+    "group": {
+      "helpTitle": "{{service}} 账号怎么用",
+      "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
+      "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
+      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。"
+    },
+    "addAccount": "添加账号",
+    "groupMenu": "{{service}} 的更多操作",
+    "accountMenu": "{{login}} 的更多操作",
+    "removeAll": "删除全部账号…",
+    "removeAccount": "删除账号…",
+    "setDefault": "设为默认",
+    "reauth": "重新登录",
+    "busyHint": "先完成或取消正在进行的登录",
+    "default": "默认",
+    "needsReauth": "需要重新登录",
+    "empty": "还没有登录 {{service}} 账号。",
+    "signedInOn": "{{date}}登录",
+    "enterpriseServer": "Enterprise Server",
+    "enterpriseDomain": "企业域名",
+    "enterpriseDomainRequired": "先填企业域名，例如 company.ghe.com",
+    "codexReauthNote": "缺少登录凭据（id_token），不能用于 Codex 托管绑定",
+    "xaiReauthNote": "登录凭据已失效，用到它的供应商无法使用",
+    "statusLoading": "正在加载账号…",
+    "xaiStatusLoadFailed": "无法加载 xAI 账号状态，请重试。",
+    "retry": "重试",
+    "loginFailed": "登录没有完成",
+    "pending": {
+      "add": "添加 {{service}} 账号 · 等待授权中…",
+      "login": "登录 {{service}} · 等待授权中…",
+      "reauth": "重新登录 {{login}} · 等待授权中…",
+      "enterCode": "在浏览器中输入验证码：",
+      "copy": "复制验证码",
+      "copied": "验证码已复制。",
+      "open": "打开授权页面",
+      "note": "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。"
+    },
+    "toast": {
+      "added": "已添加 {{service}} 账号。",
+      "reauthed": "{{login}} 已重新登录。"
+    },
+    "quota": {
+      "updating": "更新中…",
+      "loading": "正在查询额度…",
+      "refresh": "刷新额度",
+      "refreshAria": "刷新 {{login}} 的额度"
+    }
   }
 }
