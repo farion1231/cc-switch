@@ -47,10 +47,7 @@ const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
           onChange?.(event);
           onCheckedChange?.(event.target.checked);
         }}
-        className={cn(
-          "ui-checkbox",
-          className,
-        )}
+        className={cn("ui-checkbox", className)}
       />
     );
   },
