@@ -118,6 +118,7 @@ export function CodexAuthSettings({
         message={t("confirm.unifyCodexHistory.message")}
         checkboxLabel={t("confirm.unifyCodexHistory.migrateExisting")}
         confirmText={t("confirm.unifyCodexHistory.confirm")}
+        variant="info"
         onConfirm={handleEnableConfirm}
         onCancel={() => setShowEnableConfirm(false)}
       />
@@ -133,6 +134,7 @@ export function CodexAuthSettings({
         }
         checkboxDefaultChecked
         confirmText={t("confirm.unifyCodexHistoryOff.confirm")}
+        variant="info"
         onConfirm={(restoreBackup) => void handleDisableConfirm(restoreBackup)}
         onCancel={() => setShowDisableConfirm(false)}
       />

@@ -26,6 +26,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useCopilotAuth } from "./hooks/useCopilotAuth";
+import {
+  ManagedAccountRemoveDialog,
+  ManagedAccountUsage,
+  type ManagedAccountRemoveTarget,
+} from "./ManagedAccountRemoveDialog";
+import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import { copyText } from "@/lib/clipboard";
 import type { GitHubAccount } from "@/lib/api";
 
@@ -90,6 +96,12 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     logout,
     refetchStatus,
   } = useCopilotAuth(effectiveGithubDomain);
+  const accountUsers = useManagedAccountUsers(
+    "github_copilot",
+    defaultAccountId,
+  );
+  const [removeTarget, setRemoveTarget] =
+    React.useState<ManagedAccountRemoveTarget | null>(null);
 
   // 复制用户码
   const copyUserCode = async () => {
@@ -123,13 +135,28 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     }
   }, [accounts, isStatusSuccess, mode, onAccountSelect, selectedAccountId]);
 
-  // 处理移除账号
-  const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
+  // 处理移除账号：先确认，确认框里列出在用它的供应商
+  const handleRemoveAccount = (
+    accountId: string,
+    login: string,
+    e: React.MouseEvent,
+  ) => {
     e.stopPropagation();
     e.preventDefault();
-    removeAccount(accountId);
+    setRemoveTarget({ kind: "one", accountId, login });
+  };
+
+  const confirmRemove = () => {
+    const target = removeTarget;
+    setRemoveTarget(null);
+    if (!target) return;
+    if (target.kind === "all") {
+      logout();
+      return;
+    }
+    removeAccount(target.accountId);
     // 如果移除的是当前选中的账号，清除选择
-    if (selectedAccountId === accountId) {
+    if (selectedAccountId === target.accountId) {
       onAccountSelect?.(null);
     }
   };
@@ -342,6 +369,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                       {t("copilot.selected", "已选中")}
                     </Badge>
                   )}
+                  <ManagedAccountUsage users={accountUsers([account.id])} />
                 </div>
                 <div className="flex items-center gap-1">
                   {defaultAccountId !== account.id && (
@@ -361,7 +389,9 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 text-fg-2 hover:text-danger-text"
-                    onClick={(e) => handleRemoveAccount(account.id, e)}
+                    onClick={(e) =>
+                      handleRemoveAccount(account.id, account.login, e)
+                    }
                     disabled={isRemovingAccount}
                     title={t("copilot.removeAccount", "移除账号")}
                   >
@@ -506,13 +536,36 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           <Button
             type="button"
             variant="outline"
-            onClick={logout}
+            onClick={() =>
+              setRemoveTarget({
+                kind: "all",
+                accountIds: accounts.map((account) => account.id),
+              })
+            }
             className="w-full text-danger-text hover:text-danger-text hover:bg-danger-soft"
           >
             <LogOut className="mr-2 h-4 w-4" />
             {t("copilot.logoutAll", "注销所有账号")}
           </Button>
         )}
+
+      <ManagedAccountRemoveDialog
+        target={removeTarget}
+        serviceName="GitHub Copilot"
+        users={
+          removeTarget
+            ? accountUsers(
+                removeTarget.kind === "one"
+                  ? [removeTarget.accountId]
+                  : removeTarget.accountIds,
+              )
+            : []
+        }
+        othersRemain={accounts.length > 1}
+        pending={isRemovingAccount}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 };

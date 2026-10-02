@@ -48,7 +48,7 @@ export interface CardButton {
 }
 
 export interface CardPresentation {
-  /** 当前那张：模式色边框 + 淡底；neutral 是共存式「已添加」的中性样式 */
+  /** 当前那张：模式色边框 + 淡底；neutral（灰底）只给共存式应用的默认那家（OpenClaw 默认、Hermes 当前） */
   tone?: CardTone;
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
   status?: { label: string; dot: CardTone | "muted" };
@@ -105,6 +105,8 @@ export interface SwitchModeInput {
     exitAndUse: (provider: Provider) => void;
     routeTo: (provider: Provider) => void;
     startRouteFrom: (provider: Provider) => void;
+    /** 没进叠加时，以这家为默认打开进叠加的确认框（同路由预览的「从这家开始路由」） */
+    startStackFrom: (provider: Provider) => void;
     queueAdd: (provider: Provider) => void;
     queueRemove: (provider: Provider) => void;
     queueMove: (provider: Provider, delta: -1 | 1) => void;
@@ -398,7 +400,20 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
 
   // view === "stack"
   const on = active === "stack";
-  const later = on ? undefined : t("providerCard.reason.stackLater");
+  // 没进叠加时每行的主操作是「以这家为默认开始叠加…」（和路由预览的「从这家开始路由」对齐）；
+  // 进了叠加后才是「设为默认」，当场生效
+  const defaultButton = (p: Provider): CardButton =>
+    on
+      ? {
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onClick: () => actions.stackSetDefault(p),
+        }
+      : {
+          key: "startStackFrom",
+          label: t("providerCard.action.startStackFrom"),
+          onClick: () => actions.startStackFrom(p),
+        };
   const defaultId = (() => {
     const candidate = on ? routeId : (routeId ?? directId);
     const p = providers.find((x) => x.id === candidate);
@@ -460,12 +475,7 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
       presentation: {
         chips: [modelsChip(p)],
         buttons: [
-          {
-            key: "setDefault",
-            label: t("providerCard.action.setDefault"),
-            onClick: () => actions.stackSetDefault(p),
-            disabledReason: later,
-          },
+          defaultButton(p),
           {
             key: "remove",
             label: t("providerCard.action.remove"),
@@ -492,12 +502,7 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
           presentation: {
             chips: [chip.official()],
             buttons: [
-              {
-                key: "setDefault",
-                label: t("providerCard.action.setDefault"),
-                onClick: () => actions.stackSetDefault(p),
-                disabledReason: later,
-              },
+              defaultButton(p),
               {
                 key: "add",
                 label: t("providerCard.action.add"),
@@ -513,6 +518,7 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
         presentation: {
           chips: providerNeedsRouting(app, p) ? [chip.needsRoute(p)] : [],
           buttons: [
+            ...(on ? [] : [defaultButton(p)]),
             {
               key: "add",
               label: t("providerCard.action.add"),
@@ -671,11 +677,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         ? p.id === input.currentOmoId
         : p.id === input.currentOmoSlimId;
       if (enabled) {
+        // 分组标题已经写了「已添加」，按钮是「停用」，卡上不再重复写状态
         added.push({
           provider: p,
           presentation: {
-            tone: "neutral",
-            status: { label: t("providerCard.status.enabled"), dot: "muted" },
             chips,
             buttons: [
               {
@@ -741,19 +746,14 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       continue;
     }
 
-    // 已添加
+    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；灰底只给默认那一家
     const buttons: CardButton[] = [];
-    let status: CardPresentation["status"] = {
-      label:
-        app === "pi"
-          ? t("providerCard.status.enabled")
-          : t("providerCard.status.added"),
-      dot: "muted",
-    };
+    let status: CardPresentation["status"];
+    let isDefault = false;
     let removeReason: string | undefined = piBlocked;
 
     if (app === "openclaw") {
-      const isDefault = input.openclawDefault?.providerId === p.id;
+      isDefault = input.openclawDefault?.providerId === p.id;
       if (isDefault) {
         status = { label: t("providerCard.status.default"), dot: "muted" };
         chips.push({
@@ -766,7 +766,6 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         removeReason = t("providerCard.reason.defaultCannotRemove");
       } else {
         const models = input.openclawModels?.(p) ?? [];
-        status = undefined;
         buttons.push({
           key: "setDefault",
           label: t("providerCard.action.setDefault"),
@@ -792,10 +791,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
+        isDefault = true;
         status = { label: t("providerCard.status.current"), dot: "muted" };
         removeReason = t("providerCard.reason.currentCannotRemove");
       } else {
-        status = undefined;
         buttons.push({
           key: "use",
           label: t("providerCard.action.enable"),
@@ -815,7 +814,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     added.push({
       provider: p,
       presentation: {
-        tone: "neutral",
+        tone: isDefault ? "neutral" : undefined,
         status,
         chips,
         dim: managed,

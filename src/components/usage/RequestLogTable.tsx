@@ -39,12 +39,32 @@ interface RequestLogTableProps {
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
-/** 「09-30 14:21」：表格里只要月日时分，完整时间在详情抽屉里。 */
-export function formatLogTime(createdAt: number): string {
+const isSameLocalDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+/**
+ * 表格里的时间：今天（本地时区）只显示时刻「14:32:05」，
+ * 别的日子显示「09-30 14:21」。完整时间放在悬停提示和详情抽屉里。
+ */
+export function formatLogTime(createdAt: number, now = new Date()): string {
   const date = new Date(createdAt * 1000);
-  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(
-    date.getHours(),
-  )}:${pad2(date.getMinutes())}`;
+  const clock = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  if (isSameLocalDay(date, now)) {
+    return `${clock}:${pad2(date.getSeconds())}`;
+  }
+  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${clock}`;
+}
+
+/** 「2026-09-30 14:21:05」：悬停时看完整的本地时间。 */
+export function formatLogFullTime(createdAt: number): string {
+  const date = new Date(createdAt * 1000);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
+    date.getDate(),
+  )} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(
+    date.getSeconds(),
+  )}`;
 }
 
 export function isKnownAppId(appType: string): appType is AppId {
@@ -53,6 +73,27 @@ export function isKnownAppId(appType: string): appType is AppId {
 
 export function appDisplayName(appType: string): string {
   return isKnownAppId(appType) ? APP_DISPLAY_NAME[appType] : appType;
+}
+
+/**
+ * 请求日志「应用」列用的短名：图标已经区分了品牌（Claude Code / Desktop 靠角标），
+ * 列里只留最短能认出的名字，把宽度让给供应商列。全名在悬停提示里。
+ */
+const APP_SHORT_NAME: Record<AppId, string> = {
+  claude: "Claude",
+  "claude-desktop": "Desktop",
+  codex: "Codex",
+  gemini: "Gemini",
+  grokbuild: "Grok",
+  opencode: "OpenCode",
+  openclaw: "OpenClaw",
+  hermes: "Hermes",
+  pi: "Pi",
+  mcode: "MiniMax",
+};
+
+export function appShortName(appType: string): string {
+  return isKnownAppId(appType) ? APP_SHORT_NAME[appType] : appType;
 }
 
 const isSuccessStatus = (code: number) => code >= 200 && code < 300;
@@ -120,6 +161,8 @@ export function RequestLogTable({
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
+  // 「今天」按本地时区判断；每次渲染（含自动刷新）取一次当前时间
+  const now = new Date();
 
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
@@ -129,7 +172,8 @@ export function RequestLogTable({
     const unpriced = isUnpricedUsage(log);
     const freshInput = getFreshInputTokens(log);
     const isCacheInclusive = log.inputTokens !== freshInput;
-    const time = formatLogTime(log.createdAt);
+    const time = formatLogTime(log.createdAt, now);
+    const fullTime = formatLogFullTime(log.createdAt);
     const provider = log.providerName || t("usage.unknownProvider");
     const tps = formatOutputTokensPerSecond(log);
     const latency = parseFiniteNumber(log.latencyMs);
@@ -158,7 +202,11 @@ export function RequestLogTable({
           <button
             type="button"
             className="rounded-[4px] text-start tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={t("usage.openRequestDetail", { time, provider })}
+            title={fullTime}
+            aria-label={t("usage.openRequestDetail", {
+              time: fullTime,
+              provider,
+            })}
             onClick={(event) => {
               event.stopPropagation();
               onOpenDetail?.(log.requestId);
@@ -177,7 +225,7 @@ export function RequestLogTable({
         </td>
         <td className={usageTable.td}>
           <span
-            className="flex max-w-[96px] items-center gap-1.5"
+            className="flex max-w-[88px] items-center gap-1.5"
             title={appDisplayName(log.appType)}
           >
             {isKnownAppId(log.appType) && (
@@ -187,16 +235,20 @@ export function RequestLogTable({
                 badgeClassName="bg-surface"
               />
             )}
-            <span className="truncate">{appDisplayName(log.appType)}</span>
+            <span className="truncate" aria-hidden="true">
+              {appShortName(log.appType)}
+            </span>
+            <span className="sr-only">{appDisplayName(log.appType)}</span>
           </span>
         </td>
-        <td className={usageTable.td}>
-          <span className="block max-w-[104px] truncate" title={provider}>
+        {/* 供应商、模型两列按比例分走剩余宽度（max-w-0 让百分比宽度生效、内容截断） */}
+        <td className={cn(usageTable.td, "w-[30%] max-w-0")}>
+          <span className="block truncate" title={provider}>
             {provider}
           </span>
         </td>
-        <td className={cn(usageTable.td, usageTable.mono)}>
-          <span className="block max-w-[108px] truncate" title={modelTitle}>
+        <td className={cn(usageTable.td, usageTable.mono, "w-[24%] max-w-0")}>
+          <span className="block truncate" title={modelTitle}>
             {log.model}
           </span>
         </td>

@@ -94,7 +94,7 @@
     "connectivityCheck": "检测连通",
     "tabProvider": "供应商",
     "tabUniversal": "统一供应商",
-    "noProviders": "还没有添加任何供应商",
+    "noProviders": "还没有供应商",
     "noProvidersDescription": "如果你已有配置，请点击\"导入当前配置\"，所有数据将安全保存在 default 供应商中",
     "noProvidersDescriptionKeyFields": "切换供应商只替换 Key、请求地址和模型，插件等其他设置保留在配置文件里，对所有供应商生效",
     "importCurrent": "导入当前配置",
@@ -355,8 +355,8 @@
       "sidebarAndHeader": "侧栏与页头",
       "visibleApps": "在侧栏显示哪些应用",
       "goToApps": "前往「应用」",
-      "updates": "应用更新",
-      "checkToolUpdates": "启动时检查应用更新",
+      "updates": "各应用的新版本",
+      "checkToolUpdates": "启动时检查各应用的新版本",
       "checkToolUpdatesHelp": "打开后，每次启动 CC Switch 会查一次已安装的命令行应用有没有新版本，查到了就在侧栏「应用」上显示一个圆点。不会自动升级。",
       "windowAndTerminal": "窗口与终端",
       "minimizeToTrayHelp": "打开时，点关闭按钮只隐藏窗口，CC Switch 留在系统托盘里继续运行（轻量模式在托盘菜单里）；关闭时点关闭按钮直接退出。",
@@ -1576,7 +1576,24 @@
   "managedAuth": {
     "accountRemoved": "账号已移除",
     "selectedAccountNeedsReauth": "已绑定账号不存在或需要重新登录",
-    "selectedAccountUnavailable": "已绑定账号不存在或需要重新登录，请重新选择账号"
+    "selectedAccountUnavailable": "已绑定账号不存在或需要重新登录，请重新选择账号",
+    "usedBy": "{{count}} 个供应商在用",
+    "usedByTitle": "在用的供应商：{{names}}",
+    "remove": {
+      "titleOne": "删除账号「{{login}}」？",
+      "titleAll": "删除全部 {{service}} 账号？",
+      "leadOne": "会删除这个账号保存在 CC Switch 里的登录凭据，无法撤销。",
+      "leadAll": "会删除这 {{count}} 个账号保存在 CC Switch 里的登录凭据，无法撤销。",
+      "brokenOne": "这些供应商会无法使用，直到重新登录或改选别的账号：",
+      "brokenAll": "这些供应商会无法使用，直到重新登录：",
+      "moved": "这些供应商用的是默认账号，删除后改用新的默认账号：",
+      "noneOne": "没有供应商在用这个账号。",
+      "noneAll": "没有供应商在用这些账号。",
+      "confirmOne": "删除账号",
+      "confirmAll": "删除 {{count}} 个账号",
+      "appSeparator": "：",
+      "nameSeparator": "、"
+    }
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -1805,32 +1822,28 @@
       "volcengine": "火山引擎",
       "tencent": "腾讯云"
     },
-    "version": {
+    "version": {},
+    "switchVersionTitle": "切换到 {{version}}？",
+    "switchVersionMessage": "表单会按新版本重新填写，已填的 API Key 和其他修改会清空。",
+    "switchVersionConfirm": "切换",
+    "plan": {
       "payg": "按量付费",
-      "paygCn": "按量付费 · 国内",
-      "paygIntl": "按量付费 · 海外",
       "coding": "编程订阅",
-      "codingCn": "编程订阅 · 国内",
-      "codingIntl": "编程订阅 · 海外",
-      "cn": "国内",
-      "intl": "海外",
-      "agentPlan": "Agent Plan",
       "codingPlan": "Coding Plan",
+      "agentPlan": "Agent Plan",
       "tokenPlan": "Token Plan",
-      "tokenPlanCn": "Token Plan · 国内",
-      "tokenPlanIntl": "Token Plan · 海外",
-      "enterpriseLiteCn": "企业 Lite · 国内",
-      "enterpriseLiteIntl": "企业 Lite · 海外",
-      "enterpriseProCn": "企业 Pro · 国内",
-      "enterpriseProIntl": "企业 Pro · 海外",
-      "stepPlanCn": "Step Plan · 国内",
-      "stepPlanIntl": "Step Plan · 海外",
+      "enterpriseLite": "企业 Lite",
+      "enterprisePro": "企业 Pro",
+      "stepPlan": "Step Plan",
       "aksk": "AKSK",
       "apiKey": "API Key"
     },
-    "switchVersionTitle": "切换到 {{version}}？",
-    "switchVersionMessage": "表单会按新版本重新填写，已填的 API Key 和其他修改会清空。",
-    "switchVersionConfirm": "切换"
+    "region": {
+      "cn": "国内",
+      "intl": "海外"
+    },
+    "planLabel": "套餐",
+    "regionLabel": "地区"
   },
   "usage": {
     "title": "使用统计",
@@ -2084,8 +2097,7 @@
       "requests": "请求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "请求数",
-      "costLine": "成本（右轴）"
+      "requestsLegend": "请求数"
     },
     "tabs": {
       "label": "明细",
@@ -3773,7 +3785,7 @@
     "queueMoved": "{{name}} 移到第 {{position}} 位。",
     "status": {
       "directLead": "直连生效中 · 直接连接",
-      "routeLead": "路由生效中 ·",
+      "routeLead": "路由生效中",
       "byQueue": "按队列",
       "stackLead": "叠加生效中 · 默认",
       "stackValue": "{{name}} · 另有 {{count}} 家共 {{models}} 个模型"
@@ -3804,10 +3816,6 @@
       "switchTitle": "把 {{app}} 从「{{from}}」切换到「{{to}}」？",
       "routeLead": "请求会先经过本机的 CC Switch，再转给你选的供应商。",
       "stackLead": "默认供应商承接不带前缀的请求。",
-      "switchLead": "会先让 {{app}} 回到直连，再以「{{to}}」重新接入：",
-      "stepDirect": "写回直连配置（{{provider}}）",
-      "stepRoute": "以路由模式接入，路由到下面选择的供应商",
-      "stepStack": "以叠加模式接入，默认供应商为下面选择的这家",
       "routeTo": "路由到",
       "stackDefault": "默认供应商",
       "officialOption": "{{name}}（官方）",
@@ -3820,14 +3828,18 @@
       "stackNoteRestart": "需要重启 {{app}} 才能看到叠加的模型。",
       "stackNoteRestartCodex": "需要重启 {{app}} 才能看到叠加的模型；桌面版要彻底退出后重新打开。",
       "stackToRouteNote": "叠加的模型会从 /model 撤下（名单保留）；已选中的叠加模型需要改回普通模型。",
-      "ack": "我了解路由模式是高级功能（只在第一次询问）",
-      "ackRequired": "请先勾选这一项。",
       "confirmRoute": "开始路由",
       "confirmStack": "切换到叠加模式",
       "needsRouteTitle": "{{provider}} 需要路由",
       "needsRouteLead": "{{provider}}：{{reason}}。直连切换过去，{{app}} 会无法使用它。",
       "switchAnyway": "仍然直连切换",
       "routeAndUse": "开始路由并使用它"
+    },
+    "help": {
+      "title": "连接模式的区别",
+      "direct": "直连：客户端直接连所选那家，切换即改写配置。",
+      "route": "路由：请求先过本机的 CC Switch，可开故障转移。",
+      "stack": "叠加：多家模型同列在 /model，不做故障转移。"
     }
   },
   "providerCard": {
@@ -3836,8 +3848,6 @@
       "routing": "路由中",
       "currentDefault": "当前默认",
       "defaultAfterSwitch": "切换后默认",
-      "added": "已添加",
-      "enabled": "已启用",
       "current": "当前",
       "default": "默认"
     },
@@ -3856,7 +3866,8 @@
       "edit": "编辑 {{name}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
-      "moveDown": "{{name}} 下移一位"
+      "moveDown": "{{name}} 下移一位",
+      "startStackFrom": "以这家为默认开始叠加…"
     },
     "chip": {
       "official": "官方",
@@ -3875,7 +3886,6 @@
       "noRoute": "官方订阅不经过路由，回到直连后可用。",
       "noStack": "官方订阅不能用于叠加模式。",
       "officialStack": "官方账号只能做默认，不能叠加。",
-      "stackLater": "切换到叠加模式后才能设默认供应商。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。"
@@ -3895,7 +3905,7 @@
       "addedHelp": "已添加的供应商会同时写进 {{app}} 的配置，在 {{app}} 里选模型即可。",
       "addedEmpty": "还没有添加供应商。",
       "available": "可添加 · {{count}}",
-      "stackNoDefault": "还没有可以做默认的供应商；切换时在确认框里选。"
+      "stackNoDefault": "还没有默认供应商；在下面选一家，点「以这家为默认开始叠加…」。"
     }
   },
   "desktopAccess": {
@@ -4159,8 +4169,6 @@
     "noun": "Skill",
     "helpTitle": "Skills 怎么同步",
     "help": "主副本放在 CC Switch 的目录里，再同步到你勾选的应用。Claude Desktop、OpenClaw 不支持 Skills，所以表格里没有这两列。",
-    "headerCount": "已安装 {{count}}",
-    "headerCountUpdates": "已安装 {{count}} · {{updates}} 个可更新",
     "add": "添加 Skill",
     "addMenu": {
       "discover": "在发现里浏览",
@@ -4182,10 +4190,7 @@
       "unmanaged": "本机有 {{count}} 个 Skill 不在 CC Switch 管理中。",
       "reviewImport": "查看并导入",
       "ignore": "忽略",
-      "close": "关闭提示",
-      "updates": "{{count}} 个 Skill 有更新",
-      "updatesChecked": "{{count}} 个 Skill 有更新 · 上次检查 {{when}}",
-      "updateAll": "全部更新…"
+      "close": "关闭提示"
     },
     "filter": {
       "all": "全部",
@@ -4266,7 +4271,6 @@
       "skillsShNone": "skills.sh 上没有找到“{{query}}”",
       "sourceAria": "发现来源",
       "sourceRepos": "仓库 · {{count}}",
-      "statusAria": "按安装状态筛选",
       "reload": "重新读取仓库",
       "listLabel": "可安装的 Skill",
       "installed": "已安装 · {{count}} 个应用",
@@ -4282,7 +4286,8 @@
       "noneReadBody": "{{count}} 个仓库都没有读到 Skill，可能是网络问题或 GitHub 限制了访问。",
       "manageRepos": "管理仓库",
       "allInstalled": "这些仓库里的 Skill 都已安装",
-      "showAll": "显示全部"
+      "showAll": "显示全部",
+      "onlyUninstalled": "只看未安装"
     },
     "repos": {
       "buttonAll": "仓库：全部",
@@ -4320,6 +4325,13 @@
       "item": "{{repo}}（{{reason}}）",
       "discoverBody": "列表可能不完整。",
       "updatesBody": "这些仓库里的 Skill 没有检查，更新结果可能不完整。"
-    }
+    },
+    "headerUpdates": "{{count}} 个可更新",
+    "headerUpdatesShow": "只看可更新的 Skill",
+    "headerUpdatesClear": "显示全部 Skill",
+    "updateAllCount": "全部更新（{{count}} 个）…"
+  },
+  "coach": {
+    "newLayout": "界面改版了：模式移到了每个应用页的顶部，用量统计和授权中心在左侧边栏。"
   }
 }

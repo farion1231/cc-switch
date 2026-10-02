@@ -640,6 +640,52 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("navigates OpenClaw and Hermes pages with underline tabs", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(sidebarApp("OpenClaw"));
+    // 首次启动提示是模态对话框，页面其余部分是 aria-hidden，所以带上 hidden
+    const openclawTabs = await screen.findByRole("tablist", {
+      name: "OpenClaw",
+      hidden: true,
+    });
+    const pageTabs = within(openclawTabs).getAllByRole("tab", { hidden: true });
+    expect(pageTabs.map((tab) => tab.textContent)).toEqual([
+      "appPage.providers",
+      "appPage.workspace",
+      "appPage.openclawConfig",
+    ]);
+    expect(pageTabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.queryByRole("group", { name: "OpenClaw", hidden: true }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(pageTabs[2]);
+    const configTabs = await screen.findByRole("tablist", {
+      name: "appPage.openclawConfig",
+      hidden: true,
+    });
+    const subTabs = within(configTabs).getAllByRole("tab", { hidden: true });
+    expect(subTabs).toHaveLength(3);
+    expect(subTabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { hidden: true })).toHaveAttribute(
+      "aria-labelledby",
+      "openclaw-config-env",
+    );
+
+    fireEvent.click(sidebarApp("Hermes"));
+    const hermesTabs = await screen.findByRole("tablist", {
+      name: "Hermes",
+      hidden: true,
+    });
+    expect(
+      within(hermesTabs)
+        .getAllByRole("tab", { hidden: true })
+        .map((tab) => tab.textContent),
+    ).toEqual(["appPage.providers", "appPage.memory"]);
+  });
+
   it("opens the old skillsDiscovery view as the Discover segment", async () => {
     localStorage.setItem("cc-switch-last-view", "skillsDiscovery");
     const { default: App } = await import("@/App");

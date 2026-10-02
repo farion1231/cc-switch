@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageTabs } from "@/components/ui/page-tabs";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import {
   useHermesMemory,
@@ -62,8 +62,8 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
     <div className="flex flex-col gap-3">
       <div
         className={cn(
-          "flex items-center justify-between px-3 py-2 rounded-md border",
-          enabled ? "bg-subtle" : "bg-warning-soft border-transparent",
+          "flex items-center justify-between rounded-panel px-3 py-2",
+          enabled ? "bg-subtle" : "bg-warning-soft",
         )}
       >
         <div className="flex items-center gap-2">
@@ -74,14 +74,14 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
               toggleMutation.mutate({ kind, enabled: next })
             }
           />
-          <span className="text-sm">
+          <span className="text-body font-medium text-fg-1">
             {enabled
               ? t("hermes.memory.enableOn")
               : t("hermes.memory.enableOff")}
           </span>
         </div>
         {!enabled && (
-          <span className="text-xs text-warning-text">
+          <span className="text-caption text-warning-text">
             {t("hermes.memory.disabledHint")}
           </span>
         )}
@@ -100,7 +100,7 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
         />
       )}
 
-      <div className="flex items-center justify-between gap-3 text-sm">
+      <div className="flex items-center justify-between gap-3 text-body">
         <span
           className={cn("text-fg-2", isOver && "text-danger-text font-medium")}
         >
@@ -108,10 +108,12 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
           {isOver ? ` — ${t("hermes.memory.overLimit")}` : ""}
         </span>
         <div className="flex items-center gap-3">
-          <span className="hidden md:inline text-xs text-fg-2">
+          <span className="hidden text-caption text-fg-2 md:inline">
             {t("hermes.memory.runtimeNote")}
           </span>
           <Button
+            variant="solid"
+            size="regular"
             onClick={handleSave}
             disabled={saveMutation.isPending || !loaded}
           >
@@ -134,41 +136,52 @@ const HermesMemoryPanel: React.FC = () => {
   const memoryEnabled = limits?.memoryEnabled ?? true;
   const userEnabled = limits?.userEnabled ?? true;
 
+  // 两份记忆是两份文件、换的是整块内容：用二级下划线页签（挂在「供应商 / 记忆」
+  // 一级页签下面，小一号、不画整行底线）。两个面板都保持挂载，切过去再切回来
+  // 不会丢掉还没保存的修改。
   return (
-    <div className="flex flex-col h-full">
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => setActiveTab(v as HermesMemoryKind)}
-        className="flex-1 flex flex-col"
-      >
-        <div className="px-6 pt-4 flex items-center justify-between gap-3 flex-wrap">
-          <TabsList>
-            <TabsTrigger value="memory">
-              {t("hermes.memory.agentTab")}
-            </TabsTrigger>
-            <TabsTrigger value="user">{t("hermes.memory.userTab")}</TabsTrigger>
-          </TabsList>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void openHermesWebUI("/config")}
-          >
-            <ExternalLink className="w-3.5 h-3.5 mr-1" />
-            {t("hermes.memory.openConfig")}
-          </Button>
-        </div>
+    <div className="flex h-full flex-col">
+      <div className="px-6 pt-1">
+        <PageTabs
+          size="sm"
+          aria-label={t("hermes.memory.title")}
+          idPrefix="hermes-memory"
+          value={activeTab}
+          onValueChange={setActiveTab}
+          items={[
+            { value: "memory", label: t("hermes.memory.agentTab") },
+            { value: "user", label: t("hermes.memory.userTab") },
+          ]}
+          trailing={
+            <Button
+              variant="quiet"
+              size="compact"
+              className="text-fg-2"
+              onClick={() => void openHermesWebUI("/config")}
+            >
+              {t("hermes.memory.openConfig")}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          }
+        />
+      </div>
 
-        <TabsContent value="memory" className="flex-1 px-6 pb-4 mt-4">
+      {(["memory", "user"] as const).map((kind) => (
+        <div
+          key={kind}
+          role="tabpanel"
+          id={`hermes-memory-panel-${kind}`}
+          aria-labelledby={`hermes-memory-${kind}`}
+          hidden={activeTab !== kind}
+          className="mt-3 flex-1 px-6 pb-4"
+        >
           <MemoryTabPane
-            kind="memory"
-            limit={memoryLimit}
-            enabled={memoryEnabled}
+            kind={kind}
+            limit={kind === "memory" ? memoryLimit : userLimit}
+            enabled={kind === "memory" ? memoryEnabled : userEnabled}
           />
-        </TabsContent>
-        <TabsContent value="user" className="flex-1 px-6 pb-4 mt-4">
-          <MemoryTabPane kind="user" limit={userLimit} enabled={userEnabled} />
-        </TabsContent>
-      </Tabs>
+        </div>
+      ))}
     </div>
   );
 };

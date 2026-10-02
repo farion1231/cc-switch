@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ArrowUpCircle,
   Check,
   ChevronDown,
   Loader2,
@@ -13,7 +12,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice, NoticeSlot } from "@/components/ui/notice";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { PageTabs } from "@/components/ui/page-tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +52,7 @@ import { cn } from "@/lib/utils";
 import {
   MatrixCell,
   MatrixColumnHeader,
+  MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
   resolveBulkScope,
@@ -135,7 +135,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [dismissedUnmanaged, setDismissedUnmanaged] = useState<number | null>(
     null,
   );
-  const [dismissedUpdates, setDismissedUpdates] = useState<number | null>(null);
   /** 关掉的是哪一次检查的「仓库没读到」横幅（按检查时间记） */
   const [dismissedRepoFailAt, setDismissedRepoFailAt] = useState<number | null>(
     null,
@@ -320,6 +319,20 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     normalizedQuery,
     updatesMap,
   ]);
+
+  // 「可更新」筛选下把最后一个也更新完：回到全部，免得停在空表上
+  const nApplicableUpdates = applicableSkillUpdates.length;
+  const prevUpdatesRef = useRef(nApplicableUpdates);
+  useEffect(() => {
+    if (
+      prevUpdatesRef.current > 0 &&
+      nApplicableUpdates === 0 &&
+      statusFilter === "updates"
+    ) {
+      setStatusFilter("all");
+    }
+    prevUpdatesRef.current = nApplicableUpdates;
+  }, [nApplicableUpdates, statusFilter]);
 
   const filtersActive = statusFilter !== "all" || sourceFilter !== "all";
   const scope = resolveBulkScope(
@@ -585,7 +598,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       const result = await checkUpdates();
       const updates = result.data?.updates ?? [];
       const failures = result.data?.failures ?? [];
-      setDismissedUpdates(null);
       setDismissedRepoFailAt(null);
       if (updates.length === 0 && failures.length > 0) {
         // 有仓库没读到时不能说「全部最新」；哪些仓库、为什么写在横幅里
@@ -843,6 +855,15 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const nUpdates = applicableSkillUpdates.length;
   const nUnmanaged = unmanagedSkills?.length ?? 0;
   const loadOk = !isLoading && !isError;
+  const updatesOnly = view === "installed" && statusFilter === "updates";
+  const toggleUpdatesFilter = () => {
+    if (updatesOnly) {
+      setStatusFilter("all");
+      return;
+    }
+    setView("installed");
+    setStatusFilter("updates");
+  };
 
   const header = (
     <AppPageHeader
@@ -853,14 +874,28 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           <HelpTip title={t("skillsPage.helpTitle")}>
             {t("skillsPage.help")}
           </HelpTip>
-          {loadOk && (
-            <span className="ms-2 whitespace-nowrap text-body text-fg-3">
-              {nUpdates
-                ? t("skillsPage.headerCountUpdates", {
-                    count: nInstalled,
-                    updates: nUpdates,
-                  })
-                : t("skillsPage.headerCount", { count: nInstalled })}
+          {/* 已安装数量只写在页签上；页头只留可点的「N 个可更新」 */}
+          {loadOk && nUpdates > 0 && (
+            <span className="ms-2 flex items-center whitespace-nowrap text-body">
+              {/* 可点：把表格筛到可更新的项（筛选状态下列头那一行给「全部更新」），再点恢复 */}
+              <button
+                type="button"
+                aria-pressed={updatesOnly}
+                title={
+                  updatesOnly
+                    ? t("skillsPage.headerUpdatesClear")
+                    : t("skillsPage.headerUpdatesShow")
+                }
+                onClick={toggleUpdatesFilter}
+                className={cn(
+                  "-mx-1 inline-flex h-6 items-center rounded-control px-1.5 text-body font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  updatesOnly
+                    ? "bg-selected text-fg-1"
+                    : "text-fg-2 underline decoration-border-strong underline-offset-[3px] hover:bg-subtle hover:text-fg-1",
+                )}
+              >
+                {t("skillsPage.headerUpdates", { count: nUpdates })}
+              </button>
             </span>
           )}
         </>
@@ -936,10 +971,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     />
   );
 
-  const viewSwitch = (
-    <SegmentedControl<SkillsView>
+  // 「已安装 / 发现」换的是整块内容：页面级导航，用下划线页签（不是分段控件）
+  const renderViewTabs = (trailing: React.ReactNode) => (
+    <PageTabs<SkillsView>
       aria-label={t("skillsPage.viewAria")}
-      className="h-8 shrink-0 rounded-[8px]"
+      idPrefix="skills-view"
+      className="h-11"
       value={view}
       onValueChange={(next) => {
         if (next === "discover" && navigationBlocked) return;
@@ -951,14 +988,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           label: loadOk
             ? t("skillsPage.viewInstalledCount", { count: nInstalled })
             : t("skillsPage.viewInstalled"),
-          className: "rounded-[5px] px-3",
         },
         {
           value: "discover",
           label: t("skillsPage.viewDiscover"),
-          className: "rounded-[5px] px-3",
         },
       ]}
+      trailing={trailing}
     />
   );
 
@@ -1039,282 +1075,301 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         data-testid="skills-matrix"
         className="min-h-0 overflow-auto rounded-panel border border-border bg-surface"
       >
-        <div className="min-w-[600px]">
-          <div className="sticky top-0 z-10 flex h-11 items-center border-b border-border bg-subtle px-2">
-            <div className="flex min-w-0 flex-1 items-center gap-0.5 ps-[22px]">
-              {selectionActive ? (
-                <>
-                  <span className="shrink-0 whitespace-nowrap pe-1.5 ps-2.5 text-body font-medium tabular-nums">
-                    {t("skillsPage.bulk.selected", { count: selected.size })}
-                  </span>
-                  <AppMenuButton
-                    label={t("skillsPage.bulk.enableTo")}
-                    ariaLabel={t("skillsPage.bulk.enableToAria", {
-                      count: selected.size,
-                    })}
-                    apps={appIds}
-                    disabled={interactionBlocked}
-                    onPick={(app) => handleSelectionToggle(app, true)}
-                  />
-                  <AppMenuButton
-                    label={t("skillsPage.bulk.disable")}
-                    ariaLabel={t("skillsPage.bulk.disableAria", {
-                      count: selected.size,
-                    })}
-                    apps={appIds}
-                    disabled={interactionBlocked}
-                    onPick={(app) => handleSelectionToggle(app, false)}
-                  />
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="compact"
-                    className="px-2"
-                    disabled={interactionBlocked}
-                    onClick={() => {
-                      const ids = [...selected].filter((id) => updatesMap[id]);
-                      if (ids.length === 0) {
-                        toast.info(t("skillsPage.toast.noUpdatesInSelection"), {
-                          closeButton: true,
-                        });
-                        return;
-                      }
-                      void updateIds(ids);
-                    }}
-                  >
-                    {t("skills.update")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="compact"
-                    className="px-2 text-danger-text hover:text-danger-text"
-                    disabled={interactionBlocked}
-                    onClick={() =>
-                      setConfirm({ kind: "uninstall", ids: [...selected] })
-                    }
-                  >
-                    {t("skillsPage.bulk.uninstall")}
-                  </Button>
-                  <div className="flex-1" />
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="compact"
-                    className="px-2 text-fg-2"
-                    onClick={() => setSelected(new Set())}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <FilterMenu
-                    label={statusLabel(statusFilter)}
-                    active={statusFilter !== "all"}
-                    items={(["all", "updates", "none"] as StatusFilter[]).map(
-                      (value) => ({
-                        key: value,
-                        label: statusLabel(value),
-                        checked: statusFilter === value,
-                        onSelect: () => setStatusFilter(value),
-                      }),
-                    )}
-                  />
-                  <FilterMenu
-                    label={t("skillsPage.filter.sourceButton", {
-                      source:
-                        sourceFilter === "all"
-                          ? t("skillsPage.filter.all")
-                          : sourceLabel(sourceFilter),
-                    })}
-                    active={sourceFilter !== "all"}
-                    items={[
-                      {
-                        key: "all",
-                        label: t("skillsPage.filter.all"),
-                        checked: sourceFilter === "all",
-                        onSelect: () => setSourceFilter("all"),
-                      },
-                      ...sourceOptions.map(([key, count]) => ({
-                        key,
-                        label: sourceLabel(key),
-                        mono: key !== "local",
-                        count,
-                        checked: sourceFilter === key,
-                        onSelect: () => setSourceFilter(key),
-                      })),
-                    ]}
-                  />
-                </>
-              )}
-            </div>
-            <div className="flex shrink-0">
-              {appIds.map((app) => {
-                const isPi = app === "pi";
-                const onInScope = scope.rows.filter(
-                  (skill) => skill.apps[app],
-                ).length;
-                const appFilter: StatusFilter = `app:${app}`;
-                return (
-                  <MatrixColumnHeader
-                    key={app}
-                    app={app}
-                    enabledCount={
-                      installedSkills.filter((skill) => skill.apps[app]).length
-                    }
-                    totalCount={nInstalled}
-                    scopeTotal={scope.rows.length}
-                    scopeEnabled={onInScope}
-                    scopeFailed={
-                      scope.rows.filter(
-                        (skill) => fails[failKey(skill.id, app)],
-                      ).length
-                    }
-                    scopeKind={scope.kind}
-                    noun={noun}
-                    disabled={interactionBlocked}
-                    title={isPi ? t("skillsPage.piColumnTitle") : undefined}
-                    help={
-                      isPi
-                        ? {
-                            title: t("skillsPage.piHelpTitle"),
-                            body: t("skillsPage.piHelp"),
-                          }
-                        : undefined
-                    }
-                    extraAction={{
-                      label:
-                        statusFilter === appFilter
-                          ? t("skillsPage.pop.showAll")
-                          : t("skillsPage.pop.onlyApp", {
-                              app: APP_DISPLAY_NAME[app],
-                            }),
-                      onClick: () =>
-                        setStatusFilter(
-                          statusFilter === appFilter ? "all" : appFilter,
-                        ),
-                    }}
-                    onEnableRest={() => handleColumnBulk(app, true)}
-                    onDisableAll={() => handleColumnBulk(app, false)}
-                  />
-                );
-              })}
-            </div>
-            <span aria-hidden="true" className="w-16 shrink-0" />
-          </div>
-
-          {filteredSkills.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-              <h2 className="m-0 text-section">
-                {normalizedQuery
-                  ? t("skillsPage.noMatch", { query: searchQuery.trim() })
-                  : t("skillsPage.noFilterMatch")}
-              </h2>
-              <div className="flex flex-wrap justify-center gap-2 pt-1">
-                {normalizedQuery ? (
+        <MatrixColumnHighlight>
+          <div className="min-w-[600px]">
+            <div className="sticky top-0 z-10 flex h-11 items-center border-b border-border bg-subtle px-2">
+              <div className="flex min-w-0 flex-1 items-center gap-0.5 ps-[22px]">
+                {selectionActive ? (
                   <>
+                    <span className="shrink-0 whitespace-nowrap pe-1.5 ps-2.5 text-body font-medium tabular-nums">
+                      {t("skillsPage.bulk.selected", { count: selected.size })}
+                    </span>
+                    <AppMenuButton
+                      label={t("skillsPage.bulk.enableTo")}
+                      ariaLabel={t("skillsPage.bulk.enableToAria", {
+                        count: selected.size,
+                      })}
+                      apps={appIds}
+                      disabled={interactionBlocked}
+                      onPick={(app) => handleSelectionToggle(app, true)}
+                    />
+                    <AppMenuButton
+                      label={t("skillsPage.bulk.disable")}
+                      ariaLabel={t("skillsPage.bulk.disableAria", {
+                        count: selected.size,
+                      })}
+                      apps={appIds}
+                      disabled={interactionBlocked}
+                      onPick={(app) => handleSelectionToggle(app, false)}
+                    />
                     <Button
                       type="button"
-                      variant="neutral"
-                      size="regular"
-                      onClick={() => setSearchQuery("")}
+                      variant="quiet"
+                      size="compact"
+                      className="px-2"
+                      disabled={interactionBlocked}
+                      onClick={() => {
+                        const ids = [...selected].filter(
+                          (id) => updatesMap[id],
+                        );
+                        if (ids.length === 0) {
+                          toast.info(
+                            t("skillsPage.toast.noUpdatesInSelection"),
+                            {
+                              closeButton: true,
+                            },
+                          );
+                          return;
+                        }
+                        void updateIds(ids);
+                      }}
                     >
-                      {t("mcpPage.clearSearch")}
+                      {t("skills.update")}
                     </Button>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="compact"
+                      className="px-2 text-danger-text hover:text-danger-text"
+                      disabled={interactionBlocked}
+                      onClick={() =>
+                        setConfirm({ kind: "uninstall", ids: [...selected] })
+                      }
+                    >
+                      {t("skillsPage.bulk.uninstall")}
+                    </Button>
+                    <div className="flex-1" />
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="compact"
+                      className="px-2 text-fg-2"
+                      onClick={() => setSelected(new Set())}
+                    >
+                      {t("common.cancel")}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <FilterMenu
+                      label={statusLabel(statusFilter)}
+                      active={statusFilter !== "all"}
+                      items={(["all", "updates", "none"] as StatusFilter[]).map(
+                        (value) => ({
+                          key: value,
+                          label: statusLabel(value),
+                          checked: statusFilter === value,
+                          onSelect: () => setStatusFilter(value),
+                        }),
+                      )}
+                    />
+                    <FilterMenu
+                      label={t("skillsPage.filter.sourceButton", {
+                        source:
+                          sourceFilter === "all"
+                            ? t("skillsPage.filter.all")
+                            : sourceLabel(sourceFilter),
+                      })}
+                      active={sourceFilter !== "all"}
+                      items={[
+                        {
+                          key: "all",
+                          label: t("skillsPage.filter.all"),
+                          checked: sourceFilter === "all",
+                          onSelect: () => setSourceFilter("all"),
+                        },
+                        ...sourceOptions.map(([key, count]) => ({
+                          key,
+                          label: sourceLabel(key),
+                          mono: key !== "local",
+                          count,
+                          checked: sourceFilter === key,
+                          onSelect: () => setSourceFilter(key),
+                        })),
+                      ]}
+                    />
+                    {statusFilter === "updates" && nUpdates > 0 && (
+                      <Button
+                        type="button"
+                        variant="neutral"
+                        size="compact"
+                        className="ms-1.5 shrink-0"
+                        disabled={interactionBlocked}
+                        onClick={() => setConfirm({ kind: "updateAll" })}
+                      >
+                        {t("skillsPage.updateAllCount", { count: nUpdates })}
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="flex shrink-0">
+                {appIds.map((app) => {
+                  const isPi = app === "pi";
+                  const onInScope = scope.rows.filter(
+                    (skill) => skill.apps[app],
+                  ).length;
+                  const appFilter: StatusFilter = `app:${app}`;
+                  return (
+                    <MatrixColumnHeader
+                      key={app}
+                      app={app}
+                      enabledCount={
+                        installedSkills.filter((skill) => skill.apps[app])
+                          .length
+                      }
+                      totalCount={nInstalled}
+                      scopeTotal={scope.rows.length}
+                      scopeEnabled={onInScope}
+                      scopeFailed={
+                        scope.rows.filter(
+                          (skill) => fails[failKey(skill.id, app)],
+                        ).length
+                      }
+                      scopeKind={scope.kind}
+                      noun={noun}
+                      disabled={interactionBlocked}
+                      title={isPi ? t("skillsPage.piColumnTitle") : undefined}
+                      help={
+                        isPi
+                          ? {
+                              title: t("skillsPage.piHelpTitle"),
+                              body: t("skillsPage.piHelp"),
+                            }
+                          : undefined
+                      }
+                      extraAction={{
+                        label:
+                          statusFilter === appFilter
+                            ? t("skillsPage.pop.showAll")
+                            : t("skillsPage.pop.onlyApp", {
+                                app: APP_DISPLAY_NAME[app],
+                              }),
+                        onClick: () =>
+                          setStatusFilter(
+                            statusFilter === appFilter ? "all" : appFilter,
+                          ),
+                      }}
+                      onEnableRest={() => handleColumnBulk(app, true)}
+                      onDisableAll={() => handleColumnBulk(app, false)}
+                    />
+                  );
+                })}
+              </div>
+              <span aria-hidden="true" className="w-16 shrink-0" />
+            </div>
+
+            {filteredSkills.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+                <h2 className="m-0 text-section">
+                  {normalizedQuery
+                    ? t("skillsPage.noMatch", { query: searchQuery.trim() })
+                    : t("skillsPage.noFilterMatch")}
+                </h2>
+                <div className="flex flex-wrap justify-center gap-2 pt-1">
+                  {normalizedQuery ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="neutral"
+                        size="regular"
+                        onClick={() => setSearchQuery("")}
+                      >
+                        {t("mcpPage.clearSearch")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="neutral"
+                        size="regular"
+                        onClick={() => {
+                          setDiscoverQuery(searchQuery.trim());
+                          setSearchQuery("");
+                          setView("discover");
+                        }}
+                      >
+                        {t("skillsPage.searchInDiscover", {
+                          query: searchQuery.trim(),
+                        })}
+                      </Button>
+                    </>
+                  ) : (
                     <Button
                       type="button"
                       variant="neutral"
                       size="regular"
                       onClick={() => {
-                        setDiscoverQuery(searchQuery.trim());
-                        setSearchQuery("");
-                        setView("discover");
+                        setStatusFilter("all");
+                        setSourceFilter("all");
                       }}
                     >
-                      {t("skillsPage.searchInDiscover", {
-                        query: searchQuery.trim(),
-                      })}
+                      {t("skillsPage.clearFilters")}
                     </Button>
-                  </>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="neutral"
-                    size="regular"
-                    onClick={() => {
-                      setStatusFilter("all");
-                      setSourceFilter("all");
-                    }}
-                  >
-                    {t("skillsPage.clearFilters")}
-                  </Button>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          ) : (
-            <ul
-              aria-label={t("skillsPage.listLabel")}
-              className="m-0 list-none p-0"
-            >
-              {filteredSkills.map((skill, index) => (
-                <InstalledRow
-                  key={skill.id}
-                  skill={skill}
-                  first={index === 0}
-                  appIds={appIds}
-                  checked={selected.has(skill.id)}
-                  selectionActive={selectionActive}
-                  hasUpdate={Boolean(updatesMap[skill.id])}
-                  isUpdating={
-                    updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
-                  }
-                  highlighted={highlightId === skill.id}
-                  fails={fails}
-                  disabled={interactionBlocked}
-                  sourceText={
-                    skill.repoOwner && skill.repoName
-                      ? `${skill.repoOwner}/${skill.repoName}`
-                      : t("skillsPage.source.local")
-                  }
-                  onPick={(checked) =>
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      if (checked) next.add(skill.id);
-                      else next.delete(skill.id);
-                      return next;
-                    })
-                  }
-                  onCell={(app) => {
-                    const failure = fails[failKey(skill.id, app)];
-                    void writeOne(
-                      skill.id,
-                      app,
-                      failure ? failure.desired : !skill.apps[app],
-                    );
-                  }}
-                  onOpenSource={() => void openDocs(skill)}
-                  onFixSync={() => setStorageOpen(true)}
-                  onUpdate={() => void updateIds([skill.id])}
-                  onOpenDocs={() => void openDocs(skill)}
-                  onCopyDir={() => void copyDirectory(skill)}
-                  onUninstall={() => {
-                    if (writeLockRef.current || interactionBlocked) return;
-                    setConfirm({ kind: "uninstall", ids: [skill.id] });
-                  }}
-                />
-              ))}
-            </ul>
-          )}
-        </div>
+            ) : (
+              <ul
+                aria-label={t("skillsPage.listLabel")}
+                className="m-0 list-none p-0"
+              >
+                {filteredSkills.map((skill, index) => (
+                  <InstalledRow
+                    key={skill.id}
+                    skill={skill}
+                    first={index === 0}
+                    appIds={appIds}
+                    checked={selected.has(skill.id)}
+                    selectionActive={selectionActive}
+                    hasUpdate={Boolean(updatesMap[skill.id])}
+                    isUpdating={
+                      updateSkillMutation.isPending &&
+                      updateSkillMutation.variables === skill.id
+                    }
+                    highlighted={highlightId === skill.id}
+                    fails={fails}
+                    disabled={interactionBlocked}
+                    sourceText={
+                      skill.repoOwner && skill.repoName
+                        ? `${skill.repoOwner}/${skill.repoName}`
+                        : t("skillsPage.source.local")
+                    }
+                    onPick={(checked) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (checked) next.add(skill.id);
+                        else next.delete(skill.id);
+                        return next;
+                      })
+                    }
+                    onCell={(app) => {
+                      const failure = fails[failKey(skill.id, app)];
+                      void writeOne(
+                        skill.id,
+                        app,
+                        failure ? failure.desired : !skill.apps[app],
+                      );
+                    }}
+                    onOpenSource={() => void openDocs(skill)}
+                    onFixSync={() => setStorageOpen(true)}
+                    onUpdate={() => void updateIds([skill.id])}
+                    onOpenDocs={() => void openDocs(skill)}
+                    onCopyDir={() => void copyDirectory(skill)}
+                    onUninstall={() => {
+                      if (writeLockRef.current || interactionBlocked) return;
+                      setConfirm({ kind: "uninstall", ids: [skill.id] });
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </MatrixColumnHighlight>
       </div>
     );
   };
 
   const showUnmanagedBanner =
     nUnmanaged > 0 && dismissedUnmanaged !== nUnmanaged && nInstalled > 0;
-  const showUpdatesBanner = nUpdates > 0 && dismissedUpdates !== nUpdates;
   const showUpdateRepoFailBanner =
     updateRepoFailures.length > 0 && dismissedRepoFailAt !== updatesCheckedAt;
 
@@ -1331,7 +1386,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           <SkillsPage
             key={discoverQuery}
             initialQuery={discoverQuery}
-            viewSwitch={viewSwitch}
+            renderViewTabs={renderViewTabs}
             visibleAppIds={appIds}
             installTargets={targets}
             onInstallTargetsChange={setTargets}
@@ -1342,55 +1397,57 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           />
         ) : (
           <>
-            <div className="flex h-14 shrink-0 items-center gap-3 px-6">
-              {viewSwitch}
-              <div className="flex-1" />
-              {loadOk && nInstalled > 0 && (
-                <>
-                  <MatrixSearch
-                    className="w-[280px] min-w-[160px] shrink"
-                    value={searchQuery}
-                    onValueChange={setSearchQuery}
-                    placeholder={t("skillsPage.searchPlaceholder")}
-                    ariaLabel={t("skills.installedSearchAriaLabel")}
-                    status={
-                      normalizedQuery
-                        ? t("appMatrix.found", { count: filteredSkills.length })
-                        : ""
-                    }
-                  />
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="regular"
-                    className="shrink-0"
-                    disabled={interactionBlocked}
-                    title={
-                      lastCheckedText
-                        ? t("skillsPage.lastChecked", { when: lastCheckedText })
-                        : undefined
-                    }
-                    onClick={() => void handleCheckUpdates()}
-                  >
-                    {isCheckingUpdates ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" strokeWidth={2} />
-                    )}
-                    {isCheckingUpdates
-                      ? t("skills.checkingUpdates")
-                      : t("skills.checkUpdates")}
-                  </Button>
-                </>
+            <div className="shrink-0 px-6 pt-1">
+              {renderViewTabs(
+                loadOk && nInstalled > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <MatrixSearch
+                      className="w-[280px] min-w-[160px] shrink"
+                      value={searchQuery}
+                      onValueChange={setSearchQuery}
+                      placeholder={t("skillsPage.searchPlaceholder")}
+                      ariaLabel={t("skills.installedSearchAriaLabel")}
+                      status={
+                        normalizedQuery
+                          ? t("appMatrix.found", {
+                              count: filteredSkills.length,
+                            })
+                          : ""
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="regular"
+                      className="shrink-0"
+                      disabled={interactionBlocked}
+                      title={
+                        lastCheckedText
+                          ? t("skillsPage.lastChecked", {
+                              when: lastCheckedText,
+                            })
+                          : undefined
+                      }
+                      onClick={() => void handleCheckUpdates()}
+                    >
+                      {isCheckingUpdates ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" strokeWidth={2} />
+                      )}
+                      {isCheckingUpdates
+                        ? t("skills.checkingUpdates")
+                        : t("skills.checkUpdates")}
+                    </Button>
+                  </div>
+                ) : null,
               )}
             </div>
 
             <NoticeSlot
               className={cn(
-                (showUnmanagedBanner ||
-                  showUpdatesBanner ||
-                  showUpdateRepoFailBanner) &&
-                  "px-6 pb-3",
+                (showUnmanagedBanner || showUpdateRepoFailBanner) &&
+                  "px-6 pt-3",
               )}
             >
               {showUpdateRepoFailBanner && (
@@ -1444,39 +1501,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       </Button>
                     </>
                   }
-                  onDismiss={() => setDismissedUnmanaged(nUnmanaged)}
-                  dismissLabel={t("skillsPage.banner.close")}
-                />
-              )}
-              {showUpdatesBanner && (
-                <Notice
-                  icon={ArrowUpCircle}
-                  title={
-                    lastCheckedText
-                      ? t("skillsPage.banner.updatesChecked", {
-                          count: nUpdates,
-                          when: lastCheckedText,
-                        })
-                      : t("skillsPage.banner.updates", { count: nUpdates })
-                  }
-                  actions={
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="compact"
-                      disabled={interactionBlocked}
-                      onClick={() => setConfirm({ kind: "updateAll" })}
-                    >
-                      {t("skillsPage.banner.updateAll")}
-                    </Button>
-                  }
-                  onDismiss={() => setDismissedUpdates(nUpdates)}
-                  dismissLabel={t("skillsPage.banner.close")}
                 />
               )}
             </NoticeSlot>
 
-            <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
+            <div className="flex min-h-0 flex-1 flex-col px-6 pb-5 pt-3">
               {renderInstalledBody()}
             </div>
           </>
@@ -1485,6 +1514,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
       <V7ConfirmDialog
         open={confirm?.kind === "uninstall"}
+        // 卸载前会备份、能从备份恢复：可恢复操作，不用红色确认键
+        danger={false}
         title={
           uninstallTargets.length === 1
             ? t("skillsPage.confirm.uninstallOne", {
@@ -1735,6 +1766,7 @@ function InstalledRow({
           return (
             <MatrixCell
               key={app}
+              app={app}
               state={state}
               disabled={disabled}
               label={t(`appMatrix.cell.${state}`, {

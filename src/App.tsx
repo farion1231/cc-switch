@@ -50,6 +50,7 @@ import {
   type View,
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { NewLayoutNotice } from "@/components/shell/NewLayoutNotice";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import {
   AppPageHeader,
@@ -86,7 +87,7 @@ import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { PageTabs } from "@/components/ui/page-tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1114,13 +1115,15 @@ function App() {
     />
   );
 
-  // OpenClaw / Hermes 没有模式 tab，那一行放它们自己的分段控件
+  // OpenClaw / Hermes 没有模式 tab，那一行放它们自己的页面导航。
+  // 换整块内容的是页面导航，用下划线页签；分段控件只留给模式和页内筛选。
   const renderAppSegments = () => {
     if (activeApp === "openclaw") {
       return (
-        <div className="shrink-0 px-6 pt-3">
-          <SegmentedControl
+        <div className="shrink-0 px-6 pt-2">
+          <PageTabs
             aria-label={APP_DISPLAY_NAME.openclaw}
+            idPrefix="openclaw-page"
             value={currentView}
             onValueChange={(view) => setCurrentView(view)}
             items={[
@@ -1134,9 +1137,10 @@ function App() {
     }
     if (activeApp === "hermes") {
       return (
-        <div className="shrink-0 px-6 pt-3">
-          <SegmentedControl
+        <div className="shrink-0 px-6 pt-2">
+          <PageTabs
             aria-label={APP_DISPLAY_NAME.hermes}
+            idPrefix="hermes-page"
             value={currentView}
             onValueChange={(view) => setCurrentView(view)}
             items={[
@@ -1197,7 +1201,7 @@ function App() {
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 pb-12 pt-4"
       >
-        <div className="space-y-4">
+        <div className="max-w-content space-y-4">
           {activeApp === "claude-desktop" && (
             <DesktopAccessBar
               current={providers[currentProviderId]}
@@ -1252,10 +1256,13 @@ function App() {
         case "openclawConfig":
           return (
             <>
-              <div className="shrink-0 px-6 pt-3">
-                <SegmentedControl
+              {/* 二级页签：小一号、不画整行底线，挂在一级页签下面 */}
+              <div className="shrink-0 px-6 pt-1">
+                <PageTabs
                   size="sm"
                   aria-label={t("appPage.openclawConfig")}
+                  idPrefix="openclaw-config"
+                  controls="main-content"
                   value={openclawConfigTab}
                   onValueChange={setOpenclawConfigTab}
                   items={[
@@ -1265,7 +1272,12 @@ function App() {
                   ]}
                 />
               </div>
-              <div id="main-content" className="min-h-0 flex-1 overflow-y-auto">
+              <div
+                id="main-content"
+                role="tabpanel"
+                aria-labelledby={`openclaw-config-${openclawConfigTab}`}
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
                 {openclawConfigTab === "env" ? (
                   <EnvPanel />
                 ) : openclawConfigTab === "tools" ? (
@@ -1457,6 +1469,7 @@ function App() {
               }}
             />
           )}
+          <NewLayoutNotice />
           <div
             key={
               currentView === "settings"
@@ -1516,6 +1529,8 @@ function App() {
             : t("confirm.deleteProvider")
         }
         message={confirmActionMessage}
+        // 「移除」只是从应用配置里拿掉、CC Switch 里还留着，可以再加回去，不用红色
+        variant={confirmAction?.action === "remove" ? "info" : "destructive"}
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
       />

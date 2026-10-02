@@ -33,56 +33,114 @@ export function resolveBulkScope<T>(
   return { rows: visibleRows, kind: narrowedBy };
 }
 
+// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮并显示应用名） ─────────────
+/**
+ * 只有列头订阅当前列；单元格只拿稳定的 setter，悬停时整张表不会重渲染。
+ */
+const MatrixColumnSetterContext = React.createContext<
+  (app: AppId, active: boolean) => void
+>(() => {});
+const MatrixActiveColumnContext = React.createContext<AppId | null>(null);
+
+export function MatrixColumnHighlight({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [active, setActive] = React.useState<AppId | null>(null);
+  const setColumn = React.useCallback((app: AppId, on: boolean) => {
+    setActive((prev) => (on ? app : prev === app ? null : prev));
+  }, []);
+  return (
+    <MatrixColumnSetterContext.Provider value={setColumn}>
+      <MatrixActiveColumnContext.Provider value={active}>
+        {children}
+      </MatrixActiveColumnContext.Provider>
+    </MatrixColumnSetterContext.Provider>
+  );
+}
+
+/** 只认键盘焦点：鼠标点开批量弹层再关上时，焦点回到列头不该冒出名字 */
+function isKeyboardFocus(element: Element) {
+  try {
+    return element.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
+function useColumnTracking(app: AppId | undefined) {
+  const setColumn = React.useContext(MatrixColumnSetterContext);
+  return React.useMemo(() => {
+    if (!app) return {};
+    return {
+      onMouseEnter: () => setColumn(app, true),
+      onMouseLeave: () => setColumn(app, false),
+      onFocus: (event: React.FocusEvent<HTMLElement>) => {
+        if (isKeyboardFocus(event.target)) setColumn(app, true);
+      },
+      onBlur: () => setColumn(app, false),
+    };
+  }, [app, setColumn]);
+}
+
 // ─── 单元格 ─────────────────────────────────────────────────────────────
 export type MatrixCellState = "on" | "off" | "fail";
 
 interface MatrixCellProps {
   state: MatrixCellState;
+  /** 所在列：悬停 / 聚焦时高亮这一列的列头 */
+  app?: AppId;
   /** 「serena · Codex：已启用」 */
   label: string;
   onClick: () => void;
   disabled?: boolean;
 }
 
+/**
+ * 勾选框：开、关、写入失败三种状态是同一个 16px 圆角方框、同一个 28px 点击区，
+ * 只换填充和里面的符号（关 = 淡描边空框，开 = 操作色实心 + 勾，失败 = 警告描边 + ⚠）。
+ */
 export function MatrixCell({
   state,
+  app,
   label,
   onClick,
   disabled,
 }: MatrixCellProps) {
+  const tracking = useColumnTracking(app);
   return (
-    <span className="flex w-9 shrink-0 justify-center">
+    <span className="flex w-9 shrink-0 justify-center" {...tracking}>
       <button
         type="button"
         aria-pressed={state === "on"}
         aria-label={label}
         title={label}
         disabled={disabled}
+        data-state={state}
         onClick={(event) => {
           event.stopPropagation();
           onClick();
         }}
-        className={cn(
-          "flex h-7 w-7 items-center justify-center rounded-control text-fg-1 transition-[background-color,box-shadow] duration-150 hover:shadow-[inset_0_0_0_1px_var(--border-strong)] disabled:cursor-not-allowed disabled:opacity-60",
-          state === "on" && "bg-selected dark:bg-border-strong",
-        )}
+        className="group/cell flex h-7 w-7 items-center justify-center rounded-control outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {state === "on" && (
-          <Check aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={2} />
-        )}
-        {state === "off" && (
-          <span
-            aria-hidden="true"
-            className="h-3 w-3 rounded-full border-[1.5px] border-border-strong"
-          />
-        )}
-        {state === "fail" && (
-          <AlertTriangle
-            aria-hidden="true"
-            className="h-3.5 w-3.5 text-warning"
-            strokeWidth={2}
-          />
-        )}
+        <span
+          aria-hidden="true"
+          className={cn(
+            "flex h-4 w-4 items-center justify-center rounded-[4px] border transition-colors duration-150",
+            state === "on" &&
+              "border-transparent bg-action text-action-fg group-hover/cell:bg-action-hover",
+            state === "off" &&
+              "border-border-strong bg-transparent group-hover/cell:border-fg-3",
+            state === "fail" &&
+              "border-warning bg-warning-soft text-warning-text",
+          )}
+        >
+          {state === "on" && <Check className="h-3 w-3" strokeWidth={2.5} />}
+          {state === "fail" && (
+            <AlertTriangle className="h-3 w-3" strokeWidth={2.25} />
+          )}
+        </span>
       </button>
     </span>
   );
@@ -136,6 +194,12 @@ export function MatrixColumnHeader({
   const allOn = scopeTotal > 0 && rest === 0;
   const noneOn = scopeEnabled === 0;
 
+  const tracking = useColumnTracking(app);
+  const activeColumn = React.useContext(MatrixActiveColumnContext);
+  // 悬停 / 键盘聚焦在这一列（列头或任一单元格）时亮起；弹层开着时名字已在弹层标题里
+  const highlighted = activeColumn === app || open;
+  const showName = activeColumn === app && !open;
+
   const run = (action: () => void) => {
     setOpen(false);
     action();
@@ -143,7 +207,11 @@ export function MatrixColumnHeader({
 
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
-      <span className="flex w-9 shrink-0 justify-center">
+      <span
+        className="relative flex w-9 shrink-0 justify-center"
+        data-column={app}
+        {...tracking}
+      >
         <PopoverPrimitive.Trigger asChild>
           <button
             type="button"
@@ -154,15 +222,38 @@ export function MatrixColumnHeader({
               total: totalCount,
               noun,
             })}
-            title={title ?? name}
-            className="flex h-10 w-[34px] flex-col items-center justify-center gap-0.5 rounded-control transition-colors duration-150 hover:bg-selected disabled:cursor-not-allowed disabled:opacity-60 data-[state=open]:bg-selected"
+            title={title}
+            data-highlighted={highlighted ? "" : undefined}
+            className={cn(
+              "flex h-10 w-[34px] flex-col items-center justify-center gap-0.5 rounded-control text-fg-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+              highlighted && "bg-selected text-fg-1",
+            )}
           >
-            <AppGlyph app={app} size={16} badgeClassName="bg-subtle" />
-            <span className="text-badge font-medium tabular-nums text-fg-2">
+            <AppGlyph
+              app={app}
+              size={16}
+              badgeClassName={highlighted ? "bg-selected" : "bg-subtle"}
+            />
+            <span
+              className={cn(
+                "text-badge tabular-nums",
+                highlighted ? "font-semibold" : "font-medium",
+              )}
+            >
               {enabledCount}
             </span>
           </button>
         </PopoverPrimitive.Trigger>
+        {showName && (
+          // 名字已在列头的无障碍名称里，这里只给眼睛看
+          <span
+            aria-hidden="true"
+            data-testid="matrix-column-name"
+            className="pointer-events-none absolute left-1/2 top-full z-20 mt-0.5 -translate-x-1/2 whitespace-nowrap rounded-control bg-inverse px-2 py-0.5 text-caption font-medium text-inverse-fg shadow-v7-sm"
+          >
+            {name}
+          </span>
+        )}
       </span>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content

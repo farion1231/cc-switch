@@ -101,8 +101,11 @@ export function useSkillRepoActions() {
 }
 
 interface SkillsPageProps {
-  /** 左侧「已安装 / 发现」切换（由外层传入，两段共用一条工具行） */
-  viewSwitch: React.ReactNode;
+  /**
+   * 「已安装 / 发现」页签（由外层渲染，两段共用一条页签行）；
+   * 传入的内容放在页签行右侧（安装到、搜索）。
+   */
+  renderViewTabs: (trailing: React.ReactNode) => React.ReactNode;
   visibleAppIds: AppId[];
   installTargets: AppId[];
   onInstallTargetsChange: (apps: AppId[]) => void;
@@ -148,7 +151,7 @@ function formatInstalls(count: number, locale: string): string {
  * Skills 的「发现」段：仓库 / skills.sh 两个来源，结果是行列表；显式「安装到」哪些应用。
  */
 export function SkillsPage({
-  viewSwitch,
+  renderViewTabs,
   visibleAppIds,
   installTargets,
   onInstallTargetsChange,
@@ -489,46 +492,49 @@ export function SkillsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-14 shrink-0 items-center gap-3 px-6">
-        {viewSwitch}
-        <div className="flex-1" />
-        <InstallToPopover
-          label={installToLabel}
-          fullLabel={t("skillsPage.installTo.button", {
-            apps: names(installTargets),
-          })}
-          visibleAppIds={visibleAppIds}
-          targets={installTargets}
-          onChange={onInstallTargetsChange}
-        />
-        <MatrixSearch
-          className="w-[240px] min-w-[160px] shrink"
-          inputId="sk-discover-search"
-          value={query}
-          onValueChange={setQuery}
-          onEnter={isSkillsSh ? submitSkillsSh : undefined}
-          placeholder={
-            isSkillsSh
-              ? t("skillsPage.discover.skillsShPlaceholder")
-              : t("skillsPage.discover.searchPlaceholder")
-          }
-          ariaLabel={
-            isSkillsSh
-              ? t("skillsPage.discover.skillsShAria")
-              : t("skillsPage.discover.searchAria")
-          }
-          status={
-            normalizedQuery && !isSkillsSh
-              ? t("appMatrix.found", { count: visibleRows.length })
-              : ""
-          }
-        />
+      <div className="shrink-0 px-6 pt-1">
+        {renderViewTabs(
+          <div className="flex min-w-0 items-center gap-2">
+            <InstallToPopover
+              label={installToLabel}
+              fullLabel={t("skillsPage.installTo.button", {
+                apps: names(installTargets),
+              })}
+              visibleAppIds={visibleAppIds}
+              targets={installTargets}
+              onChange={onInstallTargetsChange}
+            />
+            <MatrixSearch
+              className="w-[240px] min-w-[160px] shrink"
+              inputId="sk-discover-search"
+              value={query}
+              onValueChange={setQuery}
+              onEnter={isSkillsSh ? submitSkillsSh : undefined}
+              placeholder={
+                isSkillsSh
+                  ? t("skillsPage.discover.skillsShPlaceholder")
+                  : t("skillsPage.discover.searchPlaceholder")
+              }
+              ariaLabel={
+                isSkillsSh
+                  ? t("skillsPage.discover.skillsShAria")
+                  : t("skillsPage.discover.searchAria")
+              }
+              status={
+                normalizedQuery && !isSkillsSh
+                  ? t("appMatrix.found", { count: visibleRows.length })
+                  : ""
+              }
+            />
+          </div>,
+        )}
       </div>
 
-      <div className="mb-3 flex h-9 shrink-0 items-center gap-3 px-6">
+      {/* 页签下面一行：来源是发现里的模式（分段控件），其余是页内筛选（更轻的样式） */}
+      <div className="flex h-12 shrink-0 items-center gap-2 px-6">
         <SegmentedControl<SkillsPageSource>
           aria-label={t("skillsPage.discover.sourceAria")}
-          className="h-8 rounded-[8px]"
+          size="sm"
           value={effectiveSource}
           onValueChange={setSource}
           items={[
@@ -537,12 +543,10 @@ export function SkillsPage({
               label: t("skillsPage.discover.sourceRepos", {
                 count: enabledRepos.length,
               }),
-              className: "rounded-[5px]",
             },
             {
               value: "skillssh",
               label: "skills.sh",
-              className: "rounded-[5px]",
             },
           ]}
         />
@@ -555,30 +559,22 @@ export function SkillsPage({
               onToggle={setRepoEnabled}
               onManage={onOpenRepoManager}
             />
-            <SegmentedControl<"all" | "uninstalled">
-              aria-label={t("skillsPage.discover.statusAria")}
-              className="h-8 rounded-[8px]"
-              value={statusFilter}
-              onValueChange={setStatusFilter}
-              items={[
-                {
-                  value: "all",
-                  label: t("skills.filter.all"),
-                  className: "rounded-[5px]",
-                },
-                {
-                  value: "uninstalled",
-                  label: t("skills.filter.uninstalled"),
-                  className: "rounded-[5px]",
-                },
-              ]}
-            />
+            <label className="flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-control px-2 text-body text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1">
+              <input
+                type="checkbox"
+                className={CHECKBOX_CLASS}
+                checked={statusFilter === "uninstalled"}
+                onChange={(event) =>
+                  setStatusFilter(event.target.checked ? "uninstalled" : "all")
+                }
+              />
+              {t("skillsPage.discover.onlyUninstalled")}
+            </label>
             <div className="flex-1" />
             <Button
               type="button"
               variant="quiet"
               size="icon-compact"
-              className="h-8 w-8"
               aria-label={t("skillsPage.discover.reload")}
               title={t("skillsPage.discover.reload")}
               disabled={fetchingDiscoverable}

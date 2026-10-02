@@ -114,6 +114,8 @@ vi.mock("@/hooks/useSkills", () => ({
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
+  useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
+  useInstallSkill: () => ({ mutateAsync: vi.fn() }),
 }));
 
 type Overrides = Omit<Partial<InstalledSkill>, "apps"> & {
@@ -354,7 +356,7 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
-  it("filters to Skills with updates and updates them after confirming", async () => {
+  it("filters to Skills with updates from the header count and updates them after confirming", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
       makeSkill({ id: "b", name: "B" }),
@@ -364,9 +366,29 @@ describe("UnifiedSkillsPanel", () => {
       { id: "gone", name: "Gone", remoteHash: "y" },
     ];
     renderPanel();
+    // 更新横幅已去掉：页头的「N 个可更新」、行上的徽标、「检查更新」按钮说的是同一件事
     expect(screen.getAllByText("skills.updateAvailable")).toHaveLength(1);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(
+      screen.queryByRole("button", { name: "skillsPage.updateAllCount" }),
+    ).not.toBeInTheDocument();
+
+    const chip = screen.getByRole("button", {
+      name: "skillsPage.headerUpdates",
+    });
+    expect(chip).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+    // 再点一次恢复全部
+    await userEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+
+    await userEvent.click(chip);
     await userEvent.click(
-      screen.getByRole("button", { name: "skillsPage.banner.updateAll" }),
+      screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
     );
     await userEvent.click(
       screen.getByRole("button", {
@@ -375,6 +397,61 @@ describe("UnifiedSkillsPanel", () => {
     );
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
     expect(m.updateSkill).toHaveBeenCalledWith("b");
+  });
+
+  it("switches Installed / Discover with page tabs", async () => {
+    m.installed = [makeSkill()];
+    renderPanel();
+    const tabs = screen.getByRole("tablist", { name: "skillsPage.viewAria" });
+    const [installed, discover] = within(tabs).getAllByRole("tab");
+    expect(installed).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(discover);
+    expect(
+      within(
+        screen.getByRole("tablist", { name: "skillsPage.viewAria" }),
+      ).getAllByRole("tab")[1],
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("lets the unmanaged notice be ignored with one control", async () => {
+    m.installed = [makeSkill()];
+    renderPanel();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "skillsPage.banner.ignore" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "skillsPage.banner.close" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.banner.ignore" }),
+    );
+    expect(
+      screen.queryByText("skillsPage.banner.unmanaged"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("highlights a column header and shows the app name while hovering its cells", async () => {
+    m.installed = [makeSkill({ apps: { claude: true } })];
+    renderPanel();
+    const cells = screen.getAllByRole("button", { name: /appMatrix.cell/ });
+    // 开 / 关是同一个方框，只换填充
+    expect(cells[0]).toHaveAttribute("data-state", "on");
+    expect(cells[1]).toHaveAttribute("data-state", "off");
+    expect(cells[0].className).toBe(cells[1].className);
+
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+    await userEvent.hover(cells[1]);
+    expect(columns()[1]).toHaveAttribute("data-highlighted");
+    expect(columns()[0]).not.toHaveAttribute("data-highlighted");
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    await userEvent.unhover(cells[1]);
+    expect(columns()[1]).not.toHaveAttribute("data-highlighted");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+
+    await userEvent.hover(columns()[2]);
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Pi");
   });
 
   it("ignores a second check-update click while one is running", async () => {

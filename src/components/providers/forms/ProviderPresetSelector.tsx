@@ -25,6 +25,13 @@ import {
 import { cn } from "@/lib/utils";
 import { usePresetStep } from "./presetStep";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   PRESET_GROUP_ORDER,
@@ -37,10 +44,16 @@ import {
   presetGroup,
   presetMatches,
   presetNeedsRouting,
+  presetPlanLabel,
+  presetRegionLabel,
+  presetRowGroup,
   presetRowName,
   presetRowNeedsRouting,
   presetVersionLabel,
+  presetVersionLayout,
+  presetVersionShortLabel,
   presetVersions,
+  sectionPresetRows,
   sortPresetRowsByName,
   sortPresetsByName,
   type PresetGroup,
@@ -305,7 +318,6 @@ function PresetBar({
   );
 }
 
-/** 「版本」分段控件：按钮文字是版本标签，多了自动换行；换版本 = 选同一家的另一个预设 */
 /**
  * 用户在表单里手动改过东西没有：只认表单里的 input / change 事件。预设填充是程序改值，
  * 不发这些事件；Radix Select / Checkbox / Switch 跟着值同步的隐藏控件（aria-hidden）会发，
@@ -341,8 +353,10 @@ function useFormEditedSince(
 }
 
 /**
- * 「版本」分段控件：按钮文字是版本标签，多了自动换行；换版本 = 选同一家的另一个预设，
- * 表单按它重填。用户已经手动改过表单时先确认（后果写在确认框里），没改过直接切。
+ * 选版本（换版本 = 选同一家的另一个预设，表单按它重填）。版本按「套餐 × 地区」两个维度摆：
+ * 只有一维在变 → 一个分段控件；两维都变且成完整网格 → 套餐、地区各一个分段控件
+ * （切一维时另一维保持不变）；不成网格 → 下拉。见 presetVersionLayout。
+ * 用户已经手动改过表单时先确认（后果写在确认框里），没改过直接切。
  */
 function VersionSwitch({
   entry,
@@ -357,6 +371,7 @@ function VersionSwitch({
   const ref = useRef<HTMLDivElement>(null);
   const edited = useFormEditedSince(ref, entry.id);
   const [pending, setPending] = useState<PresetEntry | null>(null);
+  const layout = presetVersionLayout(versions);
 
   const request = (id: string) => {
     if (id === entry.id) return;
@@ -369,25 +384,95 @@ function VersionSwitch({
     }
   };
 
+  // 网格里切一维：另一维保持当前值
+  const requestCell = (
+    plan = entry.preset.planKey,
+    region = entry.preset.regionKey,
+  ) => {
+    const next = versions.find(
+      (version) =>
+        version.preset.planKey === plan && version.preset.regionKey === region,
+    );
+    if (next) request(next.id);
+  };
+
+  const segmentClass =
+    "h-auto min-w-0 flex-wrap gap-0.5 border border-border-strong bg-transparent p-0.5";
+
   return (
-    <div ref={ref} className="flex items-start gap-3">
-      <span
-        aria-hidden="true"
-        className="min-w-8 shrink-0 whitespace-nowrap text-center text-caption leading-[36px] text-fg-2"
-      >
-        {t("providerPreset.versionLabel")}
-      </span>
-      <SegmentedControl
-        aria-label={t("providerPreset.versionLabel")}
-        value={entry.id}
-        onValueChange={request}
-        items={versions.map((version) => ({
-          value: version.id,
-          label: presetVersionLabel(version, t),
-          className: "h-[30px]",
-        }))}
-        className="h-auto min-w-0 flex-wrap gap-0.5 border border-border-strong bg-transparent p-0.5"
-      />
+    <div
+      ref={ref}
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2"
+    >
+      {layout.kind === "grid" ? (
+        <>
+          <DimensionLabel>{t("providerPreset.planLabel")}</DimensionLabel>
+          <SegmentedControl
+            aria-label={t("providerPreset.planLabel")}
+            value={entry.preset.planKey ?? ""}
+            onValueChange={(plan) =>
+              requestCell(plan as typeof entry.preset.planKey)
+            }
+            items={layout.plans.map((plan) => ({
+              value: plan,
+              label: presetPlanLabel(plan, t),
+              className: "h-[30px]",
+            }))}
+            className={cn(segmentClass, "justify-self-start")}
+          />
+          <DimensionLabel>{t("providerPreset.regionLabel")}</DimensionLabel>
+          <SegmentedControl
+            aria-label={t("providerPreset.regionLabel")}
+            value={entry.preset.regionKey ?? ""}
+            onValueChange={(region) =>
+              requestCell(
+                entry.preset.planKey,
+                region as typeof entry.preset.regionKey,
+              )
+            }
+            items={layout.regions.map((region) => ({
+              value: region,
+              label: presetRegionLabel(region, t),
+              className: "h-[30px]",
+            }))}
+            className={cn(segmentClass, "justify-self-start")}
+          />
+        </>
+      ) : layout.kind === "single" ? (
+        <>
+          <DimensionLabel>{t("providerPreset.versionLabel")}</DimensionLabel>
+          <SegmentedControl
+            aria-label={t("providerPreset.versionLabel")}
+            value={entry.id}
+            onValueChange={request}
+            items={versions.map((version) => ({
+              value: version.id,
+              label: presetVersionShortLabel(version, layout.dimension, t),
+              className: "h-[30px]",
+            }))}
+            className={cn(segmentClass, "justify-self-start")}
+          />
+        </>
+      ) : (
+        <>
+          <DimensionLabel>{t("providerPreset.versionLabel")}</DimensionLabel>
+          <Select value={entry.id} onValueChange={request}>
+            <SelectTrigger
+              aria-label={t("providerPreset.versionLabel")}
+              className="h-9 w-auto min-w-[220px] max-w-full justify-self-start rounded-control text-body"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {versions.map((version) => (
+                <SelectItem key={version.id} value={version.id}>
+                  {presetVersionLabel(version, t)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </>
+      )}
       <ConfirmDialog
         isOpen={pending !== null}
         title={t("providerPreset.switchVersionTitle", {
@@ -404,6 +489,18 @@ function VersionSwitch({
         onCancel={() => setPending(null)}
       />
     </div>
+  );
+}
+
+/** 版本区左侧的小标签（版本 / 套餐 / 地区），和控件第一行垂直居中 */
+function DimensionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="min-w-8 whitespace-nowrap text-center text-caption leading-[36px] text-fg-2"
+    >
+      {children}
+    </span>
   );
 }
 
@@ -486,7 +583,7 @@ function PresetPicker({
     if (key === "universal") return matchingUniversal.length;
     // 「自定义配置」固定在第一行，不计入数量
     if (key === "all") return matching.length;
-    return matching.filter((item) => rowGroup(item.row) === key).length;
+    return matching.filter((item) => presetRowGroup(item.row) === key).length;
   };
 
   const shown =
@@ -494,13 +591,40 @@ function PresetPicker({
       ? matching
       : category === "universal"
         ? []
-        : matching.filter((item) => rowGroup(item.row) === category);
+        : matching.filter((item) => presetRowGroup(item.row) === category);
 
   const navItems: PickerCategory[] = [
     "all",
     ...PRESET_GROUP_ORDER.filter((group) => groups.has(group)),
   ];
   const searching = query.trim().length > 0;
+
+  const customRow = (
+    <PresetRow
+      icon={<PresetIconBox />}
+      name={t("providerPreset.custom")}
+      detail={t("providerPreset.customDetail")}
+      selected={selectedPresetId === "custom"}
+      onClick={() => onPick("custom")}
+    />
+  );
+  const renderRow = ({ row, hits }: VisiblePresetRow) => {
+    const first = row.versions[0];
+    // 搜索命中某个版本时选中那个版本，否则选第一个
+    const target = row.versions[hits[0] ?? 0];
+    return (
+      <PresetRow
+        key={row.key}
+        icon={<PresetIconBox preset={first.preset} />}
+        name={presetRowName(row, t)}
+        detail={presetRowDetail(appId, row, hits, t)}
+        needsRoute={presetRowNeedsRouting(appId, row)}
+        selected={row.versions.some((entry) => entry.id === selectedPresetId)}
+        onClick={() => onPick(target.id)}
+      />
+    );
+  };
+
   const nothing =
     searching &&
     matching.length === 0 &&
@@ -635,43 +759,38 @@ function PresetPicker({
                 </button>
               )}
             </div>
+          ) : category === "all" ? (
+            // 「全部」按左侧分类分段，段内按名称；自定义配置固定在最上面
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-2">{customRow}</div>
+              {sectionPresetRows(shown).map((section) => (
+                <section
+                  key={section.group}
+                  aria-labelledby={`preset-section-${section.group}`}
+                  className="flex flex-col gap-2"
+                >
+                  <h3
+                    id={`preset-section-${section.group}`}
+                    className="px-0.5 text-caption font-medium text-fg-2"
+                  >
+                    {t(`providerPreset.group.${section.group}`)}
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {section.items.map(renderRow)}
+                  </div>
+                </section>
+              ))}
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
-              <PresetRow
-                icon={<PresetIconBox />}
-                name={t("providerPreset.custom")}
-                detail={t("providerPreset.customDetail")}
-                selected={selectedPresetId === "custom"}
-                onClick={() => onPick("custom")}
-              />
-              {shown.map(({ row, hits }) => {
-                const first = row.versions[0];
-                // 搜索命中某个版本时选中那个版本，否则选第一个
-                const target = row.versions[hits[0] ?? 0];
-                return (
-                  <PresetRow
-                    key={row.key}
-                    icon={<PresetIconBox preset={first.preset} />}
-                    name={presetRowName(row, t)}
-                    detail={presetRowDetail(appId, row, hits, t)}
-                    needsRoute={presetRowNeedsRouting(appId, row)}
-                    selected={row.versions.some(
-                      (entry) => entry.id === selectedPresetId,
-                    )}
-                    onClick={() => onPick(target.id)}
-                  />
-                );
-              })}
+              {customRow}
+              {shown.map(renderRow)}
             </div>
           )}
         </div>
       </div>
     </div>
   );
-}
-
-function rowGroup(row: PresetRowItem): PresetGroup {
-  return presetGroup(row.versions[0].preset);
 }
 
 /**
@@ -695,7 +814,7 @@ function presetRowDetail(
         })
       : t("providerPreset.matchedVersion", { name });
   }
-  if (rowGroup(row) === "login") {
+  if (presetRowGroup(row) === "login") {
     return t(
       `providerPreset.loginWith.${loginAccountKey(appId, first.preset)}`,
     );

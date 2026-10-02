@@ -346,7 +346,6 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           <Button
             variant="neutral"
             size="regular"
-            className="border-danger-text/40 text-danger-text hover:bg-danger-soft"
             onClick={() => setConfirmExitAll(true)}
           >
             {t("routingSettings.exitAll")}
@@ -388,8 +387,10 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
         </div>
       </SettingsBlock>
 
+      {/* 可恢复的操作（路由目标、队列、叠加名单都保留），不用红色 */}
       <ConfirmDialog
         isOpen={confirmExitAll}
+        variant="info"
         title={t("routingSettings.exitAllTitle")}
         message={t("routingSettings.exitAllMessage")}
         confirmText={t("routingSettings.exitAllConfirm")}

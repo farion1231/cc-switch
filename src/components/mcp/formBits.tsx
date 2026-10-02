@@ -46,7 +46,7 @@ export function V7Dialog({
   );
 }
 
-/** 确认框：后果写在正文里，取消默认聚焦；危险操作的确认键用 danger-soft。 */
+/** 确认框：后果写在正文里，取消默认聚焦；不可撤销的操作（danger）确认键用红底，可恢复的传 danger={false}。 */
 export function V7ConfirmDialog({
   open,
   title,
@@ -95,14 +95,10 @@ export function V7ConfirmDialog({
         </Button>
         <Button
           type="button"
-          variant={danger ? "neutral" : "solid"}
+          variant={danger ? "destructive" : "solid"}
           size="regular"
           disabled={pending}
           onClick={onConfirm}
-          className={cn(
-            danger &&
-              "border-danger bg-danger-soft font-semibold text-danger-text hover:bg-danger-soft hover:brightness-95",
-          )}
         >
           {confirmLabel}
         </Button>

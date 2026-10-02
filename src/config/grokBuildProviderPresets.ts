@@ -324,7 +324,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "Compshare",
     family: "compshare",
-    versionKey: "payg",
+    planKey: "payg",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -341,7 +341,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "Compshare Coding Plan",
     family: "compshare",
-    versionKey: "codingPlan",
+    planKey: "codingPlan",
     nameKey: "providerForm.presets.ucloudCoding",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:

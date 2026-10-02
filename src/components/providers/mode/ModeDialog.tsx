@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import type { AppId } from "@/lib/api";
@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -41,26 +40,20 @@ interface ModeDialogProps {
   providers: Provider[];
   /** 能做路由目标 / 叠加默认的供应商 */
   eligibleIds: string[];
-  directProviderName: string;
   /** 默认选中：路由用上次的路由目标，叠加用当前默认那家 */
   defaultPick: { route: string | null; stack: string | null };
   /** 叠加里除了默认那家以外的成员及其模型数 */
   stackMembers: { name: string; models: number }[];
-  /** 第一次进入路由时要勾选「我了解」 */
-  needsAck: boolean;
   onClose: () => void;
-  onEnter: (
-    target: Exclude<AppMode, "direct">,
-    pick: string,
-    acknowledged: boolean,
-  ) => Promise<void>;
+  onEnter: (target: Exclude<AppMode, "direct">, pick: string) => Promise<void>;
   /** 对话框 F：仍然直连切换 */
   onSwitchDirect: (providerId: string) => void;
 }
 
 /**
  * 模式切换确认框（B4.4 的 A / C / D / E，以及 F「需要路由」）。确认键 = 入口按钮去掉「…」。
- * 出错时就地显示，不关框。
+ * 出错时就地显示，不关框。路由可以在框里换目标；叠加的默认供应商在列表里定（卡片上的
+ * 「以这家为默认开始叠加…」或预览里的默认那家），框里只显示、不再选。
  */
 export function ModeDialog(props: ModeDialogProps) {
   const { state, onClose } = props;
@@ -88,18 +81,14 @@ function EnterBody({
   active,
   providers,
   eligibleIds,
-  directProviderName,
   defaultPick,
   stackMembers,
-  needsAck,
   onClose,
   onEnter,
 }: ModeDialogProps & {
   state: Extract<ModeDialogState, { kind: "enter" }>;
 }) {
   const { t } = useTranslation();
-  const ackId = useId();
-  const ackRef = useRef<HTMLInputElement>(null);
   const appName = APP_DISPLAY_NAME[app];
   const target = state.target;
   const viaDirect = active !== "direct";
@@ -111,11 +100,9 @@ function EnterBody({
     eligible[0]?.id ??
     "";
   const [pick, setPick] = useState(initialPick);
-  const [ack, setAck] = useState(false);
-  const [ackError, setAckError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const showAck = target === "route" && active === "direct" && needsAck;
+  const pickedProvider = eligible.find((p) => p.id === pick);
 
   useEffect(() => {
     setPick(initialPick);
@@ -151,15 +138,10 @@ function EnterBody({
 
   const confirm = async () => {
     if (!pick || busy) return;
-    if (showAck && !ack) {
-      setAckError(true);
-      ackRef.current?.focus();
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
-      await onEnter(target, pick, showAck && ack);
+      await onEnter(target, pick);
       onClose();
     } catch (err) {
       setError(extractErrorMessage(err) || t("common.unknown"));
@@ -178,11 +160,15 @@ function EnterBody({
     : target === "route"
       ? t("mode.dialog.routeTitle", { app: appName })
       : t("mode.dialog.stackTitle", { app: appName });
-  const lead = viaDirect
-    ? t("mode.dialog.switchLead", { app: appName, to: targetName })
-    : target === "route"
+  // 从路由 / 叠加互换时后端一步完成（先写回直连再接入只是实现细节），不再列步骤
+  const lead =
+    target === "route"
       ? t("mode.dialog.routeLead")
       : t("mode.dialog.stackLead");
+  const optionLabel = (provider: Provider) =>
+    provider.category === "official"
+      ? t("mode.dialog.officialOption", { name: provider.name })
+      : provider.name;
 
   return (
     <div className="space-y-4">
@@ -193,52 +179,42 @@ function EnterBody({
         </DialogDescription>
       </div>
 
-      {viaDirect && (
-        <ol className="space-y-2 text-body text-fg-1">
-          {[
-            t("mode.dialog.stepDirect", { provider: directProviderName }),
-            target === "route"
-              ? t("mode.dialog.stepRoute")
-              : t("mode.dialog.stepStack"),
-          ].map((text, index) => (
-            <li key={text} className="flex items-center gap-2.5">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-subtle text-badge text-fg-2">
-                {index + 1}
-              </span>
-              {text}
-            </li>
-          ))}
-        </ol>
-      )}
-
-      <div className="space-y-1.5">
-        <label className="text-caption font-semibold text-fg-2">
-          {target === "route"
-            ? t("mode.dialog.routeTo")
-            : t("mode.dialog.stackDefault")}
-        </label>
-        <Select value={pick} onValueChange={setPick} disabled={busy}>
-          <SelectTrigger
-            className="h-9"
-            aria-label={
-              target === "route"
-                ? t("mode.dialog.routeTo")
-                : t("mode.dialog.stackDefault")
-            }
+      {target === "route" ? (
+        <div className="space-y-1.5">
+          <label className="text-caption font-semibold text-fg-2">
+            {t("mode.dialog.routeTo")}
+          </label>
+          <Select value={pick} onValueChange={setPick} disabled={busy}>
+            <SelectTrigger
+              className="h-9"
+              aria-label={t("mode.dialog.routeTo")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="z-[70]">
+              {eligible.map((provider) => (
+                <SelectItem key={provider.id} value={provider.id}>
+                  {optionLabel(provider)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <p className="text-caption font-semibold text-fg-2">
+            {t("mode.dialog.stackDefault")}
+          </p>
+          <p
+            data-testid="stack-default"
+            className="text-body font-medium text-fg-1"
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="z-[70]">
-            {eligible.map((provider) => (
-              <SelectItem key={provider.id} value={provider.id}>
-                {provider.category === "official"
-                  ? t("mode.dialog.officialOption", { name: provider.name })
-                  : provider.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+            {pickedProvider
+              ? optionLabel(pickedProvider)
+              : t("mode.noProvider")}
+          </p>
+        </div>
+      )}
 
       <ul className="space-y-1.5 rounded-panel bg-subtle px-4 py-3 text-caption text-fg-2">
         {notes.map((note) => (
@@ -248,32 +224,6 @@ function EnterBody({
           </li>
         ))}
       </ul>
-
-      {showAck && (
-        <div className="space-y-1">
-          <label
-            htmlFor={ackId}
-            className="flex items-center gap-2 text-body text-fg-1"
-          >
-            <Checkbox
-              id={ackId}
-              ref={ackRef}
-              checked={ack}
-              aria-invalid={ackError}
-              onCheckedChange={(checked) => {
-                setAck(checked);
-                if (checked) setAckError(false);
-              }}
-            />
-            {t("mode.dialog.ack")}
-          </label>
-          {ackError && (
-            <p className="ps-6 text-caption text-danger-text">
-              {t("mode.dialog.ackRequired")}
-            </p>
-          )}
-        </div>
-      )}
 
       {error && (
         <p
@@ -330,7 +280,7 @@ function NeedsRouteBody({
     setBusy(true);
     setError(null);
     try {
-      await onEnter("route", state.providerId, true);
+      await onEnter("route", state.providerId);
       onClose();
     } catch (err) {
       setError(extractErrorMessage(err) || t("common.unknown"));

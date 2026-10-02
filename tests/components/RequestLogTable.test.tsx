@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RequestLogTable } from "@/components/usage/RequestLogTable";
+import {
+  RequestLogTable,
+  appShortName,
+  formatLogTime,
+} from "@/components/usage/RequestLogTable";
 import type { UsageRangeSelection } from "@/types/usage";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
@@ -206,5 +210,76 @@ describe("RequestLogTable", () => {
 
     fireEvent.click(rows[1]);
     expect(onOpenDetail).toHaveBeenCalledWith("short");
+  });
+
+  it("shows full provider names on hover and short app names in the app column", () => {
+    useRequestLogsMock.mockReturnValue({
+      data: {
+        data: [
+          {
+            requestId: "r1",
+            providerId: "p1",
+            providerName: "Kimi For Coding Plan Provider",
+            appType: "claude",
+            model: "kimi-k2.6",
+            costMultiplier: "1",
+            inputTokens: 10,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0",
+            isStreaming: false,
+            statusCode: 200,
+            latencyMs: 0,
+            createdAt: Math.floor(Date.now() / 1000),
+          },
+        ],
+        total: 1,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+    );
+
+    expect(
+      screen.getByTitle("Kimi For Coding Plan Provider"),
+    ).toHaveTextContent("Kimi For Coding Plan Provider");
+    // 应用列：短名 + 全名在悬停提示和读屏文字里
+    const appCell = screen.getByTitle("Claude Code");
+    expect(appCell).toHaveTextContent("Claude");
+    expect(appShortName("claude-desktop")).toBe("Desktop");
+    expect(appShortName("unknown-app")).toBe("unknown-app");
+  });
+});
+
+describe("formatLogTime", () => {
+  const at = (
+    y: number,
+    m: number,
+    d: number,
+    h: number,
+    mi: number,
+    s: number,
+  ) => Math.floor(new Date(y, m - 1, d, h, mi, s).getTime() / 1000);
+
+  it("shows only the clock (with seconds) for requests from today in local time", () => {
+    const now = new Date(2026, 9, 2, 18, 0, 0);
+    expect(formatLogTime(at(2026, 10, 2, 14, 32, 5), now)).toBe("14:32:05");
+    expect(formatLogTime(at(2026, 10, 2, 0, 0, 1), now)).toBe("00:00:01");
+  });
+
+  it("keeps the date for requests from other days", () => {
+    const now = new Date(2026, 9, 2, 0, 30, 0);
+    expect(formatLogTime(at(2026, 10, 1, 23, 59, 59), now)).toBe("10-01 23:59");
+    // 同月同日但不同年也不算今天
+    expect(formatLogTime(at(2025, 10, 2, 9, 5, 0), now)).toBe("10-02 09:05");
   });
 });

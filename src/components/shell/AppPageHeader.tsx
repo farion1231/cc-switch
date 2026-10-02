@@ -20,6 +20,8 @@ interface AppPageHeaderProps {
   titleExtra?: ReactNode;
   /** 右侧操作区：主按钮放最后一个、⋯ 放它后面 */
   actions?: ReactNode;
+  /** 标题可能很长（如会话阅读页的会话名）：标题占满剩余宽度，放不下就截断 */
+  truncateTitle?: boolean;
   className?: string;
 }
 
@@ -34,6 +36,7 @@ export function AppPageHeader({
   subtitle,
   titleExtra,
   actions,
+  truncateTitle = false,
   className,
 }: AppPageHeaderProps) {
   const windowControls = useContext(WindowControlsContext);
@@ -46,7 +49,12 @@ export function AppPageHeader({
       {...DRAG_REGION_ATTR}
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
-      <div className="flex min-w-0 shrink-0 items-center gap-2.5">
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-2.5",
+          truncateTitle ? "flex-1" : "shrink-0",
+        )}
+      >
         {leading && (
           <span className="-ms-2 flex shrink-0 items-center" style={NO_DRAG}>
             {leading}
@@ -64,6 +72,7 @@ export function AppPageHeader({
           className={cn(
             "m-0 whitespace-nowrap",
             variant === "app" ? "text-title" : "text-page",
+            truncateTitle && "min-w-0 truncate",
           )}
         >
           {title}
@@ -79,7 +88,7 @@ export function AppPageHeader({
           </div>
         )}
       </div>
-      <div className="flex-1" />
+      {!truncateTitle && <div className="flex-1" />}
       {actions && (
         <div
           className="flex min-w-0 shrink items-center justify-end gap-2"

@@ -121,7 +121,7 @@ function renderPage(
   const onShowInstalled = vi.fn();
   render(
     <SkillsPage
-      viewSwitch={null}
+      renderViewTabs={(trailing) => trailing}
       visibleAppIds={["claude", "codex", "pi"]}
       installTargets={["codex", "claude"]}
       onInstallTargetsChange={vi.fn()}
@@ -312,9 +312,14 @@ describe("SkillsPage (Discover)", () => {
     expect(onShowInstalled).toHaveBeenCalledWith("owner-a/repo-a:repo-skill");
     expect(screen.queryByText("skills.uninstall")).not.toBeInTheDocument();
 
-    // 「未安装」筛选只留下没装过的
+    // 「只看未安装」是页内筛选：复选框，不是第二层分段控件
+    expect(
+      screen.queryByRole("button", { name: "skills.filter.uninstalled" }),
+    ).not.toBeInTheDocument();
     await userEvent.click(
-      screen.getByRole("button", { name: "skills.filter.uninstalled" }),
+      screen.getByRole("checkbox", {
+        name: "skillsPage.discover.onlyUninstalled",
+      }),
     );
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByText("other-skill")).toBeInTheDocument();

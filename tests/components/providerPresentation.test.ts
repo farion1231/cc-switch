@@ -35,6 +35,7 @@ function actions() {
     exitAndUse: vi.fn(),
     routeTo: vi.fn(),
     startRouteFrom: vi.fn(),
+    startStackFrom: vi.fn(),
     queueAdd: vi.fn(),
     queueRemove: vi.fn(),
     queueMove: vi.fn(),
@@ -217,8 +218,8 @@ describe("buildSwitchSections — stack", () => {
     );
   });
 
-  it("previews the stack outside Stack mode without letting the default change yet", () => {
-    const { sections } = build({
+  it("previews the stack outside Stack mode: each row starts Stack with itself as the default", () => {
+    const { sections, input } = build({
       active: "direct",
       view: "stack",
       routeId: null,
@@ -231,9 +232,25 @@ describe("buildSwitchSections — stack", () => {
       tone: undefined,
       status: { label: "providerCard.status.defaultAfterSwitch" },
     });
-    expect(button(sections, "backup", "setDefault").disabledReason).toBe(
-      "providerCard.reason.stackLater",
-    );
+    // 和路由预览的「从这家开始路由」对齐：没有不能点的「设为默认」
+    expect(item(sections, "backup").buttons.map((b) => b.key)).toEqual([
+      "startStackFrom",
+      "remove",
+    ]);
+    const start = button(sections, "backup", "startStackFrom");
+    expect(start.disabledReason).toBeUndefined();
+    start.onClick();
+    expect(input.actions.startStackFrom).toHaveBeenCalledWith(backup);
+    // 名单的添加 / 移除照旧能点
+    expect(item(sections, "converted").buttons.map((b) => b.key)).toEqual([
+      "startStackFrom",
+      "add",
+    ]);
+    button(sections, "converted", "add").onClick();
+    expect(input.actions.stackAdd).toHaveBeenCalledWith(converted);
+    button(sections, "backup", "remove").onClick();
+    expect(input.actions.stackRemove).toHaveBeenCalledWith(backup);
+    expect(input.actions.stackSetDefault).not.toHaveBeenCalled();
   });
 
   it("never lets ChatGPT accounts be added in Codex Stack mode, even legacy cards without a category", () => {
@@ -315,6 +332,11 @@ describe("buildAdditiveSections", () => {
     ]);
     button(sections, "relay", "remove").onClick();
     expect(actions.remove).toHaveBeenCalledWith(relay);
+    // 已添加的卡白底、不再写「● 已添加 / 已启用」：灰底只给默认那一家
+    for (const id of ["relay", "omo"]) {
+      expect(item(sections, id).tone).toBeUndefined();
+      expect(item(sections, id).status).toBeUndefined();
+    }
     button(sections, "backup", "add").onClick();
     expect(actions.add).toHaveBeenCalledWith(backup);
     button(sections, "omo", "disable").onClick();
@@ -343,9 +365,12 @@ describe("buildAdditiveSections", () => {
       actions,
     });
 
-    expect(item(sections, "relay").status?.label).toBe(
-      "providerCard.status.default",
-    );
+    expect(item(sections, "relay")).toMatchObject({
+      tone: "neutral",
+      status: { label: "providerCard.status.default" },
+    });
+    expect(item(sections, "multi").tone).toBeUndefined();
+    expect(item(sections, "multi").status).toBeUndefined();
     expect(button(sections, "relay", "remove").disabledReason).toBe(
       "providerCard.reason.defaultCannotRemove",
     );
@@ -373,6 +398,8 @@ describe("buildAdditiveSections", () => {
     expect(button(sections, "relay", "remove").disabledReason).toBe(
       "providerCard.reason.currentCannotRemove",
     );
+    expect(item(sections, "relay").tone).toBe("neutral");
+    expect(item(sections, "managed").tone).toBeUndefined();
     expect(item(sections, "managed")).toMatchObject({
       dim: true,
       editDisabledReason: "provider.managedByHermesHint",

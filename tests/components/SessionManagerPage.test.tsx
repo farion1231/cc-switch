@@ -304,8 +304,11 @@ describe("SessionManagerPage", () => {
     openRow("Alpha Session");
 
     expect(
-      await screen.findByRole("heading", { level: 2, name: "Alpha Session" }),
+      await screen.findByRole("heading", { level: 1, name: "Alpha Session" }),
     ).toBeInTheDocument();
+    // 返回和会话名并进页头：只剩一层页头，「会话」那条不再单独出现
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "返回会话列表" })).toBeVisible();
     expect(await screen.findByText("alpha question")).toBeInTheDocument();
     expect(screen.getByText("shell")).toBeInTheDocument();
     expect(screen.getByText("const a = 1;")).toBeInTheDocument();
@@ -318,7 +321,7 @@ describe("SessionManagerPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "下一个会话" }));
     expect(
-      await screen.findByRole("heading", { level: 2, name: "Beta Session" }),
+      await screen.findByRole("heading", { level: 1, name: "Beta Session" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上一个会话" })).toBeEnabled();
 
@@ -399,7 +402,7 @@ describe("SessionManagerPage", () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
     openRow("Alpha Session");
-    await screen.findByRole("heading", { level: 2, name: "Alpha Session" });
+    await screen.findByRole("heading", { level: 1, name: "Alpha Session" });
 
     await userEvent.click(
       screen.getByRole("button", { name: "Alpha Session 的更多操作" }),
@@ -415,7 +418,7 @@ describe("SessionManagerPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.queryByRole("heading", { level: 2, name: "Alpha Session" }),
+        screen.queryByRole("heading", { level: 1, name: "Alpha Session" }),
       ).not.toBeInTheDocument(),
     );
     await waitFor(() =>

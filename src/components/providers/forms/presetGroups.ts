@@ -2,8 +2,11 @@ import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import {
   PRESET_FAMILIES,
+  PRESET_REGION_KEYS,
   type PresetFamilyId,
   type PresetFamilyInfo,
+  type PresetPlanKey,
+  type PresetRegionKey,
 } from "@/config/presetFamilies";
 import { PRESET_SEARCH_ALIASES } from "@/config/presetSearchAliases";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
@@ -169,19 +172,32 @@ export function presetVersions(
   return versions.length > 1 ? sortFamilyVersions(family, versions) : [entry];
 }
 
-/** 按 PRESET_FAMILIES 里的 versionOrder 排版本；没列到的保持文件顺序排在后面 */
+/**
+ * 排版本：先按套餐（PRESET_FAMILIES 里的 planOrder，没列到的按文件里第一次出现的顺序），
+ * 同一套餐里再按地区（先国内后海外）；都没写的保持文件顺序。
+ */
 function sortFamilyVersions(
   family: PresetFamilyId,
   versions: PresetEntry[],
 ): PresetEntry[] {
-  const order: readonly string[] =
-    (PRESET_FAMILIES[family] as PresetFamilyInfo).versionOrder ?? [];
-  if (order.length === 0) return versions;
-  const rank = (entry: PresetEntry) => {
-    const index = order.indexOf(entry.preset.versionKey ?? "");
-    return index === -1 ? order.length : index;
+  const listed: readonly string[] =
+    (PRESET_FAMILIES[family] as PresetFamilyInfo).planOrder ?? [];
+  const plans: string[] = [...listed];
+  for (const entry of versions) {
+    const plan = entry.preset.planKey;
+    if (plan && !plans.includes(plan)) plans.push(plan);
+  }
+  const planRank = (entry: PresetEntry) => {
+    const plan = entry.preset.planKey;
+    return plan ? plans.indexOf(plan) : plans.length;
   };
-  return [...versions].sort((a, b) => rank(a) - rank(b));
+  const regionRank = (entry: PresetEntry) => {
+    const region = entry.preset.regionKey;
+    return region ? PRESET_REGION_KEYS.indexOf(region) : -1;
+  };
+  return [...versions].sort(
+    (a, b) => planRank(a) - planRank(b) || regionRank(a) - regionRank(b),
+  );
 }
 
 export function familyDisplayName(family: PresetFamilyId, t: Translate) {
@@ -195,11 +211,98 @@ export function presetRowName(row: PresetRowItem, t: Translate): string {
     : presetDisplayName(row.versions[0].preset, t);
 }
 
-/** 版本标签（「编程订阅 · 国内」）；没写 versionKey 的用域名 */
+export function presetPlanLabel(plan: PresetPlanKey, t: Translate): string {
+  return String(t(`providerPreset.plan.${plan}`));
+}
+
+export function presetRegionLabel(
+  region: PresetRegionKey,
+  t: Translate,
+): string {
+  return String(t(`providerPreset.region.${region}`));
+}
+
+/** 版本标签「套餐 · 地区」（「编程订阅 · 国内」）；两个都没写的用域名 */
 export function presetVersionLabel(entry: PresetEntry, t: Translate): string {
-  const key = entry.preset.versionKey;
-  if (key) return String(t(`providerPreset.version.${key}`));
+  const { planKey, regionKey } = entry.preset;
+  const parts = [
+    planKey ? presetPlanLabel(planKey, t) : "",
+    regionKey ? presetRegionLabel(regionKey, t) : "",
+  ].filter(Boolean);
+  if (parts.length > 0) return parts.join(" · ");
   return presetDomain(entry.preset) || presetDisplayName(entry.preset, t);
+}
+
+/**
+ * 第 2 步怎么选版本：
+ * - `single`：版本只在一个维度上不同（或都没写维度、用域名区分）→ 一个分段控件，
+ *   按钮只写变化的那一维（`dimension` 为 null 时写完整标签）；
+ * - `grid`：套餐和地区都在变，而且每个套餐 × 每个地区都正好有一个预设 → 套餐、地区各一个分段控件；
+ * - `list`：其余（两维都变但缺格子、标签重复等）→ 下拉，列出「套餐 · 地区」。
+ */
+export type PresetVersionLayout =
+  | { kind: "single"; dimension: "plan" | "region" | null }
+  | { kind: "grid"; plans: PresetPlanKey[]; regions: PresetRegionKey[] }
+  | { kind: "list" };
+
+function distinct<T>(values: T[]): T[] {
+  return values.filter((value, index) => values.indexOf(value) === index);
+}
+
+/** `versions` 需已排好序（presetVersions / groupPresetRows 的结果） */
+export function presetVersionLayout(
+  versions: PresetEntry[],
+): PresetVersionLayout {
+  const planOf = versions.map((entry) => entry.preset.planKey);
+  const regionOf = versions.map((entry) => entry.preset.regionKey);
+  const plans = distinct(planOf);
+  const regions = distinct(regionOf);
+  const unique = (values: unknown[]) =>
+    distinct(values).length === versions.length;
+
+  if (plans.length > 1 && regions.length > 1) {
+    const complete =
+      !plans.includes(undefined) &&
+      !regions.includes(undefined) &&
+      plans.length * regions.length === versions.length &&
+      unique(planOf.map((plan, i) => `${plan}|${regionOf[i]}`));
+    if (!complete) return { kind: "list" };
+    return {
+      kind: "grid",
+      plans: plans as PresetPlanKey[],
+      regions: [...(regions as PresetRegionKey[])].sort(
+        (a, b) => PRESET_REGION_KEYS.indexOf(a) - PRESET_REGION_KEYS.indexOf(b),
+      ),
+    };
+  }
+  if (plans.length > 1) {
+    return !plans.includes(undefined) && unique(planOf)
+      ? { kind: "single", dimension: "plan" }
+      : { kind: "list" };
+  }
+  if (regions.length > 1) {
+    return !regions.includes(undefined) && unique(regionOf)
+      ? { kind: "single", dimension: "region" }
+      : { kind: "list" };
+  }
+  // 两维都没变化：靠域名区分（SudoCode）；连域名都一样就只能下拉
+  return unique(versions.map((entry) => presetDomain(entry.preset)))
+    ? { kind: "single", dimension: null }
+    : { kind: "list" };
+}
+
+/** 分段控件按钮上的字：只写变化的那一维 */
+export function presetVersionShortLabel(
+  entry: PresetEntry,
+  dimension: "plan" | "region" | null,
+  t: Translate,
+): string {
+  const { planKey, regionKey } = entry.preset;
+  if (dimension === "plan" && planKey) return presetPlanLabel(planKey, t);
+  if (dimension === "region" && regionKey) {
+    return presetRegionLabel(regionKey, t);
+  }
+  return presetVersionLabel(entry, t);
 }
 
 /**
@@ -249,6 +352,26 @@ export function matchPresetRow(
   return row.versions.some((entry) => presetMatches(entry, query, t))
     ? { versions: [] }
     : null;
+}
+
+// ─── 「全部」按分类分段 ──────────────────────────────────────────────────────
+
+/** 一行的分类：合成的行看第一个版本（同一家的版本分类一致） */
+export function presetRowGroup(row: PresetRowItem): PresetGroup {
+  return presetGroup(row.versions[0].preset);
+}
+
+/**
+ * 「全部」按左侧分类分段（账号登录 → 模型厂商 → 第三方平台 → 云服务商 → 插件配置），
+ * 段内保持传入的顺序（已按名称排）；空段不出现。
+ */
+export function sectionPresetRows<T extends { row: PresetRowItem }>(
+  items: T[],
+): { group: PresetGroup; items: T[] }[] {
+  return PRESET_GROUP_ORDER.map((group) => ({
+    group,
+    items: items.filter((item) => presetRowGroup(item.row) === group),
+  })).filter((section) => section.items.length > 0);
 }
 
 // ─── 按名称排：中文名按拼音首字母插进字母序（火山引擎排在 H）────────────────────

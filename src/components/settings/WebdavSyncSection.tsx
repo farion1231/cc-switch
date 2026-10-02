@@ -1842,10 +1842,7 @@ export function WebdavSyncSection({
             <Button variant="outline" onClick={handleMutualExclusionCancel}>
               {t("common.cancel")}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleMutualExclusionConfirm}
-            >
+            <Button variant="solid" onClick={handleMutualExclusionConfirm}>
               {t("common.confirm")}
             </Button>
           </DialogFooter>

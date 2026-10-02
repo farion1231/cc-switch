@@ -94,7 +94,7 @@
     "connectivityCheck": "Connectivity check",
     "tabProvider": "Provider",
     "tabUniversal": "Universal",
-    "noProviders": "No providers added yet",
+    "noProviders": "No providers yet",
     "noProvidersDescription": "If you already have a config, click \"Import Current Config\" — all data will be safely saved in a default provider",
     "noProvidersDescriptionKeyFields": "Switching providers only replaces the key, endpoint and model; plugins and other settings stay in the config file and apply to every provider",
     "importCurrent": "Import Current Config",
@@ -355,8 +355,8 @@
       "sidebarAndHeader": "Sidebar and header",
       "visibleApps": "Apps shown in the sidebar",
       "goToApps": "Open Apps",
-      "updates": "App updates",
-      "checkToolUpdates": "Check for app updates at startup",
+      "updates": "New versions of your apps",
+      "checkToolUpdates": "Check for new versions of your apps at launch",
       "checkToolUpdatesHelp": "When on, CC Switch checks your installed command-line apps for new versions each time it starts, and shows a dot on Apps in the sidebar if it finds one. Nothing is upgraded automatically.",
       "windowAndTerminal": "Window and terminal",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
@@ -1576,7 +1576,24 @@
   "managedAuth": {
     "accountRemoved": "Account removed",
     "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
-    "selectedAccountUnavailable": "The linked account is missing or needs you to sign in again. Select another account."
+    "selectedAccountUnavailable": "The linked account is missing or needs you to sign in again. Select another account.",
+    "usedBy": "Used by {{count}} provider(s)",
+    "usedByTitle": "Used by: {{names}}",
+    "remove": {
+      "titleOne": "Delete account “{{login}}”?",
+      "titleAll": "Delete all {{service}} accounts?",
+      "leadOne": "This deletes the sign-in credentials CC Switch keeps for this account. This can’t be undone.",
+      "leadAll": "This deletes the sign-in credentials CC Switch keeps for these {{count}} accounts. This can’t be undone.",
+      "brokenOne": "These providers will stop working until you sign in again or pick another account:",
+      "brokenAll": "These providers will stop working until you sign in again:",
+      "moved": "These providers use the default account and will switch to the new default:",
+      "noneOne": "No provider uses this account.",
+      "noneAll": "No provider uses these accounts.",
+      "confirmOne": "Delete account",
+      "confirmAll": "Delete {{count}} accounts",
+      "appSeparator": ": ",
+      "nameSeparator": ", "
+    }
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -1805,32 +1822,28 @@
       "volcengine": "Volcengine",
       "tencent": "Tencent Cloud"
     },
-    "version": {
+    "version": {},
+    "switchVersionTitle": "Switch to {{version}}?",
+    "switchVersionMessage": "The form will be refilled for the new version. The API key you entered and any other changes will be cleared.",
+    "switchVersionConfirm": "Switch",
+    "plan": {
       "payg": "Pay-as-you-go",
-      "paygCn": "Pay-as-you-go · China",
-      "paygIntl": "Pay-as-you-go · Global",
       "coding": "Coding subscription",
-      "codingCn": "Coding subscription · China",
-      "codingIntl": "Coding subscription · Global",
-      "cn": "China",
-      "intl": "Global",
-      "agentPlan": "Agent Plan",
       "codingPlan": "Coding Plan",
+      "agentPlan": "Agent Plan",
       "tokenPlan": "Token Plan",
-      "tokenPlanCn": "Token Plan · China",
-      "tokenPlanIntl": "Token Plan · Global",
-      "enterpriseLiteCn": "Enterprise Lite · China",
-      "enterpriseLiteIntl": "Enterprise Lite · Global",
-      "enterpriseProCn": "Enterprise Pro · China",
-      "enterpriseProIntl": "Enterprise Pro · Global",
-      "stepPlanCn": "Step Plan · China",
-      "stepPlanIntl": "Step Plan · Global",
+      "enterpriseLite": "Enterprise Lite",
+      "enterprisePro": "Enterprise Pro",
+      "stepPlan": "Step Plan",
       "aksk": "AKSK",
       "apiKey": "API Key"
     },
-    "switchVersionTitle": "Switch to {{version}}?",
-    "switchVersionMessage": "The form will be refilled for the new version. The API key you entered and any other changes will be cleared.",
-    "switchVersionConfirm": "Switch"
+    "region": {
+      "cn": "China",
+      "intl": "Global"
+    },
+    "planLabel": "Plan",
+    "regionLabel": "Region"
   },
   "usage": {
     "title": "Usage Statistics",
@@ -2084,8 +2097,7 @@
       "requests": "Requests",
       "tokens": "Tokens",
       "cost": "Cost",
-      "requestsLegend": "Requests",
-      "costLine": "Cost (right axis)"
+      "requestsLegend": "Requests"
     },
     "tabs": {
       "label": "Details",
@@ -3773,7 +3785,7 @@
     "queueMoved": "{{name}} moved to position {{position}}.",
     "status": {
       "directLead": "Direct is active · connected to",
-      "routeLead": "Routing is active ·",
+      "routeLead": "Routing is active",
       "byQueue": "by queue",
       "stackLead": "Stack is active · default",
       "stackValue": "{{name}} · {{count}} more with {{models}} models"
@@ -3804,10 +3816,6 @@
       "switchTitle": "Switch {{app}} from “{{from}}” to “{{to}}”?",
       "routeLead": "Requests go through CC Switch on this machine first, then to the provider you pick.",
       "stackLead": "The default provider takes requests without a prefix.",
-      "switchLead": "{{app}} goes back to direct first, then reconnects with “{{to}}”:",
-      "stepDirect": "Write back the direct config ({{provider}})",
-      "stepRoute": "Connect with routing, to the provider picked below",
-      "stepStack": "Connect with Stack, with the provider below as the default",
       "routeTo": "Route to",
       "stackDefault": "Default provider",
       "officialOption": "{{name}} (official)",
@@ -3820,14 +3828,18 @@
       "stackNoteRestart": "Restart {{app}} to see the stacked models.",
       "stackNoteRestartCodex": "Restart {{app}} to see the stacked models; quit the desktop app completely and reopen it.",
       "stackToRouteNote": "Stacked models are withdrawn from /model (the list is kept); a selected stacked model must be changed back to a regular one.",
-      "ack": "I understand routing is an advanced feature (asked only once)",
-      "ackRequired": "Please check this first.",
       "confirmRoute": "Start routing",
       "confirmStack": "Switch to Stack",
       "needsRouteTitle": "{{provider}} needs routing",
       "needsRouteLead": "{{provider}}: {{reason}}. If you switch to it directly, {{app}} won't be able to use it.",
       "switchAnyway": "Switch directly anyway",
       "routeAndUse": "Start routing and use it"
+    },
+    "help": {
+      "title": "How the connection modes differ",
+      "direct": "Direct: the client connects straight to the chosen provider; switching rewrites its config.",
+      "route": "Routing: requests go through CC Switch on this machine first; failover is available.",
+      "stack": "Stack: models from several providers are listed together in /model; no failover."
     }
   },
   "providerCard": {
@@ -3836,8 +3848,6 @@
       "routing": "Routing",
       "currentDefault": "Current default",
       "defaultAfterSwitch": "Default after switching",
-      "added": "Added",
-      "enabled": "Enabled",
       "current": "Current",
       "default": "Default"
     },
@@ -3856,7 +3866,8 @@
       "edit": "Edit {{name}}",
       "more": "More actions for {{name}}",
       "moveUp": "Move {{name}} up",
-      "moveDown": "Move {{name}} down"
+      "moveDown": "Move {{name}} down",
+      "startStackFrom": "Start Stack with this as default…"
     },
     "chip": {
       "official": "Official",
@@ -3875,7 +3886,6 @@
       "noRoute": "Official subscriptions don't go through routing; available again in direct mode.",
       "noStack": "Official subscriptions can't be used in Stack.",
       "officialStack": "Official accounts can only be the default, not stacked.",
-      "stackLater": "You can set the default after switching to Stack.",
       "needsRoute": "Needs routing: {{reason}}; can't connect directly.",
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
       "currentCannotRemove": "The provider in use can't be removed. Enable another one first."
@@ -3895,7 +3905,7 @@
       "addedHelp": "Added providers are all written into {{app}}'s config; pick the model inside {{app}}.",
       "addedEmpty": "No providers added yet.",
       "available": "Available · {{count}}",
-      "stackNoDefault": "No provider can be the default yet; pick one in the confirmation when switching."
+      "stackNoDefault": "No default provider yet. Pick one below and choose \"Start Stack with this as default…\"."
     }
   },
   "desktopAccess": {
@@ -4159,8 +4169,6 @@
     "noun": "Skills",
     "helpTitle": "How Skills sync",
     "help": "The main copy lives in CC Switch's folder and is synced to the apps you tick. Claude Desktop and OpenClaw don't support Skills, so they have no column.",
-    "headerCount": "{{count}} installed",
-    "headerCountUpdates": "{{count}} installed · {{updates}} updates",
     "add": "Add Skill",
     "addMenu": {
       "discover": "Browse in Discover",
@@ -4182,10 +4190,7 @@
       "unmanaged": "{{count}} Skills on this computer aren't managed by CC Switch.",
       "reviewImport": "Review and import",
       "ignore": "Ignore",
-      "close": "Dismiss",
-      "updates": "{{count}} Skills have updates",
-      "updatesChecked": "{{count}} Skills have updates · last checked {{when}}",
-      "updateAll": "Update all…"
+      "close": "Dismiss"
     },
     "filter": {
       "all": "All",
@@ -4266,7 +4271,6 @@
       "skillsShNone": "Nothing found on skills.sh for “{{query}}”",
       "sourceAria": "Discover source",
       "sourceRepos": "Repos · {{count}}",
-      "statusAria": "Filter by install status",
       "reload": "Reload repositories",
       "listLabel": "Skills you can install",
       "installed": "Installed · {{count}} apps",
@@ -4282,7 +4286,8 @@
       "noneReadBody": "None of the {{count}} repositories returned Skills. It may be a network problem or GitHub rate limiting.",
       "manageRepos": "Manage repositories",
       "allInstalled": "Every Skill in these repositories is installed",
-      "showAll": "Show all"
+      "showAll": "Show all",
+      "onlyUninstalled": "Not installed only"
     },
     "repos": {
       "buttonAll": "Repos: all",
@@ -4320,6 +4325,13 @@
       "item": "{{repo}} ({{reason}})",
       "discoverBody": "The list may be incomplete.",
       "updatesBody": "Skills from these repositories weren't checked, so the results may be incomplete."
-    }
+    },
+    "headerUpdates": "{{count}} updates",
+    "headerUpdatesShow": "Show only Skills with updates",
+    "headerUpdatesClear": "Show all Skills",
+    "updateAllCount": "Update all ({{count}})…"
+  },
+  "coach": {
+    "newLayout": "New layout: modes sit at the top of each app page; Usage and Accounts are in the sidebar."
   }
 }

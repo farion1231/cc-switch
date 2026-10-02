@@ -2,9 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Bar,
+  BarChart,
   CartesianGrid,
-  ComposedChart,
-  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -210,17 +209,17 @@ export function UsageTrendChart({
     [trends, isHourly, dateLocale, startDate, endDate],
   );
 
-  const showCostLine = metric !== "cost";
-  const barLabel =
+  // 单指标：图只画切换选中的那一个指标，单 Y 轴，图例和 tooltip 跟着走。
+  const metricLabel =
     metric === "requests"
       ? t("usage.trend.requestsLegend")
       : metric === "tokens"
         ? t("usage.trend.tokens")
         : t("usage.trend.cost");
 
-  const formatMetric = (value: unknown, key: string) =>
-    key === "cost" ? fmtUsd(value, 4) : fmtInt(value, dateLocale);
-  const formatLeftTick = (value: unknown) =>
+  const formatMetric = (value: unknown) =>
+    metric === "cost" ? fmtUsd(value, 4) : fmtInt(value, dateLocale);
+  const formatYTick = (value: unknown) =>
     metric === "cost"
       ? `$${parseFiniteNumber(value) ?? 0}`
       : formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
@@ -232,22 +231,16 @@ export function UsageTrendChart({
     return (
       <div className="rounded-[8px] border border-border bg-surface px-3 py-2 text-caption text-fg-1 shadow-v7-md">
         <p className="mb-1 font-semibold">{heading}</p>
-        {payload.map((entry: any) => (
-          <div
-            key={String(entry.dataKey)}
-            className="flex items-center gap-2 tabular-nums"
-          >
-            <span
-              aria-hidden="true"
-              className="h-2 w-2 rounded-[2px]"
-              style={{ backgroundColor: entry.color }}
-            />
-            <span className="text-fg-2">{entry.name}</span>
-            <span className="ms-auto ps-3">
-              {formatMetric(entry.value, String(entry.dataKey))}
-            </span>
-          </div>
-        ))}
+        <div className="flex items-center gap-2 tabular-nums">
+          <span
+            aria-hidden="true"
+            className="h-2 w-2 rounded-[2px] bg-chart-1"
+          />
+          <span className="text-fg-2">{metricLabel}</span>
+          <span className="ms-auto ps-3">
+            {formatMetric(point ? point[metric] : payload[0]?.value)}
+          </span>
+        </div>
       </div>
     );
   };
@@ -264,22 +257,16 @@ export function UsageTrendChart({
         >
           {t("usage.trend.title", { range: rangeLabel })}
         </h2>
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-caption text-fg-2">
+        <span
+          data-testid="usage-trend-legend"
+          className="inline-flex items-center gap-1.5 whitespace-nowrap text-caption text-fg-2"
+        >
           <span
             aria-hidden="true"
             className="h-2.5 w-2.5 rounded-[2px] bg-chart-1"
           />
-          {barLabel}
+          {metricLabel}
         </span>
-        {showCostLine && (
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-caption text-fg-2">
-            <span
-              aria-hidden="true"
-              className="h-0.5 w-3.5 rounded-full bg-chart-2"
-            />
-            {t("usage.trend.costLine")}
-          </span>
-        )}
         <div className="flex-1" />
         <SegmentedControl<TrendMetric>
           size="sm"
@@ -301,7 +288,7 @@ export function UsageTrendChart({
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
+            <BarChart
               data={chartData}
               margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
             >
@@ -310,6 +297,7 @@ export function UsageTrendChart({
                 stroke="var(--chart-grid)"
                 strokeWidth={1}
               />
+              {/* 🔴 分类键必须是后端 RFC3339 桶时间戳（xKey），不能用显示文字，否则跨年错位 */}
               <XAxis
                 dataKey="xKey"
                 axisLine={false}
@@ -323,58 +311,26 @@ export function UsageTrendChart({
                 allowDuplicatedCategory={false}
               />
               <YAxis
-                yAxisId="left"
                 width={44}
                 axisLine={false}
                 tickLine={false}
                 tick={AXIS_TICK}
                 tickCount={3}
-                tickFormatter={formatLeftTick}
+                tickFormatter={formatYTick}
               />
-              {showCostLine && (
-                <YAxis
-                  yAxisId="cost"
-                  orientation="right"
-                  width={44}
-                  axisLine={false}
-                  tickLine={false}
-                  tick={AXIS_TICK}
-                  tickCount={3}
-                  tickFormatter={(value) => `$${value}`}
-                />
-              )}
               <Tooltip
                 content={renderTooltip}
                 cursor={{ fill: "var(--bg-subtle)" }}
               />
               <Bar
-                yAxisId="left"
                 dataKey={metric}
-                name={barLabel}
+                name={metricLabel}
                 fill="var(--chart-1)"
                 radius={[3, 3, 0, 0]}
                 maxBarSize={36}
                 isAnimationActive={false}
               />
-              {showCostLine && (
-                <Line
-                  yAxisId="cost"
-                  type="linear"
-                  dataKey="cost"
-                  name={t("usage.trend.cost")}
-                  stroke="var(--chart-2)"
-                  strokeWidth={2}
-                  dot={{
-                    r: 3,
-                    stroke: "var(--chart-2)",
-                    strokeWidth: 1.5,
-                    fill: "var(--bg-card)",
-                  }}
-                  activeDot={{ r: 4 }}
-                  isAnimationActive={false}
-                />
-              )}
-            </ComposedChart>
+            </BarChart>
           </ResponsiveContainer>
         )}
       </div>
