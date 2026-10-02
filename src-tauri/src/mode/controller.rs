@@ -3830,12 +3830,20 @@ command = "fs-server"
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str().map(str::to_string))
         };
-        let ours = crate::live::project::codex::CATALOG_FILENAME;
+        // cc-switch 接管指针时写绝对路径（严格重读的 Codex 只认绝对形态）。
+        let ours = crate::codex_config::get_codex_model_catalog_path()
+            .to_string_lossy()
+            .to_string();
 
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
         assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
         ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
         assert_eq!(pointer(), None, "{}", codex_text());
@@ -3851,7 +3859,12 @@ command = "fs-server"
         let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
         fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         let with_user = codex_text().replace(
             &format!("model_catalog_json = \"{ours}\""),
             "model_catalog_json = \"/work/mine.json\"",
@@ -7218,7 +7231,11 @@ model_provider = "c"
         );
         assert_eq!(
             doc["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(
+                crate::codex_config::get_codex_model_catalog_path()
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
         // 窗口类全局键会覆盖每一行，改写进路由那家自己的行。
         assert!(doc.get("model_context_window").is_none(), "{doc:?}");
@@ -7978,7 +7995,11 @@ model_provider = "c"
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(
+                crate::codex_config::get_codex_model_catalog_path()
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
     }
 
