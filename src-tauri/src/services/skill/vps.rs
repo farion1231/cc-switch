@@ -81,6 +81,42 @@ fn validate_destination(path: &Path) -> Result<()> {
     )
 }
 
+// Resolve existing ancestors even when the deployment's parent has not been created.
+// Never follow the final entry: owned links may share a projection during a move.
+fn deployment_entry(path: &Path) -> Result<PathBuf> {
+    for ancestor in path.parent().unwrap_or(path).ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => {
+                let resolved = ancestor
+                    .canonicalize()
+                    .context("Resolve VPS Skill deployment ancestor")?;
+                return Ok(resolved.join(path.strip_prefix(ancestor)?));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("Read VPS Skill deployment ancestor"),
+        }
+    }
+    Err(anyhow!("VPS Skill deployment has no existing ancestor"))
+}
+
+fn deployment_paths_overlap(left: &Path, right: &Path) -> Result<bool> {
+    let overlaps = |left: &Path, right: &Path| {
+        left == right || left.starts_with(right) || right.starts_with(left)
+    };
+    Ok(overlaps(left, right) || overlaps(&deployment_entry(left)?, &deployment_entry(right)?))
+}
+
+fn deployment_overlaps_storage(destination: &Path, storage: &Path) -> Result<bool> {
+    if deployment_paths_overlap(destination, storage)? {
+        return Ok(true);
+    }
+    match storage.canonicalize() {
+        Ok(storage) => deployment_paths_overlap(destination, &storage),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).context("Resolve VPS Skill storage"),
+    }
+}
+
 fn load_receipts(root: &Path) -> Result<(Receipts, Option<Vec<u8>>)> {
     check_directory(root)?;
     check_directory(&root.join("skill-projections"))?;
@@ -329,7 +365,9 @@ impl SkillService {
         for app in required.enabled_apps() {
             let destination = Self::get_app_skills_dir(&app)?.join(DIRECTORY);
             validate_destination(&destination)?;
-            if Self::paths_overlap(&destination, root) || Self::paths_overlap(&destination, &ssot) {
+            if deployment_overlaps_storage(&destination, root)?
+                || deployment_overlaps_storage(&destination, &ssot)?
+            {
                 return Err(anyhow!(
                     "VPS Skill destination overlaps local data or Skill storage"
                 ));
@@ -363,23 +401,18 @@ impl SkillService {
             });
         }
         for (index, path) in paths.iter().enumerate() {
-            if paths
-                .iter()
-                .skip(index + 1)
-                .any(|other| Self::paths_overlap(path, other))
-            {
-                return Err(anyhow!("VPS Skill client destinations overlap"));
+            for other in paths.iter().skip(index + 1) {
+                if deployment_paths_overlap(path, other)? {
+                    return Err(anyhow!("VPS Skill client destinations overlap"));
+                }
             }
         }
         // Distinct clients cannot share one path even if both had pending receipts.
         for (index, candidate) in plan.candidates.iter().enumerate() {
-            if plan
-                .candidates
-                .iter()
-                .skip(index + 1)
-                .any(|other| Self::paths_overlap(&candidate.destination, &other.destination))
-            {
-                return Err(anyhow!("VPS Skill client destinations overlap"));
+            for other in plan.candidates.iter().skip(index + 1) {
+                if deployment_paths_overlap(&candidate.destination, &other.destination)? {
+                    return Err(anyhow!("VPS Skill client destinations overlap"));
+                }
             }
         }
         for app in apps {

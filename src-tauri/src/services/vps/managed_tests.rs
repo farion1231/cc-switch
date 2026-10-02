@@ -259,28 +259,319 @@ fn simultaneous_host_saves_keep_both_hosts_and_one_managed_record() {
     });
 }
 
+fn link_deployment(service: &VpsService, app: &AppType) {
+    let destination = deployment(app);
+    fs::remove_dir_all(&destination).unwrap();
+    crate::test_fs_links::symlink_dir(
+        &service
+            .root()
+            .join(format!("skill-projections/{}", app.as_str())),
+        &destination,
+    )
+    .unwrap();
+}
+
+#[test]
+#[serial_test::serial]
+fn linked_deployments_support_reload_and_second_save() {
+    for method in [SyncMethod::Auto, SyncMethod::Symlink] {
+        with_home(|db, service| {
+            let mut host = server(&[AppType::Claude, AppType::Pi]);
+            service.save_server_with_skills(db, host.clone()).unwrap();
+            // Reuse the owned copy's receipts with real links, including on Windows
+            // without symlink privileges. Native first-deployment coverage is below.
+            for app in [AppType::Claude, AppType::Pi] {
+                link_deployment(service, &app);
+            }
+            let mut settings = crate::settings::get_settings();
+            settings.skill_sync_method = method;
+            crate::settings::update_settings(settings).unwrap();
+            let installed_at = db
+                .get_installed_skill("internal:vps")
+                .unwrap()
+                .unwrap()
+                .installed_at;
+
+            assert_eq!(
+                service.get_servers_with_skills(db).unwrap(),
+                vec![host.clone()]
+            );
+            host.name = "Updated linked host".into();
+            assert_eq!(
+                service.save_server_with_skills(db, host.clone()).unwrap(),
+                vec![host.clone()]
+            );
+            assert_eq!(service.get_servers_with_skills(db).unwrap(), vec![host]);
+            for app in [AppType::Claude, AppType::Pi] {
+                let destination = deployment(&app);
+                assert!(fs::symlink_metadata(&destination)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink());
+                let source = service
+                    .root()
+                    .join(format!("skill-projections/{}", app.as_str()));
+                assert_eq!(
+                    destination.canonicalize().unwrap(),
+                    source.canonicalize().unwrap()
+                );
+                assert_eq!(
+                    fs::read(destination.join("SKILL.md")).unwrap(),
+                    fs::read(source.join("SKILL.md")).unwrap()
+                );
+                assert!(fs::read_to_string(
+                    service
+                        .root()
+                        .join(format!("clients/{}.json", app.as_str()))
+                )
+                .unwrap()
+                .contains("Updated linked host"));
+            }
+            assert_eq!(db.get_all_installed_skills().unwrap().len(), 1);
+            assert_eq!(
+                db.get_installed_skill("internal:vps")
+                    .unwrap()
+                    .unwrap()
+                    .installed_at,
+                installed_at
+            );
+            assert!(SkillService::get_all_installed(db).unwrap().is_empty());
+        });
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn linked_deployments_support_directory_moves_and_pending_retries() {
+    for pending in [false, true] {
+        with_home(|db, service| {
+            let host = server(&[AppType::Claude, AppType::Pi]);
+            service.save_server_with_skills(db, host.clone()).unwrap();
+            link_deployment(service, &AppType::Claude);
+            link_deployment(service, &AppType::Pi);
+            let old = deployment(&AppType::Claude);
+            let source = service.root().join("skill-projections/claude");
+            let manifest = fs::read(source.join("SKILL.md")).unwrap();
+            let mut settings = crate::settings::get_settings();
+            settings.skill_sync_method = SyncMethod::Auto;
+            settings.claude_config_dir = Some(
+                service
+                    .root()
+                    .parent()
+                    .unwrap()
+                    .join("new-client")
+                    .display()
+                    .to_string(),
+            );
+            crate::settings::update_settings(settings).unwrap();
+            let destination = deployment(&AppType::Claude);
+            if pending {
+                // A retry may see both old and new owned entries targeting one projection.
+                fs::create_dir_all(destination.parent().unwrap()).unwrap();
+                crate::test_fs_links::symlink_dir(&source, &destination).unwrap();
+                let path = service.root().join("skill-state.json");
+                let mut receipts: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                let deployments = receipts["deployments"].as_array_mut().unwrap();
+                let mut receipt = deployments
+                    .iter()
+                    .find(|entry| entry["app"] == "claude")
+                    .unwrap()
+                    .clone();
+                receipt["path"] = serde_json::to_value(&destination).unwrap();
+                deployments.push(receipt);
+                fs::write(path, serde_json::to_vec(&receipts).unwrap()).unwrap();
+            }
+
+            assert_eq!(
+                service.get_servers_with_skills(db).unwrap(),
+                vec![host.clone()]
+            );
+            assert!(fs::symlink_metadata(&old).is_err());
+            assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), manifest);
+            assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), manifest);
+            assert!(deployment(&AppType::Pi).join("SKILL.md").exists());
+            assert_eq!(
+                service.save_server_with_skills(db, host.clone()).unwrap(),
+                vec![host.clone()]
+            );
+            service.delete_server_with_skills(db, &host.id).unwrap();
+            assert!(fs::symlink_metadata(destination).is_err());
+            assert!(fs::symlink_metadata(deployment(&AppType::Pi)).is_err());
+            assert!(db.get_installed_skill("internal:vps").unwrap().is_none());
+        });
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn unowned_and_retargeted_deployment_links_are_rejected() {
+    for owned in [false, true] {
+        with_home(|db, service| {
+            let host = server(&[AppType::Claude]);
+            let destination = deployment(&AppType::Claude);
+            if owned {
+                service.save_server_with_skills(db, host.clone()).unwrap();
+                fs::remove_dir_all(&destination).unwrap();
+            } else {
+                fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            }
+            let target = service.root().parent().unwrap().join("user-skill");
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("SKILL.md"), b"user content").unwrap();
+            crate::test_fs_links::symlink_dir(&target, &destination).unwrap();
+            let mut changed = host.clone();
+            changed.name = "Must not commit".into();
+            let error = service
+                .save_server_with_skills(db, changed)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(if owned {
+                    "link target changed"
+                } else {
+                    "without ownership"
+                }),
+                "{error}"
+            );
+            assert!(fs::symlink_metadata(&destination)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(fs::read(target.join("SKILL.md")).unwrap(), b"user content");
+            assert_eq!(
+                service.load().unwrap(),
+                if owned { vec![host] } else { vec![] }
+            );
+        });
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn deployment_entries_cannot_overlap_storage_roots() {
+    for portable in [false, true] {
+        with_home(|db, service| {
+            let mut settings = crate::settings::get_settings();
+            let directory = if portable {
+                SkillService::get_ssot_dir().unwrap()
+            } else {
+                service.root().to_path_buf()
+            };
+            settings.claude_config_dir = Some(directory.display().to_string());
+            crate::settings::update_settings(settings).unwrap();
+            let error = service
+                .save_server_with_skills(db, server(&[AppType::Claude]))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("overlaps local data or Skill storage"),
+                "{error}"
+            );
+            assert!(service.load().unwrap().is_empty());
+            assert!(!deployment(&AppType::Claude).exists());
+        });
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn deployment_entries_cannot_overlap_a_linked_storage_root() {
+    with_home(|db, service| {
+        let storage = SkillService::get_ssot_dir().unwrap();
+        fs::remove_dir(&storage).unwrap();
+        let client = SkillService::get_app_skills_dir(&AppType::Claude).unwrap();
+        fs::create_dir_all(&client).unwrap();
+        crate::test_fs_links::symlink_dir(&client, &storage).unwrap();
+        let error = service
+            .save_server_with_skills(db, server(&[AppType::Claude]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("overlaps local data or Skill storage"),
+            "{error}"
+        );
+        assert!(service.load().unwrap().is_empty());
+        assert!(!deployment(&AppType::Claude).exists());
+        assert!(fs::symlink_metadata(storage)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(client.is_dir());
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn linked_deployments_cannot_contain_another_client_destination() {
+    for aliased in [false, true] {
+        with_home(|db, service| {
+            let mut host = server(&[AppType::Claude]);
+            service.save_server_with_skills(db, host.clone()).unwrap();
+            link_deployment(service, &AppType::Claude);
+            let existing = deployment(&AppType::Claude);
+            let parent = if aliased {
+                let alias = service.root().parent().unwrap().join("client-alias");
+                crate::test_fs_links::symlink_dir(
+                    existing.parent().unwrap().parent().unwrap(),
+                    &alias,
+                )
+                .unwrap();
+                alias.join("skills/cc-switch-vps")
+            } else {
+                existing.clone()
+            };
+            let mut settings = crate::settings::get_settings();
+            settings.skill_sync_method = SyncMethod::Auto;
+            settings.codex_config_dir = Some(parent.join("nested").display().to_string());
+            crate::settings::update_settings(settings).unwrap();
+            host.apps.codex = true;
+            let error = service
+                .save_server_with_skills(db, host)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("overlap"), "{error}");
+            assert!(!service.load().unwrap()[0].apps.codex);
+            assert!(!deployment(&AppType::Codex).exists());
+            assert!(!existing.join("nested").exists());
+            assert!(existing.join("SKILL.md").exists());
+        });
+    }
+}
+
 #[cfg(unix)]
 #[test]
 #[serial_test::serial]
 fn symlink_deployments_keep_per_client_sources_and_clean_up_only_the_link() {
-    with_home(|db, service| {
-        let mut settings = crate::settings::get_settings();
-        settings.skill_sync_method = SyncMethod::Symlink;
-        crate::settings::update_settings(settings).unwrap();
-        let host = server(&[AppType::Claude, AppType::Pi]);
-        service.save_server_with_skills(db, host.clone()).unwrap();
-        assert_eq!(
-            fs::read_link(deployment(&AppType::Claude)).unwrap(),
-            service.root().join("skill-projections/claude")
-        );
-        assert_eq!(
-            fs::read_link(deployment(&AppType::Pi)).unwrap(),
-            service.root().join("skill-projections/pi")
-        );
-        service.delete_server_with_skills(db, &host.id).unwrap();
-        assert!(!deployment(&AppType::Claude).exists());
-        assert!(!deployment(&AppType::Pi).exists());
-    });
+    for method in [SyncMethod::Auto, SyncMethod::Symlink] {
+        with_home(|db, service| {
+            let mut settings = crate::settings::get_settings();
+            settings.skill_sync_method = method;
+            crate::settings::update_settings(settings).unwrap();
+            let mut host = server(&[AppType::Claude, AppType::Pi]);
+            service.save_server_with_skills(db, host.clone()).unwrap();
+            assert_eq!(
+                fs::read_link(deployment(&AppType::Claude)).unwrap(),
+                service.root().join("skill-projections/claude")
+            );
+            assert_eq!(
+                fs::read_link(deployment(&AppType::Pi)).unwrap(),
+                service.root().join("skill-projections/pi")
+            );
+            assert_eq!(
+                service.get_servers_with_skills(db).unwrap(),
+                vec![host.clone()]
+            );
+            host.name = "Updated native link".into();
+            assert_eq!(
+                service.save_server_with_skills(db, host.clone()).unwrap(),
+                vec![host.clone()]
+            );
+            service.delete_server_with_skills(db, &host.id).unwrap();
+            assert!(!deployment(&AppType::Claude).exists());
+            assert!(!deployment(&AppType::Pi).exists());
+        });
+    }
 }
 
 #[test]

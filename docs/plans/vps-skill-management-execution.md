@@ -2,7 +2,7 @@
 
 日期：2026-09-29。关联 [Issue #7739](https://github.com/farion1231/cc-switch/issues/7739)。
 
-**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A–F 已实现，G 的自动化复验已推进至完整 Rust 库/集成目标；三个既有 Windows 1314 测试已通过夹具修复并定向验证，上游合并后的全量复验与 PR 准备见第 19 节。用户已反馈页面和真实服务器 SSH 测试通过，客户端端到端及其余认证/平台验收未完成。认证扩展见第 15 节，帮助退出/表单分组修复见第 16 节，最新用户实测反馈与下一步见第 17 节。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
+**用途：在新对话中直接执行本计划，不再重新讨论已确认的产品方向。阶段 A–F 已实现，G 的自动化复验已推进至完整 Rust 库/集成目标；三个既有 Windows 1314 测试已通过夹具修复并定向验证，原提交前上游合并与全量复验见第 19 节；PR 提交后的 CI/评审修复与最新上游整合见第 20 节。用户已反馈页面和真实服务器 SSH 测试通过，客户端端到端及其余认证/平台验收未完成。认证扩展见第 15 节，帮助退出/表单分组修复见第 16 节，最新用户实测反馈与下一步见第 17 节。** 产品要求以 [最终方案](../proposals/vps-skill-management.md) 为准；旧 Issue 草稿和早期聊天中的双开关/可见自动 Skill/自定义客户端注册方案均不再采用。
 
 ## 0. 开发启动条件与边界
 
@@ -543,3 +543,32 @@ PR 文案及脱敏截图说明已准备在被忽略的 `.cc-switch/contribution-
 最终额外 `cargo clippy --all-targets -- -D warnings` 也已复核：仅余上游既有 `transform_codex_chat.rs:4498` 的一项 `op_ref`，没有增加 allow 或修改该无关测试。该增强检查仍失败，不能与通过的项目 CI 标准 Clippy 命令混为一谈；证据为 `vps-pr-merged-clippy-all-targets.log`。
 
 最终日志：`vps-pr-merged-opencode-recheck.log`、`vps-pr-merged-rust-final.log`、`vps-pr-merged-clippy-final.log`、`vps-pr-merged-typecheck.log`、`vps-pr-merged-format.log`、`vps-pr-merged-frontend-final.log`、`vps-pr-merged-renderer-final.log`。失败的首轮完整 Rust 输出保留为 `vps-pr-merged-rust-full.log`，不覆盖或隐去。
+
+## 20. PR 评审修复与上游更新（2026-10-02）
+
+[PR #7804](https://github.com/farion1231/cc-switch/pull/7804) 已为非草稿、未合并。用户明确授权合入最新上游、复现并修复评审问题，完成本地验证后提交、推送并检查新 CI；不自动合并 PR，也不改回草稿。
+
+### 上游及既有 CI 失败
+
+- 本轮拉取时 `origin/main` 为 `67d1daa1`，最新 `upstream/main` 为 `b9e96202`；已无文本冲突合入，并在验证后创建独立合并提交 `3f250aa8`。相对上次合并新增26项上游提交，包括 Codex/Stack、定价模型元数据及供应商预设等现有上游变更，不作为 VPS 新功能修改。
+- [原 CI 运行](https://github.com/farion1231/cc-switch/actions/runs/36895406133) 的 Ubuntu/Windows 停在 Clippy：Codex 钥匙串两个变体仅在 macOS 构造，触发非 macOS 的 dead_code。该运行 checkout 的模拟合并不含上游 `67d1daa1`；本轮直接带入已有修复，不另写同类补丁。原运行的后续测试未执行，不能写成测试通过。
+
+### 托管链接路径检查
+
+[自动评审评论](https://github.com/farion1231/cc-switch/pull/7804#issuecomment-5944338768)指出：Auto/Symlink 部署后，保留绑定再次读取或保存时，VPS 的路径重叠检查跟随合法末级链接进入自己的投影目录，误判与本机数据重叠。
+
+- 原实现上先添加真实目录链接回归，得到23通过/2失败，失败正是读取/保存与目录迁移误报重叠。没有跳过断言或只用字符串模拟链接。
+- 仅在 `services/skill/vps.rs` 区分部署目录项位置与末级链接目标。原有 receipt、目标、内容哈希及用户文件归属校验保留，普通 Skill 的通用 `paths_overlap` 未修改。
+- 路径解析从父目录向上找到最近存在的祖先，再规范化并拼回缺失后缀；既有但无法解析的祖先返回错误，不当作无重叠。不能只解析直属父目录：新增的祖先别名/缺失子目录反例，在初版修复上实际得到25通过/1失败（本应拒绝却保存成功），随后完善解析。
+- VPS 本机根和 SSOT 仍不能与部署位置重叠；SSOT 额外比较完整解析后的目录目标。迁移期间指向同一投影的旧/新受控链接按各自目录项比较，不误认为是同一部署位置。
+- 新增6项回归覆盖重载/二次保存、目录迁移及双 receipt 重试、未登记/改向链接拒绝、普通及链接 SSOT 重叠、词法及祖先别名造成的嵌套。扩展原 Unix 用例，分别实际使用 Auto/Symlink 首次部署后再读取/保存和清理。
+- Windows 本机使用既有测试 helper 的真实目录链接（无符号链接权限时回退 junction）并保留已登记的部署回执；这是链接目录项与生命周期验证，不声称本机执行了有权限的原生 symlink 创建。Unix 原生首轮部署由后续平台 CI 验证。
+
+### 本地验证与发布状态
+
+- 完善修复后 `services::vps::` 定向 **99通过，0失败**，包含新增6项回归；使用隔离 home、TEMP、AppData及客户端目录，未访问系统 VPS 凭据、日常数据库或真实服务器。
+- 合并工作区与最终修复共同完成全量验证：Rust 库 **3201通过、0失败、10项原有忽略**；全部15个集成目标执行，**178通过、0失败**；前端 **161文件、1835通过**。TypeScript、前端格式、Rust格式、CI标准Clippy和renderer构建均通过。前端仍有既有测试警告，构建仍有动态导入/包体警告，没有为消除警告修改无关功能。
+- 本轮临时设置 `CARGO_INCREMENTAL=0`，保留已有依赖构建缓存，不立即重建之前清理的大量增量缓存；不修改仓库构建配置、系统权限或页面文件。前后端大任务串行执行，未增加超时、新增ignore或放宽测试断言。前端测试仅重写一个既有snapshot的换行；与index规范化内容逐字节一致后恢复原checkout格式，没有更新快照内容。
+- 修复的独立静态复核未发现新增阻断项。上述结果是Windows本地验证，不能替代新head的远端平台CI；额外all-targets Clippy本轮未重跑，第19节的历史结果仍只代表当时检查。
+
+日志位于被忽略的 `.cc-switch/contribution-prep/`：`vps-pr-followup-red.log`、`vps-pr-followup-parent-alias-red.log`、`vps-pr-followup-green.log` 和 `vps-pr-followup-final-*.log`。本机串行检查脚本为 `validate-vps-pr-followup.sh`。新 CI 必须对应随后推送的 head，不能沿用原 PR 检查或本机成功来声称平台 CI 已通过。
