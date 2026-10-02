@@ -56,6 +56,10 @@ function getOutputGenerationDurationMs(
   return latencyMs != null && latencyMs > 0 ? latencyMs : null;
 }
 
+// 生成窗口短于此值时不算 TPS：中转站缓冲后一次性吐出、或短回复整段落在
+// 同一个网络包里，窗口只剩几毫秒，算出来的是传输突发而不是生成速度。
+const MIN_TPS_WINDOW_MS = 100;
+
 export function getOutputTokensPerSecond(
   log: OutputTokensPerSecondInput,
 ): number | null {
@@ -63,7 +67,7 @@ export function getOutputTokensPerSecond(
   if (outputTokens == null || outputTokens <= 0) return null;
 
   const durationMs = getOutputGenerationDurationMs(log);
-  if (durationMs == null) return null;
+  if (durationMs == null || durationMs < MIN_TPS_WINDOW_MS) return null;
 
   const tps = outputTokens / (durationMs / 1000);
   return Number.isFinite(tps) && tps > 0 ? tps : null;

@@ -19,7 +19,13 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { getAppLabel, PROXY_APP_IDS } from "@/config/appConfig";
+import { useProxyStack } from "@/lib/query/proxy";
+import {
+  getAppLabel,
+  isStackAppId,
+  PROXY_APP_IDS,
+  type ProxyAppId,
+} from "@/config/appConfig";
 
 interface ProxyTabContentProps {
   settings: SettingsFormState;
@@ -44,8 +50,36 @@ export function ProxyTabContent({
     takeoverStatus,
     startProxyServer,
     stopWithRestore,
+    exitAppsInMode,
     isPending: isProxyPending,
   } = useProxyStatus();
+
+  // 主页面的路由开关和 Stack 模式开关二选一。打开一个之前，处于另一种模式的 Claude Code、
+  // Codex 先退回直连（`stack` 为真是 Stack 模式开关）。
+  const handleMainPageSwitchChange = async (
+    stack: boolean,
+    checked: boolean,
+  ) => {
+    if (checked) {
+      try {
+        await exitAppsInMode(!stack);
+      } catch (error) {
+        console.error("Exit apps in the other mode failed:", error);
+        return;
+      }
+    }
+    await onAutoSave(
+      stack
+        ? {
+            enableStackMode: checked,
+            ...(checked && { enableLocalProxy: false }),
+          }
+        : {
+            enableLocalProxy: checked,
+            ...(checked && { enableStackMode: false }),
+          },
+    );
+  };
 
   const handleToggleProxy = async (checked: boolean) => {
     try {
@@ -129,7 +163,11 @@ export function ProxyTabContent({
             <ProxyPanel
               enableLocalProxy={settings?.enableLocalProxy ?? false}
               onEnableLocalProxyChange={(checked) =>
-                onAutoSave({ enableLocalProxy: checked })
+                void handleMainPageSwitchChange(false, checked)
+              }
+              enableStackMode={settings?.enableStackMode ?? false}
+              onEnableStackModeChange={(checked) =>
+                void handleMainPageSwitchChange(true, checked)
               }
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
@@ -185,38 +223,18 @@ export function ProxyTabContent({
                     </TabsTrigger>
                   ))}
                 </TabsList>
-                {FAILOVER_APPS.map(({ id: appType }) => {
-                  const failoverDisabled =
-                    !isRunning || !(takeoverStatus?.[appType] ?? false);
-                  return (
-                    <TabsContent
-                      key={appType}
-                      value={appType}
-                      className="mt-4 space-y-6"
-                    >
-                      <div className="space-y-4">
-                        <div>
-                          <h4 className="text-sm font-semibold">
-                            {t("proxy.failoverQueue.title")}
-                          </h4>
-                          <p className="text-xs text-muted-foreground">
-                            {t("proxy.failoverQueue.description")}
-                          </p>
-                        </div>
-                        <FailoverQueueManager
-                          appType={appType}
-                          disabled={failoverDisabled}
-                        />
-                      </div>
-                      <div className="border-t border-border/50 pt-6">
-                        <AutoFailoverConfigPanel
-                          appType={appType}
-                          disabled={failoverDisabled}
-                        />
-                      </div>
-                    </TabsContent>
-                  );
-                })}
+                {FAILOVER_APPS.map(({ id: appType }) => (
+                  <TabsContent
+                    key={appType}
+                    value={appType}
+                    className="mt-4 space-y-6"
+                  >
+                    <FailoverAppSettings
+                      appType={appType}
+                      routed={isRunning && (takeoverStatus?.[appType] ?? false)}
+                    />
+                  </TabsContent>
+                ))}
               </Tabs>
             </div>
           </AccordionContent>
@@ -289,5 +307,51 @@ export function ProxyTabContent({
         onCancel={() => setShowFailoverConfirm(false)}
       />
     </motion.div>
+  );
+}
+
+// 一个应用的故障转移队列和参数：路由服务在跑且接管了这个应用时才能改。Stack 模式不做故障
+// 转移（Claude Code、Codex），这时也不能改；队列和设置留着，回到路由模式恢复。
+function FailoverAppSettings({
+  appType,
+  routed,
+}: {
+  appType: ProxyAppId;
+  routed: boolean;
+}) {
+  const { t } = useTranslation();
+  const { data: stack } = useProxyStack(
+    appType,
+    routed && isStackAppId(appType),
+  );
+  const stackMode = routed && stack?.active === true;
+  const disabled = !routed || stackMode;
+
+  return (
+    <>
+      {stackMode && (
+        <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+          <p className="text-sm text-yellow-600 dark:text-yellow-400">
+            {t("proxy.stackMode.failoverUnavailable", {
+              appLabel: getAppLabel(appType),
+            })}
+          </p>
+        </div>
+      )}
+      <div className="space-y-4">
+        <div>
+          <h4 className="text-sm font-semibold">
+            {t("proxy.failoverQueue.title")}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {t("proxy.failoverQueue.description")}
+          </p>
+        </div>
+        <FailoverQueueManager appType={appType} disabled={disabled} />
+      </div>
+      <div className="border-t border-border/50 pt-6">
+        <AutoFailoverConfigPanel appType={appType} disabled={disabled} />
+      </div>
+    </>
   );
 }
