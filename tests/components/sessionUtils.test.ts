@@ -227,7 +227,7 @@ describe("session utils", () => {
       { role: "assistant", content: "Sure.\n[Tool: Read]" },
       { role: "tool", content: "file contents" },
       { role: "assistant", content: "[Tool: Grep]" },
-      { role: "assistant", content: "[Tool: Grep]" },
+      { role: "assistant", content: "[Tool: Grep] tokio_util in src" },
       { role: "tool", content: "matches" },
       { role: "assistant", content: "Done." },
     ]);

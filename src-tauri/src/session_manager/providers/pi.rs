@@ -520,11 +520,7 @@ fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMe
                     .and_then(|message| message.get("timestamp"))
                     .and_then(parse_timestamp_to_ms)
                     .or(entry_timestamp);
-                messages.push(SessionMessage {
-                    role,
-                    content,
-                    ts: timestamp,
-                });
+                messages.push(SessionMessage::legacy(role, content, timestamp));
             }
             Some("compaction") | Some("branch_summary") => {
                 push_system(
@@ -553,11 +549,11 @@ fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMe
 
 fn push_system(messages: &mut Vec<SessionMessage>, content: &str, ts: Option<i64>) {
     if !content.trim().is_empty() {
-        messages.push(SessionMessage {
-            role: "system".to_string(),
-            content: content.to_string(),
+        messages.push(SessionMessage::legacy(
+            "system".to_string(),
+            content.to_string(),
             ts,
-        });
+        ));
     }
 }
 

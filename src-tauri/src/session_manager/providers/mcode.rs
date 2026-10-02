@@ -95,20 +95,21 @@ fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMes
     let rows = query.query_map([id], |row| {
         let data: String = row.get(1)?;
         let value: Value = serde_json::from_str(&data).unwrap_or_default();
-        Ok(SessionMessage {
-            role: row.get(0)?,
-            content: super::utils::extract_text(&value["msg_content"]),
-            ts: row.get::<_, Option<i64>>(2)?.or_else(|| {
-                let time = value
-                    .get("timestamp")
-                    .filter(|v| !v.is_null())
-                    .or_else(|| value.get("created_at"))?;
-                time.as_f64()
-                    .or_else(|| time.as_str()?.parse::<f64>().ok())
-                    .filter(|time| time.is_finite())
-                    .map(|time| time.floor() as i64)
-            }),
-        })
+        let ts = row.get::<_, Option<i64>>(2)?.or_else(|| {
+            let time = value
+                .get("timestamp")
+                .filter(|v| !v.is_null())
+                .or_else(|| value.get("created_at"))?;
+            time.as_f64()
+                .or_else(|| time.as_str()?.parse::<f64>().ok())
+                .filter(|time| time.is_finite())
+                .map(|time| time.floor() as i64)
+        });
+        Ok(SessionMessage::legacy(
+            row.get(0)?,
+            super::utils::extract_text(&value["msg_content"]),
+            ts,
+        ))
     })?;
     rows.filter_map(|r| match r {
         Ok(m) if m.content.trim().is_empty() => None,

@@ -79,11 +79,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .get("timestamp")
             .or_else(|| value.get("ts"))
             .and_then(parse_timestamp_to_ms);
-        messages.push(SessionMessage {
-            role: role.to_string(),
-            content,
-            ts,
-        });
+        messages.push(SessionMessage::legacy(role.to_string(), content, ts));
     }
 
     Ok(messages)

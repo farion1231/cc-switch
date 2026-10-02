@@ -311,10 +311,8 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
     let messages = entries
         .into_iter()
-        .map(|(ts, _, role, content)| SessionMessage {
-            role,
-            content,
-            ts: if ts > 0 { Some(ts) } else { None },
+        .map(|(ts, _, role, content)| {
+            SessionMessage::legacy(role, content, if ts > 0 { Some(ts) } else { None })
         })
         .collect();
 
@@ -430,11 +428,7 @@ fn load_messages_sqlite_v1(
             continue;
         }
 
-        messages.push(SessionMessage {
-            role,
-            content,
-            ts: Some(ts),
-        });
+        messages.push(SessionMessage::legacy(role, content, Some(ts)));
     }
 
     Ok(messages)
@@ -494,11 +488,11 @@ fn load_messages_sqlite_v2(
 
                 if let Some(content) = text {
                     if !content.trim().is_empty() {
-                        messages.push(SessionMessage {
-                            role: "user".to_string(),
+                        messages.push(SessionMessage::legacy(
+                            "user".to_string(),
                             content,
-                            ts: Some(ts),
-                        });
+                            Some(ts),
+                        ));
                     }
                 }
             }
@@ -518,11 +512,11 @@ fn load_messages_sqlite_v2(
 
                 let content = texts.join("\n");
                 if !content.trim().is_empty() {
-                    messages.push(SessionMessage {
-                        role: "assistant".to_string(),
+                    messages.push(SessionMessage::legacy(
+                        "assistant".to_string(),
                         content,
-                        ts: Some(ts),
-                    });
+                        Some(ts),
+                    ));
                 }
             }
             "system" => {
@@ -532,11 +526,11 @@ fn load_messages_sqlite_v2(
                     .map(str::to_string);
                 if let Some(content) = text {
                     if !content.trim().is_empty() {
-                        messages.push(SessionMessage {
-                            role: "system".to_string(),
+                        messages.push(SessionMessage::legacy(
+                            "system".to_string(),
                             content,
-                            ts: Some(ts),
-                        });
+                            Some(ts),
+                        ));
                     }
                 }
             }

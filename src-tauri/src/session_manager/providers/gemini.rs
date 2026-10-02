@@ -102,11 +102,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = msg.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        result.push(SessionMessage {
-            role: role.to_string(),
-            content,
-            ts,
-        });
+        result.push(SessionMessage::legacy(role.to_string(), content, ts));
     }
 
     Ok(result)

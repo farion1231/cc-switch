@@ -417,11 +417,7 @@ fn load_messages_from_conn(
             .map(decode_content)
             .unwrap_or_default();
         if !text.trim().is_empty() {
-            messages.push(SessionMessage {
-                role: row.role.clone(),
-                content: text,
-                ts,
-            });
+            messages.push(SessionMessage::legacy(row.role.clone(), text, ts));
         }
         // Assistant tool calls (OpenAI shape) render like Codex function calls.
         if row.role == "assistant" {
@@ -440,11 +436,11 @@ fn load_messages_from_conn(
                     .or_else(|| call.get("name"))
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                messages.push(SessionMessage {
-                    role: "assistant".to_string(),
-                    content: format!("[Tool: {name}]"),
+                messages.push(SessionMessage::legacy(
+                    "assistant".to_string(),
+                    format!("[Tool: {name}]"),
                     ts,
-                });
+                ));
             }
         }
     }
@@ -706,7 +702,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         }
 
         let ts = ts_val.and_then(parse_timestamp_to_ms);
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage::legacy(role, content, ts));
     }
 
     Ok(messages)

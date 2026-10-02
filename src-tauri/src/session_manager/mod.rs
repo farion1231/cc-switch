@@ -1,9 +1,12 @@
+pub mod model;
 pub mod providers;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+// 其余模型类型从 `session_manager::model` 引用
+pub use model::SessionMessage;
 use providers::{claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,15 +28,6 @@ pub struct SessionMeta {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMessage {
-    pub role: String,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ts: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

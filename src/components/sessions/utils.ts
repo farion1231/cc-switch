@@ -305,9 +305,12 @@ export const buildCdResumeCommand = (projectDir: string, command: string) =>
 
 // ─── 阅读页：消息 → 显示条目 ──────────────────────────────────────────────
 
-const TOOL_CALL_LINE = /^\[Tool(?::\s*([^\]]+))?\]$/;
+const TOOL_CALL_LINE = /^\[Tool(?::\s*([^\]]+))?\](?:\s.*)?$/;
 
-/** 后端把工具调用写成单独一行「[Tool: Read]」；拆出工具名和其余正文。 */
+/**
+ * 后端把工具调用写成单独一行「[Tool: Read]」（新投影带标题「[Tool: Read] path」，
+ * 标题这里先丢弃）；拆出工具名和其余正文。
+ */
 export const splitToolCalls = (content: string) => {
   const names: string[] = [];
   const rest: string[] = [];
