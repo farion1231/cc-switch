@@ -3971,7 +3971,8 @@
     "planExpired": "套餐已过期",
     "failed": "额度没查到",
     "reason": {
-      "loginExpired": "登录已过期"
+      "loginExpired": "登录已过期",
+      "tokenRefreshPending": "令牌待刷新"
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "点击重新查询"

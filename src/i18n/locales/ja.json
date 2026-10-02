@@ -3971,7 +3971,8 @@
     "planExpired": "プラン期限切れ",
     "failed": "残量を取得できません",
     "reason": {
-      "loginExpired": "ログインの期限切れ"
+      "loginExpired": "ログインの期限切れ",
+      "tokenRefreshPending": "トークンの更新待ち"
     },
     "updatedAt": "{{time}}に更新",
     "clickToRefresh": "クリックで再取得"

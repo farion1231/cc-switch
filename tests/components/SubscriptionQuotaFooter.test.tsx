@@ -45,7 +45,11 @@ const baseTiers: QuotaTier[] = [
   { name: "seven_day", utilization: 25, resetsAt: null },
 ];
 
-function renderQuota(tiers: QuotaTier[], inline = true) {
+function renderQuota(
+  tiers: QuotaTier[],
+  inline = true,
+  overrides: Partial<SubscriptionQuota> = {},
+) {
   const quota: SubscriptionQuota = {
     tool: "claude",
     credentialStatus: "valid",
@@ -55,6 +59,7 @@ function renderQuota(tiers: QuotaTier[], inline = true) {
     extraUsage: null,
     error: null,
     queriedAt: now,
+    ...overrides,
   };
   return render(
     <I18nextProvider i18n={i18n}>
@@ -131,5 +136,27 @@ describe("Claude Fable subscription quota", () => {
     await i18n.changeLanguage(language);
     renderQuota([{ name: "seven_day_fable", utilization: 37, resetsAt: null }]);
     expect(screen.getByText(text)).toBeInTheDocument();
+  });
+});
+
+describe("credential failures", () => {
+  const failed = (credentialStatus: SubscriptionQuota["credentialStatus"]) =>
+    renderQuota([], true, {
+      success: false,
+      credentialStatus,
+      error: "raw backend message",
+    });
+
+  it("says the token is waiting for a refresh, not that the login expired", () => {
+    failed("refresh_pending");
+    expect(screen.getByText("额度没查到")).toBeInTheDocument();
+    expect(screen.getByText("令牌待刷新")).toBeInTheDocument();
+    expect(screen.queryByText("登录已过期")).not.toBeInTheDocument();
+    expect(screen.queryByText("raw backend message")).not.toBeInTheDocument();
+  });
+
+  it("still says the login expired when it really did", () => {
+    failed("expired");
+    expect(screen.getByText("登录已过期")).toBeInTheDocument();
   });
 });

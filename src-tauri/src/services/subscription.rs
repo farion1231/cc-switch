@@ -18,6 +18,8 @@ use crate::config;
 pub enum CredentialStatus {
     Valid,
     Expired,
+    /// 访问令牌过期，但刷新令牌还能用：客户端下次运行时自己会换新的，不用重新登录。
+    RefreshPending,
     NotFound,
     ParseError,
 }
@@ -102,6 +104,10 @@ struct ClaudeOAuthEntry {
     access_token: Option<String>,
     #[serde(rename = "expiresAt")]
     expires_at: Option<serde_json::Value>,
+    #[serde(rename = "refreshToken")]
+    refresh_token: Option<String>,
+    #[serde(rename = "refreshTokenExpiresAt")]
+    refresh_token_expires_at: Option<serde_json::Value>,
 }
 
 /// 读取 Claude OAuth 凭据
@@ -231,11 +237,29 @@ fn parse_claude_credentials_json(
     // 检查 token 是否过期
     if let Some(expires_at) = entry.expires_at {
         if is_token_expired(&expires_at) {
-            return (
-                Some(access_token),
-                CredentialStatus::Expired,
-                Some("OAuth token has expired".to_string()),
-            );
+            // 访问令牌几小时一换，Claude Code 下次运行时用刷新令牌换新的；
+            // 刷新令牌还在就不算登录过期。
+            let refreshable = entry.refresh_token.is_some_and(|t| !t.is_empty())
+                && !entry
+                    .refresh_token_expires_at
+                    .as_ref()
+                    .is_some_and(is_token_expired);
+            return if refreshable {
+                (
+                    Some(access_token),
+                    CredentialStatus::RefreshPending,
+                    Some(
+                        "Access token has expired; Claude Code refreshes it the next time it runs"
+                            .to_string(),
+                    ),
+                )
+            } else {
+                (
+                    Some(access_token),
+                    CredentialStatus::Expired,
+                    Some("OAuth token has expired".to_string()),
+                )
+            };
         }
     }
 
@@ -1390,7 +1414,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
-                CredentialStatus::Expired => {
+                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
                     // 即使过期也尝试调用 API（token 可能实际上仍有效）
                     if let Some(token) = token {
                         let result = query_claude_quota(&token).await?;
@@ -1400,7 +1424,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     }
                     Ok(SubscriptionQuota::error(
                         "claude",
-                        CredentialStatus::Expired,
+                        status,
                         message.unwrap_or_else(|| "OAuth token has expired".to_string()),
                     ))
                 }
@@ -1420,7 +1444,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
-                CredentialStatus::Expired => {
+                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
                     // 即使可能过期也尝试调用 API
                     if let Some(token) = token {
                         let result = query_codex_quota(
@@ -1462,7 +1486,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     CredentialStatus::ParseError,
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
-                CredentialStatus::Expired => {
+                CredentialStatus::Expired | CredentialStatus::RefreshPending => {
                     // Gemini access_token 仅 ~1h 有效，尝试用 refresh_token 刷新
                     if let Some(ref rt) = refresh_token {
                         if let Some(new_token) = refresh_gemini_token(rt).await {
@@ -1522,6 +1546,51 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
         assert_eq!(codex_keychain_account(&link), codex_keychain_account(&real));
+    }
+
+    #[test]
+    fn claude_expired_access_token_with_live_refresh_token_is_refresh_pending() {
+        let past = now_millis() - 60_000;
+        let future = now_millis() + 3_600_000;
+        let status = |entry: serde_json::Value| {
+            parse_claude_credentials_json(
+                &serde_json::json!({ "claudeAiOauth": entry }).to_string(),
+            )
+            .1
+        };
+
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": past,
+                "refreshToken": "r", "refreshTokenExpiresAt": future
+            })),
+            CredentialStatus::RefreshPending
+        ));
+        // 旧版凭据没有刷新令牌的过期时间：有刷新令牌就按能刷新算。
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": past, "refreshToken": "r"
+            })),
+            CredentialStatus::RefreshPending
+        ));
+        // 刷新令牌也过期了 / 根本没有：真的要重新登录。
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": past,
+                "refreshToken": "r", "refreshTokenExpiresAt": past
+            })),
+            CredentialStatus::Expired
+        ));
+        assert!(matches!(
+            status(serde_json::json!({ "accessToken": "a", "expiresAt": past })),
+            CredentialStatus::Expired
+        ));
+        assert!(matches!(
+            status(serde_json::json!({
+                "accessToken": "a", "expiresAt": future, "refreshToken": "r"
+            })),
+            CredentialStatus::Valid
+        ));
     }
 
     fn scoped_limit(model: &str, percent: f64) -> serde_json::Value {

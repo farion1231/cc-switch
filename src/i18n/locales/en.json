@@ -3971,7 +3971,8 @@
     "planExpired": "Plan expired",
     "failed": "Quota unavailable",
     "reason": {
-      "loginExpired": "Sign-in expired"
+      "loginExpired": "Sign-in expired",
+      "tokenRefreshPending": "Token refresh pending"
     },
     "updatedAt": "Updated {{time}}",
     "clickToRefresh": "Click to check again"
