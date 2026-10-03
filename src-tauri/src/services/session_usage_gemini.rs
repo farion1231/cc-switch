@@ -263,6 +263,7 @@ fn insert_gemini_session_entry(
 
     let dedup_key = DedupKey {
         app_type: "gemini",
+        data_source: "gemini_session",
         model,
         input_tokens: tokens.input,
         output_tokens,

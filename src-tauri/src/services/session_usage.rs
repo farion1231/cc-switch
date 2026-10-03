@@ -818,6 +818,7 @@ fn insert_session_log_entry_on_conn(
 
     let dedup_key = DedupKey {
         app_type: "claude",
+        data_source: "session_log",
         model: &msg.model,
         input_tokens: msg.input_tokens,
         output_tokens: msg.output_tokens,
