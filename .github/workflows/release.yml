@@ -522,19 +522,33 @@ jobs:
           else
             echo "No AppImage found under target/release/bundle" >&2
           fi
-          # 额外上传 .deb（用于手动安装，不参与 Updater）
+          # 额外上传 .deb（用于 Debian/Ubuntu 自动更新）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
-            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+            cp "$DEB" "release-assets/$NEW_DEB"
+            if [ -f "$DEB.sig" ]; then
+              cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
+            else
+              echo ".sig for deb not found" >&2
+              exit 1
+            fi
+            echo "Deb package copied: $NEW_DEB"
           else
             echo "No .deb found (optional)"
           fi
-          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
+          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等自动更新）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
           if [ -n "$RPM" ]; then
-            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+            cp "$RPM" "release-assets/$NEW_RPM"
+            if [ -f "$RPM.sig" ]; then
+              cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
+            else
+              echo ".sig for RPM not found" >&2
+              exit 1
+            fi
+            echo "RPM package copied: $NEW_RPM"
           else
             echo "No .rpm found (optional)"
           fi
@@ -661,6 +675,10 @@ jobs:
           win_arm64_url=""; win_arm64_sig=""
           linux_x64_url=""; linux_x64_sig=""
           linux_arm64_url=""; linux_arm64_sig=""
+          linux_x64_deb_url=""; linux_x64_deb_sig=""
+          linux_arm64_deb_url=""; linux_arm64_deb_sig=""
+          linux_x64_rpm_url=""; linux_x64_rpm_sig=""
+          linux_arm64_rpm_url=""; linux_arm64_rpm_sig=""
           shopt -s nullglob
           for sig in dl/*.sig; do
             base=${sig%.sig}
@@ -679,6 +697,14 @@ jobs:
                 linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
               *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
+              *-Linux-arm64.deb)
+                linux_arm64_deb_url="$url"; linux_arm64_deb_sig="$sig_content";;
+              *-Linux-x86_64.deb)
+                linux_x64_deb_url="$url"; linux_x64_deb_sig="$sig_content";;
+              *-Linux-arm64.rpm)
+                linux_arm64_rpm_url="$url"; linux_arm64_rpm_sig="$sig_content";;
+              *-Linux-x86_64.rpm)
+                linux_x64_rpm_url="$url"; linux_x64_rpm_sig="$sig_content";;
             esac
           done
           # 构造 JSON（仅包含存在的目标）
@@ -716,6 +742,26 @@ jobs:
             if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
               [ $first -eq 0 ] && echo ','
               echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_deb_url" ] && [ -n "$linux_x64_deb_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64-deb\": {\"signature\": \"$linux_x64_deb_sig\", \"url\": \"$linux_x64_deb_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_deb_url" ] && [ -n "$linux_arm64_deb_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64-deb\": {\"signature\": \"$linux_arm64_deb_sig\", \"url\": \"$linux_arm64_deb_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_rpm_url" ] && [ -n "$linux_x64_rpm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64-rpm\": {\"signature\": \"$linux_x64_rpm_sig\", \"url\": \"$linux_x64_rpm_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_rpm_url" ] && [ -n "$linux_arm64_rpm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64-rpm\": {\"signature\": \"$linux_arm64_rpm_sig\", \"url\": \"$linux_arm64_rpm_url\"}"
               first=0
             fi
             echo '  }'
