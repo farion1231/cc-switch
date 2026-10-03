@@ -142,9 +142,19 @@ pub(crate) async fn read_decoded_body(
 // ============================================================================
 
 /// 检测响应是否为 SSE 流式响应
+///
+/// 上游标了 `text/event-stream` 就是流；客户端要的是流（`request_is_stream`）、
+/// 上游 2xx 却完全不带 Content-Type 时也按流处理。chatgpt.com 的 Codex
+/// Responses 回包就不带这个头：当成整包读会把实时输出攒到回合结束才一次性
+/// 交给客户端，SSE 文本按 JSON 解析失败，用量记成 0（会话日志导入随之去重
+/// 不上，同一回合出现两行）。只认“缺头”，不认任意非 JSON：网关忽略
+/// `stream: true`、回一个标成 `text/plain` 的 JSON 时，仍按整包解析用量。
 #[inline]
-pub fn is_sse_response(response: &ProxyResponse) -> bool {
+pub fn is_sse_response(response: &ProxyResponse, request_is_stream: bool) -> bool {
     response.is_sse()
+        || (request_is_stream
+            && response.status().is_success()
+            && response.content_type().is_none())
 }
 
 /// 处理流式响应
@@ -328,9 +338,10 @@ pub async fn process_response(
     ctx: &RequestContext,
     state: &ProxyState,
     parser_config: &UsageParserConfig,
+    request_is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
-    if is_sse_response(&response) {
+    if is_sse_response(&response, request_is_stream) {
         Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
@@ -1013,6 +1024,46 @@ mod tests {
             "压缩炸弹应被拒绝而不是完整展开: {:?}",
             result.map(|(_, _, body)| body.len())
         );
+    }
+
+    fn response_with_content_type(
+        status: http::StatusCode,
+        content_type: Option<&'static str>,
+    ) -> ProxyResponse {
+        let mut headers = HeaderMap::new();
+        if let Some(content_type) = content_type {
+            headers.insert("content-type", content_type.parse().unwrap());
+        }
+        ProxyResponse::buffered(status, headers, Bytes::new())
+    }
+
+    #[test]
+    fn stream_request_without_content_type_is_treated_as_sse() {
+        // chatgpt.com 的 Codex Responses 回包不带 Content-Type。
+        let response = response_with_content_type(http::StatusCode::OK, None);
+        assert!(is_sse_response(&response, true));
+        assert!(!is_sse_response(&response, false));
+    }
+
+    #[test]
+    fn declared_content_type_wins_over_stream_flag() {
+        let sse = response_with_content_type(
+            http::StatusCode::OK,
+            Some("text/event-stream;charset=utf-8"),
+        );
+        assert!(is_sse_response(&sse, false));
+
+        // 网关忽略 stream: true 时回的 JSON（无论标成什么）仍按整包解析用量。
+        for content_type in ["application/json", "text/plain"] {
+            let response = response_with_content_type(http::StatusCode::OK, Some(content_type));
+            assert!(!is_sse_response(&response, true), "{content_type}");
+        }
+    }
+
+    #[test]
+    fn stream_request_error_without_content_type_stays_buffered() {
+        let response = response_with_content_type(http::StatusCode::BAD_REQUEST, None);
+        assert!(!is_sse_response(&response, true));
     }
 
     #[test]

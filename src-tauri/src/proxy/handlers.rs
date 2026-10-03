@@ -392,6 +392,7 @@ async fn handle_messages_for_app(
         &ctx,
         &state,
         &CLAUDE_PARSER_CONFIG,
+        is_stream,
         connection_guard,
     )
     .await
@@ -960,6 +961,7 @@ pub async fn handle_chat_completions(
         &ctx,
         &state,
         &OPENAI_PARSER_CONFIG,
+        is_stream,
         connection_guard,
     )
     .await
@@ -1133,6 +1135,7 @@ async fn handle_responses_for_app(
         &ctx,
         &state,
         &CODEX_PARSER_CONFIG,
+        is_stream,
         connection_guard,
     )
     .await
@@ -1164,8 +1167,15 @@ async fn handle_codex_native_compaction_response(
     let status = response.status();
     // 错误体和非流式响应照常透传：Codex 的压缩请求总是流式，错误交给它按原样重试。
     if !status.is_success() || !response.is_sse() {
-        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
-            .await;
+        return process_response(
+            response,
+            ctx,
+            state,
+            &CODEX_PARSER_CONFIG,
+            false,
+            connection_guard,
+        )
+        .await;
     }
 
     let builder = rewritten_sse_response_builder(status, response.headers());
@@ -1295,6 +1305,7 @@ async fn handle_codex_standalone_passthrough(
         &ctx,
         &state,
         &CODEX_PARSER_CONFIG,
+        false,
         connection_guard,
     )
     .await
@@ -1427,6 +1438,7 @@ async fn handle_responses_compact_for_app(
         &ctx,
         &state,
         &CODEX_PARSER_CONFIG,
+        is_stream,
         connection_guard,
     )
     .await
@@ -1452,8 +1464,15 @@ async fn handle_codex_xai_native_responses_rewrite(
     // restorable function calls; hand them to the generic passthrough so error
     // shape and usage handling stay identical to the untransformed path.
     if !status.is_success() {
-        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
-            .await;
+        return process_response(
+            response,
+            ctx,
+            state,
+            &CODEX_PARSER_CONFIG,
+            false,
+            connection_guard,
+        )
+        .await;
     }
 
     if response.is_sse() {
@@ -2403,6 +2422,7 @@ pub async fn handle_gemini(
         &ctx,
         &state,
         &GEMINI_PARSER_CONFIG,
+        is_stream,
         connection_guard,
     )
     .await
