@@ -3228,6 +3228,8 @@
     "enabled": "{{app}} 故障轉移已啟用",
     "disabled": "{{app}} 故障轉移已關閉",
     "toggleFailed": "操作失敗：{{detail}}",
+    "queueAddFailed": "加入佇列失敗：{{detail}}",
+    "queueRemoveFailed": "移出佇列失敗：{{detail}}",
     "inQueue": "已加入",
     "addQueue": "加入",
     "priority": {
@@ -3923,7 +3925,8 @@
       "needsRoute": "需要路由：{{reason}}，不能直連。",
       "defaultCannotRemove": "預設那家不能移除，先把別家設為預設。",
       "currentCannotRemove": "正在用的這家不能移除，先啟用別家。",
-      "inUseCannotDelete": "正在用的這家不能刪除，先切到別家。"
+      "inUseCannotDelete": "正在用的這家不能刪除，先切到別家。",
+      "noFailover": "官方帳號不進故障轉移佇列：它用客戶端自己的登入，不能和別家輪換。"
     },
     "section": {
       "queue": "佇列 · 依優先順序（{{count}}）",

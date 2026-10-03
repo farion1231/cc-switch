@@ -3227,6 +3227,8 @@
     "enabled": "{{app}} 故障转移已启用",
     "disabled": "{{app}} 故障转移已关闭",
     "toggleFailed": "操作失败: {{detail}}",
+    "queueAddFailed": "加入队列失败：{{detail}}",
+    "queueRemoveFailed": "移出队列失败：{{detail}}",
     "inQueue": "已加入",
     "addQueue": "加入",
     "priority": {
@@ -3922,7 +3924,8 @@
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
-      "inUseCannotDelete": "正在用的这家不能删除，先切到别家。"
+      "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
+      "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
     },
     "section": {
       "queue": "队列 · 按优先级（{{count}}）",

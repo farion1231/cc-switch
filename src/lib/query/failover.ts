@@ -124,6 +124,7 @@ export function useAvailableProvidersForFailover(appType: string) {
  */
 export function useAddToFailoverQueue() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: ({
@@ -144,6 +145,13 @@ export function useAddToFailoverQueue() {
         queryKey: ["providers", variables.appType],
       });
     },
+    onError: (error: Error) => {
+      toast.error(
+        t("failover.queueAddFailed", {
+          detail: extractErrorMessage(error) || t("common.unknown"),
+        }),
+      );
+    },
   });
 }
 
@@ -152,6 +160,7 @@ export function useAddToFailoverQueue() {
  */
 export function useRemoveFromFailoverQueue() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: ({
@@ -183,6 +192,13 @@ export function useRemoveFromFailoverQueue() {
           variables.appType,
         ],
       });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("failover.queueRemoveFailed", {
+          detail: extractErrorMessage(error) || t("common.unknown"),
+        }),
+      );
     },
   });
 }
