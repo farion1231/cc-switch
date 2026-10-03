@@ -197,16 +197,54 @@ pub async fn get_global_proxy_config(
 
 /// 更新全局代理配置
 ///
-/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）
+/// 更新统一的全局配置字段，会同时更新三行（claude/codex/gemini）。设置页的按钮写着
+/// 「保存并重启服务」：监听地址、端口和日志开关合进完整配置走 `update_config`，服务在跑时
+/// 地址或端口变了就重启、再按新地址重写接上路由的客户端（含 Claude Desktop 的模型映射卡），
+/// 日志开关实时生效；只写库的话服务还在旧端口上听、客户端也还指着旧端口。
 #[tauri::command]
 pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
-    let db = &state.db;
-    db.update_global_proxy_config(config)
+    let mut full = state.proxy_service.get_config().await?;
+    full.listen_address = config.listen_address.clone();
+    full.listen_port = config.listen_port;
+    full.enable_logging = config.enable_logging;
+    let restarted = state.proxy_service.update_config(&full).await?;
+    // proxy_enabled 不在 ProxyConfig 里，仍走镜像写
+    state
+        .db
+        .update_global_proxy_config(config)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if restarted {
+        let mut failures = Vec::new();
+        if let Err(error) = crate::mode::controller::resync_routes(state.inner()).await {
+            failures.push(error);
+        }
+        if let Err(error) = resync_claude_desktop_gateway(&state.db) {
+            failures.push(format!("claude-desktop: {error}"));
+        }
+        if !failures.is_empty() {
+            return Err(failures.join("; "));
+        }
+    }
+    Ok(())
+}
+
+/// Claude Desktop 的模型映射卡把本地网关地址写死在 profile 里，不在 `resync_routes` 的
+/// 四个路由应用之内：服务换了地址就按当前那张卡重写一遍。
+fn resync_claude_desktop_gateway(db: &crate::database::Database) -> Result<(), String> {
+    if !crate::claude_desktop_config::current_provider_uses_proxy(db) {
+        return Ok(());
+    }
+    let Some(provider) =
+        crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+            .map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    crate::claude_desktop_config::apply_provider(db, &provider).map_err(|e| e.to_string())
 }
 
 /// 获取指定应用的代理配置
