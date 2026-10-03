@@ -93,6 +93,22 @@ pub fn get_app_mode(
     crate::mode::controller::app_mode_view(state.inner(), &app)
 }
 
+/// 指定路由目标（聚合模式下是默认那家）。直连模式下只记下来，下次进入路由 / 聚合模式时用它；
+/// 已经在路由 / 聚合模式时当场生效。
+#[tauri::command]
+pub async fn set_proxy_route(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    provider_id: String,
+) -> Result<(), String> {
+    let app = require_proxy_app(&app_type)?;
+    let result = crate::mode::controller::set_route(state.inner(), &app, &provider_id).await;
+    // 已经在路由 / 聚合模式时换的是正在用的那家，托盘跟着变
+    crate::tray::refresh_tray_menu(&app_handle);
+    result
+}
+
 /// 启动时没能接上代理、已退回直连的应用（取一次就清空）。
 #[tauri::command]
 pub fn take_startup_attach_failures() -> Vec<crate::mode::controller::StartupAttachFailure> {
