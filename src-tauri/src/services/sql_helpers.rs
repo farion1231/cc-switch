@@ -66,6 +66,39 @@ pub fn fresh_input_sql(alias: &str) -> String {
     )
 }
 
+/// Build an SQL expression for the **cache-normalized real total tokens** of a
+/// single row in `proxy_request_logs` or `usage_daily_rollups`:
+///
+/// ```text
+/// fresh_input + output + cache_creation + cache_read
+/// ```
+///
+/// 单一口径（SSOT）：这是用量看板「真实消耗 Tokens」的定义，与
+/// `derive_real_total_and_hit_rate()` 的 `real_total` 逐项对应。Hero 摘要走
+/// Rust 侧的四列相加，供应商 / 模型统计走本函数在 SQL 侧相加——两条路径必须
+/// 引用同一定义，否则同一时间范围下 Hero 与明细表会给出差几个数量级的数字
+/// （缓存命中率高时 cache_read 远大于 fresh_input + output）。
+///
+/// `fresh_input` 由 [`fresh_input_sql`] 归一，因此对 cache-inclusive 供应商
+/// （codex / gemini / grokbuild）不会把缓存部分重复计入。
+///
+/// Pass an empty string to reference the columns directly (no alias),
+/// or a table alias such as `"l"` to emit `l.output_tokens` style references.
+pub fn real_total_tokens_sql(alias: &str) -> String {
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+    let fresh_input = fresh_input_sql(alias);
+    format!(
+        "({fresh_input}) \
+         + {prefix}output_tokens \
+         + {prefix}cache_creation_tokens \
+         + {prefix}cache_read_tokens"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +226,60 @@ mod tests {
         let sql = format!("SELECT {expr} FROM proxy_request_logs l");
         let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
         assert_eq!(value, 500);
+    }
+
+    #[test]
+    fn real_total_with_alias_emits_prefixed_columns() {
+        let sql = real_total_tokens_sql("l");
+        assert!(sql.contains("l.output_tokens"));
+        assert!(sql.contains("l.cache_creation_tokens"));
+        assert!(sql.contains("l.cache_read_tokens"));
+    }
+
+    #[test]
+    fn real_total_without_alias_uses_bare_columns() {
+        let sql = real_total_tokens_sql("");
+        assert!(sql.contains("output_tokens"));
+        assert!(!sql.contains("l."));
+    }
+
+    #[test]
+    fn real_total_sums_all_four_counters_for_claude_semantics() {
+        let conn = setup_conn();
+        // Anthropic semantics: input_tokens already excludes cache.
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens
+             ) VALUES ('claude-1', 'claude', 200, 50, 9000, 750)",
+            [],
+        )
+        .unwrap();
+        let expr = real_total_tokens_sql("l");
+        let sql = format!("SELECT {expr} FROM proxy_request_logs l");
+        let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
+        // 200 fresh + 50 out + 9000 cache read + 750 cache write
+        assert_eq!(value, 10_000);
+    }
+
+    #[test]
+    fn real_total_does_not_double_count_cache_for_cache_inclusive_providers() {
+        let conn = setup_conn();
+        // OpenAI semantics: the stored 1000 input_tokens already contains the
+        // 300 cache reads and 200 cache writes. Real total must stay 1000+50,
+        // not 1000+50+300+200.
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, input_token_semantics
+             ) VALUES ('codex-1', 'codex', 1000, 50, 300, 200, ?1)",
+            [INPUT_TOKEN_SEMANTICS_TOTAL],
+        )
+        .unwrap();
+        let expr = real_total_tokens_sql("l");
+        let sql = format!("SELECT {expr} FROM proxy_request_logs l");
+        let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
+        // fresh = 1000 - 300 - 200 = 500; 500 + 50 + 200 + 300 = 1050
+        assert_eq!(value, 1050);
     }
 }
