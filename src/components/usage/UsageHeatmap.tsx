@@ -11,8 +11,8 @@ import { UsageTooltipCard } from "./UsageTooltipCard";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** 0 档用底色，1–4 档是趋势图同色（chart-1）的不同浓度，深浅色模式都能看清 */
-const LEVEL_PERCENT = [0, 30, 50, 75, 100];
+/** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
+const LEVELS = [0, 1, 2, 3, 4];
 
 type HeatMetric = "tokens" | "requests" | "cost";
 
@@ -96,7 +96,7 @@ function cellStyle(level: number) {
   return level === 0
     ? undefined
     : {
-        backgroundColor: `color-mix(in srgb, var(--chart-1) ${LEVEL_PERCENT[level]}%, transparent)`,
+        backgroundColor: `var(--heat-${level})`,
       };
 }
 
@@ -331,7 +331,7 @@ export function UsageHeatmap({
 
       <div className="mt-2 flex items-center justify-end gap-1.5 text-badge text-fg-3">
         {t("usage.heatmap.less")}
-        {LEVEL_PERCENT.map((_, level) => (
+        {LEVELS.map((level) => (
           <span
             key={level}
             className={cn(

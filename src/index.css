@@ -120,6 +120,12 @@
     --danger-text: #b91c1c;
     --danger-soft: #fee2e2;
     --chart-1: #0891b2;
+    /* 热力图 1–4 档：前三档用 chart-1 保住饱和度，最深档换同色相深一级的 #0e7490。
+       chart-1 是中等亮度，只按浓度混的话最深档不够深，整张图偏淡 */
+    --heat-1: color-mix(in srgb, var(--chart-1) 32%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-1) 62%, transparent);
+    --heat-3: var(--chart-1);
+    --heat-4: #0e7490;
     --chart-2: #db2777;
     --chart-grid: #ececf0;
 
@@ -197,6 +203,11 @@
     --danger-text: #fca5a5;
     --danger-soft: #3a1414;
     --chart-1: #38bdf8;
+    /* 深色底上越亮越多，chart-1 本身就是最亮档 */
+    --heat-1: color-mix(in srgb, var(--chart-1) 30%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-1) 50%, transparent);
+    --heat-3: color-mix(in srgb, var(--chart-1) 75%, transparent);
+    --heat-4: var(--chart-1);
     --chart-2: #f472b6;
     --chart-grid: #2c2c31;
 
