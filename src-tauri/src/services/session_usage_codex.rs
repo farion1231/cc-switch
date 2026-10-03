@@ -26,9 +26,9 @@ use crate::services::usage_stats::{
 };
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -215,6 +215,7 @@ struct ParsedCodexFile {
     root_meta_seen: bool,
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
+    history_base: Option<HistoryReference>,
     token_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
     /// Bytes actually read, including an incomplete final record. Persisted in
@@ -441,6 +442,40 @@ fn explicit_parent_from_meta(payload: &serde_json::Value) -> ParentResolution {
             "forked_from_id ({forked}) 与 thread_spawn.parent_thread_id ({spawned}) 不一致"
         )),
     }
+}
+
+/// `thread_id` in Codex's HistoryPosition names a physical rollout, not
+/// necessarily the logical parent thread (e.g. after thread/revert).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HistoryReference {
+    thread_id: String,
+    end_ordinal_exclusive: u64,
+    end_byte_offset: u64,
+}
+
+fn history_reference_from_meta(
+    payload: &serde_json::Value,
+) -> Result<Option<HistoryReference>, String> {
+    let Some(value) = payload.get("history_base").filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    if payload
+        .get("history_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("paginated")
+    {
+        return Err("history_base 缺少 paginated history_mode".to_string());
+    }
+    let mut reference: HistoryReference = serde_json::from_value(value.clone())
+        .map_err(|error| format!("无效 history_base: {error}"))?;
+    reference.thread_id = uuid::Uuid::parse_str(&reference.thread_id)
+        .map_err(|error| format!("无效 history_base rollout ID: {error}"))?
+        .hyphenated()
+        .to_string();
+    if reference.end_byte_offset == 0 || reference.end_ordinal_exclusive == 0 {
+        return Err("history_base 的继承边界为空".to_string());
+    }
+    Ok(Some(reference))
 }
 
 fn parse_timestamp(value: Option<&serde_json::Value>) -> Option<DateTime<Utc>> {
@@ -794,6 +829,14 @@ fn parse_codex_file(
     file_path: &Path,
     root_thread_id: Option<String>,
 ) -> Result<ParsedCodexFile, AppError> {
+    parse_codex_file_with_baseline(file_path, root_thread_id, None)
+}
+
+fn parse_codex_file_with_baseline(
+    file_path: &Path,
+    root_thread_id: Option<String>,
+    inherited_tokens: Option<CumulativeTokens>,
+) -> Result<ParsedCodexFile, AppError> {
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let mut reader = BufReader::new(file);
@@ -801,11 +844,12 @@ fn parse_codex_file(
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
+    let mut history_base = None;
     let mut current_model = "unknown".to_string();
     // `total_token_usage` is session-cumulative, including across model and
     // rate-limit bucket changes. Divergent snapshots are handled by preferring
     // exact `last_token_usage`, not by splitting the cumulative baseline.
-    let mut total_high_water = None;
+    let mut total_high_water = inherited_tokens;
     // Rate-limit refreshes can re-emit unchanged token info under another
     // `limit_id`. Same-source repeats are identified by that source's latest
     // full snapshot; cross-source repeats must match the immediately preceding
@@ -869,6 +913,10 @@ fn parse_codex_file(
                 root_timestamp = parse_timestamp(value.get("timestamp"));
                 let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
                 parent = explicit_parent_from_meta(payload);
+                match history_reference_from_meta(payload) {
+                    Ok(reference) => history_base = reference,
+                    Err(reason) => parent = ParentResolution::Deferred(reason),
+                }
 
                 meta_thread_id = non_empty_string(
                     payload
@@ -1025,6 +1073,7 @@ fn parse_codex_file(
         root_meta_seen,
         root_timestamp,
         parent,
+        history_base,
         token_events,
         line_offset,
         observed_bytes,
@@ -1156,6 +1205,120 @@ fn matching_replay_prefix(child: &[ParsedTokenEvent], parent: &[TokenUsageSignat
     matched
 }
 
+fn resolve_history_reference(
+    reference: &HistoryReference,
+    rollout_index: &RolloutIndex,
+    visiting: &mut HashSet<String>,
+) -> Result<Vec<TokenUsageSignature>, String> {
+    // Bound corrupt/cyclic ancestry without changing the legacy timestamp path.
+    if visiting.len() >= 64 || !visiting.insert(reference.thread_id.clone()) {
+        return Err("history_base 继承链循环或超过 64 层".to_string());
+    }
+    let candidates = rollout_index
+        .get(&reference.thread_id)
+        .filter(|paths| !paths.is_empty())
+        .ok_or_else(|| format!("找不到 history_base rollout: {}", reference.thread_id))?;
+    let mut resolved = None;
+    // The index may also carry logical-thread aliases; references always
+    // select the filename's trailing, physical rollout UUID.
+    for path in candidates.iter().filter(|path| {
+        thread_id_from_filename(path).as_deref() == Some(reference.thread_id.as_str())
+    }) {
+        let file = fs::File::open(path).map_err(|error| error.to_string())?;
+        let stamp = ParentFileStamp::from_file(&file)
+            .ok_or_else(|| "无法读取 history_base 文件标识".to_string())?;
+        if stamp.size < reference.end_byte_offset {
+            return Err("history_base 尚未写到继承字节边界".to_string());
+        }
+        let mut reader = BufReader::new((&file).take(reference.end_byte_offset));
+        let mut observed_bytes = 0u64;
+        let mut next_ordinal = None;
+        let mut inherited = None;
+        let mut signatures = Vec::new();
+        loop {
+            let mut bytes = Vec::new();
+            let read = reader
+                .read_until(b'\n', &mut bytes)
+                .map_err(|error| error.to_string())?;
+            if read == 0 {
+                break;
+            }
+            observed_bytes += read as u64;
+            if bytes.last() != Some(&b'\n') {
+                return Err("history_base 字节边界截断 JSONL 记录".to_string());
+            }
+            let value: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("history_base 包含无效 JSONL: {error}"))?;
+            if next_ordinal.is_none() {
+                let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
+                let meta_id = payload
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                    .map(|id| id.hyphenated().to_string());
+                let expected_id =
+                    leading_thread_id_from_filename(path).or_else(|| thread_id_from_filename(path));
+                if value.get("type").and_then(serde_json::Value::as_str) != Some("session_meta")
+                    || meta_id.is_none()
+                    || meta_id != expected_id
+                    || payload
+                        .get("history_mode")
+                        .and_then(serde_json::Value::as_str)
+                        != Some("paginated")
+                {
+                    return Err("history_base 的 root session_meta 不一致".to_string());
+                }
+                inherited = history_reference_from_meta(payload)?;
+                next_ordinal = Some(
+                    inherited
+                        .as_ref()
+                        .map_or(0, |base| base.end_ordinal_exclusive),
+                );
+            }
+            let ordinal = value.get("ordinal").and_then(serde_json::Value::as_u64);
+            if ordinal != next_ordinal {
+                return Err("history_base ordinal 不连续".to_string());
+            }
+            next_ordinal = ordinal.and_then(|ordinal| ordinal.checked_add(1));
+            if next_ordinal.is_none() {
+                return Err("history_base ordinal 溢出".to_string());
+            }
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("event_msg") {
+                let payload = &value["payload"];
+                if payload.get("type").and_then(serde_json::Value::as_str) == Some("token_count") {
+                    if let Some(signature) = parse_token_signature(&payload["info"]) {
+                        signatures.push(signature);
+                    }
+                }
+            }
+        }
+        if observed_bytes != reference.end_byte_offset
+            || next_ordinal != Some(reference.end_ordinal_exclusive)
+        {
+            return Err("history_base 字节与 ordinal 边界不一致".to_string());
+        }
+        if ParentFileStamp::from_file(&file) != Some(stamp)
+            || fs::File::open(path)
+                .ok()
+                .and_then(|file| ParentFileStamp::from_file(&file))
+                != Some(stamp)
+        {
+            return Err("history_base 在读取期间发生变化".to_string());
+        }
+        if let Some(base) = inherited {
+            let mut ancestor = resolve_history_reference(&base, rollout_index, visiting)?;
+            ancestor.extend(signatures);
+            signatures = ancestor;
+        }
+        if resolved.as_ref().is_some_and(|first| first != &signatures) {
+            return Err("history_base rollout 对应多个内容不一致的文件".to_string());
+        }
+        resolved = Some(signatures);
+    }
+    visiting.remove(&reference.thread_id);
+    resolved.ok_or_else(|| format!("找不到物理 history_base rollout: {}", reference.thread_id))
+}
+
 fn mark_deferred(
     file_path: &Path,
     modified: i64,
@@ -1274,12 +1437,12 @@ fn sync_single_codex_file(
         }
     }
 
-    let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
+    let mut parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
     if !parsed.has_billable_tokens {
         update_codex_sync_state(db, &file_path_str, file_modified, &parsed)?;
         return Ok(CodexFileSyncResult::default());
     }
-    let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
+    let Some(root_thread_id) = parsed.root_thread_id.clone() else {
         return Ok(mark_deferred(
             file_path,
             file_modified,
@@ -1296,71 +1459,153 @@ fn sync_single_codex_file(
         ));
     }
 
-    let replay_prefix = match &parsed.parent {
-        ParentResolution::None => 0,
-        ParentResolution::Deferred(reason) => {
-            return Ok(mark_deferred(
-                file_path,
-                file_modified,
-                file_size,
-                PendingReason::Stable(reason.clone()),
-            ));
+    // Invalid parent metadata must not be bypassed by a history reference.
+    if let ParentResolution::Deferred(reason) = &parsed.parent {
+        return Ok(mark_deferred(
+            file_path,
+            file_modified,
+            file_size,
+            PendingReason::Stable(reason.clone()),
+        ));
+    }
+    let replay_prefix = if let Some(reference) = &parsed.history_base {
+        let signatures =
+            match resolve_history_reference(reference, rollout_index, &mut HashSet::new()) {
+                Ok(signatures) => signatures,
+                Err(reason) => {
+                    return Ok(mark_deferred(
+                        file_path,
+                        file_modified,
+                        file_size,
+                        PendingReason::Retryable(reason),
+                    ))
+                }
+            };
+        // Referenced forks need not physically copy a bootstrap token_count.
+        // Seed cumulative-only accounting from the bounded inherited history,
+        // but preserve the original physical event indices used for dedup.
+        if parsed
+            .token_events
+            .iter()
+            .any(|event| event.signature.last.is_none() && event.signature.total.is_some())
+        {
+            if let Some(total) = signatures
+                .iter()
+                .rev()
+                .find_map(|signature| signature.total.as_ref())
+            {
+                let baseline = CumulativeTokens {
+                    input: total.input.unwrap_or(0),
+                    cached_input: total.cached_input.unwrap_or(0),
+                    output: total.output.unwrap_or(0),
+                };
+                let mut with_baseline = parse_codex_file_with_baseline(
+                    file_path,
+                    Some(root_thread_id.clone()),
+                    Some(baseline),
+                )?;
+                if with_baseline.observed_bytes != parsed.observed_bytes
+                    || with_baseline.token_events.len() != parsed.token_events.len()
+                    || with_baseline
+                        .token_events
+                        .iter()
+                        .zip(&parsed.token_events)
+                        .any(|(event, original)| {
+                            event.line_offset != original.line_offset
+                                || event.signature != original.signature
+                        })
+                {
+                    return Ok(mark_deferred(
+                        file_path,
+                        file_modified,
+                        file_size,
+                        PendingReason::Retryable(
+                            "child rollout 在基线重读期间发生变化".to_string(),
+                        ),
+                    ));
+                }
+                for (event, original) in with_baseline
+                    .token_events
+                    .iter_mut()
+                    .zip(&parsed.token_events)
+                {
+                    event.event_index = original.event_index;
+                }
+                parsed = with_baseline;
+            }
         }
-        ParentResolution::Parent(parent_id) => {
-            let Some(cutoff) = parsed.root_timestamp else {
+        matching_replay_prefix(&parsed.token_events, &signatures)
+    } else {
+        match &parsed.parent {
+            ParentResolution::None => 0,
+            ParentResolution::Deferred(reason) => {
                 return Ok(mark_deferred(
                     file_path,
                     file_modified,
                     file_size,
-                    PendingReason::Stable(
-                        "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
-                    ),
+                    PendingReason::Stable(reason.clone()),
                 ));
-            };
-            if let Ok(caches) = replay_caches().lock() {
-                if let Some(prefix) = caches
-                    .replay_prefixes
-                    .get(file_path)
-                    .filter(|cached| cached.modified == file_modified && cached.size == file_size)
-                    .map(|cached| cached.prefix)
-                {
-                    prefix
-                } else {
-                    drop(caches);
-                    let parent_signatures =
-                        match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
-                            Ok(signatures) => signatures,
-                            Err(reason) => {
-                                let pending_reason = if rollout_index.contains_key(parent_id) {
-                                    PendingReason::Retryable(reason)
-                                } else {
-                                    PendingReason::MissingParent(parent_id.clone())
-                                };
-                                return Ok(mark_deferred(
-                                    file_path,
-                                    file_modified,
-                                    file_size,
-                                    pending_reason,
-                                ));
-                            }
-                        };
-                    let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
-                    if let Ok(mut caches) = replay_caches().lock() {
-                        caches.replay_prefixes.insert(
-                            file_path.to_path_buf(),
-                            CachedReplayPrefix {
-                                modified: file_modified,
-                                size: file_size,
-                                prefix,
-                            },
-                        );
+            }
+            ParentResolution::Parent(parent_id) => {
+                let Some(cutoff) = parsed.root_timestamp else {
+                    return Ok(mark_deferred(
+                        file_path,
+                        file_modified,
+                        file_size,
+                        PendingReason::Stable(
+                            "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
+                        ),
+                    ));
+                };
+                if let Ok(caches) = replay_caches().lock() {
+                    if let Some(prefix) = caches
+                        .replay_prefixes
+                        .get(file_path)
+                        .filter(|cached| {
+                            cached.modified == file_modified && cached.size == file_size
+                        })
+                        .map(|cached| cached.prefix)
+                    {
+                        prefix
+                    } else {
+                        drop(caches);
+                        let parent_signatures =
+                            match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
+                                Ok(signatures) => signatures,
+                                Err(reason) => {
+                                    let pending_reason = if rollout_index.contains_key(parent_id) {
+                                        PendingReason::Retryable(reason)
+                                    } else {
+                                        PendingReason::MissingParent(parent_id.clone())
+                                    };
+                                    return Ok(mark_deferred(
+                                        file_path,
+                                        file_modified,
+                                        file_size,
+                                        pending_reason,
+                                    ));
+                                }
+                            };
+                        let prefix =
+                            matching_replay_prefix(&parsed.token_events, &parent_signatures);
+                        if let Ok(mut caches) = replay_caches().lock() {
+                            caches.replay_prefixes.insert(
+                                file_path.to_path_buf(),
+                                CachedReplayPrefix {
+                                    modified: file_modified,
+                                    size: file_size,
+                                    prefix,
+                                },
+                            );
+                        }
+                        prefix
                     }
-                    prefix
+                } else {
+                    let parent_signatures =
+                        resolve_parent_signatures(parent_id, cutoff, rollout_index)
+                            .map_err(AppError::Config)?;
+                    matching_replay_prefix(&parsed.token_events, &parent_signatures)
                 }
-            } else {
-                let parent_signatures = resolve_parent_signatures(parent_id, cutoff, rollout_index)
-                    .map_err(AppError::Config)?;
-                matching_replay_prefix(&parsed.token_events, &parent_signatures)
             }
         }
     };
@@ -1372,6 +1617,9 @@ fn sync_single_codex_file(
     let mut result = CodexFileSyncResult::default();
     let mut to_insert: Vec<(&ParsedTokenEvent, u32)> = Vec::new();
     for (token_offset, event) in parsed.token_events.iter().enumerate() {
+        if event.delta.is_zero() {
+            continue;
+        }
         let Some(event_index) = event.event_index else {
             continue;
         };
@@ -1396,7 +1644,7 @@ fn sync_single_codex_file(
     // rollout）下是前置 UUID，与会话管理器侧的会话身份同口径；尾部 rollout
     // ID 只承担 request_id 去重键（event_index 按物理文件计数，不能改用
     // 前置 ID）。
-    let session_thread_id = parsed.meta_thread_id.as_deref().unwrap_or(root_thread_id);
+    let session_thread_id = parsed.meta_thread_id.as_deref().unwrap_or(&root_thread_id);
     let batch_count = to_insert.len().div_ceil(CODEX_INSERT_BATCH_SIZE);
     for (batch_index, batch) in to_insert.chunks(CODEX_INSERT_BATCH_SIZE).enumerate() {
         let is_last_batch = batch_index + 1 == batch_count;
@@ -1614,6 +1862,11 @@ mod tests {
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
     const CHILD_B_ID: &str = "00000000-0000-4000-8000-000000000003";
+
+    mod fork_usage_tests {
+        use super::*;
+        include!("session_usage_codex_fork_tests.rs");
+    }
 
     fn write_jsonl(path: &Path, values: &[serde_json::Value]) {
         let contents = values
