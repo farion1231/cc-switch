@@ -1605,6 +1605,24 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // The known strict native Responses relay rejects client-executed
+        // tool-search history on resume. Keep other native upstreams intact:
+        // OpenAI's Responses API uses these items to load tools dynamically.
+        if matches!(app_type, AppType::Codex)
+            && !codex_official_auth_passthrough
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let removed = super::providers::transform_codex_responses_history_sanitize::
+                strip_tool_search_history_for_upstream(&mut request_body, &base_url);
+            if removed > 0 {
+                log::warn!(
+                    "[Codex] Removed {removed} unsupported tool-search history item(s) for strict native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
         // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
         // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和
