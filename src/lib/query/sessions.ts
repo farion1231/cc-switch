@@ -292,12 +292,26 @@ interface CachedImage {
 
 const imageCache = new Map<string, CachedImage>();
 const imageLoads = new Map<string, Promise<string>>();
+/** 每张图还在等加载结果、尚未占用的等待方个数；有等待方的图不淘汰 */
+const imageWaiters = new Map<string, number>();
 
-/** 超出上限时按最久未用淘汰没人在用的图并 revoke */
+const startWaiting = (key: string) =>
+  imageWaiters.set(key, (imageWaiters.get(key) ?? 0) + 1);
+
+const stopWaiting = (key: string) => {
+  const left = (imageWaiters.get(key) ?? 0) - 1;
+  if (left > 0) imageWaiters.set(key, left);
+  else imageWaiters.delete(key);
+};
+
+/**
+ * 超出上限时按最久未用淘汰没人在用的图并 revoke。
+ * 加载完、等待方还没来得及占用的图也算在用（几张图同时加载完时会互相淘汰）
+ */
 const evictImages = () => {
   for (const [key, entry] of imageCache) {
     if (imageCache.size <= SESSION_IMAGE_CACHE_SIZE) return;
-    if (entry.refs > 0) continue;
+    if (entry.refs > 0 || imageWaiters.has(key)) continue;
     URL.revokeObjectURL(entry.url);
     imageCache.delete(key);
   }
@@ -347,6 +361,7 @@ export const clearSessionImageCache = () => {
   imageCache.forEach((entry) => URL.revokeObjectURL(entry.url));
   imageCache.clear();
   imageLoads.clear();
+  imageWaiters.clear();
 };
 
 export interface SessionImageResult {
@@ -387,11 +402,16 @@ export const useSessionImage = (
       take();
     } else {
       setState({ url: null, isLoading: true, error: null });
+      startWaiting(key);
       loadImageUrl(key, providerId!, sourcePath!, image!).then(
         () => {
-          if (!cancelled) take();
+          stopWaiting(key);
+          // 已卸载就不占用；不再等它了，补一次淘汰以免超出上限
+          if (cancelled) evictImages();
+          else take();
         },
         (error: unknown) => {
+          stopWaiting(key);
           if (!cancelled) setState({ url: null, isLoading: false, error });
         },
       );

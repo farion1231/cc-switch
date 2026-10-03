@@ -413,6 +413,52 @@ describe("useSessionImage", () => {
     held.unmount();
   });
 
+  it("上限内的图全在用时，新加载的那张也拿得到 URL，不会被立刻淘汰", async () => {
+    const mounted = [];
+    for (let i = 0; i < SESSION_IMAGE_CACHE_SIZE; i += 1) {
+      const hook = renderHook(() =>
+        useSessionImage("codex", "/a", image(`/busy-${i}.png`)),
+      );
+      await waitFor(() => expect(hook.result.current.url).toBeTruthy());
+      mounted.push(hook);
+    }
+    const extra = renderHook(() =>
+      useSessionImage("codex", "/a", image("/extra.png")),
+    );
+    await waitFor(() => expect(extra.result.current.isLoading).toBe(false));
+    expect(extra.result.current.url).toBe(
+      `blob:${SESSION_IMAGE_CACHE_SIZE + 1}`,
+    );
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    extra.unmount();
+    mounted.forEach((hook) => hook.unmount());
+  });
+
+  it("上限内的图全在用时，两张同时加载完也都拿得到 URL，不会互相淘汰", async () => {
+    const mounted = [];
+    for (let i = 0; i < SESSION_IMAGE_CACHE_SIZE; i += 1) {
+      const hook = renderHook(() =>
+        useSessionImage("codex", "/a", image(`/busy-${i}.png`)),
+      );
+      await waitFor(() => expect(hook.result.current.url).toBeTruthy());
+      mounted.push(hook);
+    }
+    const resolvers: Array<(value: ArrayBuffer) => void> = [];
+    api.getImage.mockImplementation(
+      () => new Promise<ArrayBuffer>((ok) => resolvers.push(ok)),
+    );
+    const x = renderHook(() => useSessionImage("codex", "/a", image("/x.png")));
+    const y = renderHook(() => useSessionImage("codex", "/a", image("/y.png")));
+    await act(async () => {
+      resolvers.forEach((resolve) => resolve(new ArrayBuffer(3)));
+    });
+    await waitFor(() => expect(y.result.current.isLoading).toBe(false));
+    expect(x.result.current.url).toBeTruthy();
+    expect(y.result.current.url).toBeTruthy();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    [x, y, ...mounted].forEach((hook) => hook.unmount());
+  });
+
   it("加载中卸载：不再更新状态", async () => {
     let resolve: (value: ArrayBuffer) => void = () => {};
     let reject: (error: Error) => void = () => {};
