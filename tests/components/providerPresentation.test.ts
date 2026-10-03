@@ -137,8 +137,14 @@ describe("buildSwitchSections — delete guard", () => {
     expect(item(sections, "converted").deleteDisabledReason).toBeUndefined();
 
     // 直连时 routeId 只是上次的路由，不算在用
-    const direct = build({ active: "direct", view: "route", routeId: "backup" });
-    expect(item(direct.sections, "backup").deleteDisabledReason).toBeUndefined();
+    const direct = build({
+      active: "direct",
+      view: "route",
+      routeId: "backup",
+    });
+    expect(
+      item(direct.sections, "backup").deleteDisabledReason,
+    ).toBeUndefined();
   });
 });
 
@@ -168,7 +174,7 @@ describe("buildSwitchSections — route", () => {
       view: "route",
       routeId: "relay",
       failoverOn: true,
-      queue: ["relay", "backup", "missing"],
+      queue: ["relay", "backup"],
     });
 
     expect(sections.map((s) => [s.key, s.items.length])).toEqual([
@@ -189,6 +195,44 @@ describe("buildSwitchSections — route", () => {
     expect(input.actions.queueAdd).toHaveBeenCalledWith(converted);
     button(sections, "backup", "queueRemove").onClick();
     expect(input.actions.queueRemove).toHaveBeenCalledWith(backup);
+  });
+
+  it("numbers the queue by its full order and marks the recorded route, not the first visible card", () => {
+    // 搜索把 P1 过滤掉了：剩下的卡序号、上下移仍按完整队列算
+    const { sections, input } = build({
+      active: "route",
+      view: "route",
+      routeId: "backup",
+      failoverOn: true,
+      queue: ["relay", "backup", "converted"],
+      providers: [backup, converted],
+    });
+
+    expect(item(sections, "backup").chips).toEqual([
+      { key: "priority", label: "P2", tone: "outline" },
+    ]);
+    expect(item(sections, "converted").chips[0].label).toBe("P3");
+    item(sections, "backup").move?.onUp?.();
+    expect(input.actions.queueMove).toHaveBeenCalledWith(backup, -1);
+    expect(item(sections, "converted").move?.onDown).toBeUndefined();
+
+    // 转移成功后后端记下的路由是 backup：「路由中」在它身上，不在队首
+    expect(item(sections, "backup")).toMatchObject({
+      tone: "route",
+      status: { label: "providerCard.status.routing" },
+    });
+    expect(item(sections, "converted").status).toBeUndefined();
+
+    // 记下的路由已不在队列里：退回队首
+    const fallback = build({
+      active: "route",
+      view: "route",
+      routeId: "official",
+      failoverOn: true,
+      queue: ["relay", "backup"],
+    });
+    expect(item(fallback.sections, "relay").tone).toBe("route");
+    expect(item(fallback.sections, "backup").tone).toBeUndefined();
   });
 
   it("starts routing from a card while viewing route from direct", () => {
