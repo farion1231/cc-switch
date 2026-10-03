@@ -81,7 +81,7 @@ fn scan_sessions_in_roots_with_titles(
 
     // 缓存里只放文件本身解析出的结果；线程标题来自外部索引 / 数据库，
     // 每轮重新读取后再覆盖上去，和逐个调用 parse_session_with_titles 等价。
-    let mut sessions = PARSE_CACHE.scan(files, parse_session);
+    let mut sessions = PARSE_CACHE.scan(files, scan_session_file);
     for meta in &mut sessions {
         if let Some(title) = thread_titles.get(&meta.session_id) {
             meta.title = Some(truncate_summary(title, TITLE_MAX_CHARS));
@@ -1893,12 +1893,27 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     parse_session_with_titles(path, &HashMap::new())
 }
 
+/// 列表扫描用：读不了返回 `Err`，不进解析缓存、下轮重试；读到了但不是会话返回 `Ok(None)`。
+/// 线程标题由调用方在拿到结果后覆盖，这里不带。
+fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
+    let (head, tail) = read_head_tail_lines(path, 10, 30)?;
+    Ok(parse_session_lines(path, head, tail, &HashMap::new()))
+}
+
 fn parse_session_with_titles(
     path: &Path,
     thread_titles: &HashMap<String, String>,
 ) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
+    parse_session_lines(path, head, tail, thread_titles)
+}
 
+fn parse_session_lines(
+    path: &Path,
+    head: Vec<String>,
+    tail: Vec<String>,
+    thread_titles: &HashMap<String, String>,
+) -> Option<SessionMeta> {
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;

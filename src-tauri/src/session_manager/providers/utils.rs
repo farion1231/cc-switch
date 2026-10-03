@@ -41,7 +41,7 @@ impl FileParseCache {
     /// 按顺序解析 `files`，没变过的文件直接用缓存。返回能解析出会话的那些。
     pub fn scan<F>(&self, files: Vec<PathBuf>, parse: F) -> Vec<SessionMeta>
     where
-        F: Fn(&Path) -> Option<SessionMeta>,
+        F: Fn(&Path) -> io::Result<Option<SessionMeta>>,
     {
         // 锁中毒（上次扫描 panic）时丢掉旧缓存重来，不影响本次结果
         let mut previous = match self.entries.lock() {
@@ -62,7 +62,15 @@ impl FileParseCache {
             };
             let meta = match previous.remove(&path) {
                 Some(entry) if entry.modified == modified && entry.len == len => entry.meta,
-                _ => parse(&path),
+                _ => match parse(&path) {
+                    Ok(meta) => meta,
+                    // 读不了（权限、被占用等）不缓存：否则恢复读取后文件没变，
+                    // 会一直命中「没有会话」，直到文件改动或重启
+                    Err(err) => {
+                        log::debug!("会话文件暂时读取失败，下轮重试 {}: {err}", path.display());
+                        continue;
+                    }
+                },
             };
             if let Some(meta) = &meta {
                 sessions.push(meta.clone());
@@ -357,6 +365,42 @@ mod tests {
         })
     }
 
+    /// 读取失败不能缓存成「没有会话」：恢复读取后，文件没变也要重新解析出来
+    #[test]
+    fn file_parse_cache_retries_files_that_failed_to_read() {
+        use std::cell::Cell;
+
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.jsonl");
+        std::fs::write(&a, "alpha").unwrap();
+
+        let cache = FileParseCache::new();
+        let fail = Cell::new(true);
+        let calls = Cell::new(0);
+        let parse = |path: &Path| {
+            calls.set(calls.get() + 1);
+            if fail.get() {
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
+            } else {
+                Ok(meta_from_file(path))
+            }
+        };
+
+        assert!(cache.scan(vec![a.clone()], parse).is_empty());
+        assert!(cache.scan(vec![a.clone()], parse).is_empty());
+        assert_eq!(calls.get(), 2, "失败的文件每轮都要重试，不能命中缓存");
+
+        fail.set(false);
+        let sessions = cache.scan(vec![a.clone()], parse);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "alpha");
+        assert_eq!(calls.get(), 3);
+
+        // 成功后才进缓存：再扫不重新解析
+        assert_eq!(cache.scan(vec![a], parse).len(), 1);
+        assert_eq!(calls.get(), 3);
+    }
+
     #[test]
     fn file_parse_cache_reparses_only_changed_files() {
         use std::cell::Cell;
@@ -373,7 +417,7 @@ mod tests {
         let calls = Cell::new(0);
         let parse = |path: &Path| {
             calls.set(calls.get() + 1);
-            meta_from_file(path)
+            Ok(meta_from_file(path))
         };
         let ids = |sessions: Vec<SessionMeta>| -> Vec<String> {
             sessions.into_iter().map(|m| m.session_id).collect()

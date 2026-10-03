@@ -40,7 +40,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut files = Vec::new();
     collect_jsonl_files(&root, &mut files);
 
-    PARSE_CACHE.scan(files, parse_session)
+    PARSE_CACHE.scan(files, scan_session_file)
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -79,12 +79,20 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
+    scan_session_file(path).ok().flatten()
+}
+
+/// 列表扫描用：读不了（权限、文件被占用等）返回 `Err`，不进解析缓存、下轮重试；
+/// 读到了但不是会话返回 `Ok(None)`，可以缓存。
+fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
     if is_agent_session(path) {
-        return None;
+        return Ok(None);
     }
+    let (head, tail) = read_head_tail_lines(path, 10, 30)?;
+    Ok(parse_session_lines(path, head, tail))
+}
 
-    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
-
+fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Option<SessionMeta> {
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
@@ -1781,6 +1789,37 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, "user");
         assert!(msgs[0].content.contains("Please continue"));
+    }
+
+    /// 审查 #7825 的复现：会话文件暂时读不了（权限），恢复后文件没变也要重新出现在列表里
+    #[cfg(unix)]
+    #[test]
+    fn scan_recovers_session_after_read_permission_returns() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-perm.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-perm\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"sessionId\":\"session-perm\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            ),
+        )
+        .expect("write");
+        let cache = FileParseCache::new();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        if std::fs::read(&path).is_ok() {
+            // 以 root 运行时权限不起作用，这个场景复现不了
+            return;
+        }
+        assert!(cache.scan(vec![path.clone()], scan_session_file).is_empty());
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let sessions = cache.scan(vec![path], scan_session_file);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "session-perm");
     }
 
     #[test]
