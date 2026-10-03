@@ -356,11 +356,7 @@ export function EditProviderDialog({
       subtitle={APP_DISPLAY_NAME[appId]}
       backLabel={t("provider.backToList")}
       onClose={handlePanelClose}
-      contentClassName={
-        appId === "pi"
-          ? "mx-0 max-w-[1008px] pb-0 pt-4"
-          : "mx-0 max-w-[1008px] pt-4"
-      }
+      contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
       footer={
         <>
           <Button
