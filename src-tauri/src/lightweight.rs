@@ -5,6 +5,8 @@ use tauri::Manager;
 static LIGHTWEIGHT_MODE: AtomicBool = AtomicBool::new(false);
 
 pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
+    crate::auto_lightweight::cancel_pending("enter-lightweight-mode");
+
     #[cfg(target_os = "windows")]
     {
         if let Some(window) = app.get_webview_window("main") {
@@ -32,6 +34,8 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
 
 pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::WebviewWindowBuilder;
+
+    crate::auto_lightweight::cancel_pending("exit-lightweight-mode");
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();

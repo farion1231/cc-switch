@@ -279,6 +279,7 @@ export function SettingsPage({
                     <WindowSettings
                       settings={settings}
                       onChange={handleAutoSave}
+                      disabled={isSaving}
                     />
                     <TerminalSettings
                       value={settings.preferredTerminal}

@@ -60,10 +60,12 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
+    let previous_auto_lightweight = existing.auto_lightweight;
     let merged = merge_settings_for_save(settings, &existing);
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
@@ -123,6 +125,12 @@ pub async fn save_settings(
             }
         }
     }
+    let current_auto_lightweight = crate::settings::get_settings().auto_lightweight;
+    crate::auto_lightweight::reconcile_settings(
+        &app,
+        previous_auto_lightweight,
+        current_auto_lightweight,
+    );
     Ok(true)
 }
 
