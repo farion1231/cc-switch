@@ -6,8 +6,8 @@
 //! （实测 2026-10-03）。Codex 在 `output_item.done` 就定下调用，拿到空串，工具全部报
 //! `failed to parse function arguments`。
 //!
-//! 这里只动响应：参数为空的那两个结束事件先扣住，等这个条目之后第一个不是它的参数增量的事件
-//! 到来时，用累积的增量（或 `response.completed` 里的同 id 条目）补上参数再发。顺序正常的流
+//! 这里只动响应：参数为空的那两个结束事件先扣住，等之后第一个不是参数增量的事件到来时，
+//! 用累积的增量（或 `response.completed` 里的同 id 条目）补上参数再发。顺序正常的流
 //! 里结束事件本来就带参数，原样放行；真没有参数的调用，扣住的事件原样补发。请求一个字节不改。
 
 use std::collections::HashMap;
@@ -139,11 +139,10 @@ impl Repair {
                 .entry(item_id.clone())
                 .or_default()
                 .push_str(delta);
-            // 扣住的就是这个条目：增量照发，结束事件继续等。
-            if self.held.iter().all(|(held_id, _)| *held_id == item_id) {
-                out.push(block.into_bytes());
-                return out;
-            }
+            // 增量一律照发，不触发放行：并行调用时几个条目的结束事件可能都先到，各自的增量
+            // （乃至别的调用的增量）随后交错着来，见到任何增量就放行会让还没等到参数的条目空着发出。
+            out.push(block.into_bytes());
+            return out;
         }
 
         if let Some(item_id) = block.empty_function_call_end() {
@@ -309,6 +308,68 @@ mod tests {
         );
         assert_eq!(events[2]["arguments"], "{\"cmd\":\"ls\"}");
         assert_eq!(events[3]["item"]["arguments"], "{\"cmd\":\"ls\"}");
+    }
+
+    /// 并行调用：两个条目的结束事件都先到，各自的增量随后才来，两个都要补上。
+    #[test]
+    fn fills_parallel_calls_whose_arguments_arrive_after_all_end_events() {
+        let item = |id: &str, arguments: &str| {
+            json!({ "type": "function_call", "id": id, "call_id": format!("call_{id}"),
+                    "name": "exec_command", "arguments": arguments })
+        };
+        let events = run(vec![
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": item("a", "") }),
+            json!({ "type": "response.output_item.done", "output_index": 1, "item": item("b", "") }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 0,
+                    "item_id": "a", "delta": "{\"cmd\":\"ls\"}" }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 1,
+                    "item_id": "b", "delta": "{\"cmd\":\"pwd\"}" }),
+            json!({ "type": "response.completed", "response": { "output": [] } }),
+        ]);
+        assert_eq!(
+            types(&events),
+            vec![
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.delta",
+                "response.output_item.done",
+                "response.output_item.done",
+                "response.completed",
+            ]
+        );
+        assert_eq!(events[2]["item"]["arguments"], "{\"cmd\":\"ls\"}");
+        assert_eq!(events[3]["item"]["arguments"], "{\"cmd\":\"pwd\"}");
+    }
+
+    /// 别的调用的增量插在中间（A → C → B）：扣住的 A、B 不能被 C 的增量提前放走。
+    #[test]
+    fn unrelated_deltas_do_not_release_held_calls() {
+        let item = |id: &str| {
+            json!({ "type": "function_call", "id": id, "call_id": format!("call_{id}"),
+                    "name": "exec_command", "arguments": "" })
+        };
+        let delta = |id: &str, delta: &str| json!({ "type": "response.function_call_arguments.delta", "item_id": id, "delta": delta });
+        let events = run(vec![
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": item("a") }),
+            json!({ "type": "response.output_item.done", "output_index": 1, "item": item("b") }),
+            delta("a", "{\"cmd\":\"ls\"}"),
+            delta("c", "{\"cmd\":"),
+            delta("b", "{\"cmd\":\"pwd\"}"),
+            json!({ "type": "response.completed", "response": { "output": [] } }),
+        ]);
+        let done: Vec<(&str, &str)> = events
+            .iter()
+            .filter(|e| e["type"] == "response.output_item.done")
+            .map(|e| {
+                (
+                    e["item"]["id"].as_str().unwrap(),
+                    e["item"]["arguments"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            done,
+            vec![("a", "{\"cmd\":\"ls\"}"), ("b", "{\"cmd\":\"pwd\"}")]
+        );
     }
 
     /// 没有增量时，从 `response.completed` 里同 id 的条目取参数。
