@@ -1638,6 +1638,7 @@ pub fn run() {
             commands::get_session_block_content,
             commands::get_session_image,
             commands::reveal_session_path,
+            commands::export_session_markdown,
             commands::delete_session,
             commands::delete_sessions,
             commands::launch_session_terminal,

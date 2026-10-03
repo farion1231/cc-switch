@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use tauri::ipc::{Channel, Response};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::session_manager;
 use crate::session_manager::cache::chunk_ranges;
@@ -213,4 +214,32 @@ pub async fn delete_sessions(
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
+}
+
+/// 把会话导出为 Markdown 文件：由后端弹出保存对话框并写入。写入路径只能是用户在
+/// 对话框里选的位置，前端不能指定任意路径。用户取消时返回 `None`，否则返回保存路径。
+#[tauri::command]
+pub async fn export_session_markdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    #[allow(non_snake_case)] defaultName: String,
+    content: String,
+) -> Result<Option<String>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("Markdown", &["md"])
+            .set_file_name(&defaultName)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("打开保存对话框失败: {e}"))?;
+
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| format!("无效的保存路径: {e}"))?;
+    crate::config::write_text_file(&path, &content).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }

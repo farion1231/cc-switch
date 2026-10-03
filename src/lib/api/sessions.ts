@@ -98,6 +98,14 @@ export const sessionsApi = {
     return await invoke("reveal_session_path", { path });
   },
 
+  /** 弹出保存对话框把会话存成 Markdown 文件；取消时返回 null，成功返回保存路径 */
+  async exportMarkdown(
+    defaultName: string,
+    content: string,
+  ): Promise<string | null> {
+    return await invoke("export_session_markdown", { defaultName, content });
+  },
+
   async delete(options: DeleteSessionOptions): Promise<boolean> {
     const { providerId, sessionId, sourcePath } = options;
     return await invoke("delete_session", {

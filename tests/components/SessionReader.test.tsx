@@ -391,6 +391,23 @@ describe("SessionReader", () => {
     );
   });
 
+  it("导出为 Markdown 文件：用会话标题做文件名，内容与复制为 Markdown 一致", async () => {
+    const exportMarkdown = vi
+      .spyOn(sessionsApi, "exportMarkdown")
+      .mockResolvedValue("/tmp/claude 会话.md");
+    renderReader("claude", fixtures.claude);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "导出为 Markdown 文件" }),
+    );
+
+    await waitFor(() => expect(exportMarkdown).toHaveBeenCalledTimes(1));
+    const [name, content] = exportMarkdown.mock.calls[0];
+    expect(name).toBe("claude 会话.md");
+    expect(content).toContain("claude 会话");
+    expect(content).toContain("cargo build 一直报 tokio_util 找不到");
+  });
+
   it("全部 / 对话 / 改动 三选一", () => {
     renderReader("claude", fixtures.claude);
     fireEvent.click(screen.getByRole("button", { name: "对话" }));

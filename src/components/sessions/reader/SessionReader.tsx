@@ -14,6 +14,9 @@ import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { SessionTranscriptResult } from "@/lib/query/sessions";
+import { toast } from "@/lib/toast";
+
+import { sessionsApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -83,6 +86,14 @@ const latestModel = (messages: SessionMessage[]) => {
 
 /** 该轮的执行过程有没有摘要行（规则 5：只有 1 步且没失败时没有） */
 const OUTLINE_STORAGE_KEY = "cc-switch.sessionReader.outline";
+
+/** 会话标题转成文件名：去掉各系统不允许的字符，压掉空白，限制长度 */
+const toFileName = (title: string) =>
+  title
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
 
 /** 属于 Agent 一侧（靠左、带头像列）的行；提问靠右，事件和分隔线居中 */
 const AGENT_ROW_KINDS: ReadonlySet<ReaderRow["kind"]> = new Set([
@@ -408,6 +419,19 @@ export function SessionReader({
     );
   }, [exportOptions, onCopy, t, title, turns]);
 
+  const exportMarkdownFile = useCallback(async () => {
+    const name = `${toFileName(title) || session.sessionId}.md`;
+    try {
+      const path = await sessionsApi.exportMarkdown(
+        name,
+        transcriptToMarkdown(title, turns, exportOptions),
+      );
+      if (path) toast.success(rt("exported", { path }));
+    } catch (error) {
+      toast.error(rt("exportFailed", { error: extractErrorMessage(error) }));
+    }
+  }, [exportOptions, rt, session.sessionId, title, turns]);
+
   const openFind = () => {
     setFindOpen(true);
     setFindIndex(1);
@@ -724,6 +748,7 @@ export function SessionReader({
           onLaunch={onLaunch}
           onCopy={onCopy}
           onCopyMarkdown={copyMarkdown}
+          onExportMarkdown={exportMarkdownFile}
           onOpenTerminalSettings={onOpenTerminalSettings}
           onReload={onReload}
           onDelete={onDelete}

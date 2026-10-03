@@ -16,6 +16,7 @@ import {
   SquareTerminal,
   X,
   PanelRight,
+  Download,
 } from "lucide-react";
 
 import { AppGlyph } from "@/components/shell/AppGlyph";
@@ -68,6 +69,7 @@ export interface SessionReaderHeaderProps {
   onLaunch: () => void;
   onCopy: (text: string, message: string) => void;
   onCopyMarkdown: () => void;
+  onExportMarkdown: () => void;
   onOpenTerminalSettings: () => void;
   onReload: () => void;
   onDelete: () => void;
@@ -89,6 +91,7 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   onLaunch,
   onCopy,
   onCopyMarkdown,
+  onExportMarkdown,
   onOpenTerminalSettings,
   onReload,
   onDelete,
@@ -277,6 +280,13 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
             defaultValue: "复制整段为 Markdown",
           })}
         </DropdownMenuItem>
+        <DropdownMenuItem
+          className={sessionMenuItemClass}
+          disabled={!canCopyMarkdown}
+          onSelect={onExportMarkdown}
+        >
+          {rt("exportMarkdown")}
+        </DropdownMenuItem>
         <DropdownMenuCheckboxItem
           // 左边留出勾选标记的位置，避免和文字重叠
           className={cn(sessionMenuItemClass, "ps-8")}
@@ -413,6 +423,17 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
             </HoverTip>
           </div>
           {resume}
+          <HoverTip content={rt("exportMarkdown")}>
+            <button
+              type="button"
+              aria-label={rt("exportMarkdown")}
+              disabled={!canCopyMarkdown}
+              onClick={onExportMarkdown}
+              className={cn(readerIconButton, "h-8 w-8")}
+            >
+              <Download className="h-4 w-4" strokeWidth={1.5} />
+            </button>
+          </HoverTip>
           {moreMenu}
         </>
       }
