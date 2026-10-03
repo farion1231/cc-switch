@@ -173,7 +173,9 @@ export function ProviderPresetSelector({
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 点击搜索区域外时收起并清空,对齐旧 Popover 的「点击外部关闭」行为
+  // 点击搜索区域外时收起并清空,对齐旧 Popover 的「点击外部关闭」行为。
+  // 例外:点击同表单内的字段(API Key / 端点等)只收起、保留搜索词,
+  // 否则选好预设后下去填字段,搜索就被冲掉、预设列表全部弹回。
   useEffect(() => {
     if (!searchOpen) return;
 
@@ -182,6 +184,11 @@ export function ProviderPresetSelector({
         searchContainerRef.current &&
         !searchContainerRef.current.contains(event.target as Node)
       ) {
+        const form = searchContainerRef.current.closest("form");
+        if (form && form.contains(event.target as Node)) {
+          setSearchOpen(false);
+          return;
+        }
         setSearchOpen(false);
         setSearchQuery("");
       }
