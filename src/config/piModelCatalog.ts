@@ -212,7 +212,7 @@ export const piModelCatalog = {
       name: "LongCat 2.0",
       reasoning: true,
       input: ["text"],
-      contextWindow: 1_000_000,
+      contextWindow: 1_048_576,
       maxTokens: 131_072,
     },
   },
