@@ -106,15 +106,16 @@ export function ProviderList({
     appId,
   );
 
-  const { data: opencodeLiveIds } = useQuery({
-    queryKey: ["opencodeLiveProviderIds"],
-    queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-    enabled: appId === "opencode",
-  });
-  const { data: openclawLiveIds } = useOpenClawLiveProviderIds(
-    appId === "openclaw",
-  );
-  const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
+  const { data: opencodeLiveIds, isPending: isOpencodeLiveIdsPending } =
+    useQuery({
+      queryKey: ["opencodeLiveProviderIds"],
+      queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
+      enabled: appId === "opencode",
+    });
+  const { data: openclawLiveIds, isPending: isOpenclawLiveIdsPending } =
+    useOpenClawLiveProviderIds(appId === "openclaw");
+  const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
+    useHermesLiveProviderIds(appId === "hermes");
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
@@ -125,10 +126,19 @@ export function ProviderList({
   const {
     data: piCurrentState,
     isSuccess: isPiCurrentStateSuccess,
+    isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
   } = usePiCurrentState(appId === "pi");
   const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
+  // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
+  // 一张卡都没有时不用等，直接出空状态
+  const isLiveMembershipPending =
+    (appId === "opencode" && isOpencodeLiveIdsPending) ||
+    (appId === "openclaw" && isOpenclawLiveIdsPending) ||
+    (appId === "hermes" && isHermesLiveIdsPending) ||
+    (appId === "pi" && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
@@ -352,7 +362,7 @@ export function ProviderList({
       </Notice>
     ) : null;
 
-  if (isLoading) {
+  if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
         {[0, 1, 2].map((index) => (
