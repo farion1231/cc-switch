@@ -15,6 +15,7 @@ import {
   SlidersHorizontal,
   SquareTerminal,
   X,
+  PanelRight,
 } from "lucide-react";
 
 import { AppGlyph } from "@/components/shell/AppGlyph";
@@ -43,7 +44,6 @@ import {
 } from "../utils";
 import { useReaderT } from "./i18n";
 import { PathChip } from "./PathChip";
-import { SessionQuestionsMenu } from "./SessionToc";
 import { formatDuration } from "./toolSummary";
 import type { ReaderFilter } from "./turns";
 
@@ -460,7 +460,8 @@ export interface SessionReaderToolbarProps {
   onExpandAllChange: (value: boolean) => void;
   showInjected: boolean;
   onShowInjectedChange: (value: boolean) => void;
-  onJumpToTurn: (item: TurnIndex) => void;
+  outlineOpen: boolean;
+  onToggleOutline: () => void;
   find: FindState;
   findInputRef: RefObject<HTMLInputElement>;
   findButtonRef: RefObject<HTMLButtonElement>;
@@ -490,7 +491,8 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
   onExpandAllChange,
   showInjected,
   onShowInjectedChange,
-  onJumpToTurn,
+  outlineOpen,
+  onToggleOutline,
   find,
   findInputRef,
   findButtonRef,
@@ -580,10 +582,21 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
 
         {!failed && (
           <div className="flex shrink-0 items-center gap-0.5">
-            <SessionQuestionsMenu
-              items={turnIndex}
-              onItemClick={onJumpToTurn}
-            />
+            <HoverTip content={rt("outlineToggle")}>
+              <button
+                type="button"
+                aria-label={rt("outlineToggle")}
+                aria-pressed={outlineOpen}
+                onClick={onToggleOutline}
+                className={cn(
+                  readerIconButton,
+                  "h-8 w-8 max-lg:hidden",
+                  outlineOpen && "bg-selected text-fg-1",
+                )}
+              >
+                <PanelRight className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+            </HoverTip>
             {/* 全部 / 对话 / 改动 三选一（原来两个互斥的开关），省出信息栏的宽度 */}
             <SegmentedControl<ReaderFilter>
               size="sm"

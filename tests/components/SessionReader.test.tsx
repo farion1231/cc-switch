@@ -92,6 +92,9 @@ const renderReader = (
   return render(ui);
 };
 
+/** 正文滚动区（右侧对话目录里也有同样的摘要，断言正文时限定在这里） */
+const conversation = () => screen.getByRole("region", { name: "对话内容" });
+
 /** 步骤行按钮（accessible name 带完整标题与状态） */
 const stepButton = (name: RegExp) => screen.getByRole("button", { name });
 
@@ -122,7 +125,9 @@ describe("SessionReader", () => {
         screen.getByRole("heading", { level: 1, name: "claude 会话" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/cargo build 一直报 tokio_util 找不到/),
+        within(conversation()).getByText(
+          /cargo build 一直报 tokio_util 找不到/,
+        ),
       ).toBeInTheDocument();
       // 第一轮有最终回复 → 执行过程折叠；失败的 Bash 仍常显并带 exit
       expect(
@@ -362,6 +367,30 @@ describe("SessionReader", () => {
     expect(screen.getByText(/^1 \/ \d+$/)).toBeInTheDocument();
   });
 
+  it("右侧对话目录区分人和 Agent，可开关", () => {
+    renderReader("claude", fixtures.claude);
+    const outline = screen.getByRole("navigation", { name: "对话目录" });
+    // 每轮一条「你」的提问 + 一条 Agent 的输出
+    const questions = within(outline).getAllByText("你", { exact: false });
+    expect(questions.length).toBeGreaterThan(0);
+    expect(
+      within(outline).getByText(/cargo build 一直报 tokio_util 找不到/),
+    ).toBeInTheDocument();
+    expect(within(outline).getByText(/构建已经通过/)).toBeInTheDocument();
+
+    // 点 Agent 那条能跳过去（不报错即可，滚动由虚拟列表负责）
+    fireEvent.click(within(outline).getByText(/构建已经通过/));
+
+    // 关掉后目录消失，开关记住状态
+    fireEvent.click(screen.getByRole("button", { name: "对话目录" }));
+    expect(
+      screen.queryByRole("navigation", { name: "对话目录" }),
+    ).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("cc-switch.sessionReader.outline")).toBe(
+      "false",
+    );
+  });
+
   it("全部 / 对话 / 改动 三选一", () => {
     renderReader("claude", fixtures.claude);
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
@@ -373,7 +402,7 @@ describe("SessionReader", () => {
       screen.queryByRole("button", { name: /Bash\(/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/cargo build 一直报 tokio_util 找不到/),
+      within(conversation()).getByText(/cargo build 一直报 tokio_util 找不到/),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "改动" }));
@@ -487,7 +516,7 @@ describe("SessionReader", () => {
       screen.getByText(`已加载 4 / ${fixtures.claude.length}`),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/cargo build 一直报 tokio_util 找不到/),
+      within(conversation()).getByText(/cargo build 一直报 tokio_util 找不到/),
     ).toBeInTheDocument();
   });
 });

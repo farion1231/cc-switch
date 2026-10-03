@@ -29,6 +29,7 @@ import {
   agentTurnTs,
 } from "./SessionAgentAvatar";
 import { SessionFinalReply } from "./SessionFinalReply";
+import { SessionOutline } from "./SessionOutline";
 import { SessionQuestion } from "./SessionQuestion";
 import {
   SessionReaderHeader,
@@ -81,6 +82,8 @@ const latestModel = (messages: SessionMessage[]) => {
 };
 
 /** 该轮的执行过程有没有摘要行（规则 5：只有 1 步且没失败时没有） */
+const OUTLINE_STORAGE_KEY = "cc-switch.sessionReader.outline";
+
 /** 属于 Agent 一侧（靠左、带头像列）的行；提问靠右，事件和分隔线居中 */
 const AGENT_ROW_KINDS: ReadonlySet<ReaderRow["kind"]> = new Set([
   "timeline",
@@ -171,6 +174,24 @@ export function SessionReader({
   const [findIndex, setFindIndex] = useState(1);
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState<boolean | null>(null);
+  // 右侧对话目录：默认打开，开关记在本地
+  const [outlineOpen, setOutlineOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(OUTLINE_STORAGE_KEY) !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const toggleOutline = useCallback(() => {
+    setOutlineOpen((open) => {
+      try {
+        window.localStorage.setItem(OUTLINE_STORAGE_KEY, String(!open));
+      } catch {
+        // 存不了就只在本次生效
+      }
+      return !open;
+    });
+  }, []);
 
   const style = useMemo(
     () => getAgentReaderStyle(session.providerId),
@@ -275,19 +296,28 @@ export function SessionReader({
     [flash, rows, virtualizer],
   );
 
-  const jumpToTurn = useCallback(
-    (item: TurnIndex) => {
-      let index = findTurnRowIndex(rows, turns, item.turnId);
+  const jumpToQuestion = useCallback(
+    (turn: SessionTurn) => {
+      const index = rows.findIndex(
+        (row) => row.turn === turn.index && row.kind === "question",
+      );
+      scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
+    },
+    [rows, scrollToRow, turns],
+  );
+
+  /** 目录里点 Agent：优先跳到最终回复，没有回复时跳到这一轮 Agent 输出的第一行 */
+  const jumpToReply = useCallback(
+    (turn: SessionTurn) => {
+      let index = rows.findIndex(
+        (row) => row.turn === turn.index && row.kind === "final",
+      );
       if (index < 0) {
-        // 后端 turnId 与前端分组不一致时按消息下标找
-        const turn = turns.find(
-          (candidate) =>
-            candidate.firstMessageIndex <= item.firstMessageIndex &&
-            item.firstMessageIndex <= candidate.lastMessageIndex,
+        index = rows.findIndex(
+          (row) => row.turn === turn.index && AGENT_ROW_KINDS.has(row.kind),
         );
-        if (turn) index = findTurnRowIndex(rows, turns, turn.key);
       }
-      scrollToRow(index);
+      scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
     },
     [rows, scrollToRow, turns],
   );
@@ -447,6 +477,19 @@ export function SessionReader({
     transcript.isStreaming || messages !== transcript.messages
       ? transcript.progress
       : null;
+  // 正文顶部停在哪一轮：目录据此高亮（虚拟列表滚动时会重渲染，这里直接算）
+  const scrollOffset = virtualizer.scrollOffset ?? 0;
+  const firstVisible = virtualizer
+    .getVirtualItems()
+    .find((item) => item.end > scrollOffset + 8);
+  // 滚到底时最后几轮到不了顶部，直接算作最后一轮
+  const activeTurn =
+    atBottom && rows.length > 0
+      ? rows[rows.length - 1].turn
+      : firstVisible
+        ? (rows[firstVisible.index]?.turn ?? 0)
+        : 0;
+
   const showLatest =
     !failed &&
     rows.length > 0 &&
@@ -614,6 +657,8 @@ export function SessionReader({
     body = (
       <div
         ref={scrollRef}
+        role="region"
+        aria-label={rt("conversationRegion")}
         onScroll={(event) => {
           const el = event.currentTarget;
           const bottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
@@ -697,7 +742,8 @@ export function SessionReader({
           onExpandAllChange={handleExpandAll}
           showInjected={showInjected}
           onShowInjectedChange={setShowInjected}
-          onJumpToTurn={jumpToTurn}
+          outlineOpen={outlineOpen}
+          onToggleOutline={toggleOutline}
           find={{
             open: findOpen,
             query: findQuery,
@@ -714,21 +760,31 @@ export function SessionReader({
           }}
           onStepFind={stepFind}
         />
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          {body}
-          {showLatest && (
-            <Button
-              variant="neutral"
-              size="regular"
-              aria-label={t("sessionManager.jumpLatest", {
-                defaultValue: "跳到最新消息",
-              })}
-              onClick={scrollToLatest}
-              className="absolute bottom-4 end-6 gap-1.5 pe-3 ps-2.5 shadow-v7-md"
-            >
-              <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />
-              {t("sessionManager.latest", { defaultValue: "最新" })}
-            </Button>
+        <div className="flex min-h-0 flex-1">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {body}
+            {showLatest && (
+              <Button
+                variant="neutral"
+                size="regular"
+                aria-label={t("sessionManager.jumpLatest", {
+                  defaultValue: "跳到最新消息",
+                })}
+                onClick={scrollToLatest}
+                className="absolute bottom-4 end-6 gap-1.5 pe-3 ps-2.5 shadow-v7-md"
+              >
+                <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />
+                {t("sessionManager.latest", { defaultValue: "最新" })}
+              </Button>
+            )}
+          </div>
+          {outlineOpen && !failed && turns.length > 0 && (
+            <SessionOutline
+              turns={turns}
+              activeTurn={activeTurn}
+              onJumpQuestion={jumpToQuestion}
+              onJumpReply={jumpToReply}
+            />
           )}
         </div>
       </div>

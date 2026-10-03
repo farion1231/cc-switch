@@ -345,7 +345,13 @@ describe("SessionManagerPage", () => {
     // 返回和会话名并进页头：只剩一层页头，「会话」那条不再单独出现
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "返回会话列表" })).toBeVisible();
-    expect(await screen.findByText("alpha question")).toBeInTheDocument();
+    // 正文和右侧对话目录各出现一次
+    expect(await screen.findAllByText("alpha question")).toHaveLength(2);
+    expect(
+      within(screen.getByRole("navigation", { name: "对话目录" })).getByText(
+        "alpha question",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("const a = 1;")).toBeInTheDocument();
     // 工具调用和输出合并进执行过程，默认折叠成一行摘要；展开后能看到
     expect(screen.queryByText("shell")).not.toBeInTheDocument();
@@ -357,7 +363,7 @@ describe("SessionManagerPage", () => {
     // 只看对话：工具调用隐藏
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.queryByText("shell")).not.toBeInTheDocument();
-    expect(screen.getByText("alpha question")).toBeInTheDocument();
+    expect(screen.getAllByText("alpha question")).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "下一个会话" }));
     expect(
