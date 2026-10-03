@@ -15,9 +15,10 @@ export function formatJSON(value: string): string {
 
 /**
  * 智能解析 MCP JSON 配置
- * 支持两种格式：
+ * 支持3种格式：
  * 1. 纯配置对象：{ "command": "npx", "args": [...], ... }
  * 2. 带键名包装：  "server-name": { "command": "npx", ... }  或  { "server-name": {...} }
+ * 3. 多层包裹的键值对: { "mcpServers": { "Context 7": { "command": "npx", ...} } }
  *
  * @param jsonText - JSON 字符串
  * @returns { id?: string, config: object, formattedConfig: string }
@@ -38,29 +39,27 @@ export function parseSmartMcpJson(jsonText: string): {
     trimmed = `{${trimmed}}`;
   }
 
-  const parsed = JSON.parse(trimmed);
+  let currentConfig = JSON.parse(trimmed);
 
-  // 如果是单键对象且值是对象，提取键名和配置
-  const keys = Object.keys(parsed);
-  if (
+  // 如果是单键对象且值是对象，循环提取最终的键名和配置
+  let keys = Object.keys(currentConfig);
+  let extractedId: string | undefined;
+  while (
     keys.length === 1 &&
-    parsed[keys[0]] &&
-    typeof parsed[keys[0]] === "object" &&
-    !Array.isArray(parsed[keys[0]])
+    keys[0] !== "command" &&
+    currentConfig[keys[0]] &&
+    typeof currentConfig[keys[0]] === "object" &&
+    !Array.isArray(currentConfig[keys[0]])
   ) {
-    const id = keys[0];
-    const config = parsed[id];
-    return {
-      id,
-      config,
-      formattedConfig: JSON.stringify(config, null, 2),
-    };
+    extractedId = keys[0];
+    currentConfig = currentConfig[extractedId];
+    keys = Object.keys(currentConfig);
   }
 
-  // 否则直接使用
   return {
-    config: parsed,
-    formattedConfig: JSON.stringify(parsed, null, 2),
+    id: extractedId,
+    config: currentConfig,
+    formattedConfig: JSON.stringify(currentConfig, null, 2),
   };
 }
 
