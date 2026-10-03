@@ -844,6 +844,55 @@ describe("AppsPage concurrent CLI upgrades", () => {
       expect.anything(),
     );
   });
+  it("shows diagnosed conflicts on the row, refreshes the install report and says so", async () => {
+    vi.resetModules();
+    const install = (path: string, isDefault: boolean) => ({
+      path,
+      version: "2.0.0",
+      runnable: true,
+      error: null,
+      source: "npm",
+      is_path_default: isDefault,
+    });
+    // 打开页面时只有一处安装；之后外部又装了一份，诊断才发现
+    mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        tool === "claude"
+          ? report(tool, {
+              is_conflict: true,
+              installs: [
+                install("/usr/local/bin/claude", true),
+                install("/opt/homebrew/bin/claude", false),
+              ],
+            })
+          : report(tool),
+      ),
+    );
+    await renderApps();
+    expect(screen.queryByText("/opt/homebrew/bin/claude")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "settings.toolDiagnose" }),
+    );
+
+    // 冲突列表直接在行里展开，入口「另有 1 处安装」也刷新出来，并有一条提示
+    expect(
+      await card("Claude Code").findByText("/opt/homebrew/bin/claude"),
+    ).toBeInTheDocument();
+    expect(
+      card("Claude Code").getByRole("button", {
+        name: /appsPage\.otherInstalls/,
+      }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(mocks.warning).toHaveBeenCalledWith(
+      "settings.toolDiagnoseConflicts",
+      expect.anything(),
+    );
+    expect(mocks.info).not.toHaveBeenCalled();
+  });
 });
 
 describe("AppsPage visibility column", () => {

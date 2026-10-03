@@ -524,6 +524,16 @@ export function useToolManagement() {
   const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
     try {
       const [report] = await settingsApi.probeToolInstallations([toolName]);
+      // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
+      // 不用等手动「检查更新」
+      if (report) {
+        updateToolManagementState({
+          installReports: {
+            ...(toolManagementState.installReports ?? {}),
+            [toolName]: report,
+          },
+        });
+      }
       setToolDiagnostics((prev) => {
         if (report?.is_conflict) {
           return { ...prev, [toolName]: report.installs };
@@ -549,16 +559,28 @@ export function useToolManagement() {
     try {
       const reports = await settingsApi.probeToolInstallations([...TOOL_NAMES]);
       const next: Partial<Record<ToolName, ToolInstallation[]>> = {};
+      const installReports: Partial<Record<ToolName, ToolInstallationReport>> =
+        {};
       let conflicts = 0;
       for (const report of reports) {
+        installReports[report.tool as ToolName] = report;
         if (report.is_conflict) {
           next[report.tool as ToolName] = report.installs;
           conflicts += 1;
         }
       }
+      updateToolManagementState({ installReports });
       setToolDiagnostics(next);
       if (conflicts === 0) {
         toast.info(t("settings.toolDiagnoseNoConflict"), { closeButton: true });
+      } else {
+        // 冲突列表在对应行里展开（AppsPage 看 toolDiagnostics 自动展开），这里只说一句
+        toast.warning(
+          t("settings.toolDiagnoseConflicts", { count: conflicts }),
+          {
+            closeButton: true,
+          },
+        );
       }
     } catch (error) {
       console.error("[useToolManagement] Diagnose all failed", error);

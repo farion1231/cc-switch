@@ -848,6 +848,7 @@
     "toolConflictDefault": "Default",
     "toolConflictNotRunnable": "can't run",
     "toolDiagnoseNoConflict": "No conflicting installations found",
+    "toolDiagnoseConflicts": "{{count}} tool(s) have multiple installations; the lists are expanded on their rows",
     "toolDiagnoseFailed": "Diagnosis failed",
     "toolUpgradeConfirmTitle": "Confirm upgrade target",
     "toolUpgradeConfirmHint": "Multiple installations detected. This upgrade won't update all of them; refer to each tool below for what it actually targets.",

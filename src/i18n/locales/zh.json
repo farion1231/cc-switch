@@ -848,6 +848,7 @@
     "toolConflictDefault": "默认",
     "toolConflictNotRunnable": "无法运行",
     "toolDiagnoseNoConflict": "未发现安装冲突",
+    "toolDiagnoseConflicts": "{{count}} 个工具有多处安装，冲突列表已在对应行展开",
     "toolDiagnoseFailed": "诊断失败",
     "toolUpgradeConfirmTitle": "确认升级位置",
     "toolUpgradeConfirmHint": "检测到多处安装。本次升级不会全部更新，具体作用的位置以下方各项为准。",
