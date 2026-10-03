@@ -495,4 +495,182 @@ describe("ClaudeDesktopProviderForm", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  const proxyFixture = {
+    name: "Proxy Provider",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.example.com",
+        ANTHROPIC_AUTH_TOKEN: "sk-test",
+      },
+    },
+    meta: {
+      claudeDesktopMode: "proxy" as const,
+      claudeDesktopModelRoutes: {
+        "claude-sonnet-5": { model: "upstream-sonnet" },
+      },
+    },
+  };
+
+  // RTL 的 exact 匹配只折叠 DOM 文本空白、不折叠查询串，
+  // 多行占位符需用空白折叠后的单行字符串查询。
+  const headerOverridesTextarea = () =>
+    screen.getByPlaceholderText('{ "X-Provider": "cc-switch" }');
+  const bodyOverridesTextarea = () =>
+    screen.getByPlaceholderText('{ "temperature": 0.2 }');
+
+  it("模型映射模式显示本地代理请求覆盖与自定义 User-Agent，直连不显示", () => {
+    renderForm(proxyFixture);
+    expect(screen.getByText("本地代理请求覆盖")).toBeInTheDocument();
+    expect(screen.getByText("自定义 User-Agent")).toBeInTheDocument();
+    expect(headerOverridesTextarea()).toBeInTheDocument();
+  });
+
+  it("新建表单默认直连时不显示本地代理请求覆盖", () => {
+    renderForm(undefined);
+    expect(screen.queryByText("本地代理请求覆盖")).not.toBeInTheDocument();
+  });
+
+  it("保存时把 Header/Body 覆盖与自定义 User-Agent 写入 meta", async () => {
+    const onSubmit = vi.fn();
+    renderForm(proxyFixture, onSubmit);
+
+    fireEvent.change(
+      headerOverridesTextarea(),
+      { target: { value: '{"X-Gateway-Token":"secret"}' } },
+    );
+    fireEvent.change(bodyOverridesTextarea(), {
+      target: { value: '{"temperature":0.2}' },
+    });
+    fireEvent.change(screen.getByLabelText("自定义 User-Agent"), {
+      target: { value: "  cc-switch/1.0  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides,
+    ).toEqual({
+      headers: { "x-gateway-token": "secret" },
+      body: { temperature: 0.2 },
+    });
+    expect(onSubmit.mock.calls[0][0].meta.customUserAgent).toBe(
+      "cc-switch/1.0",
+    );
+  });
+
+  it("清空覆盖输入后保存会移除存量 localProxyRequestOverrides", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        ...proxyFixture,
+        meta: {
+          ...proxyFixture.meta,
+          localProxyRequestOverrides: {
+            headers: { "x-gateway-token": "secret" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    expect(headerOverridesTextarea()).toHaveValue(
+      '{\n  "x-gateway-token": "secret"\n}',
+    );
+    fireEvent.change(headerOverridesTextarea(), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides,
+    ).toBeUndefined();
+  });
+
+  it("Header 覆盖 JSON 非法时保存被拒绝", async () => {
+    const onSubmit = vi.fn();
+    renderForm(proxyFixture, onSubmit);
+
+    fireEvent.change(headerOverridesTextarea(), {
+      target: { value: "not-json" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalled());
+    expect(toastMocks.error.mock.calls[0][0]).toContain(
+      "本地代理请求覆盖格式错误",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("代理保护名单中的请求头保存时被拒绝", async () => {
+    const onSubmit = vi.fn();
+    renderForm(proxyFixture, onSubmit);
+
+    fireEvent.change(headerOverridesTextarea(), {
+      target: { value: '{"authorization":"Bearer x"}' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalled());
+    expect(toastMocks.error.mock.calls[0][0]).toContain(
+      "本地代理请求覆盖格式错误",
+    );
+    expect(toastMocks.error.mock.calls[0][0]).toContain("authorization");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("直连模式保存时原样保留存量覆盖配置", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Direct Provider",
+        settingsConfig: proxyFixture.settingsConfig,
+        meta: {
+          claudeDesktopMode: "direct",
+          localProxyRequestOverrides: {
+            headers: { "x-gateway-token": "secret" },
+          },
+          customUserAgent: "cc-switch/1.0",
+        },
+      },
+      onSubmit,
+    );
+
+    expect(screen.queryByText("本地代理请求覆盖")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides,
+    ).toEqual({ headers: { "x-gateway-token": "secret" } });
+    expect(onSubmit.mock.calls[0][0].meta.customUserAgent).toBe(
+      "cc-switch/1.0",
+    );
+  });
+
+  it("官方供应商保存时清除存量覆盖与自定义 User-Agent", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Official Provider",
+        category: "official",
+        settingsConfig: { env: {} },
+        meta: {
+          localProxyRequestOverrides: {
+            headers: { "x-gateway-token": "secret" },
+          },
+          customUserAgent: "cc-switch/1.0",
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(
+      onSubmit.mock.calls[0][0].meta.localProxyRequestOverrides,
+    ).toBeUndefined();
+    expect(onSubmit.mock.calls[0][0].meta.customUserAgent).toBeUndefined();
+  });
 });

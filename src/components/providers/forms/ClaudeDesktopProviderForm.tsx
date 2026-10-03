@@ -31,6 +31,8 @@ import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { CustomUserAgentField } from "./CustomUserAgentField";
+import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
@@ -56,6 +58,10 @@ import {
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  buildLocalProxyRequestOverrides,
+  formatRequestOverrideObject,
+} from "@/lib/requestOverrides";
 import type { ManagedAuthProvider } from "@/lib/api";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
 import { isOAuthProviderType } from "@/config/constants";
@@ -280,6 +286,21 @@ export function ClaudeDesktopProviderForm({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+  const [customUserAgent, setCustomUserAgent] = useState<string>(
+    () => initialData?.meta?.customUserAgent ?? "",
+  );
+  const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
+    useState<string>(() =>
+      formatRequestOverrideObject(
+        initialData?.meta?.localProxyRequestOverrides?.headers,
+      ),
+    );
+  const [localProxyBodyOverride, setLocalProxyBodyOverride] = useState<string>(
+    () =>
+      formatRequestOverrideObject(
+        initialData?.meta?.localProxyRequestOverrides?.body,
+      ),
+  );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
   );
@@ -475,6 +496,9 @@ export function ClaudeDesktopProviderForm({
       setMode("direct");
       setDirectRoutes([]);
       setProxyRoutes([]);
+      setCustomUserAgent("");
+      setLocalProxyHeadersOverride("");
+      setLocalProxyBodyOverride("");
       return;
     }
 
@@ -490,6 +514,9 @@ export function ClaudeDesktopProviderForm({
       requiresOAuth: entry.preset.requiresOAuth,
     });
     applyDesktopPreset(entry.preset);
+    setCustomUserAgent("");
+    setLocalProxyHeadersOverride("");
+    setLocalProxyBodyOverride("");
   };
 
   const updateRoute = (index: number, patch: Partial<RouteRowValues>) => {
@@ -586,6 +613,8 @@ export function ClaudeDesktopProviderForm({
       delete meta.apiFormat;
       delete meta.endpointAutoSelect;
       delete meta.isFullUrl;
+      delete meta.localProxyRequestOverrides;
+      delete meta.customUserAgent;
       await onSubmit({
         ...values,
         name: values.name.trim(),
@@ -809,6 +838,30 @@ export function ClaudeDesktopProviderForm({
 
     delete meta.endpointAutoSelect;
     delete meta.isFullUrl;
+
+    if (effectiveMode === "proxy") {
+      // 与 Claude Code 表单同语义：Header/Body 覆盖 JSON 统一校验后整体写入；
+      // 留空则移除。direct 模式不经过本地代理，两者原样保留、不在表单展示。
+      const overridesResult = buildLocalProxyRequestOverrides(
+        localProxyHeadersOverride,
+        localProxyBodyOverride,
+      );
+      if (overridesResult.error) {
+        toast.error(
+          t("providerForm.localProxyRequestOverridesInvalid", {
+            defaultValue: `本地代理请求覆盖格式错误：${overridesResult.error}`,
+            error: overridesResult.error,
+          }),
+        );
+        return;
+      }
+      if (overridesResult.overrides) {
+        meta.localProxyRequestOverrides = overridesResult.overrides;
+      } else {
+        delete meta.localProxyRequestOverrides;
+      }
+      meta.customUserAgent = customUserAgent.trim() || undefined;
+    }
 
     await onSubmit({
       ...values,
@@ -1197,6 +1250,20 @@ export function ClaudeDesktopProviderForm({
                         </div>
                       );
                     })}
+                  </div>
+
+                  <div className="space-y-3 border-t border-border-default pt-4">
+                    <CustomUserAgentField
+                      id="claude-desktop-custom-user-agent"
+                      value={customUserAgent}
+                      onChange={setCustomUserAgent}
+                    />
+                    <LocalProxyRequestOverridesField
+                      headersJson={localProxyHeadersOverride}
+                      bodyJson={localProxyBodyOverride}
+                      onHeadersJsonChange={setLocalProxyHeadersOverride}
+                      onBodyJsonChange={setLocalProxyBodyOverride}
+                    />
                   </div>
                 </div>
               )}
