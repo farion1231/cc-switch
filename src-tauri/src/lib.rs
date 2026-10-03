@@ -16,6 +16,8 @@ mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
 pub mod hermes_config;
+#[cfg(target_os = "linux")]
+mod im_module_cache;
 mod init_status;
 mod jsonc_document;
 mod lightweight;
@@ -55,6 +57,8 @@ pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
+#[cfg(target_os = "linux")]
+pub use im_module_cache::apply_gtk_im_module_file_fix;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,

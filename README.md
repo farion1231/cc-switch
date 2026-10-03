@@ -516,6 +516,24 @@ If you launch from a desktop icon, add it to the `.desktop` `Exec=` line (e.g. `
 
 </details>
 
+<details>
+<summary><strong>Linux (AppImage + fcitx/ibus): the app freezes when I click "Edit" on a provider</strong></summary>
+
+The AppImage's GTK startup hook unconditionally exports `GTK_IM_MODULE_FILE` pointing at a bundled `immodules.cache` that contains only GTK's built-in modules — no fcitx or ibus entries. When `GTK_IM_MODULE=fcitx` is set, GTK finds no such module in that cache and falls back to XIM, and focusing a text field in the editor can freeze the whole app (only `SIGKILL` recovers it). This fix acts on `GTK_IM_MODULE` only: a machine that configures its input method through `XMODIFIERS` alone is not covered, because GTK never reads `XMODIFIERS` when selecting a module — such a setup goes straight to GTK's locale-based fallback, which picks `xim` from the same bundled cache, and rewriting the cache cannot change that. Because the same hook also exports `GTK_EXE_PREFIX` into the AppDir, simply unsetting the variable would not help either — GTK would just re-derive the same bundled cache. CC Switch therefore detects this exact case at startup and points `GTK_IM_MODULE_FILE` at the host system's own cache, but only if that cache actually lists your input method; if none does, nothing changes. This only happens when the variable really points inside the AppDir **and** that bundled cache is missing your input method, so deb/rpm packages and setups where the module is present are untouched. If you listed several modules (`GTK_IM_MODULE=fcitx:ibus`), you get the first one the host cache actually provides, which may not be the first you listed.
+
+Pointing GTK at the host cache removes the XIM fallback, so the freeze goes away — but whether your input method then actually works depends on the host's `im-fcitx5.so` / `im-ibus.so` loading against the GTK version bundled in the AppImage. If it cannot load (a different GTK micro version), GTK falls back to its built-in `simple` context: no freeze, but the input method stays unusable, and `CC_SWITCH_GTK_IM_MODULE_FILE=keep` restores the old behavior.
+
+Launch with the opt-in escape hatch to override the choice (the hook never touches this variable):
+
+```bash
+CC_SWITCH_GTK_IM_MODULE_FILE=keep ./CC-Switch-*.AppImage                          # keep the hook's path (old behavior)
+CC_SWITCH_GTK_IM_MODULE_FILE=/path/to/immodules.cache ./CC-Switch-*.AppImage      # point GTK at a cache of your own
+```
+
+If you launch from a desktop icon, add it to the `.desktop` `Exec=` line (e.g. `env CC_SWITCH_GTK_IM_MODULE_FILE=keep /path/to/AppImage`). CC Switch reports what it did (which cache it pointed at, or why it changed nothing) on stderr, which is invisible for `.desktop` launches — run the AppImage from a terminal to see it.
+
+</details>
+
 For more questions, see the [FAQ](docs/user-manual/en/5-faq/5.2-questions.md) in the User Manual.
 
 ## Contributing
