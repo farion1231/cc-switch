@@ -69,7 +69,43 @@ fn scan_sessions_in_roots_with_titles(
         }
     }
 
-    sessions
+    collapse_thread_segments(sessions)
+}
+
+/// Codex appends another rollout file whenever a thread is resumed or reverted
+/// (`rollout-<ts>-<threadId>_<segmentId>.jsonl`, openai/codex#38127) and keeps
+/// the whole chain under one thread id. One row per file lists the same
+/// conversation several times, so collapse each thread into the row of its
+/// newest segment while keeping the thread's real start time.
+fn collapse_thread_segments(sessions: Vec<SessionMeta>) -> Vec<SessionMeta> {
+    let mut collapsed: Vec<SessionMeta> = Vec::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
+
+    for session in sessions {
+        let Some(&index) = positions.get(&session.session_id) else {
+            positions.insert(session.session_id.clone(), collapsed.len());
+            collapsed.push(session);
+            continue;
+        };
+
+        let existing = &mut collapsed[index];
+        let existing_activity = existing.last_active_at.or(existing.created_at).unwrap_or(0);
+        let incoming_activity = session.last_active_at.or(session.created_at).unwrap_or(0);
+        let created_at = match (existing.created_at, session.created_at) {
+            (Some(existing), Some(incoming)) => Some(existing.min(incoming)),
+            (existing, None) | (None, existing) => existing,
+        };
+
+        if incoming_activity >= existing_activity {
+            collapsed[index] = session;
+            collapsed[index].created_at = created_at;
+        } else {
+            existing.created_at = created_at;
+            existing.last_active_at = existing.last_active_at.max(session.last_active_at);
+        }
+    }
+
+    collapsed
 }
 
 fn load_thread_titles() -> HashMap<String, String> {
@@ -202,6 +238,38 @@ fn load_thread_titles_from_db(db_path: &Path) -> HashMap<String, String> {
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
+    let mut messages = Vec::new();
+    for segment in thread_segment_paths(path) {
+        messages.extend(load_segment_messages(&segment)?);
+    }
+    Ok(messages)
+}
+
+/// Every rollout segment of a resumed/reverted thread, oldest first. Plain
+/// single-segment rollouts are returned as-is so the common case stays a plain
+/// file read.
+fn thread_segment_paths(path: &Path) -> Vec<PathBuf> {
+    let has_extra_segment = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| UUID_RE.find_iter(name).count() > 1);
+    if !has_extra_segment {
+        return vec![path.to_path_buf()];
+    }
+
+    let mut segments = infer_session_id_from_filename(path)
+        .and_then(|thread_id| {
+            codex_dir_of(path).map(|codex_dir| thread_segment_paths_in(&codex_dir, &thread_id))
+        })
+        .unwrap_or_default();
+    if !segments.iter().any(|segment| segment == path) {
+        segments.push(path.to_path_buf());
+    }
+    segments.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    segments
+}
+
+fn load_segment_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
@@ -268,7 +336,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
-pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
     let meta = parse_session(path)
         .ok_or_else(|| format!("Failed to parse Codex session metadata: {}", path.display()))?;
 
@@ -279,14 +347,61 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         ));
     }
 
-    std::fs::remove_file(path).map_err(|e| {
-        format!(
-            "Failed to delete Codex session file {}: {e}",
-            path.display()
-        )
-    })?;
+    // A resumed/reverted thread spans several rollout files. Deleting only the
+    // segment the row points at leaves the rest of the conversation behind as
+    // new rows, so remove every segment of the thread.
+    let mut targets = codex_dir_of(root)
+        .map(|codex_dir| thread_segment_paths_in(&codex_dir, session_id))
+        .unwrap_or_default();
+    if !targets.iter().any(|target| target == path) {
+        targets.push(path.to_path_buf());
+    }
+
+    let failures = targets
+        .iter()
+        .filter_map(|target| {
+            std::fs::remove_file(target)
+                .err()
+                .map(|error| format!("{}: {error}", target.display()))
+        })
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Err(format!(
+            "Failed to delete Codex session files: {}",
+            failures.join("; ")
+        ));
+    }
 
     Ok(true)
+}
+
+/// Rollout files of one thread, oldest first. Segments sit next to the file they
+/// continue from, but a resume on a later day lands in another date directory,
+/// so the whole Codex session tree is scanned.
+fn thread_segment_paths_in(codex_dir: &Path, thread_id: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for root in [
+        codex_dir.join("sessions"),
+        codex_dir.join("archived_sessions"),
+    ] {
+        collect_jsonl_files(&root, &mut paths);
+    }
+    paths.retain(|path| infer_session_id_from_filename(path).as_deref() == Some(thread_id));
+    paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    paths
+}
+
+/// `sessions` and `archived_sessions` live directly under the Codex home.
+fn codex_dir_of(path: &Path) -> Option<PathBuf> {
+    for dir in path.ancestors() {
+        match dir.file_name().and_then(|name| name.to_str()) {
+            Some("sessions") | Some("archived_sessions") => {
+                return dir.parent().map(Path::to_path_buf)
+            }
+            _ => continue,
+        }
+    }
+    None
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -561,6 +676,80 @@ mod tests {
 
         assert!(ids.contains(&"active-id".to_string()));
         assert!(ids.contains(&"archived-id".to_string()));
+    }
+
+    const THREAD_ID: &str = "019cc369-bd7c-7891-b371-7b20b4fe0b18";
+    const SEGMENT_ID: &str = "01a083d0-3bb9-7f53-8ec7-5546ff5d870a";
+
+    fn write_rollout(path: &Path, session_id: &str, timestamp: &str, message: &str) {
+        std::fs::create_dir_all(path.parent().expect("rollout parent")).expect("rollout dir");
+        std::fs::write(
+            path,
+            format!(
+                "{{\"timestamp\":\"{timestamp}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\",\"cwd\":\"/tmp/project\"}}}}\n\
+                 {{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":\"{message}\"}}}}\n",
+            ),
+        )
+        .expect("write rollout");
+    }
+
+    /// Resume/revert continues a thread in a second file named
+    /// `rollout-<ts>-<threadId>_<segmentId>.jsonl`; both files are one session.
+    fn write_resumed_thread(root: &Path) -> (PathBuf, PathBuf) {
+        let base = root
+            .join("2026/03/06")
+            .join(format!("rollout-2026-03-06T21-50-12-{THREAD_ID}.jsonl"));
+        let resumed = root.join("2026/03/07").join(format!(
+            "rollout-2026-03-07T09-00-00-{THREAD_ID}_{SEGMENT_ID}.jsonl"
+        ));
+        write_rollout(&base, THREAD_ID, "2026-03-06T21:50:12Z", "hello");
+        write_rollout(&resumed, THREAD_ID, "2026-03-07T09:00:00Z", "continue");
+        (base, resumed)
+    }
+
+    #[test]
+    fn scan_sessions_merges_resume_segments_of_one_thread() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let (_, resumed) = write_resumed_thread(&root);
+
+        let sessions = scan_sessions_in_roots(std::slice::from_ref(&root));
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, THREAD_ID);
+        assert_eq!(
+            sessions[0].source_path.as_deref(),
+            Some(resumed.to_string_lossy().as_ref())
+        );
+        // Start time comes from the first segment, activity from the newest one.
+        assert!(sessions[0].created_at.unwrap() < sessions[0].last_active_at.unwrap());
+    }
+
+    #[test]
+    fn load_messages_merges_resume_segments_oldest_first() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let (_, resumed) = write_resumed_thread(&root);
+
+        let messages = load_messages(&resumed).expect("load messages");
+
+        let contents = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(contents, vec!["hello", "continue"]);
+    }
+
+    #[test]
+    fn delete_session_removes_every_segment_of_a_resumed_thread() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let (base, resumed) = write_resumed_thread(&root);
+
+        delete_session(&root, &resumed, THREAD_ID).expect("delete session");
+
+        assert!(!resumed.exists());
+        assert!(!base.exists());
     }
 
     #[test]
